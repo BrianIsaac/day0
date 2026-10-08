@@ -1025,12 +1025,13 @@ function phaseOf(checkpoint: string, phase: FinishingPhase): void {
 }
 
 /**
- * Delete one bounded page of the stored pages a finishing generation did not list.
+ * Delete one bounded page of the stored pages two complete walks in a row did not list.
  *
  * Internal; the finishing sync walks, with it, only the source's listing rows
- * an earlier listing stamped (D D2 (a)): a page this generation listed was
- * restamped by its batch, one it listed but could not read too (P5-11), so
- * the walk reads nothing a stable corpus keeps, whatever its size.
+ * stamped before the last complete walk's listing (D D2 (a); `pruneBelow`): a
+ * page this generation listed was restamped by its batch, one it listed but
+ * could not read too (P5-11), and one only this generation missed is kept for
+ * the next, so the walk reads nothing a stable corpus keeps, whatever its size.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1040,11 +1041,11 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = runListing(finishing.run);
+    const below = await pruneBelow(ctx, finishing.source);
     // A row this page deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
-      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', below))
       .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
     let removed = 0;
     for (const row of page.page) {
@@ -1137,14 +1138,14 @@ export const pruneMirrors = internalMutation({
     phaseOf(args.checkpoint, 'mirrors');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = runListing(finishing.run);
+    const below = await pruneBelow(ctx, finishing.source);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (mirror.sourceRef && (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing))) {
+      if (mirror.sourceRef && (await keptBy(ctx, args.sourceId, mirror.sourceRef, below))) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is
@@ -1218,18 +1219,30 @@ export const pruneDepartedMirrors = internalMutation({
   },
 });
 
-/** Whether a listing named a source's page: its listing row carries the listing's stamp. */
-async function listedBy(
+/**
+ * The listing below which a finish prunes (14-D's ruling 1 (b), 8 October 2026): the last complete
+ * walk's. A page that walk named and this one did not has been missed once and is kept, so a
+ * provider that lists in no fixed order (Drive; a Notion page edited after it was read) loses no
+ * page to one walk's miss; a page neither named has been missed by two complete walks and goes.
+ * Before any complete walk, nothing is pruned.
+ */
+async function pruneBelow(ctx: QueryCtx, source: Doc<'docSources'>): Promise<number> {
+  const previous = source.lastCompletedSyncId ? await ctx.db.get(source.lastCompletedSyncId) : null;
+  return previous?.listing ?? 0;
+}
+
+/** Whether the finish keeps a source's page: its listing row is stamped at or after `below`. */
+async function keptBy(
   ctx: QueryCtx,
   sourceId: Id<'docSources'>,
   ref: string,
-  listing: number,
+  below: number,
 ): Promise<boolean> {
   const row = await ctx.db
     .query('docPageListings')
     .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', ref))
     .unique();
-  return row?.seenBy === listing;
+  return row !== null && row.seenBy >= below;
 }
 
 /** The verdicts under which an approved or proposed intake scope is re-read after a sync. */

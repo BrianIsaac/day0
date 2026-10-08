@@ -91,6 +91,36 @@ async function seedSyncedSource(
 }
 
 /**
+ * Record a complete walk of a source that named none of its stored pages, so each has been missed
+ * once and the next complete walk that misses it prunes it (14-D's ruling 1 (b), 8 October 2026).
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   sourceId: Source under test.
+ */
+async function missedOnce(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+): Promise<void> {
+  await harness.run(async (ctx): Promise<void> => {
+    const source = await ctx.db.get(sourceId);
+    const listing = (source?.listings ?? 0) + 1;
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing,
+      pagesListed: 0,
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: 1,
+      completedAt: 1,
+    });
+    await ctx.db.patch(sourceId, { listings: listing, lastCompletedSyncId: runId });
+  });
+}
+
+/**
  * Count the stored pages and mirrors that still point at a source.
  *
  * Args:
@@ -625,6 +655,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
@@ -726,6 +757,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const superseded = await harness.mutation(internal.docSources.beginSync, { sourceId });
     const failed = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.failSync, {
@@ -836,6 +868,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     await harness.run(async (ctx) => {
       await ctx.db.insert('mockDocs', {
         agentId,
@@ -2076,6 +2109,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId, surfaceId } = await largeSource(harness);
+    await missedOnce(harness, sourceId);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     const listed = ['handbook.md'];
     for (let index = 1; index < LARGE_PAGES; index += 1) listed.push(`runbooks/page-${index}.md`);
@@ -2248,6 +2282,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const listed: string[] = [];
     await harness.run(async (ctx): Promise<void> => {
       // Each page an earlier sync (listing 1) stored and named.
@@ -2316,6 +2351,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     // Pages an earlier listing stored: the first ten this sync names again, the rest it does not.
     const stored = Array.from({ length: 40 }, (_value, index) => `stored-${index}.md`);
     await harness.run(async (ctx): Promise<void> => {
@@ -2520,6 +2556,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const { runId, checkpoint } = await harness.run(async (ctx) => {
       for (const ref of ['kept.md', 'stale.md']) {
         await ctx.db.insert('docPages', {
@@ -2589,7 +2626,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(relisted).toEqual(['kept.md', 'page.md']);
   });
 
-  it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
+  it('removes a page whose batch never recorded once two complete finishes in a row do not name it (14-D ruling 1 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2604,6 +2641,18 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       markdown: '# Orphan',
       updatedAt: 2,
     });
+    const left = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .collect()
+        )
+          .map((page) => page.ref)
+          .sort(),
+      );
+    // The first complete finish that does not name it has missed it once, and keeps it.
     const fresh = await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
     await finishGeneration(harness, sourceId, fresh, {
       refs: ['page.md'],
@@ -2611,15 +2660,15 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       pageCount: 0,
       redactionCount: 0,
     });
-    const left = await harness.run(async (ctx) =>
-      (
-        await ctx.db
-          .query('docPages')
-          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
-          .collect()
-      ).map((page) => page.ref),
-    );
-    expect(left).toEqual(['page.md']);
+    expect(await left()).toEqual(['orphan.md', 'page.md']);
+    const next = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, next, {
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    expect(await left()).toEqual(['page.md']);
   });
 
   it('prunes more than eight old runs in one pass, now a run carries no list of its pages (13-K)', async (): Promise<void> => {
@@ -2951,6 +3000,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     await harness.run(async (ctx) => {
       // A page an earlier sync (listing 1) stored and named, which this one will not name.
       await ctx.db.insert('docPages', {
@@ -3124,5 +3174,168 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     expect(
       await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null),
     ).toBeNull();
+  });
+});
+
+describe('the finish’s prune over a provider that lists in no fixed order (14-D ruling 1 (b), 8 October)', (): void => {
+  /** A source whose last complete walk (listing 1) named `kept.md` and `missed.md`, each mirrored. */
+  async function walkedSource(harness: TestConvex<typeof schema>): Promise<{
+    sourceId: Id<'docSources'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Drive',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        listings: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'source test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      for (const ref of ['kept.md', 'missed.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 1 });
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: mirroredDocSlug(sourceId, ref),
+          title: ref,
+          body: `# ${ref}`,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: ref,
+          updatedAt: 1,
+        });
+      }
+      const completed = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        pagesListed: 2,
+        credentialRefs: [],
+        pageCount: 2,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 1,
+        summary: {
+          pagesKept: 2,
+          pagesRemoved: 0,
+          mirrorsRemoved: 0,
+          credentialsSuperseded: 0,
+          surfacesToReapprove: 0,
+        },
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: completed });
+      return { sourceId };
+    });
+  }
+
+  /** One complete walk that lists the given refs. */
+  async function walk(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    refs: string[],
+  ): Promise<Doc<'docSyncRuns'> | null> {
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, runId, {
+      refs,
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    return await harness.run(async (ctx) => await ctx.db.get(runId));
+  }
+
+  /** The refs of the source's stored pages and of its mirrors. */
+  async function stored(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<{ pages: string[]; mirrors: string[] }> {
+    return await harness.run(async (ctx) => ({
+      pages: (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((page) => page.ref)
+        .sort(),
+      mirrors: (
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((mirror) => mirror.sourceRef ?? '')
+        .sort(),
+    }));
+  }
+
+  it('keeps a page one complete walk missed, its mirror too, and prunes it when the next complete walk misses it again', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    const once = await walk(harness, sourceId, ['kept.md']);
+    expect(once).toMatchObject({ state: 'completed' });
+    expect(once?.summary).toMatchObject({ pagesRemoved: 0, mirrorsRemoved: 0 });
+    expect(await stored(harness, sourceId)).toEqual({
+      pages: ['kept.md', 'missed.md'],
+      mirrors: ['kept.md', 'missed.md'],
+    });
+
+    const twice = await walk(harness, sourceId, ['kept.md']);
+    expect(twice?.summary).toMatchObject({ pagesRemoved: 1, mirrorsRemoved: 1 });
+    expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
+  });
+
+  it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    await walk(harness, sourceId, ['kept.md']);
+    await walk(harness, sourceId, ['kept.md', 'missed.md']);
+    await walk(harness, sourceId, ['kept.md']);
+
+    expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
+  });
+
+  it('counts no walk that ended before it completed as a miss', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    await walk(harness, sourceId, ['kept.md']);
+    // A walk superseded part-way: it named only `kept.md` before a newer sync took over.
+    const cutOff = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: cutOff,
+      nextCursor: 'after-1',
+      refs: ['kept.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
+
+    expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
   });
 });
