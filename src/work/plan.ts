@@ -25,6 +25,7 @@ import {
   fromLine,
   type PromptNamed,
   type PromptPeople,
+  withoutIdentities,
 } from '../people/prompt-block';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
@@ -919,7 +920,8 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
     fromLine(candidate.requesterLabel, args.surfaceMode === 'real' ? args.requester : undefined),
-    ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
+    // The owner is a provider's label, kept free of identities as the From line is (W13-R19).
+    ...(candidate.owner ? [`Owner: ${withoutIdentities(candidate.owner) || '(unknown)'}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),

@@ -305,6 +305,18 @@ describe('plan drafter grounding', (): void => {
     expect(planUserPrompt({ candidate, charter })).not.toContain('Owner:');
   });
 
+  it('prints the owner without the identities the People block keeps out, as it prints the requester (W13-R19)', (): void => {
+    const named = planUserPrompt({
+      candidate: { ...candidate, owner: 'Ana Ruiz <ana.ruiz@acme.test>' },
+      charter,
+    });
+    expect(named).toContain('\nOwner: Ana Ruiz\n');
+    expect(named).not.toContain('ana.ruiz@acme.test');
+    const idOnly = planUserPrompt({ candidate: { ...candidate, owner: 'U07ABCD1234' }, charter });
+    expect(idOnly).toContain('\nOwner: (unknown)\n');
+    expect(idOnly).not.toContain('U07ABCD1234');
+  });
+
   it("puts the manager's answers to the charter's questions in the plan prompt", (): void => {
     const answered = {
       ...charter,
