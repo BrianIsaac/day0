@@ -1132,6 +1132,35 @@ export function slackApiBaseForCheck(values: Values): URL {
   return new URL('/api/', published);
 }
 
+/** The preload that sends this machine's `fetch` to Linear to a bed's fake Linear instead. */
+const FAKE_LINEAR_PRELOAD = 'fake-linear/host-preload.mjs';
+
+/**
+ * Why the check may not reach Linear from this process, or undefined when it may (W13-R48): a bed
+ * (its env file names a fake Slack) never calls Linear itself, and this machine's Node resolves
+ * Linear's names past the compose network unless the fake Linear's preload is loaded with the fake
+ * named (`fake-linear/host-preload.mjs`, `FAKE_LINEAR_HOST_URL`). On 6 October a bed's check went
+ * to Linear itself that way. A deployment that names no fake Slack reaches Linear itself.
+ *
+ * @param values - The env file's values.
+ * @param env - This process's environment.
+ */
+export function linearBedRefusal(
+  values: Values,
+  env: Readonly<Record<string, string | undefined>>,
+): string | undefined {
+  if (!(values.DAY0_TEST_SLACK_API_URL ?? '').trim()) return undefined;
+  const lacking = [
+    ...((env.NODE_OPTIONS ?? '').includes(FAKE_LINEAR_PRELOAD)
+      ? []
+      : [`the preload (NODE_OPTIONS="--import <checkout>/${FAKE_LINEAR_PRELOAD}")`]),
+    ...((env.FAKE_LINEAR_HOST_URL ?? '').trim() ? [] : ['FAKE_LINEAR_HOST_URL']),
+  ];
+  return lacking.length === 0
+    ? undefined
+    : `DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself: run the check with ${lacking.join(' and ')} as the bed's recipe says, or check another system with --system.`;
+}
+
 /** The loopback hosts a bed publishes a fake on. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
@@ -1317,6 +1346,10 @@ export async function main(argv: readonly string[]): Promise<number> {
       (row) => args.system === undefined || row.system === args.system,
     );
     slackApiBase = slackApiBaseForCheck(values);
+    const linearRefused = rows.some((row) => row.system === 'linear')
+      ? linearBedRefusal(values, process.env)
+      : undefined;
+    if (linearRefused !== undefined) throw new Error(linearRefused);
   } catch (err) {
     console.error(errorMessage(err));
     return 1;

@@ -692,16 +692,23 @@ function wordedWriteKind(action: MockAction): 'comment' | 'message' | undefined 
  * standing grant). A comment or message with other words on the same target is the plan's and is
  * sent, as before; a status change, a browser write and a read are never reused here.
  *
+ * A manager's note that asks for a correction or a further message reuses nothing, as it reuses
+ * nothing of an earlier run's ({@link reusedLedger}): the same words again are then what the
+ * manager asked for (W13-R47).
+ *
  * @param actions - The closing set's actions.
  * @param thisRun - The writes this run's first phase recorded (`thisRunWrites`).
  * @param run - The run the reused rows take their identity from.
+ * @param options - The manager's note on the retry, if any.
  * @returns A reused row for each action that has one, undefined elsewhere.
  */
 export function reusedFromThisRun(
   actions: readonly MockAction[],
   thisRun: readonly LandedWrite[],
   run: { workItemId: string; runId: string; actionIndexOffset: number },
+  options: { readonly managerFeedback?: string } = {},
 ): Array<ReusedAppliedAction | undefined> {
+  if (correctionRequested(options.managerFeedback)) return actions.map(() => undefined);
   const sent = thisRun.flatMap((source) => {
     const kind = landedEntry(source.applied) ? wordedWriteKind(source.action) : undefined;
     return kind ? [{ source, kind, payload: payload(source.action) }] : [];

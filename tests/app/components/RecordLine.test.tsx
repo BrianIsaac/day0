@@ -83,4 +83,17 @@ describe('RecordLine', () => {
       expect(html).toContain(`<span class="sr-only">${said}: </span>`);
     }
   });
+
+  it("says a finished run's own answer for a run that was partly done or not done (13-FD's R3)", () => {
+    const partly = renderToStaticMarkup(
+      <RecordLine kind="partly-done">Lark ended “Pipeline coverage” partly done.</RecordLine>,
+    );
+    expect(partly).toContain('<span class="sr-only">Partly done: </span>');
+    expect(partly).toContain('bg-[var(--color-warn)]');
+    const not = renderToStaticMarkup(
+      <RecordLine kind="not-done">Lark ended “Pipeline coverage” not done.</RecordLine>,
+    );
+    expect(not).toContain('<span class="sr-only">Not done: </span>');
+    expect(not).toContain('bg-[var(--color-muted)]');
+  });
 });

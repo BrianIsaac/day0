@@ -1339,3 +1339,30 @@ describe('recordWords: the people graph (wave 13, 13-P)', (): void => {
     ).toBe("You ended Mira's escalation contact Dana Okafor.");
   });
 });
+
+describe('a held start the resume did not take up, in the record (W13-R46)', (): void => {
+  it('says the skill or the system did not go on after the pause, and why', (): void => {
+    const spent = (why: string): string =>
+      recordWords(
+        { type: 'skill.authoring-hold-spent', payload: { skillId: 's1', name: 'kanban', why } },
+        { name: 'Mira' },
+      );
+    expect(spent('decided')).toBe(
+      'Writing the skill kanban did not go on after the pause: it was decided while the pause held it.',
+    );
+    expect(spent('running')).toBe(
+      'Writing the skill kanban did not go on after the pause: a run held it when the pause ended.',
+    );
+    expect(spent('claimed')).toBe(
+      'Writing the skill kanban did not go on after the pause: it was started while the pause held it.',
+    );
+    expect(
+      recordWords(
+        { type: 'surface.orientation-hold-spent', payload: { surfaceId: 'f1', why: 'settled' } },
+        { name: 'Mira', connection: 'Linear' },
+      ),
+    ).toBe(
+      'Finding a way to reach Linear did not go on after the pause: it was settled while the pause held it.',
+    );
+  });
+});

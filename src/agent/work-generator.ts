@@ -4,6 +4,7 @@ import { log } from '../lib/logger';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
+import { otherRolesAskThreads } from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -151,14 +152,20 @@ function shown(text: string): string {
  * description the LLM can copy identifiers out of without hallucinating, with
  * what each record holds (13-FD): a tab's latest rows, a channel's latest
  * messages and each team document, so a ticket asks only for what is there.
+ * A company-wide ask that is another role's work is not shown.
  */
-function renderMockSnapshot(env: MockSurfaceSnapshot): string {
+function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
+  // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
+  // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
+  const otherRoles = otherRolesAskThreads(charterWords(charter));
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
     for (const c of env.slackChannels) {
       lines.push(`  - slug "${c.slug}" (${c.kind}, displayed as "${c.displayName}")`);
-      const messages = c.recentMessages.slice(-MESSAGES_SHOWN);
+      const messages = c.recentMessages
+        .filter((m) => !(m.threadKey && otherRoles.has(`${c.slug}#${m.threadKey}`)))
+        .slice(-MESSAGES_SHOWN);
       if (messages.length === 0) lines.push('      (no messages)');
       for (const m of messages) {
         const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
@@ -345,7 +352,9 @@ function withoutPurpose(item: DraftedWorkItem): GeneratedWorkItem {
  * in. An out-of-scope item that shares a word with the role, or an action item that is not a
  * ticket on the ticket queue, is drafted again, up to `GENERATION_ATTEMPTS` drafts; the last
  * draft's out-of-scope item is left out if it still reads as the role, and its action item filed
- * on the queue (D2 (b)).
+ * on the queue (D2 (b)). A draft in hand when the budget ran out that lacks a purpose, has an
+ * in-scope item sharing no word with the role or an action ticket naming no record fails the
+ * attempt instead (W13-R40).
  *
  * @param charter - The approved charter; its struck clauses are never work.
  * @param mockEnv - The employee's office, whose identifiers the items name.
@@ -361,7 +370,7 @@ export async function generateWorkItemsFromCharter(
     JSON.stringify({ ...charter, struckClauses: undefined }, null, 2),
     '',
     'Live mock environment snapshot (use these EXACT slugs in contentRefs):',
-    renderMockSnapshot(mockEnv),
+    renderMockSnapshot(mockEnv, charter),
     '',
     // Named up front: an item that shares one is judged the role's work, and a re-ask that names
     // only the last draft's words let the next draft reach for another (the bed walk). The in-scope
@@ -383,11 +392,17 @@ export async function generateWorkItemsFromCharter(
       timeoutMs: Math.min(MODEL_CALL_TIMEOUT_MS, deadline - Date.now()),
     });
   let draft = await ask(brief);
-  for (let attempt = 1; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+  // The drafts read, which the budget may cut short of `GENERATION_ATTEMPTS` (W13-R39).
+  let attempts = 1;
+  let budgetRanOut = false;
+  for (; attempts < GENERATION_ATTEMPTS; attempts += 1) {
     const reading = readDraft(draft.items, charter, records);
     if (readsAsIntended(reading)) return seeded(draft.items);
-    const again = await askedAgain(() => ask(`${brief}\n\n${askAgain(reading)}`), attempt);
-    if (again === undefined) break;
+    const again = await askedAgain(() => ask(`${brief}\n\n${askAgain(reading)}`), attempts);
+    if (again === undefined) {
+      budgetRanOut = true;
+      break;
+    }
     draft = again;
   }
   // The last draft is taken as it reads, but for an out-of-scope item that still reads as the
@@ -395,31 +410,54 @@ export async function generateWorkItemsFromCharter(
   // An in-scope item is never left out: the queue keeps its read and its tickets, an action ticket
   // that names no record of the office included (its run then says what it could not do).
   const reading = readDraft(draft.items, charter, records);
+  // A draft in hand when the budget ran out was asked again for a reason: one missing a purpose,
+  // with an in-scope item the scope rule would skip, or with an action ticket naming no record is
+  // not seeded, and the seeding's next attempt drafts again (W13-R40).
+  const faults = budgetRanOut ? keptDraftFaults(reading) : [];
+  if (faults.length > 0) {
+    throw new Error(
+      `the work generator's budget ran out on a draft that ${faults.join(' and ')}; the seeding tries again`,
+    );
+  }
   if (reading.asTheRole.length > 0) {
     log.warn('mock work generator left out an out-of-scope item that reads as the role', {
-      attempts: GENERATION_ATTEMPTS,
+      attempts,
       words: reading.asTheRole.flatMap((one) => one.words),
     });
   }
   if (reading.offTheQueue.length > 0) {
     log.warn('mock work generator filed a ticket item on the ticket queue itself', {
-      attempts: GENERATION_ATTEMPTS,
+      attempts,
       purposes: reading.offTheQueue.map((item) => item.purpose),
     });
   }
   if (reading.actionUngrounded) {
     log.warn('mock work generator kept an action ticket that names no record of the office', {
-      attempts: GENERATION_ATTEMPTS,
+      attempts,
     });
   }
   if (reading.missing.length > 0) {
     log.warn('mock work generator seeded a draft without every purpose', {
-      attempts: GENERATION_ATTEMPTS,
+      attempts,
       missing: reading.missing,
     });
   }
   const leftOut = new Set(reading.asTheRole.map((one) => one.item));
   return seeded(draft.items.filter((item) => !leftOut.has(item)).map(onTheTicketQueue));
+}
+
+/**
+ * What makes a draft kept when the budget ran out unfit to seed (W13-R40), in the words of the
+ * error that fails the attempt: a purpose it lacks, an in-scope item that shares no word with the
+ * role, an action ticket that names no record of the office. An out-of-scope item that reads as
+ * the role is left out instead, and a ticket off the queue is filed on it, as for any last draft.
+ */
+function keptDraftFaults(reading: DraftReading): string[] {
+  return [
+    ...reading.missing.map((purpose) => `it has no ${purpose} item`),
+    ...reading.untied.map((item) => `its ${item.purpose} item shares no word with the role`),
+    ...(reading.actionUngrounded ? ['its action ticket names no record of the office'] : []),
+  ];
 }
 
 /**
@@ -441,7 +479,8 @@ function seeded(items: readonly DraftedWorkItem[]): GeneratedWorkItem[] {
 
 /**
  * A draft asked for again, or undefined when the budget ran out first: the draft in hand is then
- * taken as the last draft is. Any other failure is the seeding's.
+ * taken as the last draft is, unless it is unfit to seed ({@link keptDraftFaults}). Any other
+ * failure is the seeding's.
  */
 async function askedAgain<T>(ask: () => Promise<T>, attempt: number): Promise<T | undefined> {
   try {

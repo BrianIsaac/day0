@@ -1,21 +1,52 @@
+/** The verbs whose actions can carry a message, and so a declared `reports` (D-5 (b)). */
+const MESSAGE_CAPABLE = new Set([
+  'slack.postMessage',
+  'twitter.reply',
+  'ticket.update',
+  'mcp.call',
+  'http.request',
+]);
+
+/**
+ * A recorded action as today's schema takes it: a message-capable action recorded before the
+ * run declared what a message reports carries `reports: null`, which declares nothing, so the
+ * apply binds it by its words alone as the release it was recorded under did.
+ */
+function withUndeclaredReports(action: unknown): unknown {
+  if (typeof action !== 'object' || action === null || 'reports' in action) return action;
+  const tool = (action as { tool?: unknown }).tool;
+  return typeof tool === 'string' && MESSAGE_CAPABLE.has(tool)
+    ? { ...action, reports: null }
+    : action;
+}
+
 /**
  * A recorded executor reply as today's real-mode provider schema takes it.
  *
- * The recordings predate two required, nullable fields: the question a set
- * waits on (`openQuestion`, decision N20) and the charter clause a closing
- * outcome was decided under (`charterClause`, backlog step 4). A double that
- * returns a recording declares both empty, as a model with nothing to declare
- * would; a field the recording already carries is kept.
+ * The recordings predate three required, nullable fields: the question a set
+ * waits on (`openQuestion`, decision N20), the charter clause a closing
+ * outcome was decided under (`charterClause`, backlog step 4) and the writes a
+ * message reports (`reports`, the wave 13 review's D-5 (b)). A double that
+ * returns a recording declares each empty, as a model with nothing to declare
+ * would, and `reports` null, which binds a message by its words alone as
+ * before; a field the recording already carries is kept.
  *
  * @param reply - The recorded reply.
- * @returns The reply with the two fields filled where absent.
+ * @returns The reply with the three fields filled where absent.
  */
 export function asCurrentExecutorReply(reply: unknown): unknown {
   if (typeof reply !== 'object' || reply === null) return reply;
-  const recorded = reply as { openQuestion?: unknown; planStepOutcomes?: unknown };
+  const recorded = reply as {
+    openQuestion?: unknown;
+    planStepOutcomes?: unknown;
+    actions?: unknown;
+  };
   return {
     ...recorded,
     openQuestion: recorded.openQuestion ?? null,
+    ...(Array.isArray(recorded.actions)
+      ? { actions: recorded.actions.map(withUndeclaredReports) }
+      : {}),
     ...(Array.isArray(recorded.planStepOutcomes)
       ? {
           planStepOutcomes: recorded.planStepOutcomes.map((outcome: unknown) =>

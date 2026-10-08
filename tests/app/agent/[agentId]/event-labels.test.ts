@@ -702,6 +702,21 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'work.waiting-for-skill' })).toBe('held');
   });
 
+  it("draws a finished run by its own answer when it was not done, as the line's words say it (13-FD's R3)", (): void => {
+    const finished = (workDone?: string) =>
+      recordKindOf({
+        type: 'work.completed',
+        payload: {
+          workItemId: 'w1',
+          output: workDone === undefined ? {} : { workDone, workDoneWhy: 'Its one line of why.' },
+        },
+      } as never);
+    expect(finished('partial')).toBe('partly-done');
+    expect(finished('not-done')).toBe('not-done');
+    expect(finished('done')).toBe('landed');
+    expect(finished()).toBe('landed');
+  });
+
   it('draws every line the Refused and withheld chip lists as refused or set aside, never noted (m34)', (): void => {
     for (const type of eventTypesIn('refused')) {
       expect(['refused', 'withheld'], type).toContain(recordKindOf({ type }));

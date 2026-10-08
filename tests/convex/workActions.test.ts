@@ -9682,6 +9682,88 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     },
   );
 
+  it('marks the decided request in the DM when the park of its close comes before its own edit (W13-R50)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    // The card allows the edit that marks a request decided.
+    await harness.run(async (ctx) => {
+      const slack = await ctx.db.get(surfaceId);
+      await ctx.db.patch(surfaceId, {
+        toolAllowlist: [...(slack?.toolAllowlist ?? []), 'chat.update'],
+      });
+    });
+    // The request as it reached the DM, kept for the edit that marks it decided.
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+      text: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+      withButtons: true,
+    });
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The apply parks the close before the decided request's edit has run.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept).toEqual([
+      expect.objectContaining({
+        decisionId: 'gh6npq',
+        ts: '1789000000.000100',
+        outcome: 'approved',
+        decidedVia: 'channel',
+        requestText: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+        withButtons: true,
+      }),
+    ]);
+    const edit = await harness.mutation(internal.work.prepareReplacedEdit, {
+      replacedId: kept[0]!._id,
+    });
+    expect(edit).toMatchObject({ prepared: true });
+    expect((edit as { text: string }).text).toMatch(
+      /\n\nDecided: approved in this DM \(gh6npq\)\. The ticket close it held waits on its card, and Day0 asks about it in a new message\.$/,
+    );
+    // The edit the approval scheduled finds its request moved on and does nothing more.
+    expect(
+      await harness.mutation(internal.work.prepareRequestClose, {
+        workItemId,
+        decisionId: 'gh6npq',
+      }),
+    ).toEqual({ prepared: false });
+  });
+
+  it('marks the decided request when its own edit was claimed and never finished before the park (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+      text: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+    });
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The edit's claim was taken and its action died before it recorded a result.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, closeClaimedAt: 5 } });
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept.map((row) => [row.decisionId, row.outcome])).toEqual([['gh6npq', 'approved']]);
+  });
+
   it('then the close approved on its card lands alone, and the item completes', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());

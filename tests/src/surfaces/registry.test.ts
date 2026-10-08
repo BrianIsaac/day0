@@ -2253,3 +2253,132 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
   });
 });
+
+describe("a message bound by the run's declared reports (the wave 13 review's D-5 (b))", (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+  const comment = (body: string, reports: number[]): MockAction => ({
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: JSON.stringify({ issueId: 'REVOPS-6', body }),
+    },
+    reports,
+  });
+  const missed = 'Both stop-drill notes reached #revops.';
+
+  it('holds back a report the words miss when a post its reports name was not approved', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment(missed, [0, 1])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('holds back a message whose reports name the one write that did not land', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment(missed, [0])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([1, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http).toHaveLength(1);
+  });
+
+  it('sends a message whose reports name only writes that landed', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment('The drill-end note reached #revops.', [1])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([1, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true });
+    expect(applied[2]!.held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('holds back a report by its words when reports is empty, as before the field', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('holds back a mock office comment whose reports name a post the manager withheld', async (): Promise<void> => {
+    const applied = await applySurfaceActions(
+      ctx,
+      'mock',
+      [],
+      run,
+      [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'office-asks', threadKey: 'thread-monitor', body: 'Hi Sara, ...' },
+        },
+        {
+          tool: 'ticket.update',
+          args: { slug: 'REVOPS-205', comment: 'Sara has her answer in the thread.' },
+          reports: [0],
+        },
+      ],
+      { approvedIndexes: new Set([1]), now },
+    );
+    expect(applied[0]).toMatchObject({ ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+  });
+});
+
+describe('a write whose own words report the writes before it (W13-R43)', (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+
+  it('holds back a new issue whose description reports a post that was not approved', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const described: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({
+          team: 'REVOPS',
+          title: 'Stop drill follow-up',
+          description: 'Posted both stop-drill notes in #revops.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, described],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+});

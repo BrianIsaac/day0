@@ -3169,14 +3169,24 @@ async function reusedRows(
   const earlier: LandedWrite[] =
     (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
-  // A closing set's message identical to one its own first phase landed is that message (W12V-13).
+  const managerFeedback =
+    dependent || earlier.length > 0
+      ? liveManagerFeedback(
+          (await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId }))
+            ?.managerFeedback,
+        )
+      : undefined;
+  // A closing set's message identical to one its own first phase landed is that message
+  // (W12V-13), unless the manager's note asks for it again (W13-R47).
   const fromThisRun = dependent
-    ? reusedFromThisRun(output.actions, thisRunWrites(output.initial, run), run)
+    ? reusedFromThisRun(output.actions, thisRunWrites(output.initial, run), run, {
+        managerFeedback,
+      })
     : output.actions.map(() => undefined);
   const rows =
     earlier.length === 0 && !resumed
       ? fromThisRun
-      : await reusedFromEarlier(ctx, output, surfaces, run, fromThisRun);
+      : reusedFromEarlier(output, surfaces, run, fromThisRun, managerFeedback);
   if (!rows.some((row) => row !== undefined && reusedFrom(row) !== undefined)) return rows;
   const runIds = await ctx.runQuery(internal.work.executionRunIds, { workItemId: run.workItemId });
   return withReusedRunNumbers(rows, runIds);
@@ -3186,21 +3196,20 @@ async function reusedRows(
  * The rows {@link reusedRows} takes from earlier runs and from a resumed set's previous attempt,
  * beside what it takes from this run's first phase.
  */
-async function reusedFromEarlier(
-  ctx: ActionCtx,
+function reusedFromEarlier(
   output: LedgerOutput | DependentPendingOutput,
   surfaces: readonly SurfaceRecord[],
   run: { workItemId: Id<'workItems'>; runId: Id<'events'>; actionIndexOffset: number },
   fromThisRun: ReadonlyArray<AppliedAction | undefined>,
-): Promise<Array<AppliedAction | undefined>> {
+  managerFeedback: string | undefined,
+): Array<AppliedAction | undefined> {
   const dependent = isDependentPendingOutput(output);
   const earlier: LandedWrite[] =
     (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
-  const item = await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId });
   const options = {
     surfaces,
-    managerFeedback: liveManagerFeedback(item?.managerFeedback),
+    managerFeedback,
     unsent: (dependent ? output.initial.unsentWrites : output.unsentWrites) ?? [],
   };
   const fromResume = resumed

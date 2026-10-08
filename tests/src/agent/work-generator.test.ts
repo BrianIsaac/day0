@@ -27,6 +27,18 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import type { Charter } from '../../../src/agent/charter';
+import { log } from '../../../src/lib/logger';
+import {
+  HANA_ASK,
+  KOFI_ASK,
+  LARK,
+  MANAGER_ASK,
+  MOSS,
+  NELL,
+  PIP,
+  QUILL,
+  SARA_ASK,
+} from '../../fixtures/agent/office-roles-2026-10-07';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -521,4 +533,104 @@ describe('the generation inside one seeding attempt (12-J item 6, option A)', ()
       'reached its budget',
     );
   });
+});
+
+describe('a draft kept when the budget ran out (W13-R39, W13-R40)', (): void => {
+  /** The second draft's call runs out of the budget, so the first draft is the one in hand. */
+  const budgetOutOnTheSecondDraft = (): void => {
+    calls.before = (call: number): void => {
+      if (call === 2) {
+        const spent = new Error(
+          'agentJson(day0-work-generator): the model call reached its budget',
+        );
+        spent.name = 'TimeoutError';
+        throw spent;
+      }
+    };
+  };
+
+  it('says how many drafts it read, not how many it may ask for', async (): Promise<void> => {
+    const warn = vi.spyOn(log, 'warn');
+    budgetOutOnTheSecondDraft();
+    drafts.push([READ, ACTION, BEYOND, SAYS_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(HYGIENE, OFFICE as never);
+    expect(warn).toHaveBeenCalledWith(
+      'mock work generator left out an out-of-scope item that reads as the role',
+      expect.objectContaining({ attempts: 1 }),
+    );
+    warn.mockRestore();
+  });
+
+  it.each([
+    [
+      'without a beyond-the-office item',
+      [READ, ACTION, { ...BEYOND, purpose: 'action' }, PLAIN_OUT_OF_SCOPE],
+      'it has no beyond-the-office item',
+    ],
+    [
+      'with a read that shares no word with the role',
+      [UNTIED_READ, ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+      'its read-and-answer item shares no word with the role',
+    ],
+    [
+      'with an action ticket that names no record of the office',
+      [READ, UNGROUNDED_ACTION, BEYOND, PLAIN_OUT_OF_SCOPE],
+      'its action ticket names no record of the office',
+    ],
+  ] as const)(
+    'fails the attempt rather than seed a draft %s',
+    async (_what, draft, fault): Promise<void> => {
+      budgetOutOnTheSecondDraft();
+      drafts.push([...draft]);
+      await expect(generateWorkItemsFromCharter(HYGIENE, OFFICE as never)).rejects.toThrow(
+        `the work generator's budget ran out on a draft that ${fault}`,
+      );
+    },
+  );
+});
+
+describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 13-FD's R4)", (): void => {
+  /** 13-FD's office in small: the three company-wide asks and the manager's own. */
+  const OFFICE_ASKS = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [
+          { sender: 'Kofi', threadKey: 'thread-drive-access', body: KOFI_ASK },
+          { sender: 'Sara', threadKey: 'thread-spare-monitor', body: SARA_ASK },
+          { sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK },
+        ],
+      },
+      {
+        slug: 'dm-manager',
+        displayName: 'DM · Manager',
+        kind: 'dm',
+        recentMessages: [{ sender: 'Manager', body: MANAGER_ASK }],
+      },
+    ],
+  };
+  const asks = { Kofi: KOFI_ASK, Sara: SARA_ASK, Hana: HANA_ASK };
+
+  it.each([
+    ['Nell, the IT helpdesk triager', NELL, ['Kofi']],
+    ['Pip, the support triage coordinator', PIP, ['Hana']],
+    ['Quill, the facilities coordinator', QUILL, ['Sara']],
+    ['Lark, the revenue operations coordinator', LARK, []],
+    ['Moss, the finance close assistant', MOSS, []],
+  ] as const)(
+    'shows %s the company-wide asks of its own role and no other',
+    async (_who, charter, own) => {
+      await generateWorkItemsFromCharter(charter, OFFICE_ASKS as never);
+      const prompt = prompts.at(-1) ?? '';
+      for (const [sender, words] of Object.entries(asks)) {
+        if ((own as readonly string[]).includes(sender)) expect(prompt, sender).toContain(words);
+        else expect(prompt, sender).not.toContain(words);
+      }
+      // The manager's own ask is the office's own team's, shown to every role as before.
+      expect(prompt).toContain(MANAGER_ASK);
+    },
+  );
 });

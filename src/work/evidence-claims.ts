@@ -515,6 +515,9 @@ function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]):
   return ofKind;
 }
 
+/** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
+const ISSUE_KEY = /^[a-z]+-\d+$/;
+
 /**
  * Whether a sentence reports writes its own set made before it, every value it gives carried by
  * them, the ledger or the item: the set lands together, and the apply holds the message back
@@ -533,9 +536,15 @@ function reportsOwnWrites(
   const carried = new Set(
     reported.flatMap((action) => distinctiveTokens(writeOf(action)?.text ?? '')),
   );
+  // The item vouches here only for a key that names it (REVOPS-6), never for a figure: a figure
+  // the item asks for is not one the write reported (W13-R44: the item's "74%" let a report of
+  // 74% stand over a post that carried 68%). The item vouches for a figure only through
+  // `repeatsTheItem`, a report the item itself makes.
   return tokens.every(
     (token) =>
-      carried.has(token) || prepared.ledgerTokens.has(token) || prepared.itemTokens.has(token),
+      carried.has(token) ||
+      prepared.ledgerTokens.has(token) ||
+      (ISSUE_KEY.test(token) && prepared.itemTokens.has(token)),
   );
 }
 
@@ -561,7 +570,7 @@ export function heldWithReportedWrites(
     const action = actions[index];
     if (!action) return verdict;
     // Only a held write the message reports keeps it waiting; another held write is not its own.
-    const waiting = reportedEarlierWrites(action, actions.slice(0, index)).some(
+    const waiting = boundEarlierWrites(action, actions.slice(0, index)).some(
       (at) => verdicts[at]?.disposition === 'held',
     );
     return waiting ? { disposition: 'held', reason: HELD_WITH_REPORTED_WRITES } : verdict;
@@ -610,6 +619,90 @@ export function reportedEarlierWrites(
     ),
   );
   return [...new Set(reported)].sort((a, b) => a - b);
+}
+
+/**
+ * Whether an action writes: a surface call whose intent is a write, or any mock verb (each of the
+ * four writes to the mock office).
+ */
+function isWrite(action: MockAction | undefined): boolean {
+  if (!action) return false;
+  if (!isSurfaceTool(action.tool)) return true;
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok && actionIntent(parsed.action) === 'write';
+}
+
+/** The places a message's `reports` names that are writes before it in its set, each once, in order. */
+function declaredReports(action: MockAction, earlier: readonly MockAction[]): number[] {
+  const declared = action.reports ?? [];
+  return [...new Set(declared)]
+    .filter((index) => Number.isInteger(index) && isWrite(earlier[index]))
+    .sort((a, b) => a - b);
+}
+
+/**
+ * The places in `earlier` of the writes a message is bound to at the apply and in the hold review:
+ * every write its declared `reports` names (the wave 13 review's D-5 (b)), and every write its
+ * words report ({@link reportedEarlierWrites}), the lexical reading kept beside the declaration so
+ * a report the declaration leaves out still binds (the safe direction). A message whose
+ * `reports` is empty or was never declared is bound by its words alone, as before the field.
+ *
+ * Args:
+ *   action: The message as the executor emitted it.
+ *   earlier: The actions before it in the same set.
+ *
+ * Returns:
+ *   The bound writes' indexes in `earlier`; empty when it reports none.
+ */
+export function boundEarlierWrites(action: MockAction, earlier: readonly MockAction[]): number[] {
+  const bound = new Set([
+    ...declaredReports(action, earlier),
+    ...reportedEarlierWrites(action, earlier),
+  ]);
+  return [...bound].sort((a, b) => a - b);
+}
+
+/**
+ * Where a message's declared `reports` and its words disagree (the tripwire over D-5 (b)): a
+ * sentence whose words report an earlier write the declaration leaves out, or a declared place
+ * that is not a write before the message. An empty or undeclared `reports` declares nothing, so
+ * it disagrees with nothing: the words alone bind it.
+ *
+ * Args:
+ *   action: The message as the executor emitted it.
+ *   index: Its place in the set.
+ *   earlier: The actions before it in the same set.
+ *
+ * Returns:
+ *   One issue per disagreement, naming the action and, for words, the sentence.
+ */
+function reportsDisagreements(
+  action: MockAction,
+  index: number,
+  earlier: readonly MockAction[],
+): string[] {
+  const declared = action.reports ?? [];
+  if (declared.length === 0) return [];
+  const named = new Set(declaredReports(action, earlier));
+  const issues: string[] = [];
+  const stray = [...new Set(declared)].filter((at) => !named.has(at)).sort((a, b) => a - b);
+  if (stray.length > 0) {
+    issues.push(
+      `action ${index} (${describeAction(action)}) names in \`reports\` [${stray.join(', ')}], which ${stray.length === 1 ? 'is' : 'are'} not a write before it in this set; a message reports only the writes this response emits before it`,
+    );
+  }
+  const declaredList = `[${[...named].join(', ')}]`;
+  for (const text of messageTexts(action)) {
+    for (const sentence of sentencesOf(text)) {
+      if (negatesReport(sentence)) continue;
+      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier);
+      if (said.every((at) => named.has(at))) continue;
+      issues.push(
+        `action ${index} (${describeAction(action)}) reports a write its \`reports\` does not name: it says "${sentence}" and \`reports\` names ${declaredList}, while its words report [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
+      );
+    }
+  }
+  return issues;
 }
 
 /**
@@ -1015,10 +1108,12 @@ export interface ClaimFinding {
  * Args:
  *   actions: The actions as the executor emitted them.
  *   evidence: The ledger, the documentation and the manager's words.
- *   only: Which actions to read; absent, every message is read.
+ *   only: Which actions the claim check reads; absent, every message is read. The tripwire over
+ *     a declared `reports` reads every message whatever it says.
  *
  * Returns:
- *   One finding per unsupported sentence or inconsistent note, in action order.
+ *   One finding per unsupported sentence, inconsistent note or message whose declared `reports`
+ *   disagrees with its words (the tripwire over D-5 (b)), in action order.
  */
 export function unsupportedClaimFindings(
   actions: readonly MockAction[],
@@ -1027,7 +1122,13 @@ export function unsupportedClaimFindings(
 ): ClaimFinding[] {
   const findings: ClaimFinding[] = [];
   actions.forEach((action, index): void => {
-    if (only && !only(action, index)) return;
+    // The tripwire over a declared `reports` reads every message, a ticket comment phase one's
+    // claim check leaves to the closing phase included: the apply binds them all.
+    const disagreements = reportsDisagreements(action, index, actions.slice(0, index));
+    if (only && !only(action, index)) {
+      for (const issue of disagreements) findings.push({ index, issue });
+      return;
+    }
     const beside = actions.filter((_, other) => other !== index).map(payloadWithoutMessages);
     const withResponse: ClaimEvidence = {
       ...evidence,
@@ -1048,6 +1149,7 @@ export function unsupportedClaimFindings(
         });
       }
     }
+    for (const issue of disagreements) findings.push({ index, issue });
   });
   return findings;
 }

@@ -124,7 +124,13 @@ function mockReply(
     needsDependentPhase: false,
     workDone,
     workDoneWhy: words,
-    actions: [{ tool: 'ticket.update', args: { slug: 'REVOPS-204', status, comment: words } }],
+    actions: [
+      {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-204', status, comment: words },
+        reports: null,
+      },
+    ],
     procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
   };
 }

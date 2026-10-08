@@ -498,6 +498,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill authoring held: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.authoring-resumed': (payload) =>
     `skill authoring resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.authoring-hold-spent': (payload) =>
+    `skill authoring not resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring-claimed': (payload) =>
     payload.purpose === 'verify-stored'
       ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
@@ -543,6 +545,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.orientation-held': (payload) => `orientation held${because(payload.reason)}`,
   'surface.orientation-resumed': 'orientation resumed after the pause',
+  'surface.orientation-hold-spent': 'orientation not resumed after the pause',
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
   'surface.app-forgotten': (payload) =>
@@ -828,7 +831,9 @@ export function eventItemTitle(
  * most failures are the run stopping, not anyone refusing it; a draft is noted too, since the
  * line outlives the decision it waited for.
  */
-const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'noted'>>>> = {
+const RECORD_KINDS: Readonly<
+  Partial<Record<EventType, Exclude<RecordKind, 'noted' | 'partly-done' | 'not-done'>>>
+> = {
   'work.completed': 'landed',
   'work.provider-reconciled': 'landed',
   'charter.approved': 'landed',
@@ -872,11 +877,20 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
 
 /**
  * What a record line's dot says an event did: landed, refused, withheld, held for the manager,
- * or, for every other event, noted. A type the contract no longer lists (a row an older release
- * wrote) is noted too.
+ * or, for every other event, noted. A finished run is drawn by its own answer when that says it
+ * was partly done or not done, as the line's words and its card say it (13-FD's R3, a product
+ * call built as the walk recommends): its writes landed, but the work did not. A type the
+ * contract no longer lists (a row an older release wrote) is noted too.
  *
  * @param event - The stored event.
  */
-export function recordKindOf(event: Pick<Doc<'events'>, 'type'>): RecordKind {
+export function recordKindOf(
+  event: Pick<Doc<'events'>, 'type'> & { payload?: unknown },
+): RecordKind {
+  if (event.type === 'work.completed') {
+    const output = (event.payload as { output?: unknown } | null | undefined)?.output;
+    const end = finishedAs(output);
+    if (end !== 'done') return end === 'partly done' ? 'partly-done' : 'not-done';
+  }
   return (isEventType(event.type) ? RECORD_KINDS[event.type] : undefined) ?? 'noted';
 }

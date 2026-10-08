@@ -57,9 +57,9 @@ import {
 } from '../people/prompt-block';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
+  boundEarlierWrites,
   isChatMessage,
   itemEvidence,
-  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -163,6 +163,15 @@ function workDoneOutput(item: number): string {
   return `  ${item}. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.`;
 }
 
+/**
+ * The run's declaration of what each message reports (the wave 13 review's D-5 (b)): asked in both
+ * modes, in the executor's reply and the closing set's. The apply binds a message to the writes it
+ * lists, and the words stay a tripwire over the list (`src/work/evidence-claims.ts`).
+ */
+function reportsOutput(item: number): string {
+  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action of this response from 0, reads included (a comment after a read and two posts lists [1, 2]), never a row of the applied ledger, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
+}
+
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 /**
@@ -198,11 +207,24 @@ const RESUMED_READS_REAL =
 const DEPENDENT_PHASE_MOCK =
   '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
+/**
+ * How a mock run's writes land, and so how its messages are worded (finding 3 of the v0.17.0
+ * redeploy): every action waits for the manager, and a message is read once it has landed. The
+ * planner's line for the same mode tells a plan's step to say "waits for your approval"; a run
+ * that read it wrote "it waits for manager approval before it lands here" into posts that landed,
+ * and on the 14-FW bed one followed such a step literally, posting "Will post the answer here once
+ * approved." and the answer as a draft in the DM. So the run is told, as real mode's held-set rule
+ * says, that the approval is what sends each write.
+ */
+const MOCK_ACTION_MODE =
+  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
+
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   workDoneOutput(5),
+  reportsOutput(6),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
@@ -213,7 +235,7 @@ const MOCK_PREAMBLE = [
   '  - ticket.update:        { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
-  `  - ${actionModeInstruction(false, 'mock')}`,
+  `  - ${MOCK_ACTION_MODE}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',
@@ -259,6 +281,7 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
   workDoneOutput(6),
+  reportsOutput(7),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -327,6 +350,13 @@ const cellsSchema = z
   )
   .min(1);
 
+/**
+ * On an action that can carry a message, the places in this response of the earlier writes the
+ * message reports as made (the wave 13 review's D-5 (b)): required-but-nullable, null on an action
+ * that is no message, an empty list on a message that reports none.
+ */
+const reportsSchema = z.array(z.number().int().nonnegative()).nullable();
+
 /** One emitted action as the model returns it, either verb, validated before it reaches the gate. */
 export const generatedActionSchema = z.union([
   z
@@ -351,6 +381,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -362,6 +393,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -374,6 +406,7 @@ export const generatedActionSchema = z.union([
           comment: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -386,6 +419,7 @@ export const generatedActionSchema = z.union([
           toolArgsJson: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -400,6 +434,7 @@ export const generatedActionSchema = z.union([
           body: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
 ]);
@@ -732,14 +767,21 @@ function recordedPlanStepBasis(
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
+/** An action's declared reports as the output keeps them: absent when the model gave null. */
+function reportsOf(action: GeneratedAction): Pick<MockAction, 'reports'> {
+  return 'reports' in action && action.reports !== null ? { reports: action.reports } : {};
+}
+
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
   switch (action.tool) {
     case 'spreadsheet.appendRow':
+      return action;
     case 'twitter.reply':
     case 'mcp.call':
-      return action;
+      return { tool: action.tool, args: action.args, ...reportsOf(action) };
     case 'slack.postMessage':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           channelSlug: action.args.channelSlug,
@@ -749,6 +791,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'ticket.update':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           slug: action.args.slug,
@@ -758,6 +801,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'http.request':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           surface: action.args.surface,
@@ -1085,7 +1129,17 @@ function dropActions<T extends CorrectableOutput>(
     index - indices.filter((removedIndex) => removedIndex < index).length;
   return {
     ...output,
-    actions: output.actions.filter((_, index) => !removed.has(index)),
+    actions: output.actions
+      .filter((_, index) => !removed.has(index))
+      .map((action) =>
+        // A kept message's declared reports follow the writes they name to their new places.
+        !Array.isArray(action.reports)
+          ? action
+          : {
+              ...action,
+              reports: action.reports.filter((at) => !removed.has(at)).map(reindex),
+            },
+      ),
     ...(output.procedureTrailLimitations
       ? {
           procedureTrailLimitations: output.procedureTrailLimitations
@@ -1148,14 +1202,17 @@ export function withholdActions<T extends CorrectableOutput>(
   by: string = 'by the evidence check',
 ): T {
   if (refusals.length === 0) return output;
-  const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
-  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({
+  // A message whose declared reports name a write withheld here goes with it (D-5 (b)): its words
+  // may report nothing the evidence check reads, so no later round would take it out.
+  const all = withDeclaredReportsOf(output.actions, refusals);
+  const reasons = new Map(all.map(({ index, reason }) => [index, reason]));
+  const withheld: WithheldAction[] = all.map(({ index, reason }) => ({
     action: output.actions[index]!,
     reason,
   }));
   const dropped = dropActions(
     output,
-    refusals.map(({ index }) => index),
+    all.map(({ index }) => index),
     (trailId, actionIndex) => ({
       trailId,
       state: 'inapplicable' as const,
@@ -1182,14 +1239,33 @@ export function withReportsOfWithheld(
   actions: readonly MockAction[],
   given: readonly AuditRefusal[],
 ): AuditRefusal[] {
+  return withBoundOf(actions, given, (action, index) =>
+    boundEarlierWrites(action, actions.slice(0, index)),
+  );
+}
+
+/**
+ * The refusals with every message whose declared `reports` names a withheld write added, the
+ * words left to the evidence check's own rounds (D-5 (b)).
+ */
+function withDeclaredReportsOf(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+): AuditRefusal[] {
+  return withBoundOf(actions, given, (action) => action.reports ?? []);
+}
+
+/** The refusals with every action whose bound earlier writes include a withheld one added, in index order. */
+function withBoundOf(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+  boundOf: (action: MockAction, index: number) => readonly number[],
+): AuditRefusal[] {
   const refusals = [...given];
   const withheld = new Map(given.map((refusal) => [refusal.index, refusal.reason]));
   actions.forEach((action, index): void => {
     if (withheld.has(index)) return;
-    const at = [...withheld.keys()]
-      .filter((earlier) => earlier < index)
-      .sort((a, b) => a - b)
-      .find((earlier) => reportsEarlierWrite(action, [actions[earlier]!]));
+    const at = boundOf(action, index).find((earlier) => earlier < index && withheld.has(earlier));
     if (at === undefined) return;
     const reason = `withheld with a write it reports, which was withheld: ${withheld.get(at)}`;
     withheld.set(index, reason);
@@ -1230,7 +1306,8 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    const refusals = refusalsOf(findings);
+    // The messages a withheld write's declared reports bind go with it, and are recorded with it.
+    const refusals = withDeclaredReportsOf(corrected.actions, refusalsOf(findings));
     corrected = withholdActions(corrected, refusals);
     await record?.(
       refusals.map((refusal) => refusal.index),
