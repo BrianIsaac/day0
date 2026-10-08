@@ -1231,6 +1231,28 @@ async function pruneBelow(ctx: QueryCtx, source: Doc<'docSources'>): Promise<num
   return previous?.listing ?? 0;
 }
 
+/**
+ * Whether a page is one this walk did not list but the finish keeps after a single miss
+ * (`pruneBelow`): its stamp is the last complete walk's or later, and not this walk's own.
+ */
+async function missedButKept(
+  ctx: QueryCtx,
+  page: {
+    readonly sourceId: Id<'docSources'>;
+    readonly pageRef: string;
+    readonly below: number;
+    readonly listing: number;
+  },
+): Promise<boolean> {
+  const row = await ctx.db
+    .query('docPageListings')
+    .withIndex('by_source_ref', (index) =>
+      index.eq('sourceId', page.sourceId).eq('ref', page.pageRef),
+    )
+    .unique();
+  return row !== null && row.seenBy >= page.below && row.seenBy !== page.listing;
+}
+
 /** Whether the finish keeps a source's page: its listing row is stamped at or after `below`. */
 async function keptBy(
   ctx: QueryCtx,
@@ -1435,9 +1457,14 @@ export const finishSync = internalMutation({
       statedBefore: previous === null ? undefined : new Set(previous.credentialRefs),
     };
     let credentialsSuperseded = 0;
+    const below = await pruneBelow(ctx, source);
+    const listing = runListing(run);
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
+      // A page this walk missed but the finish keeps (two-walk prune) still states its values.
+      const pageRef = credentialPageRef(credential.source.ref);
+      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) continue;
       // An earlier sync already superseded it and unbound its surfaces; doing
       // it again would rewrite nothing but the count.
       if (credential.status === 'superseded') continue;

@@ -12,6 +12,7 @@ import {
   SUPERSEDED_CREDENTIAL_KEEP_MS,
 } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
@@ -3301,6 +3302,39 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     const twice = await walk(harness, sourceId, ['kept.md']);
     expect(twice?.summary).toMatchObject({ pagesRemoved: 1, mirrorsRemoved: 1 });
     expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
+  });
+
+  it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const ref = credentialSourceRef('missed.md', 'a'.repeat(32));
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'Looker tile password',
+          ciphertext: 'encrypted',
+          iv: 'iv',
+          source: { sourceId, ref },
+          createdAt: 1,
+        }),
+    );
+    // The last complete walk stated it, as the page that holds it was read then.
+    await harness.run(async (ctx): Promise<void> => {
+      const source = await ctx.db.get(sourceId);
+      await ctx.db.patch(source!.lastCompletedSyncId!, { credentialRefs: [ref] });
+    });
+    const status = async (): Promise<string | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(credentialId)))?.status;
+
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await status()).toBeUndefined();
+
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await status()).toBe('superseded');
   });
 
   it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {
