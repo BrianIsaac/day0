@@ -192,11 +192,9 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     definition:
       'The characters of documentation the model was given for an item, beside the input tokens billed for the item where the provider reported them. Recall is a test result: on the labelled test items, where people marked the pages and sections they would open, the share Day0 chose too.',
     value: ({ retrieval }) =>
-      `${retrievalRead(retrieval.tokens)}; ${
-        retrieval.recall === null
-          ? 'recall not tested yet'
-          : `recall ${Math.round(retrieval.recall.pages * 100)}% of pages and ${Math.round(retrieval.recall.blocks * 100)}% of sections on ${retrieval.recall.cases} test items`
-      }`,
+      retrieval.recall === null
+        ? retrievalRead(retrieval.tokens)
+        : `${retrievalRead(retrieval.tokens)}; recall ${Math.round(retrieval.recall.pages * 100)}% of pages and ${Math.round(retrieval.recall.blocks * 100)}% of sections on ${retrieval.recall.cases} test items over a ${retrieval.recall.corpusPages}-page test library`,
   },
 ];
 

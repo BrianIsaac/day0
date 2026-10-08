@@ -1494,11 +1494,14 @@ export const finishSync = internalMutation({
       unread: unreadRecord,
       summary: { pagesKept: pagesListed, ...pruned, credentialsSuperseded },
     });
+    // A generation that holds no page and read none is not read (W14-R11): "Read" with a page
+    // count would be untrue of it.
+    const nothingStored = pagesListed === 0 && (unreadRecord?.count ?? 0) > 0;
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
       lastCompletedSyncId: run._id,
-      status: 'synced',
-      lastError: unreadPagesLine(unreadRecord),
+      status: nothingStored ? 'error' : 'synced',
+      lastError: unreadPagesLine(unreadRecord, nothingStored),
       lastSyncAt: now,
       updatedAt: now,
     });

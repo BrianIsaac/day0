@@ -114,6 +114,8 @@ export interface RetrievalRecall {
   blocks: number;
   /** The labelled items graded. */
   cases: number;
+  /** The pages of the test library the items were graded over (W14-R6: the figure names it). */
+  corpusPages: number;
   /** When the grade was taken, as an ISO time. */
   gradedAt: string;
   /** The commit the selector was graded at. */

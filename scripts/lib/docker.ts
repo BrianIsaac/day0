@@ -86,3 +86,48 @@ export function redactorVolumeClone(
     };
   });
 }
+
+/** The backend image the setup builds (`pnpm backend:build`) and the compose file runs. */
+export const BACKEND_IMAGE = 'day0-convex-backend:git';
+
+/** `docker image inspect` arguments that print an image's layers, as JSON. */
+export function layersInspect(reference: string): string[] {
+  return ['image', 'inspect', reference, '--format', '{{json .RootFS.Layers}}'];
+}
+
+/** An image's layers from `docker image inspect` with {@link layersInspect}, or none it could read. */
+function layersOf(inspected: {
+  readonly status: number | null;
+  readonly stdout: string;
+}): string[] {
+  if (inspected.status !== 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(inspected.stdout.trim());
+    return Array.isArray(parsed) ? parsed.filter((layer) => typeof layer === 'string') : [];
+  } catch {
+    // Not the JSON the format asks for: no layers to compare, so the image reads as stale.
+    return [];
+  }
+}
+
+/**
+ * Whether the backend image on this machine is built from the base the checkout pins (W14-R17):
+ * missing, current (its layers start with the pinned base's), or stale (built from an earlier
+ * pin, or the pinned base is not here to compare with).
+ *
+ * @param built - What `docker image inspect` with {@link layersInspect} answered for the image.
+ * @param base - The same for the Dockerfile's `FROM` reference, when the checkout names one.
+ */
+export function backendImageState(
+  built: { readonly status: number | null; readonly stdout: string },
+  base: { readonly status: number | null; readonly stdout: string } | undefined,
+): 'missing' | 'current' | 'stale' {
+  if (built.status !== 0) return 'missing';
+  const own = layersOf(built);
+  const pinned = base === undefined ? [] : layersOf(base);
+  const fromPin =
+    pinned.length > 0 &&
+    own.length > pinned.length &&
+    pinned.every((layer, index) => own[index] === layer);
+  return fromPin ? 'current' : 'stale';
+}

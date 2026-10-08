@@ -382,9 +382,10 @@ async function keptUnchangedPage(
 /**
  * What a generation keeps of the pages one batch could not read.
  *
- * Each keeps its stored version and its stored credentials: its ref and its
- * credential rows' refs go into the generation's current sets, so the final
- * batch neither deletes the page nor supersedes its values.
+ * Each one stored before keeps its stored version and its stored credentials: its ref and its
+ * credential rows' refs go into the generation's current sets, so the final batch neither deletes
+ * the page nor supersedes its values. One never stored keeps nothing and is not counted as a page
+ * the source holds (W14-R11); the run's record still names it.
  *
  * @returns The refs and credential refs to add to the batch's own.
  */
@@ -393,6 +394,11 @@ async function keptUnreadPages(
   source: Doc<'docSources'>,
   unread: readonly UnreadPage[],
 ): Promise<{ refs: string[]; credentialRefs: string[] }> {
+  if (unread.length === 0) return { refs: [], credentialRefs: [] };
+  const stored = await ctx.runQuery(internal.docPages.storedPageRefs, {
+    sourceId: source._id,
+    refs: unread.map((page): string => page.ref),
+  });
   const credentialRefs: string[] = [];
   for (const page of unread) {
     const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
@@ -404,7 +410,7 @@ async function keptUnreadPages(
       if (typeof row.source !== 'string') credentialRefs.push(row.source.ref);
     }
   }
-  return { refs: unread.map((page): string => page.ref), credentialRefs };
+  return { refs: stored, credentialRefs };
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */

@@ -16,6 +16,7 @@ const GRADED_RECALL = {
   pages: 0.95,
   blocks: 0.9333333333333333,
   cases: 30,
+  corpusPages: 17,
   gradedAt: '2026-10-07T19:39:48.260Z',
   commit: '0123456789abcdef0123456789abcdef01234567',
 };
@@ -331,7 +332,7 @@ describe('the company supervision card', (): void => {
     expect(priyaRow).toContain('1.5 h over 2 items');
     // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
     expect(priyaRow).toContain(
-      'no documentation counted yet; recall 95% of pages and 93% of sections on 30 test items',
+      'no documentation counted yet; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
     );
     expect(pilot).not.toContain('not measured yet');
     const companyRow = rowOf(pilot, 'Company');
@@ -367,13 +368,13 @@ describe('the retrieval figure (14-R)', (): void => {
         }),
       ),
     ).toBe(
-      '6,210 characters of documentation and 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items',
+      '6,210 characters of documentation and 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
     );
   });
 
-  it('says the recall is not tested yet when a backend before 0.18.0 answers none', (): void => {
+  it('says no recall where no selection ran, as on the hosted mock office or a backend before 0.18.0 (W14-R6)', (): void => {
     expect(retrievalFigure.value(figures({ tokens: null, recall: null }))).toBe(
-      'no documentation counted yet; recall not tested yet',
+      'no documentation counted yet',
     );
   });
 
@@ -386,7 +387,7 @@ describe('the retrieval figure (14-R)', (): void => {
         }),
       ),
     ).toBe(
-      '980 characters of documentation an item; recall 95% of pages and 93% of sections on 30 test items',
+      '980 characters of documentation an item; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
     );
   });
 });

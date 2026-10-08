@@ -920,7 +920,9 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
     },
     retrieval: {
       tokens: retrievalTokens(totals),
-      recall: RETRIEVAL_RECALL,
+      // The recall grades the selection, so it is shown only where a selection ran: real mode,
+      // which alone records one (W14-R6); the hosted mock office never meets the selector.
+      recall: totals.retrievalItems > 0 ? RETRIEVAL_RECALL : null,
     },
   };
 }

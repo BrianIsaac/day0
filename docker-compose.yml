@@ -124,7 +124,8 @@ services:
     profiles: ['real']
     # Built, not pulled: the pinned upstream backend with git added, nothing else
     # (docker/backend.Dockerfile, whose FROM line is the backend's pin). ./setup.sh
-    # builds it at every install and upgrade (`pnpm backend:build`).
+    # builds it at every real-mode install and upgrade, and in mock mode when no
+    # image of this base is here (`pnpm backend:build`).
     build:
       context: docker
       dockerfile: backend.Dockerfile
