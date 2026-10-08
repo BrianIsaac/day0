@@ -107,8 +107,11 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    vendor from inside it, and an install where that dial cannot run stops
    there. Where its way out passes such a proxy, give the container the
    bundle: `SSL_CERT_FILE` for the check, `NODE_EXTRA_CA_CERTS` for the
-   deployment's calls. The kit sets neither, so agree with IT before the day
-   how the bundle reaches the container.
+   deployment's calls, and `GIT_SSL_CAINFO` in `.env.local` (the bundle's
+   path inside the container) for a git documentation source on a server the
+   same authority signs: the clone runs in the deployment's environment, which
+   `./scripts/sync-convex-env.sh` writes. The kit sets none of them, so agree
+   with IT before the day how the bundle reaches the container.
 7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.

@@ -131,7 +131,7 @@ egress list.
 
 ## Not yet checked against a real tenant
 
-day0's Feishu reader is built and tested against Feishu's published API reference (read 8 October 2026) and recorded responses in that shape; it has not yet read a real tenant. Four things are
+day0's Feishu reader is built and tested against Feishu's published API reference (read 8 October 2026), with test answers written from that reference, not recorded from a tenant; it has not yet read a real tenant. Four things are
 known only from that reference until it does: that a wiki admits the app through the group chat
 as described; what Feishu answers for a document the app may not open; how a Drive folder is
 shared with the app (the reference does not say; sharing it with the same group chat, with

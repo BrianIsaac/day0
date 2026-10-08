@@ -18,9 +18,16 @@ documented-API example is checked that way once day0 reads that grammar.
   is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host: a host listed
   there must resolve to a public address, and one that resolves inside the network is refused
   until it is listed in `DAY0_PRIVATE_HOSTS` instead.
-- A repository on a host other than GitHub or GitLab is cloned, which needs a `git` binary in
-  the backend. The backend image an install builds carries one (`docker/backend.Dockerfile`);
-  on an image someone replaces with one that has none, the source's status says so.
+- A repository is cloned, which needs a `git` binary in the backend: from this release a
+  GitHub or GitLab repository is cloned first too, and read through the host's archive only when
+  the clone fails. The backend image an install builds carries git
+  (`docker/backend.Dockerfile`); on an image someone replaces with one that has none, the
+  source's status says so.
+- A git server whose certificate comes from the company's own certificate authority needs that
+  authority's bundle: mount it into the backend container and set `GIT_SSL_CAINFO` in
+  `.env.local` to its path inside the container (`./scripts/sync-convex-env.sh` puts it on the
+  deployment, whose environment the clone runs in). Without it the source reads "server
+  certificate verification failed".
 - A Feishu or Lark source reads a wiki space, or a Drive folder and the folders under it, as the
   company's own app: every new-style document as Markdown, and every sheet, base, mind note or
   file named as not read. How IT sets up the app, and what each refusal means:
