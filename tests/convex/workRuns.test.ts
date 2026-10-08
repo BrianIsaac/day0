@@ -1450,6 +1450,43 @@ describe('a Retry after the documentation a plan cited changed (14-R’s gone ci
     ]);
   });
 
+  it('leaves no closing resume of the old plan on the row it redrafts, only the writes that landed (second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    // A resumed closing phase met the changed cite: its output still names the old plan's closing.
+    const failedOutput = {
+      phase: 'dependent-authoring',
+      resumedClosing: true,
+      draft: '',
+      notes: '',
+      initial: {
+        draft: 'Commented on REVOPS-1.',
+        notes: '',
+        actions: [comment],
+        applied: [landedComment],
+      },
+    };
+    expect(landedWritesOf(failedOutput).map((write) => write.applied.providerId)).toEqual([
+      'comment-1',
+    ]);
+    const { workItemId } = await goneCiteItem(harness, goneReason, failedOutput);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('claimed');
+    const output = row.output as Record<string, unknown>;
+    expect(output.resumedClosing).toBeUndefined();
+    expect(output.phase).toBeUndefined();
+    expect(output.initial).toBeUndefined();
+    expect(landedWritesOf(row.output).map((write) => write.applied.providerId)).toEqual([
+      'comment-1',
+    ]);
+  });
+
   it('still retries any other failure on the plan the manager approved', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
