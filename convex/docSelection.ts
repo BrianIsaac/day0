@@ -234,34 +234,20 @@ export const changedCitedBlocks = internalQuery({
     if (args.blocks.length > SEARCH_BLOCKS_LIMIT) {
       throw new Error(`A plan's cites are checked ${SEARCH_BLOCKS_LIMIT} blocks at a time.`);
     }
-    const hashesOnPage = new Map<string, Promise<ReadonlySet<string>>>();
-    const pageHashes = (block: Doc<'docBlocks'>): Promise<ReadonlySet<string>> => {
-      const key = pageKeyOf(block.sourceId, block.pageRef);
-      if (!hashesOnPage.has(key)) {
-        hashesOnPage.set(
-          key,
-          (async () => {
-            const rows = await ctx.db
-              .query('docBlocks')
-              .withIndex('by_source_page', (q) =>
-                q.eq('sourceId', block.sourceId).eq('pageRef', block.pageRef),
-              )
-              .take(MAX_BLOCKS_PER_PAGE);
-            return new Set(rows.map((row) => row.hash));
-          })(),
-        );
-      }
-      return hashesOnPage.get(key)!;
-    };
+    const onPage = async (block: Doc<'docBlocks'>, hash: string): Promise<boolean> =>
+      (await ctx.db
+        .query('docBlocks')
+        .withIndex('by_source_page_hash', (q) =>
+          q.eq('sourceId', block.sourceId).eq('pageRef', block.pageRef).eq('hash', hash),
+        )
+        .first()) !== null;
     const standing = await Promise.all(
       args.blocks.map(async (cited) => {
         const blockId = ctx.db.normalizeId('docBlocks', cited.id);
         const block = blockId === null ? null : await ctx.db.get(blockId);
         if (block === null || !(await pageStored(ctx, block.sourceId, block.pageRef))) return false;
         return (
-          cited.hash === undefined ||
-          block.hash === cited.hash ||
-          (await pageHashes(block)).has(cited.hash)
+          cited.hash === undefined || block.hash === cited.hash || (await onPage(block, cited.hash))
         );
       }),
     );

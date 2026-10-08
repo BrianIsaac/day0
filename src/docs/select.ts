@@ -555,7 +555,7 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
 
   // Every contract's needed blocks are spent first, page by page, then each page's rest in the
   // order above: one long contract page no longer cuts the next page's contract (W14-R3).
-  const chosen = new Map<string, SelectableBlock[]>();
+  const chosen: ChosenDocumentation = { blocks: new Map(), entries: new Map() };
   for (const candidate of candidates) {
     const contractNeeds = needed.get(candidate.page.key);
     if (contractNeeds === undefined) continue;
@@ -572,7 +572,7 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   const teamDocs: Array<MockSurfaceSnapshot['teamDocs'][number]> = [];
   const citations: Citation[] = [];
   for (const candidate of candidates) {
-    const blocks = chosen.get(candidate.page.key);
+    const blocks = chosen.blocks.get(candidate.page.key);
     if (blocks === undefined || blocks.length === 0) continue;
     const assembled = assemblePage(candidate.page, blocks);
     const entry = { slug: candidate.page.slug, title: candidate.page.title, body: assembled.body };
@@ -644,40 +644,47 @@ function pagesInPickOrder(picked: readonly SelectableBlock[]): string[] {
   return [...new Set(picked.map((block) => block.pageKey))];
 }
 
+/** Each page's chosen blocks by key, and the page as the prompt would carry them. */
+interface ChosenDocumentation {
+  readonly blocks: Map<string, SelectableBlock[]>;
+  readonly entries: Map<string, { slug: string; title: string; body: string }>;
+}
+
 /**
  * Add to a page's chosen blocks as many of `blocks` (in the order given, the first kept longest) as
  * fit the budget beside every page's chosen blocks; none when even the first does not fit. A longer
- * prefix never renders shorter, so the largest that fits is found by bisection.
+ * prefix never renders shorter, so the largest that fits is found by bisection; the other pages'
+ * bodies are kept assembled, so a step assembles this page alone.
  *
- * @param chosen - Each page's chosen blocks by key, updated in place.
+ * @param chosen - Each page's chosen blocks and assembled body, updated in place.
  * @param candidates - Every page in the order the prompt carries them, for the budget's sum.
  */
 function fitBlocks(
   candidate: Assembled,
   blocks: readonly SelectableBlock[],
-  chosen: Map<string, SelectableBlock[]>,
+  chosen: ChosenDocumentation,
   candidates: readonly Assembled[],
 ): void {
   const key = candidate.page.key;
-  const base = chosen.get(key) ?? [];
+  const base = chosen.blocks.get(key) ?? [];
   const taken = new Set(base.map(blockKey));
   const extra = blocks.filter((block) => !taken.has(blockKey(block)));
+  const trialBlocks = (count: number): SelectableBlock[] =>
+    [...base, ...extra.slice(0, count)].sort((left, right) => left.index - right.index);
+  const entryOf = (own: readonly SelectableBlock[]) => ({
+    slug: candidate.page.slug,
+    title: candidate.page.title,
+    body: assemblePage(candidate.page, own).body,
+  });
   const fits = (count: number): boolean => {
-    const trial = [...base, ...extra.slice(0, count)].sort(
-      (left, right) => left.index - right.index,
-    );
+    const trial = entryOf(trialBlocks(count));
     const documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'> = {
       howToGuides: [],
       teamDocs: [],
     };
     for (const other of candidates) {
-      const own = other.page.key === key ? trial : (chosen.get(other.page.key) ?? []);
-      if (own.length === 0) continue;
-      const entry = {
-        slug: other.page.slug,
-        title: other.page.title,
-        body: assemblePage(other.page, own).body,
-      };
+      const entry = other.page.key === key ? trial : chosen.entries.get(other.page.key);
+      if (entry === undefined) continue;
       (other.page.category === 'how-to-guide' ? documents.howToGuides : documents.teamDocs).push(
         entry,
       );
@@ -692,9 +699,8 @@ function fitBlocks(
     else high = middle - 1;
   }
   if (low > 0) {
-    chosen.set(
-      key,
-      [...base, ...extra.slice(0, low)].sort((left, right) => left.index - right.index),
-    );
+    const own = trialBlocks(low);
+    chosen.blocks.set(key, own);
+    chosen.entries.set(key, entryOf(own));
   }
 }

@@ -541,6 +541,37 @@ describe('docSelection.changedCitedBlocks', (): void => {
     ).resolves.toEqual([]);
   });
 
+  it('reads one section a cited hash, never the whole page, when a row holds another block (second pass on W14-R2)', async (): Promise<void> => {
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 60 },
+    });
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    const ref = 'runbooks/long.md';
+    const long = Array.from(
+      { length: 200 },
+      (_unused, index) => `## Step ${index}\n\nDo step ${index} of the close.`,
+    ).join('\n\n');
+    await storePage(harness, { agentId, ...handbook, ref, title: 'Long runbook', markdown: long });
+    const [first, second] = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docBlocks')
+          .withIndex('by_source_page', (q) =>
+            q.eq('sourceId', handbook.sourceId).eq('pageRef', ref),
+          )
+          .take(2),
+    );
+    await harness.run(async (ctx) => await ctx.db.patch(first._id, { hash: second.hash }));
+    await expect(
+      harness.query(internal.docSelection.changedCitedBlocks, {
+        blocks: [{ id: first._id, hash: first.hash }],
+      }),
+    ).resolves.toEqual([first._id]);
+  });
+
   it('reads a cite by its hash on its page, the id only a hint, so a row that now holds another block still stands (W14-R2)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await employee(harness);

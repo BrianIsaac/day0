@@ -278,9 +278,10 @@ export class UrlsReader implements DocumentationReader {
  * Fetch one page, following its redirects by hand, each one through the checked read.
  *
  * Every hop is checked before it is dialled (`read`), so a redirect cannot carry the read to an
- * address the page itself could not name. A chain that began on a host `DAY0_PRIVATE_HOSTS` does
- * not list is never followed onto one it lists (W14-R12): a public page's redirect would otherwise
- * read any path on a private host for whoever controls the public page. With a reader secret,
+ * address the page itself could not name. A chain that has been on a host `DAY0_PRIVATE_HOSTS` does
+ * not list is never followed onto one it lists (W14-R12), whether it began there or came back
+ * through a listed host's redirect: a public page's redirect would otherwise read any path on a
+ * private host for whoever controls the public page. With a reader secret,
  * redirects are followed only within the secret's site, so the header never reaches another host
  * (E-74).
  *
@@ -295,7 +296,7 @@ async function fetchWithinSite(
   access: PageAccess,
   isListed: (address: URL) => boolean,
 ): Promise<Response> {
-  const startedListed = isListed(url);
+  let leftListed = !isListed(url);
   const headers: Record<string, string> = {
     Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8',
     ...(access.authorization === undefined ? {} : { Authorization: access.authorization }),
@@ -312,11 +313,13 @@ async function fetchWithinSite(
         `${url.href} redirects to ${next.origin}; a page read with a secret is not followed off its site.`,
       );
     }
-    if (!startedListed && isListed(next)) {
+    const nextListed = isListed(next);
+    if (leftListed && nextListed) {
       throw new PageAddressRefusal(
         `${url.href} redirects to ${next.origin}, a host ${PRIVATE_HOSTS_VAR} lists; Day0 does not follow a page from outside your network into it.`,
       );
     }
+    leftListed ||= !nextListed;
     current = next;
   }
   throw new Error(`${url.href} redirected more than ${MAX_REDIRECTS} times.`);

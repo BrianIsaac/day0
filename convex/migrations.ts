@@ -1228,18 +1228,19 @@ async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<Migrati
  */
 async function runBlockBackfillPage(ctx: ActionCtx): Promise<MigrationProgress> {
   const name = 'docs-backfill-blocks';
-  let failure: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
     } catch (error) {
-      failure = error;
+      // Each failure is logged with its reason, so a fault that is not the page's own (a bug, a
+      // backend restart) is seen in the log beside the page it passed over.
+      log.warn('migration page failed', {
+        migration: name,
+        attempt,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
-  log.warn('migration page passed over', {
-    migration: name,
-    reason: failure instanceof Error ? failure.message : String(failure),
-  });
   return await ctx.runMutation(internal.migrations.passOverBlockPage, {});
 }
 

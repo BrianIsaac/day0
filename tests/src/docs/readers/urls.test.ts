@@ -349,6 +349,47 @@ describe('URL documentation reader', (): void => {
     ]);
   });
 
+  it('refuses a chain that leaves the listed hosts and comes back to one (second pass on W14-R12)', async (): Promise<void> => {
+    const dialled: string[] = [];
+    const reader = new UrlsReader(PROVIDER_BACKOFF, {
+      resolve: async (hostname: string): Promise<string[]> =>
+        hostname === 'docs.partner.example' ? ['93.184.215.14'] : ['10.1.2.3'],
+      dial: () => async (input: URL) => {
+        dialled.push(input.href);
+        if (input.pathname === '/r') {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://docs.partner.example/x' },
+          });
+        }
+        if (input.hostname === 'docs.partner.example') {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'http://looker-tile:8080/admin' },
+          });
+        }
+        return new Response('# Admin', { headers: { 'content-type': 'text/markdown' } });
+      },
+      privateHosts: privateHostAllowlist('looker-tile'),
+    });
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: 'http://looker-tile:8080/r',
+    };
+    const batch = await reader.listPageBatch(source, undefined, undefined, 25);
+    expect(batch.pages).toEqual([]);
+    expect(batch.unread).toEqual([
+      {
+        ref: 'http://looker-tile:8080/r',
+        reason:
+          'http://looker-tile:8080/r redirects to http://looker-tile:8080, a host DAY0_PRIVATE_HOSTS lists; Day0 does not follow a page from outside your network into it.',
+      },
+    ]);
+    expect(dialled).toEqual(['http://looker-tile:8080/r', 'https://docs.partner.example/x']);
+  });
+
   it('extracts a plain fallback-safe HTML title', (): void => {
     expect(htmlPageTitle('<title>  Team   docs </title>', 'fallback')).toBe('Team docs');
     expect(htmlPageTitle('<p>none</p>', 'fallback')).toBe('fallback');
