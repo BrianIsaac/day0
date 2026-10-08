@@ -23,6 +23,7 @@ import {
   assertBedProject,
   assertNotProtected,
   bedEnvDefaults,
+  imagesPreflightItem,
   bedPorts,
   composeImages,
   credentialKeyToAdopt,
@@ -63,6 +64,7 @@ import { READ_ONLY_PROJECTS as SETUP_READ_ONLY_PROJECTS } from '../../scripts/se
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 const COMPOSE_FILE = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
+const BACKEND_DOCKERFILE = readFileSync(join(ROOT, 'docker', 'backend.Dockerfile'), 'utf8');
 
 /** Every pre-flight fact true, so one test flips one at a time. */
 const READY: TierInputs = {
@@ -224,6 +226,9 @@ describe('what removes data asks first (Q12), and what a snapshot records (step 
     chmodSync(join(bin, 'docker'), 0o755);
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-u7-down\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     const down = (extra: string[]) =>
       spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -262,6 +267,9 @@ describe('the protected volumes and projects', (): void => {
       'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n',
     );
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -293,6 +301,9 @@ describe('the protected volumes and projects', (): void => {
     writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
     const command = join(ROOT, 'node_modules/.bin/tsx');
     const script = join(ROOT, 'scripts/demo-bed.ts');
@@ -445,6 +456,9 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     );
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -608,6 +622,49 @@ describe('the compose file is pinned to digests', (): void => {
     for (const image of images) {
       expect(image.reference, `${image.service} is not pinned`).toMatch(/@sha256:[0-9a-f]{64}$/);
     }
+  });
+
+  it('reads a built service by the image its Dockerfile starts from, and names what it builds (14-F ruling 1 (a))', (): void => {
+    const compose =
+      'services:\n  backend:\n    profiles: [real]\n    build:\n      context: docker\n' +
+      '      dockerfile: backend.Dockerfile\n    image: day0-convex-backend:git\n';
+    const read = (path: string): string =>
+      path === 'docker/backend.Dockerfile'
+        ? `# the pin\nFROM ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}\nRUN true\n`
+        : '';
+    expect(composeImages(compose, read)).toEqual([
+      {
+        service: 'backend',
+        reference: `ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}`,
+        pinned: true,
+        builtAs: 'day0-convex-backend:git',
+      },
+    ]);
+  });
+
+  it('says in pre-flight what is built here and what a missing built image needs (14-F ruling 1 (a))', (): void => {
+    const base = `ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}`;
+    const node = `node:22-alpine@sha256:${'b'.repeat(64)}`;
+    const images = [
+      { service: 'backend', reference: base, pinned: true, builtAs: 'day0-convex-backend:git' },
+      { service: 'looker-tile', reference: node, pinned: true },
+    ];
+    expect(imagesPreflightItem(images, (): boolean => true)).toEqual({
+      label: 'Images: 2/2 present (1 built here), 2/2 pinned',
+      status: 'ok',
+      detail: '',
+    });
+    // The base being present is not enough: the bed runs what is built from it.
+    expect(
+      imagesPreflightItem(
+        images,
+        (reference: string): boolean => reference !== 'day0-convex-backend:git',
+      ),
+    ).toEqual({
+      label: 'Images: 1/2 present (1 built here), 2/2 pinned',
+      status: 'gap',
+      detail: `missing: backend (day0-convex-backend:git, built from ${base}); build it with \`pnpm backend:build\` before travelling, not at the venue`,
+    });
   });
 
   it('reports an unpinned image as such', (): void => {
@@ -966,6 +1023,9 @@ describe('the warm redactor volumes', (): void => {
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),

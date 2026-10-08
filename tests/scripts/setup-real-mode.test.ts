@@ -449,6 +449,7 @@ describe('the order the real-mode helpers run in', (): void => {
       'reset',
       'dev:no-auth-key',
       'warm-redactor',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'redactor:up',
@@ -462,6 +463,7 @@ describe('the order the real-mode helpers run in', (): void => {
     ]);
     expect(sequenceSteps('local', { mode: 'real', sandbox: 'daytona' })).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'model:up',
       'model:pull',
@@ -805,7 +807,7 @@ describe('the redactor device check inside a run', (): void => {
     expect(printed).toContain('waiting for the redactor to load its model');
     expect(printed).toContain('the redactor is healthy');
     expect(printed.indexOf('the redactor is healthy')).toBeLessThan(
-      printed.indexOf('[11/11] pnpm check:setup'),
+      printed.indexOf('[12/12] pnpm check:setup'),
     );
   });
 
@@ -956,7 +958,7 @@ describe('--reset', (): void => {
     expect(readEnvValues(join(h.directory, '.env.local')).CONVEX_SELF_HOSTED_ADMIN_KEY).toBe(
       'convex-self-hosted|0123456789abcdef1',
     );
-    expect(h.output.join('\n')).toContain('[1/12] docker compose down -v');
+    expect(h.output.join('\n')).toContain('[1/13] docker compose down -v');
   });
 });
 
@@ -1112,7 +1114,7 @@ describe('--company', (): void => {
     expect(docs).toBeGreaterThan(checker);
     expect(check).toBeGreaterThan(docs);
     const printed = h.output.join('\n');
-    expect(printed).toContain('[12/13] pnpm exec tsx scripts/bed/company.ts docs');
+    expect(printed).toContain('[13/14] pnpm exec tsx scripts/bed/company.ts docs');
     expect(printed).toContain(
       "The company bed's hand steps, once per workspace (step 2's asks each sitting):",
     );
@@ -1128,7 +1130,7 @@ describe('--company', (): void => {
       'DAY0_BED_LINEAR_API_KEY, DAY0_BED_SLACK_BOT_TOKEN and DAY0_BED_NOTION_TOKEN',
     );
     expect(printed.indexOf('hand steps')).toBeLessThan(
-      printed.indexOf('[13/13] pnpm exec tsx scripts/bed/company.ts check'),
+      printed.indexOf('[14/14] pnpm exec tsx scripts/bed/company.ts check'),
     );
   });
 

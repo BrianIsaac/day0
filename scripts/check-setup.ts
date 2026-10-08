@@ -1884,7 +1884,15 @@ export function egressHosts(
     'registry-1.docker.io',
     "image pulls at setup (ollama, python, node, and the token store's nango-server, postgres and redis)",
   );
-  add('ghcr.io', 'image pulls at setup (the Convex backend and dashboard)');
+  add(
+    'ghcr.io',
+    'image pulls at setup (the Convex backend the backend image is built from, and the dashboard)',
+  );
+  // The backend image is built at setup and upgrade (docker/backend.Dockerfile): git from the
+  // archive of its Ubuntu base.
+  for (const host of ['archive.ubuntu.com', 'security.ubuntu.com']) {
+    add(host, "the backend image's build at setup and upgrade (git's packages)");
+  }
   add('mcr.microsoft.com', 'image pulls at setup (the browser component)');
   return rows;
 }

@@ -254,6 +254,15 @@ export const REAL_MODE_PROFILES: readonly string[] = [
   'slack-socket',
 ];
 
+/**
+ * What the setup says before it builds the backend image (14-F's ruling 1 (a)): the one image an
+ * install builds rather than pulls, and why.
+ */
+export const BACKEND_BUILD_LINE =
+  'Building the backend image day0-convex-backend:git: the pinned Convex backend with git added ' +
+  '(docker/backend.Dockerfile), so a git documentation source on a listed host can be cloned. ' +
+  'The first build downloads git from the Ubuntu archive; a later one reuses it.';
+
 /** Where the backend reaches the two components real mode starts. */
 export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
 /** The redactor's address as the backend container reaches it on the Compose network. */
@@ -1469,6 +1478,9 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(input.reset ? ['reset'] : []),
     'dev:no-auth-key',
     ...(real && input.warm ? ['warm-redactor'] : []),
+    // The backend runs an image built here (docker/backend.Dockerfile): built before every start,
+    // so an upgrade's re-pinned base or changed Dockerfile reaches the backend (14-F's ruling 1 (a)).
+    'backend:build',
     'convex:up',
     ...(route === 'local' ? ['model:up', ...(input.pull === false ? [] : ['model:pull'])] : []),
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
@@ -1872,6 +1884,8 @@ export function stepCommands(step: string, context: StepContext): PlannedCommand
         ],
       );
     }
+    case 'backend:build':
+      return [{ command: 'pnpm', args: ['run', 'backend:build'] }];
     case 'convex:up':
       return [
         { command: 'pnpm', args: ['run', 'convex:up', ...profileArguments(context.profiles)] },
@@ -3422,6 +3436,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       }
     }
 
+    io.log(BACKEND_BUILD_LINE);
+    if (!runStep('backend:build', 'pnpm backend:build')) return 1;
     if (
       !runStep(
         'convex:up',

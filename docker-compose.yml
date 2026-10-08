@@ -101,16 +101,18 @@
 # that lacks one fails loudly rather than downloading whatever the tag means
 # today. The tag is kept beside the digest for the reader; Docker resolves the
 # digest. Pinned 12 Sep 2026 to the images then present on the demo laptop,
-# except the backend: re-pinned 8 Oct 2026 to the build of upstream commit
-# 5c7cb5bc (28 Sep 2026), the first `latest` after the self-hosted search
-# disk-cache fix of 18 Sep 2026 (PR #531, merged as bf09681d and three more),
-# before the first search index. To re-pin after a deliberate
-# `docker pull <name:tag>`:
+# except the backend, which is built rather than pulled: its pin is the FROM
+# line of docker/backend.Dockerfile, which adds git (wave 14, 14-F's ruling
+# 1 (a)), re-pinned 8 Oct 2026 to the build of upstream commit 5c7cb5bc
+# (28 Sep 2026), the first `latest` after the self-hosted search disk-cache fix
+# of 18 Sep 2026 (PR #531, merged as bf09681d and three more), before the first
+# search index. To re-pin after a deliberate `docker pull <name:tag>`:
 #
 #   docker image inspect --format '{{index .RepoDigests 0}}' <name:tag>
 #
-# and put the `sha256:...` it prints after the `@`. `pnpm demo:bed preflight`
-# reports any image line that is not pinned or not present.
+# and put the `sha256:...` it prints after the `@` (for the backend, on the
+# Dockerfile's FROM line, then `pnpm backend:build`). `pnpm demo:bed preflight`
+# reports any image that is not pinned or not present, the built one included.
 
 services:
   # day0 itself. `real` is the profile an enterprise runs, and this is all it
@@ -120,7 +122,13 @@ services:
   # for what each one is for and when you need it.
   backend:
     profiles: ['real']
-    image: ghcr.io/get-convex/convex-backend:latest@sha256:d715e9ec088784407ca4ba2d3db592702cd328d02c76cdca3852c0018f2a76b4
+    # Built, not pulled: the pinned upstream backend with git added, nothing else
+    # (docker/backend.Dockerfile, whose FROM line is the backend's pin). ./setup.sh
+    # builds it at every install and upgrade (`pnpm backend:build`).
+    build:
+      context: docker
+      dockerfile: backend.Dockerfile
+    image: day0-convex-backend:git
     stop_grace_period: 10s
     stop_signal: SIGINT
     # `nango` is the token store's private network (see `nango-server`): the

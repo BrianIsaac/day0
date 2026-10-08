@@ -15,6 +15,7 @@
     "dev:no-auth-key": "tsx scripts/dev-no-auth-key.ts init",
     "convex:dev": "convex dev",
     "convex:up": "tsx scripts/dev-docs-dir.ts && tsx scripts/compose.ts up -d",
+    "backend:build": "tsx scripts/compose.ts build backend",
     "convex:down": "tsx scripts/compose.ts down",
     "convex:restart": "tsx scripts/compose.ts restart backend",
     "convex:admin-key": "tsx scripts/compose.ts exec backend ./generate_admin_key.sh",

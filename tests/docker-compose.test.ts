@@ -260,3 +260,50 @@ describe('the Slack socket bridge (wave 12, 12-M; RM7)', (): void => {
     expect(bridge?.healthcheck?.test).toEqual(['CMD', 'node', '/app/healthcheck.js']);
   });
 });
+
+describe('the backend image (14-F ruling 1 (a), 8 October)', (): void => {
+  const backend = (
+    COMPOSE.services as Record<
+      string,
+      Service & {
+        readonly image?: string;
+        readonly build?: { readonly context?: string; readonly dockerfile?: string };
+      }
+    >
+  ).backend;
+  const dockerfile = readFileSync(new URL('../docker/backend.Dockerfile', import.meta.url), 'utf8');
+  /** The Dockerfile's instructions, comments and continuations folded. */
+  const instructions = dockerfile
+    .replace(/\\\n/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+
+  it('is built from docker/backend.Dockerfile under a name of its own, never pulled', (): void => {
+    expect(backend.build).toEqual({ context: 'docker', dockerfile: 'backend.Dockerfile' });
+    expect(backend.image).toBe('day0-convex-backend:git');
+  });
+
+  it('starts from the pinned upstream image, its pin on one line', (): void => {
+    const from = instructions.filter((line) => /^FROM\s/i.test(line));
+    expect(from).toEqual([
+      expect.stringMatching(
+        /^FROM ghcr\.io\/get-convex\/convex-backend:latest@sha256:[0-9a-f]{64}$/,
+      ),
+    ]);
+    expect(dockerfile.match(/@sha256:/g)).toHaveLength(1);
+    expect(readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8')).not.toContain(
+      'ghcr.io/get-convex/convex-backend',
+    );
+  });
+
+  it('adds git and nothing else, without recommended packages, leaving no package lists', (): void => {
+    const runs = instructions.filter((line) => /^RUN\s/i.test(line));
+    expect(runs).toHaveLength(1);
+    const run = runs[0]!.replace(/\s+/g, ' ');
+    expect(run).toContain('apt-get update');
+    expect(run).toContain('apt-get install -y --no-install-recommends git &&');
+    expect(run).toContain('rm -rf /var/lib/apt/lists/*');
+    expect(instructions.filter((line) => !/^(?:FROM|RUN)\s/i.test(line))).toEqual([]);
+  });
+});

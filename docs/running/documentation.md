@@ -19,7 +19,8 @@ documented-API example is checked that way once day0 reads that grammar.
   there must resolve to a public address, and one that resolves inside the network is refused
   until it is listed in `DAY0_PRIVATE_HOSTS` instead.
 - A repository on a host other than GitHub or GitLab is cloned, which needs a `git` binary in
-  the backend. The stock backend image has none, and the source's status says so.
+  the backend. The backend image an install builds carries one (`docker/backend.Dockerfile`);
+  on an image someone replaces with one that has none, the source's status says so.
 - A Feishu or Lark source reads a wiki space, or a Drive folder and the folders under it, as the
   company's own app: every new-style document as Markdown, and every sheet, base, mind note or
   file named as not read. How IT sets up the app, and what each refusal means:
