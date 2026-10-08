@@ -23,19 +23,31 @@ function modules(): Map<string, boolean> {
   );
 }
 
-/** The sibling modules a file imports a value or a type from, by name. */
-function siblingImports(file: string): string[] {
-  const text = readFileSync(new URL(`${file}.ts`, CONVEX), 'utf8');
-  return [...text.matchAll(/from '\.\/([A-Za-z0-9_]+)'/g)].map((match) => match[1]!);
+/** The sibling modules a module's text imports a value from, by name: a type-only import is erased. */
+function siblingImports(text: string): string[] {
+  return [...text.matchAll(/^import\s+(type\s)?[^;]*?from\s+['"]\.\/([A-Za-z0-9_]+)['"]/gm)]
+    .filter((match) => match[1] === undefined)
+    .map((match) => match[2]!);
+}
+
+/** A module's text by its name in `convex/`. */
+function moduleText(file: string): string {
+  return readFileSync(new URL(`${file}.ts`, CONVEX), 'utf8');
 }
 
 describe("the 'use node' boundary in convex/ (the standard's 1.5)", (): void => {
+  it('reads a type-only import as no crossing, since the bundle erases it', (): void => {
+    expect(
+      siblingImports('import type { A } from \'./a\';\nimport { b, type C } from "./b";'),
+    ).toEqual(['b']);
+  });
+
   it("imports no 'use node' module from a module without the directive", (): void => {
     const all = modules();
     const crossings = [...all]
       .filter(([, node]) => !node)
       .flatMap(([file]) =>
-        siblingImports(file)
+        siblingImports(moduleText(file))
           .filter((imported) => all.get(imported) === true)
           .map((imported) => `${file} imports ${imported}`),
       );

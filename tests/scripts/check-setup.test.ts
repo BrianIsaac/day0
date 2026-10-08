@@ -279,7 +279,7 @@ describe('the token store component (join 9)', (): void => {
     const rows = egressHosts({});
     for (const host of ['archive.ubuntu.com', 'security.ubuntu.com']) {
       expect(rows.find((row) => row.host === host)?.purpose).toBe(
-        "the backend image's build at setup and upgrade (git's packages)",
+        "the backend image's build at setup and upgrade (git's packages, over http on port 80)",
       );
     }
     expect(rows.find((row) => row.host === 'ghcr.io')?.purpose).toBe(

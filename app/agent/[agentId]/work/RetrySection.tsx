@@ -76,7 +76,7 @@ export function retryWhy(
         : `Retry runs the item again, with your note when you write one; ${heldAgain}.`;
     case 'cites-changed':
       return autonomous
-        ? `Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; with autonomous actions on, the plan runs once it is drafted, and ${heldAgain}.`
+        ? `Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; with autonomous actions on, the plan runs once it is drafted unless something holds it for you, and ${heldAgain}.`
         : 'Retry drafts a new plan from the documentation as it stands now, reading your note when you write one; the plan comes back to you before anything runs.';
     case 'cancelled':
       return mode.hadPlan
