@@ -186,7 +186,10 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  // What the backend and the bridge saw, so a timeout says why (W14-R37).
+  throw new Error(
+    `timed out waiting for ${what}: the backend opened ${backend.opened}, the bridge logged ${JSON.stringify(logged.slice(-8))}`,
+  );
 }
 
 async function proof(): Promise<{
@@ -507,6 +510,22 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     expect(
       logged.filter((line) => line.message === 'press not handed over').length,
     ).toBeGreaterThan(0);
+  });
+
+  it('keeps refreshing when the connection a refresh replaced is slow to close (found by the pre-tag gate)', async (): Promise<void> => {
+    // A replaced connection still closing when the next refresh is due: the bridge holds two, and
+    // the refresh it skipped then was never scheduled again, so it stopped refreshing for good.
+    class SlowToClose extends WebSocket {
+      override close(code?: number, reason?: string): void {
+        setTimeout(() => super.close(code, reason), 400);
+      }
+    }
+    const running = start({
+      maxConnectionMs: 100,
+      WebSocket: SlowToClose as unknown as typeof WebSocket,
+    });
+    await running.start();
+    await until(() => backend.opened >= 4, 'three refreshes');
   });
 
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {

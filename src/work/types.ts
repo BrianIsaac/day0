@@ -278,10 +278,12 @@ export interface MockAction {
   args: MockActionArgs;
   /**
    * On a message, the places in its own set of the earlier writes it reports as made, as the run
-   * declared them (the wave 13 review's D-5 (b)). The apply binds the message to them. Absent on
-   * an action that is not a message and on every action written before the field.
+   * declared them (the wave 13 review's D-5 (b)). The apply binds the message to them. Null where
+   * the run declared none (a message whose words then report a write is a tripwire finding,
+   * W14-R8); absent on a mock verb that carries no message and on every action written before the
+   * field.
    */
-  reports?: number[];
+  reports?: number[] | null;
 }
 
 /** Legacy mock-mode accounting row retained byte-for-byte for the hosted comparison. */

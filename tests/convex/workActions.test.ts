@@ -77,6 +77,7 @@ import {
 } from '../fixtures/work/work-done-corpora';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { replacePageBlocks } from '../../convex/docBlocks';
 import { versionBodyHash } from '../../src/work/skill-library';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
@@ -10421,6 +10422,9 @@ describe('the People block in both executor phases (13-J)', (): void => {
   });
 });
 
+/** The queries one transaction may make in the fallback test: past the selection over 33 sources, inside every other read. */
+const SELECTION_QUERY_LIMIT = 120;
+
 describe('the documentation selection at the work loop’s sites (14-R)', (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();
@@ -10653,6 +10657,94 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
     expect(recorded.skillRuns).toBe(0);
     expect(recorded.mcp).toEqual([]);
     expect(blockId).toBeDefined();
+  });
+
+  it('reads the whole mirror when the selection throws, so the run goes on (W14-R4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    // A read limit only the selection over 33 sources passes stands in for a library past what one
+    // query can select from.
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { databaseQueries: SELECTION_QUERY_LIMIT },
+    });
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [],
+    };
+    const seeded = await seed(harness, 'real', ['linear:read'], { autonomousActions: true });
+    for (let index = 0; index < 33; index += 1) {
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: `Source ${index}`,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const generation = await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          listing: 1,
+          credentialRefs: [],
+          pageCount: 1,
+          redactionCount: 0,
+          state: 'completed',
+          createdAt: 2,
+        });
+        const markdown = `# Ticket notes ${index}\n\nRead the ticket in Linear before closing it.`;
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `page-${index}.md`,
+          title: `Page ${index}`,
+          markdown,
+          updatedAt: 3,
+        });
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId,
+          pageRef: `page-${index}.md`,
+          generation,
+          markdown,
+        });
+        await ctx.db.insert('mockDocs', {
+          agentId: seeded.agentId,
+          slug: `source-page-${index}`,
+          title: `Page ${index}`,
+          body: markdown,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: `page-${index}.md`,
+          updatedAt: 3,
+        });
+      });
+    }
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(seeded.workItemId, {
+        plan: {
+          summary: 'Read the ticket.',
+          steps: ['Read the ticket in Linear'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Nothing is written.',
+          estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, {
+      workItemId: seeded.workItemId,
+    });
+    const item = await readItem(harness, seeded.workItemId);
+    expect(item.state).not.toBe('failed');
+    expect(recorded.skillRuns).toBe(1);
+    // The whole mirror was read, so no selection is recorded for the run.
+    expect((await events(harness, seeded.agentId)).map((event) => event.type)).not.toContain(
+      'work.documentation-selected',
+    );
   });
 
   it('records no selection in mock mode, where the run reads the whole mirror (R3)', async (): Promise<void> => {

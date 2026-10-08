@@ -126,6 +126,31 @@ describe('replacePageBlocks', (): void => {
     expect(await split(harness, { sourceId, runId }, shorter)).toBe(1);
     expect((await blocksOf(harness, sourceId)).map((block) => block.index)).toEqual([0, 1]);
   });
+
+  it("keeps an unchanged block's row when a block is inserted above it, so a citation of it stands (W14-R2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    const before = await blocksOf(harness, sourceId);
+    const inserted = RUNBOOK.replace(
+      '## When it is stale',
+      '## Who to ask\n\nAsk the revenue operations lead.\n\n## When it is stale',
+    );
+    await split(harness, { sourceId, runId }, inserted);
+    const after = await blocksOf(harness, sourceId);
+    expect(after.map((block) => [block.index, block.text])).toEqual([
+      [0, 'Open the pipeline dashboard.'],
+      [1, 'Ask the revenue operations lead.'],
+      [2, 'Press refresh twice.'],
+      [3, 'Post in the revops channel.'],
+    ]);
+    const idOf = (text: string): string | undefined =>
+      after.find((block) => block.text === text)?._id;
+    for (const block of before) {
+      expect(idOf(block.text)).toBe(block._id);
+      expect(after.find((row) => row._id === block._id)?.hash).toBe(block.hash);
+    }
+  });
 });
 
 describe('splitStoredPage', (): void => {
@@ -152,6 +177,41 @@ describe('splitStoredPage', (): void => {
     expect(await split('gone.md')).toBe(0);
     expect(await blocksOf(harness, sourceId)).toHaveLength(3);
   });
+});
+
+describe('splitStoredPage and a page of long nested headings (W14-R1)', (): void => {
+  it("writes the page's blocks inside a transaction's write limit, its paths bounded", async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { sourceId, runId } = await sourceOf(harness);
+    const han = (length: number, offset: number): string =>
+      Array.from({ length }, (_unused, index) =>
+        String.fromCodePoint(0x4e00 + ((index * 7 + offset * 13) % 2_000)),
+      ).join('');
+    // Reader 1's probe: past 16 MiB of rows while every block carried the whole 1,200-character path.
+    const markdown = [
+      ...[1, 2, 3, 4, 5].map((level) => `${'#'.repeat(level)} ${han(200, level)}`),
+      ...Array.from(
+        { length: 1_400 },
+        (_unused, index) => `###### ${han(200, index)}\n\n${han(4, index)}`,
+      ),
+    ].join('\n\n');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'nested.md',
+        title: 'Nested',
+        markdown,
+        updatedAt: 1,
+      });
+    });
+    await expect(
+      harness.mutation(internal.docBlocks.splitStoredPage, {
+        sourceId,
+        ref: 'nested.md',
+        generation: runId,
+      }),
+    ).resolves.toBe(1_400);
+  }, 60_000);
 });
 
 describe('searchBlocks', (): void => {

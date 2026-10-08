@@ -566,6 +566,11 @@ export default defineSchema({
     /** A page's blocks in document order: the replace, the prune and an assembled citation. */
     .index('by_source_page', ['sourceId', 'pageRef', 'index'])
     /**
+     * A page's block by its content: a plan's cite is read by the hash it was cited under, one row
+     * a cite, never the whole page (the second pass on W14-R2).
+     */
+    .index('by_source_page_hash', ['sourceId', 'pageRef', 'hash'])
+    /**
      * A source's blocks by the run that wrote them (the wave file's index; nothing reads it yet: a
      * source's removal pages through `by_source_page`, which also leads with the source).
      */

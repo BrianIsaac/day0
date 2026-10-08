@@ -143,6 +143,21 @@ class FeishuServerError extends TransientProviderError {
  * A refusal of the app itself rather than of one request (a missing scope, an
  * unpublished version), worded with what IT checks.
  */
+/**
+ * An answer that is not Feishu's JSON (a proxy's or a firewall's page, or a host without the
+ * endpoint): never a page's refusal, so it fails the batch with what stands between (W14-R9).
+ */
+class FeishuGatewayError extends Error {
+  constructor(host: string, status: number) {
+    super(
+      `${host} answered HTTP ${status} with a page that is not Feishu’s own answer, so something ` +
+        'between day0 and Feishu (a proxy or a firewall) may be stopping the request: ask IT ' +
+        `whether the machine day0 runs on reaches ${host} directly.`,
+    );
+    this.name = 'FeishuGatewayError';
+  }
+}
+
 class FeishuAppError extends Error {
   constructor(error: FeishuApiError) {
     super(
@@ -176,6 +191,8 @@ interface ListedItem {
 interface ListedPage {
   readonly items: readonly ListedItem[];
   readonly next: string | undefined;
+  /** Why the parent's children are not read, when Feishu refused to list them (W14-R10). */
+  readonly refused?: string;
 }
 
 /** One source's read: where it is, the app it reads as. */
@@ -269,6 +286,10 @@ function documentFailure(entry: ListedEntry, error: unknown): string {
   if (error instanceof FeishuApiError && error.code < 99_990_000) {
     return pageFailureReason(entry, error);
   }
+  // An export that keeps timing out is that document's, as a server failure is (W14-R10).
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return `Feishu did not give "${entry.title}" as Markdown within ${REQUEST_TIMEOUT_MS / 1_000} seconds, each time it was asked; re-sync to try again.`;
+  }
   if (
     error instanceof TransientProviderError &&
     error.status !== undefined &&
@@ -278,6 +299,14 @@ function documentFailure(entry: ListedEntry, error: unknown): string {
     return `Feishu answered HTTP ${error.status} for "${entry.title}" each time it was asked${code}; re-sync to try again.`;
   }
   throw error;
+}
+
+/** What makes two documents' failures one cause: the code, the status, or the timeout. */
+function failureCause(error: unknown): string {
+  if (error instanceof FeishuApiError) return `code ${error.code}`;
+  if (error instanceof FeishuServerError) return `HTTP ${error.status} code ${error.feishuCode}`;
+  if (error instanceof TransientProviderError) return `HTTP ${error.status ?? ''}`;
+  return error instanceof Error ? error.name : 'unknown';
 }
 
 /** The sentence for a listing Feishu refused. */
@@ -364,7 +393,8 @@ export class FeishuReader implements DocumentationReader {
         : walkFromCursor(cursor);
     const listed = await this.listBatch(session, walk, limit);
     const pages: DocPage[] = [];
-    const unread: UnreadPage[] = [];
+    const unread: UnreadPage[] = [...listed.refused];
+    const failed: Array<{ readonly reason: string; readonly cause: string }> = [];
     for (const entry of listed.entries) {
       if (entry.type !== 'docx' || entry.shortcut) {
         unread.push({ ref: entry.ref, reason: notReadReason(entry) });
@@ -375,8 +405,20 @@ export class FeishuReader implements DocumentationReader {
       } catch (error) {
         // A refusal of this document is the page's; the token, the limit or the
         // transport are the batch's, for its retry and the sync's resume.
-        unread.push({ ref: entry.ref, reason: documentFailure(entry, error) });
+        const reason = documentFailure(entry, error);
+        unread.push({ ref: entry.ref, reason });
+        failed.push({ reason, cause: failureCause(error) });
       }
+    }
+    // Every document unread for one cause is the source's failure, not each page's (W14-R9).
+    if (
+      pages.length === 0 &&
+      failed.length >= 2 &&
+      new Set(failed.map((f) => f.cause)).size === 1
+    ) {
+      throw new Error(
+        `Feishu gave none of the ${failed.length} documents in this batch, each for the same reason: ${failed[0].reason}`,
+      );
     }
     return {
       pages,
@@ -402,14 +444,16 @@ export class FeishuReader implements DocumentationReader {
     session: FeishuSession,
     start: FeishuWalk,
     limit: number,
-  ): Promise<{ entries: ListedEntry[]; walk: FeishuWalk | undefined }> {
+  ): Promise<{ entries: ListedEntry[]; walk: FeishuWalk | undefined; refused: UnreadPage[] }> {
     const entries: ListedEntry[] = [];
+    const refused: UnreadPage[] = [];
     let { queue, pageToken, skip, listed, requests } = start;
     for (let made = 0; queue.length > 0 && entries.length < limit; made += 1) {
       if (made === MAX_LISTING_REQUESTS_PER_BATCH) break;
       if (requests >= MAX_LISTING_REQUESTS) throw endlessListing();
       const page = await this.listedPage(session, queue[0], pageToken, made === 0 && skip > 0);
       requests += 1;
+      if (page.refused !== undefined) refused.push({ ref: queue[0]!, reason: page.refused });
       let index = skip;
       const children: string[] = [];
       for (; index < page.items.length && entries.length < limit; index += 1) {
@@ -432,6 +476,7 @@ export class FeishuReader implements DocumentationReader {
     return {
       entries,
       walk: queue.length === 0 ? undefined : { queue, pageToken, skip, listed, requests },
+      refused,
     };
   }
 
@@ -455,6 +500,19 @@ export class FeishuReader implements DocumentationReader {
     } catch (error) {
       if (!(error instanceof FeishuApiError) || error.code >= 99_990_000) throw error;
       if (resumed && pageToken !== null) throw new ListingChangedError();
+      // A child the app may not list is recorded and passed over, so the rest is read (W14-R10);
+      // a refused top of the source is the source's.
+      const top = scope.kind === 'wiki' ? null : scope.folderToken;
+      if (parent !== null && parent !== top) {
+        return {
+          items: [],
+          next: undefined,
+          refused:
+            `Feishu would not list the pages under this one (Feishu code ${error.code}, ` +
+            `${error.feishuMessage}), so they are not read: add the app to them, or to the ` +
+            `${scope.kind === 'wiki' ? 'wiki space as a member' : 'folder'}.`,
+        };
+      }
       throw listingFailure(scope, error);
     }
   }
@@ -591,11 +649,11 @@ export class FeishuReader implements DocumentationReader {
       const revision = field(field(document, 'document'), 'revision_id');
       return typeof revision === 'number' ? revision : null;
     } catch (error) {
-      if (!(error instanceof FeishuApiError) && !(error instanceof FeishuAppError)) throw error;
-      // Logged, not recorded: the revision is kept nowhere yet, and the page was read.
+      // Whatever went wrong, the page was read and the revision is kept nowhere yet (W14-R10):
+      // logged, never the page's or the batch's failure.
       log.warn('feishu document revision not read', {
         ref: entry.ref,
-        reason: error.message,
+        reason: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
@@ -707,9 +765,7 @@ export class FeishuReader implements DocumentationReader {
           status: response.status,
         });
       }
-      // A refusal that is not Feishu's own JSON is still this request's refusal: one page's, when
-      // it answered a document.
-      throw new FeishuApiError(0, response.status, 'an answer that is not Feishu JSON');
+      throw new FeishuGatewayError(url.host, response.status);
     }
     if (body.code === 0) return body;
     // A server failure is tried again, except a document too large to export, which stays so.

@@ -604,7 +604,7 @@ export interface ComposeImage {
 }
 
 /** The image a Dockerfile starts from: its first `FROM`, without a stage name. */
-function dockerfileBase(text: string): string | undefined {
+export function dockerfileBase(text: string): string | undefined {
   for (const line of text.split('\n')) {
     const from = /^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)/i.exec(line);
     if (from) return from[1];

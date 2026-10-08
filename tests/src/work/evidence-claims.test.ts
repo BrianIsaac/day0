@@ -1094,6 +1094,64 @@ describe("the run's declared reports on a message (the wave 13 review's D-5 (b))
   });
 });
 
+describe('the declared reports in the claim floor and the binding (W14-R7, W14-R8)', (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  const comment = (body: string, reports?: number[] | null): MockAction => ({
+    ...commentOn('REVOPS-6', body),
+    ...(reports === undefined ? {} : { reports: reports as number[] }),
+  });
+  const summary = slackPost('C0BSQTE1H7E', 'Weekly pipeline summary: coverage is 3.1x');
+
+  it.each([
+    'Posted it in #revops.',
+    'Posted the update in #revops.',
+    'Sent the digest to the team.',
+    'I have posted my answer.',
+  ])('takes %j as supported by the post its reports name (W14-R7)', (said): void => {
+    expect(unsupportedClaimFindings([summary, comment(said, [0])], empty)).toEqual([]);
+  });
+
+  it('still refuses a figure the declared write does not carry (W14-R7)', (): void => {
+    const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 68%.');
+    const claim = comment('Posted the pipeline coverage of 74% in #revops.', [0]);
+    expect(
+      unsupportedClaimFindings([coverage, claim], empty).map((finding) => finding.index),
+    ).toEqual([1]);
+  });
+
+  it('binds only the write a precise declaration names, the kind guess dropped (W14-R8)', (): void => {
+    const second = comment('Posted the second note in #revops.', [1]);
+    expect(boundEarlierWrites(second, [NOTE_1, NOTE_2])).toEqual([1]);
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, second], empty)).toEqual([]);
+  });
+
+  it('binds nothing by the kind guess for a message that declares none (W14-R8)', (): void => {
+    const unrelated = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 68%.');
+    expect(
+      boundEarlierWrites(comment('Posted both stop-drill notes in #revops.', []), [unrelated]),
+    ).toEqual([]);
+  });
+
+  it('asks for the field on a message whose words report a write and whose reports is null (W14-R8)', (): void => {
+    const said = 'Posted both stop-drill notes in #revops.';
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said, null)], empty)).toEqual([
+      {
+        index: 2,
+        issue:
+          'action 2 (linear save_comment) reports earlier writes of this set in its words and declares no `reports`: it says "Posted both stop-drill notes in #revops.", which reports [0, 1]; list in `reports` every earlier write of this set the message reports, or [] when it reports none',
+      },
+    ]);
+    // A reply recorded before the field has none, and its words bind it as before.
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said)], empty)).toEqual([]);
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, comment('Which channel should the note go to?', null)],
+        empty,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("the item's own figures beside a report of the set's writes (W13-R44)", (): void => {
   const asked: ClaimEvidence = {
     ledger: '',

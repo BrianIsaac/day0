@@ -77,10 +77,15 @@ export type AgreementRefusalReason = (typeof AGREEMENT_REFUSAL_REASONS)[number];
 
 /**
  * Why a keep was refused before any judgement (W13-R28, ruled for 14-FX): an agreement kept for
- * every employee of an owner with more employees than its check reads. Not a verdict of the
- * judgement, so a list of its own beside {@link AGREEMENT_REFUSAL_REASONS}, which is.
+ * every employee of an owner with more employees than its check reads; or, on an employee's own
+ * row, an agreement for every employee held for that employee alone because its charter was
+ * approved past that bound, so nobody checked the agreement against it (W14-R15). Not a verdict of
+ * the judgement, so a list of its own beside {@link AGREEMENT_REFUSAL_REASONS}, which is.
  */
-export const AGREEMENT_KEEP_REFUSAL_REASONS = ['every-employee-too-many'] as const;
+export const AGREEMENT_KEEP_REFUSAL_REASONS = [
+  'every-employee-too-many',
+  'unchecked-for-employee',
+] as const;
 
 /** One of {@link AGREEMENT_KEEP_REFUSAL_REASONS}. */
 export type AgreementKeepRefusalReason = (typeof AGREEMENT_KEEP_REFUSAL_REASONS)[number];

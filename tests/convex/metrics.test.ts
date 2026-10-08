@@ -282,7 +282,8 @@ describe('agent evaluation metrics', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
+        // Re-pinned for W14-R6: no selection ran, so no recall is shown.
+        retrieval: { tokens: null, recall: null },
       },
     });
   });
@@ -884,7 +885,8 @@ describe('supervision figures for a company of employees', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
+        // Re-pinned for W14-R6: no selection ran, so no recall is shown.
+        retrieval: { tokens: null, recall: null },
       },
     });
     expect(figures.excludedAgents).toBe(2);
@@ -2313,9 +2315,11 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       tokens: { items: 1, charsPerItem: 10_000, inputTokensPerItem: 20_000 },
       recall: RETRIEVAL_RECALL,
     });
+    // Re-pinned for W14-R6: the recall is a grade of the selection, shown only where a selection
+    // ran (real mode); a deployment with none, the hosted mock one included, shows none.
     expect(computeAgentMetrics([], [], []).pilot.retrieval).toEqual({
       tokens: null,
-      recall: RETRIEVAL_RECALL,
+      recall: null,
     });
     const unbilled = events.filter((row) => row.type === 'work.documentation-selected');
     expect(
@@ -2356,7 +2360,8 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       },
       reorientation: { answered: 2, amended: 1, rate: 0.5 },
       hoursSaved: { estimatedItems: 2, hours: 1.5 },
-      retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
+      // Re-pinned for W14-R6: no selection ran, so no recall is shown.
+      retrieval: { tokens: null, recall: null },
     });
   });
 

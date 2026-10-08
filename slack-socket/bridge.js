@@ -24,6 +24,9 @@ export const HELLO_TIMEOUT_MS = 10_000;
  * break with no close) can hold the app's presses.
  */
 export const MAX_CONNECTION_MS = 30 * 60_000;
+
+/** How long a due refresh waits for the connection the last one replaced to finish closing. */
+const REFRESH_WAIT_MS = 1_000;
 /** How long a press is offered to the backend before it is given up (a backend restart is shorter). */
 export const PRESS_RETRY_WINDOW_MS = 60_000;
 /** The first wait between offers of a press; it doubles to the cap. */
@@ -472,11 +475,18 @@ export function createBridge(options) {
     // The connection this one replaced, after a refresh, goes once this one is greeted.
     if (previous !== undefined && previous !== socket) previous.close();
     clearTimeout(state.refresh);
-    state.refresh = setTimeout(() => {
+    const refresh = () => {
+      // The connection the last refresh replaced is still closing, so the bridge holds two and
+      // `open` would do nothing: try again shortly, or the bridge stops refreshing for good.
+      if (state.sockets.size >= 2) {
+        state.refresh = setTimeout(refresh, REFRESH_WAIT_MS);
+        return;
+      }
       state.refresh = undefined;
       if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       void open(state); // open records its own failure and schedules the retry
-    }, maxConnectionMs);
+    };
+    state.refresh = setTimeout(refresh, maxConnectionMs);
   }
 
   async function receive(state, socket, text) {

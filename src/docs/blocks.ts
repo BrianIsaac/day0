@@ -83,6 +83,22 @@ const INDENTED = /^(?: {2,}|\t)\S/;
  */
 const HEADING_PATH_CHARS = 200;
 
+/**
+ * The most characters a block's whole heading path keeps (W14-R1): six nested headings of 200
+ * characters each, carried twice by every block of a page with their bigrams, wrote past a
+ * transaction's 16 MiB from one stored page. A longer path keeps every level, each cut to its
+ * share, so a page's rows stay under a transaction's write limit whatever its headings.
+ */
+const HEADING_PATH_TOTAL_CHARS = 300;
+
+/** A heading path cut to `HEADING_PATH_TOTAL_CHARS`, every level cut to an equal share. */
+function boundedPath(path: readonly string[]): string[] {
+  const total = path.reduce((sum, heading) => sum + charCount(heading), 0);
+  if (total <= HEADING_PATH_TOTAL_CHARS) return [...path];
+  const share = Math.floor(HEADING_PATH_TOTAL_CHARS / path.length);
+  return path.map((heading) => truncated(heading, share));
+}
+
 /** The first `limit` characters (code points) of a string. */
 function truncated(text: string, limit: number): string {
   return charCount(text) <= limit ? text : [...text].slice(0, limit).join('');
@@ -143,7 +159,7 @@ function sectionsOf(markdown: string): Section[] {
   let inFence: string | undefined;
   const close = (): void => {
     const units = unitsOf(lines);
-    if (units.length > 0) sections.push({ headingPath: [...path], units });
+    if (units.length > 0) sections.push({ headingPath: boundedPath(path), units });
     lines = [];
   };
   for (const line of markdown.split('\n')) {

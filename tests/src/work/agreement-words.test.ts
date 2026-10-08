@@ -75,6 +75,14 @@ describe('what the cards say of a working agreement', (): void => {
     expect(refusalOffersAmendment(tooMany)).toBe(false);
   });
 
+  it('says an agreement for every employee held for one employee alone stays in effect for the others (W14-R15)', (): void => {
+    const held = { reason: 'unchecked-for-employee' as const };
+    expect(refusalSentence(held, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines: Ines's charter was approved while you had more than 50 employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.",
+    );
+    expect(refusalOffersAmendment(held)).toBe(false);
+  });
+
   it('reads a kept agreement as stale once its check has waited past its tries, and says so (W13-R30)', (): void => {
     const kept = { status: 'proposed' as const, approvedAt: 1_000 };
     expect(checkStale(kept, 1_000 + CHECK_STALE_MS)).toBe(false);

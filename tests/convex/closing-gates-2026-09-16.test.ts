@@ -1001,10 +1001,15 @@ describe('the 16 September run 4 closing phases, replayed through the real gate'
         refusedClosing: { withheldActions?: Array<{ action: MockAction; reason: string }> };
       }
     ).refusedClosing.withheldActions;
+    // Re-pinned for W14-R8: the recording's double declares what each message's words report
+    // (here none), and the output keeps the declaration where it dropped the null before.
     expect(withheld?.map((row) => [row.action, row.reason])).toEqual([
-      [unsupported, expect.stringContaining('All three standup deals are reconciled')],
       [
-        run4RefreshClosing.actions[1],
+        { ...unsupported, reports: [] },
+        expect.stringContaining('All three standup deals are reconciled'),
+      ],
+      [
+        { ...run4RefreshClosing.actions[1], reports: [] },
         expect.stringContaining('the audit comment on REVOPS-7 it was to follow was withheld'),
       ],
     ]);

@@ -92,7 +92,12 @@ import { readEnvValues, writeEnvValues } from './lib/env-file';
 import { SIGN_IN_PROVIDERS, runSignIn, type SignInFlags } from './setup-sign-in';
 import { parseAnswers, runAccess, type AccessFlags } from './setup-access';
 import type { OauthFetch } from '../src/surfaces/mcp-oauth';
-import { credentialKeyToAdopt, PROTECTED_PROJECTS, PROTECTED_VOLUMES } from './demo-bed';
+import {
+  credentialKeyToAdopt,
+  dockerfileBase,
+  PROTECTED_PROJECTS,
+  PROTECTED_VOLUMES,
+} from './demo-bed';
 import {
   defaultModel,
   manifestListingCommand,
@@ -115,7 +120,14 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
-import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
+import {
+  BACKEND_IMAGE,
+  backendImageState,
+  layersInspect,
+  pinnedNodeImage,
+  redactorVolumeClone,
+  REDACTOR_VOLUME_SUFFIXES,
+} from './lib/docker';
 import { DEMO_TILE_HOST, listsDemoTile } from './lib/demo-tile';
 import { isLoopback, setupRoute } from './setup-route';
 import {
@@ -262,6 +274,14 @@ export const BACKEND_BUILD_LINE =
   'Building the backend image day0-convex-backend:git: the pinned Convex backend with git added ' +
   '(docker/backend.Dockerfile), so a git documentation source on a listed host can be cloned. ' +
   'The first build downloads git from the Ubuntu archive; a later one reuses it.';
+
+/** What the setup says when mock mode runs the backend image already built from this base. */
+export const BACKEND_IMAGE_KEPT_LINE =
+  'The backend image day0-convex-backend:git is already built from the pinned backend, so it is used as it is: mock mode clones nothing, so it does not build the image again.';
+
+/** What the setup says when the backend image did not build and one of this base is used. */
+export const BACKEND_BUILD_FAILED_KEPT_LINE =
+  'warning: the backend image did not build (the output above says why), so the day0-convex-backend:git already here, built from the same pinned backend, is used. Run `pnpm backend:build` again once the machine reaches the Ubuntu archive, to take any change to docker/backend.Dockerfile.';
 
 /** Where the backend reaches the two components real mode starts. */
 export const BROWSER_MCP_URL = 'http://playwright-mcp:8931/mcp';
@@ -1452,6 +1472,11 @@ export interface SequenceInput {
    */
   empty?: boolean;
   /**
+   * The backend image on this machine (`backendImageState`): mock mode, which never clones, builds
+   * it only when it is missing or built from another base (W14-R17); real mode builds it always.
+   */
+  backendImage?: 'missing' | 'current' | 'stale';
+  /**
    * An upgrade: the scheduled jobs are paused once the backend is up and its
    * release is checked, before the env or the functions change, and released
    * after the check. A release the check refuses leaves them running.
@@ -1478,9 +1503,10 @@ export function sequenceSteps(route: SetupRoute, input: SequenceInput = {}): str
     ...(input.reset ? ['reset'] : []),
     'dev:no-auth-key',
     ...(real && input.warm ? ['warm-redactor'] : []),
-    // The backend runs an image built here (docker/backend.Dockerfile): built before every start,
-    // so an upgrade's re-pinned base or changed Dockerfile reaches the backend (14-F's ruling 1 (a)).
-    'backend:build',
+    // The backend runs an image built here (docker/backend.Dockerfile): built before every start in
+    // real mode, so an upgrade's re-pinned base or changed Dockerfile reaches the backend (14-F's
+    // ruling 1 (a)); in mock mode, which clones nothing, only when no image of this base is here.
+    ...(real || input.backendImage !== 'current' ? ['backend:build'] : []),
     'convex:up',
     ...(route === 'local' ? ['model:up', ...(input.pull === false ? [] : ['model:pull'])] : []),
     ...(real && input.sandbox === 'daytona' ? [] : ['sandbox:up']),
@@ -2577,6 +2603,11 @@ function step(
   return io.run(command, args, options);
 }
 
+/** A file's text, or undefined when it cannot be read. */
+function readIfPresent(path: string): string | undefined {
+  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+}
+
 function onlyOwedCompanyTokenGaps(output: string): boolean {
   const gaps = [...output.matchAll(/^\s*GAP\s+(.+)$/gm)].map((match) => match[1]!);
   const summary = /^(\d+) gap\(s\) above\.$/m.exec(output);
@@ -3187,6 +3218,9 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     // env, is the check's answer, not the volume's existence: a first run
     // stopped before its push leaves a volume with nothing in it.
     const existingDeployment = decision === 'rerun' && !options.reset;
+    const backendBase = dockerfileBase(
+      readIfPresent(join(checkoutRoot, 'docker', 'backend.Dockerfile')) ?? '',
+    );
     const sequence: SequenceInput = {
       mode: options.mode,
       warm,
@@ -3196,6 +3230,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       company: options.company,
       existing: existingDeployment,
       upgrade: options.upgradePause !== undefined,
+      backendImage: backendImageState(
+        io.run('docker', layersInspect(BACKEND_IMAGE), { timeoutMs: 30_000 }),
+        backendBase === undefined
+          ? undefined
+          : io.run('docker', layersInspect(backendBase), { timeoutMs: 30_000 }),
+      ),
     };
     let steps = sequenceSteps(route, sequence);
     let deploymentHasRows = existingDeployment;
@@ -3436,8 +3476,30 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       }
     }
 
-    io.log(BACKEND_BUILD_LINE);
-    if (!runStep('backend:build', 'pnpm backend:build')) return 1;
+    if (!steps.includes('backend:build')) {
+      io.log(BACKEND_IMAGE_KEPT_LINE);
+    } else if (sequence.backendImage === 'current') {
+      // An image of this base is here: a build that fails (no network to the archive, a proxy)
+      // leaves it, and the setup goes on with it (W14-R17).
+      io.log(BACKEND_BUILD_LINE);
+      const [planned] = stepCommands('backend:build', context);
+      const built = step(
+        io,
+        steps,
+        'backend:build',
+        'pnpm backend:build',
+        planned.command,
+        planned.args,
+        {
+          ...streamed,
+          env: { ...environment, ...(planned.env ?? {}) },
+        },
+      );
+      if (built.status !== 0) io.log(BACKEND_BUILD_FAILED_KEPT_LINE);
+    } else {
+      io.log(BACKEND_BUILD_LINE);
+      if (!runStep('backend:build', 'pnpm backend:build')) return 1;
+    }
     if (
       !runStep(
         'convex:up',

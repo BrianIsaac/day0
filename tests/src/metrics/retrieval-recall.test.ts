@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { RETRIEVAL_RECALL } from '../../../src/metrics/retrieval-recall';
+import { retrievalPages } from '../../../evaluation/retrieval/fixture';
 
 /** The newest tracked grade of the labelled set, by its stamp. */
 function newestGrade(): {
@@ -26,6 +27,7 @@ describe('RETRIEVAL_RECALL', (): void => {
       pages: grade.recall.pages,
       blocks: grade.recall.blocks,
       cases: grade.cases,
+      corpusPages: retrievalPages().length,
       gradedAt: grade.generatedAt,
       commit: grade.commit,
     });

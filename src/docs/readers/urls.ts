@@ -14,11 +14,13 @@ import { markdownPageTitle } from './folder';
 import { authorizationHeader } from './mcp';
 import {
   checkPageAddress,
+  isListedPageHost,
+  PageAddressRefusal,
   pinnedPageFetch,
   type CheckedPageAddress,
   type PageFetch,
 } from './page-address';
-import type { PrivateHostAllowlist } from '../../lib/private-hosts';
+import { PRIVATE_HOSTS_VAR, type PrivateHostAllowlist } from '../../lib/private-hosts';
 import { resolveHostname, type HostResolver } from '../../surfaces/mcp-address';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024;
@@ -242,7 +244,9 @@ export class UrlsReader implements DocumentationReader {
     turndown: TurndownService,
     access: PageAccess,
   ): Promise<DocPage> {
-    const response = await fetchWithinSite(url, read, access);
+    const response = await fetchWithinSite(url, read, access, (address: URL): boolean =>
+      isListedPageHost(address, this.connection.privateHosts),
+    );
     const declaredLength = Number(response.headers.get('content-length') || 0);
     if (!response.ok || declaredLength > MAX_PAGE_BYTES) {
       // The refused answer is let go, so its connection is freed for the next page.
@@ -274,9 +278,15 @@ export class UrlsReader implements DocumentationReader {
  * Fetch one page, following its redirects by hand, each one through the checked read.
  *
  * Every hop is checked before it is dialled (`read`), so a redirect cannot carry the read to an
- * address the page itself could not name. With a reader secret, redirects are followed only
- * within the secret's site, so the header never reaches another host (E-74).
+ * address the page itself could not name. A chain that has been on a host `DAY0_PRIVATE_HOSTS` does
+ * not list is never followed onto one it lists (W14-R12), whether it began there or came back
+ * through a listed host's redirect: a public page's redirect would otherwise read any path on a
+ * private host for whoever controls the public page. With a reader secret,
+ * redirects are followed only within the secret's site, so the header never reaches another host
+ * (E-74).
  *
+ * @param isListed - Whether a host is one the operator listed.
+ * @throws PageAddressRefusal when a page from outside the listed hosts redirects onto one.
  * @throws Error when a page read with a secret redirects to another site, or a page redirects
  *   too often.
  */
@@ -284,7 +294,9 @@ async function fetchWithinSite(
   url: URL,
   read: (input: URL, init?: RequestInit) => Promise<Response>,
   access: PageAccess,
+  isListed: (address: URL) => boolean,
 ): Promise<Response> {
+  let leftListed = !isListed(url);
   const headers: Record<string, string> = {
     Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8',
     ...(access.authorization === undefined ? {} : { Authorization: access.authorization }),
@@ -301,6 +313,13 @@ async function fetchWithinSite(
         `${url.href} redirects to ${next.origin}; a page read with a secret is not followed off its site.`,
       );
     }
+    const nextListed = isListed(next);
+    if (leftListed && nextListed) {
+      throw new PageAddressRefusal(
+        `${url.href} redirects to ${next.origin}, a host ${PRIVATE_HOSTS_VAR} lists; Day0 does not follow a page from outside your network into it.`,
+      );
+    }
+    leftListed ||= !nextListed;
     current = next;
   }
   throw new Error(`${url.href} redirected more than ${MAX_REDIRECTS} times.`);

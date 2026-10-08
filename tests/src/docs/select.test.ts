@@ -258,6 +258,55 @@ describe('selectDocumentation', (): void => {
     );
   });
 
+  it("keeps every page's contract when one contract page alone fills the bound, its needed blocks spent first (W14-R3)", (): void => {
+    // Reader 2's pair: a ticket runbook of about 24,000 characters whose contract is its last
+    // section, beside a short page whose contract posts the recap to the manager.
+    const long = page(
+      'runbooks/update-ticket-long.md',
+      'How to update a ticket, in full',
+      `${Array.from(
+        { length: 16 },
+        (_unused, section) =>
+          `## Ticket part ${section}\n\n${'Ticket Looker pipeline tile refresh coverage note. '.repeat(30)}`,
+      ).join('\n\n')}\n\n${TICKET_CLOSING}`,
+      'how-to-guide',
+    );
+    const recap = page(
+      'runbooks/post-recap.md',
+      'How to post the recap',
+      [
+        '# How to post the recap',
+        '',
+        '## Recap to the manager',
+        '',
+        "Post the recap with slack.postMessage to the manager's private channel: put `manager-dm` in channelSlug and the recap text in `body`.",
+      ].join('\n'),
+      'how-to-guide',
+    );
+    const pages = [long, recap];
+    const whole = parseProcedureContract({ howToGuides: pages, teamDocs: [] });
+    expect(whole.trails.map((trail) => trail.effect.tool).sort()).toEqual([
+      'slack.postMessage',
+      'ticket.update',
+    ]);
+    expect(long.body.length).toBeGreaterThan(DOCUMENTATION_CHAR_LIMIT - 1_000);
+    const selection = selectDocumentation({ request, pages, scouted: everyBlock(pages) });
+    expect(selection.chars).toBeLessThanOrEqual(DOCUMENTATION_CHAR_LIMIT);
+    expect(
+      parseProcedureContract(selection)
+        .trails.map((trail) => trail.effect.tool)
+        .sort(),
+    ).toEqual(['slack.postMessage', 'ticket.update']);
+  });
+
+  it('takes the pages always included as given, so the caller works them out once (W14-R4)', (): void => {
+    const pages = [holidays, tileRunbook, ticketRunbook];
+    const asked = { request, pages, scouted: everyBlock(pages) };
+    const given = selectDocumentation({ ...asked, always: [holidays.key] });
+    expect(given.always).toEqual([holidays.key]);
+    expect(selectDocumentation(asked).always).toEqual(alwaysIncludedPages(pages, request));
+  });
+
   it('assembles each page’s blocks in document order under a cite line, and maps each cite to its blocks', (): void => {
     const selection = selectDocumentation({
       request: { ...request, shape: undefined, target: undefined },

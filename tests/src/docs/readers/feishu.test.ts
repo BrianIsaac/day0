@@ -506,7 +506,9 @@ describe('the Feishu reads a batch keeps inside its time (second pass)', (): voi
     expect(sleeps).toEqual(expect.arrayContaining([1_000, 2_000, 4_000]));
   });
 
-  it('names a document that answers with a page that is not Feishu JSON unread', async (): Promise<void> => {
+  it('fails the batch on a document that answers with a page that is not Feishu JSON (re-pinned for W14-R9)', async (): Promise<void> => {
+    // It named the page unread before W14-R9: a page that is not Feishu's answer is a proxy's, a
+    // firewall's or a host without the endpoint, never the document's refusal.
     const { reader } = readerOnTenant({
       override: (request) =>
         request.url.pathname === '/open-apis/docs/v1/content' &&
@@ -514,9 +516,9 @@ describe('the Feishu reads a batch keeps inside its time (second pass)', (): voi
           ? new Response('<html>Not Found</html>', { status: 404 })
           : undefined,
     });
-    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
-    expect(batch.unread.map((page) => page.ref)).toContain(NODES.zh1.node);
-    expect(batch.pages).toHaveLength(3);
+    await expect(reader.listPageBatch(wiki, SECRET, undefined, 25)).rejects.toThrow(
+      'open.feishu.cn answered HTTP 404 with a page that is not Feishu’s own answer',
+    );
   });
 
   it('tries again a read cut off in its body, and fails the batch as interrupted, not as a strange answer', async (): Promise<void> => {
@@ -539,6 +541,96 @@ describe('the Feishu reads a batch keeps inside its time (second pass)', (): voi
     expect(String(failure)).toContain('terminated');
     expect(String(failure)).not.toContain('does not read');
     expect(tries).toBe(4);
+  });
+
+  it('fails the batch, naming what stands between, when a document answers with a page that is not Feishu JSON (W14-R9)', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content'
+          ? new Response('<html>blocked</html>', { status: 403 })
+          : undefined,
+    });
+    const failure = await reader.listPageBatch(wiki, SECRET, undefined, 25).catch((error) => error);
+    expect(String(failure)).toContain(
+      'open.feishu.cn answered HTTP 403 with a page that is not Feishu’s own answer, so something between day0 and Feishu (a proxy or a firewall) may be stopping the request',
+    );
+    expect(String(failure)).not.toContain('add the app');
+  });
+
+  it('fails the batch with the cause when every document is unread for one cause (W14-R9)', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname === '/open-apis/docs/v1/content'
+          ? new Response(JSON.stringify({ code: 2889905, msg: 'internal error' }), { status: 500 })
+          : undefined,
+    });
+    const failure = await reader.listPageBatch(wiki, SECRET, undefined, 25).catch((error) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain('Feishu gave none of the 6 documents in this batch');
+    expect(String(failure)).toContain('answered HTTP 500');
+  });
+
+  it('names a child its listing refuses unread and reads the rest (W14-R10)', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname.endsWith('/nodes') &&
+        request.url.searchParams.get('parent_node_token') === NODES.handbook.node
+          ? new Response(JSON.stringify({ code: 131006, msg: 'permission denied' }), {
+              status: 400,
+            })
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toContain(NODES.handbook.node);
+    expect(batch.unread).toContainEqual({
+      ref: NODES.handbook.node,
+      reason:
+        'Feishu would not list the pages under this one (Feishu code 131006, permission denied), so they are not read: add the app to them, or to the wiki space as a member.',
+    });
+    expect(batch.nextCursor).toBeUndefined();
+  });
+
+  it('names a document whose export keeps timing out unread, and reads the rest (W14-R10)', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) => {
+        if (
+          request.url.pathname === '/open-apis/docs/v1/content' &&
+          request.url.searchParams.get('doc_token') === NODES.zh1.obj
+        ) {
+          throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+        }
+        return undefined;
+      },
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.unread).toContainEqual({
+      ref: NODES.zh1.node,
+      reason:
+        'Feishu did not give "刷新看板" as Markdown within 30 seconds, each time it was asked; re-sync to try again.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toContain(NODES.refresh.node);
+  });
+
+  it('reads a document whose details answer a server failure or time out, logging no revision (W14-R10)', async (): Promise<void> => {
+    for (const answer of [
+      (): Response =>
+        new Response(JSON.stringify({ code: 1, msg: 'internal error' }), { status: 503 }),
+      (): Response => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      },
+    ]) {
+      const { reader } = readerOnTenant({
+        override: (request) =>
+          request.url.pathname.startsWith('/open-apis/docx/v1/documents/') ? answer() : undefined,
+      });
+      const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+      expect(batch.pages.map((page) => page.ref)).toEqual([
+        NODES.handbook.node,
+        NODES.zh1.node,
+        NODES.zh2.node,
+        NODES.refresh.node,
+      ]);
+    }
   });
 
   it('reads a document whose details the app may not read, logging no revision', async (): Promise<void> => {

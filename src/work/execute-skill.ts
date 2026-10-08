@@ -768,9 +768,13 @@ function recordedPlanStepBasis(
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
-/** An action's declared reports as the output keeps them: absent when the model gave null. */
+/**
+ * An action's declared reports as the output keeps them, null included: a message whose `reports`
+ * is null while its words report earlier writes is a tripwire finding (W14-R8), so the null must
+ * reach the check.
+ */
 function reportsOf(action: GeneratedAction): Pick<MockAction, 'reports'> {
-  return 'reports' in action && action.reports !== null ? { reports: action.reports } : {};
+  return 'reports' in action ? { reports: action.reports } : {};
 }
 
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
@@ -1208,9 +1212,9 @@ export function withholdActions<T extends CorrectableOutput>(
   by: string = 'by the evidence check',
 ): T {
   if (refusals.length === 0) return output;
-  // A message whose declared reports name a write withheld here goes with it (D-5 (b)): its words
-  // may report nothing the evidence check reads, so no later round would take it out.
-  const all = withDeclaredReportsOf(output.actions, refusals);
+  // A message bound to a write withheld here goes with it, by its declared reports (D-5 (b)) or its
+  // words (W14-R8): the apply would bind it the same way, so it must not land on what is left.
+  const all = withReportsOfWithheld(output.actions, refusals);
   const reasons = new Map(all.map(({ index, reason }) => [index, reason]));
   const withheld: WithheldAction[] = all.map(({ index, reason }) => ({
     action: output.actions[index]!,
@@ -1248,17 +1252,6 @@ export function withReportsOfWithheld(
   return withBoundOf(actions, given, (action, index) =>
     boundEarlierWrites(action, actions.slice(0, index)),
   );
-}
-
-/**
- * The refusals with every message whose declared `reports` names a withheld write added, the
- * words left to the evidence check's own rounds (D-5 (b)).
- */
-function withDeclaredReportsOf(
-  actions: readonly MockAction[],
-  given: readonly AuditRefusal[],
-): AuditRefusal[] {
-  return withBoundOf(actions, given, (action) => action.reports ?? []);
 }
 
 /** The refusals with every action whose bound earlier writes include a withheld one added, in index order. */
@@ -1312,8 +1305,8 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    // The messages a withheld write's declared reports bind go with it, and are recorded with it.
-    const refusals = withDeclaredReportsOf(corrected.actions, refusalsOf(findings));
+    // The messages bound to a withheld write go with it, and are recorded with it (W14-R8).
+    const refusals = withReportsOfWithheld(corrected.actions, refusalsOf(findings));
     corrected = withholdActions(corrected, refusals);
     await record?.(
       refusals.map((refusal) => refusal.index),

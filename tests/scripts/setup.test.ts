@@ -41,7 +41,9 @@ import {
   pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
+  BACKEND_BUILD_FAILED_KEPT_LINE,
   BACKEND_BUILD_LINE,
+  BACKEND_IMAGE_KEPT_LINE,
   demoTileNote,
   shouldCaptureAdminKey,
   wrapIndented,
@@ -123,6 +125,12 @@ interface HarnessOptions {
   volumes?: string[];
   /** Commands answered with a failure, matched on the joined argument list. */
   failing?: { match: string; status: number; stderr: string }[];
+  /**
+   * The layers `docker image inspect` prints for the backend image (`built`, null when no image is
+   * here) and for the Dockerfile's pinned base. Absent, the inspect answers as any unscripted
+   * command does.
+   */
+  backendLayers?: { readonly built: readonly string[] | null; readonly base: readonly string[] };
   /** Whether the backend answers on its port. */
   backendUp?: boolean;
   environment?: Record<string, string | undefined>;
@@ -166,6 +174,14 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.startsWith('docker compose version')) {
       return { status: 0, stdout: 'Docker Compose version v5.5.1\n', stderr: '' };
+    }
+    if (joined.startsWith('docker image inspect') && options.backendLayers !== undefined) {
+      const layers = joined.includes('day0-convex-backend:git')
+        ? options.backendLayers.built
+        : options.backendLayers.base;
+      return layers === null
+        ? { status: 1, stdout: '', stderr: 'Error: No such image: day0-convex-backend:git' }
+        : { status: 0, stdout: `${JSON.stringify(layers)}\n`, stderr: '' };
     }
     if (joined.startsWith('docker volume ls')) {
       return { status: 0, stdout: `${volumes.join('\n')}\n`, stderr: '' };
@@ -260,6 +276,17 @@ function harness(options: HarnessOptions = {}): Harness {
  * Returns:
  *   Complete setup options.
  */
+/** The checkout's backend Dockerfile, and the base it pins (its FROM line's reference). */
+const BACKEND_DOCKERFILE = readFileSync(
+  fileURLToPath(new URL('../../docker/backend.Dockerfile', import.meta.url)),
+  'utf8',
+);
+/** An image built from the pinned base: the base's layers, then git's. */
+const CURRENT_LAYERS = {
+  built: ['sha256:base-1', 'sha256:base-2', 'sha256:git'],
+  base: ['sha256:base-1', 'sha256:base-2'],
+};
+
 function keyRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
   return {
     mode: 'mock',
@@ -991,6 +1018,57 @@ describe('the values written into .env.local', (): void => {
       const steps = sequenceSteps('key', input);
       expect(steps.indexOf('backend:build')).toBeGreaterThanOrEqual(0);
       expect(steps.indexOf('backend:build')).toBe(steps.indexOf('convex:up') - 1);
+    }
+  });
+
+  it('builds the backend image in mock mode only when none of the pinned base is here (W14-R17)', (): void => {
+    expect(sequenceSteps('key', { backendImage: 'current' })).not.toContain('backend:build');
+    for (const backendImage of ['missing', 'stale'] as const) {
+      expect(sequenceSteps('key', { backendImage })).toContain('backend:build');
+    }
+    expect(sequenceSteps('key', { mode: 'real', backendImage: 'current' })).toContain(
+      'backend:build',
+    );
+  });
+
+  it('uses the backend image already built from the pinned base in mock mode, building nothing (W14-R17)', async () => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend', 'sandbox'],
+      backendLayers: CURRENT_LAYERS,
+    });
+    mkdirSync(join(h.directory, 'docker'), { recursive: true });
+    writeFileSync(join(h.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(BACKEND_IMAGE_KEPT_LINE);
+    expect(printed).not.toContain('pnpm backend:build');
+    expect(h.commands.some((entry) => entry.args.includes('backend:build'))).toBe(false);
+  });
+
+  it('goes on with an image of the pinned base when the build fails, and stops when none is here (W14-R17)', async () => {
+    const failing = [{ match: 'run backend:build', status: 1, stderr: 'apt: hash sum mismatch' }];
+    const kept = harness({
+      answers: ['synthetic-key'],
+      services: ['backend', 'sandbox'],
+      backendLayers: CURRENT_LAYERS,
+      failing,
+    });
+    mkdirSync(join(kept.directory, 'docker'), { recursive: true });
+    writeFileSync(join(kept.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+    expect(await runSetup(keyRoute({ mode: 'real' }), kept.io)).toBe(0);
+    expect(kept.output.join('\n')).toContain(BACKEND_BUILD_FAILED_KEPT_LINE);
+    for (const built of [null, ['sha256:older-base', 'sha256:git']]) {
+      const stopped = harness({
+        answers: ['synthetic-key'],
+        services: ['backend', 'sandbox'],
+        backendLayers: { built, base: CURRENT_LAYERS.base },
+        failing,
+      });
+      mkdirSync(join(stopped.directory, 'docker'), { recursive: true });
+      writeFileSync(join(stopped.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+      expect(await runSetup(keyRoute({ mode: 'real' }), stopped.io)).toBe(1);
+      expect(stopped.output.join('\n')).not.toContain(BACKEND_BUILD_FAILED_KEPT_LINE);
     }
   });
 

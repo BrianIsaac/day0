@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BACKEND_IMAGE,
+  backendImageState,
+  layersInspect,
   pinnedNodeImage,
   redactorVolumeClone,
   REDACTOR_VOLUME_SUFFIXES,
@@ -39,5 +42,35 @@ describe('the redactor volume copy', (): void => {
     expect(() => redactorVolumeClone('day0-redactor-warm', 'day0-demo-7c65e7', 'img')).toThrow(
       'protected',
     );
+  });
+});
+
+describe('the backend image on this machine (W14-R17)', (): void => {
+  const answer = (layers: readonly string[]) => ({
+    status: 0,
+    stdout: `${JSON.stringify(layers)}\n`,
+  });
+  const base = ['sha256:base-1', 'sha256:base-2'];
+
+  it('asks Docker for an image\u2019s layers as JSON', (): void => {
+    expect(layersInspect(BACKEND_IMAGE)).toEqual([
+      'image',
+      'inspect',
+      'day0-convex-backend:git',
+      '--format',
+      '{{json .RootFS.Layers}}',
+    ]);
+  });
+
+  it('reads an image whose layers start with the pinned base\u2019s as current, another as stale, and none as missing', (): void => {
+    expect(backendImageState(answer([...base, 'sha256:git']), answer(base))).toBe('current');
+    expect(backendImageState(answer(['sha256:older', 'sha256:git']), answer(base))).toBe('stale');
+    expect(backendImageState(answer([...base, 'sha256:git']), { status: 1, stdout: '' })).toBe(
+      'stale',
+    );
+    expect(backendImageState(answer([...base, 'sha256:git']), undefined)).toBe('stale');
+    expect(backendImageState(answer(base), answer(base))).toBe('stale');
+    expect(backendImageState({ status: 0, stdout: 'not json' }, answer(base))).toBe('stale');
+    expect(backendImageState({ status: 1, stdout: '' }, answer(base))).toBe('missing');
   });
 });

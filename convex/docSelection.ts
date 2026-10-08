@@ -213,17 +213,16 @@ export async function selectedDocumentation(
     userId === undefined || sourceIds.length === 0
       ? []
       : await scoutedBlocks(ctx, { userId, sourceIds, queries: scoutQueries(request, pages) });
-  const pageBlocks = await storedPageBlocks(
-    ctx,
-    docs,
-    new Set(alwaysIncludedPages(pages, request)),
-  );
-  return selectDocumentation({ request, pages, scouted, pageBlocks });
+  const always = alwaysIncludedPages(pages, request);
+  const pageBlocks = await storedPageBlocks(ctx, docs, new Set(always));
+  return selectDocumentation({ request, pages, scouted, pageBlocks, always });
 }
 
 /**
  * The cited blocks of a plan that no longer stand as they were cited: the row deleted, its page
- * gone, or its hash changed (a block rewritten in place keeps its id). Internal; the work loop
+ * gone, or the block it was cited under no longer on its page. A cite is read by its hash on its
+ * page, the id only a hint to the page (W14-R2): a block that moved, or a row that a re-split
+ * gave another block, still stands while the page holds the cited block. Internal; the work loop
  * reads it before the first phase writes and before the closing phase authors (wave 14, 14-R).
  *
  * @returns The ids, of those given, that are gone or changed; an id that names no row is gone.
@@ -235,14 +234,20 @@ export const changedCitedBlocks = internalQuery({
     if (args.blocks.length > SEARCH_BLOCKS_LIMIT) {
       throw new Error(`A plan's cites are checked ${SEARCH_BLOCKS_LIMIT} blocks at a time.`);
     }
+    const onPage = async (block: Doc<'docBlocks'>, hash: string): Promise<boolean> =>
+      (await ctx.db
+        .query('docBlocks')
+        .withIndex('by_source_page_hash', (q) =>
+          q.eq('sourceId', block.sourceId).eq('pageRef', block.pageRef).eq('hash', hash),
+        )
+        .first()) !== null;
     const standing = await Promise.all(
       args.blocks.map(async (cited) => {
         const blockId = ctx.db.normalizeId('docBlocks', cited.id);
         const block = blockId === null ? null : await ctx.db.get(blockId);
+        if (block === null || !(await pageStored(ctx, block.sourceId, block.pageRef))) return false;
         return (
-          block !== null &&
-          (cited.hash === undefined || block.hash === cited.hash) &&
-          (await pageStored(ctx, block.sourceId, block.pageRef))
+          cited.hash === undefined || block.hash === cited.hash || (await onPage(block, cited.hash))
         );
       }),
     );

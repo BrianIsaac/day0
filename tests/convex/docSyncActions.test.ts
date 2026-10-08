@@ -676,6 +676,35 @@ describe('documentation sync batching', (): void => {
     );
   });
 
+  it('reads a source whose every page is unread and none stored as not read, counting no page (W14-R11)', async (): Promise<void> => {
+    const root = temporary('day0-sync-none-stored-');
+    await mkdir(join(root, 'none'));
+    await writeFile(
+      join(root, 'none', 'tile.md'),
+      `# Tile runbook\n\n${'Step.\n'.repeat(160_000)}`,
+      'utf8',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'None',
+      kind: 'folder',
+      locator: 'none',
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    const { run, source } = await harness.run(async (ctx) => ({
+      run: await ctx.db.query('docSyncRuns').order('desc').first(),
+      source: await ctx.db.get(sourceId),
+    }));
+    expect(run).toMatchObject({ state: 'completed', summary: { pagesKept: 0 } });
+    // The chip reads an `error` source as "Could not read" (`app/documentation/source-status.ts`).
+    expect(source?.status).toBe('error');
+    expect(source?.lastError).toMatch(
+      /^1 page could not be read, and nothing from this source is stored yet: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. Day0 reads it again at the next sync; a page it refuses stays unread until the page or its address changes\.$/,
+    );
+  });
+
   it('keeps a page it cannot store at its last version, with its credential, and completes the sync (P5-11)', async (): Promise<void> => {
     const root = temporary('day0-sync-unread-');
     await mkdir(join(root, 'few'));
