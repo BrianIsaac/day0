@@ -1372,7 +1372,7 @@ export const applyRestatedScope = internalMutation({
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
  * Internal. The sync action calls it last, once the generation has read every
- * page, removed the pages and mirrors it did not list and re-read the intake
+ * page, removed the pages and mirrors two complete walks in a row did not list and re-read the intake
  * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
  * steps removed as `pruned`; a resumed finish counts its own part only. A
  * caller that finishes a run from its last read batch passes that batch
@@ -1869,7 +1869,7 @@ export const upsertPage = internalMutation({
       return existing._id;
     }
     // Every stored page carries a listing row, so a page whose batch never
-    // recorded is still found, and removed, by the next finish that did not list it.
+    // recorded is still found, and removed once two complete finishes in a row did not list it.
     const run = await ctx.db.get(args.syncRunId);
     if (!run) throw new Error('Documentation sync run not found.');
     await stampListed(ctx, args.sourceId, [args.ref], runListing(run));
