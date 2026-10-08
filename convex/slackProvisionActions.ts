@@ -9,6 +9,7 @@ import { action, internalAction, type ActionCtx } from './_generated/server';
 import { credentialKeyring } from './credentialCryptoActions';
 import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { logEvent } from './eventLog';
+import { forEachDocumentationWindow } from './documentationWindows';
 import type { RefreshClaim } from './refreshLease';
 import type { HeldConfigurationRows, RotationRecorded } from './slackProvision';
 import { revokeSlackConfigurationToken, slackRevocationOutcome } from './sourceRevocationSend';
@@ -41,7 +42,7 @@ import {
   type VisibleChannel,
 } from '../src/surfaces/identity-issuers/slack';
 import { approvedChannelNames } from '../src/surfaces/intake-scope';
-import { slackInstallUrl } from '../src/surfaces/slack-manifest';
+import { extractManifestTemplate, slackInstallUrl } from '../src/surfaces/slack-manifest';
 import { manifestTakesMessages } from '../src/surfaces/slack-messages-tab';
 import { safeFailureMessage } from '../src/surfaces/redact';
 import {
@@ -764,16 +765,32 @@ export async function runProvisionApp(
     if (pasted) await revokeConfigurationToken(ctx, dependencies.fetch, surface, pasted);
     return await reissueKeptApp(ctx, surface, kept, dependencies, now);
   }
-  const pages: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId: surface.agentId,
-  });
   const built = slackAppManifest({
-    documentation: pages.map((page: Doc<'docPages'>): string => page.markdown).join('\n\n'),
+    documentation: await manifestTemplatePage(ctx, surface.agentId),
     employeeName: agent.name,
     publicUrl,
   });
   const created = await createEmployeeApp(ctx, surface, ownerKey, pasted, built, dependencies);
   return await recordCreatedApp(ctx, { surface, ownerKey }, created, built, dependencies, now);
+}
+
+/**
+ * The first of an employee's pages that documents a Slack app manifest template, read a window at
+ * a time and no further than that page (F2 D5), or the empty text when none does, which builds the
+ * access kit's app.
+ */
+async function manifestTemplatePage(ctx: ActionCtx, agentId: Id<'agents'>): Promise<string> {
+  let documented = '';
+  await forEachDocumentationWindow(ctx, agentId, 'slack-app-manifest', (pages) => {
+    const page = pages.find(
+      (candidate: Doc<'docPages'>): boolean =>
+        extractManifestTemplate(candidate.markdown) !== undefined,
+    );
+    if (page === undefined) return 'continue';
+    documented = page.markdown;
+    return 'stop';
+  });
+  return documented;
 }
 
 /** The card an app is provisioned for, its employee, and the owner the action started under. */

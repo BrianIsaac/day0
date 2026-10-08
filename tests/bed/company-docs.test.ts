@@ -457,7 +457,10 @@ describe('orientation over the synced pages', (): void => {
   });
 
   it('reaches the tile through its web page with the stored login and the probe marker', (): void => {
+    // The tile is plain http on a compose host, which the bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     const tile = orient('Looker pipeline tile', 'looker-pipeline-tile', 'browser-driven');
+    vi.unstubAllEnvs();
     expect(tile.chosen).toEqual({ path: 'browser-driven', endpoint: 'http://looker-tile:8080/' });
     expect(tile.credential.found).toBe('value');
     expect(isBrowserLoginCredential(tile.credential)).toBe(true);

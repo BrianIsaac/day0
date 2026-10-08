@@ -1,7 +1,7 @@
 /** @vitest-environment node */
 
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
@@ -9,7 +9,8 @@ import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } 
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
 import { FolderReader } from '../../src/docs/readers/folder';
-import { UrlsReader } from '../../src/docs/readers/urls';
+import { UrlsReader, __setPageConnectionForTest } from '../../src/docs/readers/urls';
+import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { RedactorUnavailableError } from '../../src/redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -17,6 +18,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
+  LISTING_RESTARTS_REASON,
   SYNC_BATCH_SIZE,
   categoryForPage,
   persistPageBatch,
@@ -41,8 +43,7 @@ const temporary = temporaryDirectories();
 // 6.28 (Node 22.23) a request on a pooled socket waits for a zero-delay timer
 // that a faked clock never fires (about 6 s a test until the double dropped the
 // socket, 12-N, 5 October 2026). A test that stubs fetch again keeps the route by
-// handing on to the global it found; one that unstubs every global itself (the
-// private wiki test, after its sync) leaves the rest of its own body unrouted.
+// handing on to the global it found.
 const redactorFetch = routeSpanModelFetch(globalThis.fetch);
 beforeAll((): void => {
   process.env.DAY0_REDACTOR_URL = SPAN_MODEL_TEST_URL;
@@ -978,6 +979,59 @@ describe('documentation sync batching', (): void => {
     expect(state.runs[1].reason).toContain('the listing changed under its cursor');
   });
 
+  it('ends a sync whose listing keeps changing after three restarts, with its reason on the source (M19)', async (): Promise<void> => {
+    const root = temporary('day0-sync-changing-');
+    await mkdir(join(root, 'changing'));
+    for (let index = 1; index <= 30; index += 1) {
+      await writeFile(
+        join(root, 'changing', `page-${String(index).padStart(2, '0')}.md`),
+        `# Page ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Changing',
+      kind: 'folder',
+      locator: 'changing',
+    });
+    // An author renames a page between every first batch and the next, as a folder written
+    // into all day would change under each sync.
+    const read = FolderReader.prototype.listPageBatch;
+    let renames = 0;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (args[2] !== undefined) {
+        const from = renames === 0 ? 'page-01.md' : `renamed-${renames}.md`;
+        renames += 1;
+        await rename(join(root, 'changing', from), join(root, 'changing', `renamed-${renames}.md`));
+      }
+      return await read.apply(this, args);
+    });
+
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+    }));
+    expect(state.runs.map((run) => [run.state, run.restarts])).toEqual([
+      ['error', 3],
+      ['superseded', 2],
+      ['superseded', 1],
+      ['superseded', undefined],
+    ]);
+    expect(state.runs[0].reason?.split('\n')[0]).toBe(LISTING_RESTARTS_REASON);
+    expect(state.source).toMatchObject({ status: 'error', lastError: LISTING_RESTARTS_REASON });
+    expect(state.source?.activeSyncId).toBeUndefined();
+    expect(await scheduled(harness)).toEqual([]);
+  });
+
   it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.run(async (ctx) => {
@@ -1093,26 +1147,28 @@ describe('documentation sync batching', (): void => {
       });
     });
     const seen: Array<string | null> = [];
-    // The in-process redactor is reached through fetch too; only the wiki is faked.
-    const realFetch = globalThis.fetch;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-        if (!String(input).startsWith('https://wiki.example/')) return await realFetch(input, init);
-        seen.push(new Headers(init?.headers).get('authorization'));
-        if (String(input).endsWith('/two')) {
-          // A failure that echoes the secret across where a 200-character cut once fell.
-          throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
-        }
-        return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
-      }),
-    );
+    // The wiki is reached through the reader's own connection (R9); the in-process redactor
+    // keeps the global fetch.
+    __setPageConnectionForTest({
+      resolve: async (): Promise<string[]> => ['93.184.215.14'],
+      dial:
+        () =>
+        async (input: URL, init?: RequestInit): Promise<Response> => {
+          seen.push(new Headers(init?.headers).get('authorization'));
+          if (input.href.endsWith('/two')) {
+            // A failure that echoes the secret across where a 200-character cut once fell.
+            throw new Error(`${'refused by the wiki gateway; '.repeat(6)}token ${secret} rejected`);
+          }
+          return new Response('# One', { headers: { 'content-type': 'text/markdown' } });
+        },
+      privateHosts: privateHostAllowlist(''),
+    });
     try {
       await expect(
         harness.action(internal.docSyncActions.syncSource, { sourceId }),
       ).resolves.toMatchObject({ ok: true, pages: 1, complete: true });
     } finally {
-      vi.unstubAllGlobals();
+      __setPageConnectionForTest(undefined);
     }
     expect(seen).toEqual([`Bearer ${secret}`, `Bearer ${secret}`]);
     const stored = await harness.run(async (ctx) => ({

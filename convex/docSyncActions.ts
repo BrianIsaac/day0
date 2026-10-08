@@ -52,6 +52,17 @@ export { SYNC_HELD_REASON };
  */
 export const MAX_STORED_PAGE_BYTES = 768 * 1024;
 
+/**
+ * How many times one sync starts its listing again when the listing changed under its cursor
+ * before it stops (M19). A source written into all day would otherwise restart without end, its
+ * runs piling up and its status never leaving `linking`.
+ */
+export const MAX_LISTING_RESTARTS = 3;
+
+/** Why a sync stopped after {@link MAX_LISTING_RESTARTS} restarts, as the source's card says it. */
+export const LISTING_RESTARTS_REASON =
+  'The source kept changing while it was read: its listing changed under the sync and again after each of three fresh starts, so this sync stopped. The next scheduled sync reads it again from the first page.';
+
 /** What one batch persisted, and the pages it could not. */
 export interface PersistedBatch {
   refs: string[];
@@ -567,6 +578,21 @@ export const syncBatch = internalAction({
       return { ok: true, ...counts, complete: false };
     } catch (error) {
       if (error instanceof ListingChangedError) {
+        if ((context.run.restarts ?? 0) >= MAX_LISTING_RESTARTS) {
+          await ctx.runMutation(internal.docSources.failSync, {
+            sourceId: source._id,
+            runId: args.runId,
+            status: 'error',
+            reason: LISTING_RESTARTS_REASON,
+          });
+          return {
+            ok: false,
+            pages: 0,
+            redactions: 0,
+            complete: true,
+            reason: LISTING_RESTARTS_REASON,
+          };
+        }
         const restarted = await ctx.runMutation(internal.docSources.restartSync, {
           sourceId: source._id,
           runId: args.runId,

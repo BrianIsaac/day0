@@ -16,59 +16,75 @@ const queries = vi.hoisted(() => ({
   newDoc: false,
 }));
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: unknown, args: unknown): unknown => {
-    const name = getFunctionName(reference as never);
-    if (args === 'skip') return undefined;
-    if (!queries.surfacesLoaded && name === 'surfaces:listForAgent') return undefined;
-    if (name === 'surfaces:listForAgent') {
-      return [
-        {
-          _id: 'surface-linear',
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
-          verdict: 'declared',
-          whereFound: [],
-          credentialLanded: false,
-        },
-      ].map((row) => withListedIdentity(row));
-    }
-    if (name === 'charters:latest') return null;
-    if (name === 'mock:listDocs') {
-      return [
-        {
-          _id: 'doc-1',
-          slug: 'doc',
-          title: 'Operating handbook',
-          body: 'How the team works.',
-          category: 'team-doc',
-        },
-        {
-          _id: 'doc-2',
-          slug: 'doc-2',
-          title: 'Linear automation',
-          body: 'How work enters the queue.',
-          category: 'how-to-guide',
-        },
-        ...(queries.newDoc
-          ? [
-              {
-                _id: 'doc-3',
-                slug: 'doc-3',
-                title: 'Close checklist',
-                body: 'What the close needs.',
-                category: 'how-to-guide',
-              },
-            ]
-          : []),
-      ];
-    }
-    return [];
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-  useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+vi.mock('convex/react', () => {
+  /** The office's documents, the list's page and each open document alike. */
+  const officeDocs = (): Array<{
+    _id: string;
+    slug: string;
+    title: string;
+    body: string;
+    category: string;
+  }> => [
+    {
+      _id: 'doc-1',
+      slug: 'doc',
+      title: 'Operating handbook',
+      body: 'How the team works.',
+      category: 'team-doc',
+    },
+    {
+      _id: 'doc-2',
+      slug: 'doc-2',
+      title: 'Linear automation',
+      body: 'How work enters the queue.',
+      category: 'how-to-guide',
+    },
+    ...(queries.newDoc
+      ? [
+          {
+            _id: 'doc-3',
+            slug: 'doc-3',
+            title: 'Close checklist',
+            body: 'What the close needs.',
+            category: 'how-to-guide',
+          },
+        ]
+      : []),
+  ];
+  return {
+    usePaginatedQuery: (reference: unknown) => ({
+      results: getFunctionName(reference as never) === 'mock:listDocs' ? officeDocs() : [],
+      status: 'Exhausted',
+      loadMore: (): void => undefined,
+    }),
+    useQuery: (reference: unknown, args: unknown): unknown => {
+      const name = getFunctionName(reference as never);
+      if (args === 'skip') return undefined;
+      if (!queries.surfacesLoaded && name === 'surfaces:listForAgent') return undefined;
+      if (name === 'surfaces:listForAgent') {
+        return [
+          {
+            _id: 'surface-linear',
+            slug: 'linear',
+            displayName: 'Linear',
+            class: 'kanban',
+            verdict: 'declared',
+            whereFound: [],
+            credentialLanded: false,
+          },
+        ].map((row) => withListedIdentity(row));
+      }
+      if (name === 'charters:latest') return null;
+      // The tab reads the list a page at a time and the open document whole (M17).
+      if (name === 'mock:getDoc') {
+        return officeDocs().find((doc) => doc.slug === (args as { slug: string }).slug) ?? null;
+      }
+      return [];
+    },
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
