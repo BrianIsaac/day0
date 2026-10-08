@@ -14,6 +14,7 @@ import { browserSignedInMarker, browserTitleMarker } from '../src/surfaces/brows
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
+import { webUiAddressRefusal } from '../src/surfaces/browser-address';
 import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import type { ReopenOutcome } from './surfaceReopen';
 import {
@@ -124,6 +125,11 @@ export interface DocumentedEndpoints {
   webUi?: string;
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
+  /**
+   * The first web UI the browser rung would not open (`webUiAddressRefusal`: plain http on a host
+   * `DAY0_PRIVATE_HOSTS` does not list), when no other page became the web UI.
+   */
+  refusedWebUi?: string;
   /** The first MCP endpoint the probe's address rule refuses, with the probe's own reason. */
   refusedMcp?: RefusedEndpoint;
   /** The first API base the probe's address rule refuses, with the probe's own reason. */
@@ -686,9 +692,10 @@ export function isCredentialSafeEndpoint(url: string): boolean {
  * @param urls - URLs attributed to one system.
  * @param privateHosts - The operator's private-host allowlist; the environment's when omitted.
  * @returns The first MCP endpoint and the first API base the probe would admit, the first
- *   other URL on a host nothing refused, the first plaintext public endpoint refused as an
- *   MCP or API base, and the first MCP endpoint and API base the probe's address rule refuses
- *   when none of their kind is admitted.
+ *   other URL on a host nothing refused that the browser rung would open (`webUiAddressRefusal`)
+ *   and, when there is none, the first it would not, the first plaintext public endpoint refused
+ *   as an MCP or API base, and the first MCP endpoint and API base the probe's address rule
+ *   refuses when none of their kind is admitted.
  */
 export function documentedEndpoints(
   urls: string[],
@@ -721,18 +728,24 @@ export function documentedEndpoints(
       ...plaintextPublic,
     ].map(hostnameOf),
   );
-  const webUi = urls.find((url: string): boolean => {
+  const webUiCandidates = urls.filter((url: string): boolean => {
     const bare = withoutFragment(url);
     return (
       bare !== mcp && bare !== api && !carriesUserinfo(url) && !refusedHosts.has(hostnameOf(url))
     );
   });
+  // The browser rung signs in over the page's own scheme, so a plaintext page is a web UI only
+  // on a host the operator listed (M20, R9).
+  const webUi = webUiCandidates.find(
+    (url: string): boolean => webUiAddressRefusal(url, privateHosts) === undefined,
+  );
   const refusedApi = api === undefined ? firstRefused(judgedApi) : undefined;
   return {
     mcp,
     api,
     webUi,
     insecure: plaintextPublic[0],
+    refusedWebUi: webUi === undefined ? webUiCandidates[0] : undefined,
     refusedMcp: mcp === undefined ? firstRefused(judgedMcp) : undefined,
     // The address rule is the MCP client's; only the noun on the card differs.
     refusedApi:
@@ -1511,8 +1524,15 @@ export function surfaceDocumentation(
   const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
     explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
   );
+  // A web UI the browser rung refused is documented, not absent: its card says why it was not
+  // opened (M20).
   const absent =
-    matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi);
+    matches.length === 0 ||
+    (explicitNone &&
+      !endpoints.mcp &&
+      !endpoints.api &&
+      !endpoints.webUi &&
+      !endpoints.refusedWebUi);
   return { matches, relevantText, endpoints, absent };
 }
 
@@ -1635,6 +1655,10 @@ export async function orientSurface(
     openQuestions.push(
       `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
     );
+  }
+  if (endpoints.refusedWebUi) {
+    const refusal = webUiAddressRefusal(endpoints.refusedWebUi);
+    if (refusal !== undefined) openQuestions.push(refusal);
   }
   if (endpoints.refusedMcp) {
     openQuestions.push(

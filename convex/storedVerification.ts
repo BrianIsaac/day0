@@ -30,6 +30,7 @@ import {
   type AuthorRunbookPage,
 } from './skillAuthorPrompt';
 import { holdSandboxLease, namedHarnessSurfaces, verifyAuthoredSkill } from './skillSandboxCheck';
+import { linkedRunbookPages } from './documentationWindows';
 import {
   FAILED_VERIFICATION_LOG_CHARS,
   recordAuthoringFailure,
@@ -124,14 +125,20 @@ export const verifyStoredSkill = internalAction({
     if (!claim.claimed) return { ok: false, reason: claim.reason };
     const { skill, version } = target;
     const { runId } = claim;
-    const [surfaceRows, pageRows]: [Doc<'surfaces'>[], Doc<'docPages'>[]] = await Promise.all([
-      ctx.runQuery(internal.orientationData.surfacesForAgent, { agentId: skill.agentId }),
-      ctx.runQuery(internal.orientationData.pagesForAgent, { agentId: skill.agentId }),
-    ]);
+    const surfaceRows: Doc<'surfaces'>[] = await ctx.runQuery(
+      internal.orientationData.surfacesForAgent,
+      { agentId: skill.agentId },
+    );
     const surfaces = surfaceRows.map(toSurfaceRecord);
+    // The pages are read only to write a check, a window at a time (F2 D5).
     const smokeTest =
       version.smokeTest ??
-      (await writeKeptCheck(ctx, { skill, body: version.body, surfaces, pages: pageRows }));
+      (await writeKeptCheck(ctx, {
+        skill,
+        body: version.body,
+        surfaces,
+        pages: await linkedRunbookPages(ctx, skill.agentId, skill, surfaces, 'kept-check'),
+      }));
     const stop =
       typeof smokeTest === 'string'
         ? await runStoredVerification(ctx, {

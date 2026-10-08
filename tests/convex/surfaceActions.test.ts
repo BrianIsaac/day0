@@ -1992,6 +1992,11 @@ describe('a dedicated app that has not been invited to its channels', (): void =
 });
 
 describe('probing the browser floor', (): void => {
+  beforeEach((): void => {
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
+  });
+
   const TILE = 'http://looker-tile:8080/';
   const TITLE = 'Sign in - Looker';
   /** This deployment runs the browser component, at the address `--profile browser` starts. */
@@ -2089,6 +2094,28 @@ describe('probing the browser floor', (): void => {
     await expect(probeBrowserSurface(request({ markers: {} }), () => client)).rejects.toThrow(
       'No probe marker (a page title, or an element after sign-in) is documented',
     );
+  });
+
+  it('refuses a public web UI over http before it opens a driver session (M20)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
+    const makeClient = vi.fn(() => fakeDriver({}).client);
+    await expect(
+      probeBrowserSurface(request({ endpoint: 'http://portal.example.com/login' }), makeClient),
+    ).rejects.toThrow(
+      'The web UI http://portal.example.com/login is plain http on a host DAY0_PRIVATE_HOSTS does not list',
+    );
+    expect(makeClient).not.toHaveBeenCalled();
+  });
+
+  it('opens a plaintext web UI only on a host DAY0_PRIVATE_HOSTS lists (R9)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    await expect(probeBrowserSurface(request(), () => fakeDriver({}).client)).rejects.toThrow(
+      `The web UI ${TILE} is plain http on a host DAY0_PRIVATE_HOSTS does not list`,
+    );
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
+    const { client, navigated } = fakeDriver({});
+    await probeBrowserSurface(request(), () => client);
+    expect(navigated).toEqual([{ name: 'browser_navigate', args: { url: TILE } }]);
   });
 
   it('fails when the driver reports an error rather than reading it as no tools', async (): Promise<void> => {

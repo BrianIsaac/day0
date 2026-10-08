@@ -1,0 +1,7 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "content": "# How to refresh the Looker pipeline tile\n\n1. Open the Q3 board in Looker.\n2. Select the pipeline tile and choose **Refresh**.\n3. Post the new total in the RevOps channel.\n\n```text\nlooker refresh --tile pipeline\n```\n"
+  }
+}

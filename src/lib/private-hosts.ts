@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { isDiallablePrivateAddress } from './network-addresses';
+import { isDiallablePrivateAddress, isNonPublicAddress } from './network-addresses';
 
 /**
  * The operator's list of hosts inside their own network that day0 may reach.
@@ -35,14 +35,14 @@ const HOST_NAME =
   /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
- * Parse the allowlist.
+ * Parse a host list in the private list's grammar, naming the variable it came from.
  *
+ * @param variable - The environment name a refusal names.
  * @param value - The variable's value: entries separated by commas or whitespace.
- * @returns The names and suffixes, lower-cased, without a trailing dot or IPv6 brackets.
  * @throws Error naming the variable when an entry is not a host name, an IP address or a
  *   `.suffix`, or names loopback, link-local, multicast, an unspecified address or `localhost`.
  */
-export function privateHostAllowlist(value: string | undefined): PrivateHostAllowlist {
+function hostList(variable: string, value: string | undefined): PrivateHostAllowlist {
   const names: string[] = [];
   const suffixes: string[] = [];
   for (const entry of (value ?? '').split(/[\s,]+/).filter(Boolean)) {
@@ -54,7 +54,7 @@ export function privateHostAllowlist(value: string | undefined): PrivateHostAllo
       key.endsWith('.localhost')
     ) {
       throw new Error(
-        `${PRIVATE_HOSTS_VAR} lists "${entry}", which is this machine or an address day0 never ` +
+        `${variable} lists "${entry}", which is this machine or an address day0 never ` +
           'dials (loopback, link-local, multicast or unspecified), listed or not.',
       );
     }
@@ -65,12 +65,24 @@ export function privateHostAllowlist(value: string | undefined): PrivateHostAllo
       names.push(key);
     } else {
       throw new Error(
-        `${PRIVATE_HOSTS_VAR} entries are host names, IP addresses or .suffix forms, ` +
+        `${variable} entries are host names, IP addresses or .suffix forms, ` +
           `separated by commas or spaces; "${entry}" is none of those.`,
       );
     }
   }
   return { names, suffixes };
+}
+
+/**
+ * Parse the allowlist.
+ *
+ * @param value - The variable's value: entries separated by commas or whitespace.
+ * @returns The names and suffixes, lower-cased, without a trailing dot or IPv6 brackets.
+ * @throws Error naming the variable when an entry is not a host name, an IP address or a
+ *   `.suffix`, or names loopback, link-local, multicast, an unspecified address or `localhost`.
+ */
+export function privateHostAllowlist(value: string | undefined): PrivateHostAllowlist {
+  return hostList(PRIVATE_HOSTS_VAR, value);
 }
 
 /**
@@ -83,11 +95,64 @@ export function privateHostAllowlist(value: string | undefined): PrivateHostAllo
  * @param allowlist - The parsed allowlist.
  */
 export function isPrivateHostAllowed(hostname: string, allowlist: PrivateHostAllowlist): boolean {
+  return isListed(hostname, allowlist);
+}
+
+/** Whether a host is a name in a list or under one of its suffixes. */
+function isListed(hostname: string, list: PrivateHostAllowlist): boolean {
   const key = hostKey(hostname);
-  return allowlist.names.includes(key) || allowlist.suffixes.some((suffix) => key.endsWith(suffix));
+  return list.names.includes(key) || list.suffixes.some((suffix) => key.endsWith(suffix));
 }
 
 /** The allowlist this process's environment configures. */
 export function configuredPrivateHosts(): PrivateHostAllowlist {
   return privateHostAllowlist(process.env[PRIVATE_HOSTS_VAR]);
+}
+
+/**
+ * The operator's list of git hosts day0 may clone from beyond GitHub and GitLab.
+ *
+ * A public code host such as Gitee or JiHu, or the customer's own, is not a
+ * host inside the operator's network, so it does not belong in
+ * `DAY0_PRIVATE_HOSTS`, where listing it would let every reader that honours
+ * that list (an MCP server's, a git repository's) treat it as private. This
+ * list is read by the git reader alone: a listed host is cloned on the clone
+ * path, resolved once and pinned to its checked address as a private host is,
+ * and is never a private host anywhere else. Its grammar is the private list's.
+ */
+export const GIT_HOSTS_VAR = 'DAY0_GIT_HOSTS';
+
+/**
+ * Parse the git hosts list.
+ *
+ * @param value - The variable's value: entries separated by commas or whitespace.
+ * @returns The names and suffixes, as the private list's parser returns them.
+ * @throws Error naming `DAY0_GIT_HOSTS` for an entry the private list would refuse, or an IP
+ *   address that is not public, which is a private host and listed as one.
+ */
+export function gitHostAllowlist(value: string | undefined): PrivateHostAllowlist {
+  const list = hostList(GIT_HOSTS_VAR, value);
+  const inside = list.names.find((name) => isIP(name) !== 0 && isNonPublicAddress(name));
+  if (inside !== undefined) {
+    throw new Error(
+      `${GIT_HOSTS_VAR} lists "${inside}", an address that is not public: list a host inside ` +
+        `your network in ${PRIVATE_HOSTS_VAR} instead.`,
+    );
+  }
+  return list;
+}
+
+/**
+ * Whether the operator listed this host as a git host.
+ *
+ * @param hostname - A URL's hostname, brackets and trailing dot allowed.
+ * @param list - The parsed git hosts list.
+ */
+export function isGitHostListed(hostname: string, list: PrivateHostAllowlist): boolean {
+  return isListed(hostname, list);
+}
+
+/** The git hosts list this process's environment configures. */
+export function configuredGitHosts(): PrivateHostAllowlist {
+  return gitHostAllowlist(process.env[GIT_HOSTS_VAR]);
 }

@@ -67,6 +67,62 @@ describe('LinkSourceForm', (): void => {
     view.unmount();
   });
 
+  it('links a Feishu wiki space with its region and app, joining the ID and secret and clearing both (14-F)', async (): Promise<void> => {
+    const view = mount(<LinkSourceForm />);
+    const choose = (id: string, value: string): void => {
+      const select = field<HTMLSelectElement>(view.container, id);
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      act((): void => {
+        setter?.call(select, value);
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    };
+    choose('source-kind', 'feishu');
+    choose('feishu-region', 'lark');
+    typeInto(field(view.container, 'source-label'), 'RevOps wiki');
+    typeInto(field(view.container, 'source-locator'), '7300000000000000001');
+    field<HTMLInputElement>(view.container, 'feishu-app-id').value = 'cli_fixture_app';
+    field<HTMLInputElement>(view.container, 'feishu-app-secret').value = 'fixture-app-secret';
+
+    await press(view.container, 'Link location');
+    await settle();
+
+    expect(backend.calls).toEqual([
+      {
+        name: 'docSources:link',
+        args: {
+          label: 'RevOps wiki',
+          kind: 'feishu',
+          locator: 'https://open.larksuite.com/wiki/spaces/7300000000000000001',
+          serverKind: undefined,
+          credential: 'cli_fixture_app:fixture-app-secret',
+        },
+      },
+    ]);
+    expect(field<HTMLInputElement>(view.container, 'feishu-app-secret').value).toBe('');
+    expect(field<HTMLInputElement>(view.container, 'feishu-app-id').value).toBe('');
+    view.unmount();
+  });
+
+  it('clears the folder default label when another kind is chosen, and keeps a typed one (14-F)', (): void => {
+    const view = mount(<LinkSourceForm />);
+    const kind = field<HTMLSelectElement>(view.container, 'source-kind');
+    const choose = (value: string): void => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      act((): void => {
+        setter?.call(kind, value);
+        kind.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    };
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('Team folder');
+    choose('feishu');
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('');
+    typeInto(field(view.container, 'source-label'), 'RevOps wiki');
+    choose('git');
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('RevOps wiki');
+    view.unmount();
+  });
+
   it('says a refusal under the form without the transport envelope', async (): Promise<void> => {
     backend.refusal =
       '[CONVEX A(docSources:link)] [Request ID: 1] Server Error\nUncaught Error: Documentation linking is a real-mode feature.\n    at handler (../convex/docSources.ts:1:1)';

@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { paginationOptsValidator, type PaginationResult } from 'convex/server';
 import {
   internalMutation,
   internalQuery,
@@ -13,6 +14,7 @@ import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { groundTicketWork, type TicketGroundingItem } from '../src/work/office-tickets';
 import { selectedDocumentation, selectionRequestValidator } from './docSelection';
+import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
  * Read + write API for the mock work environment.
@@ -72,20 +74,50 @@ export async function readableDocs(
 }
 
 /**
+ * The most documents a mock office's snapshot reads (M17). A mock office never syncs
+ * documentation (linking is real mode only), so its documents are the seed's fixed set
+ * (`convex/mockSeed.ts`, eleven pages), with room for the seed to grow; an office holding more is
+ * refused rather than read whole or cut short.
+ */
+export const MOCK_OFFICE_DOCS_READ = 32;
+
+/**
+ * The documents a run's snapshot reads: in mock mode the office's fixed set, at most
+ * {@link MOCK_OFFICE_DOCS_READ}; in real mode the employee's whole mirror, which the selection
+ * replaces (14-R).
+ *
+ * @throws Error when a mock office holds more than {@link MOCK_OFFICE_DOCS_READ} documents.
+ */
+async function snapshotDocs(db: DatabaseReader, agentId: Id<'agents'>): Promise<Doc<'mockDocs'>[]> {
+  const stored = db.query('mockDocs').withIndex('by_agent_slug', (q) => q.eq('agentId', agentId));
+  if (SURFACE_MODE === 'real') return await stored.collect();
+  const docs = await stored.take(MOCK_OFFICE_DOCS_READ + 1);
+  if (docs.length > MOCK_OFFICE_DOCS_READ) {
+    throw new Error(
+      `The mock office holds more than ${MOCK_OFFICE_DOCS_READ} documents, more than its fixed set; a snapshot reads at most that many.`,
+    );
+  }
+  return docs;
+}
+
+/**
  * Internal snapshot used only by an already-authorised scheduler continuation. Its documents are
- * the ones the employee reads ({@link readableDocs}): every one whole, or with `selection` (real
- * mode only, wave 14's 14-R) the pages and blocks one item needs, cited, within 24,000
- * characters (`docSelection.selectedDocumentation`). Mock mode and the frozen evaluation pass no
- * selection and read the whole mirror (R3).
+ * the ones the employee reads ({@link readableDocs}): with no `selection`, every one whole, read
+ * by {@link snapshotDocs} (a mock office at most {@link MOCK_OFFICE_DOCS_READ}); with `selection`
+ * (real mode only, wave 14's 14-R) the pages and blocks one item needs from the whole mirror,
+ * cited, within 24,000 characters (`docSelection.selectedDocumentation`). Mock mode and the frozen
+ * evaluation pass no selection (R3).
  */
 export const snapshotInternal = internalQuery({
   args: { agentId: v.id('agents'), selection: v.optional(selectionRequestValidator) },
   handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
     const [stored, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
-      ctx.db
-        .query('mockDocs')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
-        .collect(),
+      args.selection === undefined
+        ? snapshotDocs(ctx.db, args.agentId)
+        : ctx.db
+            .query('mockDocs')
+            .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
+            .collect(),
       ctx.db
         .query('mockSpreadsheets')
         .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
@@ -180,16 +212,55 @@ export const snapshotInternal = internalQuery({
 
 // ---------- Docs ----------
 
-/** Public, owner-guarded: the mock office's documents one employee reads ({@link readableDocs}). */
+/** The most documents one page of {@link listDocs} reads. */
+const DOCS_LIST_ROWS = 100;
+
+/**
+ * The most one page of {@link listDocs} reads, in bytes: a mirrored page carries its whole body
+ * (up to 768 KiB), so a page of the list stops well under a query's 16 MiB read (M17).
+ */
+const DOCS_LIST_BYTES = 4 * 1024 * 1024;
+
+/** One document as the Docs list shows it: what the rail names, without the body. */
+export interface MockDocListing {
+  readonly _id: Id<'mockDocs'>;
+  readonly slug: string;
+  readonly title: string;
+  readonly category: Doc<'mockDocs'>['category'];
+  readonly sourceId?: Id<'docSources'>;
+}
+
+/**
+ * Public, owner-guarded: one page of the documents an employee reads ({@link readableDocs}), in
+ * slug order, each without its body ({@link getDoc} reads one page whole). Reads at most
+ * {@link DOCS_LIST_ROWS} documents and {@link DOCS_LIST_BYTES} bytes a page (M17, R6); writes
+ * nothing.
+ */
 export const listDocs = query({
-  args: { agentId: v.id('agents') },
-  handler: async (ctx, args) => {
+  args: { agentId: v.id('agents'), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args): Promise<PaginationResult<MockDocListing>> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const stored = await ctx.db
+    const result = await ctx.db
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId))
-      .collect();
-    return await readableDocs(ctx.db, agent, stored);
+      .paginate({
+        ...args.paginationOpts,
+        numItems: Math.min(args.paginationOpts.numItems, DOCS_LIST_ROWS),
+        maximumBytesRead: DOCS_LIST_BYTES,
+      });
+    const readable = await readableDocs(ctx.db, agent, result.page);
+    return {
+      ...result,
+      page: readable.map(
+        (doc): MockDocListing => ({
+          _id: doc._id,
+          slug: doc.slug,
+          title: doc.title,
+          category: doc.category,
+          ...(doc.sourceId !== undefined ? { sourceId: doc.sourceId } : {}),
+        }),
+      ),
+    };
   },
 });
 
@@ -212,7 +283,8 @@ export const getDoc = query({
  * Upsert one page of an agent's Docs surface by slug. Internal; written by the
  * seed and by the documentation sync's mirror. A sync names its generation
  * and writes nothing once a newer sync has superseded it (step 14). A page of a source the
- * employee does not read ({@link mirrorReadable}) is not written.
+ * employee does not read ({@link mirrorReadable}) is not written, nor one of a source that no
+ * longer exists, which a deploy's mirroring that crossed an unlink would otherwise leave (M18).
  *
  * @returns The page's id, or null when nothing was written.
  * @throws Error when `syncRunId` is given without its source, or is not the

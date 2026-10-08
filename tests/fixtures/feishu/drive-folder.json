@@ -1,0 +1,29 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "files": [
+      {
+        "name": "Q3 close checklist",
+        "parent_token": "fldcnRevOpsFolder0000000000",
+        "token": "doxcnCloseChecklist00000000",
+        "type": "docx",
+        "created_time": "1759226400",
+        "modified_time": "1759334400",
+        "owner_id": "ou_fixture_owner",
+        "url": "https://feishu.cn/docx/doxcnCloseChecklist00000000"
+      },
+      {
+        "name": "Archive",
+        "parent_token": "fldcnRevOpsFolder0000000000",
+        "token": "fldcnArchive000000000000000",
+        "type": "folder",
+        "created_time": "1759226400",
+        "modified_time": "1759334400",
+        "owner_id": "ou_fixture_owner",
+        "url": "https://feishu.cn/drive/folder/fldcnArchive000000000000000"
+      }
+    ],
+    "has_more": false
+  }
+}

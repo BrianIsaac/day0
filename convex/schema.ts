@@ -383,7 +383,18 @@ export default defineSchema({
   docSources: defineTable({
     userId: v.string(),
     label: v.string(),
-    kind: v.union(v.literal('mcp'), v.literal('folder'), v.literal('git'), v.literal('urls')),
+    kind: v.union(
+      v.literal('mcp'),
+      v.literal('folder'),
+      v.literal('git'),
+      v.literal('urls'),
+      /**
+       * A Feishu or Lark wiki space or Drive folder (wave 14, 14-F). The region is the locator's
+       * host (`open.feishu.cn` or `open.larksuite.com`); the app's ID and secret are the reader
+       * secret, held as `credentialId`. No field of its own.
+       */
+      v.literal('feishu'),
+    ),
     locator: v.string(),
     serverKind: v.optional(
       v.union(
