@@ -53,6 +53,7 @@ import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
 import { backfillMessagesTabPage } from './slackMessagesTab';
 import { replacePageBlocks } from './docBlocks';
+import { log } from '../src/lib/logger';
 import { notTheirAddresses } from './peopleProposals';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
@@ -962,13 +963,56 @@ const MIGRATION_PAGES: Readonly<
 };
 
 /**
- * Stored pages one page of the block backfill reads, bounded so a page of the pass stays inside a
- * transaction's limits whatever its pages: each splits into at most `MAX_BLOCKS_PER_PAGE` (1,500)
- * blocks, all written (and, on a second run, read back) in the same transaction, so four pages
- * write at most 6,000 documents of the 16,000 allowed; and a byte bound, since a block's search
- * text is about three times a CJK page's.
+ * Stored pages one page of the block backfill reads: one, so a page of the pass writes one stored
+ * page's blocks at most, which its bounded heading paths keep under a transaction's 16 MiB however
+ * the page is cut (W14-R1: four pages a transaction let two pages of long nested headings write
+ * past it, and the pass then failed on every call).
  */
-const BLOCK_BACKFILL_READ = { numItems: 4, maximumBytesRead: 1024 * 1024 } as const;
+const BLOCK_BACKFILL_READ = { numItems: 1, maximumBytesRead: 1024 * 1024 } as const;
+
+/** The pages a pass-over note names before it counts the rest. */
+const PASSED_OVER_NAMED = 10;
+
+/**
+ * The block backfill's note with one more page it could not split (W14-R1), read back from the
+ * note it already holds: the count, then the first pages by ref.
+ */
+export function passedOverNote(previous: string | undefined, ref: string): string {
+  const held = /^(\d+) pages? could not be split[^:]*: (.*?)(?: and \d+ more)?\.$/.exec(
+    previous ?? '',
+  );
+  const count = (held === null ? 0 : Number(held[1])) + 1;
+  const named = held === null ? [] : held[2].split(', ');
+  const listed = named.length < PASSED_OVER_NAMED ? [...named, ref] : named;
+  const more = count - listed.length;
+  return `${count} ${count === 1 ? 'page' : 'pages'} could not be split into sections for the documentation search, so the search does not find ${count === 1 ? 'it' : 'them'}: ${listed.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`;
+}
+
+/**
+ * Pass over the stored page the block backfill stands at, which it could not split, and record it
+ * in the pass's note (W14-R1). Internal; `runPending` calls it when that page's run fails twice, so
+ * the pass goes on to the next page and the passes after it still run. The page keeps its
+ * Markdown and is split again when a sync next stores it.
+ */
+export const passOverBlockPage = internalMutation({
+  args: {},
+  handler: async (ctx): Promise<MigrationProgress> => {
+    const name = 'docs-backfill-blocks';
+    const row = await migrationRow(ctx, name);
+    if (row?.completedAt !== undefined) return { ...progressOf(name, row), finishedEarlier: true };
+    const page = await ctx.db
+      .query('docPages')
+      .paginate({ ...BLOCK_BACKFILL_READ, cursor: row?.cursor ?? null });
+    const [stored] = page.page;
+    return await recordPage(ctx, name, row, {
+      read: page.page.length,
+      changed: 0,
+      cursor: page.continueCursor,
+      isDone: page.isDone,
+      ...(stored === undefined ? {} : { note: passedOverNote(row?.note, stored.ref) }),
+    });
+  },
+});
 
 /** Whose blocks a source's pages are, and the run they are filed under; null for a gone source. */
 async function blockOwnerOf(
@@ -1164,6 +1208,7 @@ export const recordActionPage = internalMutation({
  * and record where it reached.
  */
 async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<MigrationProgress> {
+  if (name === 'docs-backfill-blocks') return await runBlockBackfillPage(ctx);
   if (!isActionMigration(name)) {
     return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
   }
@@ -1175,6 +1220,27 @@ async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<Migrati
     fromCursor: start.cursor,
     page,
   });
+}
+
+/**
+ * Run the block backfill's next page, tried twice; a page that fails both is passed over and named
+ * in the pass's note (W14-R1), so one page the backend will not write never stops the upgrade.
+ */
+async function runBlockBackfillPage(ctx: ActionCtx): Promise<MigrationProgress> {
+  const name = 'docs-backfill-blocks';
+  let failure: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
+    } catch (error) {
+      failure = error;
+    }
+  }
+  log.warn('migration page passed over', {
+    migration: name,
+    reason: failure instanceof Error ? failure.message : String(failure),
+  });
+  return await ctx.runMutation(internal.migrations.passOverBlockPage, {});
 }
 
 /**

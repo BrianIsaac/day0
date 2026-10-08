@@ -5,7 +5,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
+import { MIGRATION_NAMES, MIGRATIONS, passedOverNote } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
@@ -2997,6 +2997,50 @@ describe('the owner person at the upgrade (13-K)', (): void => {
   });
 });
 
+/** A completed run of a source, made its last completed sync. */
+async function completedRun(
+  harness: Harness,
+  sourceId: Id<'docSources'>,
+): Promise<Id<'docSyncRuns'>> {
+  return await harness.run(async (ctx) => {
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing: 1,
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: 2,
+    });
+    await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+    return runId;
+  });
+}
+
+/** A stored page of a source, written in its own transaction. */
+async function storedPage(
+  harness: Harness,
+  page: { sourceId: Id<'docSources'>; ref: string; markdown: string },
+): Promise<void> {
+  await harness.run(async (ctx) => {
+    await ctx.db.insert('docPages', { ...page, title: page.ref, updatedAt: 3 });
+  });
+}
+
+/** Five nested 200-character Han headings over 1,400 sections of their own, each with a line of text. */
+function nestedHanPage(seed: number): string {
+  const han = (length: number, offset: number): string =>
+    Array.from({ length }, (_unused, index) =>
+      String.fromCodePoint(0x4e00 + ((index * 7 + offset * 13) % 2_000)),
+    ).join('');
+  const outer = [1, 2, 3, 4, 5].map((level) => `${'#'.repeat(level)} ${han(200, seed + level)}`);
+  const sections = Array.from(
+    { length: 1_400 },
+    (_unused, index) => `###### ${han(200, seed + index)}\n\n${han(4, index)}`,
+  );
+  return [...outer, ...sections].join('\n\n');
+}
+
 describe('the block backfill (14-I)', (): void => {
   it('is registered at 0.18.0 after the wave 13 passes, the newest release any migration names', (): void => {
     expect(MIGRATIONS['docs-backfill-blocks'].release).toBe('0.18.0');
@@ -3104,9 +3148,16 @@ describe('the block backfill (14-I)', (): void => {
         .unique();
       if (row !== null) await ctx.db.delete(row._id);
     });
-    await expect(
-      harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-backfill-blocks' }),
-    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+    // One stored page a call since W14-R1, so the second run takes four calls to finish.
+    let second = await harness.mutation(internal.migrations.runMigrationPage, {
+      name: 'docs-backfill-blocks',
+    });
+    while (second.completedAt === undefined) {
+      second = await harness.mutation(internal.migrations.runMigrationPage, {
+        name: 'docs-backfill-blocks',
+      });
+    }
+    expect(second).toMatchObject({ read: 4, changed: 0, completedAt: expect.any(Number) });
     expect(await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect())).toEqual(
       blocks,
     );
@@ -3156,6 +3207,63 @@ describe('the block backfill (14-I)', (): void => {
     await runAll(harness);
     expect(await count()).toBe(12 * 1_400);
   }, 120_000);
+
+  it("splits pages of long nested CJK headings inside a transaction's limits (W14-R1)", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const runId = await completedRun(harness, sourceId);
+    // Reader 1's probe: five nested 200-character Han headings over 1,400 more of their own, so
+    // every block's path held 1,200 characters, twice, with its bigrams: past 16 MiB of rows a page.
+    for (const ref of ['nested-a.md', 'nested-b.md']) {
+      await storedPage(harness, { sourceId, ref, markdown: nestedHanPage(ref.length) });
+    }
+    await runAll(harness);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(blocks).toHaveLength(2 * 1_400);
+    expect(blocks.every((block) => block.generation === runId)).toBe(true);
+    expect(Math.max(...blocks.map((block) => block.headingPath.join('').length))).toBe(300);
+  }, 120_000);
+
+  it('records a page it cannot split in the pass’s note and goes on to the next (W14-R1)', async (): Promise<void> => {
+    // A tighter write limit than the backend's stands in for a page whose rows pass it.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesWritten: 1024 * 1024 },
+    });
+    const sourceId = await source(harness, 'owner');
+    await completedRun(harness, sourceId);
+    await storedPage(harness, { sourceId, ref: 'before.md', markdown: '# Before\n\nRead first.' });
+    await storedPage(harness, {
+      sourceId,
+      ref: 'too-large.md',
+      markdown: Array.from(
+        { length: 300 },
+        (_unused, index) => `## 第${index}节\n\n${'管道看板'.repeat(100)}`,
+      ).join('\n\n'),
+    });
+    await storedPage(harness, { sourceId, ref: 'after.md', markdown: '# After\n\nRead on.' });
+    await runAll(harness);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect([...new Set(blocks.map((block) => block.pageRef))].sort()).toEqual([
+      'after.md',
+      'before.md',
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    const row = status.migrations.find((entry) => entry.name === 'docs-backfill-blocks');
+    expect(row).toMatchObject({ read: 3, changed: 2, completedAt: expect.any(Number) });
+    expect(row?.note).toBe(
+      '1 page could not be split into sections for the documentation search, so the search does not find it: too-large.md.',
+    );
+  }, 120_000);
+
+  it('counts every page it passed over and names the first ten (W14-R1)', (): void => {
+    let note: string | undefined;
+    for (let index = 0; index < 12; index += 1) note = passedOverNote(note, `p${index}.md`);
+    expect(note).toBe(
+      '12 pages could not be split into sections for the documentation search, so the search does not find them: p0.md, p1.md, p2.md, p3.md, p4.md, p5.md, p6.md, p7.md, p8.md, p9.md and 2 more.',
+    );
+  });
 
   it('reads nothing on a deployment that stores no page, as the hosted mock deployment does', async (): Promise<void> => {
     const harness = limitedHarness();

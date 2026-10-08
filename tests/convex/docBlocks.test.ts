@@ -179,6 +179,41 @@ describe('splitStoredPage', (): void => {
   });
 });
 
+describe('splitStoredPage and a page of long nested headings (W14-R1)', (): void => {
+  it("writes the page's blocks inside a transaction's write limit, its paths bounded", async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { sourceId, runId } = await sourceOf(harness);
+    const han = (length: number, offset: number): string =>
+      Array.from({ length }, (_unused, index) =>
+        String.fromCodePoint(0x4e00 + ((index * 7 + offset * 13) % 2_000)),
+      ).join('');
+    // Reader 1's probe: past 16 MiB of rows while every block carried the whole 1,200-character path.
+    const markdown = [
+      ...[1, 2, 3, 4, 5].map((level) => `${'#'.repeat(level)} ${han(200, level)}`),
+      ...Array.from(
+        { length: 1_400 },
+        (_unused, index) => `###### ${han(200, index)}\n\n${han(4, index)}`,
+      ),
+    ].join('\n\n');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'nested.md',
+        title: 'Nested',
+        markdown,
+        updatedAt: 1,
+      });
+    });
+    await expect(
+      harness.mutation(internal.docBlocks.splitStoredPage, {
+        sourceId,
+        ref: 'nested.md',
+        generation: runId,
+      }),
+    ).resolves.toBe(1_400);
+  }, 60_000);
+});
+
 describe('searchBlocks', (): void => {
   it("answers the owner's blocks of the sources asked, never another owner's", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

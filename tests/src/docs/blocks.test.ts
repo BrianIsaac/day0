@@ -190,6 +190,17 @@ describe('splitPage', (): void => {
     expect(block.searchText.length).toBeLessThan(300);
   });
 
+  it('keeps at most 300 characters of the whole heading path a block carries, each level kept (W14-R1)', (): void => {
+    const nested = [1, 2, 3, 4, 5, 6]
+      .map((level) => `${'#'.repeat(level)} ${String.fromCodePoint(0x4e00 + level).repeat(200)}`)
+      .join('\n\n');
+    const [block] = splitPage(`${nested}\n\n正文。`);
+    expect(block.headingPath).toHaveLength(6);
+    expect(block.headingPath.every((heading) => heading.length === 50)).toBe(true);
+    const short = splitPage('# Close\n\n## Format\n\nOne comment.')[0];
+    expect(short.headingPath).toEqual(['Close', 'Format']);
+  });
+
   it('counts characters, not UTF-16 units', (): void => {
     expect(splitPage('Ship it 🚢')[0].chars).toBe(9);
   });
