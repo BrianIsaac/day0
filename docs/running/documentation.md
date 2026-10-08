@@ -15,7 +15,9 @@ documented-API example is checked that way once day0 reads that grammar.
 - A git source is a repository on GitHub or GitLab. IT can add other public code hosts in
   `DAY0_GIT_HOSTS` (for example `gitee.com`, the JiHu host `jihulab.com`, or the company's own),
   and hosts inside the company's network in `DAY0_PRIVATE_HOSTS`. A repository on any other host
-  is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host.
+  is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host: a host listed
+  there must resolve to a public address, and one that resolves inside the network is refused
+  until it is listed in `DAY0_PRIVATE_HOSTS` instead.
 - A repository on a host other than GitHub or GitLab is cloned, which needs a `git` binary in
   the backend. The stock backend image has none, and the source's status says so.
 - A Feishu or Lark source reads a wiki space, or a Drive folder and the folders under it, as the

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isIP } from 'node:net';
 import { basename, join } from 'node:path';
-import { isDiallablePrivateAddress } from '../../lib/network-addresses';
+import { isDiallablePrivateAddress, isNonPublicAddress } from '../../lib/network-addresses';
 import {
   configuredGitHosts,
   configuredPrivateHosts,
@@ -19,9 +19,18 @@ import { readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
+/**
+ * Which rule admitted a repository's host (14-F's ruling 2 (b)): GitHub and GitLab by name, a host
+ * inside the operator's network through `DAY0_PRIVATE_HOSTS`, or another public code host through
+ * `DAY0_GIT_HOSTS`, which must then answer with public addresses only.
+ */
+export type GitHostAdmission = 'archive-host' | 'private-hosts' | 'git-hosts';
+
 export interface GitLocator {
   url: URL;
   ref: string;
+  /** The rule that admitted the host; the clone holds its answers to that rule. */
+  admittedBy: GitHostAdmission;
 }
 
 /** The public hosts whose archives are read when the backend cannot clone. */
@@ -65,18 +74,22 @@ export function parseGitLocator(
         'the backend can read without one.',
     );
   }
-  if (
-    !ARCHIVE_HOSTS.includes(url.hostname) &&
-    !isPrivateHostAllowed(url.hostname, privateHosts) &&
-    !isGitHostListed(url.hostname, gitHosts ?? configuredGitHosts())
-  ) {
+  // A host in both lists is inside the network: that list's meaning is the wider one.
+  const admittedBy: GitHostAdmission | undefined = ARCHIVE_HOSTS.includes(url.hostname)
+    ? 'archive-host'
+    : isPrivateHostAllowed(url.hostname, privateHosts)
+      ? 'private-hosts'
+      : isGitHostListed(url.hostname, gitHosts ?? configuredGitHosts())
+        ? 'git-hosts'
+        : undefined;
+  if (admittedBy === undefined) {
     throw new Error(
       'Git documentation supports GitHub and GitLab archive URLs, and repositories on hosts ' +
         'listed in DAY0_GIT_HOSTS or DAY0_PRIVATE_HOSTS.',
     );
   }
   if (!ref.trim()) throw new Error('Git documentation ref cannot be empty.');
-  return { url, ref };
+  return { url, ref, admittedBy };
 }
 
 /**
@@ -183,7 +196,8 @@ export function gitPinsResolve(version: string): boolean {
  * GitHub and GitLab are cloned by name. A host the operator listed in
  * `DAY0_PRIVATE_HOSTS` or `DAY0_GIT_HOSTS` is resolved once, every answer is checked the way a
  * listed MCP server's are (never loopback, link-local, multicast or
- * unspecified), and git is told to dial only the first checked answer and to
+ * unspecified), and a host only `DAY0_GIT_HOSTS` admitted must answer with public addresses
+ * alone; git is told to dial only the first checked answer and to
  * follow no redirect, so neither a later DNS answer nor a 302 to a metadata
  * address reaches past the check.
  *
@@ -195,7 +209,8 @@ export function gitPinsResolve(version: string): boolean {
  * @param resolve - The resolver; the system's by default.
  * @param withSecret - Whether the clone carries the source's reader secret.
  * @returns The arguments after `git`.
- * @throws Error naming the host when it does not resolve or answers with an address day0 never dials.
+ * @throws Error naming the host when it does not resolve, answers with an address day0 never
+ *   dials, or was admitted as a public git host and answers with an address that is not public.
  */
 export async function cloneArguments(
   locator: GitLocator,
@@ -231,6 +246,17 @@ export async function cloneArguments(
     throw new Error(
       `The git host ${host} answers with an address day0 never dials (loopback, link-local, ` +
         'multicast or unspecified), listed or not.',
+    );
+  }
+  // A public code host is never a way into the network (14-F's ruling 2 (b)): a `.suffix` entry on
+  // a domain whose names someone else can point inward would otherwise be one.
+  const inside =
+    locator.admittedBy === 'git-hosts' ? addresses.find(isNonPublicAddress) : undefined;
+  if (inside !== undefined) {
+    throw new Error(
+      `The git host ${host} answers with an address that is not public (${inside}), and ` +
+        'DAY0_GIT_HOSTS lists public hosts only: list a host inside your network in ' +
+        'DAY0_PRIVATE_HOSTS instead.',
     );
   }
   const pinned = isIP(addresses[0]) === 6 ? `[${addresses[0]}]` : addresses[0];
