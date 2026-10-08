@@ -4,6 +4,7 @@
  */
 
 import { DEFAULT_LOCAL_MANAGER_ADDRESS } from '../../../src/agent/manager-address';
+import { DEMO_TILE_HOST } from '../../lib/demo-tile';
 
 /**
  * Application values copied from the operator's env file into the bed's.
@@ -95,6 +96,8 @@ export function bedEnvValues(input: BedEnvInput): Record<string, string> {
     DAY0_DOCS_ROOT: '/docs',
     DAY0_BROWSER_MCP_URL: BROWSER_MCP_URL,
     DAY0_REDACTOR_URL: REDACTOR_URL,
+    // Every rehearsal bed runs the demo profile, whose tile opens only on a listed private host.
+    DAY0_PRIVATE_HOSTS: DEMO_TILE_HOST,
   };
   for (const key of COPIED_KEYS) {
     const value = input.source[key];

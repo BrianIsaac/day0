@@ -1339,6 +1339,15 @@ export interface WorkPlanRedraftingPayload extends WorkItemNamed {
   readonly slug: string;
 }
 
+/**
+ * The payload of `work.plan-redraft`: a plan whose cited documentation changed after its approval,
+ * drafted again on the manager's Retry (14-R's gone cite, ruled 8 October 2026).
+ */
+export interface WorkPlanRedraftPayload extends WorkItemNamed {
+  /** The failed run's reason, which named the changed documentation. */
+  readonly reason: string;
+}
+
 /** The payload of `work.corrections-applied`. */
 export interface WorkCorrectionsAppliedPayload extends WorkItemNamed {
   readonly correctionIds: Id<'corrections'>[];
@@ -1911,6 +1920,7 @@ export interface EventPayloads {
   'work.plan-grounding-read': WorkPlanGroundingReadPayload;
   'work.plan-drafted': WorkPlanDraftedPayload;
   'work.plan-redrafting': WorkPlanRedraftingPayload;
+  'work.plan-redraft': WorkPlanRedraftPayload;
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
@@ -2114,6 +2124,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.plan-grounding-read',
   'work.plan-drafted',
   'work.plan-redrafting',
+  'work.plan-redraft',
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',

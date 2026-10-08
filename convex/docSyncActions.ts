@@ -628,9 +628,9 @@ export const syncBatch = internalAction({
 /**
  * Finish a generation that has read every page, one bounded transaction at a time.
  *
- * From the point the run's cursor records, the stored pages it did not list,
- * the superseded page credentials that have aged out and then the mirrors it
- * did not list are removed a page at a time, the employees'
+ * From the point the run's cursor records, the stored pages neither it nor the
+ * complete walk before it listed, the superseded page credentials that have
+ * aged out and then those pages' mirrors are removed a page at a time, the employees'
  * intake scopes are re-read against the pages as they now stand (real mode),
  * and `finishSync` supersedes the credentials no page states and publishes
  * the synced state. Each step is fenced on the run's cursor, so a newer sync

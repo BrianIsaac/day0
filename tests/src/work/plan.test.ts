@@ -296,6 +296,17 @@ describe('plan drafter grounding', (): void => {
     expect(user.indexOf('Refs:')).toBeLessThan(user.indexOf('Body:'));
   });
 
+  it('says in real mode that the documentation comes before the candidate and the surfaces after it, the mock head as it was (14-R, for 14-FW)', (): void => {
+    const real = planSystemPrompt(false, 'real');
+    expect(real).toContain(
+      "  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. Plan the steps a documented procedure prescribes on a connected surface;",
+    );
+    expect(real).not.toContain('may follow the candidate');
+    expect(planSystemPrompt(false, 'mock')).toContain(
+      "  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps",
+    );
+  });
+
   it('names the owner the provider returned beside the requester, and nothing when it returned none', (): void => {
     const withOwner = planUserPrompt({
       candidate: { ...candidate, owner: 'Ana', requester: 'Manager' },
@@ -303,6 +314,18 @@ describe('plan drafter grounding', (): void => {
     });
     expect(withOwner).toContain('From: Manager\nOwner: Ana\nTitle: Refresh the dashboard tile');
     expect(planUserPrompt({ candidate, charter })).not.toContain('Owner:');
+  });
+
+  it('prints the owner without the identities the People block keeps out, as it prints the requester (W13-R19)', (): void => {
+    const named = planUserPrompt({
+      candidate: { ...candidate, owner: 'Ana Ruiz <ana.ruiz@acme.test>' },
+      charter,
+    });
+    expect(named).toContain('\nOwner: Ana Ruiz\n');
+    expect(named).not.toContain('ana.ruiz@acme.test');
+    const idOnly = planUserPrompt({ candidate: { ...candidate, owner: 'U07ABCD1234' }, charter });
+    expect(idOnly).toContain('\nOwner: (unknown)\n');
+    expect(idOnly).not.toContain('U07ABCD1234');
   });
 
   it("puts the manager's answers to the charter's questions in the plan prompt", (): void => {

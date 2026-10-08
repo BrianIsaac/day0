@@ -511,6 +511,24 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan is drafted again in the words of the run its changed documentation failed (14-R, ruled 8 October)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-redraft',
+          payload: {
+            workItemId: 'w1',
+            reason:
+              'Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for \u201cDraft response for new tier-two RevOps ask\u201d is drafted again. Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',

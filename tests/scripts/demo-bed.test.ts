@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -23,6 +23,7 @@ import {
   assertBedProject,
   assertNotProtected,
   bedEnvDefaults,
+  imagesPreflightItem,
   bedPorts,
   composeImages,
   credentialKeyToAdopt,
@@ -63,6 +64,7 @@ import { READ_ONLY_PROJECTS as SETUP_READ_ONLY_PROJECTS } from '../../scripts/se
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 const COMPOSE_FILE = readFileSync(join(ROOT, 'docker-compose.yml'), 'utf8');
+const BACKEND_DOCKERFILE = readFileSync(join(ROOT, 'docker', 'backend.Dockerfile'), 'utf8');
 
 /** Every pre-flight fact true, so one test flips one at a time. */
 const READY: TierInputs = {
@@ -224,6 +226,9 @@ describe('what removes data asks first (Q12), and what a snapshot records (step 
     chmodSync(join(bin, 'docker'), 0o755);
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-u7-down\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     const down = (extra: string[]) =>
       spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -262,6 +267,9 @@ describe('the protected volumes and projects', (): void => {
       'COMPOSE_PROJECT_NAME=day0-p11r-test\nCOMPOSE_FILE=alternate.yml\n',
     );
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -284,7 +292,7 @@ describe('the protected volumes and projects', (): void => {
     }
   });
 
-  it('refuses every protected CLI project and file contract before Docker', (): void => {
+  it('refuses every protected CLI project and file contract before Docker', async (): Promise<void> => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-guard-'));
     const bin = join(scratch, 'bin');
     const calls = join(scratch, 'docker-calls');
@@ -292,37 +300,58 @@ describe('the protected volumes and projects', (): void => {
     const docker = join(bin, 'docker');
     writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
     chmodSync(docker, 0o755);
-    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
-    writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
     const command = join(ROOT, 'node_modules/.bin/tsx');
     const script = join(ROOT, 'scripts/demo-bed.ts');
-    const invoke = (args: string[]): void => {
-      const result = spawnSync(command, [script, ...args], {
-        cwd: scratch,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
-        encoding: 'utf8',
+    /** One checkout whose env file names this project, so every invocation can run at once. */
+    const checkoutFor = (project: string): string => {
+      const directory = join(scratch, project);
+      mkdirSync(join(directory, 'docker'), { recursive: true });
+      writeFileSync(join(directory, 'docker-compose.yml'), COMPOSE_FILE);
+      // The backend is built from the Dockerfile the compose file names beside it.
+      writeFileSync(join(directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+      writeFileSync(join(directory, 'snapshot.tar.gz'), 'test');
+      writeFileSync(join(directory, '.env.local'), `COMPOSE_PROJECT_NAME=${project}\n`);
+      return directory;
+    };
+    const invoke = async (cwd: string, args: string[]): Promise<void> => {
+      const result = await new Promise<{ status: number | null; stderr: string }>((resolve) => {
+        const child = spawn(command, [script, ...args], {
+          cwd,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+        });
+        let stderr = '';
+        child.stderr.on('data', (chunk: Buffer): void => {
+          stderr += chunk.toString('utf8');
+        });
+        child.on('close', (status): void => resolve({ status, stderr }));
       });
       expect([1, 2], args.join(' ')).toContain(result.status);
       expect(result.stderr, args.join(' ')).toMatch(
         /protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/,
       );
-      expect(existsSync(calls), args.join(' ')).toBe(false);
     };
     try {
-      for (const protectedProject of [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS]) {
-        writeFileSync(join(scratch, '.env.local'), `COMPOSE_PROJECT_NAME=${protectedProject}\n`);
-        invoke(['up', '--project', protectedProject]);
-        invoke(['restore', '--project', protectedProject, '--snapshot', 'snapshot.tar.gz']);
-        invoke(['down', '--project', protectedProject, '--volumes']);
-        invoke(['preflight', '--project', protectedProject, '--no-probe']);
-        invoke(['offline-rung', '--project', protectedProject, '--out', 'results']);
-        invoke(['snapshot', '--project', protectedProject]);
-        invoke(['up', '--project', 'day0-p11r-test']);
-        invoke(['restore', '--project', 'day0-p11r-test', '--snapshot', 'snapshot.tar.gz']);
-        invoke(['down', '--project', 'day0-p11r-test', '--volumes']);
-        invoke(['preflight', '--project', 'day0-p11r-test', '--no-probe']);
-        invoke(['offline-rung', '--project', 'day0-p11r-test', '--out', 'results']);
-      }
+      // Thirty-three processes, each refusing before Docker: run together, not one after another,
+      // so the test's time is one process's and not thirty-three under a loaded machine's.
+      await Promise.all(
+        [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS].flatMap((protectedProject) => {
+          const cwd = checkoutFor(protectedProject);
+          return [
+            ['up', '--project', protectedProject],
+            ['restore', '--project', protectedProject, '--snapshot', 'snapshot.tar.gz'],
+            ['down', '--project', protectedProject, '--volumes'],
+            ['preflight', '--project', protectedProject, '--no-probe'],
+            ['offline-rung', '--project', protectedProject, '--out', 'results'],
+            ['snapshot', '--project', protectedProject],
+            ['up', '--project', 'day0-p11r-test'],
+            ['restore', '--project', 'day0-p11r-test', '--snapshot', 'snapshot.tar.gz'],
+            ['down', '--project', 'day0-p11r-test', '--volumes'],
+            ['preflight', '--project', 'day0-p11r-test', '--no-probe'],
+            ['offline-rung', '--project', 'day0-p11r-test', '--out', 'results'],
+          ].map(async (args) => await invoke(cwd, args));
+        }),
+      );
+      expect(existsSync(calls)).toBe(false);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
@@ -445,6 +474,9 @@ describe('snapshot and restore run through a throwaway container', (): void => {
     );
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),
@@ -610,6 +642,49 @@ describe('the compose file is pinned to digests', (): void => {
     }
   });
 
+  it('reads a built service by the image its Dockerfile starts from, and names what it builds (14-F ruling 1 (a))', (): void => {
+    const compose =
+      'services:\n  backend:\n    profiles: [real]\n    build:\n      context: docker\n' +
+      '      dockerfile: backend.Dockerfile\n    image: day0-convex-backend:git\n';
+    const read = (path: string): string =>
+      path === 'docker/backend.Dockerfile'
+        ? `# the pin\nFROM ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}\nRUN true\n`
+        : '';
+    expect(composeImages(compose, read)).toEqual([
+      {
+        service: 'backend',
+        reference: `ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}`,
+        pinned: true,
+        builtAs: 'day0-convex-backend:git',
+      },
+    ]);
+  });
+
+  it('says in pre-flight what is built here and what a missing built image needs (14-F ruling 1 (a))', (): void => {
+    const base = `ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}`;
+    const node = `node:22-alpine@sha256:${'b'.repeat(64)}`;
+    const images = [
+      { service: 'backend', reference: base, pinned: true, builtAs: 'day0-convex-backend:git' },
+      { service: 'looker-tile', reference: node, pinned: true },
+    ];
+    expect(imagesPreflightItem(images, (): boolean => true)).toEqual({
+      label: 'Images: 2/2 present (1 built here), 2/2 pinned',
+      status: 'ok',
+      detail: '',
+    });
+    // The base being present is not enough: the bed runs what is built from it.
+    expect(
+      imagesPreflightItem(
+        images,
+        (reference: string): boolean => reference !== 'day0-convex-backend:git',
+      ),
+    ).toEqual({
+      label: 'Images: 1/2 present (1 built here), 2/2 pinned',
+      status: 'gap',
+      detail: `missing: backend (day0-convex-backend:git, built from ${base}); build it with \`pnpm backend:build\` before travelling, not at the venue`,
+    });
+  });
+
   it('reports an unpinned image as such', (): void => {
     const [image] = composeImages('services:\n  x:\n    image: node:22-alpine\n');
     expect(image).toEqual({ service: 'x', reference: 'node:22-alpine', pinned: false });
@@ -685,6 +760,32 @@ describe('the env file', (): void => {
     const derived = bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports);
     expect(derived.DAY0_TEST_SLACK_API_URL).toBe('http://fake-slack:8090/api/');
     expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
+  });
+
+  it('lists the demo tile among the private hosts when the demo profile runs, keeping the operator’s own (14-D ruling 2)', (): void => {
+    const ports = bedPorts({});
+    expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_PRIVATE_HOSTS).toBe(
+      'looker-tile',
+    );
+    expect(
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+        ports,
+      ).DAY0_PRIVATE_HOSTS,
+    ).toBe('mcp.linear.app,looker-tile');
+    expect(
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app, looker-tile' },
+        ports,
+      ),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+    expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
+      'DAY0_PRIVATE_HOSTS',
+    );
   });
 
   it('names a bed that runs the offline rung an evaluation bed, and keeps a name the file gives', (): void => {
@@ -940,6 +1041,9 @@ describe('the warm redactor volumes', (): void => {
     chmodSync(docker, 0o755);
     writeFileSync(join(scratch, '.env.local'), 'COMPOSE_PROJECT_NAME=day0-p11r-test\n');
     writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
+    // The backend is built from the Dockerfile the compose file names beside it.
+    mkdirSync(join(scratch, 'docker'));
+    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
     try {
       const result = spawnSync(
         join(ROOT, 'node_modules/.bin/tsx'),

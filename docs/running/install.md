@@ -196,6 +196,17 @@ images, the pnpm store and a copy of the redactor's volumes (`--warm-from`):
 | `./setup.sh install`, the build and the live sign-in check included | 55 s |
 | **From a clean clone to a passing install** | **2 min 1 s** |
 
-A first install on a new machine adds the image pulls, the redactor's model
-download and IT's own steps at each vendor; time those with the customer and
-plan for them.
+A first install on a new machine adds the image pulls, the backend image's
+build, the redactor's model download and IT's own steps at each vendor; time
+those with the customer and plan for them.
+
+An install builds one image rather than pulling it: the backend, from the
+pinned Convex backend with `git` added and nothing else
+(`docker/backend.Dockerfile`), which a git documentation source on a host other
+than GitHub or GitLab needs to be cloned. The setup says so when it builds it,
+and `./setup.sh upgrade` builds it again, so a re-pinned base reaches the
+backend. The build fetches git's packages from the Ubuntu archive
+(`archive.ubuntu.com`, `security.ubuntu.com`), which `pnpm check:setup` lists
+among the machine's egress; a machine that cannot reach it needs the image
+built where it can and loaded (`docker save` and `docker load` of
+`day0-convex-backend:git`).

@@ -4,7 +4,6 @@ import {
   PEOPLE_BLOCK_MAX_LINES,
   PEOPLE_HEADING,
   fromLine,
-  namesAnyone,
   namesEveryCollaborator,
   peopleBlockLines,
   personNamed,
@@ -327,14 +326,6 @@ describe('the People block after the second pass (13-J)', (): void => {
       }),
     ).toEqual([PEOPLE_BLOCK_LEAD, '- Lee Tan: works with you.']);
     expect(peopleBlockLines({ people: [], escalation: contact })).toEqual([]);
-  });
-
-  it('says whether the block names anyone the employee works beside', (): void => {
-    expect(namesAnyone(graph)).toBe(true);
-    expect(namesAnyone({ people: [], escalation: { kind: 'person', displayName: 'Sara' } })).toBe(
-      false,
-    );
-    expect(namesAnyone(undefined)).toBe(false);
   });
 });
 

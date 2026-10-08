@@ -969,14 +969,29 @@ describe('documentation sync batching', (): void => {
         .collect(),
       runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
     }));
+    // The removed page was missed by one complete walk, so it is kept until a second misses it
+    // too (14-D's ruling 1 (b)); no page the restart listed was lost.
     expect(state.pages.map((page) => page.ref).sort()).toEqual(
-      Array.from({ length: 100 }, (_value, index) => name(index + 1)).filter(
-        (ref) => ref !== name(10),
-      ),
+      Array.from({ length: 100 }, (_value, index) => name(index + 1)),
     );
     expect(state.runs[0]).toMatchObject({ state: 'completed', pageCount: 99 });
     expect(state.runs[1]).toMatchObject({ state: 'superseded' });
     expect(state.runs[1].reason).toContain('the listing changed under its cursor');
+
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    const pruned = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect(),
+    );
+    expect(pruned.map((page) => page.ref).sort()).toEqual(
+      Array.from({ length: 100 }, (_value, index) => name(index + 1)).filter(
+        (ref) => ref !== name(10),
+      ),
+    );
   });
 
   it('ends a sync whose listing keeps changing after three restarts, with its reason on the source (M19)', async (): Promise<void> => {

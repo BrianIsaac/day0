@@ -49,7 +49,7 @@ import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
 import {
   fromLine,
-  namesAnyone,
+  namesEveryCollaborator,
   PEOPLE_HEADING,
   peopleBlockLines,
   type PromptNamed,
@@ -314,7 +314,8 @@ const REAL_PREAMBLE = [
 /**
  * The executor preamble for one surface mode.
  *
- * The mock preamble is byte-for-byte the hosted demo's prompt. The real-mode
+ * The mock preamble is the hosted demo's prompt (moved at v0.18.0 by the `reports` item and the
+ * action-mode line, the standard's 15.2). The real-mode
  * preamble names only the two surface verbs: the four mock verbs are refused
  * by the registry in real mode, so telling the model about them would only
  * produce actions that fail the run.
@@ -955,7 +956,12 @@ export function executorCharterLines(
     `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
     `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
     `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
-    ...(namesAnyone(reader.people)
+    // Left out only when the block prints every collaborator it names (W13-R22): one the manager
+    // never confirmed would otherwise leave the prompt with its topic.
+    ...(namesEveryCollaborator(
+      reader.people,
+      (charter.namedCollaborators ?? []).map((person) => person.name),
+    )
       ? []
       : [
           `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,

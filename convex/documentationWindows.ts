@@ -1,3 +1,5 @@
+'use node';
+
 import type { PaginationResult } from 'convex/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
@@ -15,6 +17,9 @@ import { log } from '../src/lib/logger';
  * whole corpus (the Slack app's manifest template, a skill's linked runbooks) walks it here: each
  * of the employee's sources, one bounded page of its stored pages at a time (`PAGED_READ`, the
  * read the deploy mirror and the finishing sync use), and keeps only what it needs of each window.
+ *
+ * Node runtime: every caller is a `'use node'` action, and the linked runbooks are read through
+ * `skillAuthorPrompt`, which is one, so this module is too (the standard's 1.5).
  */
 
 /** What a caller does after one window: read on, or stop because it has what it needs. */

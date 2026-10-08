@@ -275,6 +275,18 @@ describe('the token store component (join 9)', (): void => {
     expect(told.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
   });
 
+  it('names the Ubuntu archive the backend image’s build fetches git from, and the base among the pulls (14-F ruling 1 (a))', (): void => {
+    const rows = egressHosts({});
+    for (const host of ['archive.ubuntu.com', 'security.ubuntu.com']) {
+      expect(rows.find((row) => row.host === host)?.purpose).toBe(
+        "the backend image's build at setup and upgrade (git's packages, over http on port 80)",
+      );
+    }
+    expect(rows.find((row) => row.host === 'ghcr.io')?.purpose).toBe(
+      'image pulls at setup (the Convex backend the backend image is built from, and the dashboard)',
+    );
+  });
+
   it('names the token store’s images among the registry pulls', (): void => {
     const registry = egressHosts({}).find((row) => row.host === 'registry-1.docker.io');
     expect(registry?.purpose).toContain('nango-server');

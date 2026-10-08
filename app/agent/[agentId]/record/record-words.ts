@@ -1082,6 +1082,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The plan${forItem(subject)} is drafted again: ${
       text(p.slug) ?? 'its system'
     } is connected, so the ticket can be read`,
+  'work.plan-redraft': (p, subject) =>
+    `The plan${forItem(subject)} is drafted again. ${
+      text(p.reason) ?? 'Documentation the plan followed has since been changed or removed.'
+    }`,
   'work.corrections-applied': (p, subject) =>
     `The plan${forItem(subject)} applies ${
       counted(p.correctionIds?.length, 'kept correction') ?? 'kept corrections'

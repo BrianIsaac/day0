@@ -83,8 +83,9 @@ export const MOCK_OFFICE_DOCS_READ = 32;
 
 /**
  * The documents a run's snapshot reads: in mock mode the office's fixed set, at most
- * {@link MOCK_OFFICE_DOCS_READ}; in real mode the employee's whole mirror, which the selection
- * replaces (14-R).
+ * {@link MOCK_OFFICE_DOCS_READ}; in real mode the employee's whole mirror. A real-mode run that
+ * passes a selection does not come here: `snapshotInternal` reads the mirror for the selection
+ * itself (14-R, joined at the seam).
  *
  * @throws Error when a mock office holds more than {@link MOCK_OFFICE_DOCS_READ} documents.
  */

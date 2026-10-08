@@ -30,7 +30,14 @@ import {
   retryRequiresProviderReconciliation,
 } from '@/work/reconciliation';
 import { failedRowMove } from '@/work/needs-manager';
-import { approvedNotStarted, isStoppableItem, isStopped, type StopRunAnswer } from '@/work/stop';
+import {
+  approvedNotStarted,
+  isStoppableItem,
+  isStopped,
+  stopDetail,
+  type StopRunAnswer,
+} from '@/work/stop';
+import { isGoneCitesReason } from '@/work/plan-cites';
 import { Button } from '../../../components/Button';
 import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
@@ -98,9 +105,16 @@ export function retryModeOf(
     case 'completed':
       return { kind: 'send-back' };
     case 'failed':
-      return heldQuestion !== undefined
-        ? { kind: 'answer', question: heldQuestion }
-        : { kind: 'retry-failed', rejected: rejectionOf(item) !== undefined };
+      if (heldQuestion !== undefined) return { kind: 'answer', question: heldQuestion };
+      // Retry drafts a new plan for a run its plan's changed documentation stopped (14-R).
+      if (
+        item.plan !== undefined &&
+        item.skipReason !== undefined &&
+        isGoneCitesReason(stopDetail(item.skipReason))
+      ) {
+        return { kind: 'cites-changed' };
+      }
+      return { kind: 'retry-failed', rejected: rejectionOf(item) !== undefined };
     case 'cancelled':
       return { kind: 'cancelled', hadPlan: item.plan !== undefined };
     case 'skipped':
@@ -146,6 +160,7 @@ function retryDone(mode: RetryMode, title: string): string {
       return `Answer sent: ${title} runs again with it.`;
     case 'send-back':
     case 'retry-failed':
+    case 'cites-changed':
     case 'cancelled':
     case 'skip-retry':
     case 'parked':

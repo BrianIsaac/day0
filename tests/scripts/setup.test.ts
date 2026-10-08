@@ -41,6 +41,8 @@ import {
   pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
+  BACKEND_BUILD_LINE,
+  demoTileNote,
   shouldCaptureAdminKey,
   wrapIndented,
   writeEnvValues,
@@ -949,6 +951,59 @@ describe('the values written into .env.local', (): void => {
     expect(updates.OPENAI_API_KEY).toBeUndefined();
   });
 
+  it('lists the demo tile among the private hosts in real mode when the file lists none, and only then (14-D ruling 2)', (): void => {
+    const real = (existing: Record<string, string>): Record<string, string> =>
+      setupEnvUpdates({
+        route: 'key',
+        project: 'day0-setup-abc',
+        ports: DEFAULT_PORTS,
+        existing,
+        mode: 'real',
+      });
+    expect(real({}).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: '' }).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).not.toHaveProperty(
+      'DAY0_PRIVATE_HOSTS',
+    );
+    expect(
+      setupEnvUpdates({ route: 'key', project: 'p', ports: DEFAULT_PORTS, existing: {} }),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+  });
+
+  it('says so when the operator’s private hosts leave out the demo tile real mode starts (14-D ruling 2)', (): void => {
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(
+      'DAY0_PRIVATE_HOSTS does not list looker-tile, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add looker-tile to the list to use the tile.',
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal looker-tile' })).toBe(
+      undefined,
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: '' })).toBe(undefined);
+    expect(demoTileNote('mock', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(undefined);
+  });
+
+  it('builds the backend image before it starts the backend, at every install, rerun and upgrade (14-F ruling 1 (a))', (): void => {
+    for (const input of [
+      {},
+      { mode: 'real' as const },
+      { existing: true, upgrade: true },
+      { mode: 'real' as const, existing: true, upgrade: true },
+    ]) {
+      const steps = sequenceSteps('key', input);
+      expect(steps.indexOf('backend:build')).toBeGreaterThanOrEqual(0);
+      expect(steps.indexOf('backend:build')).toBe(steps.indexOf('convex:up') - 1);
+    }
+  });
+
+  it('says what it builds before it builds the backend image (14-F ruling 1 (a))', async () => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend', 'sandbox'] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(BACKEND_BUILD_LINE);
+    expect(BACKEND_BUILD_LINE).toContain('docker/backend.Dockerfile');
+    expect(printed.indexOf(BACKEND_BUILD_LINE)).toBeLessThan(printed.indexOf('pnpm backend:build'));
+    expect(printed.indexOf('pnpm backend:build')).toBeLessThan(printed.indexOf('pnpm convex:up'));
+  });
+
   it('writes the model port only where a bundled model uses one', (): void => {
     const local = setupEnvUpdates({
       route: 'local',
@@ -994,6 +1049,7 @@ describe('the order the helpers run in', (): void => {
   it('is the one the README calls load-bearing', (): void => {
     expect(sequenceSteps('key')).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',
@@ -1006,6 +1062,7 @@ describe('the order the helpers run in', (): void => {
     ]);
     expect(sequenceSteps('local')).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'model:up',
       'model:pull',
@@ -1023,6 +1080,7 @@ describe('the order the helpers run in', (): void => {
   it('checks the release and pushes the functions before the env on a volume that already holds a deployment (step 14)', (): void => {
     expect(sequenceSteps('key', { existing: true })).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',
@@ -1039,6 +1097,7 @@ describe('the order the helpers run in', (): void => {
   it('puts the env first on a reused volume the release check found empty', (): void => {
     expect(sequenceSteps('key', { existing: true, empty: true })).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',
