@@ -17,6 +17,7 @@ import {
 } from '../../src/work/reconciliation';
 import { landedWritesOf, unsentWritesOf } from '../../src/work/landed-writes';
 import { STOPPED_PREFIX } from '../../src/work/stop';
+import { goneCitesReason } from '../../src/work/plan-cites';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import type { AppliedAction } from '../../src/surfaces/types';
 import {
@@ -1370,5 +1371,103 @@ describe('a manager DM that reports a held write of its set (W12X-2, W12V-8)', (
     });
     const row = await readItem(harness, ids.workItemId);
     expect(row.actionVerdicts?.[1]).toEqual({ disposition: 'auto' });
+  });
+});
+
+describe('a Retry after the documentation a plan cited changed (14-R’s gone cite, ruled 8 October)', (): void => {
+  const goneReason = goneCitesReason(['Handbook/runbook.md#Runbook > Closing']);
+
+  /** A failed real-mode item the evaluation claimed, its plan's cite gone, stopped or failed as given. */
+  async function goneCiteItem(
+    harness: Harness,
+    skipReason: string,
+    output?: unknown,
+  ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+    const { agentId, workItemId } = await seed(harness, 'failed');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        verdict: { decision: 'claim', reason: 'Linear work in scope.' },
+        skipReason,
+        ...(output === undefined ? {} : { output }),
+      });
+    });
+    return { agentId, workItemId };
+  }
+
+  it('sends an item stopped before its first write back to drafting with its own event, never to the same plan', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await goneCiteItem(harness, `${STOPPED_PREFIX}${goneReason}`);
+
+    const answer = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId });
+
+    expect(answer).toEqual({ ok: true, resumeState: 'claimed' });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('claimed');
+    expect(row.plan).toBeUndefined();
+    expect(row.skipReason).toBeUndefined();
+    const redrafts = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .filter((q) => q.eq(q.field('type'), 'work.plan-redraft'))
+          .collect(),
+    );
+    expect(redrafts.map((event) => event.payload)).toEqual([{ workItemId, reason: goneReason }]);
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('workActions:draftPlanInternal');
+    expect(scheduled.map((job) => job.name)).not.toContain(
+      'workActions:executeApprovedPlanInternal',
+    );
+  });
+
+  it('redrafts an item whose closing check failed and keeps the writes its first phase landed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await goneCiteItem(harness, goneReason, {
+      draft: 'Commented on REVOPS-1.',
+      notes: '',
+      actions: [comment],
+      applied: [landedComment],
+    });
+    // A run that landed a write is confirmed on the provider before any Retry (U17 D1).
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.reconcileFailed, { workItemId, confirmed: true });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('claimed');
+    expect(row.plan).toBeUndefined();
+    expect(landedWritesOf(row.output).map((write) => write.applied.providerId)).toEqual([
+      'comment-1',
+    ]);
+  });
+
+  it('still retries any other failure on the plan the manager approved', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await goneCiteItem(harness, 'the Linear MCP timed out');
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('plan-approved');
+    expect(row.plan).toBeDefined();
+    const types = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect()
+      ).map((event) => event.type),
+    );
+    expect(types).not.toContain('work.plan-redraft');
   });
 });

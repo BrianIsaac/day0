@@ -39,6 +39,7 @@ import {
   verdictList,
 } from './work';
 import { closingResume } from '../src/work/closing-resume';
+import { isGoneCitesReason } from '../src/work/plan-cites';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -126,7 +127,12 @@ function carriedIntoRetry(
   };
 }
 
-/** Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as feedback for the next run. */
+/**
+ * Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as
+ * feedback for the next run. A plan the manager declined, or one whose cited documentation has
+ * since changed (recorded as `work.plan-redraft`, with the run's reason), is drafted again rather
+ * than run as it stood.
+ */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -154,9 +160,17 @@ export const retryFailed = mutation({
       );
     }
     const verdict = row.verdict as { decision?: string; reason?: unknown } | undefined;
+    const failure = row.skipReason === undefined ? undefined : stopDetail(row.skipReason);
+    // A plan whose cited documentation has since changed would meet the same change on every
+    // run, so Retry drafts a new one from the documentation as it stands (14-R's gone cite).
+    const citesChanged =
+      row.state === 'failed' &&
+      row.plan !== undefined &&
+      failure !== undefined &&
+      isGoneCitesReason(failure);
     // A cancelled plan is one the manager turned down: Retry drafts a new plan
     // that goes back to them, and never runs the rejected one.
-    const redraft = row.state === 'cancelled' && row.plan !== undefined;
+    const redraft = (row.state === 'cancelled' && row.plan !== undefined) || citesChanged;
     const next: Doc<'workItems'>['state'] =
       row.plan && !redraft
         ? 'plan-approved'
@@ -182,11 +196,11 @@ export const retryFailed = mutation({
       (entry) => entry.answer === 'not-sent',
     );
     const resume =
-      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan && !answeredNotSent
+      SURFACE_MODE === 'real' && row.state === 'failed' && row.plan && !answeredNotSent && !redraft
         ? closingResume(
             row.output,
             row.plan as ExecutionPlan,
-            row.skipReason && stopDetail(row.skipReason),
+            failure,
             (
               await ctx.db
                 .query('surfaces')
@@ -268,6 +282,14 @@ export const retryFailed = mutation({
       },
       createdAt: Date.now(),
     });
+    if (citesChanged) {
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.plan-redraft',
+        payload: { workItemId: args.workItemId, reason: failure },
+        createdAt: Date.now(),
+      });
+    }
     await scheduleNextStep(ctx, { ...row, state: next, ...(redraft ? { plan: undefined } : {}) });
     return { ok: true, resumeState: next };
   },

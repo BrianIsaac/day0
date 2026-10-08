@@ -40,6 +40,19 @@ export function resolvedPlanCites(
   );
 }
 
+/** How a gone cite's reason opens, so a Retry can tell it from any other failure. */
+const GONE_CITES_OPENING = 'Documentation the plan followed has since been changed or removed';
+
+/**
+ * Whether a run's failure is a gone cite's: the plan it ran on cites documentation that has
+ * since changed, so only a new plan can go on (14-R's gone cite, ruled 8 October 2026).
+ *
+ * @param failure - The run's failure, without the stopped prefix (`stopDetail`).
+ */
+export function isGoneCitesReason(failure: string): boolean {
+  return failure.startsWith(GONE_CITES_OPENING);
+}
+
 /**
  * Why a run did not go on with a plan whose cited documentation is gone or changed: kept under
  * the failure line's 300 characters, so it names the first cite and counts the rest.
@@ -51,5 +64,5 @@ export function goneCitesReason(labels: readonly string[]): string {
   const named = `"${first.length > 90 ? `${first.slice(0, 87)}...` : first}"${
     rest.length > 0 ? ` and ${rest.length} more` : ''
   }`;
-  return `Documentation the plan followed has since been changed or removed (${named}), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.`;
+  return `${GONE_CITES_OPENING} (${named}), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.`;
 }

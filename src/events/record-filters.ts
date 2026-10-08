@@ -164,6 +164,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.plan-grounding-read': READS,
   'work.plan-drafted': NONE,
   'work.plan-redrafting': NONE,
+  'work.plan-redraft': NONE,
   'work.corrections-applied': READS,
   'work.corrections-redaction-limited': NONE,
   'work.correction-retired': DECISIONS,

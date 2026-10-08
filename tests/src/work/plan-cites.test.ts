@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { goneCitesReason, resolvedPlanCites } from '../../../src/work/plan-cites';
+import {
+  goneCitesReason,
+  isGoneCitesReason,
+  resolvedPlanCites,
+} from '../../../src/work/plan-cites';
 
 const documentation = {
   citations: [
@@ -83,5 +87,13 @@ describe('goneCitesReason', (): void => {
     ]);
     expect(reason.length).toBeLessThanOrEqual(300);
     expect(reason).toContain('..." and 1 more)');
+  });
+});
+
+describe('isGoneCitesReason', (): void => {
+  it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
+    expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);
+    expect(isGoneCitesReason('the Linear MCP timed out')).toBe(false);
+    expect(isGoneCitesReason(`stopped: ${goneCitesReason(['Handbook/a.md#A'])}`)).toBe(false);
   });
 });

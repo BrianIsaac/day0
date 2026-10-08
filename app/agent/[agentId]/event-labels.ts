@@ -680,6 +680,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-drafted': 'plan drafted',
   'work.plan-redrafting': (payload) =>
     `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
+  'work.plan-redraft': 'plan drafted again: documentation it followed has changed',
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',

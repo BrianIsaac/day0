@@ -486,6 +486,12 @@ describe('the live feed labels', (): void => {
     ).toBe('documentation · closing · 980 characters from 1 section');
   });
 
+  it('labels a plan drafted again because the documentation it followed changed (14-R, ruled 8 October)', (): void => {
+    expect(
+      eventLabel({ type: 'work.plan-redraft', payload: { workItemId: 'w1', reason: 'x' } }),
+    ).toBe('plan drafted again: documentation it followed has changed');
+  });
+
   it('labels the model-call and restart events in words (P7-18)', (): void => {
     expect(
       eventLabel({
