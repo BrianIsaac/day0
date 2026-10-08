@@ -215,6 +215,45 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     expect(user).toContain('- Escalate to: Sara Lindqvist.');
   });
 
+  it("keeps the charter's collaborators line when the block names only some of them, in both phases (W13-R22)", async (): Promise<void> => {
+    const both: Charter = {
+      ...charter,
+      namedCollaborators: [
+        { name: 'Lee Tan', topic: 'Linear access', introPath: 'manager' },
+        { name: 'Mei Lin', topic: 'carrier escalations', introPath: 'manager' },
+      ],
+    };
+    recorded.outputs.push(phaseOne, closing);
+    await runSkill({
+      skill,
+      plan,
+      candidate,
+      charter: both,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      people,
+    });
+    await runDependentSkill({
+      skill,
+      plan,
+      candidate,
+      charter: both,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      people,
+      initialOutput,
+      initialLedger: [],
+    });
+    for (const user of recorded.users) {
+      expect(user).toContain(
+        'Charter namedCollaborators: Lee Tan (Linear access) | Mei Lin (carrier escalations)',
+      );
+      expect(user).toContain(BLOCK);
+    }
+  });
+
   it("names a confirmed requester on phase one's From line, in real mode only", async (): Promise<void> => {
     const requester = { displayName: 'Lee Tan', title: 'Work management administrator' };
     const labelled = { ...candidate, requesterLabel: 'U07LEE12345' };

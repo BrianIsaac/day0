@@ -381,17 +381,6 @@ export function peopleBlockLines(people: PromptPeople | undefined): string[] {
 }
 
 /**
- * Whether the block names anyone the employee works beside (a collaborator, a neighbouring role or
- * a dotted-line contact), not only an escalation contact: the executor's charter lines keep the
- * charter's own named collaborators until it does.
- *
- * @param people - What the graph's readers answered; undefined in mock mode.
- */
-export function namesAnyone(people: PromptPeople | undefined): boolean {
-  return people !== undefined && personLines(people).length > 0;
-}
-
-/**
  * Whether the block prints a line for every collaborator the charter names (W13-R22): only then
  * may the executor leave the charter's own collaborators line out, since a collaborator the manager
  * never confirmed, or one past the block's room, would otherwise leave the prompt with its topic.

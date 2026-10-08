@@ -49,7 +49,7 @@ import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
 import {
   fromLine,
-  namesAnyone,
+  namesEveryCollaborator,
   PEOPLE_HEADING,
   peopleBlockLines,
   type PromptNamed,
@@ -955,7 +955,12 @@ export function executorCharterLines(
     `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
     `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
     `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
-    ...(namesAnyone(reader.people)
+    // Left out only when the block prints every collaborator it names (W13-R22): one the manager
+    // never confirmed would otherwise leave the prompt with its topic.
+    ...(namesEveryCollaborator(
+      reader.people,
+      (charter.namedCollaborators ?? []).map((person) => person.name),
+    )
       ? []
       : [
           `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
