@@ -985,6 +985,9 @@ export const lookupTargets = internalQuery({
 });
 
 /** The validator of an identity a lookup found. */
+/** The most of one person's identities a lookup reads: far past what one person holds. */
+const IDENTITIES_READ = 100;
+
 const foundIdentityValidator = v.object({
   provider: v.union(v.literal('slack'), v.literal('linear')),
   externalId: v.string(),
@@ -1032,7 +1035,25 @@ export const recordLookups = internalMutation({
     }
     let added = 0;
     let offerable: Id<'people'> | undefined;
+    // A confirmed person's own verified accounts: one in a workspace is theirs, so a lookup that
+    // answers another there (an address Take gave them was a colleague's) records none (W14-R18).
+    const own =
+      person.status === 'active'
+        ? (
+            await ctx.db
+              .query('personIdentities')
+              .withIndex('by_person', (q) => q.eq('personId', person._id))
+              .take(IDENTITIES_READ)
+          ).filter((row) => row.verifiedAt !== undefined)
+        : [];
     for (const identity of args.found) {
+      const second = own.some(
+        (row) =>
+          row.provider === identity.provider &&
+          row.providerWorkspaceId === identity.workspaceId &&
+          row.externalId !== identity.externalId,
+      );
+      if (second) continue;
       const held = (await identitiesUnder(ctx, person.userId, [identity])).filter(
         (row) => row.providerWorkspaceId === identity.workspaceId,
       );

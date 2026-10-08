@@ -1088,6 +1088,35 @@ describe('people lookups at Confirm', (): void => {
     expect((await graphRows(harness)).identities).toEqual([]);
   });
 
+  it("takes no second verified account in a workspace on a confirmed person, so a colleague's address Taken does not give them the colleague's Slack (W14-R18)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const personId = await seedPerson(harness, 'Aiko Tanaka', {
+      primaryEmail: 'mei@kestrel.test',
+    });
+    await seedIdentity(harness, personId, {
+      provider: 'slack',
+      providerWorkspaceId: 'T0KESTREL',
+      externalId: 'U0AIKO',
+      displayName: 'aiko',
+    });
+    expect(
+      await harness.mutation(internal.peopleProposals.recordLookups, {
+        personId,
+        address: 'mei@kestrel.test',
+        found: [
+          { provider: 'slack', workspaceId: 'T0KESTREL', externalId: 'U0MEI', displayName: 'mei' },
+          { provider: 'linear', externalId: 'lin-user-mei', displayName: 'Mei Lin' },
+        ],
+      }),
+    ).toBe(1);
+    expect(
+      (await graphRows(harness)).identities.map((row) => [row.provider, row.externalId]).sort(),
+    ).toEqual([
+      ['linear', 'lin-user-mei'],
+      ['slack', 'U0AIKO'],
+    ]);
+  });
+
   it('repoints every agreement about the person merged away, in every standing, onto the person kept (W13-R33)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
