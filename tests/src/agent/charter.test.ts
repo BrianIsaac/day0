@@ -470,7 +470,103 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     ).toBe(true);
   });
 
-  it('takes a reply whose binds or goals-stated the schema cannot read, each rule then read by its words (W13-R36)', (): void => {
+  it("checks Nell's password rule clause by clause when the reply drops its binds, so its strike takes nothing (W14-R13)", (): void => {
+    const reply = structuredClone(REDEPLOY_NELL_DRAFT_2026_10_07) as Record<string, unknown>;
+    for (const rule of reply.constraints as Array<Record<string, unknown>>) delete rule.binds;
+    const nell = assemble(
+      charterSchema.parse(reply),
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-09T00:00:00.000Z',
+    );
+    const password = 'Never share a password in a ticket comment.';
+    const duty = 'Draft replies for the routine access tickets using the wiki steps.';
+    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
+    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+      kind: 'bound',
+      clauses: [duty],
+      carriesWords: false,
+      notCarrying: [duty],
+    });
+    expect(strikePreview(nell, index).removedClauses).toEqual([]);
+    expect(strike(nell, password).proposedBoundaries.willDo).toContain(duty);
+    // The reporting-line rule's words are in no clause, so with its binds gone it reads as in no
+    // clause, where the card offers to keep it, rather than as struck by words no clause holds.
+    const line = nell.constraints!.find((rule) => rule.kind === 'reporting-line')!;
+    expect(rulePlacement(nell, line).kind).toBe('in-no-clause');
+  });
+
+  /** Nell's draft with one rule bound to one will-do, its wording a phrase of that will-do. */
+  function boundToWillDo(quote: string, willDo: string): Charter {
+    const reply = structuredClone(REDEPLOY_NELL_DRAFT_2026_10_07) as Record<string, unknown>;
+    const boundaries = reply.proposedBoundaries as { willDo: string[] };
+    boundaries.willDo[1] = willDo;
+    reply.constraints = [
+      {
+        kind: 'system-boundary',
+        quote,
+        wording: [willDo.replace(/\.$/, '')],
+        binds: [{ field: 'willDo', index: 1 }],
+      },
+    ];
+    return assemble(
+      charterSchema.parse(reply),
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-09T00:00:00.000Z',
+    );
+  }
+
+  it.each([
+    [
+      'Passwords go through the vault.',
+      'Draft replies for the routine access tickets using the wiki steps.',
+    ],
+    [
+      'Only the security lead approves access policy changes.',
+      'Approve access policy changes for the helpdesk.',
+    ],
+    [
+      'Only the security lead approves access policy changes.',
+      'Triage this week’s open tickets on the ticket queue.',
+    ],
+    ['Avoid sending anything to customers.', 'Send the weekly status to customers.'],
+    ['You are not to approve spend.', 'Approve spend requests from the team.'],
+    [
+      'Please don’t reply to customers directly.',
+      'Reply to customers directly about their tickets.',
+    ],
+    ['Never edit a booked figure.', 'Edit booked figures without asking.'],
+    ['Never promise a refund.', 'Promise refunds only when the order is under 20.'],
+  ])(
+    'reads %j bound to the will-do %j as Check, and its strike keeps the will-do (W14-R14)',
+    (quote, willDo): void => {
+      const charter = boundToWillDo(quote, willDo);
+      expect(carriedOf(charter)[quote]).toBe(false);
+      expect(strike(charter, quote).proposedBoundaries.willDo).toContain(willDo);
+    },
+  );
+
+  it.each([
+    [
+      'Never share a password in a ticket comment.',
+      'Answer access tickets, never sharing a password in a ticket comment.',
+    ],
+    [
+      'Only send invoices after the manager approves.',
+      'Send invoices only after the manager approves them.',
+    ],
+    [
+      'Route all client contact through the account manager.',
+      'Route all client contact through the account manager.',
+    ],
+    [
+      'Do not edit a booked figure without the controller’s approval.',
+      'Prepare corrections, never editing a booked figure without the controller’s approval.',
+    ],
+  ])('still reads %j bound to the will-do %j as Confirmed (W14-R14)', (quote, willDo): void => {
+    expect(carriedOf(boundToWillDo(quote, willDo))[quote]).toBe(true);
+  });
+
+  it('takes a reply whose binds or goals-stated the schema cannot read, each rule then bound by its words (W13-R36, W14-R13)', (): void => {
     const reply = structuredClone(GLM_BINDS_DRAFTS_2026_10_05.Nell) as Record<string, unknown>;
     const goals = reply.shortTermGoals as Record<string, unknown>;
     delete goals.stated;
@@ -485,10 +581,12 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       '2026-10-08T00:00:00.000Z',
     );
     expect(nell.shortTermGoals).not.toHaveProperty('stated');
+    // Re-pinned for W14-R13: a rule whose binds the schema dropped is bound to the clauses its
+    // verified wording is in, never left to the wording path.
     for (const rule of nell.constraints ?? []) {
       if (rule.origin !== 'synthesis') continue;
-      expect(rule).not.toHaveProperty('binds');
-      expect(rulePlacement(nell, rule).kind).toBe('by-wording');
+      expect(rule.binds).toBeDefined();
+      expect(rulePlacement(nell, rule).kind).not.toBe('by-wording');
     }
   });
 

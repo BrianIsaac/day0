@@ -202,12 +202,14 @@ describe('withoutProvenanceSuffixes', (): void => {
 describe('normaliseConstraints', (): void => {
   it('strips the suffix from wording before checking the clauses carry it', (): void => {
     const result = normaliseConstraints(GLM_DRAFT_2026_09_16.constraints, runThrough());
+    // Re-pinned for W14-R13: a reply with no binds is bound to the clauses its wording is in.
     expect(result).toEqual([
       {
         kind: 'system-boundary',
         quote: 'Never post to public channels.',
         wording: ['Post to public Slack channels.'],
         origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 0 }],
       },
     ]);
   });
@@ -225,12 +227,17 @@ describe('normaliseConstraints', (): void => {
       ],
       charter,
     );
+    // Re-pinned for W14-R13: a reply with no binds is bound to the clauses its wording is in.
     expect(result).toEqual([
       {
         kind: 'candidate-property',
         quote: "if it's a ticket it has an owner and a priority",
         wording: ['owned, prioritized'],
         origin: 'synthesis',
+        binds: [
+          { field: 'proposedFunction', index: 0 },
+          { field: 'willDo', index: 0 },
+        ],
       },
     ]);
   });
@@ -249,12 +256,14 @@ describe('one line per rule (the production walk 6c)', (): void => {
   ];
 
   it('keeps one rule for a sentence the model listed twice, the one the clauses carry', (): void => {
+    // Re-pinned for W14-R13: each rule is bound to the clauses its wording is in.
     expect(normaliseConstraints(pair, runThrough())).toEqual([
       {
         kind: 'system-boundary',
         quote: sentence,
         wording: ['Change Northstar CRM records.'],
         origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 1 }],
       },
     ]);
     // Listed the other way round, the verified one still takes the place.
@@ -264,6 +273,7 @@ describe('one line per rule (the production walk 6c)', (): void => {
         quote: sentence,
         wording: ['Change Northstar CRM records.'],
         origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 1 }],
       },
     ]);
   });
@@ -953,12 +963,16 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
     ]);
   });
 
-  it('gives a rule drafted without binds none, so it strikes by its wording as before', (): void => {
+  it('binds a rule drafted without binds to the clauses its wording is in, so each is checked on its own (W14-R13)', (): void => {
+    // Re-pinned for W14-R13: such a rule went back to the wording path, where the v0.17.0
+    // redeploy's finding 1 returned; a stored rule with no binds still strikes by its wording.
     const [rule] = normaliseConstraints(
       [{ ...amountRule, wording: ['Change a deal amount in the tracker.'] }],
       larkDraft(),
     );
-    expect(rule).not.toHaveProperty('binds');
+    expect(rule.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+    expect(rulePlacement(larkDraft([rule]), rule).kind).toBe('bound');
+    expect(rulePlacement(larkDraft(), { ...rule, binds: undefined }).kind).toBe('by-wording');
   });
 
   it('merges the binds of one sentence listed twice under one kind', (): void => {

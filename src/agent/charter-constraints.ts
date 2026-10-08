@@ -351,8 +351,10 @@ export function normaliseConstraints(
         }),
       ),
     ];
-    const binds =
-      item.binds === undefined ? undefined : verifiedBinds(item.binds, wording, charter);
+    // A reply that omits or mis-shapes binds is placed by its verified wording, so its clauses
+    // are still checked one by one (W14-R13): left unbound, the rule went back to the wording
+    // path, where the v0.17.0 redeploy's finding 1 returned.
+    const binds = verifiedBinds(item.binds ?? [], wording, charter);
     // A sentence the model lists twice (the production walk's 6c) is one rule for each kind it
     // makes with words or places of its own; a copy with neither once verified is no rule.
     const rule: CharterConstraint = {
@@ -360,7 +362,7 @@ export function normaliseConstraints(
       quote,
       wording,
       origin: 'synthesis',
-      ...(binds === undefined ? {} : { binds }),
+      binds,
     };
     const said = (listed: CharterConstraint): boolean => sameQuote(listed.quote, quote);
     const bare = out.findIndex((listed) => said(listed) && !placedInClauses(listed));
@@ -1239,17 +1241,33 @@ function contentStems(text: string): Set<string> {
   );
 }
 
-/** The words a rule forbids an act by, wherever in the rule they stand (the second pass on W13-R6). */
+/**
+ * The words a rule forbids an act by, wherever in the rule they stand (the second pass on W13-R6),
+ * with either apostrophe and the softer forms a manager says it in: "avoid", "refrain from", "you
+ * are not to", "nothing ... without" (W14-R14).
+ */
 const FORBIDS =
-  /\b(?:never|must not|mustn't|cannot|can't|do not|don't|should not|shouldn't|under no circumstances|not allowed to|no one may)\b/i;
+  /\b(?:never|must not|mustn['\u2019]t|cannot|can['\u2019]t|do not|don['\u2019]t|should not|shouldn['\u2019]t|under no circumstances|not allowed to|no one may|avoid|refrain from|(?:are|is) not to|nothing\b[^.;]*\bwithout)\b/i;
 
 /**
- * Whether a rule forbids an act (`PROHIBITION_OPENING`, or a forbidding word in any of its
- * sentences: "Sales owns the tracker. Never edit a booked figure.", "You must not ..."), so a
- * will-do or the function, which grant the act, never carries it.
+ * A sentence that keeps an act to someone else: "Only the security lead approves ...". A property
+ * of the work ("Only stuck deals.", "Only owned tickets.") names no one acting, so it is not one.
+ */
+const ONLY_OPENING =
+  /^only\s+(?:the|a|an|your|our|their|my)\s+\S+(?:\s+\S+)?\s+(?:may|can|approves|signs|owns|decides|sends|changes|edits|answers|replies)\b/i;
+
+/**
+ * Whether a rule forbids an act (`PROHIBITION_OPENING`, a forbidding word in any of its sentences:
+ * "Sales owns the tracker. Never edit a booked figure.", "You must not ...", or a sentence that
+ * keeps the act to someone else: "Only the security lead approves access policy changes."), so a
+ * will-do or the function, which grant the act, carries it only by stating the limit.
  */
 function forbidsAnAct(quote: string): boolean {
-  return PROHIBITION_OPENING.test(quote.trim()) || FORBIDS.test(quote);
+  return (
+    PROHIBITION_OPENING.test(quote.trim()) ||
+    FORBIDS.test(quote) ||
+    quoteSentences(quote).some((sentence: string): boolean => ONLY_OPENING.test(sentence.trim()))
+  );
 }
 
 /** The manager's first person, which the drafter writes as "the manager"; never the "i" of "i.e.". */
@@ -1294,8 +1312,12 @@ function clauseCarriesRule(
   const verified = constraint.wording.some((phrase: string): boolean =>
     wordingPresent(phrase, [clause]),
   );
-  if (grants && forbidsAnAct(constraint.quote)) {
-    return verified && statesTheProhibition(constraint, clause);
+  // A grant carries a rule only by stating it, whatever the rule's opening (W14-R14): a phrase the
+  // drafter verified in it is the grant's own words, and for a rule that forbids, it must be one.
+  if (grants) {
+    return (
+      (verified || !forbidsAnAct(constraint.quote)) && statesTheProhibition(constraint, clause)
+    );
   }
   if (verified) return true;
   return quoteSentences(constraint.quote).some((sentence: string): boolean => {
@@ -1325,7 +1347,22 @@ function holdsMostOf(sentence: string, text: string): boolean {
 }
 
 /** A word that limits a granted act: "Draft replies, never sharing a password.", "Send only after". */
-const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 'i');
+const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 'gi');
+
+/**
+ * Whether a clause limits the act a rule's sentence forbids: a limiting word whose words after it
+ * hold one of the sentence's own, so "Edit booked figures without asking." does not carry "Never
+ * edit a booked figure." and "Promise refunds only when the order is under 20." does not carry
+ * "Never promise a refund." (W14-R14), while "Answer access tickets, never sharing a password in a
+ * ticket comment." carries "Never share a password in a ticket comment.".
+ */
+function limitsTheAct(sentence: string, text: string): boolean {
+  const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
+  return [...text.matchAll(LIMITS_THE_ACT)].some((limit: RegExpMatchArray): boolean => {
+    const after = contentStems(text.slice((limit.index ?? 0) + limit[0].length));
+    return [...said].some((word: string): boolean => after.has(word));
+  });
+}
 
 /**
  * Whether a will-do or the function, which grant an act, carries a rule that forbids one (the
@@ -1340,7 +1377,7 @@ const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 
 function statesTheProhibition(constraint: CharterConstraint, text: string): boolean {
   return quoteSentences(constraint.quote).some(
     (sentence: string): boolean =>
-      holdsMostOf(sentence, text) && (!forbidsAnAct(sentence) || LIMITS_THE_ACT.test(text)),
+      holdsMostOf(sentence, text) && (!forbidsAnAct(sentence) || limitsTheAct(sentence, text)),
   );
 }
 
