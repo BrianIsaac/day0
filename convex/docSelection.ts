@@ -89,11 +89,12 @@ async function pageStored(
   return page !== null;
 }
 
-/** A found or stored block as the selection reads it; a stored row carries its hash. */
+/** A found or stored block as the selection reads it, with the hash its cite keeps. */
 function selectableBlock(
-  block: Pick<FoundBlock, '_id' | 'sourceId' | 'pageRef' | 'index' | 'headingPath' | 'text'> & {
-    readonly hash?: string;
-  },
+  block: Pick<
+    FoundBlock,
+    '_id' | 'sourceId' | 'pageRef' | 'index' | 'headingPath' | 'text' | 'hash'
+  >,
 ): SelectableBlock {
   return {
     id: block._id,
@@ -101,7 +102,7 @@ function selectableBlock(
     index: block.index,
     headingPath: block.headingPath,
     text: block.text,
-    ...(block.hash !== undefined ? { hash: block.hash } : {}),
+    hash: block.hash,
   };
 }
 
@@ -187,43 +188,6 @@ async function storedPageBlocks(
 }
 
 /**
- * The selection with each cited block's hash: the search answers no hash, so the rows of the
- * cited blocks it found are read for it (at most the ranked pick's twelve); the stored blocks of
- * the pages always included carry theirs.
- */
-async function withBlockHashes(
-  ctx: QueryCtx,
-  selection: SelectedDocumentation,
-): Promise<SelectedDocumentation> {
-  const unhashed = [
-    ...new Set(
-      selection.citations.flatMap((citation) =>
-        citation.blocks.flatMap((block) => (block.hash === undefined ? [block.id] : [])),
-      ),
-    ),
-  ];
-  if (unhashed.length === 0) return selection;
-  const hashes = new Map(
-    await Promise.all(
-      unhashed.map(async (id): Promise<[string, string | undefined]> => {
-        const blockId = ctx.db.normalizeId('docBlocks', id);
-        return [id, blockId === null ? undefined : (await ctx.db.get(blockId))?.hash];
-      }),
-    ),
-  );
-  return {
-    ...selection,
-    citations: selection.citations.map((citation) => ({
-      ...citation,
-      blocks: citation.blocks.map((block) => {
-        const hash = block.hash ?? hashes.get(block.id);
-        return hash === undefined ? block : { ...block, hash };
-      }),
-    })),
-  };
-}
-
-/**
  * Select the documentation one real-mode prompt carries, inside the caller's query: the
  * employee's readable pages, the blocks the search scouts from their sources under the owner's
  * key, and the stored blocks of the pages always included (`selectDocumentation`), each cited
@@ -254,7 +218,7 @@ export async function selectedDocumentation(
     docs,
     new Set(alwaysIncludedPages(pages, request)),
   );
-  return await withBlockHashes(ctx, selectDocumentation({ request, pages, scouted, pageBlocks }));
+  return selectDocumentation({ request, pages, scouted, pageBlocks });
 }
 
 /**

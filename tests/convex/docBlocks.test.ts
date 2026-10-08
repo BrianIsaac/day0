@@ -171,6 +171,22 @@ describe('searchBlocks', (): void => {
     expect(found.map((block) => [block.sourceId, block.index])).toEqual([[ours.sourceId, 1]]);
   });
 
+  it('answers each found block with the hash its row holds, so a cite needs no second read (14-R, for 14-I)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await sourceOf(harness);
+    await split(harness, source, RUNBOOK);
+    const found = await harness.query(internal.docBlocks.searchBlocks, {
+      userId: 'owner',
+      sourceIds: [source.sourceId],
+      query: 'twice',
+    });
+    const rows = await blocksOf(harness, source.sourceId);
+    expect(found.map((block) => block.hash)).toEqual(
+      found.map((block) => rows.find((row) => row._id === block._id)?.hash),
+    );
+    expect(found.every((block) => typeof block.hash === 'string' && block.hash !== '')).toBe(true);
+  });
+
   it('searches each source on its own, so ten sources each answer their blocks', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sources: Id<'docSources'>[] = [];

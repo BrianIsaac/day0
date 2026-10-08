@@ -61,6 +61,8 @@ export interface FoundBlock {
   readonly text: string;
   readonly kind: Doc<'docBlocks'>['kind'];
   readonly chars: number;
+  /** The row's hash, which a plan's cite keeps so its check needs no second read (14-R). */
+  readonly hash: string;
   /** Its place in its own source's answer, from 0: the backend's relevance order. */
   readonly rank: number;
 }
@@ -297,6 +299,7 @@ export const searchBlocks = internalQuery({
           text: row.text,
           kind: row.kind,
           chars: row.chars,
+          hash: row.hash,
           rank,
         }),
       ),
