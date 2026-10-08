@@ -185,6 +185,11 @@ export interface SelectionInput {
    * stored yet (its split is pending) is split here.
    */
   readonly pageBlocks?: ReadonlyMap<string, readonly SelectableBlock[]>;
+  /**
+   * The pages always included (`alwaysIncludedPages`), when the caller has worked them out already
+   * to read their stored blocks, so each page is parsed for them once a selection (W14-R4).
+   */
+  readonly always?: readonly string[];
 }
 
 /** A cite line as the selection prints it, alone on its line. */
@@ -510,7 +515,7 @@ interface Assembled {
 export function selectDocumentation(input: SelectionInput): SelectedDocumentation {
   const { request, pages } = input;
   const byKey = new Map(pages.map((page) => [page.key, page]));
-  const always = alwaysIncludedPages(pages, request);
+  const always = input.always ?? alwaysIncludedPages(pages, request);
   const alwaysSet = new Set(always);
   const ranked = rankBlocks(request, pages, input.scouted);
   const picked = pickBlocks(ranked, alwaysSet);
@@ -533,21 +538,46 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
     ...guidesFirst(alwaysPages.filter((entry) => !contract.has(entry.page.key))),
     ...guidesFirst(pickedPages),
   ];
+  const needed = new Map(
+    candidates
+      .filter((candidate) => contract.has(candidate.page.key))
+      .map((candidate) => [candidate.page.key, contractBlocks(candidate)] as const),
+  );
   const priority = (candidate: Assembled): ((block: SelectableBlock) => number) => {
-    if (contract.has(candidate.page.key)) return contractPriority(candidate);
+    const contractNeeds = needed.get(candidate.page.key);
+    if (contractNeeds !== undefined) {
+      return (block) =>
+        (contractNeeds.has(blockKey(block)) ? 0 : 1) * candidate.blocks.length + block.index;
+    }
     if (alwaysSet.has(candidate.page.key)) return (block) => block.index;
     return (block) => rankOf.get(blockKey(block)) ?? Number.POSITIVE_INFINITY;
   };
+
+  // Every contract's needed blocks are spent first, page by page, then each page's rest in the
+  // order above: one long contract page no longer cuts the next page's contract (W14-R3).
+  const chosen = new Map<string, SelectableBlock[]>();
+  for (const candidate of candidates) {
+    const contractNeeds = needed.get(candidate.page.key);
+    if (contractNeeds === undefined) continue;
+    const blocks = candidate.blocks.filter((block) => contractNeeds.has(blockKey(block)));
+    fitBlocks(candidate, blocks, chosen, candidates);
+  }
+  for (const candidate of candidates) {
+    const rank = priority(candidate);
+    const ordered = [...candidate.blocks].sort((left, right) => rank(left) - rank(right));
+    fitBlocks(candidate, ordered, chosen, candidates);
+  }
 
   const howToGuides: Array<MockSurfaceSnapshot['howToGuides'][number]> = [];
   const teamDocs: Array<MockSurfaceSnapshot['teamDocs'][number]> = [];
   const citations: Citation[] = [];
   for (const candidate of candidates) {
-    const fitted = fitPage(candidate, { howToGuides, teamDocs }, priority(candidate));
-    if (fitted === undefined) continue;
-    const entry = { slug: candidate.page.slug, title: candidate.page.title, body: fitted.body };
+    const blocks = chosen.get(candidate.page.key);
+    if (blocks === undefined || blocks.length === 0) continue;
+    const assembled = assemblePage(candidate.page, blocks);
+    const entry = { slug: candidate.page.slug, title: candidate.page.title, body: assembled.body };
     (candidate.page.category === 'how-to-guide' ? howToGuides : teamDocs).push(entry);
-    citations.push(...fitted.citations);
+    citations.push(...assembled.citations);
   }
   const documents = { howToGuides, teamDocs };
   return {
@@ -583,14 +613,15 @@ function yieldsContract(page: Pick<SelectablePage, 'slug' | 'title' | 'body'>): 
 }
 
 /**
- * The order a contract page's blocks are kept in when the budget cannot hold it whole: first
- * every block without which the page's own contract would parse differently, then the rest in
- * document order. So a contract is never what the bound cuts while its page can be cut instead.
+ * The blocks of a contract page without which the page's own contract would parse differently,
+ * by key: kept first when the budget cannot hold the page whole, so a contract is never what the
+ * bound cuts while its page can be cut instead. Past `CONTRACT_BLOCK_SEARCH_LIMIT` blocks none is
+ * weighed, and the page keeps document order.
  */
-function contractPriority(candidate: Assembled): (block: SelectableBlock) => number {
+function contractBlocks(candidate: Assembled): Set<string> {
   const { page } = candidate;
-  // Each block is weighed by one parse of the page without it; past this many, document order.
-  if (candidate.blocks.length > CONTRACT_BLOCK_SEARCH_LIMIT) return (block) => block.index;
+  // Each block is weighed by one parse of the page without it.
+  if (candidate.blocks.length > CONTRACT_BLOCK_SEARCH_LIMIT) return new Set();
   const parse = (blocks: readonly SelectableBlock[]): string =>
     JSON.stringify(
       parseProcedureContract({
@@ -601,12 +632,11 @@ function contractPriority(candidate: Assembled): (block: SelectableBlock) => num
       }).trails,
     );
   const whole = parse(candidate.blocks);
-  const needed = new Set(
+  return new Set(
     candidate.blocks
       .filter((block) => parse(candidate.blocks.filter((other) => other !== block)) !== whole)
       .map(blockKey),
   );
-  return (block) => (needed.has(blockKey(block)) ? 0 : 1) * candidate.blocks.length + block.index;
 }
 
 /** The picked pages, by key, in the order their best block was picked. */
@@ -615,32 +645,56 @@ function pagesInPickOrder(picked: readonly SelectableBlock[]): string[] {
 }
 
 /**
- * As many of a page's blocks as fit the budget beside what is already chosen, dropping the block
- * that matters least first (`priority`: the higher, the sooner dropped), or undefined when none
- * fits. A longer prefix of the blocks never renders shorter, so the largest that fits is found
- * by bisection.
+ * Add to a page's chosen blocks as many of `blocks` (in the order given, the first kept longest) as
+ * fit the budget beside every page's chosen blocks; none when even the first does not fit. A longer
+ * prefix never renders shorter, so the largest that fits is found by bisection.
+ *
+ * @param chosen - Each page's chosen blocks by key, updated in place.
+ * @param candidates - Every page in the order the prompt carries them, for the budget's sum.
  */
-function fitPage(
+function fitBlocks(
   candidate: Assembled,
-  chosen: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
-  priority: (block: SelectableBlock) => number,
-): { body: string; citations: Citation[] } | undefined {
-  const ordered = [...candidate.blocks].sort((left, right) => priority(left) - priority(right));
-  const attempt = (count: number): { body: string; citations: Citation[] } | undefined => {
-    const assembled = assemblePage(candidate.page, ordered.slice(0, count));
-    const entry = { slug: candidate.page.slug, title: candidate.page.title, body: assembled.body };
-    const trial =
-      candidate.page.category === 'how-to-guide'
-        ? { howToGuides: [...chosen.howToGuides, entry], teamDocs: chosen.teamDocs }
-        : { howToGuides: chosen.howToGuides, teamDocs: [...chosen.teamDocs, entry] };
-    return documentationChars(trial) <= DOCUMENTATION_CHAR_LIMIT ? assembled : undefined;
+  blocks: readonly SelectableBlock[],
+  chosen: Map<string, SelectableBlock[]>,
+  candidates: readonly Assembled[],
+): void {
+  const key = candidate.page.key;
+  const base = chosen.get(key) ?? [];
+  const taken = new Set(base.map(blockKey));
+  const extra = blocks.filter((block) => !taken.has(blockKey(block)));
+  const fits = (count: number): boolean => {
+    const trial = [...base, ...extra.slice(0, count)].sort(
+      (left, right) => left.index - right.index,
+    );
+    const documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'> = {
+      howToGuides: [],
+      teamDocs: [],
+    };
+    for (const other of candidates) {
+      const own = other.page.key === key ? trial : (chosen.get(other.page.key) ?? []);
+      if (own.length === 0) continue;
+      const entry = {
+        slug: other.page.slug,
+        title: other.page.title,
+        body: assemblePage(other.page, own).body,
+      };
+      (other.page.category === 'how-to-guide' ? documents.howToGuides : documents.teamDocs).push(
+        entry,
+      );
+    }
+    return documentationChars(documents) <= DOCUMENTATION_CHAR_LIMIT;
   };
   let low = 0;
-  let high = ordered.length;
+  let high = extra.length;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (attempt(middle) === undefined) high = middle - 1;
-    else low = middle;
+    if (fits(middle)) low = middle;
+    else high = middle - 1;
   }
-  return low === 0 ? undefined : attempt(low);
+  if (low > 0) {
+    chosen.set(
+      key,
+      [...base, ...extra.slice(0, low)].sort((left, right) => left.index - right.index),
+    );
+  }
 }

@@ -213,12 +213,9 @@ export async function selectedDocumentation(
     userId === undefined || sourceIds.length === 0
       ? []
       : await scoutedBlocks(ctx, { userId, sourceIds, queries: scoutQueries(request, pages) });
-  const pageBlocks = await storedPageBlocks(
-    ctx,
-    docs,
-    new Set(alwaysIncludedPages(pages, request)),
-  );
-  return selectDocumentation({ request, pages, scouted, pageBlocks });
+  const always = alwaysIncludedPages(pages, request);
+  const pageBlocks = await storedPageBlocks(ctx, docs, new Set(always));
+  return selectDocumentation({ request, pages, scouted, pageBlocks, always });
 }
 
 /**

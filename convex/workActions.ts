@@ -4195,14 +4195,29 @@ async function siteSnapshot(
 ): Promise<MockSurfaceSnapshot> {
   const selection =
     SURFACE_MODE === 'real' && !selectionSwitchedOff(process.env) ? input.request : undefined;
-  const snapshot = input.internalCaller
-    ? await ctx.runQuery(
-        internal.mock.snapshotInternal,
-        selection === undefined
-          ? { agentId: input.agentId }
-          : { agentId: input.agentId, selection },
-      )
-    : await readSurfaceSnapshot(ctx, input.agentId, 'mock', [], selection);
+  const read = async (asked: SelectionRequest | undefined): Promise<MockSurfaceSnapshot> =>
+    input.internalCaller
+      ? await ctx.runQuery(
+          internal.mock.snapshotInternal,
+          asked === undefined
+            ? { agentId: input.agentId }
+            : { agentId: input.agentId, selection: asked },
+        )
+      : await readSurfaceSnapshot(ctx, input.agentId, 'mock', [], asked);
+  let snapshot: MockSurfaceSnapshot;
+  try {
+    snapshot = await read(selection);
+  } catch (error) {
+    if (selection === undefined) throw error;
+    // A selection the query could not finish (a library past its reads, W14-R4) falls back to the
+    // whole mirror in a transaction of its own, as mock mode reads it, rather than failing the item.
+    log.warn('documentation selection failed; the whole mirror is read instead', {
+      workItemId: input.workItemId,
+      site: selection.site,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    snapshot = await read(undefined);
+  }
   if (snapshot.documentation !== undefined) {
     await logEvent(ctx, {
       agentId: input.agentId,
