@@ -681,6 +681,71 @@ describe('keeping an agreement on a card', (): void => {
     expect(rows.find((row) => row._id === agreementId)?.status).toBe('proposed');
   });
 
+  it('holds an every-employee agreement for the 51st employee alone when its charter is past the check, and keeps it for the other fifty (W14-R15)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const first = await seedEmployee(harness);
+    for (let index = 2; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: 'Name the vessel in every comment.',
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    recorded.model.length = 0;
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: hired,
+      attempt: 0,
+    });
+    expect(recorded.model).toEqual([]);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)).toMatchObject({ status: 'active' });
+    expect(rows.find((row) => row._id === agreementId)?.effectiveUntil).toBeUndefined();
+    const held = rows.find((row) => row._id !== agreementId);
+    expect(held).toMatchObject({
+      agentId: hired,
+      status: 'refused',
+      supersedes: agreementId,
+      statement: 'Name the vessel in every comment.',
+      refusal: { reason: 'unchecked-for-employee', judgedAt: expect.any(Number) },
+    });
+    // The other fifty's planners still read it; the new hire's does not.
+    const read = async (agentId: Id<'agents'>, externalId: string): Promise<string[]> =>
+      (
+        await harness.query(internal.workingAgreements.selectedForCandidate, {
+          workItemId: await seedItem(harness, agentId, externalId, 'plan-pending'),
+        })
+      ).map((row) => row._id);
+    expect(await read(first, 'LOG-1')).toEqual([agreementId]);
+    expect(await read(hired, 'LOG-2')).toEqual([]);
+    const events = await eventsOf(harness, 'agreement.refused');
+    expect(events.map((event) => [event.agentId, event.payload])).toEqual([
+      [hired, { agreementId: held?._id, everyEmployee: true, reason: 'unchecked-for-employee' }],
+    ]);
+    const listed = await harness
+      .withIdentity(OWNER)
+      .query(api.workingAgreements.listForAgent, { agentId: hired });
+    expect(listed.map((row) => [row._id, row.status])).toEqual([[held?._id, 'refused']]);
+    // A second approval of the same charter holds nothing twice.
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: hired,
+      attempt: 0,
+    });
+    expect(await agreementsOf(harness)).toHaveLength(2);
+  }, 60_000);
+
   it('keeps the proposal for its employee when another charter refuses its every-employee copy (W13-R31)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });

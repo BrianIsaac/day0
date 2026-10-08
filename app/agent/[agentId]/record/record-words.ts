@@ -1101,12 +1101,14 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${decider(subject)} kept a working agreement${
       p.everyEmployee === true ? ' for every employee' : ''
     }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
-  'agreement.refused': (p) =>
+  'agreement.refused': (p, subject) =>
     p.reason === 'every-employee-too-many'
       ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
-      : text(p.clause)
-        ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
-        : `A working agreement was refused: it would go beyond the charter`,
+      : p.reason === 'unchecked-for-employee'
+        ? `A working agreement for every employee is not in effect for ${subject.name}: you had more than ${EMPLOYEES_CHECKED} employees when its charter was approved, so it was never checked against it`
+        : text(p.clause)
+          ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+          : `A working agreement was refused: it would go beyond the charter`,
   'agreement.retired': (p, subject) =>
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`

@@ -109,7 +109,32 @@ async function bindingAgreements(
           .take(AGREEMENTS_READ),
     ),
   );
-  return [...(own ?? []), ...(everyone ?? [])];
+  // An agreement for every employee held for this employee alone binds it no longer (W14-R15).
+  const held = status === 'active' ? await heldForEmployee(ctx, userId, agentId) : new Set();
+  return [...(own ?? []), ...(everyone ?? []).filter((row) => !held.has(row._id))];
+}
+
+/**
+ * The agreements for every employee held for one employee alone (W14-R15): its own refused rows
+ * that name one, written when its charter was approved past the employees the check reads.
+ */
+async function heldForEmployee(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+  agentId: Id<'agents'>,
+): Promise<Set<Id<'workingAgreements'>>> {
+  const refused = await ctx.db
+    .query('workingAgreements')
+    .withIndex('by_user_agent_status', (q) =>
+      q.eq('userId', userId).eq('agentId', agentId).eq('status', 'refused'),
+    )
+    .order('desc')
+    .take(AGREEMENTS_READ);
+  return new Set(
+    refused.flatMap((row) =>
+      row.refusal?.reason === 'unchecked-for-employee' && row.supersedes ? [row.supersedes] : [],
+    ),
+  );
 }
 
 /** Whether an agreement binds an employee: its own, or every employee's of the same owner. */
@@ -221,7 +246,7 @@ async function refuseTooMany(
   agentId: Id<'agents'>,
   now: number,
 ): Promise<void> {
-  const reason = AGREEMENT_KEEP_REFUSAL_REASONS[0];
+  const reason = 'every-employee-too-many';
   await ctx.db.patch(agreementId, { status: 'refused', refusal: { reason, judgedAt: now } });
   await appendEvent(ctx, {
     agentId,
@@ -807,6 +832,47 @@ export const settleCharterCheck = internalMutation({
       agentId: args.agentId,
       type: 'agreement.refused',
       payload: { agreementId: row._id, everyEmployee: true, ...args.refusal },
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Internal: hold an active agreement for every employee for one employee alone, whose newly
+ * approved charter came past the employees the check reads (W14-R15): the agreement stays in
+ * effect for every other employee, and this employee's own refused row, which names it, takes it
+ * out of what this employee's planner and runs read. Nothing for a row no longer active or no
+ * longer for every employee, or one already held for the employee. Writes `agreement.refused` on
+ * the employee.
+ */
+export const holdForEmployee = internalMutation({
+  args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.agreementId);
+    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if ((await heldForEmployee(ctx, row.userId, args.agentId)).has(row._id)) return null;
+    const now = Date.now();
+    const reason = 'unchecked-for-employee';
+    const heldId = await ctx.db.insert('workingAgreements', {
+      userId: row.userId,
+      agentId: args.agentId,
+      kind: row.kind,
+      statement: row.statement,
+      scope: row.scope,
+      ...(row.scopeRef !== undefined ? { scopeRef: row.scopeRef } : {}),
+      ...(row.personId !== undefined ? { personId: row.personId } : {}),
+      sourceType: row.sourceType,
+      status: 'refused',
+      refusal: { reason, judgedAt: now },
+      supersedes: row._id,
+      createdAt: now,
+      appliedTo: [],
+    });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agreement.refused',
+      payload: { agreementId: heldId, everyEmployee: true, reason },
       createdAt: now,
     });
     return null;

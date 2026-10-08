@@ -279,8 +279,9 @@ export const settleKept = internalAction({
 /**
  * Internal: check an employee's newly approved charter against its owner's active agreements for
  * every employee (13-W's gap; scheduled by `charters.approve`), each as the keep's check would have:
- * one the charter refuses, or every one once the owner has more employees than the check reads, is
- * refused on its row (`settleCharterCheck`). A check that could not be had is tried again after each
+ * one the charter refuses is refused on its row (`settleCharterCheck`); once the owner has more
+ * employees than the check reads, every one is held for this employee alone and stays in effect for
+ * the others (`holdForEmployee`, W14-R15). A check that could not be had is tried again after each
  * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone.
  */
 export const checkForCharter = internalAction({
@@ -298,12 +299,14 @@ export const checkForCharter = internalAction({
       ...(args.agreementIds === undefined ? {} : { agreementIds: args.agreementIds }),
     });
     if (inputs === null) return;
+    // Past the check, the agreements stay in effect for the employees they were checked against,
+    // and are held for this one alone (W14-R15): ended for everyone, the fiftieth's agreement went
+    // with the fifty-first's hire.
     if (inputs.pastTheCheck) {
       for (const agreement of inputs.agreements) {
-        await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
+        await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
           agreementId: agreement._id,
           agentId: args.agentId,
-          refusal: { reason: 'every-employee-too-many' },
         });
       }
       return;

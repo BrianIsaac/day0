@@ -94,6 +94,17 @@ export const NOT_KEPT = 'Not kept';
  */
 export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. You can keep it for a single employee instead.`;
 
+/**
+ * Why an agreement for every employee does not bind one employee (W14-R15; wording draft): its
+ * charter was approved while the owner had more employees than the check reads, so the agreement was
+ * never checked against it. It stays in effect for the others, which the row says.
+ *
+ * @param name - The employee's name.
+ */
+export function uncheckedForEmployee(name: string): string {
+  return `Not in effect for ${name}: ${name}'s charter was approved while you had more than ${EMPLOYEES_CHECKED} employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.`;
+}
+
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
 
@@ -207,6 +218,8 @@ export function refusalSentence(
       return 'This names a credential, which a working agreement never keeps. It was not kept.';
     case 'every-employee-too-many':
       return EVERY_EMPLOYEE_TOO_MANY;
+    case 'unchecked-for-employee':
+      return uncheckedForEmployee(name);
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);

@@ -1402,6 +1402,17 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
       recordWords(
         {
           type: 'agreement.refused',
+          payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement for every employee is not in effect for Mira: you had more than 50 employees when its charter was approved, so it was never checked against it.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
           payload: {
             agreementId: 'a1',
             everyEmployee: true,

@@ -819,5 +819,13 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
       }),
     ).toBe('working agreement not in effect for every employee: you have more than 50 employees');
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
+      }),
+    ).toBe(
+      'working agreement for every employee not in effect for this employee: you had more than 50 employees when its charter was approved',
+    );
   });
 });
