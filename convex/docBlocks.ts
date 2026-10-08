@@ -100,33 +100,87 @@ function blockRow(
 /**
  * Make a page's stored blocks the blocks of its Markdown, in the caller's transaction.
  *
- * Block by block in document order: a row that already holds the same block is left as it is
- * (its id, so a citation of it, and the run that wrote it stay), a row that differs is
- * rewritten, a missing one inserted, and the rows past the page's new end deleted. So running
- * it twice over the same Markdown changes nothing, which the backfill relies on.
+ * A row that already holds the same block keeps it wherever the block now sits on the page (its
+ * id, so a citation of it, and the run that wrote it stay; only its place is moved), so an edit
+ * above a cited section leaves the cite standing (W14-R2). A block no row holds takes the row
+ * left at its place, or any row left over, or a new one; the rows left after that are deleted.
+ * So running it twice over the same Markdown changes nothing, which the backfill relies on.
  *
  * @param ctx - The writing mutation's context.
  * @param page - The page and the run writing it.
- * @returns How many block rows it inserted, rewrote or deleted.
+ * @returns How many block rows it inserted, rewrote, moved or deleted.
  */
 export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Promise<number> {
   const blocks = splitPage(page.markdown);
   const stored = await ctx.db
     .query('docBlocks')
-    .withIndex('by_source_page', (q) =>
-      q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef).lt('index', blocks.length),
-    )
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef))
     .take(MAX_BLOCKS_PER_PAGE);
-  const byIndex = new Map(stored.map((row) => [row.index, row]));
+  const { kept, rewritten, left } = matchStoredBlocks(stored, blocks, page.userId);
   let changed = 0;
-  for (const block of blocks) {
-    const row = byIndex.get(block.index);
-    if (row !== undefined && sameBlock(row, block, page.userId)) continue;
+  for (const [index, row] of kept) {
+    if (row.index === index) continue;
+    await ctx.db.patch(row._id, { index });
+    changed += 1;
+  }
+  for (const { block, row } of rewritten) {
     if (row === undefined) await ctx.db.insert('docBlocks', blockRow(page, block));
     else await ctx.db.replace(row._id, blockRow(page, block));
     changed += 1;
   }
-  return changed + (await deleteBlocksFrom(ctx, page.sourceId, page.pageRef, blocks.length));
+  for (const row of left) await ctx.db.delete(row._id);
+  // A page stored with more rows than one read takes (none since the split's bound) loses the rest.
+  return (
+    changed +
+    left.length +
+    (await deleteBlocksFrom(ctx, page.sourceId, page.pageRef, blocks.length))
+  );
+}
+
+/** How a page's stored rows meet its blocks: the rows kept as they are, the blocks to write, the rows left. */
+interface StoredBlockMatch {
+  /** Each block's index whose row already holds it. */
+  readonly kept: ReadonlyMap<number, Doc<'docBlocks'>>;
+  /** Each block no row holds, with the row it takes (none: a new row). */
+  readonly rewritten: ReadonlyArray<{ block: DocBlock; row: Doc<'docBlocks'> | undefined }>;
+  readonly left: readonly Doc<'docBlocks'>[];
+}
+
+/**
+ * Match a page's stored rows to its blocks by content first, in document order (two equal
+ * blocks take two rows in order), then the rest by place.
+ */
+function matchStoredBlocks(
+  stored: readonly Doc<'docBlocks'>[],
+  blocks: readonly DocBlock[],
+  userId: string,
+): StoredBlockMatch {
+  const byHash = new Map<string, Doc<'docBlocks'>[]>();
+  for (const row of [...stored].sort((a, b) => a.index - b.index)) {
+    byHash.set(row.hash, [...(byHash.get(row.hash) ?? []), row]);
+  }
+  const kept = new Map<number, Doc<'docBlocks'>>();
+  const unmatched: DocBlock[] = [];
+  for (const block of blocks) {
+    const candidates = byHash.get(block.hash) ?? [];
+    const at = candidates.findIndex((row) => sameBlock(row, block, userId));
+    if (at < 0) {
+      unmatched.push(block);
+      continue;
+    }
+    kept.set(block.index, candidates[at]);
+    candidates.splice(at, 1);
+  }
+  const taken = new Set([...kept.values()].map((row) => row._id));
+  const free = new Map(
+    stored.filter((row) => !taken.has(row._id)).map((row) => [row.index, row] as const),
+  );
+  const rewritten = unmatched.map((block) => {
+    const row = free.get(block.index) ?? free.values().next().value;
+    if (row !== undefined) free.delete(row.index);
+    return { block, row };
+  });
+  return { kept, rewritten, left: [...free.values()] };
 }
 
 /** Delete a page's blocks from `index` on, in rounds a page never outgrows. */

@@ -126,6 +126,31 @@ describe('replacePageBlocks', (): void => {
     expect(await split(harness, { sourceId, runId }, shorter)).toBe(1);
     expect((await blocksOf(harness, sourceId)).map((block) => block.index)).toEqual([0, 1]);
   });
+
+  it("keeps an unchanged block's row when a block is inserted above it, so a citation of it stands (W14-R2)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    const before = await blocksOf(harness, sourceId);
+    const inserted = RUNBOOK.replace(
+      '## When it is stale',
+      '## Who to ask\n\nAsk the revenue operations lead.\n\n## When it is stale',
+    );
+    await split(harness, { sourceId, runId }, inserted);
+    const after = await blocksOf(harness, sourceId);
+    expect(after.map((block) => [block.index, block.text])).toEqual([
+      [0, 'Open the pipeline dashboard.'],
+      [1, 'Ask the revenue operations lead.'],
+      [2, 'Press refresh twice.'],
+      [3, 'Post in the revops channel.'],
+    ]);
+    const idOf = (text: string): string | undefined =>
+      after.find((block) => block.text === text)?._id;
+    for (const block of before) {
+      expect(idOf(block.text)).toBe(block._id);
+      expect(after.find((row) => row._id === block._id)?.hash).toBe(block.hash);
+    }
+  });
 });
 
 describe('splitStoredPage', (): void => {

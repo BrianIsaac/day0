@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -32,6 +33,11 @@ const TILE_RUNBOOK = [
   '',
   'Press Refresh, then read back the coverage figure and the audit line.',
 ].join('\n');
+
+const CLOSE_STATUS_NOTE = readFileSync(
+  new URL('../fixtures/company-bed/folder/finance/runbooks/close-status-note.md', import.meta.url),
+  'utf8',
+);
 
 const HOLIDAYS = ['# Office holidays', '', 'The office closes on the first Monday of August.'].join(
   '\n',
@@ -132,6 +138,17 @@ async function storePage(
       updatedAt: 3,
     });
   });
+}
+
+/** A stored page's blocks in document order. */
+async function pageBlocks(harness: Harness, sourceId: Id<'docSources'>, pageRef: string) {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db
+        .query('docBlocks')
+        .withIndex('by_source_page', (q) => q.eq('sourceId', sourceId).eq('pageRef', pageRef))
+        .collect(),
+  );
 }
 
 describe('docSelection', (): void => {
@@ -483,5 +500,85 @@ describe('docSelection.changedCitedBlocks', (): void => {
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, { blocks: [standing] }),
     ).resolves.toEqual([standing.id]);
+  });
+
+  it('answers nothing for a cited section when a section is inserted above it (W14-R2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    const ref = 'finance/runbooks/close-status-note.md';
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref,
+      title: 'How to write the close status note',
+      markdown: CLOSE_STATUS_NOTE,
+    });
+    const cited = (await pageBlocks(harness, handbook.sourceId, ref))
+      .filter((block) => block.headingPath.includes('Format'))
+      .map((block) => ({ id: block._id, hash: block.hash }));
+    expect(cited.length).toBeGreaterThan(0);
+    const edited = CLOSE_STATUS_NOTE.replace(
+      '## Format',
+      '## Contacts\n\nThe controller answers questions about the note.\n\n## Format',
+    );
+    await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', handbook.sourceId).eq('ref', ref))
+        .unique();
+      await ctx.db.patch(page!._id, { markdown: edited });
+      await replacePageBlocks(ctx, {
+        userId: 'owner',
+        sourceId: handbook.sourceId,
+        pageRef: ref,
+        generation: handbook.runId,
+        markdown: edited,
+      });
+    });
+    await expect(
+      harness.query(internal.docSelection.changedCitedBlocks, { blocks: cited }),
+    ).resolves.toEqual([]);
+  });
+
+  it('reads a cite by its hash on its page, the id only a hint, so a row that now holds another block still stands (W14-R2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    const ref = 'runbooks/refresh-tile.md';
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref,
+      title: 'How to refresh the pipeline tile',
+      markdown: TILE_RUNBOOK,
+    });
+    const [first, second] = await pageBlocks(harness, handbook.sourceId, ref);
+    // The shape a positional re-split left: each row holds the other's block.
+    const content = (block: typeof first) => ({
+      headingPath: block.headingPath,
+      text: block.text,
+      searchText: block.searchText,
+      kind: block.kind,
+      hash: block.hash,
+      chars: block.chars,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(first._id, content(second));
+      await ctx.db.patch(second._id, content(first));
+    });
+    await expect(
+      harness.query(internal.docSelection.changedCitedBlocks, {
+        blocks: [
+          { id: first._id, hash: first.hash },
+          { id: second._id, hash: second.hash },
+        ],
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      harness.query(internal.docSelection.changedCitedBlocks, {
+        blocks: [{ id: first._id, hash: 'a-hash-no-block-on-the-page-holds' }],
+      }),
+    ).resolves.toEqual([first._id]);
   });
 });
