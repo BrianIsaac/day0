@@ -67,6 +67,7 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { errorMessage } from '../src/lib/errors';
+import { listsDemoTile, withDemoTile } from './lib/demo-tile';
 
 const ENV_FILE = '.env.local';
 const COMPOSE_FILE = 'docker-compose.yml';
@@ -1551,6 +1552,9 @@ export function bedEnvDefaults(
     derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
   if (profiles.includes('redactor') && !values.DAY0_REDACTOR_URL)
     derived.DAY0_REDACTOR_URL = REDACTOR_URL;
+  // The tile is a web UI over plain http, opened only on a listed private host (14-D's ruling 2).
+  if (profiles.includes('demo') && !listsDemoTile(values.DAY0_PRIVATE_HOSTS))
+    derived.DAY0_PRIVATE_HOSTS = withDemoTile(values.DAY0_PRIVATE_HOSTS);
   if (profiles.includes('test')) {
     if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
     if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)

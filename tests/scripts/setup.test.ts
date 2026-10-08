@@ -41,6 +41,7 @@ import {
   pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
+  demoTileNote,
   shouldCaptureAdminKey,
   wrapIndented,
   writeEnvValues,
@@ -947,6 +948,36 @@ describe('the values written into .env.local', (): void => {
     expect(updates.DAY0_SURFACE_MODE).toBeUndefined();
     expect(updates.CONVEX_BIND_ADDR).toBeUndefined();
     expect(updates.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it('lists the demo tile among the private hosts in real mode when the file lists none, and only then (14-D ruling 2)', (): void => {
+    const real = (existing: Record<string, string>): Record<string, string> =>
+      setupEnvUpdates({
+        route: 'key',
+        project: 'day0-setup-abc',
+        ports: DEFAULT_PORTS,
+        existing,
+        mode: 'real',
+      });
+    expect(real({}).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: '' }).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).not.toHaveProperty(
+      'DAY0_PRIVATE_HOSTS',
+    );
+    expect(
+      setupEnvUpdates({ route: 'key', project: 'p', ports: DEFAULT_PORTS, existing: {} }),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+  });
+
+  it('says so when the operator’s private hosts leave out the demo tile real mode starts (14-D ruling 2)', (): void => {
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(
+      'DAY0_PRIVATE_HOSTS does not list looker-tile, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add looker-tile to the list to use the tile.',
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal looker-tile' })).toBe(
+      undefined,
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: '' })).toBe(undefined);
+    expect(demoTileNote('mock', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(undefined);
   });
 
   it('writes the model port only where a bundled model uses one', (): void => {

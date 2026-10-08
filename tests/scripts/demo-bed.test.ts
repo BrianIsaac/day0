@@ -687,6 +687,32 @@ describe('the env file', (): void => {
     expect(derived.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('http://127.0.0.1:44090/oauth/v2/authorize');
   });
 
+  it('lists the demo tile among the private hosts when the demo profile runs, keeping the operator’s own (14-D ruling 2)', (): void => {
+    const ports = bedPorts({});
+    expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_PRIVATE_HOSTS).toBe(
+      'looker-tile',
+    );
+    expect(
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+        ports,
+      ).DAY0_PRIVATE_HOSTS,
+    ).toBe('mcp.linear.app,looker-tile');
+    expect(
+      bedEnvDefaults(
+        'day0-a7-abc123',
+        BED_PROFILES,
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app, looker-tile' },
+        ports,
+      ),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+    expect(bedEnvDefaults('day0-a7-abc123', ['real'], {}, ports)).not.toHaveProperty(
+      'DAY0_PRIVATE_HOSTS',
+    );
+  });
+
   it('names a bed that runs the offline rung an evaluation bed, and keeps a name the file gives', (): void => {
     const ports = bedPorts({});
     expect(bedEnvDefaults('day0-a7-abc123', BED_PROFILES, {}, ports).DAY0_EVALUATION_BED).toBe(

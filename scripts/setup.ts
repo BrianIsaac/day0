@@ -116,6 +116,7 @@ import {
 } from './redactor-device';
 import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from './bed/spec';
 import { pinnedNodeImage, redactorVolumeClone, REDACTOR_VOLUME_SUFFIXES } from './lib/docker';
+import { DEMO_TILE_HOST, listsDemoTile } from './lib/demo-tile';
 import { isLoopback, setupRoute } from './setup-route';
 import {
   checkoutReleases,
@@ -1339,6 +1340,9 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
     derived.DAY0_REDACTOR_URL = REDACTOR_URL;
     whenMissing.DAY0_DOCS_ROOT = '/docs';
+    // Real mode starts the demo profile, whose tile opens only on a listed private host (14-D's
+    // ruling 2); an operator's own list is theirs, and `demoTileNote` says what it leaves out.
+    whenMissing.DAY0_PRIVATE_HOSTS = DEMO_TILE_HOST;
     if ((input.sandbox ?? 'local') === 'local') selected.DAYTONA_API_KEY = '';
     if (input.bossEmail) selected.NEXT_PUBLIC_DEMO_BOSS_EMAIL = input.bossEmail;
   }
@@ -1355,6 +1359,23 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     if (input.existing[name] === updates[name]) delete updates[name];
   }
   return updates;
+}
+
+/**
+ * The line the setup prints when real mode starts the demo tile and the operator's own private
+ * hosts leave it out, so the tile's card would be refused at its first probe (14-D's ruling 2).
+ *
+ * @param mode - The mode being set up.
+ * @param existing - The env file as it stands.
+ * @returns The line, or undefined when there is nothing to say.
+ */
+export function demoTileNote(
+  mode: SetupMode,
+  existing: Readonly<Record<string, string>>,
+): string | undefined {
+  const listed = existing.DAY0_PRIVATE_HOSTS ?? '';
+  if (mode !== 'real' || listed.trim() === '' || listsDemoTile(listed)) return undefined;
+  return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add ${DEMO_TILE_HOST} to the list to use the tile.`;
 }
 
 /**
@@ -3268,6 +3289,8 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('');
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
     }
+    const tileNote = demoTileNote(real ? 'real' : 'mock', existing);
+    if (tileNote !== undefined) io.log(tileNote);
     if (keptByResume.length > 0) {
       io.log(
         `Kept as ${ENV_FILE} has them (a resume changes only what its own arguments name): ` +
