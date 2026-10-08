@@ -198,7 +198,9 @@ export function DeployForm({
             }}
             aria-describedby={nameMissing ? `${nameHelpId} ${nameErrorId}` : nameHelpId}
             aria-invalid={nameMissing ? true : undefined}
-            className="min-h-11 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
+            // Focused again by its alert, the field and its label keep clear of the sticky header
+            // (14-FX's bed at 390 by 844); the room is the field's own, so no hash landing moves.
+            className="min-h-11 w-full scroll-mt-24 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2.5 text-sm focus:border-[var(--color-accent)]"
           />
           <p id={nameHelpId} className="mt-1.5 text-xs text-[var(--color-muted)]">
             The name the team will see. It cannot be changed after deploy.
