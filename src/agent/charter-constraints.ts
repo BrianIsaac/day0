@@ -1247,14 +1247,16 @@ function contentStems(text: string): Set<string> {
  * are not to", "nothing ... without" (W14-R14).
  */
 const FORBIDS =
-  /\b(?:never|must not|mustn['\u2019]t|cannot|can['\u2019]t|do not|don['\u2019]t|should not|shouldn['\u2019]t|under no circumstances|not allowed to|no one may|avoid|refrain from|(?:are|is) not to|nothing\b[^.;]*\bwithout)\b/i;
+  /\b(?:never|must not|mustn['\u2019]t|cannot|can['\u2019]t|do not|don['\u2019]t|should not|shouldn['\u2019]t|under no circumstances|not allowed to|no one may|avoid|refrain from|(?:are|is) not to|nothing\b[^.;]*\bwithout|prohibited|forbidden|not permitted|off limits)\b/i;
 
 /**
- * A sentence that keeps an act to someone else: "Only the security lead approves ...". A property
- * of the work ("Only stuck deals.", "Only owned tickets.") names no one acting, so it is not one.
+ * A sentence that keeps an act to someone else ("Only the security lead approves ...", "Only Dana
+ * approves spend.", "Only managers should approve refunds.") or forbids it outright ("No refunds
+ * over 50."). A property of the work names no one acting ("Only stuck deals.", "Only the open
+ * tickets can be triaged."), so it is not one.
  */
-const ONLY_OPENING =
-  /^only\s+(?:the|a|an|your|our|their|my)\s+\S+(?:\s+\S+)?\s+(?:may|can|approves|signs|owns|decides|sends|changes|edits|answers|replies)\b/i;
+const KEPT_TO_SOMEONE_ELSE =
+  /^(?:(?:only|nobody but|no one but|none but)\s+(?:(?:the|a|an|your|our|their|my)\s+)?(?:[\w\u2019'-]+\s+){0,5}?(?:(?:may|can|should|must|will)(?!\s+be\b)|approves?|signs?|owns?|decides?|sends?|changes?|edits?|answers?|replies|reply|handles?|issues?)\b|no\s+(?!one\b|doubt\b|problem\b|need\b)\w)/i;
 
 /**
  * Whether a rule forbids an act (`PROHIBITION_OPENING`, a forbidding word in any of its sentences:
@@ -1266,7 +1268,9 @@ function forbidsAnAct(quote: string): boolean {
   return (
     PROHIBITION_OPENING.test(quote.trim()) ||
     FORBIDS.test(quote) ||
-    quoteSentences(quote).some((sentence: string): boolean => ONLY_OPENING.test(sentence.trim()))
+    quoteSentences(quote).some((sentence: string): boolean =>
+      KEPT_TO_SOMEONE_ELSE.test(sentence.trim()),
+    )
   );
 }
 
@@ -1349,18 +1353,43 @@ function holdsMostOf(sentence: string, text: string): boolean {
 /** A word that limits a granted act: "Draft replies, never sharing a password.", "Send only after". */
 const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 'gi');
 
+/** Where a rule's condition starts: the words after it say when the act is allowed. */
+const CONDITION_OPENING = /\b(?:without|unless|until|except|before|after|if|when|once)\b/i;
+
+/** A rule's opening that names no act: a prohibition's, or "only" and its kin. */
+const RULE_OPENING =
+  /^(?:please\s+)?(?:(?:i\s+)?(?:never|(?:do|does|will|must|should|shall)\s+not|don['\u2019]t|doesn['\u2019]t|won['\u2019]t|mustn['\u2019]t|shouldn['\u2019]t|avoid|refrain from)|only|nobody but|no one but|none but|no)\s+/i;
+
 /**
- * Whether a clause limits the act a rule's sentence forbids: a limiting word whose words after it
- * hold one of the sentence's own, so "Edit booked figures without asking." does not carry "Never
- * edit a booked figure." and "Promise refunds only when the order is under 20." does not carry
- * "Never promise a refund." (W14-R14), while "Answer access tickets, never sharing a password in a
- * ticket comment." carries "Never share a password in a ticket comment.".
+ * A rule sentence's act and its condition, as stems: "Do not send anything without my approval."
+ * forbids sending anything, under the condition of the manager's approval.
+ */
+function actAndCondition(sentence: string): { act: Set<string>; condition: Set<string> } {
+  const words = sentence.replace(FIRST_PERSON, 'manager').trim().replace(RULE_OPENING, '');
+  const at = words.search(CONDITION_OPENING);
+  return at < 0
+    ? { act: contentStems(words), condition: new Set() }
+    : { act: contentStems(words.slice(0, at)), condition: contentStems(words.slice(at)) };
+}
+
+/**
+ * Whether a clause limits the act a rule's sentence forbids (W14-R14): a limiting word in the
+ * clause whose own phrase (up to the next comma, semicolon or full stop) names the rule's act, or,
+ * for "only", the act or the rule's condition. So "Answer access tickets, never sharing a password
+ * in a ticket comment." carries "Never share a password in a ticket comment." and "Send invoices
+ * only after the manager approves them." carries "Only send invoices after the manager approves.",
+ * while "Edit booked figures without asking.", "Promise refunds only when the order is under 20.",
+ * "Send updates without approval." (the opposite of "Do not send anything without my approval.")
+ * and "Draft replies that avoid delays, promise refunds to angry customers." carry nothing.
  */
 function limitsTheAct(sentence: string, text: string): boolean {
-  const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
+  const { act, condition } = actAndCondition(sentence);
   return [...text.matchAll(LIMITS_THE_ACT)].some((limit: RegExpMatchArray): boolean => {
-    const after = contentStems(text.slice((limit.index ?? 0) + limit[0].length));
-    return [...said].some((word: string): boolean => after.has(word));
+    const phrase = text.slice((limit.index ?? 0) + limit[0].length).split(/[.,;]/)[0] ?? '';
+    const named = contentStems(phrase);
+    const names = (stems: ReadonlySet<string>): boolean =>
+      [...stems].some((word: string): boolean => named.has(word));
+    return names(act) || (limit[0].toLowerCase() === 'only' && names(condition));
   });
 }
 

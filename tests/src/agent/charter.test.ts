@@ -547,6 +547,32 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
 
   it.each([
     [
+      'Never promise a refund.',
+      'Draft replies that avoid delays, promise refunds to angry customers.',
+    ],
+    [
+      'Never edit a booked figure.',
+      'Reply to tickets without delay; edit booked figures in the tracker.',
+    ],
+    ['Do not send anything without my approval.', 'Send updates without approval.'],
+    ['No refunds over 50.', 'Issue refunds over 50.'],
+    ['Only Dana approves spend.', 'Approve spend.'],
+    ['Only finance approves spend requests.', 'Approve spend requests from the team.'],
+    ['Only managers should approve refunds.', 'Approve refunds for customers.'],
+  ])(
+    'reads %j bound to the will-do %j as Check (second pass on W14-R14)',
+    (quote, willDo): void => {
+      expect(carriedOf(boundToWillDo(quote, willDo))[quote]).toBe(false);
+    },
+  );
+
+  it('still reads a property of the work bound to the will-do it limits as Confirmed (second pass on W14-R14)', (): void => {
+    const quote = 'Only the open tickets can be triaged.';
+    expect(carriedOf(boundToWillDo(quote, 'Triage open tickets.'))[quote]).toBe(true);
+  });
+
+  it.each([
+    [
       'Never share a password in a ticket comment.',
       'Answer access tickets, never sharing a password in a ticket comment.',
     ],
