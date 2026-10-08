@@ -19,8 +19,11 @@ interface RegisteredFunction {
   readonly exportArgs?: () => string;
 }
 
-/** Re-pinned with the function added or removed named in the commit (207 at v0.17.0). */
-const PINNED_COUNT = 207;
+/**
+ * Re-pinned with the function added or removed named in the commit (207 at v0.17.0; 210 with
+ * wave 14's `personChanges:take`, `personChanges:dismiss` and `workingAgreements:recheck`).
+ */
+const PINNED_COUNT = 210;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 

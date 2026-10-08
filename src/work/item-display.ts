@@ -15,7 +15,7 @@ import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from './types';
 const SLACK_USER_ID = /^[UW](?=[A-Z0-9]*\d)[A-Z0-9]{8,}$/;
 
 /** A raw Slack user mention in a message's text, `<@U0BTFK6FLNL>` or `<@W0ABCDEF12|rowan>`. */
-const SLACK_MENTION = /\s*<@[UW][A-Z0-9]+(?:\|[^>]*)?>/g;
+const SLACK_MENTION = /(\s*)<@([UW][A-Z0-9]+)(?:\|([^>]*))?>/g;
 
 /**
  * A work item as the Work tab lists it (`work.listForAgent`): the row, and the name of the
@@ -24,6 +24,8 @@ const SLACK_MENTION = /\s*<@[UW][A-Z0-9]+(?:\|[^>]*)?>/g;
 export type ListedWorkItem = Doc<'workItems'> & {
   /** The confirmed requester's name, read from the owner's graph when the list is read (W13V-7). */
   readonly requesterName?: string;
+  /** The confirmed people its text mentions, by Slack user id (W13V-7). */
+  readonly mentionNames?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -57,14 +59,38 @@ export function sourceLine(
 }
 
 /**
- * A message's text with its raw Slack user mentions taken out, for a card to show: `<@U0C78V6LAPP>`
- * says nothing to a manager (W13V-7). Naming the person mentioned instead is wave 14's.
+ * The Slack user ids a message's text mentions, each once, in the order first mentioned, at most
+ * ten: one message naming hundreds never asks the graph hundreds of times.
  *
  * @param text - The text as intake stored it.
  */
-export function withoutSlackMentions(text: string): string {
+export function slackMentionIds(text: string): string[] {
+  return [...new Set([...text.matchAll(SLACK_MENTION)].map((match) => match[2]!))].slice(
+    0,
+    MENTIONS_NAMED,
+  );
+}
+
+/** The most mentions of one message the Work tab asks the people graph about (the second pass). */
+const MENTIONS_NAMED = 10;
+
+/**
+ * A message's text with its raw Slack user mentions said by name, for a card to show (W13V-7):
+ * `<@U0C78V6LAPP>` says nothing to a manager, so a mention of a confirmed person reads `@Rowan
+ * Hale`, one that carries its handle `@rowan`, and any other is taken out.
+ *
+ * @param text - The text as intake stored it.
+ * @param names - The confirmed people mentioned, by Slack user id.
+ */
+export function withSlackMentionsNamed(
+  text: string,
+  names: Readonly<Record<string, string>> = {},
+): string {
   return text
-    .replace(SLACK_MENTION, '')
+    .replace(SLACK_MENTION, (_match, space: string, id: string, handle: string | undefined) => {
+      const name = names[id] ?? handle?.trim();
+      return name ? `${space}@${name}` : '';
+    })
     .replace(/\s{2,}/g, ' ')
     .trim();
 }

@@ -205,11 +205,16 @@ export const charterSchema = z.object({
     day30: z.string(),
     day60: z.string(),
     day90: z.string(),
-    stated: z.object({
-      day30: z.boolean(),
-      day60: z.boolean(),
-      day90: z.boolean(),
-    }),
+    // Optional, and dropped when unreadable (W13-R36): a goal is then read by its words, as on a
+    // charter drafted before the drafter said whether it was given.
+    stated: z
+      .object({
+        day30: z.boolean(),
+        day60: z.boolean(),
+        day90: z.boolean(),
+      })
+      .optional()
+      .catch(undefined),
   }),
   proposedBoundaries: z.object({
     willDo: z.array(z.string()),
@@ -247,12 +252,18 @@ export const charterSchema = z.object({
       kind: z.enum(CONSTRAINT_KINDS),
       quote: z.string(),
       wording: z.array(z.string()),
-      binds: z.array(
-        z.object({
-          field: z.enum(CLAUSE_FIELDS),
-          index: z.number().int(),
-        }),
-      ),
+      // Optional, and dropped when unreadable (W13-R36: a field outside the list or a fractional
+      // index went to the structured repair, and past two repairs the synthesis threw): the rule
+      // is then placed by its words, as a rule drafted before binds is.
+      binds: z
+        .array(
+          z.object({
+            field: z.enum(CLAUSE_FIELDS),
+            index: z.number().int(),
+          }),
+        )
+        .optional()
+        .catch(undefined),
     }),
   ),
 });
@@ -533,7 +544,7 @@ export function assemble(
     whyThisHire: raw.whyThisHire,
     proposedFunction: raw.proposedFunction,
     evidence: ensureProvenance(raw.evidence),
-    shortTermGoals: raw.shortTermGoals,
+    shortTermGoals: goalsOf(raw.shortTermGoals),
     proposedBoundaries: raw.proposedBoundaries,
     namedCollaborators: raw.namedCollaborators,
     namedSystems: normaliseNamedSystems(raw.namedSystems, args.office),
@@ -551,6 +562,12 @@ export function assemble(
     ...charter,
     constraints: [...listed, ...deriveConstraints(charter, args.answers, listed)],
   };
+}
+
+/** The goals as the charter keeps them: no `stated` key where the reply gave none it could read. */
+function goalsOf(goals: RawCharterPayload['shortTermGoals']): Charter['shortTermGoals'] {
+  const { stated, ...said } = goals;
+  return stated === undefined ? said : { ...said, stated };
 }
 
 /**

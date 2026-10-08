@@ -246,19 +246,29 @@ export function SourceTable({
                     {/* Discovery runs after every completed sync and decides which systems this
                         source evidences. A failure leaves the last accepted set standing, so
                         nothing else on the row would say the newest pages were never read. */}
-                    {source.lastDiscoveryError ? (
+                    {source.lastDiscoveryError &&
+                    source.lastDiscoveryError === source.lastPeopleExtractionError ? (
+                      // Both passes failed alike: one failure, said once.
                       <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
-                        System discovery: {source.lastDiscoveryError}
+                        System discovery and people from its pages: {source.lastDiscoveryError}
                       </span>
-                    ) : null}
-                    {/* The people extraction after each sync proposes the people its pages name;
-                        a failure leaves the last proposals standing and nothing else says so
-                        (W13-R9). */}
-                    {source.lastPeopleExtractionError ? (
-                      <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
-                        People from its pages: {source.lastPeopleExtractionError}
-                      </span>
-                    ) : null}
+                    ) : (
+                      <>
+                        {source.lastDiscoveryError ? (
+                          <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                            System discovery: {source.lastDiscoveryError}
+                          </span>
+                        ) : null}
+                        {/* The people extraction after each sync proposes the people its pages
+                            name; a failure leaves the last proposals standing and nothing else
+                            says so (W13-R9). */}
+                        {source.lastPeopleExtractionError ? (
+                          <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                            People from its pages: {source.lastPeopleExtractionError}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
                   </th>
                   <Cell label="Pages">
                     <span className="tabular-nums">{source.pageCount}</span>

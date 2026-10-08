@@ -7,6 +7,13 @@ export declare const PRESS_ATTEMPTS: number;
 export declare const PRESS_RETRY_FIRST_MS: number;
 export declare const BACKEND_TIMEOUT_MS: number;
 export declare const FAREWELL_TIMEOUT_MS: number;
+export declare const FAREWELL_WAIT_MS: number;
+export declare const REPORT_PAGE: number;
+
+/** A report in the pages the backend takes, each naming at most `REPORT_PAGE` apps. */
+export declare function reportPages<App>(body: {
+  readonly apps: readonly App[];
+}): Array<{ apps: App[] }>;
 export declare const PRESS_NOT_RECEIVED: string;
 export declare const PRESS_REFUSED: string;
 export declare const PRESS_NOTICE_TIMEOUT_MS: number;

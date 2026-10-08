@@ -18,7 +18,9 @@ import {
   NOTHING_WAITING,
   OWNER_IS_THE_MANAGER,
   RELATIONSHIP_ENDED,
+  RELATIONSHIP_HELD,
   RELATIONSHIP_TYPE_FIXED,
+  SAME_PERSON_CONFLICT,
   SAY_WHETHER_SAME_FIRST,
 } from '../../src/people/words';
 
@@ -1049,6 +1051,80 @@ describe('people lookups at Confirm', (): void => {
     expect((await graphRows(harness)).identities).toEqual([]);
   });
 
+  it("writes the address it was told is someone else's on the person's own field (W13-R8, 14-I's field)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId, { email: 'sara@kestrel.test' });
+    const identityId = await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      displayName: 'sara',
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.notThisMatch, { personId, identityId, agentId });
+    expect((await graphRows(harness)).people[0]?.notTheirAddresses).toEqual(['sara@kestrel.test']);
+  });
+
+  it("reads the person's field, not the evidence, so a page line and a lookup by an address it holds bring it back to nobody (W13-R8, 14-I's field)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await proposePriya(harness, agentId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(personId, { notTheirAddresses: ['sara@kestrel.test'] }),
+    );
+    expect(await proposePriya(harness, agentId, { email: 'sara@kestrel.test' })).toBe(personId);
+    expect((await graphRows(harness)).people[0]?.primaryEmail).toBeUndefined();
+    await harness.run(
+      async (ctx) => await ctx.db.patch(personId, { primaryEmail: 'sara@kestrel.test' }),
+    );
+    expect(
+      await harness.mutation(internal.peopleProposals.recordLookups, {
+        personId,
+        address: 'sara@kestrel.test',
+        found: [{ provider: 'slack', externalId: 'U0SARA', displayName: 'sara' }],
+      }),
+    ).toBe(0);
+    expect((await graphRows(harness)).identities).toEqual([]);
+  });
+
+  it('repoints every agreement about the person merged away, in every standing, onto the person kept (W13-R33)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    const agreements = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          (['active', 'refused'] as const).map(
+            async (status) =>
+              await ctx.db.insert('workingAgreements', {
+                userId: 'owner',
+                agentId,
+                kind: 'preference',
+                statement: `Copy Lee on every reply (${status}).`,
+                scope: 'person',
+                personId: offered,
+                sourceType: 'manager-card',
+                status,
+                createdAt: 1,
+                appliedTo: [],
+              }),
+          ),
+        ),
+    );
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    const rows = await harness.run(
+      async (ctx) => await Promise.all(agreements.map(async (id) => await ctx.db.get(id))),
+    );
+    expect(rows.map((row) => row?.personId)).toEqual([known, known]);
+  });
+
   it('looks a confirmed person up when Same person brings them the address a page gave', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -1176,5 +1252,244 @@ describe('the people graph, the second pass', (): void => {
       type: 'approval-authority',
       scope: 'NetLedger access',
     });
+  });
+});
+
+describe('the people graph after the wave 13 review (14-FX)', (): void => {
+  it("names the owner's row by name once a sign-in brings one, where it was named by its address (W13-R26)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    await harness.withIdentity(managerIdentity()).mutation(api.people.ensureOwner, {});
+    expect((await graphOf(harness)).people[0]?.displayName).toBe(MANAGER_ADDRESS);
+    await harness
+      .withIdentity({ ...managerIdentity(), name: 'Rowan Hale' })
+      .mutation(api.people.ensureOwner, {});
+    expect((await graphOf(harness)).people[0]).toMatchObject({
+      displayName: 'Rowan Hale',
+      nameKey: 'rowan hale',
+    });
+  });
+
+  it("reads the owner's chat cards only when its row is first written, not at every home open (W13-R26)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    await owner.mutation(api.people.ensureOwner, {});
+    await chatCard(harness, priya);
+    expect(await owner.mutation(api.people.ensureOwner, {})).toMatchObject({ identitiesAdded: 0 });
+    expect((await graphOf(harness)).identities.map((row) => row.provider)).toEqual(['email']);
+  });
+
+  it("refuses a relationship to the owner's own row and a second identical one (W13-R26)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(managerIdentity());
+    const { personId: own } = await owner.mutation(api.people.ensureOwner, {});
+    await expect(
+      owner.mutation(api.people.addRelationship, {
+        personId: own!,
+        agentId,
+        type: 'collaborator',
+      }),
+    ).rejects.toThrow(OWNER_IS_THE_MANAGER);
+    const lee = await seedPerson(harness, 'Lee Tan');
+    const add = {
+      personId: lee,
+      agentId,
+      type: 'collaborator' as const,
+      scope: 'the close',
+    };
+    await owner.mutation(api.people.addRelationship, add);
+    await expect(
+      owner.mutation(api.people.addRelationship, { ...add, scope: ' the close ' }),
+    ).rejects.toThrow(RELATIONSHIP_HELD);
+    await owner.mutation(api.people.addRelationship, { ...add, scope: 'payroll' });
+    expect((await graphRows(harness)).edges.filter((edge) => edge.toPersonId === lee)).toHaveLength(
+      2,
+    );
+  });
+
+  it('merges no edge the person kept already holds, retiring the copy (W13-R21)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    await seedEdge(harness, known, { type: 'collaborator', fromAgentId: agentId, scope: 'close' });
+    const copy = await seedEdge(harness, offered, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'close',
+      status: 'proposed',
+      confirmedAt: undefined,
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    const edges = (await graphRows(harness)).edges;
+    expect(edges.filter((edge) => edge.status !== 'retired')).toHaveLength(1);
+    expect(edges.find((edge) => edge._id === copy)?.status).toBe('retired');
+  });
+
+  it('moves an edge the person kept held once but ended, rather than retiring it as a copy (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Lee Tan');
+    const offered = await seedPerson(harness, 'Lee Tan', {
+      status: 'unverified',
+      possiblySameAs: known,
+    });
+    await seedEdge(harness, known, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'close',
+      effectiveUntil: 2,
+    });
+    const live = await seedEdge(harness, offered, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'close',
+      status: 'proposed',
+      confirmedAt: undefined,
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    expect((await graphRows(harness)).edges.find((edge) => edge._id === live)).toMatchObject({
+      status: 'proposed',
+      toPersonId: known,
+    });
+  });
+
+  it("refuses Same person when the proposal's verified identity contradicts the person's own, moving nothing (W13-R24)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Ana Tan');
+    await seedIdentity(harness, known, {
+      provider: 'slack',
+      externalId: 'U0ANA',
+      providerWorkspaceId: 'T1',
+    });
+    const offered = await seedPerson(harness, 'Ana Tan', {
+      status: 'unverified',
+      primaryEmail: 'ceo@acme.test',
+      possiblySameAs: known,
+    });
+    await seedIdentity(harness, offered, {
+      provider: 'slack',
+      externalId: 'U0CEO',
+      providerWorkspaceId: 'T1',
+    });
+    await expect(
+      harness
+        .withIdentity(managerIdentity())
+        .mutation(api.people.samePerson, { personId: offered, agentId }),
+    ).rejects.toThrow(SAME_PERSON_CONFLICT);
+    const rows = await graphRows(harness);
+    expect(rows.people.find((row) => row._id === known)?.primaryEmail).toBeUndefined();
+    expect(rows.identities.find((row) => row.externalId === 'U0CEO')?.personId).toBe(offered);
+  });
+
+  it('shows the address a Same person would bring on the proposal (W13-R24)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Ana Tan');
+    await seedEdge(harness, known, { type: 'collaborator', fromAgentId: agentId });
+    await seedPerson(harness, 'Ana Tan', {
+      status: 'unverified',
+      primaryEmail: 'ceo@acme.test',
+      possiblySameAs: known,
+      evidence: [{ quote: 'Ana Tan <ceo@acme.test>', where: 'Team page', at: 5 }],
+    });
+    const view = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.forEmployee, { agentId });
+    expect(view.proposals[0]?.possiblySameAs).toMatchObject({ bringsAddress: 'ceo@acme.test' });
+  });
+
+  it('says no address for a Same person whose kept person has one already, which the merge keeps (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const known = await seedPerson(harness, 'Ana Tan', { primaryEmail: 'ana@acme.test' });
+    await seedEdge(harness, known, { type: 'collaborator', fromAgentId: agentId });
+    await seedPerson(harness, 'Ana Tan', {
+      status: 'unverified',
+      primaryEmail: 'ceo@acme.test',
+      possiblySameAs: known,
+      evidence: [{ quote: 'Ana Tan <ceo@acme.test>', where: 'Team page', at: 5 }],
+    });
+    const view = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.forEmployee, { agentId });
+    expect(view.proposals[0]?.possiblySameAs).not.toHaveProperty('bringsAddress');
+  });
+});
+
+describe('the people graph past its read bound (14-FX, W13-R23)', (): void => {
+  it('lists the newest people of each standing and says when older ones are left out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 501; index += 1) {
+        const name = `Proposal ${String(index).padStart(3, '0')}`;
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: name,
+          nameKey: name.toLowerCase(),
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [{ quote: `${name} on the team page.`, where: 'Team page', at: index }],
+          createdAt: index,
+          updatedAt: index,
+        });
+      }
+    });
+    const view = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.forEmployee, { agentId });
+    const names = view.proposals.map((row) => row.name);
+    expect(names).toHaveLength(500);
+    expect(names).toContain('Proposal 500');
+    expect(names).not.toContain('Proposal 000');
+    expect(view.more).toBe(true);
+  });
+
+  it('answers the newest escalation contact for everyone past the oldest edges (W13-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const lee = await seedPerson(harness, 'Lee Tan');
+    const mei = await seedPerson(harness, 'Mei Ling');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          toPersonId: lee,
+          type: 'escalation-contact',
+          effectiveFrom: 1,
+          effectiveUntil: 2,
+          status: 'superseded',
+          source: 'manager',
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('relationships', {
+        userId: 'owner',
+        toPersonId: mei,
+        type: 'escalation-contact',
+        effectiveFrom: 3,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 3,
+        createdAt: 3,
+      });
+    });
+    const answer = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.escalationContactFor, { agentId });
+    expect(answer).toMatchObject({ kind: 'person', personId: mei });
   });
 });

@@ -16,6 +16,7 @@ import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
+import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -1097,9 +1098,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       p.everyEmployee === true ? ' for every employee' : ''
     }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
   'agreement.refused': (p) =>
-    text(p.clause)
-      ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
-      : `A working agreement was refused: it would go beyond the charter`,
+    p.reason === 'every-employee-too-many'
+      ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
+      : text(p.clause)
+        ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+        : `A working agreement was refused: it would go beyond the charter`,
   'agreement.retired': (p, subject) =>
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`

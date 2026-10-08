@@ -805,4 +805,13 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
       }),
     ).toBe('ticket close held, waiting on its card');
   });
+
+  it('labels a working agreement refused for every employee past the employees its check reads (14-FX, W13-R28)', (): void => {
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
+      }),
+    ).toBe('working agreement not in effect for every employee: you have more than 50 employees');
+  });
 });

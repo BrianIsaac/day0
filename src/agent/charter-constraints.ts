@@ -280,26 +280,38 @@ export function removeWording(text: string, phrase: string): string {
   const trimmed = phrase.trim();
   if (!trimmed) return text;
   const p = escapeRegExp(trimmed);
-  const separator = String.raw`(?:\s*,\s*|\s+(?:and|or)\s+)`;
+  // A comma or semicolon takes the "and" or "or" after it with it (W13-R38: ", and" left a
+  // dangling comma, "; flag deals;" a doubled semicolon).
+  const separator = String.raw`(?:\s*[,;]\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)`;
   // Joined on the left and not on the right: the phrase closes or sits inside
   // a list, so the separator before it goes with it.
   const withPreceding = new RegExp(
     String.raw`${separator}${p}(?![A-Za-z0-9])(?!${separator})`,
     'gi',
   );
+  // Joined on the right, the phrase takes its own comma and leaves a list's "and" to the rest
+  // (the second pass: "A, X, and B" minus X is "A, and B").
+  const following = String.raw`(?:\s*,\s*|\s+(?:and|or)\s+)`;
   const withFollowing = new RegExp(
-    String.raw`(?<![A-Za-z0-9])${p}(?![A-Za-z0-9])(?:${separator}|\s*)`,
+    String.raw`(?<![A-Za-z0-9])${p}(?![A-Za-z0-9])(?:${following}|\s*)`,
     'gi',
   );
   const removed = text.replace(withPreceding, ' ').replace(withFollowing, ' ');
   // Tidying an unmatched clause would make a strike that removes nothing read
   // as a change (and be recorded as one), so the clause stays as written.
   if (removed === text) return text;
-  return removed
+  const tidied = removed
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/([,;:])(?:\s*[,;:])+/g, '$1')
+    .replace(/[,;:]+(?=[.!?]|$)/g, '')
     .replace(/^[\s,;:]+/, '')
+    .replace(/^(?:and|or)\s+/i, '')
     .trim();
+  // A sentence that opened on a capital still does once its first words are taken (W13-R38).
+  return /^[A-Z]/.test(text.trim())
+    ? tidied.replace(/^[a-z]/, (first) => first.toUpperCase())
+    : tidied;
 }
 
 /**
@@ -797,7 +809,7 @@ function withoutBoundClauses(
   for (const rule of struck) {
     for (const ref of rule.binds ?? []) {
       if (ref.field === 'proposedFunction') {
-        functionPhrases.push(...rule.wording);
+        functionPhrases.push(...ruleWordsInFunction(rule, target.proposedFunction));
         continue;
       }
       const clause = target.lists[ref.field].find(
@@ -978,6 +990,8 @@ export interface StrikePreview {
   removedClauses: string[];
   /** Will-do clauses the strike keeps with the wording gone, as they read before and after. */
   rewrittenClauses: Array<{ from: string; to: string }>;
+  /** The proposed function with the rule's words gone, as it reads before and after (W13-R38). */
+  rewrittenFunction?: { from: string; to: string };
   /** Clauses the rule binds that the strike keeps, each with why (W13-R6, W13-R7); absent when none. */
   keptClauses?: KeptClause[];
   /**
@@ -1066,9 +1080,13 @@ export function strikePreview(charter: ClauseCharter, index: number): StrikePrev
       ? [{ clause, because: fate.because, ...(fate.rule === undefined ? {} : { rule: fate.rule }) }]
       : [];
   });
+  const functionAfter = after.charter.proposedFunction;
   return {
     removedClauses: gone.filter((clause: string): boolean => !rewritten.has(clause)),
     rewrittenClauses,
+    ...(functionAfter !== base.proposedFunction
+      ? { rewrittenFunction: { from: base.proposedFunction, to: functionAfter } }
+      : {}),
     ...(keptClauses.length > 0 ? { keptClauses } : {}),
     // The function is not one of the lists above, so what changes is asked of the whole charter.
     changes: clauseChanges(base, after.charter).length > 0,
@@ -1249,14 +1267,16 @@ const THROUGH_THE_MANAGER =
   /\b(?:through|via)\s+the\s+manager\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b|\b(?:contact|message|email|ask|reach|call|talk to|write to|go to)\b[^.;]*\bdirectly\b/i;
 
 /**
- * Whether one clause carries a rule, judged on its own (W13-R6): one of the rule's verified phrases
- * is in it; or, unless the rule opens on a prohibition and the clause is a will-do or the function
- * (which would grant the act: "Never edit a booked figure." against "Edit any booked figure."), it
- * holds more than half of the manager's own words in one sentence of the rule, the manager's first
- * person read as "the manager"; or the sentence routes work through the manager and the clause, a
- * bounding one, keeps a contact going through the manager ("Contact the support lead or billing
- * directly."). On the recorded GLM drafts every right bind carries the rule this way and neither
- * wrong one does (`GLM_BINDS_DRAFTS_2026_10_05`).
+ * Whether one clause carries a rule, judged on its own (W13-R6). A will-do or the function, which
+ * grant an act, carries a rule forbidding one only when one of the rule's verified phrases is in it
+ * and it states the prohibition itself (`statesTheProhibition`): "Edit any booked figure." never
+ * carries "Never edit a booked figure.", nor does a will-do the drafter bound by a phrase of its own
+ * (the v0.17.0 redeploy's finding 1). Any other clause carries the rule when one of its verified
+ * phrases is in it; or when it holds more than half of the manager's own words in one sentence of
+ * the rule, the manager's first person read as "the manager"; or when the sentence routes work
+ * through the manager and the clause, a bounding one, keeps a contact going through the manager
+ * ("Contact the support lead or billing directly."). On the recorded GLM drafts every right bind
+ * carries the rule this way and no wrong one does (`GLM_BINDS_DRAFTS_2026_10_05`).
  *
  * @param constraint - The rule.
  * @param clause - The clause's words.
@@ -1267,22 +1287,74 @@ function clauseCarriesRule(
   clause: string,
   field: ClauseRef['field'],
 ): boolean {
-  if (constraint.wording.some((phrase: string): boolean => wordingPresent(phrase, [clause]))) {
-    return true;
-  }
   const grants = field === 'willDo' || field === 'proposedFunction';
-  if (grants && forbidsAnAct(constraint.quote)) return false;
-  const inClause = contentStems(clause);
-  // A sentence ends before a capital, so "e.g. in a ticket comment" stays inside its sentence; a
-  // fragment of one word is too little to read as the rule.
-  return constraint.quote
-    .split(/(?<=[.!?;])\s+(?=[A-Z"\u201c])/)
-    .some((sentence: string): boolean => {
-      const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
-      const shared = [...said].filter((word: string): boolean => inClause.has(word)).length;
-      if (said.size >= 2 && shared * 2 > said.size) return true;
-      return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
-    });
+  // A phrase the drafter verified in a grant is a phrase of the grant, not the rule: the v0.17.0
+  // redeploy drew Nell's "Never share a password in a ticket comment." as carried by "Draft replies
+  // for the routine access tickets using the wiki steps." that way.
+  const verified = constraint.wording.some((phrase: string): boolean =>
+    wordingPresent(phrase, [clause]),
+  );
+  if (grants && forbidsAnAct(constraint.quote)) {
+    return verified && statesTheProhibition(constraint, clause);
+  }
+  if (verified) return true;
+  return quoteSentences(constraint.quote).some((sentence: string): boolean => {
+    if (holdsMostOf(sentence, clause)) return true;
+    return !grants && THROUGH_ME.test(sentence) && THROUGH_THE_MANAGER.test(clause);
+  });
+}
+
+/**
+ * The rule's sentences. A sentence ends before a capital, so "e.g. in a ticket comment" stays
+ * inside its sentence.
+ */
+function quoteSentences(quote: string): string[] {
+  return quote.split(/(?<=[.!?;])\s+(?=[A-Z"\u201c])/);
+}
+
+/**
+ * Whether a text holds more than half of the manager's own words in one sentence of a rule, the
+ * manager's first person read as "manager"; a fragment of one word is too little to read as the
+ * rule.
+ */
+function holdsMostOf(sentence: string, text: string): boolean {
+  const inText = contentStems(text);
+  const said = contentStems(sentence.replace(FIRST_PERSON, 'manager'));
+  const shared = [...said].filter((word: string): boolean => inText.has(word)).length;
+  return said.size >= 2 && shared * 2 > said.size;
+}
+
+/** A word that limits a granted act: "Draft replies, never sharing a password.", "Send only after". */
+const LIMITS_THE_ACT = new RegExp(`${FORBIDS.source}|\\bwithout\\b|\\bonly\\b`, 'i');
+
+/**
+ * Whether a will-do or the function, which grant an act, carries a rule that forbids one (the
+ * redeploy's finding 1): it holds more than half of the manager's words in one sentence of the rule,
+ * and, where that sentence forbids, a word that limits the act. "Answer access tickets, never
+ * sharing a password in a ticket comment." carries "Never share a password in a ticket comment.";
+ * "Route all client contact through the account manager." carries the rule's "Go through the
+ * account manager." (the second pass); "Edit any booked figure." does not carry "Never edit a
+ * booked figure.", and a will-do with none of the rule's words carries nothing, whatever phrase of
+ * it the drafter verified.
+ */
+function statesTheProhibition(constraint: CharterConstraint, text: string): boolean {
+  return quoteSentences(constraint.quote).some(
+    (sentence: string): boolean =>
+      holdsMostOf(sentence, text) && (!forbidsAnAct(sentence) || LIMITS_THE_ACT.test(text)),
+  );
+}
+
+/**
+ * The rule's verified phrases the function carries: each one in it, and, for a rule that forbids
+ * an act, only one that states the prohibition, since the function grants what it names.
+ */
+function ruleWordsInFunction(constraint: CharterConstraint, proposedFunction: string): string[] {
+  const forbids = forbidsAnAct(constraint.quote);
+  return constraint.wording.filter(
+    (phrase: string): boolean =>
+      wordingPresent(phrase, [proposedFunction]) &&
+      (!forbids || statesTheProhibition(constraint, phrase)),
+  );
 }
 
 /**
@@ -1301,9 +1373,7 @@ export function rulePlacement(
   if (constraint.binds === undefined) return { kind: 'by-wording' };
   // The function is the role's one sentence and a strike only ever takes the rule's words from it,
   // so a function bind is shown, and verified, as those words, and as nothing when it has none.
-  const inFunction = constraint.wording.filter((phrase: string): boolean =>
-    wordingPresent(phrase, [charter.proposedFunction]),
-  );
+  const inFunction = ruleWordsInFunction(constraint, charter.proposedFunction);
   const listed = constraint.binds.flatMap((ref: ClauseRef): Array<[string, boolean]> => {
     if (ref.field === 'proposedFunction') return [];
     const clause = clauseAt(charter, ref);

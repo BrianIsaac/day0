@@ -434,6 +434,37 @@ describe('SurfaceCards and the approved tools', (): void => {
   });
 });
 
+describe("SurfaceCards: a proposed Slack card's scopes (W13V-5)", (): void => {
+  const agentId = 'agent-1' as Id<'agents'>;
+
+  it("lists the scopes the employee's app asks, not the page's method names, on a page with no manifest", (): void => {
+    state.surfaces = [
+      {
+        _id: 'surface-slack',
+        agentId,
+        slug: 'slack',
+        displayName: 'Slack',
+        class: 'chat',
+        verdict: 'proposed',
+        path: 'documented-api',
+        endpoint: 'https://slack.com/api/',
+        whereFound: [],
+        credentialLanded: false,
+        request: { scopeRequested: ['conversations.list', 'chat.postMessage'], costBand: 'free' },
+      },
+    ];
+    try {
+      const markup = renderToStaticMarkup(<SurfaceCards agentId={agentId} employeeName="Otto" />);
+      const scopes = /Scopes requested<\/dt><dd[^>]*>([^<]*)<\/dd>/.exec(markup)?.[1] ?? '';
+      expect(scopes).not.toContain('chat.postMessage');
+      expect(scopes).toContain('chat:write');
+      expect(scopes).toContain('channels:join');
+    } finally {
+      state.surfaces = undefined;
+    }
+  });
+});
+
 describe('SurfaceCards: where decisions reach the manager on a Slack card (wave 12, 12-M)', (): void => {
   const agentId = 'agent-1' as Id<'agents'>;
   const slackCard = (decisionButtons: unknown): object => ({

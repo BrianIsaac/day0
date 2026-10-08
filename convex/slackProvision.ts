@@ -12,7 +12,7 @@ import { appendConnectionEvent } from './connectionEvents';
 import { purgeAppLevelToken, purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { endedByItsRevoke } from './organisationConnectionReads';
-import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { assertOwnsSurface } from './ownership';
 import { recordAppTakesMessages } from './slackMessagesTab';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisation-key';
 import { assertRealMode } from '../src/lib/surface-mode';
@@ -474,13 +474,12 @@ export const forgetEndedApp = mutation({
   args: { surfaceId: v.id('surfaces') },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    await getCallerOrThrow(ctx);
-    const surface = await ctx.db.get(args.surfaceId);
-    if (surface === null) throw new ConvexError('Surface not found.');
-    await assertOwnsAgent(ctx, surface.agentId);
+    const surface = await assertOwnsSurface(ctx, args.surfaceId);
     assertRealMode('Forgetting an app');
     const app = surface.provisioning;
-    if (app === undefined || (await endedByItsRevoke(ctx, surface)) !== 'kept-app-ended') {
+    // A second press finds the app already forgotten: nothing more to do, and no fault (W13-R14).
+    if (app === undefined) return null;
+    if ((await endedByItsRevoke(ctx, surface)) !== 'kept-app-ended') {
       throw new ConvexError(FORGET_NOT_ENDED);
     }
     const now = Date.now();

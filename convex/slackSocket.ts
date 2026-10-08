@@ -296,20 +296,24 @@ export const bridgePress = httpAction(async (ctx, request) => {
 /** How many of a report's apps one mutation keeps: each reads its card and its row. */
 const HEARTBEAT_PAGE = 100;
 
+/** The most apps one heartbeat names: the bridge reports in pages of this many (W13-R17). */
+const HEARTBEAT_REPORT_LIMIT = 1_000;
+
 /**
  * `POST /slack-socket/heartbeat` with `{ apps: [{ surfaceId, appId, live, liveSince?, failure? }] }`:
  * the apps the bridge holds and whether each has a live connection (wave 13, 13-FS; D-6 (b)),
  * kept one row per card (`socketHeartbeats`). Secret required and read before the body; 400 for a
- * body that is not a report, or one naming more apps than the bridge's own list holds. Answers how
- * many rows were written.
+ * body that is not a report, or one naming more apps than one of the bridge's report pages. Answers
+ * how many rows were written.
  */
 export const bridgeHeartbeat = httpAction(async (ctx, request) => {
   const refused = await refusal(request);
   if (refused !== undefined) return refused;
   const reports = parseHeartbeat(await bodyOf(request));
   if (reports === undefined) return json({ error: 'not a heartbeat' }, 400);
-  // No more apps than the list the bridge reads can name, so one report is bounded.
-  if (reports.length > BRIDGE_PAGE * BRIDGE_PAGES) {
+  // No more apps than one of the bridge's report pages (`REPORT_PAGE` in `slack-socket/bridge.js`),
+  // so one call runs at most ten mutations (W13-R17).
+  if (reports.length > HEARTBEAT_REPORT_LIMIT) {
     return json({ error: 'too many apps in one report' }, 400);
   }
   let written = 0;

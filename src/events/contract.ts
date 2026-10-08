@@ -31,7 +31,7 @@ import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
 import type {
   AgreementApprovedVia,
-  AgreementRefusalReason,
+  AgreementRowRefusalReason,
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
@@ -1380,7 +1380,8 @@ export interface AgreementActivatedPayload extends AgreementNamed {
 
 /** The payload of `agreement.refused`: it would go beyond the charter (F11), with the clause. */
 export interface AgreementRefusedPayload extends AgreementNamed {
-  readonly reason: AgreementRefusalReason;
+  /** The judgement's verdict, or a keep for every employee past the employees its check reads. */
+  readonly reason: AgreementRowRefusalReason;
   /** The `willNotDo` clause it contradicts, word for word. */
   readonly clause?: string;
 }

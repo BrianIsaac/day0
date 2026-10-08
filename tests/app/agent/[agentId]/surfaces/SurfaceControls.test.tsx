@@ -34,6 +34,20 @@ describe('the tools line and the re-approval of a narrowed card (Q10, U10 D2 (b)
     expect(markup).toContain('role="status"');
   });
 
+  it("says on an employee's own Slack app that its messages to you and its edit are Day0's whatever the list says (W13-R15, D-3)", (): void => {
+    const slack = tools({ displayName: 'Slack', toolAllowlist: ['conversations.history'] });
+    const own = renderToStaticMarkup(
+      <ToolsRow surface={slack} ownSlackApp onApprove={async () => undefined} />,
+    );
+    expect(own.replace(/&#x27;/g, "'")).toContain(
+      "Whatever this list says, this employee's own app can always message you and edit its own requests for your approval.",
+    );
+    const shared = renderToStaticMarkup(
+      <ToolsRow surface={slack} onApprove={async () => undefined} />,
+    );
+    expect(shared).not.toContain('Day0 created for this employee');
+  });
+
   it('says a card that may call nothing in words, not as a tool name', (): void => {
     const markup = renderToStaticMarkup(
       <ToolsRow surface={tools({ toolAllowlist: [] })} onApprove={async () => undefined} />,

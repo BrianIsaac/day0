@@ -97,7 +97,7 @@ export function ManageView() {
         ) : (
           <p className={COPY}>
             {!real
-              ? 'The hosted office has no switch: the employee holds its writes for your decision, and what you approve lands in the mock office only.'
+              ? 'The hosted office has no switch: the employee holds its writes for your decision, and what you approve lands in the hosted office only.'
               : `The switch is here once ${agent.name}'s charter is approved.`}
           </p>
         )}

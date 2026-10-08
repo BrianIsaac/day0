@@ -4,6 +4,7 @@ import {
   OAUTH_FALLBACK_LABEL,
   OAUTH_FALLBACK_NOTE,
   oauthNoProvisioningNote,
+  OAUTH_UNAVAILABLE_FALLBACK_NOTE,
   presentChannelsNotJoined,
   presentProvisioning,
   ORGANISATION_PROVISION_NOTE,
@@ -443,6 +444,18 @@ describe('the dedicated-app procedure on the card', (): void => {
     expect(
       presentSurfaceCredential({ credential: oauth, provisioningRowShown: true }).landingNote,
     ).toBe(OAUTH_FALLBACK_NOTE);
+  });
+
+  it('says what the row above waits for, not a control above, on a card whose provisioning row offers none (W13V-1 follow-up)', (): void => {
+    const shown = presentSurfaceCredential({
+      credential: oauth,
+      displayName: 'Slack',
+      provisioningRowShown: true,
+      provisioningControlShown: false,
+    });
+    expect(shown.landingNote).toBe(OAUTH_UNAVAILABLE_FALLBACK_NOTE);
+    expect(shown.landingNote).not.toContain('the control above');
+    expect(shown.landingNote).toContain('cannot register one yet');
   });
 
   it("names why a renewal's install did not complete, and offers it again", (): void => {

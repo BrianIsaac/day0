@@ -14,9 +14,12 @@ import {
   evidenceLine,
   evidenceText,
   identityLabel,
+  lookupFailedLine,
   matchesSlackLine,
   moreEvidence,
+  PEOPLE_MORE,
   possiblySameLine,
+  proposedChangeLine,
   proposedEdgeLine,
   proposedEmpty,
   proposedInMock,
@@ -25,6 +28,7 @@ import {
   RELATIONSHIP_NOUNS,
   RELATIONSHIP_SCOPE_LIMIT,
   roleSuffix,
+  sameBringsAddressLine,
   sameOrDifferentHelp,
   waitingLine,
 } from '@/people/words';
@@ -135,6 +139,9 @@ export function ProposedPeopleCard({
               />
             ))}
           </ul>
+          {people.more === true ? (
+            <p className="text-[13px] text-[var(--color-muted)]">{PEOPLE_MORE}</p>
+          ) : null}
         </div>
       )}
       <div className="mt-1">
@@ -251,6 +258,11 @@ function ProposalRow({
       {offered !== undefined ? (
         <p className="text-sm text-[var(--color-fg-2)]">
           {possiblySameLine(offered.name, offered.standing, offered.role)}
+        </p>
+      ) : null}
+      {offered?.bringsAddress !== undefined ? (
+        <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+          {sameBringsAddressLine(offered.name, offered.bringsAddress)}
         </p>
       ) : null}
       <EvidenceList evidence={proposal.evidence} zone={zone} />
@@ -492,6 +504,21 @@ function ConfirmedRow({
       {person.evidence !== undefined ? (
         <EvidenceList evidence={[person.evidence]} zone={zone} />
       ) : null}
+      {person.lookupFailedAt !== undefined ? (
+        <p className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]">
+          {lookupFailedLine(name, clockTime(person.lookupFailedAt, zone))}
+        </p>
+      ) : null}
+      {person.proposedChange !== undefined ? (
+        <ProposedChange
+          name={name}
+          proposed={person.proposedChange}
+          args={{ personId: person.personId, agentId }}
+          zone={zone}
+          change={change}
+          landed={landed}
+        />
+      ) : null}
       {form.kind === 'add' ? (
         edgeForm(undefined)
       ) : (
@@ -511,6 +538,76 @@ function ConfirmedRow({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * A source's proposed change to a confirmed person (W13-R3): what it proposes, the words it came
+ * from, and Take or Dismiss.
+ */
+function ProposedChange({
+  name,
+  proposed,
+  args,
+  zone,
+  change,
+  landed,
+}: {
+  readonly name: string;
+  readonly proposed: NonNullable<Confirmed['proposedChange']>;
+  readonly args: { readonly personId: Id<'people'>; readonly agentId: Id<'agents'> };
+  readonly zone: string | undefined;
+  readonly change: Change;
+  readonly landed: () => HTMLElement | null;
+}) {
+  const take = useMutation(api.personChanges.take);
+  const dismiss = useMutation(api.personChanges.dismiss);
+  return (
+    // Its own inset, so the change does not read as one of the edges above it (the second pass).
+    <div className="grid gap-2 rounded-lg border border-[var(--color-border)] p-3">
+      <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-muted)]">
+        Proposed change
+      </p>
+      <p className="text-sm text-[var(--color-fg)] [overflow-wrap:anywhere]">
+        {proposedChangeLine(proposed.where, proposed)}
+      </p>
+      <EvidenceList
+        evidence={[{ quote: proposed.quote, where: proposed.where, at: proposed.at }]}
+        zone={zone}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="small"
+          variant="approve"
+          disabled={change.busy}
+          aria-label={`Take the proposed change for ${name}`}
+          onClick={() =>
+            change.run(() => take(args), {
+              done: `Took the proposed change for ${name}.`,
+              refused: `The proposed change for ${name} was not taken.`,
+              focus: landed,
+            })
+          }
+        >
+          Take
+        </Button>
+        <Button
+          size="small"
+          variant="quiet"
+          disabled={change.busy}
+          aria-label={`Dismiss the proposed change for ${name}`}
+          onClick={() =>
+            change.run(() => dismiss(args), {
+              done: `Dismissed the proposed change for ${name}.`,
+              refused: `The proposed change for ${name} was not dismissed.`,
+              focus: landed,
+            })
+          }
+        >
+          Dismiss
+        </Button>
+      </div>
+    </div>
   );
 }
 

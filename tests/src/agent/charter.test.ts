@@ -31,6 +31,7 @@ import {
   GLM_BINDS_DRAFTS_2026_10_05,
   GLM_BINDS_PROMPT_2026_10_05,
 } from '../../fixtures/charter-paraphrase-2026-09-30';
+import { REDEPLOY_NELL_DRAFT_2026_10_07 } from '../../fixtures/charter-redeploy-nell-2026-10-07';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -436,6 +437,59 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     expect(strikePreview(sage, index).keptClauses).toEqual([
       { clause: duty, because: 'not-this-rule' },
     ]);
+  });
+
+  it("reads Nell's password rule bound by the drafter to an unrelated will-do as Check, and its strike takes nothing (the v0.17.0 redeploy's finding 1)", (): void => {
+    const nell = assemble(
+      charterSchema.parse(REDEPLOY_NELL_DRAFT_2026_10_07),
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-07T15:40:00.000Z',
+    );
+    const password = 'Never share a password in a ticket comment.';
+    const duty = 'Draft replies for the routine access tickets using the wiki steps.';
+    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
+    expect(nell.constraints![index]!.binds).toEqual([{ field: 'willDo', index: 1 }]);
+    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+      kind: 'bound',
+      clauses: [duty],
+      carriesWords: false,
+      notCarrying: [duty],
+    });
+    expect(strikePreview(nell, index)).toEqual({
+      removedClauses: [],
+      rewrittenClauses: [],
+      keptClauses: [{ clause: duty, because: 'not-this-rule' }],
+      changes: false,
+    });
+    expect(strike(nell, password).proposedBoundaries.willDo).toContain(duty);
+    // The reporting-line rule beside it is a right bind, and still reads as one.
+    expect(
+      carriedOf(nell)[
+        'The security lead owns access policy; the facilities team owns hardware. Go through me.'
+      ],
+    ).toBe(true);
+  });
+
+  it('takes a reply whose binds or goals-stated the schema cannot read, each rule then read by its words (W13-R36)', (): void => {
+    const reply = structuredClone(GLM_BINDS_DRAFTS_2026_10_05.Nell) as Record<string, unknown>;
+    const goals = reply.shortTermGoals as Record<string, unknown>;
+    delete goals.stated;
+    const [first, second] = reply.constraints as Array<Record<string, unknown>>;
+    first!.binds = [{ field: 'scope', index: 0 }];
+    second!.binds = [{ field: 'willDo', index: 1.5 }];
+    const parsed = charterSchema.parse(reply);
+    expect(parsed.constraints.map((rule) => rule.binds)).toEqual([undefined, undefined]);
+    const nell = assemble(
+      parsed,
+      { ...args, answers: answersOf('Nell') },
+      '2026-10-08T00:00:00.000Z',
+    );
+    expect(nell.shortTermGoals).not.toHaveProperty('stated');
+    for (const rule of nell.constraints ?? []) {
+      if (rule.origin !== 'synthesis') continue;
+      expect(rule).not.toHaveProperty('binds');
+      expect(rulePlacement(nell, rule).kind).toBe('by-wording');
+    }
   });
 
   it("keeps the model's binds on the recorded draft, and a rule it bound to nothing as in no clause", (): void => {

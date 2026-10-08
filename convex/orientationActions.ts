@@ -600,8 +600,10 @@ export function hostCarriesSlug(host: string, slug: string): boolean {
  *
  * A URL belongs to a system only when the prose of the sentence it appears
  * in names the system as a whole word (the URL text itself does not count),
- * or when the URL host carries the system slug as whole labels.
- * Co-occurrence in a paragraph is not attribution: a page that documents
+ * when the URL host carries the system slug as whole labels, or when the
+ * sentence names the system's vendor word and the host carries it too: a page
+ * titled "Slack automation policy" documents "Slack Web API over HTTPS at
+ * `https://slack.com/api/`" for itself (W13V-1). Co-occurrence in a paragraph is not attribution: a page that documents
  * Linear's MCP endpoint and mentions Slack in the next sentence documents
  * nothing for Slack, and a sentence about Slackbot documents nothing for
  * Slack. A sentence that denies a surface contributes no URL at all.
@@ -616,19 +618,64 @@ export function hostCarriesSlug(host: string, slug: string): boolean {
  */
 export function attributedUrls(text: string, system: string, slug: string): string[] {
   const pattern = systemNamePattern(system);
+  const vendor = vendorWord(system);
   const urls = new Set<string>();
   for (const line of text.split('\n')) {
     for (const sentence of line.split(SENTENCE_BOUNDARY)) {
       if (NO_SURFACE_PATTERN.test(sentence)) continue;
-      const named = pattern.test(sentence.replace(URL_PATTERN, ' '));
+      const prose = sentence.replace(URL_PATTERN, ' ');
+      const named = pattern.test(prose);
+      const vendorNamed = vendor !== undefined && systemNamePattern(vendor).test(prose);
       for (const raw of sentence.match(URL_PATTERN) ?? []) {
         const url = raw.replace(/[.,;:!?]+$/, '');
-        if (named || hostCarriesSlug(hostOf(url), slug)) urls.add(url);
+        const host = hostOf(url);
+        if (
+          named ||
+          hostCarriesSlug(host, slug) ||
+          (vendorNamed && hostCarriesSlug(host, vendor))
+        ) {
+          urls.add(url);
+        }
       }
     }
   }
   return [...urls];
 }
+
+/**
+ * The word a system's name opens on when the name says more than the system ("Slack" of "Slack
+ * automation policy"), or nothing for a one-word name or a lead word too short to name a vendor.
+ */
+function vendorWord(system: string): string | undefined {
+  const words = system
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const lead = words[0];
+  return words.length > 1 && lead !== undefined && lead.length >= 3 && !NOT_A_VENDOR.has(lead)
+    ? lead
+    : undefined;
+}
+
+/** Lead words of a page title that name no vendor ("The team wiki", "Our CRM"). */
+const NOT_A_VENDOR: ReadonlySet<string> = new Set([
+  'the',
+  'our',
+  'your',
+  'team',
+  'company',
+  'support',
+  'internal',
+  'customer',
+  'shared',
+  'general',
+  'main',
+  'help',
+  'service',
+  'admin',
+  'access',
+  'policy',
+]);
 
 /**
  * Decide whether a host is private to this machine or the compose network.

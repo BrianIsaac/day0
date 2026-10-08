@@ -63,7 +63,8 @@ describe('projectKnowledge', (): void => {
       'Will do: Draft replies to tier-2 asks.',
       'Will not do: Touch forecasting.',
       'Escalates when: A customer names a contract.',
-      'Rules you confirmed: Only post in #revops-asks.',
+      // Re-pinned for W13-R34 (14-FX): a rule no clause carries is not one the charter enforces.
+      'Rules the charter does not enforce: Only post in #revops-asks.',
       'Rules you struck: Copy Sara on escalations.',
       'Answered: What topic should Sara be contacted about? Renewals.',
       'People: you (sam@revops.example, manager), Priya (segment and pipeline), Aman (forecasting)',
@@ -74,6 +75,46 @@ describe('projectKnowledge', (): void => {
       'Connections: Slack (connected until 25 Dec 2026), Looker (waiting for you)',
       'Documentation: RevOps runbooks',
     ]);
+  });
+
+  it('lists a rule the charter enforces apart from one bound to no clause or to clauses without its words (W13-R34)', (): void => {
+    const base = mira();
+    const body = {
+      ...(base.charter!.body as Record<string, unknown>),
+      proposedBoundaries: {
+        willDo: ['Draft replies to tier-2 asks.'],
+        willNotDo: ['Touch forecasting.', 'Post outside #revops-asks.'],
+        escalationTriggers: ['A customer names a contract.'],
+      },
+      constraints: [
+        {
+          kind: 'system-boundary',
+          quote: 'Only post in #revops-asks.',
+          wording: ['Post outside #revops-asks'],
+          origin: 'synthesis',
+          binds: [{ field: 'willNotDo', index: 1 }],
+        },
+        {
+          kind: 'reporting-line',
+          quote: 'Never message the CFO.',
+          wording: [],
+          origin: 'synthesis',
+          binds: [],
+        },
+        {
+          kind: 'system-boundary',
+          quote: 'Never share a password in a ticket comment.',
+          wording: ['Draft replies to tier-2 asks'],
+          origin: 'synthesis',
+          binds: [{ field: 'willDo', index: 0 }],
+        },
+      ],
+    };
+    const { text } = projectKnowledge(mira({ charter: { ...base.charter!, body } }));
+    expect(text).toContain('Rules you confirmed: Only post in #revops-asks.');
+    expect(text).toContain(
+      'Rules the charter does not enforce: Never message the CFO.; Never share a password in a ticket comment.',
+    );
   });
 
   it('says what is not there yet before the first approval', (): void => {
@@ -129,7 +170,7 @@ describe('projectKnowledge', (): void => {
   it("names the mock office's systems and whom the employee acts as there, in the Surfaces tab's words (round 0141 R-D item 3)", (): void => {
     const { text } = projectKnowledge(mira({ office: 'mock', surfaces: [] }));
     expect(text.split('\n')).toContain(
-      "Connections: the mock office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
+      "Connections: the hosted office's Slack, Spreadsheet, Docs, Tickets and Social. Acts as: Mira, its own app in this office",
     );
     expect(text).not.toContain('Connections: none yet');
   });

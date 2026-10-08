@@ -3,7 +3,11 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
-import { runLookups, type LookupDependencies } from '../../convex/peopleLookupActions';
+import {
+  LOOKUP_ATTEMPTS,
+  runLookups,
+  type LookupDependencies,
+} from '../../convex/peopleLookupActions';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import {
@@ -215,5 +219,141 @@ describe('peopleLookupActions.runLookups', (): void => {
     });
     expect(await runLookups(runners(harness), [sara], dependencies)).toBe(0);
     expect((await graphRows(harness)).identities).toHaveLength(1);
+  });
+
+  it('asks again past a rate limit within its bound, then marks the person, and an answer clears the mark (W13-R25)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const sara = await seedPerson(harness, 'Sara Lim', { primaryEmail: 'sara.lim@kestrel.test' });
+    const retries: Array<{ personIds: readonly Id<'people'>[]; attempt: number; delayMs: number }> =
+      [];
+    const limited: LookupDependencies = {
+      ...slackFake({}).dependencies,
+      fetch: async () =>
+        new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), {
+          status: 429,
+          headers: { 'Retry-After': '30' },
+        }),
+      retry: async (personIds, attempt, delayMs) => {
+        retries.push({ personIds, attempt, delayMs });
+      },
+    };
+    expect(await runLookups(runners(harness), [sara], limited)).toBe(0);
+    expect(retries).toEqual([{ personIds: [sara], attempt: 2, delayMs: 30_000 }]);
+    expect((await graphRows(harness)).people[0]?.lookupFailedAt).toBeUndefined();
+    expect(await runLookups(runners(harness), [sara], limited, LOOKUP_ATTEMPTS)).toBe(0);
+    expect(retries).toHaveLength(1);
+    expect((await graphRows(harness)).people[0]?.lookupFailedAt).toEqual(expect.any(Number));
+    const { dependencies } = slackFake({ 'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' } });
+    expect(await runLookups(runners(harness), [sara], dependencies)).toBe(1);
+    expect((await graphRows(harness)).people[0]?.lookupFailedAt).toBeUndefined();
+  });
+
+  it('marks a lookup the provider refuses at once, with no retry, and one that finds nobody as answered', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const sara = await seedPerson(harness, 'Sara Lim', { primaryEmail: 'sara.lim@kestrel.test' });
+    const retried: unknown[] = [];
+    const retry: LookupDependencies['retry'] = async (...args) => {
+      retried.push(args);
+    };
+    const refused: LookupDependencies = {
+      ...slackFake({}).dependencies,
+      fetch: async () => Response.json({ ok: false, error: 'missing_scope' }),
+      retry,
+    };
+    expect(await runLookups(runners(harness), [sara], refused)).toBe(0);
+    expect(retried).toEqual([]);
+    expect((await graphRows(harness)).people[0]?.lookupFailedAt).toEqual(expect.any(Number));
+    expect(
+      await runLookups(runners(harness), [sara], { ...slackFake({}).dependencies, retry }),
+    ).toBe(0);
+    expect((await graphRows(harness)).people[0]?.lookupFailedAt).toBeUndefined();
+  });
+
+  it('offers a proposal as possibly the person who holds the identity its lookup found (W13-R25)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const held = await seedPerson(harness, 'S. Lim');
+    await seedIdentity(harness, held, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      providerWorkspaceId: 'T0KESTREL',
+    });
+    const sara = await seedPerson(harness, 'Sara Lim', {
+      status: 'unverified',
+      primaryEmail: 'sara.lim@kestrel.test',
+    });
+    const { dependencies } = slackFake({ 'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' } });
+    expect(await runLookups(runners(harness), [sara], dependencies)).toBe(0);
+    expect((await graphRows(harness)).people.find((row) => row._id === sara)?.possiblySameAs).toBe(
+      held,
+    );
+  });
+
+  it("offers no proposal as possibly the owner, whose own row a lookup's user may be (W13-R25, found on the bed)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const owner = await seedPerson(harness, 'manager@acme.test', { isOwner: true });
+    await seedIdentity(harness, owner, {
+      provider: 'slack',
+      externalId: 'U0BOSS',
+      providerWorkspaceId: 'T0KESTREL',
+    });
+    const mei = await seedPerson(harness, 'Mei Ling', {
+      status: 'unverified',
+      primaryEmail: 'mei.ling@kestrel.test',
+    });
+    const { dependencies } = slackFake({ 'mei.ling@kestrel.test': { id: 'U0BOSS', name: 'boss' } });
+    await runLookups(runners(harness), [mei], dependencies);
+    expect(
+      (await graphRows(harness)).people.find((row) => row._id === mei)?.possiblySameAs,
+    ).toBeUndefined();
+  });
+
+  it("asks again past Slack's own transient errors and an unreadable answer, and offers no dismissed holder (the second pass)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const sara = await seedPerson(harness, 'Sara Lim', { primaryEmail: 'sara.lim@kestrel.test' });
+    for (const answer of [
+      (): Response => Response.json({ ok: false, error: 'internal_error' }),
+      (): Response => new Response('<html>proxy</html>', { status: 403 }),
+    ]) {
+      const retried: unknown[] = [];
+      await runLookups(runners(harness), [sara], {
+        ...slackFake({}).dependencies,
+        fetch: async () => answer(),
+        retry: async (...args) => {
+          retried.push(args);
+        },
+      });
+      expect(retried).toHaveLength(1);
+      expect(
+        (await graphRows(harness)).people.find((row) => row._id === sara)?.lookupFailedAt,
+      ).toBeUndefined();
+    }
+    const gone = await seedPerson(harness, 'S. Lim', { status: 'dismissed' });
+    await seedIdentity(harness, gone, {
+      provider: 'slack',
+      externalId: 'U0SARA',
+      providerWorkspaceId: 'T0KESTREL',
+    });
+    const proposal = await seedPerson(harness, 'Sara L.', {
+      status: 'unverified',
+      primaryEmail: 'sara.l@kestrel.test',
+    });
+    await runLookups(
+      runners(harness),
+      [proposal],
+      slackFake({ 'sara.l@kestrel.test': { id: 'U0SARA', name: 'sara' } }).dependencies,
+    );
+    expect(
+      (await graphRows(harness)).people.find((row) => row._id === proposal)?.possiblySameAs,
+    ).toBeUndefined();
   });
 });

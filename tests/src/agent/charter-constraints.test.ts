@@ -110,6 +110,28 @@ describe('removeWording', (): void => {
   });
 });
 
+describe('removeWording after the wave 13 review (14-FX, W13-R38)', (): void => {
+  it('leaves no doubled or dangling mark and no lower-case start', (): void => {
+    expect(removeWording('Triage asks; flag deals; log fixes.', 'flag deals')).toBe(
+      'Triage asks; log fixes.',
+    );
+    expect(removeWording('Triage asks; flag deals; log fixes.', 'Triage asks')).toBe(
+      'Flag deals; log fixes.',
+    );
+    expect(
+      removeWording('I sort tickets, and I answer access questions.', 'I answer access questions'),
+    ).toBe('I sort tickets.');
+    expect(
+      removeWording(
+        'Keep the tracker clean, and flag deals that look stuck.',
+        'Keep the tracker clean',
+      ),
+    ).toBe('Flag deals that look stuck.');
+    // The second pass: a phrase taken from the middle of a list keeps the list's "and".
+    expect(removeWording('Reconcile A, X, and B.', 'X')).toBe('Reconcile A, and B.');
+  });
+});
+
 describe('stripProvenanceSuffix', (): void => {
   it('removes a trailing provenance suffix in its bracketed and dashed forms, keeping the full stop', (): void => {
     expect(
@@ -493,6 +515,7 @@ describe('striking a derived constraint', (): void => {
       rewrittenClauses: [],
       changes: true,
     });
+    // Re-pinned for W13-R38 (14-FX): the preview now says how the strike rewrites the function.
     expect(strikePreview(strikeRefusalBody(false), 0)).toEqual({
       removedClauses: [
         'Route Northstar CRM-dependent requests to Sam.',
@@ -500,6 +523,10 @@ describe('striking a derived constraint', (): void => {
         'A request requires access to Northstar CRM; route it to Sam.',
       ],
       rewrittenClauses: [],
+      rewrittenFunction: {
+        from: 'Provide first-line operational support for questions received in Slack and execute formal operations work tracked in Linear; route any Northstar CRM-dependent work to Sam.',
+        to: 'Provide first-line operational support for questions received in Slack and execute formal operations work tracked in Linear.',
+      },
       changes: true,
     });
     // "Sam" is a word inside both will-not-do clauses, so this strike was
@@ -526,6 +553,7 @@ describe('striking a derived constraint', (): void => {
       'strike refused: \u201cChange owned Linear tickets outside Q3 close.\u201d is the only clause that bounds Linear';
     expect(() => effectiveCharter(charter)).toThrow(reason);
     expect(strikeOutcome(charter)).toEqual({ ok: false, reason });
+    // Re-pinned for W13-R38 (14-FX): the preview now says how the strike rewrites the function.
     expect(strikePreview(runThrough([ownership]), 0)).toEqual({
       removedClauses: [],
       rewrittenClauses: [
@@ -534,6 +562,10 @@ describe('striking a derived constraint', (): void => {
           to: 'Handle prioritized Linear tickets in the Q3 close project.',
         },
       ],
+      rewrittenFunction: {
+        from: 'Own routine revenue operations work from owned, prioritized Linear tickets for the RevOps team.',
+        to: 'Own routine revenue operations work from prioritized Linear tickets for the RevOps team.',
+      },
       changes: true,
     });
     const draft = { ...charter, constraints: [ownership] };
@@ -993,9 +1025,11 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
         },
       ]),
     );
+    // Re-pinned for W13-R38 (14-FX): a clause that opened on a capital still does once its first
+    // words are taken.
     expect(minusWords.proposedBoundaries.willDo).toEqual([
       'Keep the Q4 Revenue Tracker current from what is said in Slack.',
-      'when updating the tracker.',
+      'When updating the tracker.',
       'Flag deals that look stuck.',
     ]);
     const bare = larkDraft([
@@ -1021,6 +1055,20 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
           because: 'not-this-rule',
         },
       ],
+    });
+  });
+
+  it('says in the preview how a strike rewrites the function (W13-R38)', (): void => {
+    const bound: CharterConstraint = {
+      kind: 'candidate-property',
+      quote: 'Only stuck deals.',
+      wording: ['flag deals that look stuck'],
+      origin: 'synthesis',
+      binds: [{ field: 'proposedFunction', index: 0 }],
+    };
+    expect(strikePreview(larkDraft([bound]), 0).rewrittenFunction).toEqual({
+      from: 'Keep the Q4 Revenue Tracker clean and flag deals that look stuck.',
+      to: 'Keep the Q4 Revenue Tracker clean.',
     });
   });
 
@@ -1182,6 +1230,94 @@ describe('binding a rule to the clauses it produced (13-R)', (): void => {
       },
     };
     expect(rulePlacement(commenting, password)).toMatchObject({ carriesWords: false });
+  });
+
+  it('reads a prohibition as carried by a grant only where the grant states it, whatever phrase of the grant the drafter verified (the v0.17.0 redeploy)', (): void => {
+    const password: CharterConstraint = {
+      kind: 'system-boundary',
+      quote: 'Never share a password in a ticket comment.',
+      wording: ['Draft replies for the routine access tickets'],
+      origin: 'synthesis',
+      binds: [{ field: 'willDo', index: 3 }],
+    };
+    const withDuty = (duty: string): Charter => {
+      const base = larkDraft();
+      return {
+        ...base,
+        proposedBoundaries: {
+          ...base.proposedBoundaries,
+          willDo: [...base.proposedBoundaries.willDo, duty],
+        },
+      };
+    };
+    const unrelated = withDuty(
+      'Draft replies for the routine access tickets using the wiki steps.',
+    );
+    expect(rulePlacement(unrelated, password)).toMatchObject({ carriesWords: false });
+    const stated = withDuty(
+      'Draft replies for the routine access tickets, never sharing a password in a ticket comment.',
+    );
+    expect(rulePlacement(stated, password)).toMatchObject({ carriesWords: true, notCarrying: [] });
+    // The function grants the role whole: a phrase of it is not the prohibition either.
+    const inFunction: CharterConstraint = {
+      ...password,
+      quote: 'Never touch the forecast.',
+      wording: ['flag deals that look stuck'],
+      binds: [{ field: 'proposedFunction', index: 0 }],
+    };
+    expect(rulePlacement(larkDraft([inFunction]), inFunction)).toEqual({ kind: 'in-no-clause' });
+    expect(effectiveCharter(larkDraft([{ ...inFunction, struck: true }])).proposedFunction).toBe(
+      'Keep the Q4 Revenue Tracker clean and flag deals that look stuck.',
+    );
+  });
+
+  it("reads a grant carrying a rule's sentence that forbids nothing, or limiting the act, as carrying the rule (the second pass's probes)", (): void => {
+    const withDuty = (duty: string): Charter => {
+      const base = larkDraft();
+      return {
+        ...base,
+        proposedBoundaries: {
+          ...base.proposedBoundaries,
+          willDo: [...base.proposedBoundaries.willDo, duty],
+        },
+      };
+    };
+    const carries = (quote: string, duty: string): boolean => {
+      const rule: CharterConstraint = {
+        kind: 'reporting-line',
+        quote,
+        wording: [duty.replace(/\.$/, '')],
+        origin: 'synthesis',
+        binds: [{ field: 'willDo', index: 3 }],
+      };
+      const placement = rulePlacement(withDuty(duty), rule);
+      return placement.kind === 'bound' && placement.carriesWords;
+    };
+    expect(
+      carries(
+        'Never contact clients directly. Go through the account manager.',
+        'Route all client contact through the account manager.',
+      ),
+    ).toBe(true);
+    expect(
+      carries(
+        'Do not send an invoice before I sign off.',
+        'Send invoices only after the manager signs off.',
+      ),
+    ).toBe(true);
+    expect(
+      carries(
+        'Always cc finance when you draft invoices. Never send without my sign-off.',
+        'Draft invoices and cc finance on each one.',
+      ),
+    ).toBe(true);
+    expect(carries('Never edit a booked figure.', 'Edit any booked figure.')).toBe(false);
+    expect(
+      carries(
+        'Never share a password in a ticket comment.',
+        'Draft replies for the routine access tickets using the wiki steps.',
+      ),
+    ).toBe(false);
   });
 
   it("reads a prohibition anywhere in the rule, in any of its usual words, as not carried by a will-do granting the act (the code reader's probes)", (): void => {

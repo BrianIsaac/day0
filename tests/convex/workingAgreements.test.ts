@@ -6,8 +6,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { ExecutionPlan } from '../../src/work/types';
-import { AGREEMENT_NOT_YOURS } from '../../src/work/agreement-vocabulary';
-import { EMPLOYEES_CHECKED, EVERY_EMPLOYEE_TOO_MANY } from '../../convex/workingAgreements';
+import { AGREEMENT_NOT_YOURS, EMPLOYEES_CHECKED } from '../../src/work/agreement-vocabulary';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -24,6 +23,8 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 const recorded = vi.hoisted(() => ({
   model: [] as Array<{ agent: string; user: string }>,
   refusalDown: false,
+  /** A statement whose judgement is down while the others answer. */
+  downFor: undefined as string | undefined,
 }));
 
 vi.mock('../../src/lib/mastra', async () => {
@@ -37,6 +38,9 @@ vi.mock('../../src/lib/mastra', async () => {
       if (call.agent.name === 'day0-agreement-refusal') {
         if (recorded.refusalDown) throw new Error('model down');
         const statement = call.user.split('--- Statement ---\n')[1] ?? '';
+        if (recorded.downFor !== undefined && statement.includes(recorded.downFor)) {
+          throw new Error('model down');
+        }
         const clauses = [...call.user.matchAll(/\[(\d+)\] (.+)/g)];
         const emailing = clauses.find((clause) => clause[2] === 'email customers directly');
         return /yourself/i.test(statement) && emailing
@@ -74,6 +78,7 @@ beforeEach((): void => {
 afterEach((): void => {
   recorded.model.length = 0;
   recorded.refusalDown = false;
+  recorded.downFor = undefined;
   vi.useRealTimers();
   restoreSurfaceMode();
 });
@@ -489,9 +494,17 @@ describe('keeping an agreement on a card', (): void => {
     });
     await drain(harness);
 
-    const [kept] = await agreementsOf(harness);
-    expect(kept?.status).toBe('active');
+    // Re-pinned for W13-R31 (14-FX): the keep writes an every-employee copy, as the replacement
+    // path does, and the proposal gives way once the copy passes, rather than the proposal itself
+    // losing its employee.
+    const rows = await agreementsOf(harness);
+    const kept = rows.find((row) => row._id !== agreementId);
+    expect(kept).toMatchObject({ status: 'active', supersedes: agreementId });
     expect(kept?.agentId).toBeUndefined();
+    expect(rows.find((row) => row._id === agreementId)).toMatchObject({
+      status: 'superseded',
+      agentId,
+    });
     const [refusalPrompt] = promptsOf('day0-agreement-refusal');
     expect(refusalPrompt).toContain('Priya: willDo');
     expect(refusalPrompt).toContain('Mateo: willDo');
@@ -503,7 +516,7 @@ describe('keeping an agreement on a card', (): void => {
           workItemId: mateoItem,
         })
       ).map((row) => row._id),
-    ).toEqual([agreementId]);
+    ).toEqual([kept?._id]);
     const mateoSlack = await seedItem(harness, mateo, 'C1-1.1', 'claimed', 'slack');
     expect(
       await harness.query(internal.workingAgreements.selectedForCandidate, {
@@ -531,26 +544,80 @@ describe('keeping an agreement on a card', (): void => {
     expect((await agreementsOf(harness))[0]?.approvedAt).toBeTypeOf('number');
   });
 
-  it('refuses to keep one for every employee of an owner with more employees than the check reads, and says so (W13-R28)', async (): Promise<void> => {
+  it('checks a keep the pause held as soon as the employee is resumed (the first pre-tag, for wave 14)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await proposal(harness, agentId);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { pausedAt: 1 }));
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: false,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    expect((await agreementsOf(harness))[0]?.status).toBe('proposed');
+    recorded.model.length = 0;
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+    await drain(harness);
+    expect(promptsOf('day0-agreement-refusal')).toHaveLength(1);
+    expect((await agreementsOf(harness))[0]?.status).toBe('active');
+  });
+
+  it('refuses a keep for every employee of an owner with more employees than the check reads on the row, and keeps the proposal for its employee (W13-R28, W13-R31)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
     for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
       await seedEmployee(harness, { name: `Employee ${index}` });
     }
     const agreementId = await proposal(harness, agentId);
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
-        agreementId,
-        agentId,
-        forEveryEmployee: true,
-        via: 'promotion-card',
-      }),
-    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
-    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'proposed' });
-    expect((await agreementsOf(harness))[0]?.approvedAt).toBeUndefined();
+    recorded.model.length = 0;
+    // Re-pinned for the ruling on 14-I's "Rulings needed 2": refused on the row with its reason,
+    // not at the keep.
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: true,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    expect(recorded.model).toEqual([]);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)).toMatchObject({
+      status: 'proposed',
+      agentId,
+    });
+    expect(rows.find((row) => row._id === agreementId)?.approvedAt).toBeUndefined();
+    const copy = rows.find((row) => row._id !== agreementId);
+    expect(copy).toMatchObject({
+      status: 'refused',
+      supersedes: agreementId,
+      refusal: { reason: 'every-employee-too-many', judgedAt: expect.any(Number) },
+    });
+    expect(copy?.agentId).toBeUndefined();
+    expect((await eventsOf(harness, 'agreement.refused')).map((event) => event.payload)).toEqual([
+      { agreementId: copy?._id, everyEmployee: true, reason: 'every-employee-too-many' },
+    ]);
+    const listed = await harness
+      .withIdentity(OWNER)
+      .query(api.workingAgreements.listForAgent, { agentId });
+    expect(listed.find((row) => row._id === copy?._id)?.refusal).toEqual({
+      reason: 'every-employee-too-many',
+    });
+    expect(listed.some((row) => row._id === agreementId)).toBe(true);
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: false,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    expect((await agreementsOf(harness)).find((row) => row._id === agreementId)?.status).toBe(
+      'active',
+    );
   });
 
-  it('refuses an edit of an every-employee agreement past the employees its check reads, as keep does (the code reader)', async (): Promise<void> => {
+  it('refuses an edit of an every-employee agreement past the employees its check reads on the new row, and keeps the old one in effect (the code reader)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
     for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
@@ -572,14 +639,166 @@ describe('keeping an agreement on a card', (): void => {
           appliedTo: [],
         }),
     );
-    await expect(
-      harness.withIdentity(OWNER).mutation(api.workingAgreements.edit, {
+    // Re-pinned with the keep's: refused on the row, not at the edit.
+    const { agreementId: edited } = await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.edit, {
         agreementId,
         agentId,
         statement: 'Name the vessel and the carrier.',
-      }),
-    ).rejects.toMatchObject({ data: EVERY_EMPLOYEE_TOO_MANY });
-    expect(await agreementsOf(harness)).toHaveLength(1);
+      });
+    await drain(harness);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('active');
+    expect(rows.find((row) => row._id === edited)).toMatchObject({
+      status: 'refused',
+      statement: 'Name the vessel and the carrier.',
+      refusal: { reason: 'every-employee-too-many' },
+    });
+  });
+
+  it('refuses a kept every-employee agreement at its check once the owner has more employees than it reads, asking no model (W13-R28)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await proposal(harness, agentId);
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: true,
+      via: 'promotion-card',
+    });
+    for (let index = 1; index <= EMPLOYEES_CHECKED; index += 1) {
+      await seedEmployee(harness, { name: `Employee ${index}` });
+    }
+    recorded.model.length = 0;
+    await drain(harness);
+    expect(recorded.model).toEqual([]);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id !== agreementId)).toMatchObject({
+      status: 'refused',
+      refusal: { reason: 'every-employee-too-many' },
+    });
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('proposed');
+  });
+
+  it('keeps the proposal for its employee when another charter refuses its every-employee copy (W13-R31)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });
+    await seedEmployee(harness, { name: 'Mateo' });
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          agentId,
+          kind: 'preference',
+          statement: EMAIL_YOURSELF,
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'proposed',
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.workingAgreements.keep, {
+      agreementId,
+      agentId,
+      forEveryEmployee: true,
+      via: 'promotion-card',
+    });
+    await drain(harness);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)).toMatchObject({
+      status: 'proposed',
+      agentId,
+    });
+    expect(rows.find((row) => row._id !== agreementId)).toMatchObject({
+      status: 'refused',
+      refusal: { reason: 'contradicts-will-not-do', clause: 'email customers directly' },
+    });
+  });
+
+  it('asks again of a new charter only the agreements whose check could not be had (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });
+    const every = async (statement: string): Promise<Id<'workingAgreements'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('workingAgreements', {
+            userId: 'owner',
+            kind: 'preference',
+            statement,
+            scope: 'global',
+            sourceType: 'correction-promotion',
+            status: 'active',
+            approvedAt: 1,
+            approvedVia: 'promotion-card',
+            effectiveFrom: 1,
+            createdAt: 1,
+            appliedTo: [],
+          }),
+      );
+    await every('Name the vessel in every comment.');
+    const held = await every('Name the carrier in every comment.');
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    recorded.downFor = 'Name the carrier';
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: hired,
+      attempt: 0,
+    });
+    const retry = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).find((job) => job.name === 'workingAgreementActions:checkForCharter');
+    expect(retry?.args[0]).toMatchObject({ agreementIds: [held], attempt: 1 });
+  });
+
+  it("checks an every-employee agreement against a new employee's charter at its approval, the refusal on the agreement's row (13-W's gap)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // Priya's charter allows the agreement; only the new employee's refuses it.
+    await seedEmployee(harness, { willNotDo: ['change carrier contracts'] });
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          kind: 'preference',
+          statement: EMAIL_YOURSELF,
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'active',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          effectiveFrom: 1,
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    const charterId = await harness.run(async (ctx) => {
+      const [charter] = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', hired))
+        .collect();
+      await ctx.db.patch(charter!._id, { approved: false, approvedAt: undefined });
+      return charter!._id;
+    });
+    recorded.model.length = 0;
+    await harness.withIdentity(OWNER).mutation(api.charters.approve, { charterId });
+    await drain(harness);
+    const [prompt] = promptsOf('day0-agreement-refusal');
+    expect(prompt).toContain('Ines: willDo');
+    expect(prompt).not.toContain('Priya: willDo');
+    expect((await agreementsOf(harness)).find((row) => row._id === agreementId)).toMatchObject({
+      status: 'refused',
+      effectiveUntil: expect.any(Number),
+      refusal: { reason: 'contradicts-will-not-do', clause: 'email customers directly' },
+    });
+    expect((await eventsOf(harness, 'agreement.refused')).map((event) => event.payload)).toEqual([
+      {
+        agreementId,
+        everyEmployee: true,
+        reason: 'contradicts-will-not-do',
+        clause: 'email customers directly',
+      },
+    ]);
   });
 
   it("refuses an employee's own agreement for every employee when another charter forbids it, and keeps it for its employee", async (): Promise<void> => {
@@ -1038,5 +1257,43 @@ describe('selection for a candidate', (): void => {
     expect(await statementsFor({ requesterPerson: { kind: 'person', personId: dee } })).toEqual([]);
     expect(await statementsFor({ requesterPerson: { kind: 'unknown' } })).toEqual([]);
     expect(await statementsFor({})).toEqual([]);
+  });
+});
+
+describe('a kept agreement whose check could not be had (14-FX, W13-R30)', (): void => {
+  it('checks it again on Try again, and refuses one no longer waiting on its check', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreementId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'owner',
+          agentId,
+          kind: 'preference',
+          statement: NO_EMAIL,
+          scope: 'global',
+          sourceType: 'correction-promotion',
+          status: 'proposed',
+          approvedAt: 1,
+          approvedVia: 'promotion-card',
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    recorded.model.length = 0;
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.recheck, { agreementId, agentId });
+    await drain(harness);
+    expect(promptsOf('day0-agreement-refusal')).toHaveLength(1);
+    expect((await agreementsOf(harness))[0]?.status).toBe('active');
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.workingAgreements.recheck, { agreementId, agentId }),
+    ).rejects.toMatchObject({ data: 'This working agreement has changed since this page loaded.' });
+    await expect(
+      harness
+        .withIdentity(STRANGER)
+        .mutation(api.workingAgreements.recheck, { agreementId, agentId }),
+    ).rejects.toThrow();
   });
 });

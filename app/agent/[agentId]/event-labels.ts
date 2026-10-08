@@ -12,6 +12,7 @@ import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
 import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
+import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -689,9 +690,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'working agreement kept for every employee'
       : 'working agreement kept',
   'agreement.refused': (payload) =>
-    text(payload.clause)
-      ? `working agreement refused: it contradicts “${text(payload.clause)}”`
-      : 'working agreement refused: it would go beyond the charter',
+    payload.reason === 'every-employee-too-many'
+      ? `working agreement not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
+      : text(payload.clause)
+        ? `working agreement refused: it contradicts “${text(payload.clause)}”`
+        : 'working agreement refused: it would go beyond the charter',
   'agreement.retired': (payload) =>
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'

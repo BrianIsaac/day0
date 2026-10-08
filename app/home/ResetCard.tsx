@@ -159,6 +159,20 @@ export function unlinkLabel(holdings: Holdings | null | undefined): string {
 }
 
 /**
+ * What the card says the deletion takes: in the hosted office, where no person and no working
+ * agreement is kept, it names neither, as its dialog does not (the v0.17.0 redeploy's finding 4).
+ *
+ * @param mode - The deployment's mode, or undefined while it is read.
+ */
+export function whatItDeletes(mode: 'mock' | 'real' | undefined): string {
+  const takes =
+    mode === 'mock'
+      ? 'your employees and everything they made, your skill library and the notes on your handover requests'
+      : 'your employees and everything they made, your skill library, the people and working agreements you keep (including your own entry among your people) and the notes on your handover requests';
+  return `Deletes ${takes}. Your sign-in stays, and the requests stay in the other manager’s record.`;
+}
+
+/**
  * Whether a deletion would take anything: any stored row it removes, or the documentation once the
  * manager has chosen to unlink it.
  */
@@ -178,7 +192,7 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
  * focused first; what the deletion came to is said on the card and focus comes back to the
  * button, or to the card once nothing is left for the button to take.
  */
-export function ResetCard() {
+export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
   const holdings = useQuery(api.reset.holdings);
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
@@ -201,12 +215,7 @@ export function ResetCard() {
     <Card title="Your data" tone="danger" focusRef={card}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm text-[var(--color-muted)]">
-            Deletes your employees and everything they made, your skill library, the people and
-            working agreements you keep (including your own entry among your people) and the notes
-            on your handover requests. Your sign-in stays, and the requests stay in the other
-            manager’s record.
-          </p>
+          <p className="text-sm text-[var(--color-muted)]">{whatItDeletes(mode)}</p>
           <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
             {holdings
               ? heldNow(holdings, alsoUnlinkDocumentation)

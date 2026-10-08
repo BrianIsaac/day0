@@ -715,6 +715,39 @@ describe('URL attribution', (): void => {
     ).toEqual(['https://crm.northstar.example/login']);
   });
 
+  it('attributes a URL to a system named by more than its vendor when the sentence names the vendor and the host carries it (W13V-1)', (): void => {
+    const system = 'Slack automation policy';
+    const slug = 'slack-automation-policy';
+    expect(
+      attributedUrls(
+        'Integration: Slack Web API over HTTPS at `https://slack.com/api/`, bot token in the header.',
+        system,
+        slug,
+      ),
+    ).toEqual(['https://slack.com/api/']);
+    expect(
+      attributedUrls('The policy lives at https://slack.com/intl/policy.', system, slug),
+    ).toEqual([]);
+    expect(
+      attributedUrls('Slack posts go through https://hooks.example.com/in.', system, slug),
+    ).toEqual([]);
+    expect(
+      attributedUrls(
+        'The wiki is at https://the.example.com/wiki.',
+        'The team wiki',
+        'the-team-wiki',
+      ),
+    ).toEqual([]);
+    // The second pass: a name led by a common word is not a vendor.
+    expect(
+      attributedUrls(
+        'Support questions go to https://support.slack.com/help.',
+        'Support desk',
+        'support-desk',
+      ),
+    ).toEqual([]);
+  });
+
   it('matches a system as a whole word, so Slackbot text is not Slack evidence', (): void => {
     expect(namesSystem('Slackbot answers questions.', 'Slack')).toBe(false);
     expect(namesSystem("Linear's MCP endpoint", 'Linear')).toBe(true);
@@ -1726,6 +1759,23 @@ describe('orientation run', (): void => {
     expect(surfaces.slack.credentialId).toBeUndefined();
     expect(surfaces.slack.request).not.toHaveProperty('credential.summary');
     expect(surfaces['northstar-crm'].verdict).toBe('absent');
+  });
+
+  it('orients a dedicated Slack page under its own title to the documented API at the Slack endpoint (W13V-1)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'systems/slack.md': notionFixture('slack-day0-app') },
+      [{ name: 'Slack automation policy', class: 'chat' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    expect((await surfacesBySlug(harness, agentId))['slack-automation-policy']).toMatchObject({
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      request: { credential: { method: 'oauth' } },
+    });
   });
 
   it('keeps a value that escaped redaction out of the model, the card and the events', async (): Promise<void> => {

@@ -104,21 +104,34 @@ function namesContentType(headers: Readonly<Record<string, string>>): boolean {
   return Object.keys(headers).some((key) => key.toLowerCase() === CONTENT_TYPE.toLowerCase());
 }
 
-/**
- * Whether a body the action sends is a JSON object or array. Without a content type `fetch` sends
- * a string body as `text/plain`, which Slack refuses with `invalid_arguments` (the first walk's
- * row 19), so a JSON body is labelled JSON when its action names no type of its own.
- */
-function isJsonText(body: string): boolean {
-  const text = body.trim();
-  if (!text.startsWith('{') && !text.startsWith('[')) return false;
+/** The content type of a form body. */
+const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
+
+/** A body written as a form: `key=value` pairs joined by `&`, no space unencoded. */
+const FORM_BODY = /^[^=&\s]+=[^&\s]*(?:&[^=&\s]+=[^&\s]*)*$/;
+
+/** Whether a body is JSON: an object, an array or a scalar ("text", 42, true, null). */
+function isJsonText(text: string): boolean {
   try {
     JSON.parse(text);
     return true;
   } catch {
-    // Not JSON after all: the body goes as the action wrote it.
+    // Not JSON: another rule, or none, labels it.
     return false;
   }
+}
+
+/**
+ * The content type a body the action sends goes with when its action names none. Without one
+ * `fetch` sends a string body as `text/plain`, which Slack refuses with `invalid_arguments` (the
+ * first walk's row 19): a JSON body, object, array or scalar, is labelled JSON, and a form body a
+ * form (W13-R18); any other text goes as the action wrote it.
+ */
+function defaultContentType(body: string): string | undefined {
+  const text = body.trim();
+  if (text === '') return undefined;
+  if (isJsonText(text)) return JSON_CONTENT_TYPE;
+  return FORM_BODY.test(text) ? FORM_CONTENT_TYPE : undefined;
 }
 
 /**
@@ -683,9 +696,8 @@ export class HttpAdapter implements SurfaceAdapter {
         request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
-      if (body !== undefined && !namesContentType(headers) && isJsonText(body)) {
-        headers[CONTENT_TYPE] = JSON_CONTENT_TYPE;
-      }
+      const labelled = body === undefined ? undefined : defaultContentType(body);
+      if (labelled !== undefined && !namesContentType(headers)) headers[CONTENT_TYPE] = labelled;
       const authorityRefusal = transportAuthority
         ? await this.deps.beforeTransport?.(action, surface, { authority: transportAuthority })
         : await this.deps.beforeTransport?.(action, surface);

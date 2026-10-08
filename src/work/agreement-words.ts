@@ -5,10 +5,12 @@
  */
 
 import type { Id } from '../../convex/_generated/dataModel';
-import type {
-  AgreementRefusalReason,
-  AgreementSourceType,
-  AgreementStatus,
+import {
+  CHECK_STALE_MS,
+  EMPLOYEES_CHECKED,
+  type AgreementRowRefusalReason,
+  type AgreementSourceType,
+  type AgreementStatus,
 } from './agreement-vocabulary';
 
 /** A working agreement as a card reads it; the `workingAgreements` row carries these fields. */
@@ -26,7 +28,7 @@ export interface AgreementView {
   readonly effectiveFrom?: number;
   readonly createdAt: number;
   readonly refusal?: {
-    readonly reason: AgreementRefusalReason;
+    readonly reason: AgreementRowRefusalReason;
     readonly clause?: string;
   };
 }
@@ -53,6 +55,13 @@ export function keepNoteHint(name: string): string {
   return `Your answer above becomes a working agreement for ${name} once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.`;
 }
 
+/**
+ * What the plan approval says in the hosted office, where no working agreement is kept, in place
+ * of the "Keep this note" tick (13-FD's R10; wording draft).
+ */
+export const KEEP_NOTE_IN_MOCK =
+  'Your answer is for this run. In a deployment of your own, “Keep this note for later work of this kind” keeps it as a working agreement.';
+
 /** Where a card stands: the Work tab's promotion card, or the Charter tab's Agreements card. */
 export type AgreementPlace = 'work' | 'charter';
 
@@ -76,8 +85,20 @@ export const AGREEMENTS_LOADING = 'Reading the working agreements.';
 /** The kicker of a refused row. */
 export const NOT_KEPT = 'Not kept';
 
+/**
+ * Why an agreement kept for every employee was not kept (W13-R28, moved from
+ * `convex/workingAgreements.ts` for the card's row; wording draft): the owner has more employees
+ * than its check reads, so it would bind an employee whose charter nobody checked it against. The
+ * row is drawn on every employee's card, so it names none of them (found on the bed: "Keep it for
+ * Ines alone" on a card whose proposal was Priya's).
+ */
+export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. You can keep it for a single employee instead.`;
+
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
+
+/** The live region once a stale check is tried again (W13-R30, wording draft). */
+export const CHECKING_AGAIN = 'Day0 is checking it again.';
 
 /** The live region once a kept agreement waiting on its check is withdrawn. */
 export const WITHDRAWN = 'Withdrawn: it will not take effect.';
@@ -135,6 +156,29 @@ export function checkingLine(statement: string, place: AgreementPlace): string {
 }
 
 /**
+ * Whether a kept agreement's check has waited past its tries (W13-R30): its card then says the
+ * check could not be had and offers Try again beside Withdraw.
+ *
+ * @param row - The agreement.
+ * @param now - The page's clock.
+ */
+export function checkStale(
+  row: Pick<AgreementView, 'status' | 'approvedAt'>,
+  now: number,
+): boolean {
+  return awaitingCheck(row) && now - (row.approvedAt ?? now) > CHECK_STALE_MS;
+}
+
+/**
+ * The line of a kept agreement whose check could not be had (W13-R30, wording draft).
+ *
+ * @param statement - The agreement's words.
+ */
+export function checkUnavailableLine(statement: string): string {
+  return `Kept, but Day0 could not check “${statement}” against the charter yet, so it is not in effect. Try again, or withdraw it.`;
+}
+
+/**
  * Why a statement was refused, in a sentence: the clause it contradicts, quoted word for word, or
  * what it would have done; and, where the charter could settle it, the way to: on the Work tab the
  * question the card's Amend the charter answers, on the Charter tab the amendment above.
@@ -161,6 +205,8 @@ export function refusalSentence(
       return 'This would grant a permission, which only a connection you approve can give. It was not kept.';
     case 'names-credential':
       return 'This names a credential, which a working agreement never keeps. It was not kept.';
+    case 'every-employee-too-many':
+      return EVERY_EMPLOYEE_TOO_MANY;
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);

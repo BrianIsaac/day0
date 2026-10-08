@@ -57,11 +57,22 @@ describe('a goal the model says was not given (C D11)', (): void => {
     day90: 'No milestone given.',
   };
 
+  it('draws a goal whose words say none was given as a gap even when the model says it was stated (W13-R37)', (): void => {
+    const stated = {
+      ...goals,
+      day60: 'No 60-day goal was given.',
+      stated: { day30: true, day60: true, day90: true },
+    };
+    expect(goalNotGiven(stated, 'day60')).toBe(true);
+    expect(goalNotGiven(stated, 'day30')).toBe(false);
+  });
+
   it('a goal the model says was not given draws no goal stated, whatever its words', (): void => {
     const stated = { ...goals, stated: { day30: true, day60: false, day90: true } };
     expect(goalNotGiven(stated, 'day60')).toBe(true);
-    // The model's word wins over the heuristic both ways.
-    expect(goalNotGiven(stated, 'day90')).toBe(false);
+    // Re-pinned for W13-R37 (14-FX): the model's "not given" wins, and words that say no goal was
+    // given are a gap whatever the model says, so "No milestone given." is no goal.
+    expect(goalNotGiven(stated, 'day90')).toBe(true);
     expect(goalNotGiven(stated, 'day30')).toBe(false);
   });
 

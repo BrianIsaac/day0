@@ -367,6 +367,14 @@ export function RuleRow({
       : [];
   const chip = STANDING_CHIP[standing];
   const keepUnder = CLAUSE_LIST_WORDS[defaultRuleClause(constraint.quote)];
+  // A rule to check whose strike would change nothing is not enforced: the row says so once, with
+  // what to do, and not again as "nothing to strike" and a kept clause (the second pass's words).
+  const unenforced =
+    standing === 'check' &&
+    placement.kind === 'bound' &&
+    preview !== undefined &&
+    preview.refusal === undefined &&
+    !preview.changes;
   return (
     <li
       data-just={justStruck ? '' : undefined}
@@ -415,6 +423,11 @@ export function RuleRow({
             {placement.clauses.length === 1
               ? 'This clause does not carry your words.'
               : 'These clauses do not carry your words.'}
+            {unenforced
+              ? record
+                ? ` The charter does not enforce it. Add it to ${keepUnder} to enforce it.`
+                : ` The charter does not enforce it. Ask ${name} for changes to add it, or approve without it.`
+              : null}
           </RowNote>
         ) : null}
         {standing === 'in-no-clause' ? (
@@ -424,12 +437,22 @@ export function RuleRow({
               : `The charter does not enforce it. Ask ${name} for changes to add it, or approve without it.`}
           </RowNote>
         ) : null}
-        <StrikeLine
-          constraint={constraint}
-          placement={placement}
-          preview={preview}
-          check={standing === 'check'}
-        />
+        {unenforced ? null : (
+          <StrikeLine
+            constraint={constraint}
+            placement={placement}
+            preview={preview}
+            check={standing === 'check'}
+          />
+        )}
+        {preview?.rewrittenFunction !== undefined && !preview.refusal ? (
+          <RowNote>
+            {'rewrites the function: '}
+            {quotedClauses([preview.rewrittenFunction.from])}
+            {' to '}
+            {quotedClauses([preview.rewrittenFunction.to])}
+          </RowNote>
+        ) : null}
         {preview && !preview.refusal
           ? preview.rewrittenClauses.map((pair, i) => (
               <RowNote key={i}>

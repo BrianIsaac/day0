@@ -10,7 +10,7 @@ import {
 import { isEventOf } from '../src/events/contract';
 import { appendEvent, eventsOfType } from './eventLog';
 import { endedByItsRevoke } from './organisationConnectionReads';
-import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { assertOwnsSurface } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
 import {
   MESSAGES_TAB_OPEN_HOWS,
@@ -248,10 +248,7 @@ export const confirmMessagesTab = mutation({
   args: { surfaceId: v.id('surfaces') },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    await getCallerOrThrow(ctx);
-    const surface = await ctx.db.get(args.surfaceId);
-    if (surface === null) throw new ConvexError('Surface not found.');
-    await assertOwnsAgent(ctx, surface.agentId);
+    const surface = await assertOwnsSurface(ctx, args.surfaceId);
     assertRealMode('Confirming an app takes messages');
     const app = surface.provisioning;
     const reach = await typedCodeReachOf(ctx, surface);

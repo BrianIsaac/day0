@@ -22,6 +22,23 @@ export const SAME_PERSON_GONE = 'The person this was offered as is no longer in 
 /** The refusal of A different person on an identity that is not the proposal's own match. */
 export const NOT_THE_MATCH = 'This identity is not the match proposed for this person.';
 
+/** The refusal of Take or Dismiss on a person whose proposed change is gone (W13-R3). */
+export const NO_PROPOSED_CHANGE = 'Nothing is proposed for this person any more.';
+
+/** The refusal of Take on a proposed address another of the owner's people holds (W13-R3). */
+export const PROPOSED_ADDRESS_HELD =
+  'Another person on your list already has this address, so it cannot be taken. Dismiss the change.';
+
+/** The refusal of a relationship the employee already has to the person, the same kind and scope (W13-R26). */
+export const RELATIONSHIP_HELD = 'This relationship is already there.';
+
+/**
+ * The refusal of Same person when the proposal's verified identity in a system contradicts the
+ * person's own there (W13-R24).
+ */
+export const SAME_PERSON_CONFLICT =
+  'These cannot be the same person: they hold different verified accounts in the same workspace. Keep them apart with Different.';
+
 /** The refusal of a change to an edge that has ended. */
 export const RELATIONSHIP_ENDED = 'This relationship has already ended.';
 
@@ -295,3 +312,51 @@ export function edgeLine(
     everyone ? ' · for everyone you manage' : ''
   }`;
 }
+
+/** The values of a source's proposed change, as the confirmed person's row names them. */
+export interface ProposedChangeWords {
+  readonly title?: string;
+  readonly team?: string;
+  readonly primaryEmail?: string;
+}
+
+/**
+ * The line a confirmed person's row says a source's proposed change in (W13-R3, wording draft):
+ * "Team directory proposes a change: title “Head of revenue operations”, address
+ * priya.shah@kestrel.test. What you confirmed stays until you take it."
+ *
+ * @param where - Where the words came from, as the evidence says it.
+ */
+export function proposedChangeLine(where: string, change: ProposedChangeWords): string {
+  const parts = [
+    ...(change.title === undefined ? [] : [`title \u201c${change.title}\u201d`]),
+    ...(change.team === undefined ? [] : [`team \u201c${change.team}\u201d`]),
+    ...(change.primaryEmail === undefined ? [] : [`address ${change.primaryEmail}`]),
+  ];
+  return `${where} proposes a change: ${parts.join(', ')}. What you confirmed stays until you take it.`;
+}
+
+/**
+ * The line a confirmed person's row says a failed lookup in (W13-R25, wording draft).
+ *
+ * @param name - The person.
+ * @param when - When it failed, in the employee's zone.
+ */
+export function lookupFailedLine(name: string, when: string): string {
+  return `Day0 could not look ${name} up in Slack or Linear on ${when}, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.`;
+}
+
+/**
+ * The line under a Same person offer that names the address the merge would give the person kept,
+ * one with none (W13-R24, wording draft), so a page's wrong address is seen before it is merged.
+ *
+ * @param name - The person kept.
+ * @param address - The address the proposal holds.
+ */
+export function sameBringsAddressLine(name: string, address: string): string {
+  return `Same person would also give ${name} the address ${address}.`;
+}
+
+/** The Proposed card's line when a standing holds more people than the tab reads (W13-R23, wording draft). */
+export const PEOPLE_MORE =
+  'Showing the 500 most recently added proposals; decide some and the rest appear.';

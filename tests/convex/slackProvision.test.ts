@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import { CARD_HAS_APP, FORGET_NOT_ENDED, SPENT_REFRESH_REASON } from '../../convex/slackProvision';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { allConvexModules } from './all-modules';
+import { SURFACE_NOT_YOURS } from '../../src/agent/employee-access';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -519,6 +520,52 @@ describe("forgetting an app IT's revoke ended (W12X-4; 13-FS's design 2 (b))", (
     ).rejects.toThrow(FORGET_NOT_ENDED);
     const row = await harness.run(async (ctx) => await ctx.db.get(card.surfaceId));
     expect(row?.provisioning?.appId).toBe('A0LEO');
+  });
+
+  it("answers a card that does not exist as another owner's is answered, one refusal for both (W13-R13)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const card = await endedCard(harness, 'revoked');
+    const gone = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('surfaces', {
+        agentId: (await ctx.db.get(card.surfaceId))!.agentId,
+        slug: 'gone',
+        displayName: 'Gone',
+        class: 'chat',
+        verdict: 'declared',
+        whereFound: [],
+        credentialLanded: false,
+        createdAt: 1,
+      });
+      await ctx.db.delete(id);
+      return id;
+    });
+    const missing = harness
+      .withIdentity(managerIdentity())
+      .mutation(api.slackProvision.forgetEndedApp, { surfaceId: gone });
+    await expect(missing).rejects.toThrow(SURFACE_NOT_YOURS);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('someone-else'))
+        .mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId }),
+    ).rejects.toThrow(SURFACE_NOT_YOURS);
+  });
+
+  it('answers a second Forget as already forgotten, not as a fault (W13-R14)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const card = await endedCard(harness, 'revoked');
+    const manager = harness.withIdentity(managerIdentity());
+    await manager.mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId });
+    const events = async (): Promise<number> =>
+      (await harness.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+        (event) => event.type === 'surface.app-forgotten',
+      ).length;
+    expect(await events()).toBe(1);
+    await expect(
+      manager.mutation(api.slackProvision.forgetEndedApp, { surfaceId: card.surfaceId }),
+    ).resolves.toBeNull();
+    expect(await events()).toBe(1);
   });
 
   it('is refused in mock mode, where the page drives every step', async (): Promise<void> => {

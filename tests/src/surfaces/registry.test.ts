@@ -4,6 +4,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { HttpAdapter } from '../../../src/surfaces/http';
 import { McpAdapter, type McpClientLike, type McpClientOptions } from '../../../src/surfaces/mcp';
 import { mockAdapter } from '../../../src/surfaces/mock';
+import { withChannelMethods } from '../../../src/surfaces/slack-own-channel';
 import { MOCK_ACTION_TOOLS } from '../../../src/work/types';
 import {
   AWAITING_APPROVAL,
@@ -1100,6 +1101,53 @@ describe('applying surface actions', (): void => {
           text: 'Decided: approved in this DM (ab3xyz).\n\n-- Priya (Day0) · run wi_1/run_1',
         },
       },
+    ]);
+  });
+
+  it("posts and edits on an employee's own app through the registry with the channel's methods, though its page names none (W13-R12)", async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const own: SurfaceRecord = {
+      ...slack,
+      toolAllowlist: [],
+      credentialKind: 'oauth',
+      ownSlackApp: true,
+    };
+    const grants = new Set(['boss:message']);
+    const refused = await applySurfaceActions(ctx, 'real', [own], run, [dm], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+    expect(refused[0]?.ok).toBe(false);
+    expect(recorded.http).toEqual([]);
+    const posted = await applySurfaceActions(ctx, 'real', [withChannelMethods(own)], run, [dm], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+    expect(posted[0]).toMatchObject({ ok: true });
+    const edit: MockAction = {
+      tool: 'http.request',
+      args: {
+        ...dm.args,
+        path: '/chat.update',
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          ts: '1787738163.314789',
+          text: 'Decided: approved in this DM (ab3xyz).',
+        }),
+      },
+    };
+    const edited = await applySurfaceActions(ctx, 'real', [withChannelMethods(own)], run, [edit], {
+      deps: deps(recorded),
+      grants,
+      now,
+      requestEdit: { channel: 'D0MANAGER', ts: '1787738163.314789' },
+    });
+    expect(edited[0]).toMatchObject({ ok: true });
+    expect(recorded.http.map((call) => call.url)).toEqual([
+      'https://slack.com/api/chat.postMessage',
+      'https://slack.com/api/chat.update',
     ]);
   });
 

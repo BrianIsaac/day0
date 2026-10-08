@@ -286,7 +286,7 @@ describe('RetireDialog: what retiring does, said before it is done (Q15, N1)', (
       'Not sure? Keep Mira and turn autonomous actions off instead: nothing but reads and the DM to you lands without your approval, and nothing is deleted.',
     );
     expect(retireAlternative(EMPLOYEE_ROW, 'mock')).toBe(
-      'Not sure? Keep Mira: in the hosted office nothing it does leaves the mock office, and every write waits for your decision.',
+      'Not sure? Keep Mira: in the hosted office nothing it does leaves that office, and every write waits for your decision.',
     );
   });
 

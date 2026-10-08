@@ -2,9 +2,10 @@
 
 import { act } from 'react';
 import type { Id } from '../../../../../convex/_generated/dataModel';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgreementsCard } from '../../../../../app/agent/[agentId]/charter/AgreementsCard';
 import type { AgreementView } from '../../../../../src/work/agreement-words';
+import { CHECK_STALE_MS } from '../../../../../src/work/agreement-vocabulary';
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { button, mount, press, said, settle, typeInto } from '../../../../fixtures/dom/press';
@@ -59,7 +60,15 @@ const waiting: AgreementView = {
   effectiveFrom: undefined,
 };
 
+beforeEach((): void => {
+  // The page's clock decides when a kept agreement's check is stale (W13-R30): pinned just after
+  // the fixtures were kept.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(10_000);
+});
+
 afterEach((): void => {
+  vi.useRealTimers();
   document.body.replaceChildren();
 });
 
@@ -81,6 +90,9 @@ function card(rows: readonly AgreementView[], calls: string[] = []): ReturnType<
         }}
         onDismiss={async (id) => {
           calls.push(`dismiss ${id}`);
+        }}
+        onRecheck={async (id) => {
+          calls.push(`recheck ${id}`);
         }}
       />
     </AgentZoneContext.Provider>,
@@ -173,6 +185,20 @@ describe('the Agreements card', (): void => {
     await press(view.container, 'Dismiss the refused agreement “Email the customer yourself.”');
     await press(view.container, 'Withdraw “Name the carrier first.”');
     expect(calls).toEqual(['dismiss wa4', 'dismiss wa3']);
+    view.unmount();
+  });
+
+  it('says a check that could not be had once it is stale, and offers Try again (W13-R30)', async (): Promise<void> => {
+    vi.setSystemTime((checking.approvedAt ?? 0) + CHECK_STALE_MS + 1);
+    const calls: string[] = [];
+    const view = card([checking], calls);
+    expect(view.container.textContent).toContain(
+      'Kept, but Day0 could not check “Name the carrier first.” against the charter yet, so it is not in effect. Try again, or withdraw it.',
+    );
+    await press(view.container, 'Try the check of “Name the carrier first.” again');
+    expect(calls).toEqual(['recheck wa3']);
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
     view.unmount();
   });
 

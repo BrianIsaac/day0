@@ -340,6 +340,17 @@ function slackAppScopes(card: AccessRequestCard): string[] {
   return [...own, ...SLACK_KIT_BOT_SCOPES.filter((scope) => !own.includes(scope))];
 }
 
+/**
+ * The scopes a card asks for, as its access request names them and its card lists them (W13V-5):
+ * on a Slack card, the scopes of the employee's own app (`slackAppScopes`), never the page's method
+ * names; on any other system, the scopes it was proposed with.
+ *
+ * @param card - The card, with its proposal.
+ */
+export function scopesRequestedOf(card: AccessRequestCard): string[] {
+  return organisationSystemOf(card) === 'slack' ? slackAppScopes(card) : [...approvedScopes(card)];
+}
+
 /** Why the card asks, in IT's words: a connection IT revoked is said as revoked, never as not yet made. */
 function reasonLine(
   reason: AccessRequestReason,
@@ -448,10 +459,7 @@ export function draftAccessRequest(input: AccessRequestInput): AccessRequestDraf
     throw new Error('A card on no organisation system asks IT for nothing.');
   const name = input.connection?.displayName ?? input.card.displayName;
   const employee = input.employeeName;
-  const scopes = [
-    ...(input.scopes ??
-      (system === 'slack' ? slackAppScopes(input.card) : approvedScopes(input.card))),
-  ];
+  const scopes = [...(input.scopes ?? scopesRequestedOf(input.card))];
   const subject = `Day0 access request: ${name} for ${employee}`;
   const lines = [
     `${employee}, a Day0 employee, needs access to ${name}; ${employee}’s manager approved it and asks IT to connect it.`,
