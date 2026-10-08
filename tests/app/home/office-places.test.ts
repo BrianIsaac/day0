@@ -54,11 +54,16 @@ describe('where the office stands its idle employees (walk m18)', () => {
       ],
       [],
     );
+    // A fixed walk over the spots in place of a random pick: each call lands elsewhere in the list.
+    let picks = 0;
     for (let step = 0; step < 20; step += 1) {
       const next = idlePlaces(
         Object.entries(start).map(([agentId, previous], seed) => ({ agentId, seed, previous })),
         [],
-        (spots) => spots[Math.floor(Math.random() * spots.length)] ?? spots[0]!,
+        (spots) => {
+          picks += 1;
+          return spots[(picks * 7) % spots.length] ?? spots[0]!;
+        },
       );
       for (const [agentId, place] of Object.entries(next)) {
         const previous = start[agentId]!;

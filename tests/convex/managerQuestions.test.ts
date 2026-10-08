@@ -49,21 +49,22 @@ async function seedClaimed(
   title: string,
   contentSummary = 'A routine ticket.',
 ): Promise<Id<'workItems'>> {
-  return await harness.run(
-    async (ctx) =>
-      await ctx.db.insert('workItems', {
-        agentId,
-        sourceCategory: 'ticket-queue',
-        sourceSystem: 'linear',
-        externalId: `REVOPS-${Math.floor(Math.random() * 10_000)}`,
-        title,
-        contentSummary,
-        contentRefs: [],
-        state: 'claimed',
-        observedAt: 3,
-        createdAt: 3,
-      }),
-  );
+  return await harness.run(async (ctx) => {
+    // Numbered by the rows already seeded: unique, fixed, and never a key a title names.
+    const seeded = (await ctx.db.query('workItems').collect()).length;
+    return await ctx.db.insert('workItems', {
+      agentId,
+      sourceCategory: 'ticket-queue',
+      sourceSystem: 'linear',
+      externalId: `REVOPS-${101 + seeded}`,
+      title,
+      contentSummary,
+      contentRefs: [],
+      state: 'claimed',
+      observedAt: 3,
+      createdAt: 3,
+    });
+  });
 }
 
 const lookerPlan = {

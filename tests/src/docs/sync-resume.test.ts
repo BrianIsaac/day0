@@ -12,7 +12,7 @@ const LISTING = Array.from({ length: 500 }, (_, index) => `page-${index}.md`);
 
 function run(fields: Partial<ResumeCandidate> & Pick<ResumeCandidate, 'state'>): ResumeCandidate {
   return {
-    _id: `run-${Math.random()}` as Id<'docSyncRuns'>,
+    _id: `run-${fields.state}` as Id<'docSyncRuns'>,
     cursor: listingCursor(300, LISTING),
     listing: 1,
     pageCount: 300,

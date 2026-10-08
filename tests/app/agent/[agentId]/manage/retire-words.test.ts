@@ -12,7 +12,12 @@ import type { InboxItem } from '../../../../../app/components/InboxEntry';
 
 /** An inbox entry of a kind, with the fields the words read. */
 function entry(kind: InboxItem['kind'], extra: Record<string, unknown> = {}): InboxItem {
-  return { kind, key: `${kind}-${Math.random()}`, subject: 'REVOPS-7', ...extra } as InboxItem;
+  return {
+    kind,
+    key: `${kind}-${JSON.stringify(extra)}`,
+    subject: 'REVOPS-7',
+    ...extra,
+  } as InboxItem;
 }
 
 describe('the retire dialog in words', (): void => {
