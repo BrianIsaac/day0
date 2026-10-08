@@ -207,6 +207,31 @@ describe('a write withheld beside a message bound by its declared reports (D-5 (
   });
 });
 
+describe('a withhold takes the messages bound by words and declaration both (W14-R8)', (): void => {
+  it('withholds a message whose words report the withheld write though it declares none', (): void => {
+    const both: MockAction = {
+      ...OWN_WRITES_COMMENT,
+      args: {
+        ...OWN_WRITES_COMMENT.args,
+        toolArgsJson: JSON.stringify({
+          issueId: 'REVOPS-6',
+          body: 'Both notes are now in #revops.',
+        }),
+      },
+      reports: null as unknown as number[],
+    };
+    const output = withholdActions(
+      { actions: [NOTE_1, NOTE_2, both], withheldActions: [] as WithheldAction[] },
+      [{ index: 0, reason: 'unsupported' }],
+    );
+    expect(output.actions).toEqual([NOTE_2]);
+    expect(output.withheldActions?.map((row) => row.reason)).toEqual([
+      'unsupported',
+      'withheld with a write it reports, which was withheld: unsupported',
+    ]);
+  });
+});
+
 describe("a resumed closing set (Wren's second Retry, wave 13 item 8)", (): void => {
   it('reads the previous attempt’s failure as that attempt’s, and answers for the set as it will stand once it lands', async (): Promise<void> => {
     await closingSet(OWN_WRITES_CLOSING, {

@@ -268,6 +268,7 @@ function supported(
   sentence: string,
   prepared: PreparedEvidence,
   earlier: readonly MockAction[] = [],
+  bound: readonly number[] = [],
 ): boolean {
   if (negatesReport(sentence) || asks(sentence)) return true;
   if (
@@ -282,7 +283,7 @@ function supported(
   if (tokens.some((token) => prepared.ledgerTokens.has(token))) return true;
   return (
     repeatsTheItem(sentence, tokens, prepared) ||
-    reportsOwnWrites(sentence, tokens, prepared, earlier)
+    reportsOwnWrites(sentence, tokens, prepared, earlier, bound)
   );
 }
 
@@ -487,8 +488,18 @@ function reportedWrites(sentence: string, earlier: readonly MockAction[]): MockA
   return reportedWriteIndexes(sentence, earlier).map((index) => earlier[index]!);
 }
 
-/** The places in `earlier` of the writes a sentence reports ({@link reportedWrites}). */
-function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]): number[] {
+/**
+ * The places in `earlier` of the writes a sentence reports ({@link reportedWrites}).
+ *
+ * @param kindGuess - Whether a sentence that names a message's kind and no write's words binds
+ *   every message of that kind; off for a message that declares its `reports`, which says which
+ *   (W14-R8).
+ */
+function reportedWriteIndexes(
+  sentence: string,
+  earlier: readonly MockAction[],
+  kindGuess = true,
+): number[] {
   const said = withoutIntentions(sentence);
   if (said === '') return [];
   const kinds = reportableKinds(said);
@@ -511,8 +522,28 @@ function reportedWriteIndexes(sentence: string, earlier: readonly MockAction[]):
   // A report that names a message's kind binds every message of that kind, unless some carry its
   // own words: then those alone, so an unrelated post beside the reported ones is not bound
   // (W13-R2).
-  if (sharing.length > 0 || !namesMessageKind(said)) return sharing;
+  if (sharing.length > 0 || !kindGuess || !namesMessageKind(said)) return sharing;
   return ofKind;
+}
+
+/**
+ * The writes a message is bound to that a report sentence of it can mean: of a kind its verb
+ * reports. So "Posted it in #revops." beside the post its `reports` names reads the post, which
+ * its words alone could not name (W14-R7).
+ */
+function declaredWritesReported(
+  sentence: string,
+  earlier: readonly MockAction[],
+  bound: readonly number[],
+): MockAction[] {
+  const said = withoutIntentions(sentence);
+  if (said === '' || bound.length === 0) return [];
+  const kinds = reportableKinds(said);
+  return bound.flatMap((index): MockAction[] => {
+    const action = earlier[index];
+    const write = action === undefined ? undefined : writeOf(action);
+    return action !== undefined && write !== undefined && kinds.has(write.kind) ? [action] : [];
+  });
 }
 
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
@@ -530,8 +561,12 @@ function reportsOwnWrites(
   tokens: readonly string[],
   prepared: PreparedEvidence,
   earlier: readonly MockAction[],
+  bound: readonly number[],
 ): boolean {
-  const reported = reportedWrites(sentence, earlier);
+  const reported = [
+    ...reportedWrites(sentence, earlier),
+    ...declaredWritesReported(sentence, earlier, bound),
+  ];
   if (reported.length === 0) return false;
   const carried = new Set(
     reported.flatMap((action) => distinctiveTokens(writeOf(action)?.text ?? '')),
@@ -615,7 +650,11 @@ export function reportedEarlierWrites(
     sentencesOf(text).flatMap((sentence) =>
       negatesReport(sentence)
         ? []
-        : reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier),
+        : reportedWriteIndexes(
+            sentence.replace(CONDITIONAL_CLAUSE, ' '),
+            earlier,
+            !Array.isArray(action.reports),
+          ),
     ),
   );
   return [...new Set(reported)].sort((a, b) => a - b);
@@ -681,7 +720,9 @@ function reportsDisagreements(
   index: number,
   earlier: readonly MockAction[],
 ): string[] {
-  const declared = action.reports ?? [];
+  if (action.reports === null) return undeclaredReports(action, index, earlier);
+  if (action.reports === undefined) return [];
+  const declared = action.reports;
   if (declared.length === 0) return [];
   const named = new Set(declaredReports(action, earlier));
   const issues: string[] = [];
@@ -695,7 +736,7 @@ function reportsDisagreements(
   for (const text of messageTexts(action)) {
     for (const sentence of sentencesOf(text)) {
       if (negatesReport(sentence)) continue;
-      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier);
+      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier, false);
       if (said.every((at) => named.has(at))) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports a write its \`reports\` does not name: it says "${sentence}" and \`reports\` names ${declaredList}, while its words report [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
@@ -703,6 +744,28 @@ function reportsDisagreements(
     }
   }
   return issues;
+}
+
+/**
+ * The tripwire on a message whose `reports` is null while its words report earlier writes of its
+ * set (W14-R8): the words alone would bind it, the kind guess included, so the repair asks for the
+ * field. A reply recorded before the field has none and is read by its words, as it was.
+ */
+function undeclaredReports(
+  action: MockAction,
+  index: number,
+  earlier: readonly MockAction[],
+): string[] {
+  return messageTexts(action).flatMap((text) =>
+    sentencesOf(text).flatMap((sentence): string[] => {
+      if (negatesReport(sentence)) return [];
+      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier);
+      if (said.length === 0) return [];
+      return [
+        `action ${index} (${describeAction(action)}) reports earlier writes of this set in its words and declares no \`reports\`: it says "${sentence}", which reports [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or [] when it reports none`,
+      ];
+    }),
+  );
 }
 
 /**
@@ -742,10 +805,12 @@ function unsupportedBeside(
   text: string,
   evidence: ClaimEvidence,
   earlier: readonly MockAction[],
+  bound: readonly number[] = [],
 ): string[] {
   const prepared = prepare(evidence);
   return sentencesOf(text).filter(
-    (sentence: string): boolean => claims(sentence) && !supported(sentence, prepared, earlier),
+    (sentence: string): boolean =>
+      claims(sentence) && !supported(sentence, prepared, earlier, bound),
   );
 }
 
@@ -1135,7 +1200,9 @@ export function unsupportedClaimFindings(
       ledger: [evidence.ledger, ...beside].join('\n'),
     };
     for (const text of messageTexts(action)) {
-      for (const claim of unsupportedBeside(text, withResponse, actions.slice(0, index))) {
+      const earlier = actions.slice(0, index);
+      const bound = boundEarlierWrites(action, earlier);
+      for (const claim of unsupportedBeside(text, withResponse, earlier, bound)) {
         findings.push({
           index,
           issue: `asserted a fact the ledger, the documentation and the manager's feedback do not carry: action ${index} (${describeAction(action)}) says "${claim}"; quote the ledger row, the page or the manager's words that show it, or write that you could not confirm it and ask`,

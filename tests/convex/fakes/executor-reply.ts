@@ -1,3 +1,6 @@
+import { reportedEarlierWrites } from '../../../src/work/evidence-claims';
+import type { MockAction } from '../../../src/work/types';
+
 /** The verbs whose actions can carry a message, and so a declared `reports` (D-5 (b)). */
 const MESSAGE_CAPABLE = new Set([
   'slack.postMessage',
@@ -9,15 +12,23 @@ const MESSAGE_CAPABLE = new Set([
 
 /**
  * A recorded action as today's schema takes it: a message-capable action recorded before the
- * run declared what a message reports carries `reports: null`, which declares nothing, so the
- * apply binds it by its words alone as the release it was recorded under did.
+ * run declared what a message reports declares the earlier writes its words report, as a model
+ * filling the field would, so the apply binds it as the release it was recorded under did. Re-pinned
+ * for W14-R8: it declared null, which now means the run declared none, a tripwire finding on a
+ * message whose words report a write.
  */
-function withUndeclaredReports(action: unknown): unknown {
+function withUndeclaredReports(
+  action: unknown,
+  index: number,
+  actions: readonly unknown[],
+): unknown {
   if (typeof action !== 'object' || action === null || 'reports' in action) return action;
   const tool = (action as { tool?: unknown }).tool;
-  return typeof tool === 'string' && MESSAGE_CAPABLE.has(tool)
-    ? { ...action, reports: null }
-    : action;
+  if (typeof tool !== 'string' || !MESSAGE_CAPABLE.has(tool)) return action;
+  return {
+    ...action,
+    reports: reportedEarlierWrites(action as MockAction, actions.slice(0, index) as MockAction[]),
+  };
 }
 
 /**
@@ -28,7 +39,7 @@ function withUndeclaredReports(action: unknown): unknown {
  * outcome was decided under (`charterClause`, backlog step 4) and the writes a
  * message reports (`reports`, the wave 13 review's D-5 (b)). A double that
  * returns a recording declares each empty, as a model with nothing to declare
- * would, and `reports` null, which binds a message by its words alone as
+ * would, and `reports` as the writes its words report, which binds a message as
  * before; a field the recording already carries is kept.
  *
  * @param reply - The recorded reply.
