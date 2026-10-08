@@ -124,6 +124,25 @@ function modelCallLabel(payload: Read<'work.model-call'>): string {
   return `model call${stageWords} · ${outcome}${attempts}${status}`;
 }
 
+/** The model call site a documentation selection was made for, in words. */
+const DOCUMENTATION_SITE_WORDS: Readonly<Record<string, string>> = {
+  plan: 'plan draft',
+  execute: 'run',
+  closing: 'closing',
+};
+
+/** A documentation selection: the site, and how much of the documentation it carried. */
+function documentationSelectedLabel(payload: Read<'work.documentation-selected'>): string {
+  const site = text(payload.site);
+  const siteWords = site ? ` · ${DOCUMENTATION_SITE_WORDS[site] ?? site}` : '';
+  const sections = Array.isArray(payload.blockIds) ? payload.blockIds.length : 0;
+  const amount =
+    typeof payload.chars === 'number'
+      ? ` · ${payload.chars.toLocaleString('en-GB')} characters from ${sections} ${sections === 1 ? 'section' : 'sections'}`
+      : '';
+  return `documentation${siteWords}${amount}`;
+}
+
 /**
  * The feed's words for every event type the contract lists.
  *
@@ -751,6 +770,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
           : 'a claim withheld a write'
     }`,
   'work.model-call': modelCallLabel,
+  'work.documentation-selected': documentationSelectedLabel,
   'work.manager-note-sending': (payload) =>
     `sending the manager a ${payload.kind === 'stopped' ? 'stop' : 'landed-work'} note`,
   'work.manager-note-failed': (payload) => `manager note not delivered${because(payload.reason)}`,

@@ -260,6 +260,23 @@ export function plannedWriteTargets(
   surfaces: ReadonlyArray<{ slug: string; path?: string }>,
   pages: ReadonlyArray<{ body: string }>,
 ): BrowserWriteTarget[] {
+  return writtenBrowserSurfaces(obligations, surfaces).flatMap((slug) =>
+    documentedBrowserFields(pages, slug).map((field) => ({ surfaceSlug: slug, field })),
+  );
+}
+
+/**
+ * The browser-driven surfaces a plan writes unconditionally, by slug, in the surfaces' order:
+ * the ones whose documented fields it claims (`plannedWriteTargets`), and whose pages the
+ * documentation selection therefore always includes (wave 14, 14-R).
+ *
+ * @param obligations - The approved plan's declared obligations, if it has them.
+ * @param surfaces - The agent's surfaces.
+ */
+export function writtenBrowserSurfaces(
+  obligations: { steps: ReadonlyArray<{ kind: string; writes: readonly string[] }> } | undefined,
+  surfaces: ReadonlyArray<{ slug: string; path?: string }>,
+): string[] {
   const written = new Set(
     (obligations?.steps ?? [])
       .filter((step) => step.kind === 'write')
@@ -267,12 +284,7 @@ export function plannedWriteTargets(
   );
   return surfaces
     .filter((surface) => surface.path === BROWSER_DRIVEN && written.has(surface.slug))
-    .flatMap((surface) =>
-      documentedBrowserFields(pages, surface.slug).map((field) => ({
-        surfaceSlug: surface.slug,
-        field,
-      })),
-    );
+    .map((surface) => surface.slug);
 }
 
 /** The most external ids one write is checked under; each is one indexed read. */

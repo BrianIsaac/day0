@@ -42,6 +42,7 @@
     "gate": "tsx scripts/gate.ts",
     "eval:comparison": "tsx --env-file-if-exists=.env.local scripts/eval-comparison.ts",
     "eval:gate": "tsx evaluation/gate/run.ts",
+    "eval:retrieval": "tsx evaluation/retrieval/run.ts",
     "metrics:recompute": "tsx scripts/recompute-metrics.ts",
     "export:trace": "tsx scripts/export-trace.ts",
     "eval:revocation": "tsx --env-file-if-exists=.env.local scripts/eval-revocation.ts",

@@ -555,6 +555,13 @@ const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
   authoring: 'skill writing',
 };
 
+/** The model call site a documentation selection was made for, in words. */
+const DOCUMENTATION_SITE: Readonly<Record<string, string>> = {
+  plan: 'plan draft',
+  execute: 'run',
+  closing: 'closing phase',
+};
+
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
 const ACKNOWLEDGEMENT_WORDS: Readonly<
   Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
@@ -1225,6 +1232,15 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     return `A model call for the ${stage ? (MODEL_CALL_STAGE[stage] ?? stage) : 'work'} ${
       outcome === 'ok' ? 'answered' : `ended ${outcome}`
     }${attempts}${status}`;
+  },
+  'work.documentation-selected': (p, subject) => {
+    const site = text(p.site);
+    const what = `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(subject)} read`;
+    if (typeof p.chars !== 'number') return `${what} documentation`;
+    const sections = counted(Array.isArray(p.blockIds) ? p.blockIds.length : undefined, 'section');
+    return `${what} ${p.chars.toLocaleString('en-GB')} characters of documentation${
+      sections ? ` from ${sections}` : ''
+    }`;
   },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(

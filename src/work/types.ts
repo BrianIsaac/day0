@@ -190,6 +190,21 @@ export interface ExecutionPlan {
   appliedAgreements?: string[];
   /** Set when the agreements the planner saw were scrubbed without the span model. */
   agreementsRedaction?: 'structural-only';
+  /**
+   * The documentation each step follows, real mode only (wave 14, 14-R): the cite lines the
+   * planner named for a step, each with the stored blocks under it in the planner's selection.
+   * The closing phase refuses to run on a plan whose cited block is gone.
+   */
+  cites?: PlanCite[];
+}
+
+/** One cite of a plan step: the cite line's words and the stored blocks under it. */
+export interface PlanCite {
+  /** The one-based step that follows the cited documentation. */
+  readonly step: number;
+  /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
+  readonly label: string;
+  readonly blocks: readonly CitedBlock[];
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -573,6 +588,38 @@ export interface MockSurfaceSnapshot {
     status: string;
     body: string;
   }>;
+  /**
+   * What the documentation selection chose for this snapshot's guides and team documents
+   * (wave 14, 14-R): present only when a real-mode caller asked for a selection; mock mode and
+   * the frozen evaluation read the whole mirror and carry none (R3).
+   */
+  documentation?: DocumentationSelectionRecord;
+}
+
+/** A stored block a cite line stands for, as it read when it was cited. */
+export interface CitedBlock {
+  /** The `docBlocks` row id. */
+  readonly id: string;
+  /** The block's hash then (`docBlocks.hash`): a block rewritten in place keeps its id, not this. */
+  readonly hash?: string;
+}
+
+/** One cite line of a selection: its words and the stored blocks under it. */
+export interface DocumentationCitation {
+  /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
+  readonly label: string;
+  readonly blocks: readonly CitedBlock[];
+}
+
+/** What one documentation selection put in a prompt, for the record and the plan's cites. */
+export interface DocumentationSelectionRecord {
+  /** The model call site the selection was made for (`DOCUMENTATION_SITES`). */
+  readonly site: 'plan' | 'execute' | 'closing';
+  /** Every stored block the prompt carries, in prompt order. */
+  readonly blockIds: readonly string[];
+  /** The documentation's characters as the prompt renders it. */
+  readonly chars: number;
+  readonly citations: readonly DocumentationCitation[];
 }
 
 /** How many items an employee works at once while the autonomy switch is off. */

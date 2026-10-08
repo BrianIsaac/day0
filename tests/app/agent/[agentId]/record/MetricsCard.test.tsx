@@ -79,7 +79,8 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toContain('1 of 1 answer');
     expect(markup).toMatch(/hours saved<span[^>]*>your estimates, internal gauge<\/span>/);
     expect(markup).toContain('1.3 h over 2 items');
-    expect(markup).toContain('not measured yet');
+    // The retrieval figure is measured since wave 14 (14-R): this backend shape carries no recall.
+    expect(markup).toContain('no documentation counted yet; recall not tested yet');
   });
 });
 

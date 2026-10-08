@@ -40,7 +40,7 @@ import type { PlannerObligations } from '../work/plan-obligations';
 import type { RelationshipType } from '../people/vocabulary';
 import type { ReconciliationEntry } from '../work/reconciliation';
 import type { TicketSnapshot } from '../work/ticket-ownership';
-import type { ExecutionPlan, PlanObligations } from '../work/types';
+import type { DocumentationSelectionRecord, ExecutionPlan, PlanObligations } from '../work/types';
 
 type WorkItemId = Id<'workItems'>;
 type SurfaceId = Id<'surfaces'>;
@@ -1698,6 +1698,18 @@ export interface ClosingReauthoredForRound extends WorkItemRun {
 /** The payload of `work.closing-reauthored`, by why the set was authored again. */
 export type WorkClosingReauthoredPayload = ClosingReauthoredForHolder | ClosingReauthoredForRound;
 
+/**
+ * The payload of `work.documentation-selected` (wave 14, 14-R): the documentation one real-mode
+ * model call site's prompt carries for the item, by stored block and character count. Written
+ * once a site's snapshot is read; the retrieval figure counts the characters.
+ */
+export interface WorkDocumentationSelectedPayload {
+  readonly workItemId: WorkItemId;
+  readonly site: DocumentationSelectionRecord['site'];
+  readonly blockIds: string[];
+  readonly chars: number;
+}
+
 /** The payload of `work.model-call`. */
 export interface WorkModelCallPayload extends ModelCallReport {
   readonly workItemId?: WorkItemId;
@@ -1917,6 +1929,7 @@ export interface EventPayloads {
   'work.carried-reads-applied': WorkCarriedReadsAppliedPayload;
   'work.closing-reauthored': WorkClosingReauthoredPayload;
   'work.model-call': WorkModelCallPayload;
+  'work.documentation-selected': WorkDocumentationSelectedPayload;
   'work.manager-note-sending': WorkManagerNoteSendingPayload;
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
@@ -2117,6 +2130,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.carried-reads-applied',
   'work.closing-reauthored',
   'work.model-call',
+  'work.documentation-selected',
   'work.manager-note-sending',
   'work.manager-note-failed',
   'work.manager-digest-sending',

@@ -83,8 +83,41 @@ export interface PilotFigures {
   reorientation: { answered: number; amended: number; rate: number | null };
   /** N11: the manager's optional estimates over completed items. An internal gauge, never a claim. */
   hoursSaved: { estimatedItems: number; hours: number | null };
-  /** N11: counted once B3 records the selected blocks and the provider's usage; null until then. */
-  retrieval: { tokens: null; recall: null };
+  /**
+   * N11 (wave 14, 14-R): the documentation the real-mode prompts carried for an item, against the
+   * input tokens its model calls were billed (null before any item's prompts carried a
+   * selection), and the selection's recall on the labelled set (null only from a backend older
+   * than 0.18.0, which a page can meet while a redeploy is half done).
+   */
+  retrieval: { tokens: RetrievalTokens | null; recall: RetrievalRecall | null };
+}
+
+/**
+ * The documentation an item's real-mode prompts carried, against what its model calls were
+ * billed: over the items a provider reported usage for when any did, so both describe the same
+ * items; else over every item with a selection, the characters alone.
+ */
+export interface RetrievalTokens {
+  /** The items counted (`work.documentation-selected`, with `work.model-call` usage when any). */
+  items: number;
+  /** Their documentation characters summed over every prompt site, per item: the mean. */
+  charsPerItem: number;
+  /** The input tokens their model calls were billed, per item; null when no provider reported. */
+  inputTokensPerItem: number | null;
+}
+
+/** The documentation selection's recall on the labelled set (`evaluation/retrieval/`). */
+export interface RetrievalRecall {
+  /** The mean recall at 6 pages. */
+  pages: number;
+  /** The mean recall at 12 blocks. */
+  blocks: number;
+  /** The labelled items graded. */
+  cases: number;
+  /** When the grade was taken, as an ISO time. */
+  gradedAt: string;
+  /** The commit the selector was graded at. */
+  commit: string;
 }
 
 /** One employee's figures beside the company's, in deploy order. */

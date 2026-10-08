@@ -9,6 +9,7 @@ import {
   isEvaluationAgent,
 } from '../../convex/metrics';
 import type { OwnerMetrics } from '../../src/metrics/types';
+import { RETRIEVAL_RECALL } from '../../src/metrics/retrieval-recall';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -281,7 +282,7 @@ describe('agent evaluation metrics', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: null },
+        retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
       },
     });
   });
@@ -883,7 +884,7 @@ describe('supervision figures for a company of employees', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
-        retrieval: { tokens: null, recall: null },
+        retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
       },
     });
     expect(figures.excludedAgents).toBe(2);
@@ -2203,6 +2204,57 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     ).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
   });
 
+  it('counts the documentation an item’s prompts carried against its billed input tokens, with the graded recall (14-R)', (): void => {
+    const events = [
+      event(
+        'work.documentation-selected',
+        { workItemId: 'a', site: 'plan', blockIds: ['b1'], chars: 6_000 },
+        1_000,
+      ),
+      event(
+        'work.documentation-selected',
+        { workItemId: 'a', site: 'execute', blockIds: ['b2'], chars: 4_000 },
+        2_000,
+      ),
+      event(
+        'work.model-call',
+        { workItemId: 'a', stage: 'draft', outcome: 'ok', inputTokens: 9_000 },
+        1_500,
+      ),
+      event(
+        'work.model-call',
+        { workItemId: 'a', stage: 'execution', outcome: 'ok', inputTokens: 11_000 },
+        2_500,
+      ),
+      event(
+        'work.documentation-selected',
+        { workItemId: 'b', site: 'plan', blockIds: [], chars: 2_000 },
+        3_000,
+      ),
+      event('work.model-call', { workItemId: 'b', stage: 'draft', outcome: 'ok' }, 3_500),
+      event(
+        'work.model-call',
+        { workItemId: 'c', stage: 'evaluation', outcome: 'ok', inputTokens: 500 },
+        4_000,
+      ),
+    ];
+    expect(
+      computeAgentMetrics(events, [item('a'), item('b'), item('c')], []).pilot.retrieval,
+    ).toEqual({
+      // Item a alone reported usage, so both halves describe it: b's 2,000 characters wait.
+      tokens: { items: 1, charsPerItem: 10_000, inputTokensPerItem: 20_000 },
+      recall: RETRIEVAL_RECALL,
+    });
+    expect(computeAgentMetrics([], [], []).pilot.retrieval).toEqual({
+      tokens: null,
+      recall: RETRIEVAL_RECALL,
+    });
+    const unbilled = events.filter((row) => row.type === 'work.documentation-selected');
+    expect(
+      computeAgentMetrics(unbilled, [item('a'), item('b')], []).pilot.retrieval.tokens,
+    ).toEqual({ items: 2, charsPerItem: 6_000, inputTokensPerItem: null });
+  });
+
   it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {
     const events = [
       event('work.discovered', { workItemId: 'a' }, 1_500),
@@ -2236,7 +2288,7 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       },
       reorientation: { answered: 2, amended: 1, rate: 0.5 },
       hoursSaved: { estimatedItems: 2, hours: 1.5 },
-      retrieval: { tokens: null, recall: null },
+      retrieval: { tokens: null, recall: RETRIEVAL_RECALL },
     });
   });
 

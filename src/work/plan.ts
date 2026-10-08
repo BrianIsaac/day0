@@ -10,6 +10,7 @@ import type { SpanModel } from '../redaction/client';
 import { redactText } from '../redaction/redact';
 import { answeredQuestionLines } from './charter-answers';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { resolvedPlanCites } from './plan-cites';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
 import {
@@ -79,6 +80,16 @@ export const DECLARED_OBLIGATIONS_PLANNER = [
 ];
 
 /**
+ * The cites, real mode only (wave 14, 14-R): the selected documentation prints each block under
+ * a cite line, and the plan names the lines each step follows, so the closing phase can refuse
+ * to run on documentation that changed after approval. The mock planner text stays
+ * byte-identical.
+ */
+export const CITED_STEPS_PLANNER = [
+  '  - The documentation prints its text under lines of the form `[cite: <source>/<page>#<heading path>]`. Declare `stepCites`: one list per step, in step order. In each list put the text between `[cite: ` and the closing `]` of every cite line whose text that step follows, copied character for character (hyphens, `#` and `>` included, whatever the punctuation rule says of dashes). Use an empty list for a step no printed text prescribes, and null when no cite line is printed. Never invent a cite, and never copy a cite line into a step or `riskNotes`.',
+];
+
+/**
  * What a ticket filed under a shared credential needs, real mode only: the
  * attribution rule signs a new ticket in its description and refuses one with
  * nothing to sign, and a refused step leaves the rest of the run going. The
@@ -135,6 +146,7 @@ export function planSystemPrompt(
       ? [
           ...SCOPE_NOT_GATE_PLANNER,
           ...DECLARED_OBLIGATIONS_PLANNER,
+          ...CITED_STEPS_PLANNER,
           ...SIGNED_TICKET_PLANNER,
           ...OWN_ITEM_READS_PLANNER,
           ...LIST_READ_PLANNER,
@@ -515,12 +527,16 @@ export const realPlanSchema = planSchema.extend({
   transitionStep: z.number().int().nullable(),
   appliedCorrections: z.array(z.string()).nullable(),
   appliedAgreements: z.array(z.string()).nullable(),
+  stepCites: z.array(z.array(z.string())).nullable(),
 });
 
 type RealPlanReply = z.infer<typeof realPlanSchema>;
 
-/** The documentation the planner may plan from: the same pages the executor cites. */
-export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
+/**
+ * The documentation the planner may plan from: the same pages the executor cites, and in real
+ * mode the record of the selection, whose cites a plan step may name (wave 14, 14-R).
+ */
+export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs' | 'documentation'>;
 
 /** What a grounding read fetched: a ticket's own record, or the thread a chat ask sits in. */
 export type CandidateRecordSubject = 'record' | 'thread';
@@ -865,7 +881,9 @@ export function renderPlanSurfaces(surfaces: readonly SurfaceRecord[], now: numb
  * documentation travel when the caller loads them, so a plan is drawn from
  * what the agent can reach and what the team has written down rather than
  * from the charter alone; a caller that passes neither gets the prompt as it
- * was before those sections existed.
+ * was before those sections existed. The documentation sits before the
+ * candidate (wave 14, 14-R), the surfaces after it; only real mode passes
+ * documentation.
  *
  * Args:
  *   args: The candidate, the charter and the optional grounding.
@@ -883,6 +901,18 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
     `escalationTriggers: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
     ...answeredQuestionLines(charter),
+    // The documentation travels before the candidate (wave 14, 14-R), so a provider's prefix
+    // cache holds the role, the charter and the pages across the items that read the same pages.
+    ...(args.documents
+      ? [
+          '',
+          '--- How-to guides ---',
+          renderHowTos(args.documents.howToGuides),
+          '',
+          '--- Team docs (read-only context) ---',
+          renderTeamDocs(args.documents.teamDocs),
+        ]
+      : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
@@ -907,16 +937,6 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
   }
   const people = args.surfaceMode === 'real' ? peopleBlockLines(args.people) : [];
   if (people.length > 0) lines.push('', PEOPLE_HEADING, ...people);
-  if (args.documents) {
-    lines.push(
-      '',
-      '--- How-to guides ---',
-      renderHowTos(args.documents.howToGuides),
-      '',
-      '--- Team docs (read-only context) ---',
-      renderTeamDocs(args.documents.teamDocs),
-    );
-  }
   if (args.surfaceMode === 'real') {
     lines.push(
       ...plannerCorrectionLines(args.corrections ?? []),
@@ -1000,11 +1020,21 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
       drafted = { ...plan, advisorySteps: audit.flagged };
     }
   }
-  return withCorrections(
-    await withObligations(drafted, reply, args, onObligationEvent),
+  return withCites(
+    withCorrections(await withObligations(drafted, reply, args, onObligationEvent), reply, args),
     reply,
     args,
   );
+}
+
+/** The plan with the documentation each step follows, as the selection the planner read printed it. */
+function withCites(plan: ExecutionPlan, reply: RealPlanReply, args: DraftPlanArgs): ExecutionPlan {
+  const cites = resolvedPlanCites(
+    reply.stepCites,
+    plan.steps.length,
+    args.documents?.documentation,
+  );
+  return cites.length > 0 ? { ...plan, cites } : plan;
 }
 
 /**

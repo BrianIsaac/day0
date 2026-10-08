@@ -24,6 +24,7 @@ import type * as crons from '../crons.js';
 import type * as devAuth from '../devAuth.js';
 import type * as docBlocks from '../docBlocks.js';
 import type * as docPages from '../docPages.js';
+import type * as docSelection from '../docSelection.js';
 import type * as docSources from '../docSources.js';
 import type * as docSyncActions from '../docSyncActions.js';
 import type * as documentationDiscovery from '../documentationDiscovery.js';
@@ -139,6 +140,7 @@ declare const fullApi: ApiFromModules<{
   devAuth: typeof devAuth;
   docBlocks: typeof docBlocks;
   docPages: typeof docPages;
+  docSelection: typeof docSelection;
   docSources: typeof docSources;
   docSyncActions: typeof docSyncActions;
   documentationDiscovery: typeof documentationDiscovery;

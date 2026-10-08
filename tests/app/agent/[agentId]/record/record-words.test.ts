@@ -497,6 +497,20 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says how much documentation a prompt read for the item, and from how many sections (14-R)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.documentation-selected',
+          payload: { site: 'execute', blockIds: ['b1', 'b2', 'b3'], chars: 12_400 },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The run for \u201cDraft response for new tier-two RevOps ask\u201d read 12,400 characters of documentation from 3 sections.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',
