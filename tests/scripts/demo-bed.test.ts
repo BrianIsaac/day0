@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -292,7 +292,7 @@ describe('the protected volumes and projects', (): void => {
     }
   });
 
-  it('refuses every protected CLI project and file contract before Docker', (): void => {
+  it('refuses every protected CLI project and file contract before Docker', async (): Promise<void> => {
     const scratch = mkdtempSync(join(tmpdir(), 'day0-p11-guard-'));
     const bin = join(scratch, 'bin');
     const calls = join(scratch, 'docker-calls');
@@ -300,40 +300,58 @@ describe('the protected volumes and projects', (): void => {
     const docker = join(bin, 'docker');
     writeFileSync(docker, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$DOCKER_CALL_LOG"\nexit 99\n');
     chmodSync(docker, 0o755);
-    writeFileSync(join(scratch, 'docker-compose.yml'), COMPOSE_FILE);
-    // The backend is built from the Dockerfile the compose file names beside it.
-    mkdirSync(join(scratch, 'docker'));
-    writeFileSync(join(scratch, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
-    writeFileSync(join(scratch, 'snapshot.tar.gz'), 'test');
     const command = join(ROOT, 'node_modules/.bin/tsx');
     const script = join(ROOT, 'scripts/demo-bed.ts');
-    const invoke = (args: string[]): void => {
-      const result = spawnSync(command, [script, ...args], {
-        cwd: scratch,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
-        encoding: 'utf8',
+    /** One checkout whose env file names this project, so every invocation can run at once. */
+    const checkoutFor = (project: string): string => {
+      const directory = join(scratch, project);
+      mkdirSync(join(directory, 'docker'), { recursive: true });
+      writeFileSync(join(directory, 'docker-compose.yml'), COMPOSE_FILE);
+      // The backend is built from the Dockerfile the compose file names beside it.
+      writeFileSync(join(directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+      writeFileSync(join(directory, 'snapshot.tar.gz'), 'test');
+      writeFileSync(join(directory, '.env.local'), `COMPOSE_PROJECT_NAME=${project}\n`);
+      return directory;
+    };
+    const invoke = async (cwd: string, args: string[]): Promise<void> => {
+      const result = await new Promise<{ status: number | null; stderr: string }>((resolve) => {
+        const child = spawn(command, [script, ...args], {
+          cwd,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+        });
+        let stderr = '';
+        child.stderr.on('data', (chunk: Buffer): void => {
+          stderr += chunk.toString('utf8');
+        });
+        child.on('close', (status): void => resolve({ status, stderr }));
       });
       expect([1, 2], args.join(' ')).toContain(result.status);
       expect(result.stderr, args.join(' ')).toMatch(
         /protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/,
       );
-      expect(existsSync(calls), args.join(' ')).toBe(false);
     };
     try {
-      for (const protectedProject of [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS]) {
-        writeFileSync(join(scratch, '.env.local'), `COMPOSE_PROJECT_NAME=${protectedProject}\n`);
-        invoke(['up', '--project', protectedProject]);
-        invoke(['restore', '--project', protectedProject, '--snapshot', 'snapshot.tar.gz']);
-        invoke(['down', '--project', protectedProject, '--volumes']);
-        invoke(['preflight', '--project', protectedProject, '--no-probe']);
-        invoke(['offline-rung', '--project', protectedProject, '--out', 'results']);
-        invoke(['snapshot', '--project', protectedProject]);
-        invoke(['up', '--project', 'day0-p11r-test']);
-        invoke(['restore', '--project', 'day0-p11r-test', '--snapshot', 'snapshot.tar.gz']);
-        invoke(['down', '--project', 'day0-p11r-test', '--volumes']);
-        invoke(['preflight', '--project', 'day0-p11r-test', '--no-probe']);
-        invoke(['offline-rung', '--project', 'day0-p11r-test', '--out', 'results']);
-      }
+      // Thirty-three processes, each refusing before Docker: run together, not one after another,
+      // so the test's time is one process's and not thirty-three under a loaded machine's.
+      await Promise.all(
+        [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS].flatMap((protectedProject) => {
+          const cwd = checkoutFor(protectedProject);
+          return [
+            ['up', '--project', protectedProject],
+            ['restore', '--project', protectedProject, '--snapshot', 'snapshot.tar.gz'],
+            ['down', '--project', protectedProject, '--volumes'],
+            ['preflight', '--project', protectedProject, '--no-probe'],
+            ['offline-rung', '--project', protectedProject, '--out', 'results'],
+            ['snapshot', '--project', protectedProject],
+            ['up', '--project', 'day0-p11r-test'],
+            ['restore', '--project', 'day0-p11r-test', '--snapshot', 'snapshot.tar.gz'],
+            ['down', '--project', 'day0-p11r-test', '--volumes'],
+            ['preflight', '--project', 'day0-p11r-test', '--no-probe'],
+            ['offline-rung', '--project', 'day0-p11r-test', '--out', 'results'],
+          ].map(async (args) => await invoke(cwd, args));
+        }),
+      );
+      expect(existsSync(calls)).toBe(false);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
