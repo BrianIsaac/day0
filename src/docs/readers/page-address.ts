@@ -73,6 +73,18 @@ function listedHosts(
 }
 
 /**
+ * Whether a page's host is one the operator listed in `DAY0_PRIVATE_HOSTS`, read as
+ * `checkPageAddress` reads it.
+ *
+ * @param url - The page, or the address a redirect leads to.
+ * @param privateHosts - The operator's list; the environment's when omitted.
+ * @throws PageAddressRefusal when the environment's list cannot be read.
+ */
+export function isListedPageHost(url: URL, privateHosts?: PrivateHostAllowlist): boolean {
+  return isPrivateHostAllowed(url.hostname.replace(/^\[|\]$/g, ''), listedHosts(url, privateHosts));
+}
+
+/**
  * Hold one page address to the rules, resolving its host once.
  *
  * @param url - The page, or the address a redirect leads to.
