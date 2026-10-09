@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PAGE_STATUSES,
+  defaultStatusOf,
+  pageStatusOf,
+  sourceAuthorityOf,
   PAGE_STATUSES,
   RELATION_KINDS,
   RELATION_STATUSES,
@@ -26,5 +29,17 @@ describe('document authority', (): void => {
       'possible_conflict',
     ]);
     expect(RELATION_STATUSES).toEqual(['proposed', 'confirmed', 'dismissed']);
+  });
+
+  it('reads a page with no status as active and a source with no trust as team, and either given one as given', (): void => {
+    expect(pageStatusOf({})).toBe('active');
+    expect(pageStatusOf({ status: 'superseded' })).toBe('superseded');
+    expect(sourceAuthorityOf({})).toBe('team');
+    expect(sourceAuthorityOf({ authority: 'personal' })).toBe('personal');
+  });
+
+  it('reads a source with no default status as giving its pages active, and one given draft as draft', (): void => {
+    expect(defaultStatusOf({})).toBe('active');
+    expect(defaultStatusOf({ defaultStatus: 'draft' })).toBe('draft');
   });
 });

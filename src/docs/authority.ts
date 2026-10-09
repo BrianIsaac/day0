@@ -1,7 +1,9 @@
 /**
- * Document authority's vocabulary (wave 15, 15-K; A5, A19): how far the manager trusts a
- * documentation source, what status a page has and who or what decided it, and how two pages may
- * relate. Pure, and read by `convex/schema.ts`, so it reads no environment variable at load.
+ * Document authority's vocabulary and its absent-reads-as rules (wave 15, 15-K; A5, A19): how far
+ * the manager trusts a documentation source, what status a page has and who or what decided it,
+ * and how two pages may relate. Every field behind it is optional (N10), so a reader goes through
+ * `pageStatusOf`, `sourceAuthorityOf` and `defaultStatusOf` rather than the field. Pure, and read
+ * by `convex/schema.ts`, so it reads no environment variable at load.
  */
 
 /**
@@ -63,3 +65,25 @@ export const RELATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const
 
 /** One relation's standing. */
 export type RelationStatus = (typeof RELATION_STATUSES)[number];
+
+/**
+ * A page's status as every reader reads it: absent reads as `active`, since no page had a status
+ * before 0.19.0 and a page nothing has decided is current.
+ */
+export function pageStatusOf(page: { readonly status?: PageStatus }): PageStatus {
+  return page.status ?? 'active';
+}
+
+/** A source's trust as every reader reads it: absent reads as `team` (A19, D1). */
+export function sourceAuthorityOf(source: {
+  readonly authority?: SourceAuthority;
+}): SourceAuthority {
+  return source.authority ?? 'team';
+}
+
+/** The status a source gives a page nothing else decides: absent reads as `active`. */
+export function defaultStatusOf(source: {
+  readonly defaultStatus?: DefaultPageStatus;
+}): DefaultPageStatus {
+  return source.defaultStatus ?? 'active';
+}
