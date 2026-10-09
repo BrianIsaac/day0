@@ -1,4 +1,4 @@
-import type { DocSourceKind } from '../types';
+import { notReadYet, type DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
 import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
@@ -14,6 +14,9 @@ import { UrlsReader } from './urls';
  *
  * Returns:
  *   Reader implementation for the source, whose batches name the pages they could not read.
+ *
+ * Raises:
+ *   Error: For a kind whose reader has not landed (`PENDING_READER_NAMES`).
  */
 export function readerFor(kind: DocSourceKind): DocumentationReader {
   switch (kind) {
@@ -27,5 +30,12 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
       return new McpReader();
     case 'feishu':
       return new FeishuReader();
+    case 'sharepoint':
+    case 'confluence-v2':
+    case 'confluence-dc':
+    case 'yuque':
+    case 'drive':
+      // Declared by the schema before its reader lands (K-3); the link refuses such a source.
+      throw new Error(notReadYet(kind));
   }
 }

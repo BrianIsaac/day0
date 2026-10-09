@@ -6,11 +6,12 @@
  */
 import { isBundledNotionLocator } from './components';
 import { parseFeishuLocator, parseFeishuSecret } from './feishu-source';
+import { isPendingReaderKind, notReadYet, type DocSourceKind } from './types';
 
 /** The link form's values for one documentation source, as `docSources.link` takes them. */
 export interface LinkInput {
   label: string;
-  kind: 'mcp' | 'folder' | 'git' | 'urls' | 'feishu';
+  kind: DocSourceKind;
   locator: string;
   serverKind?: 'notion' | 'confluence' | 'drive' | 'generic';
 }
@@ -25,9 +26,11 @@ export interface LinkInput {
  *   Trimmed values safe to persist.
  *
  * Raises:
- *   Error: If the source kind and locator fields are inconsistent.
+ *   Error: If the source kind and locator fields are inconsistent, or the kind's reader has not
+ *   landed.
  */
 export function validateLinkInput(input: LinkInput): LinkInput {
+  if (isPendingReaderKind(input.kind)) throw new Error(notReadYet(input.kind));
   const label = input.label.trim();
   const locator = input.locator.trim();
   if (!label) throw new Error('Documentation label is required.');
@@ -160,6 +163,12 @@ export function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
     case 'folder':
     case 'git':
     case 'urls':
+    // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
+    case 'sharepoint':
+    case 'confluence-v2':
+    case 'confluence-dc':
+    case 'yuque':
+    case 'drive':
       return `${source.label} reader secret`;
   }
 }

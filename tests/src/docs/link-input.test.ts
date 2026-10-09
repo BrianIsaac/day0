@@ -148,4 +148,17 @@ describe('the secret a source reads with', (): void => {
       (['mcp', 'folder', 'git', 'urls', 'feishu'] as const).filter(readsWithOwnSecret),
     ).toEqual(['mcp', 'git', 'urls', 'feishu']);
   });
+
+  it('refuses to link a kind whose reader has not landed, before anything is stored (15-K)', (): void => {
+    expect(() =>
+      validateLinkInput({
+        label: 'Operations site',
+        kind: 'sharepoint',
+        locator: 'https://contoso.sharepoint.com/sites/ops',
+      }),
+    ).toThrow('Day0 does not read SharePoint sources yet.');
+    expect(() =>
+      validateLinkInput({ label: 'Team space', kind: 'yuque', locator: 'https://www.yuque.com/t' }),
+    ).toThrow('Day0 does not read Yuque sources yet.');
+  });
 });

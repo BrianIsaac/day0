@@ -55,6 +55,11 @@ const sourceKind = v.union(
   v.literal('git'),
   v.literal('urls'),
   v.literal('feishu'),
+  v.literal('sharepoint'),
+  v.literal('confluence-v2'),
+  v.literal('confluence-dc'),
+  v.literal('yuque'),
+  v.literal('drive'),
 );
 
 const serverKind = v.union(

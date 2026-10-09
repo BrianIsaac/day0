@@ -20,6 +20,7 @@ import {
 } from '../src/surfaces/access-identity';
 import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
 import { BLOCK_KINDS } from '../src/docs/blocks';
+import { DEFAULT_PAGE_STATUSES, SOURCE_AUTHORITIES } from '../src/docs/authority';
 import {
   IDENTITY_PROVIDERS,
   PEOPLE_SOURCES,
@@ -395,6 +396,21 @@ export default defineSchema({
        * secret, held as `credentialId`. No field of its own.
        */
       v.literal('feishu'),
+      /**
+       * The wave 15 readers' kinds (15-K for 15-X; K-3), each declared before its reader lands so
+       * one push proves them all: until it lands, `readerFor` names the kind as not read yet and
+       * the link refuses it. A SharePoint site's document library and pages, read through
+       * Microsoft Graph.
+       */
+      v.literal('sharepoint'),
+      /** A Confluence Cloud space, read through its v2 REST API. */
+      v.literal('confluence-v2'),
+      /** A Confluence Data Center space on the customer's own host, read through its REST API. */
+      v.literal('confluence-dc'),
+      /** A Yuque knowledge base, read through its open API. */
+      v.literal('yuque'),
+      /** A Google Drive folder read directly through the Drive API, not through an MCP server. */
+      v.literal('drive'),
     ),
     locator: v.string(),
     serverKind: v.optional(
@@ -406,6 +422,18 @@ export default defineSchema({
       ),
     ),
     credentialId: v.optional(v.id('credentials')),
+    /**
+     * How far the manager trusts the source's pages (wave 15, 15-K for 15-A; A5, A19): official
+     * beats team beats personal, and within a source a page's own status decides. Absent reads as
+     * `team` (`sourceAuthorityOf`, `src/docs/authority.ts`).
+     */
+    authority: v.optional(v.union(...SOURCE_AUTHORITIES.map((authority) => v.literal(authority)))),
+    /**
+     * The status the source's pages take when neither the manager, the source, a marker in the
+     * page nor a confirmed relation decides one (wave 15, 15-K for 15-A). Absent reads as
+     * `active`.
+     */
+    defaultStatus: v.optional(v.union(...DEFAULT_PAGE_STATUSES.map((status) => v.literal(status)))),
     activeSyncId: v.optional(v.id('docSyncRuns')),
     /** The completed generation whose pages are currently authoritative. */
     lastCompletedSyncId: v.optional(v.id('docSyncRuns')),

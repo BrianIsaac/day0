@@ -20,4 +20,16 @@ describe('documentation reader registry', (): void => {
   it('resolves the Feishu reader, which reads as its app', (): void => {
     expect(readerFor('feishu')).toBeInstanceOf(FeishuReader);
   });
+
+  it('names each kind whose reader has not landed as not read yet, rather than reading it as another', (): void => {
+    expect(() => readerFor('sharepoint')).toThrow('Day0 does not read SharePoint sources yet.');
+    expect(() => readerFor('confluence-v2')).toThrow(
+      'Day0 does not read Confluence Cloud sources yet.',
+    );
+    expect(() => readerFor('confluence-dc')).toThrow(
+      'Day0 does not read Confluence Data Center sources yet.',
+    );
+    expect(() => readerFor('yuque')).toThrow('Day0 does not read Yuque sources yet.');
+    expect(() => readerFor('drive')).toThrow('Day0 does not read Google Drive sources yet.');
+  });
 });

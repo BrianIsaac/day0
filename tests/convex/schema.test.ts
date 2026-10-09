@@ -2582,6 +2582,69 @@ describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void 
   });
 });
 
+describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void => {
+  /** A linked source with the fields a test gives it. */
+  const docSource = (
+    fields: Partial<WithoutSystemFields<Doc<'docSources'>>> = {},
+  ): WithoutSystemFields<Doc<'docSources'>> => ({
+    userId: 'owner',
+    label: 'Handbook',
+    kind: 'folder',
+    locator: '.',
+    status: 'synced',
+    createdAt: 1,
+    updatedAt: 1,
+    ...fields,
+  });
+
+  it("gives a source its authority and pages' default status, and stores each kind a wave 15 reader reads; an older source keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const older = await ctx.db.insert('docSources', docSource());
+      const official = await ctx.db.insert(
+        'docSources',
+        docSource({ authority: 'official', defaultStatus: 'draft' }),
+      );
+      const kinds = [];
+      for (const kind of [
+        'sharepoint',
+        'confluence-v2',
+        'confluence-dc',
+        'yuque',
+        'drive',
+      ] as const) {
+        const id = await ctx.db.insert('docSources', docSource({ kind, locator: kind }));
+        kinds.push((await ctx.db.get(id))?.kind);
+      }
+      return { older: await ctx.db.get(older), official: await ctx.db.get(official), kinds };
+    });
+    expect(read.older).not.toHaveProperty('authority');
+    expect(read.older).not.toHaveProperty('defaultStatus');
+    expect(read.official).toMatchObject({ authority: 'official', defaultStatus: 'draft' });
+    expect(read.kinds).toEqual(['sharepoint', 'confluence-v2', 'confluence-dc', 'yuque', 'drive']);
+  });
+
+  it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'docSources',
+          docSource({ authority: 'company' as Doc<'docSources'>['authority'] }),
+        );
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'docSources',
+          docSource({ defaultStatus: 'superseded' as Doc<'docSources'>['defaultStatus'] }),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('the schema module', (): void => {
   it('evaluates without reading an environment variable, which the backend refuses while it evaluates a schema', async (): Promise<void> => {
     // The day0-w13k bed, 5 October: a schema that imported a module whose import chain read the
