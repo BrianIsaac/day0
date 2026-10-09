@@ -2,7 +2,7 @@ import { v, type ObjectType } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 import { appendEvent } from './eventLog';
-import { requeueBehindRegisteredSkill } from './work';
+import { requeueBehindRegisteredSkill } from './workVerdicts';
 import { recordOffer } from './skillAdoption';
 import { skillOwnerKeyOf } from './skillVersions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';

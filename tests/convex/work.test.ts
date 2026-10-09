@@ -8489,7 +8489,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement on the record once, however often the mock loop asks again', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 3; ask += 1) {
@@ -8504,7 +8504,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('leaves real mode as it was: every judgement of a queued row is written', async (): Promise<void> => {
     useSurfaceMode('real');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 2; ask += 1) {
@@ -8517,7 +8517,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement again under a newer approved charter, so the record names the rules that decided', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     const charter = async (version: string): Promise<Id<'charters'>> =>
@@ -8545,7 +8545,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('still writes the claim once a slot frees', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     await harness.run(async (ctx) => {

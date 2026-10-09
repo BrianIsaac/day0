@@ -123,6 +123,7 @@ import type * as workLoop from '../workLoop.js';
 import type * as workReevaluation from '../workReevaluation.js';
 import type * as workRuns from '../workRuns.js';
 import type * as workSeeding from '../workSeeding.js';
+import type * as workVerdicts from '../workVerdicts.js';
 import type * as workingAgreementActions from '../workingAgreementActions.js';
 import type * as workingAgreements from '../workingAgreements.js';
 import type * as workspace from '../workspace.js';
@@ -245,6 +246,7 @@ declare const fullApi: ApiFromModules<{
   workReevaluation: typeof workReevaluation;
   workRuns: typeof workRuns;
   workSeeding: typeof workSeeding;
+  workVerdicts: typeof workVerdicts;
   workingAgreementActions: typeof workingAgreementActions;
   workingAgreements: typeof workingAgreements;
   workspace: typeof workspace;

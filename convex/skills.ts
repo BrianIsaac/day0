@@ -3,7 +3,7 @@ import { mutation, query, internalMutation, internalQuery } from './_generated/s
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
-import { applyVerdict } from './work';
+import { applyVerdict } from './workVerdicts';
 import {
   moveWaitingWork,
   requeueWaitingWork,
