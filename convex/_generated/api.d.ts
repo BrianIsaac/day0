@@ -50,6 +50,7 @@ import type * as linearIdentityActions from '../linearIdentityActions.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
 import type * as managerDecisions from '../managerDecisions.js';
 import type * as managerQuestions from '../managerQuestions.js';
+import type * as managerReplies from '../managerReplies.js';
 import type * as managerTransfers from '../managerTransfers.js';
 import type * as mcpOauth from '../mcpOauth.js';
 import type * as mcpOauthActions from '../mcpOauthActions.js';
@@ -175,6 +176,7 @@ declare const fullApi: ApiFromModules<{
   managerChannelActions: typeof managerChannelActions;
   managerDecisions: typeof managerDecisions;
   managerQuestions: typeof managerQuestions;
+  managerReplies: typeof managerReplies;
   managerTransfers: typeof managerTransfers;
   mcpOauth: typeof mcpOauth;
   mcpOauthActions: typeof mcpOauthActions;
