@@ -107,6 +107,7 @@ import type * as storedVerification from '../storedVerification.js';
 import type * as surfaceActions from '../surfaceActions.js';
 import type * as surfaceReopen from '../surfaceReopen.js';
 import type * as surfaces from '../surfaces.js';
+import type * as ticketListings from '../ticketListings.js';
 import type * as transferAcceptance from '../transferAcceptance.js';
 import type * as transferDepartures from '../transferDepartures.js';
 import type * as transferInFlight from '../transferInFlight.js';
@@ -227,6 +228,7 @@ declare const fullApi: ApiFromModules<{
   surfaceActions: typeof surfaceActions;
   surfaceReopen: typeof surfaceReopen;
   surfaces: typeof surfaces;
+  ticketListings: typeof ticketListings;
   transferAcceptance: typeof transferAcceptance;
   transferDepartures: typeof transferDepartures;
   transferInFlight: typeof transferInFlight;

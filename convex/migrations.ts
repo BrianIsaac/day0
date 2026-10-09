@@ -42,12 +42,8 @@ import {
   newestConnectedEvent,
   restartAccessClocksPage,
 } from './surfaces';
-import {
-  backfillUnavailableCausePage,
-  keepTicketListing,
-  settleDecisionBatchesPage,
-  WORK_LISTED_EVENT,
-} from './work';
+import { backfillUnavailableCausePage, settleDecisionBatchesPage } from './work';
+import { keepTicketListing, WORK_LISTED_EVENT } from './ticketListings';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
