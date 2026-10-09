@@ -488,9 +488,15 @@ const SOURCE_ROW_TABLES = [
 ] as const;
 
 /**
+ * Relations one page of a source's deletion reads. `take` has no byte bound and the schema bounds
+ * no relation's evidence, so the page is sized by the 1 MiB a document may reach: eight stay
+ * inside a transaction's 16 MiB read however much evidence each holds.
+ */
+const RELATION_DELETE_PAGE = 8;
+
+/**
  * One bounded page of the relations from a source's pages, or, once none is left, to them: a
- * relation goes with either end's source. Read with `take`, as a function may paginate once; a
- * relation row is a few hundred bytes, so a page stays well inside a transaction's read limit.
+ * relation goes with either end's source. Read with `take`, as a function may paginate once.
  */
 async function sourceRelationsPage(
   ctx: MutationCtx,
@@ -499,13 +505,13 @@ async function sourceRelationsPage(
   const from = await ctx.db
     .query('docRelations')
     .withIndex('by_from', (index) => index.eq('from.sourceId', sourceId))
-    .take(PAGED_READ.numItems);
+    .take(RELATION_DELETE_PAGE);
   if (from.length > 0) return { page: from, isDone: false };
   const to = await ctx.db
     .query('docRelations')
     .withIndex('by_to', (index) => index.eq('to.sourceId', sourceId))
-    .take(PAGED_READ.numItems);
-  return { page: to, isDone: to.length < PAGED_READ.numItems };
+    .take(RELATION_DELETE_PAGE);
+  return { page: to, isDone: to.length < RELATION_DELETE_PAGE };
 }
 
 /**

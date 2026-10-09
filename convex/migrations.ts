@@ -1053,8 +1053,9 @@ async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<
 
 /**
  * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the block
- * backfill is, since each patch writes its block again; a block is at most a 1,200-character
- * window with its heading path and bigrams, so the byte bound ends a page of CJK blocks first.
+ * backfill is, since each patch writes its block again; a CJK block's text and search text can
+ * reach about 16 KB (`SEARCH_BLOCKS_LIMIT`, `convex/docBlocks.ts`), so the byte bound ends a page
+ * of such blocks at about 256.
  */
 const BLOCK_STATUS_READ = { numItems: 1_000, maximumBytesRead: 4 * 1024 * 1024 } as const;
 

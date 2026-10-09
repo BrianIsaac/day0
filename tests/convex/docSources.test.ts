@@ -563,6 +563,51 @@ describe('documentation sources in real mode', (): void => {
     expect(left.map((row) => row._id)).toEqual([kept]);
   });
 
+  it("unlinks a source's relations inside a transaction's read limit however much evidence each holds, across pages from both ends (15-K, second pass)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { sourceId } = await seedSyncedSource(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'wiki',
+          kind: 'folder',
+          locator: 'wiki',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    // The schema bounds no relation's evidence: each row here is about 900 KB of block refs, so
+    // a page of twenty such rows from one end reads past 16 MiB.
+    const blockRefs = Array.from({ length: 14_000 }, (_unused, index) =>
+      index.toString(16).padStart(64, '0'),
+    );
+    for (let index = 0; index < 21; index += 1) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from:
+            index % 2 === 0 ? { sourceId, ref: `a-${index}.md` } : { sourceId: other, ref: 'b.md' },
+          to:
+            index % 2 === 0 ? { sourceId: other, ref: 'b.md' } : { sourceId, ref: `a-${index}.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'text-overlap', value: 0.9, blockRefs }],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      });
+    }
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(
+      async (ctx) => (await ctx.db.query('docRelations').take(5)).length,
+    );
+    expect(left).toBe(0);
+  }, 120_000);
+
   it('deletes the ciphertext of every credential an unlink revokes and keeps the row', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

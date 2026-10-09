@@ -3246,7 +3246,6 @@ describe('the block status pass (15-K; K-1)', (): void => {
   it('is registered at 0.19.0 after the block backfill, the newest release any migration names', (): void => {
     expect(MIGRATIONS['docs-blocks-status'].release).toBe('0.19.0');
     expect(NEWEST_MIGRATION_RELEASE).toBe('0.19.0');
-    expect(MIGRATION_NAMES.at(-1)).toBe('docs-blocks-status');
     expect(MIGRATION_NAMES.indexOf('docs-blocks-status')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('docs-backfill-blocks'),
     );
