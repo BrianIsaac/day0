@@ -48,10 +48,8 @@ import { keepTicketListing, WORK_LISTED_EVENT } from './ticketListings';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
-import { backfillMessagesTabPage } from './slackMessagesTab';
 import { replacePageBlocks } from './docBlocks';
 import { log } from '../src/lib/logger';
-import { notTheirAddresses } from './peopleProposals';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
 import { mirroredDocSlug } from '../src/docs/types';
@@ -67,8 +65,11 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
  * they restart. A migration leaves this list when the declaration it cleared
  * is retired (`RETIRED_DECLARATIONS` in `scripts/releases.ts`), or the dual
  * read it served goes: `surfaces-kept-identity-since` (0.17.0) left at 0.18.0
- * with the kept-identity sweep's reason-word fallback (14-I). A deployment's
- * finished row of a migration that left stays as its record.
+ * with the kept-identity sweep's reason-word fallback (14-I);
+ * `surfaces-messages-tab` (0.17.0) left at 0.19.0, its reader reading the
+ * card alone since 13-FS, and `people-not-their-addresses` (0.18.0) with the
+ * marker's reader, every reader reading the field since 14-FX (15-K). A
+ * deployment's finished row of a migration that left stays as its record.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
@@ -97,9 +98,7 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'work-decision-closed',
-  'surfaces-messages-tab',
   'docs-backfill-blocks',
-  'people-not-their-addresses',
   'docs-blocks-status',
 ] as const;
 
@@ -173,14 +172,9 @@ const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 const SUPERVISION_RELEASE = '0.16.0';
 
 /**
- * The release of people and working agreements (wave 13): the schema step's marks on the cards
- * wave 12 recorded state for only in their reason words or the employee's record (13-K).
- */
-const PEOPLE_RELEASE = '0.17.0';
-
-/**
  * The release of retrieval (wave 14): the blocks the documentation search reads, split from every
- * page stored before it, and the people field wave 13 kept as evidence (14-I).
+ * page stored before it (14-I). Its people pass, which lifted the field wave 13 kept as evidence,
+ * left at 0.19.0.
  */
 const RETRIEVAL_RELEASE = '0.18.0';
 
@@ -324,22 +318,10 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
   },
-  'surfaces-messages-tab': {
-    release: PEOPLE_RELEASE,
-    does: 'copies onto each chat card’s own app the open messages tab its employee’s record kept as surface.app-messages-open, newest line first, so the card’s reader can read it off the row once every writer writes it (13-FS); a card with no app of Day0’s, an app the record does not name and one whose state is already written are left; mock mode has no such app',
-    thenRemoves:
-      'nothing: typedCodeReachOf reads the card’s own field, which every writer of the opening writes (13-FS); the record’s lines stay as the record',
-  },
   'docs-backfill-blocks': {
     release: RETRIEVAL_RELEASE,
     does: 'splits the stored, already redacted Markdown of every documentation page into the blocks the search index reads, under its source’s owner and the source’s last completed sync (its running one, or its newest, for a source that never completed); it asks nothing of the redaction component and changes no page; a page whose blocks already match is left, a page of a removed source is passed over, and mock mode stores no page',
     thenRemoves: 'nothing: every page a sync writes from this release is split as it is stored',
-  },
-  'people-not-their-addresses': {
-    release: RETRIEVAL_RELEASE,
-    does: 'copies every address a person’s evidence marks as someone else’s (the not-their-address: marker of W13-R8’s A different person) into the person’s notTheirAddresses, after any already there, keeping the evidence; a person with no marker is left, and mock mode stores no person',
-    thenRemoves:
-      'the marker evidence and its reader (notTheirAddresses in convex/peopleProposals.ts) the release after, once every writer writes the field and every reader reads it (14-FX)',
   },
   'docs-blocks-status': {
     release: DOCUMENT_AUTHORITY_RELEASE,
@@ -967,9 +949,7 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
-  'surfaces-messages-tab': async (ctx, cursor) => await backfillMessagesTabPage(ctx, cursor),
   'docs-backfill-blocks': backfillBlocks,
-  'people-not-their-addresses': liftNotTheirAddresses,
   'docs-blocks-status': stampBlockStatus,
 };
 
@@ -1067,27 +1047,6 @@ async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<
       markdown: stored.markdown,
     });
     if (written > 0) changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
-
-/**
- * One page of the lift of W13-R8's marker (14-I): every address a person's evidence marks as
- * someone else's joins the person's `notTheirAddresses`, after those already there. The evidence
- * stays, so its card and every reader of the marker read as before until they read the field.
- */
-async function liftNotTheirAddresses(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<MigrationPage> {
-  const page = await ctx.db.query('people').paginate({ ...LARGE_ROWS_READ, cursor });
-  let changed = 0;
-  for (const person of page.page) {
-    const held = person.notTheirAddresses ?? [];
-    const lifted = [...notTheirAddresses(person)].filter((address) => !held.includes(address));
-    if (lifted.length === 0) continue;
-    await ctx.db.patch(person._id, { notTheirAddresses: [...held, ...lifted] });
-    changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }

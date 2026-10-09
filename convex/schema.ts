@@ -914,8 +914,8 @@ export default defineSchema({
          * for the Slack fix; W12V-7): `open`, with how Day0 knows it (`MESSAGES_TAB_OPEN_HOWS`)
          * and when, or `refused`, with Slack's words for the last refused opening, when, and how
          * many openings were refused, so the card stops trying at every probe. The
-         * `surfaces-messages-tab` pass copies the open state from the employee's record, where
-         * `surface.app-messages-open` kept it before this field.
+         * `surfaces-messages-tab` pass (0.17.0, retired at 0.19.0) copied the open state from the
+         * employee's record, where `surface.app-messages-open` kept it before this field.
          */
         messagesTab: v.optional(
           v.union(
@@ -2000,9 +2000,10 @@ export default defineSchema({
     /**
      * Addresses the manager said are someone else's (wave 14, 14-I for 14-FX; W13-R8's "A different
      * person"), normalised: never merged onto this person again, and a lookup by one is not this
-     * person's. Replaces the `not-their-address:` evidence marker, which the
-     * `people-not-their-addresses` pass lifts into it; 14-FX writes it at "A different person" and
-     * reads it in the merge and the lookup. The marker goes in a later release (N10).
+     * person's. Written at "A different person" and read in the merge and the lookup (14-FX); the
+     * `people-not-their-addresses` pass (0.18.0) lifted the older `not-their-address:` evidence
+     * markers into it, and left with the markers' reader at 0.19.0 (15-K). The evidence line
+     * itself stays, as what the card shows.
      */
     notTheirAddresses: v.optional(v.array(v.string())),
     /**

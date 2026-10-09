@@ -207,21 +207,6 @@ export function notTheirAddressEvidence(address: string, at: number): Evidence {
   };
 }
 
-/**
- * The addresses a person's evidence marks as someone else's ({@link notTheirAddressEvidence}): the
- * marker the `people-not-their-addresses` pass lifts into `people.notTheirAddresses`. Read by that
- * pass alone since 14-FX; it goes with the marker in the release after (N10).
- */
-export function notTheirAddresses(person: Pick<Doc<'people'>, 'evidence'>): ReadonlySet<string> {
-  return new Set(
-    person.evidence.flatMap((item) =>
-      item.ref?.startsWith(NOT_THEIR_ADDRESS_REF) === true
-        ? [item.ref.slice(NOT_THEIR_ADDRESS_REF.length)]
-        : [],
-    ),
-  );
-}
-
 /** Record the proposal's identities on a person, each unless the owner holds it already. */
 async function addIdentities(
   ctx: MutationCtx,
