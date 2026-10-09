@@ -12,7 +12,6 @@ import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
-  LISTING_AFTER_HANDOVER,
   MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
@@ -20,6 +19,7 @@ import {
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
 import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { openQuestionStopReason } from '../../src/work/obligations';

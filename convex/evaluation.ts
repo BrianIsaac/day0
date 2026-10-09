@@ -1,7 +1,7 @@
 import { ConvexError, v } from 'convex/values';
 import { mutation, query } from './_generated/server';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
-import { seedItemInTransaction, workItemSeedFields } from './work';
+import { seedItemInTransaction, workItemSeedFields } from './workSeeding';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { isTerminalWorkState } from '../src/evaluation/states';
 import { evaluationBedName, evaluationBedRefusal } from '../src/evaluation/bed-flag';
