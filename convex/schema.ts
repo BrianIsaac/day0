@@ -662,7 +662,12 @@ export default defineSchema({
     sourceId: v.id('docSources'),
     /** The page's `docPages.ref`. */
     pageRef: v.string(),
-    /** The sync run that wrote this version of the block; the backfill's, the source's last completed run. */
+    /**
+     * The sync run that scheduled the split that wrote the block (the backfill's: the source's last
+     * completed run), not the last writer: a re-split keeps an unchanged block's row, and its
+     * generation with it (`replacePageBlocks`). No reader (W14-R21: documented rather than dropped,
+     * since dropping a field is a narrowing that costs a release for nothing).
+     */
     generation: v.id('docSyncRuns'),
     /** The block's place in its page, from 0. */
     index: v.number(),
@@ -691,8 +696,10 @@ export default defineSchema({
      */
     .index('by_source_page_hash', ['sourceId', 'pageRef', 'hash'])
     /**
-     * A source's blocks by the run that wrote them (the wave file's index; nothing reads it yet: a
-     * source's removal pages through `by_source_page`, which also leads with the source).
+     * A source's blocks by the run that scheduled their split, not their last writer (see
+     * `generation`). No reader: a source's removal pages through `by_source_page`, which also
+     * leads with the source (W14-R21: documented rather than dropped, as dropping an index is a
+     * narrowing that costs a release for nothing).
      */
     .index('by_source_generation', ['sourceId', 'generation'])
     /**
@@ -709,12 +716,16 @@ export default defineSchema({
 
   /**
    * The listing that last named each page of a source (D D2 (a)). Each batch
-   * stamps the refs it listed; a finishing sync removes the pages whose stamp
-   * is older than its own listing, reading only those. A slim row of its own
-   * rather than a field on `docPages`, so restamping every listed page each
-   * sync never rewrites a page body or wakes the page's readers (P5-18).
-   * Every stored page has one (`upsertPage`, the `doc-page-listings`
-   * migration); a listed page not stored yet may have one without a page.
+   * stamps the refs it listed; a finishing sync removes only the pages whose
+   * stamp is older than the last complete walk's listing (`pruneBelow`), so a
+   * page goes when two complete walks in a row did not list it, never on one
+   * miss (wave 14, 14-D's ruling 1 (b), 14-J): a provider that lists in no
+   * fixed order, or a page edited mid-walk, keeps its page for one more walk.
+   * A slim row of its own rather than a field on `docPages`, so restamping
+   * every listed page each sync never rewrites a page body or wakes the page's
+   * readers (P5-18). Every stored page has one (`upsertPage`, the
+   * `doc-page-listings` migration); a listed page not stored yet may have one
+   * without a page.
    */
   docPageListings: defineTable({
     sourceId: v.id('docSources'),
@@ -722,7 +733,7 @@ export default defineSchema({
     /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
     seenBy: v.number(),
   })
-    /** By source, then listing: the finish's walk of what a listing did not name. */
+    /** By source, then listing: the finish's walk of the pages two complete walks did not name. */
     .index('by_source', ['sourceId', 'seenBy'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
