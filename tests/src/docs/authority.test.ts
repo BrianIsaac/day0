@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PAGE_STATUSES, SOURCE_AUTHORITIES } from '../../../src/docs/authority';
+import {
+  DEFAULT_PAGE_STATUSES,
+  PAGE_STATUSES,
+  SOURCE_AUTHORITIES,
+  STATUS_SOURCES,
+} from '../../../src/docs/authority';
 
 describe('document authority', (): void => {
   it('orders the trust a source may have most first, and lets a source default its pages to active or draft only', (): void => {
     expect(SOURCE_AUTHORITIES).toEqual(['official', 'team', 'personal']);
     expect(DEFAULT_PAGE_STATUSES).toEqual(['active', 'draft']);
+  });
+
+  it('gives a page one of four statuses, decided by the manager, the source, a marker, a relation or the default', (): void => {
+    expect(PAGE_STATUSES).toEqual(['active', 'draft', 'superseded', 'archived']);
+    expect(STATUS_SOURCES).toEqual(['manager', 'source-native', 'marker', 'relation', 'default']);
   });
 });

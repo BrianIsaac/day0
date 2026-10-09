@@ -20,7 +20,12 @@ import {
 } from '../src/surfaces/access-identity';
 import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
 import { BLOCK_KINDS } from '../src/docs/blocks';
-import { DEFAULT_PAGE_STATUSES, SOURCE_AUTHORITIES } from '../src/docs/authority';
+import {
+  DEFAULT_PAGE_STATUSES,
+  PAGE_STATUSES,
+  SOURCE_AUTHORITIES,
+  STATUS_SOURCES,
+} from '../src/docs/authority';
 import {
   IDENTITY_PROVIDERS,
   PEOPLE_SOURCES,
@@ -37,6 +42,12 @@ import {
   AGREEMENT_SOURCE_TYPES,
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
+
+/** A documentation page's status (wave 15, 15-K): `PAGE_STATUSES`. */
+const pageStatus = v.union(...PAGE_STATUSES.map((status) => v.literal(status)));
+
+/** How far a documentation source or page is trusted (wave 15, 15-K): `SOURCE_AUTHORITIES`. */
+const sourceAuthority = v.union(...SOURCE_AUTHORITIES.map((authority) => v.literal(authority)));
 
 /**
  * A tracker ticket as one intake listing showed it: who is assigned, its
@@ -427,7 +438,7 @@ export default defineSchema({
      * beats team beats personal, and within a source a page's own status decides. Absent reads as
      * `team` (`sourceAuthorityOf`, `src/docs/authority.ts`).
      */
-    authority: v.optional(v.union(...SOURCE_AUTHORITIES.map((authority) => v.literal(authority)))),
+    authority: v.optional(sourceAuthority),
     /**
      * The status the source's pages take when neither the manager, the source, a marker in the
      * page nor a confirmed relation decides one (wave 15, 15-K for 15-A). Absent reads as
@@ -557,6 +568,40 @@ export default defineSchema({
      * a page is redacted again at its next sync, which then writes the hash.
      */
     contentHash: v.optional(v.string()),
+    /**
+     * The page's status, the outcome of the inputs below (wave 15, 15-K for 15-A; K-2). Absent
+     * reads as `active` (`pageStatusOf`, `src/docs/authority.ts`). Never part of `contentHash`: a
+     * status reaches the row beside it, so an unchanged page whose status changed is marked
+     * without being redacted or split again.
+     */
+    status: v.optional(pageStatus),
+    /** What decided `status`. */
+    statusSource: v.optional(v.union(...STATUS_SOURCES.map((source) => v.literal(source)))),
+    /** What the reader, the page's front matter or its path said of its status, kept as said. */
+    nativeStatus: v.optional(pageStatus),
+    /**
+     * The model's judgement of a free-text marker in the page ("deprecated", "do not use"; N20):
+     * the status it read, the words it read it from and when.
+     */
+    marker: v.optional(v.object({ status: pageStatus, quote: v.string(), judgedAt: v.number() })),
+    /** The manager's verified address, when the manager decided `status`. */
+    decidedBy: v.optional(v.string()),
+    /** When the manager decided `status`. */
+    decidedAt: v.optional(v.number()),
+    /**
+     * The page's revision as its source numbers it (wave 15, 15-K for 15-X; 14-F's ruling 3):
+     * Feishu's `revision_id`, Confluence's `version.number`, Drive's `version`, SharePoint's
+     * `cTag`, Yuque's `content_updated_at`. One field for every reader; absent where the source
+     * gives none.
+     */
+    sourceRevision: v.optional(v.string()),
+    /** From when the page says it holds, and until when. */
+    effectiveFrom: v.optional(v.number()),
+    effectiveUntil: v.optional(v.number()),
+    /** The page that superseded this one, by source and ref. */
+    supersededBy: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
+    /** The manager's trust for this page alone, over its source's `authority`. */
+    authorityOverride: v.optional(sourceAuthority),
   })
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),

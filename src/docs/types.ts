@@ -1,5 +1,6 @@
 import type { Id } from '../../convex/_generated/dataModel';
 import { droppedScriptSuffix } from '../lib/short-hash';
+import type { PageStatus } from './authority';
 
 /**
  * How a documentation source is read: an MCP server, a folder, a git repository, a URL list, a
@@ -63,6 +64,13 @@ export interface DocPage {
   url?: string;
   markdown: string;
   updatedAt: number;
+  /**
+   * What the source says of the page's status (an archive, a trash, a draft flag, front matter or
+   * a path), where its reader reads one; stored as `docPages.nativeStatus` (wave 15, 15-K).
+   */
+  nativeStatus?: PageStatus;
+  /** The page's revision as its source numbers it, where it gives one (`docPages.sourceRevision`). */
+  sourceRevision?: string;
 }
 
 /** What every documentation reader provides: one batch of pages at a time. */

@@ -3,6 +3,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import {
   isPendingReaderKind,
   mirroredDocSlug,
+  type DocPage,
   notReadYet,
   PENDING_READER_NAMES,
 } from '../../../src/docs/types';
@@ -38,5 +39,18 @@ describe('documentation types', (): void => {
     expect(notReadYet('confluence-dc')).toBe(
       'Day0 does not read Confluence Data Center sources yet.',
     );
+  });
+
+  it("lets a reader report a page's own status and its revision beside it, both optional (15-K)", (): void => {
+    const base: DocPage = {
+      sourceId: 'jd7source1234567890' as Id<'docSources'>,
+      ref: 'runbook.md',
+      title: 'Runbook',
+      markdown: '# Runbook',
+      updatedAt: 1,
+    };
+    const reported: DocPage = { ...base, nativeStatus: 'archived', sourceRevision: '7' };
+    expect(reported).toMatchObject({ nativeStatus: 'archived', sourceRevision: '7' });
+    expect(base).not.toHaveProperty('nativeStatus');
   });
 });

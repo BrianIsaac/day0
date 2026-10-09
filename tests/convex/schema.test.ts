@@ -2624,6 +2624,87 @@ describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void 
     expect(read.kinds).toEqual(['sharepoint', 'confluence-v2', 'confluence-dc', 'yuque', 'drive']);
   });
 
+  it("gives a page its status with what decided it and the inputs kept beside it, its source's revision, its dates, its successor and its trust; an older page keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', docSource());
+      const page = {
+        sourceId,
+        ref: 'v1.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 3,
+      };
+      const older = await ctx.db.insert('docPages', page);
+      const decided = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'v2.md',
+        status: 'superseded',
+        statusSource: 'manager',
+        nativeStatus: 'active',
+        marker: { status: 'superseded', quote: 'Deprecated: use v3.', judgedAt: 4 },
+        decidedBy: MANAGER_ADDRESS,
+        decidedAt: 5,
+        sourceRevision: '42',
+        effectiveFrom: 6,
+        effectiveUntil: 7,
+        supersededBy: { sourceId, ref: 'v3.md' },
+        authorityOverride: 'official',
+      });
+      return { older: await ctx.db.get(older), decided: await ctx.db.get(decided) };
+    });
+    for (const field of [
+      'status',
+      'statusSource',
+      'nativeStatus',
+      'marker',
+      'decidedBy',
+      'decidedAt',
+      'sourceRevision',
+      'effectiveFrom',
+      'effectiveUntil',
+      'supersededBy',
+      'authorityOverride',
+    ]) {
+      expect(read.older).not.toHaveProperty(field);
+    }
+    expect(read.decided).toMatchObject({
+      status: 'superseded',
+      statusSource: 'manager',
+      nativeStatus: 'active',
+      marker: { status: 'superseded', quote: 'Deprecated: use v3.', judgedAt: 4 },
+      decidedBy: MANAGER_ADDRESS,
+      sourceRevision: '42',
+      supersededBy: { ref: 'v3.md' },
+      authorityOverride: 'official',
+    });
+  });
+
+  it('refuses a page status, a decider or a marker the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertPage = async (fields: Partial<WithoutSystemFields<Doc<'docPages'>>>) =>
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', docSource());
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: 'a.md',
+          title: 'A',
+          markdown: '# A',
+          updatedAt: 1,
+          ...fields,
+        });
+      });
+    await expect(
+      insertPage({ status: 'deprecated' as Doc<'docPages'>['status'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertPage({ statusSource: 'model' as Doc<'docPages'>['statusSource'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertPage({ marker: { status: 'superseded', quote: 'Old' } as Doc<'docPages'>['marker'] }),
+    ).rejects.toThrow();
+  });
+
   it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(
