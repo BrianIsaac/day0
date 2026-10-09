@@ -6,6 +6,7 @@ import {
   selectionRequestFor,
   type SelectableBlock,
   type SelectablePage,
+  type SelectionRequest,
 } from '../../src/docs/select';
 import {
   RETRIEVAL_CASES,
@@ -27,6 +28,32 @@ export const RECALL_BAR = { pages: 0.9, blocks: 0.8 } as const;
 
 /** The most blocks the emulated scout keeps of one source for one query, as the selection asks. */
 const SCOUT_LIMIT_PER_SOURCE = 12;
+
+/** The blocks a scout finds for one item's queries among the corpus pages. */
+export type Scout = (
+  queries: readonly string[],
+  pages: readonly SelectablePage[],
+) => SelectableBlock[];
+
+/**
+ * Where a grade's scout ran when it was a bed's own search: the bed, its backend image, the
+ * corpus as stored there, and the emulated grade it is read beside.
+ */
+export interface BackendScoutRecord {
+  /** The bed's Compose project. */
+  project: string;
+  /** The backend image the bed ran, by id. */
+  image: string;
+  /** The `docBlocks.searchBlocks` calls the grade made. */
+  searches: number;
+  pagesStored: number;
+  blocksStored: number;
+  blocksByPage: Record<string, number>;
+  /** The corpus pages whose stored text differs from the tree's (the sync's redaction). */
+  textDiffers: string[];
+  /** The emulated grade this one is read beside: its directory and its recall. */
+  emulated: { stamp: string; recall: { pages: number; blocks: number } };
+}
 
 /** Labels and the share of them found. */
 export interface RecallOf {
@@ -62,6 +89,12 @@ export interface RetrievalGradeEvidence {
   commit: string;
   /** Whether the selector or the set had changes not yet committed at `commit` when graded. */
   uncommittedChanges?: boolean;
+  /**
+   * `backend` when the scout was a bed's own search index; absent for the emulated scout. The
+   * test that reproduces every tracked grade cannot run a backend, so it skips a grade by this.
+   */
+  scout?: 'backend';
+  backend?: BackendScoutRecord;
   cases: number;
   observations: RetrievalObservation[];
   /** The mean recall over the cases of what the prompt carries, at 6 pages and at 12 blocks. */
@@ -131,12 +164,9 @@ function recallOf(expected: readonly string[], found: ReadonlySet<string>): Reca
   };
 }
 
-/** Grade one labelled item: the planner's selection for it, against what a person would open. */
-export function gradeCase(
-  entry: RetrievalCase,
-  pages: readonly SelectablePage[],
-): RetrievalObservation {
-  const request = selectionRequestFor({
+/** The selection request the planner makes for one labelled item. */
+export function selectionRequestOf(entry: RetrievalCase): SelectionRequest {
+  return selectionRequestFor({
     site: 'plan',
     candidate: {
       title: entry.title,
@@ -147,7 +177,21 @@ export function gradeCase(
     roleFunction: RETRIEVAL_ROLES[entry.role],
     surfaces: RETRIEVAL_SURFACES,
   });
-  const scouted = scoutedBlocks(scoutQueries(request, pages), pages);
+}
+
+/**
+ * Grade one labelled item: the planner's selection for it, against what a person would open.
+ *
+ * @param scout - What finds the blocks for the item's queries: the emulation unless a bed's own
+ *   search is given.
+ */
+export function gradeCase(
+  entry: RetrievalCase,
+  pages: readonly SelectablePage[],
+  scout: Scout = scoutedBlocks,
+): RetrievalObservation {
+  const request = selectionRequestOf(entry);
+  const scouted = scout(scoutQueries(request, pages), pages);
   const selection = selectDocumentation({ request, pages, scouted });
   const byKey = new Map(pages.map((page) => [page.key, page]));
   const picked = selection.picked.map((key) => {
@@ -192,10 +236,14 @@ function mean(values: readonly number[]): number {
     : values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-/** Grade every labelled item at a commit, without a model. */
-export function buildRetrievalGrade(commit: string, now = new Date()): RetrievalGradeEvidence {
+/** Grade every labelled item at a commit, without a model, with the emulated scout or the one given. */
+export function buildRetrievalGrade(
+  commit: string,
+  now = new Date(),
+  options: { scout?: Scout } = {},
+): RetrievalGradeEvidence {
   const pages = retrievalPages();
-  const observations = RETRIEVAL_CASES.map((entry) => gradeCase(entry, pages));
+  const observations = RETRIEVAL_CASES.map((entry) => gradeCase(entry, pages, options.scout));
   const recall = {
     pages: mean(observations.map((row) => row.pages.recall)),
     blocks: mean(observations.map((row) => row.sections.recall)),
@@ -242,11 +290,23 @@ export function renderRetrievalGrade(evidence: RetrievalGradeEvidence): string {
         [...row.pages.missed, ...row.sections.missed].join(', ') || 'none'
       } |`,
   );
+  const backend = evidence.scout === 'backend' ? evidence.backend : undefined;
+  const scout = backend
+    ? `the scout the backend’s search: \`docBlocks.searchBlocks\` on the bed \`${backend.project}\` (backend image \`${backend.image}\`), ${backend.searches} searches over the ${backend.pagesStored} pages stored and split there (${backend.blocksStored} blocks), at most 12 blocks a source as the product asks`
+    : "the scout emulated (the backend's ranking cannot run in a test)";
   return [
-    '# Retrieval recall',
+    backend ? '# Retrieval recall, the scout the backend’s search' : '# Retrieval recall',
     '',
-    `Generated ${evidence.generatedAt} at commit \`${evidence.commit}\`${evidence.uncommittedChanges ? ' with the uncommitted changes the commit that tracks this grade carries' : ''}, without a model: the selector over the labelled set (n=${evidence.cases}), the scout emulated (the backend's ranking cannot run in a test).`,
+    `Generated ${evidence.generatedAt} at commit \`${evidence.commit}\`${evidence.uncommittedChanges ? ' with the uncommitted changes the commit that tracks this grade carries' : ''}, without a model: the selector over the labelled set (n=${evidence.cases}), ${scout}.`,
     '',
+    ...(backend
+      ? [
+          `Emulated scout (\`${backend.emulated.stamp}\`): pages ${percent(backend.emulated.recall.pages)}, sections ${percent(backend.emulated.recall.blocks)}; the backend’s search (this grade): pages ${percent(evidence.recall.pages)}, sections ${percent(evidence.recall.blocks)}.`,
+          '',
+          `Stored text that differs from the tree's (the sync's redaction): ${backend.textDiffers.join(', ') || 'none'}.`,
+          '',
+        ]
+      : []),
     `What the prompt carries (the pages always included and the ranked pick of at most 6 pages and 12 blocks): recall of pages **${percent(evidence.recall.pages)}**, of sections **${percent(evidence.recall.blocks)}**.`,
     '',
     `The ranked pick alone, against the labels the pages always included leave (${evidence.rankedRecall.pageCases} items with pages left, ${evidence.rankedRecall.blockCases} with sections left): recall at 6 pages **${percent(evidence.rankedRecall.pages)}**, at 12 blocks **${percent(evidence.rankedRecall.blocks)}**.`,

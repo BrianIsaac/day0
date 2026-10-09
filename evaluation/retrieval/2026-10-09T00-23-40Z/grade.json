@@ -1,0 +1,1399 @@
+{
+  "schemaVersion": 1,
+  "experiment": "day0-retrieval-recall",
+  "generatedAt": "2026-10-09T00:23:40.080Z",
+  "commit": "7ceed64b1bb678a0c408989a0994f289bf5bee43",
+  "cases": 30,
+  "observations": [
+    {
+      "id": "fin-status-note",
+      "pages": {
+        "expected": [
+          "company:finance/runbooks/close-status-note.md",
+          "company:finance/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:finance/runbooks/close-status-note.md#Format",
+          "company:finance/runbooks/close-status-note.md#Rules"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:finance/handbook.md",
+        "notion:linear-automation.md"
+      ],
+      "chars": 15105
+    },
+    {
+      "id": "fin-where-close-stands",
+      "pages": {
+        "expected": [
+          "company:finance/runbooks/close-status-note.md",
+          "company:finance/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:finance/runbooks/close-status-note.md#Rules",
+          "company:finance/handbook.md#How the team works"
+        ],
+        "missed": [
+          "company:finance/handbook.md#How the team works"
+        ],
+        "recall": 0.5
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/runbooks/close-status-note.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:finance/runbooks/close-status-note.md#Rules",
+            "company:finance/handbook.md#How the team works"
+          ],
+          "missed": [
+            "company:finance/handbook.md#How the team works"
+          ],
+          "recall": 0.5
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:finance/handbook.md",
+        "notion:linear-automation.md",
+        "company:onboarding.md",
+        "company:systems/netledger.md",
+        "notion:slack-automation-policy.md"
+      ],
+      "chars": 8259
+    },
+    {
+      "id": "fin-accrual-owner",
+      "pages": {
+        "expected": [
+          "company:systems/netledger.md",
+          "company:finance/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/netledger.md#NetLedger",
+          "company:finance/handbook.md#How the team works"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/netledger.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/netledger.md#NetLedger",
+            "company:finance/handbook.md#How the team works"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:finance/handbook.md",
+        "company:systems/netledger.md",
+        "company:onboarding.md",
+        "notion:linear-automation.md"
+      ],
+      "chars": 17292
+    },
+    {
+      "id": "fin-accruals-late",
+      "pages": {
+        "expected": [
+          "company:finance/handbook.md",
+          "company:finance/runbooks/close-status-note.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:finance/handbook.md#The close calendar"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:finance/handbook.md",
+            "company:finance/runbooks/close-status-note.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:finance/handbook.md#The close calendar"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:finance/handbook.md",
+        "company:finance/runbooks/close-status-note.md"
+      ],
+      "chars": 5904
+    },
+    {
+      "id": "fin-flash-report",
+      "pages": {
+        "expected": [
+          "company:systems/netledger.md",
+          "company:finance/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/netledger.md#NetLedger",
+          "company:finance/handbook.md#The close calendar"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/netledger.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/netledger.md#NetLedger",
+            "company:finance/handbook.md#The close calendar"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:finance/handbook.md",
+        "company:systems/netledger.md",
+        "company:onboarding.md"
+      ],
+      "chars": 16793
+    },
+    {
+      "id": "log-held-no-eta",
+      "pages": {
+        "expected": [
+          "company:logistics/runbooks/exception-note.md",
+          "company:logistics/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/runbooks/exception-note.md#Comment format",
+          "company:logistics/handbook.md#Notices and ETAs"
+        ],
+        "missed": [
+          "company:logistics/handbook.md#Notices and ETAs"
+        ],
+        "recall": 0.5
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#Notices and ETAs"
+          ],
+          "missed": [
+            "company:logistics/handbook.md#Notices and ETAs"
+          ],
+          "recall": 0
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/handbook.md"
+      ],
+      "chars": 15136
+    },
+    {
+      "id": "log-thread-reply",
+      "pages": {
+        "expected": [
+          "company:logistics/runbooks/exception-note.md",
+          "company:logistics/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/runbooks/exception-note.md#Thread reply shape",
+          "company:logistics/handbook.md#The exception process"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/exception-note.md",
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/exception-note.md#Thread reply shape",
+            "company:logistics/handbook.md#The exception process"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/handbook.md",
+        "notion:slack-automation-policy.md",
+        "company:onboarding.md",
+        "notion:linear-automation.md"
+      ],
+      "chars": 8496
+    },
+    {
+      "id": "log-eta-confirmed",
+      "pages": {
+        "expected": [
+          "company:logistics/handbook.md",
+          "company:logistics/runbooks/exception-note.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/handbook.md#Customer notice templates",
+          "company:logistics/runbooks/exception-note.md#Comment format"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#Customer notice templates"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/handbook.md"
+      ],
+      "chars": 15137
+    },
+    {
+      "id": "log-damaged-ops-request",
+      "pages": {
+        "expected": [
+          "company:logistics/handbook.md",
+          "company:onboarding.md"
+        ],
+        "missed": [
+          "company:onboarding.md"
+        ],
+        "recall": 0.5
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/handbook.md#The exception process",
+          "company:onboarding.md#Working rules for every team"
+        ],
+        "missed": [
+          "company:logistics/handbook.md#The exception process",
+          "company:onboarding.md#Working rules for every team"
+        ],
+        "recall": 0
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/handbook.md",
+            "company:onboarding.md"
+          ],
+          "missed": [
+            "company:onboarding.md"
+          ],
+          "recall": 0.5
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/handbook.md#The exception process",
+            "company:onboarding.md#Working rules for every team"
+          ],
+          "missed": [
+            "company:logistics/handbook.md#The exception process",
+            "company:onboarding.md#Working rules for every team"
+          ],
+          "recall": 0
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:logistics/handbook.md",
+        "company:logistics/runbooks/exception-note.md",
+        "notion:slack-automation-policy.md",
+        "rehearsal:slack-day0-app.md",
+        "company:finance/handbook.md",
+        "company:revops/handbook.md"
+      ],
+      "chars": 7979
+    },
+    {
+      "id": "log-which-linear-team",
+      "pages": {
+        "expected": [
+          "notion:linear-automation.md",
+          "company:logistics/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "notion:linear-automation.md#Where it is",
+          "company:logistics/handbook.md#What the desk uses"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md",
+            "company:logistics/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Where it is",
+            "company:logistics/handbook.md#What the desk uses"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/handbook.md",
+        "notion:linear-automation.md",
+        "notion:slack-automation-policy.md",
+        "company:onboarding.md",
+        "company:finance/handbook.md",
+        "company:revops/handbook.md"
+      ],
+      "chars": 17338
+    },
+    {
+      "id": "revops-refresh-tile",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/how-to-refresh-the-tile.md",
+          "company:systems/looker-pipeline-tile.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/how-to-refresh-the-tile.md#Action shapes",
+          "company:systems/looker-pipeline-tile.md#Current approved figure"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Current approved figure"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-refresh-the-tile.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md"
+      ],
+      "chars": 11328
+    },
+    {
+      "id": "revops-stale-figure",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/how-to-refresh-the-tile.md",
+          "company:systems/looker-pipeline-tile.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/how-to-refresh-the-tile.md#Action shapes",
+          "company:systems/looker-pipeline-tile.md#Working rules"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:revops/runbooks/how-to-refresh-the-tile.md",
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Action shapes",
+            "company:systems/looker-pipeline-tile.md#Working rules"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:revops/runbooks/how-to-refresh-the-tile.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md"
+      ],
+      "chars": 11201
+    },
+    {
+      "id": "revops-audit-note",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md",
+          "company:revops/runbooks/how-to-update-ticket.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md#Writing the close-summary audit note",
+          "company:revops/runbooks/q3-close-checklist.md#The three checks"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:revops/handbook.md",
+        "notion:linear-automation.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:onboarding.md"
+      ],
+      "chars": 16664
+    },
+    {
+      "id": "revops-comment-close",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/how-to-update-ticket.md",
+          "notion:linear-automation.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/how-to-update-ticket.md#Action shape",
+          "company:revops/runbooks/how-to-update-ticket.md#Closing the loop"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/handbook.md",
+        "company:revops/handbook.md",
+        "notion:linear-automation.md",
+        "company:finance/handbook.md",
+        "company:onboarding.md",
+        "company:systems/looker-pipeline-tile.md"
+      ],
+      "chars": 16548
+    },
+    {
+      "id": "revops-reply-coverage-ask",
+      "pages": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md",
+          "company:revops/runbooks/how-to-post-slack.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md#Current approved figure",
+          "company:revops/runbooks/how-to-post-slack.md#Closing the loop on a public-channel ask"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Current approved figure"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "notion:slack-automation-policy.md",
+        "company:revops/runbooks/how-to-refresh-the-tile.md"
+      ],
+      "chars": 10860
+    },
+    {
+      "id": "revops-globex-owner",
+      "pages": {
+        "expected": [
+          "company:systems/northstar-crm.md",
+          "company:revops/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/northstar-crm.md#Northstar CRM",
+          "company:revops/handbook.md#Cold-start posture"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/northstar-crm.md",
+            "company:revops/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/northstar-crm.md#Northstar CRM",
+            "company:revops/handbook.md#Cold-start posture"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:systems/northstar-crm.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "notion:slack-automation-policy.md",
+        "rehearsal:slack-day0-app.md"
+      ],
+      "chars": 10801
+    },
+    {
+      "id": "revops-rotate-linear-key",
+      "pages": {
+        "expected": [
+          "notion:linear-automation.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "notion:linear-automation.md#Access"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Access"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "notion:linear-automation.md",
+        "rehearsal:slack-day0-app.md",
+        "company:finance/handbook.md"
+      ],
+      "chars": 17296
+    },
+    {
+      "id": "revops-own-slack-app",
+      "pages": {
+        "expected": [
+          "rehearsal:slack-day0-app.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "rehearsal:slack-day0-app.md#How an automation gets its own Slack identity",
+          "rehearsal:slack-day0-app.md#Manifest template"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "rehearsal:slack-day0-app.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "rehearsal:slack-day0-app.md#How an automation gets its own Slack identity",
+            "rehearsal:slack-day0-app.md#Manifest template"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "rehearsal:slack-day0-app.md",
+        "notion:slack-automation-policy.md",
+        "notion:linear-automation.md",
+        "company:onboarding.md",
+        "company:logistics/runbooks/exception-note.md"
+      ],
+      "chars": 10610
+    },
+    {
+      "id": "revops-finance-channel",
+      "pages": {
+        "expected": [
+          "notion:slack-automation-policy.md",
+          "company:finance/handbook.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "notion:slack-automation-policy.md#The channels, by team"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:slack-automation-policy.md",
+            "company:finance/handbook.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:slack-automation-policy.md#The channels, by team"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "notion:slack-automation-policy.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md",
+        "company:finance/handbook.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:logistics/handbook.md"
+      ],
+      "chars": 7481
+    },
+    {
+      "id": "revops-first-week",
+      "pages": {
+        "expected": [
+          "company:revops/handbook.md",
+          "company:onboarding.md"
+        ],
+        "missed": [
+          "company:onboarding.md"
+        ],
+        "recall": 0.5
+      },
+      "sections": {
+        "expected": [
+          "company:revops/handbook.md#First week"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:revops/handbook.md",
+            "company:onboarding.md"
+          ],
+          "missed": [
+            "company:onboarding.md"
+          ],
+          "recall": 0.5
+        },
+        "sections": {
+          "expected": [
+            "company:revops/handbook.md#First week"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/handbook.md",
+        "notion:slack-automation-policy.md",
+        "rehearsal:slack-day0-app.md",
+        "company:revops/runbooks/q3-close-checklist.md"
+      ],
+      "chars": 10533
+    },
+    {
+      "id": "revops-missing-slack-access",
+      "pages": {
+        "expected": [
+          "company:onboarding.md",
+          "notion:slack-automation-policy.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:onboarding.md#Escalation"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:onboarding.md",
+            "notion:slack-automation-policy.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:onboarding.md#Escalation"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:onboarding.md",
+        "company:revops/handbook.md",
+        "rehearsal:slack-day0-app.md",
+        "notion:slack-automation-policy.md",
+        "notion:linear-automation.md",
+        "company:logistics/handbook.md"
+      ],
+      "chars": 11087
+    },
+    {
+      "id": "revops-standup-deals",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md#The three checks"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:revops/handbook.md",
+        "company:systems/looker-pipeline-tile.md"
+      ],
+      "chars": 14185
+    },
+    {
+      "id": "revops-close-tickets-done",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md",
+          "company:revops/runbooks/how-to-update-ticket.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/q3-close-checklist.md#The three checks",
+          "company:revops/runbooks/how-to-update-ticket.md#Action shape"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": null,
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:finance/handbook.md",
+        "company:revops/handbook.md",
+        "notion:linear-automation.md",
+        "notion:slack-automation-policy.md",
+        "company:onboarding.md",
+        "company:logistics/handbook.md"
+      ],
+      "chars": 18760
+    },
+    {
+      "id": "revops-manager-dm-recap",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/how-to-post-slack.md",
+          "notion:slack-automation-policy.md"
+        ],
+        "missed": [
+          "notion:slack-automation-policy.md"
+        ],
+        "recall": 0.5
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/how-to-post-slack.md#Action shape"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:slack-automation-policy.md"
+          ],
+          "missed": [
+            "notion:slack-automation-policy.md"
+          ],
+          "recall": 0
+        },
+        "sections": null
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:revops/handbook.md",
+        "company:finance/handbook.md",
+        "company:logistics/handbook.md",
+        "company:onboarding.md",
+        "notion:linear-automation.md",
+        "rehearsal:slack-day0-app.md"
+      ],
+      "chars": 19192
+    },
+    {
+      "id": "revops-tile-screenshot",
+      "pages": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md",
+          "company:revops/runbooks/how-to-refresh-the-tile.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md#Working rules",
+          "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+        ],
+        "missed": [
+          "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+        ],
+        "recall": 0.5
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md",
+            "company:revops/runbooks/how-to-refresh-the-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Working rules",
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+          ],
+          "missed": [
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+          ],
+          "recall": 0.5
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:revops/runbooks/how-to-refresh-the-tile.md",
+        "company:revops/handbook.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:onboarding.md"
+      ],
+      "chars": 10858
+    },
+    {
+      "id": "revops-tile-login-refused",
+      "pages": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md",
+          "company:revops/runbooks/how-to-refresh-the-tile.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:systems/looker-pipeline-tile.md#Working rules",
+          "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md",
+            "company:revops/runbooks/how-to-refresh-the-tile.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:systems/looker-pipeline-tile.md#Working rules",
+            "company:revops/runbooks/how-to-refresh-the-tile.md#Discipline"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:revops/runbooks/how-to-refresh-the-tile.md",
+        "company:systems/looker-pipeline-tile.md",
+        "company:revops/handbook.md",
+        "company:onboarding.md"
+      ],
+      "chars": 20274
+    },
+    {
+      "id": "revops-issue-status-change",
+      "pages": {
+        "expected": [
+          "company:revops/runbooks/how-to-update-ticket.md",
+          "notion:linear-automation.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:revops/runbooks/how-to-update-ticket.md#Action shape",
+          "notion:linear-automation.md#Working rules"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "notion:linear-automation.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "notion:linear-automation.md#Working rules"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "notion:linear-automation.md",
+        "company:onboarding.md"
+      ],
+      "chars": 15267
+    },
+    {
+      "id": "zh-handover-signature",
+      "pages": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md#交接前检查"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#交接前检查"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:logistics/runbooks/warehouse-handover-zh.md"
+      ],
+      "chars": 3883
+    },
+    {
+      "id": "zh-handover-exception",
+      "pages": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md",
+          "company:logistics/runbooks/exception-note.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md#记录异常"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#记录异常"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:revops/runbooks/how-to-update-ticket.md",
+        "company:revops/runbooks/q3-close-checklist.md",
+        "company:finance/runbooks/close-status-note.md",
+        "company:logistics/runbooks/exception-note.md",
+        "company:logistics/runbooks/warehouse-handover-zh.md"
+      ],
+      "chars": 13576
+    },
+    {
+      "id": "zh-handover-post",
+      "pages": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "sections": {
+        "expected": [
+          "company:logistics/runbooks/warehouse-handover-zh.md#发布交接结果"
+        ],
+        "missed": [],
+        "recall": 1
+      },
+      "ranked": {
+        "pages": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md"
+          ],
+          "missed": [],
+          "recall": 1
+        },
+        "sections": {
+          "expected": [
+            "company:logistics/runbooks/warehouse-handover-zh.md#发布交接结果"
+          ],
+          "missed": [],
+          "recall": 1
+        }
+      },
+      "promptPages": [
+        "company:revops/runbooks/how-to-post-slack.md",
+        "company:logistics/runbooks/warehouse-handover-zh.md"
+      ],
+      "chars": 3883
+    }
+  ],
+  "recall": {
+    "pages": 0.95,
+    "blocks": 0.9166666666666666
+  },
+  "rankedRecall": {
+    "pages": 0.9259259259259259,
+    "blocks": 0.875,
+    "pageCases": 27,
+    "blockCases": 24
+  },
+  "bar": {
+    "pages": 0.9,
+    "blocks": 0.8
+  },
+  "meetsBar": true,
+  "noModelCalls": true,
+  "scout": "backend",
+  "backend": {
+    "project": "day0-w14q2",
+    "image": "sha256:b0f73d16c5dff2d9bbb5fe7fb4c253f6faf8e8738e9768ce7a63f552e473288d",
+    "searches": 125,
+    "pagesStored": 17,
+    "blocksStored": 105,
+    "blocksByPage": {
+      "company:onboarding.md": 6,
+      "company:revops/handbook.md": 7,
+      "company:revops/runbooks/how-to-post-slack.md": 6,
+      "company:revops/runbooks/how-to-refresh-the-tile.md": 15,
+      "company:revops/runbooks/how-to-update-ticket.md": 7,
+      "company:revops/runbooks/q3-close-checklist.md": 4,
+      "company:finance/handbook.md": 9,
+      "company:finance/runbooks/close-status-note.md": 6,
+      "company:logistics/handbook.md": 8,
+      "company:logistics/runbooks/exception-note.md": 5,
+      "company:systems/looker-pipeline-tile.md": 5,
+      "company:systems/netledger.md": 1,
+      "company:systems/northstar-crm.md": 1,
+      "notion:linear-automation.md": 6,
+      "notion:slack-automation-policy.md": 8,
+      "rehearsal:slack-day0-app.md": 7,
+      "company:logistics/runbooks/warehouse-handover-zh.md": 4
+    },
+    "textDiffers": [
+      "company:revops/runbooks/how-to-refresh-the-tile.md",
+      "company:systems/looker-pipeline-tile.md"
+    ],
+    "emulated": {
+      "stamp": "2026-10-07T20-11-36Z",
+      "recall": {
+        "pages": 0.95,
+        "blocks": 0.9333333333333333
+      }
+    }
+  },
+  "uncommittedChanges": true
+}
