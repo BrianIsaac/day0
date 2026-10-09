@@ -10,7 +10,7 @@ import {
   settleFailureReason,
 } from '../../convex/transferAcceptance';
 import { ConvexError } from 'convex/values';
-import { HANDED_OVER_REQUEST_REASON } from '../../convex/work';
+import { HANDED_OVER_REQUEST_REASON } from '../../convex/decisionRequests';
 import { HANDOVER_SESSION_FAILURE } from '../../convex/voice';
 import { TRANSFER_SETTLE_MS, transferExpiresAt } from '../../src/agent/manager-transfer';
 import { STOPPED_PREFIX } from '../../src/work/stop';

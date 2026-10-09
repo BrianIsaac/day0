@@ -12,13 +12,13 @@ import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
-  MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
   THREAD_NOT_FOUND_REASON,
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
 import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
@@ -31,12 +31,12 @@ import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
+import { GROUNDING_READ_AFTER_HANDOVER } from '../../convex/work';
 import {
-  GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
   voidDecisionRequestsForHandover,
-} from '../../convex/work';
+} from '../../convex/decisionRequests';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
 // Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.

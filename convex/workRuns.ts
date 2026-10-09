@@ -25,13 +25,12 @@ import {
   NOTHING_TO_DECIDE_REASON,
   parkOnConnection,
   queueManagerNote,
-  rememberRetriedRequest,
   reviewHeldActions,
-  scheduleDecisionRequest,
   SKILL_OUT_OF_USE_REASONS,
   SKILL_UNDER_REVISION_REASON,
   surfaceAwaitingConnection,
 } from './work';
+import { rememberRetriedRequest, scheduleDecisionRequest } from './decisionRequests';
 import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';

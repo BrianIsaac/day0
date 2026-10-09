@@ -24,7 +24,7 @@ import {
   EVALUATION_ADDRESS_FIXED,
   UNVERIFIED_FOR_ADOPTION,
 } from '../../src/agent/manager-standing';
-import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/work';
+import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
 

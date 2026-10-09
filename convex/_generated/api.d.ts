@@ -21,6 +21,7 @@ import type * as coworker from '../coworker.js';
 import type * as credentialCryptoActions from '../credentialCryptoActions.js';
 import type * as credentials from '../credentials.js';
 import type * as crons from '../crons.js';
+import type * as decisionRequests from '../decisionRequests.js';
 import type * as devAuth from '../devAuth.js';
 import type * as docBlocks from '../docBlocks.js';
 import type * as docPages from '../docPages.js';
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   credentialCryptoActions: typeof credentialCryptoActions;
   credentials: typeof credentials;
   crons: typeof crons;
+  decisionRequests: typeof decisionRequests;
   devAuth: typeof devAuth;
   docBlocks: typeof docBlocks;
   docPages: typeof docPages;
