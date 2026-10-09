@@ -116,6 +116,7 @@ import type * as voice from '../voice.js';
 import type * as waitingWork from '../waitingWork.js';
 import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
+import type * as workClaims from '../workClaims.js';
 import type * as workLedger from '../workLedger.js';
 import type * as workLoop from '../workLoop.js';
 import type * as workReevaluation from '../workReevaluation.js';
@@ -235,6 +236,7 @@ declare const fullApi: ApiFromModules<{
   waitingWork: typeof waitingWork;
   work: typeof work;
   workActions: typeof workActions;
+  workClaims: typeof workClaims;
   workLedger: typeof workLedger;
   workLoop: typeof workLoop;
   workReevaluation: typeof workReevaluation;

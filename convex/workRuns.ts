@@ -26,14 +26,13 @@ import {
   parkOnConnection,
   queueManagerNote,
   rememberRetriedRequest,
-  retakeExternalClaim,
   reviewHeldActions,
   scheduleDecisionRequest,
-  settleWriteTargetClaims,
   SKILL_OUT_OF_USE_REASONS,
   SKILL_UNDER_REVISION_REASON,
   surfaceAwaitingConnection,
 } from './work';
+import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';
 import { isGoneCitesReason } from '../src/work/plan-cites';
