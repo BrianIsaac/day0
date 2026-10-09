@@ -2,6 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
+import { OFFICE_ASKS } from '../../src/work/office-asks';
 import { allConvexModules } from './all-modules';
 
 /** Every string inside a value, with where it sits. */
@@ -99,6 +100,10 @@ describe('the seeded mock office', (): void => {
       ['Sara', 'thread-spare-monitor'],
       ['Hana', 'thread-double-charge'],
     ]);
+    // The asks the generator pools by role are the ones the office seeds, word for word.
+    expect(asks.map((ask) => [ask.sender, ask.threadKey, ask.body])).toEqual(
+      OFFICE_ASKS.map((ask) => [ask.sender, ask.threadKey, ask.body]),
+    );
     const doc = (slug: string) => seeded.docs.find((row) => row.slug === slug);
     for (const slug of ['it-access', 'office-supplies', 'billing-replies']) {
       expect(doc(slug)?.category, slug).toBe('team-doc');

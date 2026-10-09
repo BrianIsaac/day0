@@ -16,6 +16,7 @@ import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
+import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
   isWholeHistory,
@@ -313,6 +314,10 @@ function decisionTotals(
   const requestIds = new Set<string>();
   const resultIds = new Set<string>();
   const resentIds = new Map<string, string>();
+  // An approval that left a close the tripwire held for its card, by item: the card's decision on
+  // that close is the rest of the same decision, not a second one (W13-R50), so it is folded into
+  // this one, which reads approved in part when the close is withheld.
+  const leftForCard = new Map<string, { runId: string | undefined; partial: boolean }>();
   const firstAsk = (decisionId: string): string => {
     let id = decisionId;
     for (let hops = 0; hops < 100; hops += 1) {
@@ -373,11 +378,36 @@ function decisionTotals(
     }
     const result = decisionResult(event);
     if (!result) continue;
-    countDecision(totals, result.outcome, result.partial, result.cancelled);
     const key = `${result.workItemId}:${result.kind}`;
     const queue = pending.get(key) ?? [];
     const request = queue.shift();
     pending.set(key, queue);
+    const earlier = result.kind === 'actions' ? leftForCard.get(result.workItemId) : undefined;
+    // The card's decision on the close an approval left: an approval of the same run, or the run
+    // rejected on the card (its event names no run, and only the close is left to decide). It
+    // adds no decision and no latency of its own: the wait was for the one decision already timed.
+    const rejectedOnCard = isEventOf(event, 'work.actions-rejected');
+    if (earlier !== undefined && (rejectedOnCard || earlier.runId === asString(payload?.runId))) {
+      leftForCard.delete(result.workItemId);
+      waitingSince.delete(key);
+      const askId = asString(asRecord(request?.payload)?.decisionId);
+      if (askId) resultIds.add(askId);
+      if (!earlier.partial && (rejectedOnCard || asIndexes(payload?.rejectedIndexes).length > 0)) {
+        totals.partiallyApproved += 1;
+      }
+      continue;
+    }
+    countDecision(totals, result.outcome, result.partial, result.cancelled);
+    if (result.kind === 'actions') {
+      if (asIndexes(payload?.leftForCard).length > 0) {
+        leftForCard.set(result.workItemId, {
+          runId: asString(payload?.runId),
+          partial: result.partial,
+        });
+      } else {
+        leftForCard.delete(result.workItemId);
+      }
+    }
     const waitStart = waitingSince.get(key);
     waitingSince.delete(key);
     if (!request) {
@@ -710,6 +740,57 @@ interface PilotTotals {
   amended: number;
   estimatedItems: number;
   estimatedMinutes: number;
+  /** The items whose prompts carried a documentation selection, and their characters summed. */
+  retrievalItems: number;
+  retrievalChars: number;
+  /** Of those items, the ones a provider reported usage for, their characters and input tokens. */
+  tokenItems: number;
+  billedChars: number;
+  inputTokens: number;
+}
+
+/**
+ * The retrieval figure's tokens half from the documentation each item's prompts carried and the
+ * input tokens its model calls were billed (wave 14, 14-R): only items with a selection count.
+ */
+function retrievalTotals(
+  documentationChars: ReadonlyMap<string, number>,
+  inputTokens: ReadonlyMap<string, number>,
+): Pick<
+  PilotTotals,
+  'retrievalItems' | 'retrievalChars' | 'tokenItems' | 'billedChars' | 'inputTokens'
+> {
+  const billed = [...documentationChars].flatMap(([workItemId, chars]) => {
+    const tokens = inputTokens.get(workItemId);
+    return tokens === undefined ? [] : [{ chars, tokens }];
+  });
+  return {
+    retrievalItems: documentationChars.size,
+    retrievalChars: [...documentationChars.values()].reduce((total, chars) => total + chars, 0),
+    tokenItems: billed.length,
+    billedChars: billed.reduce((total, item) => total + item.chars, 0),
+    inputTokens: billed.reduce((total, item) => total + item.tokens, 0),
+  };
+}
+
+/**
+ * The tokens half of the retrieval figure: over the items a provider reported usage for when any
+ * did, so the characters and the tokens describe the same items; else the characters alone.
+ */
+function retrievalTokens(totals: PilotTotals): PilotFigures['retrieval']['tokens'] {
+  if (totals.tokenItems > 0) {
+    return {
+      items: totals.tokenItems,
+      charsPerItem: totals.billedChars / totals.tokenItems,
+      inputTokensPerItem: totals.inputTokens / totals.tokenItems,
+    };
+  }
+  if (totals.retrievalItems === 0) return null;
+  return {
+    items: totals.retrievalItems,
+    charsPerItem: totals.retrievalChars / totals.retrievalItems,
+    inputTokensPerItem: null,
+  };
 }
 
 function pilotTotals(
@@ -726,9 +807,24 @@ function pilotTotals(
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
+  const documentationChars = new Map<string, number>();
+  const inputTokens = new Map<string, number>();
   for (const event of ordered) {
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
+    if (isEventOf(event, 'work.documentation-selected') && workItemId) {
+      const chars = typeof payload?.chars === 'number' ? payload.chars : 0;
+      documentationChars.set(workItemId, (documentationChars.get(workItemId) ?? 0) + chars);
+      continue;
+    }
+    if (
+      isEventOf(event, 'work.model-call') &&
+      workItemId &&
+      typeof payload?.inputTokens === 'number'
+    ) {
+      inputTokens.set(workItemId, (inputTokens.get(workItemId) ?? 0) + payload.inputTokens);
+      continue;
+    }
     if (isEventOf(event, 'work.execution-claimed') && workItemId) {
       const skillId = asString(payload?.skillId);
       if (!skillId || runs.has(`${workItemId}:${skillId}`)) continue;
@@ -793,6 +889,7 @@ function pilotTotals(
     amended,
     estimatedItems: estimates.length,
     estimatedMinutes: estimates.reduce((total, minutes) => total + minutes, 0),
+    ...retrievalTotals(documentationChars, inputTokens),
   };
 }
 
@@ -821,7 +918,12 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       estimatedItems: totals.estimatedItems,
       hours: totals.estimatedItems > 0 ? totals.estimatedMinutes / 60 : null,
     },
-    retrieval: { tokens: null, recall: null },
+    retrieval: {
+      tokens: retrievalTokens(totals),
+      // The recall grades the selection, so it is shown only where a selection ran: real mode,
+      // which alone records one (W14-R6); the hosted mock office never meets the selector.
+      recall: totals.retrievalItems > 0 ? RETRIEVAL_RECALL : null,
+    },
   };
 }
 
@@ -836,6 +938,11 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     amended: rows.reduce((total, row) => total + row.amended, 0),
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
     estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
+    retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),
+    retrievalChars: rows.reduce((total, row) => total + row.retrievalChars, 0),
+    tokenItems: rows.reduce((total, row) => total + row.tokenItems, 0),
+    billedChars: rows.reduce((total, row) => total + row.billedChars, 0),
+    inputTokens: rows.reduce((total, row) => total + row.inputTokens, 0),
   };
 }
 

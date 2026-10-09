@@ -125,6 +125,76 @@ describe('peopleProposals', (): void => {
     expect(person?.evidence).toMatchObject([{ quote: `Ana Tan <ana@acme.test> - ${injected}` }]);
   });
 
+  it("keeps a source's title, team and address for a confirmed person as one proposed change beside the confirmed values (W13-R3, 14-I's field)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const held = await seedPerson(harness, 'Ana Tan', {
+      primaryEmail: 'ana@acme.test',
+      title: 'Controller',
+    });
+    await seedIdentity(harness, held, {
+      provider: 'slack',
+      externalId: 'U0ANA',
+      providerWorkspaceId: 'T1',
+    });
+    const quote = 'Ana Tan, Finance lead, ana.tan@acme.test';
+    await propose(
+      harness,
+      priya(agentId, {
+        name: 'Ana Tan',
+        email: 'Ana.Tan@acme.test',
+        title: 'Finance lead',
+        team: 'Finance',
+        identities: [{ provider: 'slack', externalId: 'U0ANA', workspaceId: 'T1' }],
+        evidence: [{ quote, where: 'Team page', at: 5, ref: 'team.md' }],
+      }),
+    );
+    const [person] = (await graphRows(harness)).people;
+    expect(person).toMatchObject({
+      primaryEmail: 'ana@acme.test',
+      title: 'Controller',
+      proposedChange: {
+        title: 'Finance lead',
+        team: 'Finance',
+        primaryEmail: 'ana.tan@acme.test',
+        source: 'one-to-one',
+        evidence: { quote, where: 'Team page', at: 5, ref: 'team.md' },
+        proposedAt: 10,
+      },
+    });
+    expect(person?.team).toBeUndefined();
+  });
+
+  it('proposes only what differs from the confirmed values, nothing when the source agrees, and the newer change in place of the older', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const held = await seedPerson(harness, 'Ana Tan', {
+      primaryEmail: 'ana@acme.test',
+      title: 'Controller',
+      notTheirAddresses: ['ana@other.test'],
+    });
+    const fromPage = (fields: Partial<ProposedPerson>): ProposedPerson =>
+      priya(agentId, {
+        name: 'Ana Tan',
+        email: 'ana@acme.test',
+        evidence: [{ quote: 'Ana Tan on the team page.', where: 'Team page', at: 5 }],
+        ...fields,
+      });
+    await propose(harness, fromPage({ title: 'Controller' }));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toBeUndefined();
+    await propose(harness, fromPage({ title: 'Controller', team: 'Finance' }));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toMatchObject({ team: 'Finance' });
+    expect((await graphRows(harness)).people[0]?.proposedChange).not.toHaveProperty('title');
+    await propose(harness, fromPage({ title: 'Head of finance' }));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toEqual({
+      title: 'Head of finance',
+      source: 'one-to-one',
+      evidence: { quote: 'Ana Tan on the team page.', where: 'Team page', at: 5 },
+      proposedAt: 10,
+    });
+    expect(held).toBe((await graphRows(harness)).people[0]?._id);
+  });
+
   it('writes no address onto a confirmed person matched by an identity', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

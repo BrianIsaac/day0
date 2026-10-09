@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
+import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL } from '../src/work/office-asks';
 
 /**
  * Seed the per-agent mock work environment. Idempotent - safe to call
@@ -447,7 +448,7 @@ export const seedMockEnvironment = internalMutation({
     await ensureChannel('dm-manager', 'DM · Manager', 'dm');
     await ensureChannel('dm-priya', 'DM · Priya', 'dm');
     await ensureChannel('dm-aman', 'DM · Aman', 'dm');
-    await ensureChannel('office-asks', '#office-asks', 'channel');
+    await ensureChannel(OFFICE_ASKS_CHANNEL, '#office-asks', 'channel');
 
     // Initial Slack messages - set the scene
     const seedMessage = async (
@@ -490,27 +491,10 @@ export const seedMockEnvironment = internalMutation({
     );
     // Asks from across the company, each answered by a team document above, so an employee in any
     // role has work the office lets it finish (13-FD: on the v0.16.0 redeploy no first ticket could).
-    await seedMessage(
-      'office-asks',
-      'thread-drive-access',
-      'Kofi',
-      'requester',
-      'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
-    );
-    await seedMessage(
-      'office-asks',
-      'thread-spare-monitor',
-      'Sara',
-      'requester',
-      'The monitor at desk 14 has died. Where can I get a spare, and does anyone need to know I took one?',
-    );
-    await seedMessage(
-      'office-asks',
-      'thread-double-charge',
-      'Hana',
-      'requester',
-      'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
-    );
+    // The generator shows each role only its own (`src/work/office-asks.ts`).
+    for (const ask of OFFICE_ASKS) {
+      await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
+    }
 
     // Tweet
     const tweetExisting = await ctx.db

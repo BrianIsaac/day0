@@ -16,6 +16,7 @@ import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
+import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -186,6 +187,22 @@ function registeredVia(via: unknown): string {
   if (via === 'organisation-page') return ' by an administrator';
   if (via === 'setup-cli') return ' by the setup command';
   return '';
+}
+
+/** Why a held authoring did not go on after the pause, as the record says it (W13-R46). */
+function heldAuthoringSpentWords(why: unknown): string {
+  switch (why) {
+    case 'decided':
+      return 'it was decided while the pause held it';
+    case 'running':
+      return 'a run held it when the pause ended';
+    case 'claimed':
+      return 'it was started while the pause held it';
+    case 'gone':
+      return 'it is gone';
+    default:
+      return 'it was settled while the pause held it';
+  }
 }
 
 /** The connection an event is about, by name, or a plain stand-in when it names none. */
@@ -555,6 +572,13 @@ const MODEL_CALL_STAGE: Readonly<Record<string, string>> = {
   authoring: 'skill writing',
 };
 
+/** The model call site a documentation selection was made for, in words. */
+const DOCUMENTATION_SITE: Readonly<Record<string, string>> = {
+  plan: 'plan draft',
+  execute: 'run',
+  closing: 'closing phase',
+};
+
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
 const ACKNOWLEDGEMENT_WORDS: Readonly<
   Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
@@ -806,6 +830,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Writing the skill ${text(p.name) ?? 'unnamed'} was held${because(p.reason)}`,
   'skill.authoring-resumed': (p) =>
     `Writing the skill ${text(p.name) ?? 'unnamed'} went on after the pause`,
+  'skill.authoring-hold-spent': (p) =>
+    `Writing the skill ${text(p.name) ?? 'unnamed'} did not go on after the pause: ${heldAuthoringSpentWords(p.why)}`,
   'skill.authoring-claimed': (p, { name }) =>
     p.purpose === 'verify-stored'
       ? `${name} started checking the skill ${text(p.name) ?? 'unnamed'} in the sandbox`
@@ -861,6 +887,8 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `Finding a way to reach ${subject.connection ?? 'a system'} was held${because(p.reason)}`,
   'surface.orientation-resumed': (_p, subject) =>
     `Finding a way to reach ${subject.connection ?? 'a system'} went on after the pause`,
+  'surface.orientation-hold-spent': (_p, subject) =>
+    `Finding a way to reach ${subject.connection ?? 'a system'} did not go on after the pause: it was settled while the pause held it`,
   'surface.app-provisioned': (p, subject) =>
     `An app was registered for ${connectionOf(subject)}${text(p.appName) ? `: ${p.appName}` : ''}`,
   'surface.app-forgotten': (p, subject) => {
@@ -1054,6 +1082,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The plan${forItem(subject)} is drafted again: ${
       text(p.slug) ?? 'its system'
     } is connected, so the ticket can be read`,
+  'work.plan-redraft': (p, subject) =>
+    `The plan${forItem(subject)} is drafted again. ${
+      text(p.reason) ?? 'Documentation the plan followed has since been changed or removed.'
+    }`,
   'work.corrections-applied': (p, subject) =>
     `The plan${forItem(subject)} applies ${
       counted(p.correctionIds?.length, 'kept correction') ?? 'kept corrections'
@@ -1069,10 +1101,14 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${decider(subject)} kept a working agreement${
       p.everyEmployee === true ? ' for every employee' : ''
     }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
-  'agreement.refused': (p) =>
-    text(p.clause)
-      ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
-      : `A working agreement was refused: it would go beyond the charter`,
+  'agreement.refused': (p, subject) =>
+    p.reason === 'every-employee-too-many'
+      ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
+      : p.reason === 'unchecked-for-employee'
+        ? `A working agreement for every employee is not in effect for ${subject.name}: you had more than ${EMPLOYEES_CHECKED} employees when its charter was approved, so it was never checked against it`
+        : text(p.clause)
+          ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
+          : `A working agreement was refused: it would go beyond the charter`,
   'agreement.retired': (p, subject) =>
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`
@@ -1225,6 +1261,15 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     return `A model call for the ${stage ? (MODEL_CALL_STAGE[stage] ?? stage) : 'work'} ${
       outcome === 'ok' ? 'answered' : `ended ${outcome}`
     }${attempts}${status}`;
+  },
+  'work.documentation-selected': (p, subject) => {
+    const site = text(p.site);
+    const what = `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(subject)} read`;
+    if (typeof p.chars !== 'number') return `${what} documentation`;
+    const sections = counted(Array.isArray(p.blockIds) ? p.blockIds.length : undefined, 'section');
+    return `${what} ${p.chars.toLocaleString('en-GB')} characters of documentation${
+      sections ? ` from ${sections}` : ''
+    }`;
   },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(

@@ -16,59 +16,75 @@ const queries = vi.hoisted(() => ({
   newDoc: false,
 }));
 
-vi.mock('convex/react', () => ({
-  useQuery: (reference: unknown, args: unknown): unknown => {
-    const name = getFunctionName(reference as never);
-    if (args === 'skip') return undefined;
-    if (!queries.surfacesLoaded && name === 'surfaces:listForAgent') return undefined;
-    if (name === 'surfaces:listForAgent') {
-      return [
-        {
-          _id: 'surface-linear',
-          slug: 'linear',
-          displayName: 'Linear',
-          class: 'kanban',
-          verdict: 'declared',
-          whereFound: [],
-          credentialLanded: false,
-        },
-      ].map((row) => withListedIdentity(row));
-    }
-    if (name === 'charters:latest') return null;
-    if (name === 'mock:listDocs') {
-      return [
-        {
-          _id: 'doc-1',
-          slug: 'doc',
-          title: 'Operating handbook',
-          body: 'How the team works.',
-          category: 'team-doc',
-        },
-        {
-          _id: 'doc-2',
-          slug: 'doc-2',
-          title: 'Linear automation',
-          body: 'How work enters the queue.',
-          category: 'how-to-guide',
-        },
-        ...(queries.newDoc
-          ? [
-              {
-                _id: 'doc-3',
-                slug: 'doc-3',
-                title: 'Close checklist',
-                body: 'What the close needs.',
-                category: 'how-to-guide',
-              },
-            ]
-          : []),
-      ];
-    }
-    return [];
-  },
-  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-  useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
-}));
+vi.mock('convex/react', () => {
+  /** The office's documents, the list's page and each open document alike. */
+  const officeDocs = (): Array<{
+    _id: string;
+    slug: string;
+    title: string;
+    body: string;
+    category: string;
+  }> => [
+    {
+      _id: 'doc-1',
+      slug: 'doc',
+      title: 'Operating handbook',
+      body: 'How the team works.',
+      category: 'team-doc',
+    },
+    {
+      _id: 'doc-2',
+      slug: 'doc-2',
+      title: 'Linear automation',
+      body: 'How work enters the queue.',
+      category: 'how-to-guide',
+    },
+    ...(queries.newDoc
+      ? [
+          {
+            _id: 'doc-3',
+            slug: 'doc-3',
+            title: 'Close checklist',
+            body: 'What the close needs.',
+            category: 'how-to-guide',
+          },
+        ]
+      : []),
+  ];
+  return {
+    usePaginatedQuery: (reference: unknown) => ({
+      results: getFunctionName(reference as never) === 'mock:listDocs' ? officeDocs() : [],
+      status: 'Exhausted',
+      loadMore: (): void => undefined,
+    }),
+    useQuery: (reference: unknown, args: unknown): unknown => {
+      const name = getFunctionName(reference as never);
+      if (args === 'skip') return undefined;
+      if (!queries.surfacesLoaded && name === 'surfaces:listForAgent') return undefined;
+      if (name === 'surfaces:listForAgent') {
+        return [
+          {
+            _id: 'surface-linear',
+            slug: 'linear',
+            displayName: 'Linear',
+            class: 'kanban',
+            verdict: 'declared',
+            whereFound: [],
+            credentialLanded: false,
+          },
+        ].map((row) => withListedIdentity(row));
+      }
+      if (name === 'charters:latest') return null;
+      // The tab reads the list a page at a time and the open document whole (M17).
+      if (name === 'mock:getDoc') {
+        return officeDocs().find((doc) => doc.slug === (args as { slug: string }).slug) ?? null;
+      }
+      return [];
+    },
+    useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  };
+});
 
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { MockEnvironment } from '../../../../app/agent/[agentId]/MockEnvironment';
@@ -85,7 +101,7 @@ const markupIn = (mode: SurfaceMode): string =>
 describe('MockEnvironment caption and tabs', (): void => {
   it('says the office is the seeded mock and shows no Surfaces tab in mock mode', (): void => {
     const markup = markupIn('mock');
-    expect(markup).toMatch(/<h2[^>]*>Mock office<\/h2>/);
+    expect(markup).toMatch(/<h2[^>]*>Hosted office<\/h2>/);
     expect(markup).toContain('the seeded workplace this employee works in');
     expect([...markup.matchAll(/role="tab"[^>]*>([A-Za-z]+)/g)].map((tab) => tab[1])).toEqual([
       'Slack',
@@ -108,7 +124,7 @@ describe('MockEnvironment caption and tabs', (): void => {
     expect(markup).toContain('Operating handbook');
     expect(markup).toMatch(/<h2[^>]*>Permissions<\/h2>/);
     expect(markup).not.toContain('role="tablist"');
-    expect(markup).not.toContain('Mock office');
+    expect(markup).not.toContain('Hosted office');
     expect(markup).not.toContain('mock-only');
   });
 
@@ -117,7 +133,7 @@ describe('MockEnvironment caption and tabs', (): void => {
       <MockEnvironment agentId={agentId} employeeName="Maya" mode={undefined} />,
     );
     expect(markup).toContain('Loading the work environment');
-    expect(markup).not.toContain('Mock office');
+    expect(markup).not.toContain('Hosted office');
   });
 });
 
@@ -132,7 +148,7 @@ describe('whom the employee acts as in the hosted office (wave 11, 11-AC)', (): 
 describe('the tab strip and the panel for a keyboard and a screen reader (step 45, P10-4)', (): void => {
   it('marks the selected tab in words, not colour alone, gives each tab a 44 px target and names the panel', (): void => {
     const markup = markupIn('mock');
-    expect(markup).toMatch(/<div role="tablist" aria-label="Mock office"/);
+    expect(markup).toMatch(/<div role="tablist" aria-label="Hosted office"/);
     const tabs = [
       ...markup.matchAll(
         /<button id="([^"]+)" type="button" role="tab" aria-selected="(true|false)"[^>]*class="([^"]*)"/g,
@@ -269,7 +285,7 @@ describe('a tab count that changes on the page (v3 section 5.2)', (): void => {
 
   /** The Docs tab's badge. */
   const docsBadge = (): Element | null | undefined =>
-    [...document.querySelectorAll('[role="tablist"][aria-label="Mock office"] [role="tab"]')]
+    [...document.querySelectorAll('[role="tablist"][aria-label="Hosted office"] [role="tab"]')]
       .find((tab) => tab.textContent?.startsWith('Docs'))
       ?.querySelector('span.rounded-full');
 

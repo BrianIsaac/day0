@@ -715,6 +715,39 @@ describe('URL attribution', (): void => {
     ).toEqual(['https://crm.northstar.example/login']);
   });
 
+  it('attributes a URL to a system named by more than its vendor when the sentence names the vendor and the host carries it (W13V-1)', (): void => {
+    const system = 'Slack automation policy';
+    const slug = 'slack-automation-policy';
+    expect(
+      attributedUrls(
+        'Integration: Slack Web API over HTTPS at `https://slack.com/api/`, bot token in the header.',
+        system,
+        slug,
+      ),
+    ).toEqual(['https://slack.com/api/']);
+    expect(
+      attributedUrls('The policy lives at https://slack.com/intl/policy.', system, slug),
+    ).toEqual([]);
+    expect(
+      attributedUrls('Slack posts go through https://hooks.example.com/in.', system, slug),
+    ).toEqual([]);
+    expect(
+      attributedUrls(
+        'The wiki is at https://the.example.com/wiki.',
+        'The team wiki',
+        'the-team-wiki',
+      ),
+    ).toEqual([]);
+    // The second pass: a name led by a common word is not a vendor.
+    expect(
+      attributedUrls(
+        'Support questions go to https://support.slack.com/help.',
+        'Support desk',
+        'support-desk',
+      ),
+    ).toEqual([]);
+  });
+
   it('matches a system as a whole word, so Slackbot text is not Slack evidence', (): void => {
     expect(namesSystem('Slackbot answers questions.', 'Slack')).toBe(false);
     expect(namesSystem("Linear's MCP endpoint", 'Linear')).toBe(true);
@@ -818,6 +851,26 @@ describe('URL attribution', (): void => {
     expect(
       documentedEndpoints(['http://tracker:8080/api/v2'], privateHostAllowlist('tracker')).api,
     ).toBeUndefined();
+  });
+
+  it('refuses a public web UI over http, and admits one on a host DAY0_PRIVATE_HOSTS lists (M20, R9)', (): void => {
+    const unlisted = privateHostAllowlist('');
+    expect(documentedEndpoints(['http://portal.example.com/login'], unlisted)).toMatchObject({
+      webUi: undefined,
+      refusedWebUi: 'http://portal.example.com/login',
+    });
+    // A name inside the network is no exception until the operator lists it.
+    expect(documentedEndpoints(['http://looker-tile:8080/'], unlisted).webUi).toBeUndefined();
+    expect(
+      documentedEndpoints(['http://looker-tile:8080/'], privateHostAllowlist('looker-tile')),
+    ).toMatchObject({ webUi: 'http://looker-tile:8080/', refusedWebUi: undefined });
+    // The https page is the web UI; the plaintext one beside it is not noted against it.
+    expect(
+      documentedEndpoints(
+        ['http://portal.example.com/login', 'https://portal.example.com/login'],
+        unlisted,
+      ),
+    ).toMatchObject({ webUi: 'https://portal.example.com/login', refusedWebUi: undefined });
   });
 
   it('admits a private MCP endpoint only when DAY0_PRIVATE_HOSTS lists its host', (): void => {
@@ -963,6 +1016,8 @@ describe('orientation run', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
@@ -1706,6 +1761,23 @@ describe('orientation run', (): void => {
     expect(surfaces['northstar-crm'].verdict).toBe('absent');
   });
 
+  it('orients a dedicated Slack page under its own title to the documented API at the Slack endpoint (W13V-1)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'documented-api';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      { 'systems/slack.md': notionFixture('slack-day0-app') },
+      [{ name: 'Slack automation policy', class: 'chat' }],
+    );
+    await expect(orientDeclared(harness, agentId)).resolves.toEqual({ proposed: 1, absent: 0 });
+    expect((await surfacesBySlug(harness, agentId))['slack-automation-policy']).toMatchObject({
+      path: 'documented-api',
+      endpoint: 'https://slack.com/api/',
+      request: { credential: { method: 'oauth' } },
+    });
+  });
+
   it('keeps a value that escaped redaction out of the model, the card and the events', async (): Promise<void> => {
     stubRegistry();
     model.pathFor = (): DraftPath => 'mcp';
@@ -2177,6 +2249,8 @@ describe('the browser floor in orientation', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     vi.stubEnv('DAY0_CREDENTIAL_KEY', randomBytes(32).toString('base64'));
   });
 
@@ -2244,6 +2318,28 @@ describe('the browser floor in orientation', (): void => {
     });
     expect(reports.request?.openQuestions).toContain(
       'No web login credential was found; browser access is limited to content the documented UI exposes without sign-in.',
+    );
+  });
+
+  it('refuses a public web UI over http and says on the card why (M20)', async (): Promise<void> => {
+    stubRegistry();
+    model.pathFor = (): DraftPath => 'browser-driven';
+    const harness = convexTest(schema, orientationModules());
+    const { agentId } = await seedOrientation(
+      harness,
+      {
+        'reports.md':
+          '# Forecast reports\n\nForecast reports use the browser at http://reports.example.test/forecast. There is no API or MCP server.\n\n- Probe marker: page title `Forecast reports`.',
+      },
+      [{ name: 'Forecast reports', class: 'analytics' }],
+    );
+    await orientDeclared(harness, agentId);
+    const reports = (await surfacesBySlug(harness, agentId))['forecast-reports'];
+    // Documented, so not absent: the card escalates and says why the page was not opened.
+    expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
+    expect(reports.endpoint).toBeUndefined();
+    expect(reports.request?.openQuestions).toContain(
+      'The web UI http://reports.example.test/forecast is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it: a sign-in there would cross the network unencrypted. Document its https address, or list the host in DAY0_PRIVATE_HOSTS if it is inside this network.',
     );
   });
 
@@ -2708,6 +2804,8 @@ describe('each employee reads its own role', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
     useSurfaceMode('real');
+    // The bed's tile is plain http on a compose host, which a bed lists (R9, 14-D).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
   });
 
   it("proposes only the systems each employee's charter names over one company page set", async (): Promise<void> => {

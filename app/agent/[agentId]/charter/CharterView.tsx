@@ -50,6 +50,7 @@ export function CharterView() {
   const editAgreement = useMutation(api.workingAgreements.edit);
   const retireAgreement = useMutation(api.workingAgreements.retire);
   const dismissAgreement = useMutation(api.workingAgreements.dismiss);
+  const recheckAgreement = useMutation(api.workingAgreements.recheck);
   const onCard = (agreementId: Id<'workingAgreements'>) => ({ agreementId, agentId: agent._id });
   // Who acted before a handover is named, never "you" for the earlier manager.
   const actor = (at: number): string => actorAt(at, earlier, agent.bossEmail);
@@ -129,6 +130,7 @@ export function CharterView() {
           onEdit={(agreementId, statement) => editAgreement({ ...onCard(agreementId), statement })}
           onRetire={(agreementId) => retireAgreement(onCard(agreementId))}
           onDismiss={(agreementId) => dismissAgreement(onCard(agreementId))}
+          onRecheck={(agreementId) => recheckAgreement(onCard(agreementId))}
         />
       ) : null}
     </Columns>

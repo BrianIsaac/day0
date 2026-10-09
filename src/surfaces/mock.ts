@@ -8,6 +8,7 @@ import {
   type MockWriteResult,
 } from '../work/types';
 import type { AdapterRun, AppliedAction, SurfaceAdapter } from './types';
+import type { SelectionRequest } from '../docs/select';
 import { errorMessage } from '../lib/errors';
 
 /**
@@ -35,12 +36,21 @@ class MockSurfaceAdapter implements SurfaceAdapter {
    * Args:
    *   ctx: Convex action context.
    *   agentId: Agent whose isolated environment is read.
+   *   selection: Real mode only: the item the documentation is selected for; without it the
+   *     guides and team documents are the whole mirror (R3).
    *
    * Returns:
    *   Hydrated documents, sheets, messages, tweets and tickets.
    */
-  async read(ctx: ActionCtx, agentId: Id<'agents'>): Promise<MockSurfaceSnapshot> {
-    return await ctx.runQuery(internal.mock.snapshotInternal, { agentId });
+  async read(
+    ctx: ActionCtx,
+    agentId: Id<'agents'>,
+    selection?: SelectionRequest,
+  ): Promise<MockSurfaceSnapshot> {
+    return await ctx.runQuery(
+      internal.mock.snapshotInternal,
+      selection === undefined ? { agentId } : { agentId, selection },
+    );
   }
 
   /**

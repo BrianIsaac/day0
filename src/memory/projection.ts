@@ -1,4 +1,12 @@
 import type { Doc } from '../../convex/_generated/dataModel';
+import {
+  CLAUSE_FIELDS,
+  CONSTRAINT_KINDS,
+  rulePlacement,
+  type ClauseCharter,
+  type ClauseRef,
+  type ConstraintKind,
+} from '../agent/charter-constraints';
 import { formatStamp } from '../lib/zone';
 import { mockActsAsWords, mockOfficeSystemsPhrase } from '../surfaces/mock-office';
 
@@ -102,6 +110,47 @@ function field(value: unknown, key: string): unknown {
     : undefined;
 }
 
+/** Whether a stored bind names a clause the way `ClauseRef` does. */
+function isClauseRef(value: unknown): value is ClauseRef {
+  const ref = field(value, 'field');
+  return (
+    typeof ref === 'string' &&
+    (CLAUSE_FIELDS as readonly string[]).includes(ref) &&
+    Number.isInteger(field(value, 'index'))
+  );
+}
+
+/**
+ * Whether the charter's clauses carry a stored rule, as the charter card reads it
+ * (`rulePlacement`): bound to clauses that carry its words, or, drafted before binds, with words
+ * verified in them. A rule of a shape the placement cannot read is said to be confirmed, as before.
+ */
+function enforcedRule(charter: ClauseCharter, rule: Record<string, unknown>): boolean {
+  const quote = text(rule.quote);
+  const wording = texts(rule.wording);
+  const binds = Array.isArray(rule.binds) ? rule.binds.filter(isClauseRef) : undefined;
+  if (quote === undefined || !CONSTRAINT_KINDS.includes(rule.kind as ConstraintKind)) return true;
+  const placement = rulePlacement(charter, {
+    kind: rule.kind as ConstraintKind,
+    quote,
+    wording,
+    origin: 'synthesis',
+    ...(binds === undefined ? {} : { binds }),
+  });
+  switch (placement.kind) {
+    case 'bound':
+      return placement.carriesWords;
+    case 'by-wording':
+      return wording.length > 0;
+    case 'in-no-clause':
+      return false;
+    default: {
+      const unknown: never = placement;
+      throw new Error(`unknown rule placement ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
 /** The charter's lines: what the employee is for, its boundaries, its rules and its answers. */
 function charterLines(charter: ProjectedCharter | null, zone: string): string[] {
   if (charter === null) return ['Charter: none approved yet.'];
@@ -119,13 +168,22 @@ function charterLines(charter: ProjectedCharter | null, zone: string): string[] 
   if (wont.length > 0) lines.push(`Will not do: ${wont.join('; ')}`);
   if (escalates.length > 0) lines.push(`Escalates when: ${escalates.join('; ')}`);
   const rules = records(field(body, 'constraints'));
-  const kept = rules
-    .filter((rule) => rule.struck !== true)
-    .flatMap((rule) => text(rule.quote) ?? []);
-  const struck = rules
-    .filter((rule) => rule.struck === true)
-    .flatMap((rule) => text(rule.quote) ?? []);
-  if (kept.length > 0) lines.push(`Rules you confirmed: ${kept.join('; ')}`);
+  const clauses: ClauseCharter = {
+    proposedFunction: text(field(body, 'proposedFunction')) ?? '',
+    proposedBoundaries: { willDo: will, willNotDo: wont, escalationTriggers: escalates },
+  };
+  const standing = rules.filter((rule) => rule.struck !== true);
+  const quotes = (kept: readonly Record<string, unknown>[]): string[] =>
+    kept.flatMap((rule) => text(rule.quote) ?? []);
+  const enforced = quotes(standing.filter((rule) => enforcedRule(clauses, rule)));
+  const unenforced = quotes(standing.filter((rule) => !enforcedRule(clauses, rule)));
+  const struck = quotes(rules.filter((rule) => rule.struck === true));
+  if (enforced.length > 0) lines.push(`Rules you confirmed: ${enforced.join('; ')}`);
+  // A rule no clause carries is the manager's sentence only (W13-R34): the employee reads the
+  // clauses, never this list, so it is not said to be confirmed.
+  if (unenforced.length > 0) {
+    lines.push(`Rules the charter does not enforce: ${unenforced.join('; ')}`);
+  }
   if (struck.length > 0) lines.push(`Rules you struck: ${struck.join('; ')}`);
   for (const answered of records(field(body, 'answeredQuestions'))) {
     const question = text(answered.question);
@@ -187,7 +245,7 @@ function surfaceState(surface: ProjectedSurface, zone: string): string {
  */
 function connectionsLine(input: ProjectionInput): string {
   if (input.office === 'mock') {
-    return `Connections: the mock office's ${mockOfficeSystemsPhrase()}. Acts as: ${mockActsAsWords(input.name)}`;
+    return `Connections: the hosted office's ${mockOfficeSystemsPhrase()}. Acts as: ${mockActsAsWords(input.name)}`;
   }
   const surfaces = input.surfaces.map(
     (surface) => `${surface.displayName} (${surfaceState(surface, input.zone)})`,

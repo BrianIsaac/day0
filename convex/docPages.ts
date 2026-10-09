@@ -1,7 +1,7 @@
 import { paginationOptsValidator, type PaginationResult } from 'convex/server';
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
-import { query, type QueryCtx } from './_generated/server';
+import { internalQuery, query, type QueryCtx } from './_generated/server';
 import { getCallerOrThrow } from './ownership';
 
 /*
@@ -139,5 +139,25 @@ export const readState = query({
       unreadCount: run.unread?.count ?? 0,
       unreadNamed: run.unread?.pages.length ?? 0,
     };
+  },
+});
+
+/**
+ * The refs, of those given, that a source has a stored page under. Internal; the sync reads it so a
+ * page it could not read counts as kept only when an earlier version of it is stored (W14-R11).
+ */
+export const storedPageRefs = internalQuery({
+  args: { sourceId: v.id('docSources'), refs: v.array(v.string()) },
+  handler: async (ctx, args): Promise<string[]> => {
+    const stored = await Promise.all(
+      args.refs.map(
+        async (ref) =>
+          (await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', ref))
+            .first()) !== null,
+      ),
+    );
+    return args.refs.filter((_ref, index) => stored[index]);
   },
 });

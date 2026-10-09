@@ -70,6 +70,19 @@ describe('ResetCard', (): void => {
     expect(html).not.toMatch(/\bagents?\b/i);
   });
 
+  it('names no people or agreements in the hosted office, where none is kept, as its dialog does not (the v0.17.0 redeploy, finding 4)', async (): Promise<void> => {
+    const view = mount(<ResetCard mode="mock" />);
+    const card = view.container.textContent ?? '';
+    expect(card).toContain(
+      'Deletes your employees and everything they made, your skill library and the notes on your handover requests.',
+    );
+    expect(card).not.toContain('people');
+    await press(view.container, 'Delete my data…');
+    const dialog = document.querySelector('[role="alertdialog"]')?.textContent ?? '';
+    expect(dialog).toContain('This deletes every employee and its data.');
+    expect(dialog).not.toContain('people');
+  });
+
   it('is named for what it does, on the card, in its dialog and on its confirmation (the v0.13.0 walk)', async (): Promise<void> => {
     const view = mount(<ResetCard />);
     expect(view.container.querySelector('h2')?.textContent).toBe('Your data');

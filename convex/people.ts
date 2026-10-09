@@ -52,8 +52,10 @@ import {
   NOTHING_WAITING,
   OWNER_IS_THE_MANAGER,
   RELATIONSHIP_ENDED,
+  RELATIONSHIP_HELD,
   RELATIONSHIP_SCOPE_LIMIT,
   RELATIONSHIP_TYPE_FIXED,
+  SAME_PERSON_CONFLICT,
   SAME_PERSON_GONE,
   SAY_WHETHER_SAME_FIRST,
   SCOPE_TOO_LONG,
@@ -95,22 +97,34 @@ interface LookedUpSlackUser {
 /**
  * The owner's own row: the one marked `isOwner`, or else a person the graph already holds under
  * the owner's address (a page may have named them first), made the owner's own row rather than
- * written twice; a new one otherwise. A row already the owner's takes a changed address.
+ * written twice; a new one otherwise. A row already the owner's takes a changed address, and a
+ * name once the sign-in brings one where it was named by its address (W13-R26).
+ *
+ * @returns The row, and whether it became the owner's now.
  */
 async function ownerPerson(
   ctx: MutationCtx,
   owner: SignedInOwner,
   now: number,
-): Promise<Id<'people'>> {
+): Promise<{ personId: Id<'people'>; madeNow: boolean }> {
   const marked = await ctx.db
     .query('people')
     .withIndex('by_user_owner', (q) => q.eq('userId', owner.scope).eq('isOwner', true))
     .first();
   if (marked !== null) {
-    if (marked.primaryEmail !== owner.address) {
-      await ctx.db.patch(marked._id, { primaryEmail: owner.address, updatedAt: now });
+    const name = owner.name?.trim();
+    const renamed =
+      name !== undefined &&
+      name !== '' &&
+      marked.displayName.toLowerCase() === (marked.primaryEmail ?? owner.address).toLowerCase();
+    if (marked.primaryEmail !== owner.address || renamed) {
+      await ctx.db.patch(marked._id, {
+        primaryEmail: owner.address,
+        ...(renamed ? { displayName: name, nameKey: personNameKey(name) } : {}),
+        updatedAt: now,
+      });
     }
-    return marked._id;
+    return { personId: marked._id, madeNow: false };
   }
   const named = await ctx.db
     .query('people')
@@ -125,10 +139,10 @@ async function ownerPerson(
       confirmedAt: named.confirmedAt ?? now,
       updatedAt: now,
     });
-    return named._id;
+    return { personId: named._id, madeNow: true };
   }
   const displayName = owner.name?.trim() || owner.address;
-  return await ctx.db.insert('people', {
+  const personId = await ctx.db.insert('people', {
     userId: owner.scope,
     displayName,
     nameKey: personNameKey(displayName),
@@ -141,6 +155,7 @@ async function ownerPerson(
     createdAt: now,
     updatedAt: now,
   });
+  return { personId, madeNow: true };
 }
 
 /**
@@ -210,9 +225,11 @@ async function addIdentity(
 
 /**
  * Write the owner's own person and its identities, as {@link ensureOwner} does for a caller: the
- * person keyed by the verified address, the address as an identity, and one Slack identity per
- * distinct Slack user the owner's connected chat cards looked up by that address. Safe to run any
- * number of times: what is held is left.
+ * person keyed by the verified address, the address as an identity, and, when the row becomes the
+ * owner's, one Slack identity per distinct Slack user the owner's connected chat cards looked up by
+ * that address (W13-R26: the read of every card is the backfill's, not every home open's; a card
+ * connected later records the owner's Slack user at its probe, `recordOwnerChatIdentity`). Safe
+ * to run any number of times: what is held is left.
  *
  * @param ctx - The mutation's context.
  * @param owner - The signed-in owner.
@@ -224,7 +241,7 @@ export async function ensureOwnerPerson(
   owner: SignedInOwner,
   now: number,
 ): Promise<{ personId: Id<'people'>; identitiesAdded: number }> {
-  const personId = await ownerPerson(ctx, owner, now);
+  const { personId, madeNow } = await ownerPerson(ctx, owner, now);
   const added = [
     await addIdentity(ctx, owner, {
       personId,
@@ -235,7 +252,7 @@ export async function ensureOwnerPerson(
       createdAt: now,
     }),
   ];
-  for (const user of await slackUsersOf(ctx, owner)) {
+  for (const user of madeNow ? await slackUsersOf(ctx, owner) : []) {
     added.push(
       await addIdentity(ctx, owner, {
         personId,
@@ -442,10 +459,40 @@ export const dismiss = mutation({
 });
 
 /**
+ * Whether a proposal's verified identities contradict a person's (W13-R24): a verified account in
+ * the same system and workspace under another id, which no merge can make one person's.
+ */
+async function identitiesConflict(
+  ctx: QueryCtx,
+  identities: readonly Doc<'personIdentities'>[],
+  personId: Id<'people'>,
+): Promise<boolean> {
+  const verified = identities.filter(
+    (row) => row.verifiedAt !== undefined && row.provider !== 'email',
+  );
+  if (verified.length === 0) return false;
+  const held = await ctx.db
+    .query('personIdentities')
+    .withIndex('by_person', (q) => q.eq('personId', personId))
+    .take(GRAPH_READ_LIMIT);
+  return verified.some((row) =>
+    held.some(
+      (own) =>
+        own.verifiedAt !== undefined &&
+        own.provider === row.provider &&
+        own.providerWorkspaceId === row.providerWorkspaceId &&
+        own.externalId !== row.externalId,
+    ),
+  );
+}
+
+/**
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **Same person** on a
  * proposal whose name alone matched someone known (C5). The manager's word merges it: its
- * evidence, identities and edges move to that person (the edges still proposed, for Confirm), and
- * the proposal's row goes. A merge never confirms anything.
+ * evidence, identities, edges and the working agreements about it move to that person (the edges
+ * still proposed, for Confirm; one the person already holds is retired, W13-R21), and the
+ * proposal's row goes. Refused when the two hold different verified accounts in one workspace
+ * (W13-R24). A merge never confirms anything.
  *
  * @returns The person it was merged into.
  */
@@ -462,6 +509,13 @@ export const samePerson = mutation({
     if (target === null || target.userId !== proposal.userId || target.status === 'dismissed') {
       throw new ConvexError(SAME_PERSON_GONE);
     }
+    const identities = await ctx.db
+      .query('personIdentities')
+      .withIndex('by_person', (q) => q.eq('personId', proposal._id))
+      .take(GRAPH_READ_LIMIT);
+    if (await identitiesConflict(ctx, identities, target._id)) {
+      throw new ConvexError(SAME_PERSON_CONFLICT);
+    }
     const now = Date.now();
     await ctx.db.patch(target._id, {
       evidence: withEvidence(target.evidence, proposal.evidence),
@@ -474,16 +528,35 @@ export const samePerson = mutation({
       ...(target.team === undefined && proposal.team !== undefined ? { team: proposal.team } : {}),
       updatedAt: now,
     });
-    const identities = await ctx.db
-      .query('personIdentities')
-      .withIndex('by_person', (q) => q.eq('personId', proposal._id))
-      .take(GRAPH_READ_LIMIT);
     for (const identity of identities) await ctx.db.patch(identity._id, { personId: target._id });
+    // An agreement about the person merged away is about the person kept (W13-R33), whatever its
+    // standing, so a later read of either finds it.
+    const agreements = await ctx.db
+      .query('workingAgreements')
+      .withIndex('by_user_person', (q) =>
+        q.eq('userId', proposal.userId).eq('personId', proposal._id),
+      )
+      .take(GRAPH_READ_LIMIT);
+    for (const agreement of agreements) {
+      await ctx.db.patch(agreement._id, { personId: target._id });
+    }
+    const kept = (await edgesTo(ctx, proposal.userId, target._id)).filter(
+      (edge) =>
+        (edge.status === 'proposed' || edge.status === 'active') &&
+        edge.effectiveUntil === undefined,
+    );
     for (const edge of await edgesTo(ctx, proposal.userId, proposal._id)) {
-      // The manager is the owner, never the end of an edge (the one-role rulings).
+      // The manager is the owner, never the end of an edge (the one-role rulings); and an edge the
+      // person kept already holds is not held twice (W13-R21).
+      const twice = kept.some(
+        (held) =>
+          held.fromAgentId === edge.fromAgentId &&
+          held.fromPersonId === edge.fromPersonId &&
+          sameEdgeWords(held, edge),
+      );
       await ctx.db.patch(
         edge._id,
-        target.isOwner === true ? { status: 'retired' } : { toPersonId: target._id },
+        target.isOwner === true || twice ? { status: 'retired' } : { toPersonId: target._id },
       );
     }
     const offered = await ctx.db
@@ -541,8 +614,9 @@ export const notTheSame = mutation({
  * Public, owner-level (`assertOwnsPerson` first, then `assertOwnsAgent`): **A different person**
  * on a proposal a lookup matched to a chat user. The lookup was by the proposal's address, so the
  * manager saying the user is someone else says the address is someone else's: every identity a
- * lookup by it recorded (Slack and Linear alike) and the address go, the address is kept as
- * evidence that it is someone else's so no source or lookup gives it back (W13-R8), and the
+ * lookup by it recorded (Slack and Linear alike) and the address go, the address is kept on the
+ * person's `notTheirAddresses` so no source or lookup gives it back, and as evidence the card shows
+ * (W13-R8), and the
  * proposal stays, for Confirm or Dismiss, which then looks nothing up.
  */
 export const notThisMatch = mutation({
@@ -573,14 +647,16 @@ export const notThisMatch = mutation({
         await ctx.db.delete(row._id);
     }
     const now = Date.now();
+    const address = proposal.primaryEmail;
+    const marked = proposal.notTheirAddresses ?? [];
     await ctx.db.patch(proposal._id, {
       primaryEmail: undefined,
-      ...(proposal.primaryEmail === undefined
+      // The field is what the merge and the lookup read; the evidence is what the card shows.
+      ...(address === undefined
         ? {}
         : {
-            evidence: withEvidence(proposal.evidence, [
-              notTheirAddressEvidence(proposal.primaryEmail, now),
-            ]),
+            notTheirAddresses: marked.includes(address) ? marked : [...marked, address],
+            evidence: withEvidence(proposal.evidence, [notTheirAddressEvidence(address, now)]),
           }),
       updatedAt: now,
     });
@@ -637,10 +713,18 @@ export const addRelationship = mutation({
   },
   returns: v.id('relationships'),
   handler: async (ctx, args): Promise<Id<'relationships'>> => {
-    const person = await assertOwnsPerson(ctx, args.personId);
+    const person = decidable(await assertOwnsPerson(ctx, args.personId));
     await assertOwnsAgent(ctx, args.agentId);
     if (person.status !== 'active') throw new ConvexError(CONFIRM_BEFORE_RELATING);
     const scope = typedScope(args.scope);
+    const held = (await edgesTo(ctx, person.userId, person._id)).some(
+      (edge) =>
+        edge.status === 'active' &&
+        edge.effectiveUntil === undefined &&
+        edge.fromAgentId === args.agentId &&
+        sameEdgeWords(edge, { type: args.type, scope }),
+    );
+    if (held) throw new ConvexError(RELATIONSHIP_HELD);
     const now = Date.now();
     const relationshipId = await ctx.db.insert('relationships', {
       userId: person.userId,
@@ -658,6 +742,16 @@ export const addRelationship = mutation({
     return relationshipId;
   },
 });
+
+/** Whether two edges say the same: one type, and one scope, case and spacing aside. */
+function sameEdgeWords(
+  edge: Pick<Doc<'relationships'>, 'type' | 'scope'>,
+  other: { readonly type: RelationshipType; readonly scope?: string },
+): boolean {
+  const key = (scope: string | undefined): string =>
+    (scope ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return edge.type === other.type && key(edge.scope) === key(other.scope);
+}
 
 /** An edge the manager may change: in force, and of the caller's owner scope. */
 function standingEdge(edge: Doc<'relationships'>): Doc<'relationships'> {
@@ -886,9 +980,11 @@ async function ownerWideEdges(
   scope: string,
   type: RelationshipType,
 ): Promise<Doc<'relationships'>[]> {
+  // Newest first (W13-R23): the readers want the edge in force now, never the oldest ones.
   const edges = await ctx.db
     .query('relationships')
     .withIndex('by_user_type', (q) => q.eq('userId', scope).eq('type', type))
+    .order('desc')
     .take(GRAPH_READ_LIMIT);
   return edges.filter((edge) => edge.fromAgentId === undefined && edge.fromPersonId === undefined);
 }
@@ -1229,6 +1325,8 @@ const proposalShownValidator = v.object({
       role: v.optional(v.string()),
       /** Whether the person it may be is confirmed or itself still a proposal. */
       standing: v.union(v.literal('confirmed'), v.literal('proposed')),
+      /** The address Same person would give them, who have none (W13-R24). */
+      bringsAddress: v.optional(v.string()),
     }),
   ),
   waiting: v.array(v.object({ type: relationshipTypeValidator, scope: v.optional(v.string()) })),
@@ -1243,12 +1341,27 @@ const confirmedShownValidator = v.object({
   evidence: v.optional(evidenceShownValidator),
   identities: v.array(identityAnswerValidator),
   edges: v.array(edgeShownValidator),
+  /** A source's change to the confirmed values, with its words, for Take or Dismiss (W13-R3). */
+  proposedChange: v.optional(
+    v.object({
+      title: v.optional(v.string()),
+      team: v.optional(v.string()),
+      primaryEmail: v.optional(v.string()),
+      quote: v.string(),
+      where: v.string(),
+      at: v.number(),
+    }),
+  ),
+  /** When a lookup of the person's address last failed past its asks (W13-R25). */
+  lookupFailedAt: v.optional(v.number()),
 });
 
 /** What the People tab draws from the graph for one employee. */
 const employeePeopleValidator = v.object({
   proposals: v.array(proposalShownValidator),
   confirmed: v.array(confirmedShownValidator),
+  /** Set when more proposals wait than the tab reads: only the newest are listed (W13-R23). */
+  more: v.optional(v.boolean()),
 });
 
 /** What {@link forEmployee} answers. */
@@ -1305,6 +1418,10 @@ async function proposalShown(
             name: offered.displayName,
             ...(roleOf(offered) === undefined ? {} : { role: roleOf(offered) }),
             standing: offered.status === 'active' ? ('confirmed' as const) : ('proposed' as const),
+            // The merge gives an address only to a person with none (`samePerson`).
+            ...(person.primaryEmail !== undefined && offered.primaryEmail === undefined
+              ? { bringsAddress: person.primaryEmail }
+              : {}),
           },
         }),
     waiting: waiting.map((edge) => ({
@@ -1328,6 +1445,7 @@ async function confirmedShown(
   if (edges.length === 0) return undefined;
   const role = roleOf(person);
   const first = person.evidence[0];
+  const change = person.proposedChange;
   return {
     personId: person._id,
     name: person.displayName,
@@ -1337,6 +1455,19 @@ async function confirmedShown(
       ? {}
       : { evidence: { quote: first.quote, where: first.where, at: first.at } }),
     identities: await identitiesOfPerson(ctx, person, undefined),
+    ...(change === undefined
+      ? {}
+      : {
+          proposedChange: {
+            ...(change.title === undefined ? {} : { title: change.title }),
+            ...(change.team === undefined ? {} : { team: change.team }),
+            ...(change.primaryEmail === undefined ? {} : { primaryEmail: change.primaryEmail }),
+            quote: change.evidence.quote,
+            where: change.evidence.where,
+            at: change.evidence.at,
+          },
+        }),
+    ...(person.lookupFailedAt === undefined ? {} : { lookupFailedAt: person.lookupFailedAt }),
     edges: edges.map((edge) => ({
       relationshipId: edge._id,
       type: edge.type,
@@ -1355,16 +1486,24 @@ async function employeePeople(
 ): Promise<EmployeePeople> {
   const scope = employeeOwnerScope(agent);
   if (scope === undefined) return { proposals: [], confirmed: [] };
+  // The newest of each standing, one past the bound to tell whether any were left out (W13-R23).
   const [unverified, active] = await Promise.all(
     (['unverified', 'active'] as const).map(
       async (status) =>
         await ctx.db
           .query('people')
           .withIndex('by_user_status', (q) => q.eq('userId', scope).eq('status', status))
-          .take(GRAPH_READ_LIMIT),
+          .order('desc')
+          .take(GRAPH_READ_LIMIT + 1),
     ),
   );
-  const people = [...(unverified ?? []), ...(active ?? [])];
+  // Said on the Proposed card: the proposals past the bound (a confirmed list past it is rarer and
+  // its newest are read the same way).
+  const more = (unverified?.length ?? 0) > GRAPH_READ_LIMIT;
+  const people = [
+    ...(unverified ?? []).slice(0, GRAPH_READ_LIMIT),
+    ...(active ?? []).slice(0, GRAPH_READ_LIMIT),
+  ];
   const [proposals, confirmed] = await Promise.all([
     Promise.all(people.map(async (person) => await proposalShown(ctx, person, agent._id))),
     Promise.all(people.map(async (person) => await confirmedShown(ctx, person, agent._id, now))),
@@ -1374,6 +1513,7 @@ async function employeePeople(
   return {
     proposals: proposals.filter((row) => row !== undefined).sort(byName),
     confirmed: confirmed.filter((row) => row !== undefined).sort(byName),
+    ...(more ? { more: true } : {}),
   };
 }
 
@@ -1381,7 +1521,8 @@ async function employeePeople(
  * Public, owner-guarded (`assertOwnsAgent` first): what the People tab draws from the graph for one
  * employee: the people waiting on the manager (a proposal, or a confirmed person with edges
  * proposed) that concern this employee or everyone, and the confirmed people its edges in force
- * reach. The owner's own row is the Manager card's. Reads only; empty for a graph not kept (mock
+ * reach, the newest of each standing within the read bound, saying when older ones are left out.
+ * The owner's own row is the Manager card's. Reads only; empty for a graph not kept (mock
  * mode keeps none).
  */
 export const forEmployee = query({

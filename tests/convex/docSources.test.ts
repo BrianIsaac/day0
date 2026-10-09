@@ -10,10 +10,9 @@ import {
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   SUPERSEDED_CREDENTIAL_KEEP_MS,
-  validateLinkInput,
-  validateReaderSecret,
 } from '../../convex/docSources';
 import { DOCS_NOTION_LOCATOR } from '../../src/docs/components';
+import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
@@ -93,6 +92,36 @@ async function seedSyncedSource(
 }
 
 /**
+ * Record a complete walk of a source that named none of its stored pages, so each has been missed
+ * once and the next complete walk that misses it prunes it (14-D's ruling 1 (b), 8 October 2026).
+ *
+ * Args:
+ *   harness: Convex test harness.
+ *   sourceId: Source under test.
+ */
+async function missedOnce(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+): Promise<void> {
+  await harness.run(async (ctx): Promise<void> => {
+    const source = await ctx.db.get(sourceId);
+    const listing = (source?.listings ?? 0) + 1;
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing,
+      pagesListed: 0,
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: 1,
+      completedAt: 1,
+    });
+    await ctx.db.patch(sourceId, { listings: listing, lastCompletedSyncId: runId });
+  });
+}
+
+/**
  * Count the stored pages and mirrors that still point at a source.
  *
  * Args:
@@ -160,69 +189,6 @@ async function finishGeneration(
     cursor: FINISHING_CURSOR,
   });
 }
-
-describe('documentation source validation', (): void => {
-  it('validates kind-specific source fields', (): void => {
-    expect(
-      validateLinkInput({ label: ' Team docs ', kind: 'folder', locator: ' runbooks ' }),
-    ).toEqual({ label: 'Team docs', kind: 'folder', locator: 'runbooks' });
-    expect(() =>
-      validateLinkInput({ label: 'Private', kind: 'folder', locator: '../private' }),
-    ).toThrow('stay inside');
-    expect(() =>
-      validateLinkInput({
-        label: 'Notion',
-        kind: 'mcp',
-        locator: 'http://notion-mcp:3000/mcp',
-        serverKind: 'notion',
-      }),
-    ).not.toThrow();
-  });
-
-  it('refuses a user name or token in every remote locator, and never repeats it', (): void => {
-    for (const [kind, locator] of [
-      ['git', 'https://oauth2:glpat-abc@git.corp.internal/team/docs#main'],
-      ['git', 'https://ghp_secret123@github.com/example/docs'],
-      ['urls', 'https://docs.example.com/a\nhttps://deploy:hunter2@docs.example.com/b'],
-      ['mcp', 'https://svc:hunter2@docs.example.com/mcp'],
-      ['git', 'https://ghp_secret123#en@github.com/org/docs#main'],
-      ['urls', 'https://hunter2#x@docs.example.com/page'],
-    ] as const) {
-      let message = '';
-      try {
-        validateLinkInput({
-          label: 'Docs',
-          kind,
-          locator,
-          ...(kind === 'mcp' ? { serverKind: 'confluence' as const } : {}),
-        });
-      } catch (error) {
-        message = error instanceof Error ? error.message : String(error);
-      }
-      expect(message, locator).toContain('must not carry a user name or password');
-      for (const secret of ['glpat-abc', 'ghp_secret123', 'hunter2', 'oauth2', 'deploy', 'svc']) {
-        expect(message).not.toContain(secret);
-      }
-    }
-  });
-
-  it("refuses a plain HTTP MCP locator except Day0's own component, before a secret is stored (M16)", (): void => {
-    const mcp = (locator: string) => (): unknown =>
-      validateLinkInput({ label: 'Docs', kind: 'mcp', locator, serverKind: 'confluence' });
-    expect(mcp('http://docs.example.com/mcp')).toThrow('must use HTTPS');
-    // The component's host under another server kind is not the component.
-    expect(mcp('http://docs-notion-mcp:3000/mcp')).toThrow('must use HTTPS');
-    expect(mcp('https://docs.example.com/mcp')).not.toThrow();
-    expect(() =>
-      validateLinkInput({
-        label: 'Notion',
-        kind: 'mcp',
-        locator: 'http://docs-notion-mcp:3000/mcp',
-        serverKind: 'notion',
-      }),
-    ).not.toThrow();
-  });
-});
 
 describe('documentation sources in mock mode', (): void => {
   it('refuses to link any location, including link-local metadata URLs', async (): Promise<void> => {
@@ -465,37 +431,45 @@ describe('documentation sources in real mode', (): void => {
     vi.unstubAllEnvs();
   });
 
-  it('refuses a reader secret a source cannot keep to one https site, and a folder’s (E-74)', (): void => {
-    const folder = validateLinkInput({ label: 'Folder', kind: 'folder', locator: '.' });
-    expect(() => validateReaderSecret(folder, 'value')).toThrow('takes no secret');
-    const twoSites = validateLinkInput({
-      label: 'Wiki',
-      kind: 'urls',
-      locator: 'https://wiki.example/a\nhttps://other.example/b',
+  it('links a Feishu wiki space with the app ID and secret held as its reader secret, and rotates them (14-F)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 7).toString('base64'));
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const sourceId = await owner.action(api.docSources.link, {
+      label: 'RevOps wiki',
+      kind: 'feishu',
+      locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+      credential: 'cli_fixture_app:fixture-app-secret',
     });
-    expect(() => validateReaderSecret(twoSites, 'value')).toThrow('one https site');
-    const plaintext = validateLinkInput({
-      label: 'Wiki',
-      kind: 'urls',
-      locator: 'http://wiki.example/a',
+    const linked = await harness.run(async (ctx) => {
+      const source = await ctx.db.get(sourceId);
+      return {
+        source,
+        credential: source?.credentialId ? await ctx.db.get(source.credentialId) : null,
+      };
     });
-    expect(() => validateReaderSecret(plaintext, 'value')).toThrow('one https site');
-    const oneSite = validateLinkInput({
-      label: 'Wiki',
-      kind: 'urls',
-      locator: 'https://wiki.example/a\nhttps://wiki.example/b',
+    expect(linked.source).toMatchObject({
+      kind: 'feishu',
+      locator: 'https://open.feishu.cn/wiki/spaces/7300000000000000001',
+      status: 'linking',
     });
-    expect(() => validateReaderSecret(oneSite, 'value')).not.toThrow();
-    expect(() => validateReaderSecret(oneSite, undefined)).not.toThrow();
-    expect(() => validateReaderSecret(oneSite, '')).toThrow('cannot be empty');
-    expect(() => validateReaderSecret(oneSite, 'first\nsecond')).toThrow('line break');
-    const mcp = validateLinkInput({
-      label: 'Notion',
-      kind: 'mcp',
-      serverKind: 'generic',
-      locator: 'https://mcp.example/mcp',
+    expect(linked.credential).toMatchObject({
+      label: 'RevOps wiki app ID and secret',
+      source: 'entered',
     });
-    expect(() => validateReaderSecret(mcp, undefined)).toThrow('Connection secret is required');
+    expect(JSON.stringify(linked)).not.toContain('fixture-app-secret');
+    await owner.action(api.docSources.rotateCredential, {
+      sourceId,
+      credential: 'cli_fixture_app:fixture-app-secret-two',
+    });
+    const rotated = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(rotated?.credentialId).not.toBe(linked.credential?._id);
+    await expect(
+      owner.action(api.docSources.rotateCredential, { sourceId, credential: 'only-a-secret' }),
+    ).rejects.toThrow('A Feishu secret is the app ID and the app secret joined by a colon');
+    vi.unstubAllEnvs();
   });
 
   it('persists only a credential id on an authenticated source', async (): Promise<void> => {
@@ -682,6 +656,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.upsertPage, {
       sourceId,
@@ -783,6 +758,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const superseded = await harness.mutation(internal.docSources.beginSync, { sourceId });
     const failed = await harness.mutation(internal.docSources.beginSync, { sourceId });
     await harness.mutation(internal.docSources.failSync, {
@@ -893,6 +869,7 @@ describe('documentation sources in real mode', (): void => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, agentId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     await harness.run(async (ctx) => {
       await ctx.db.insert('mockDocs', {
         agentId,
@@ -2133,6 +2110,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId, surfaceId } = await largeSource(harness);
+    await missedOnce(harness, sourceId);
     const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
     const listed = ['handbook.md'];
     for (let index = 1; index < LARGE_PAGES; index += 1) listed.push(`runbooks/page-${index}.md`);
@@ -2305,6 +2283,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const listed: string[] = [];
     await harness.run(async (ctx): Promise<void> => {
       // Each page an earlier sync (listing 1) stored and named.
@@ -2373,6 +2352,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     // Pages an earlier listing stored: the first ten this sync names again, the rest it does not.
     const stored = Array.from({ length: 40 }, (_value, index) => `stored-${index}.md`);
     await harness.run(async (ctx): Promise<void> => {
@@ -2577,6 +2557,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     vi.useFakeTimers();
     const harness = limitedHarness();
     const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
     const { runId, checkpoint } = await harness.run(async (ctx) => {
       for (const ref of ['kept.md', 'stale.md']) {
         await ctx.db.insert('docPages', {
@@ -2646,7 +2627,7 @@ describe('the documentation store under the transaction limits (step 49)', (): v
     expect(relisted).toEqual(['kept.md', 'page.md']);
   });
 
-  it('removes a page whose batch never recorded, at the next finish that does not name it', async (): Promise<void> => {
+  it('removes a page whose batch never recorded once two complete finishes in a row do not name it (14-D ruling 1 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
     const harness = limitedHarness();
@@ -2661,6 +2642,18 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       markdown: '# Orphan',
       updatedAt: 2,
     });
+    const left = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+            .collect()
+        )
+          .map((page) => page.ref)
+          .sort(),
+      );
+    // The first complete finish that does not name it has missed it once, and keeps it.
     const fresh = await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
     await finishGeneration(harness, sourceId, fresh, {
       refs: ['page.md'],
@@ -2668,15 +2661,15 @@ describe('the documentation store under the transaction limits (step 49)', (): v
       pageCount: 0,
       redactionCount: 0,
     });
-    const left = await harness.run(async (ctx) =>
-      (
-        await ctx.db
-          .query('docPages')
-          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
-          .collect()
-      ).map((page) => page.ref),
-    );
-    expect(left).toEqual(['page.md']);
+    expect(await left()).toEqual(['orphan.md', 'page.md']);
+    const next = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, next, {
+      refs: ['page.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    expect(await left()).toEqual(['page.md']);
   });
 
   it('prunes more than eight old runs in one pass, now a run carries no list of its pages (13-K)', async (): Promise<void> => {
@@ -2904,5 +2897,479 @@ describe('the anonymous-caller guard before the mode (12-G)', (): void => {
     await expect(harness.mutation(api.docSources.unlink, { sourceId })).rejects.toMatchObject(
       refusal,
     );
+  });
+});
+
+describe('pages as blocks, their hash and the skills that read them (14-I)', (): void => {
+  /** A runbook of two sections. */
+  const RUNBOOK = '# Refresh the tile\n\nOpen the dashboard.\n\n## Stale\n\nPress refresh twice.';
+
+  /** A page's stored row and its blocks' texts. */
+  async function storedPage(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    ref: string,
+  ): Promise<{ page: Doc<'docPages'> | null; blocks: string[]; generations: string[] }> {
+    return await harness.run(async (ctx) => {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', ref))
+        .unique();
+      const blocks = await ctx.db
+        .query('docBlocks')
+        .withIndex('by_source_page', (index) => index.eq('sourceId', sourceId).eq('pageRef', ref))
+        .collect();
+      return {
+        page,
+        blocks: blocks.map((block) => block.text),
+        generations: blocks.map((block) => block.generation),
+      };
+    });
+  }
+
+  it("stores a page's hash with its blocks, split from the page as stored", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const stored = await storedPage(harness, sourceId, 'refresh.md');
+    expect(stored.page?.contentHash).toBe('a'.repeat(32));
+    expect(stored.blocks).toEqual(['Open the dashboard.', 'Press refresh twice.']);
+    expect(stored.generations).toEqual([runId, runId]);
+  });
+
+  it('writes the hash onto an unchanged page stored before it and splits it, leaving its body and its time', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'refresh.md',
+        title: 'Refresh the tile',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 9,
+    };
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const stored = await storedPage(harness, sourceId, 'refresh.md');
+    expect(stored.page).toMatchObject({
+      markdown: RUNBOOK,
+      updatedAt: 1,
+      contentHash: 'a'.repeat(32),
+    });
+    expect(stored.blocks).toHaveLength(2);
+    // A page changed with no hash to give (a deployment without a key) forgets the old one, so
+    // the old hash can never vouch for the new body.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: `${RUNBOOK}\n\nThen post.`,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const changed = await storedPage(harness, sourceId, 'refresh.md');
+    expect(changed.page).not.toHaveProperty('contentHash');
+    expect(changed.blocks).toEqual(['Open the dashboard.', 'Press refresh twice.\n\nThen post.']);
+  });
+
+  it('prunes blocks with their page and with their source', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    await missedOnce(harness, sourceId);
+    await harness.run(async (ctx) => {
+      // A page an earlier sync (listing 1) stored and named, which this one will not name.
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'gone.md',
+        title: 'Gone',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPageListings', { sourceId, ref: 'gone.md', seenBy: 1 });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docBlocks.splitStoredPage, {
+      sourceId,
+      ref: 'gone.md',
+      generation: runId,
+    });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'kept.md',
+      title: 'Kept',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await storedPage(harness, sourceId, 'gone.md')).blocks).toHaveLength(2);
+    await finishGeneration(harness, sourceId, runId, {
+      refs: ['kept.md'],
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await storedPage(harness, sourceId, 'gone.md')).blocks).toEqual([]);
+    expect((await storedPage(harness, sourceId, 'kept.md')).blocks).toHaveLength(2);
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect())).toEqual([]);
+  });
+
+  it('stamps Re-check due on the skills whose version read a page whose body changed, and on no other', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 8, 3, 0, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    };
+    await harness.mutation(internal.docSources.upsertPage, page);
+    const holders = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Asia/Singapore' });
+      const version = async (readRef: string): Promise<Id<'skillVersions'>> =>
+        await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name: `refresh-${readRef}`,
+          description: 'Refresh the pipeline tile.',
+          surfaceClass: 'dashboard',
+          operation: 'refresh',
+          version: 1,
+          body: '# Refresh',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: [{ sourceId, ref: readRef, title: 'Refresh the tile' }],
+          verifiedAt: 1,
+          createdAt: 1,
+        });
+      const holder = async (versionId: Id<'skillVersions'>): Promise<Id<'skills'>> =>
+        await ctx.db.insert('skills', {
+          agentId,
+          name: 'refresh-the-tile',
+          description: 'Refresh the pipeline tile.',
+          body: '# Refresh',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+        });
+      return {
+        reads: await holder(await version('refresh.md')),
+        readsAnother: await holder(await version('other.md')),
+      };
+    });
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      title: 'Refresh the tile now',
+      contentHash: 'b'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const stamped = async (skillId: Id<'skills'>) =>
+      await harness.run(async (ctx) => (await ctx.db.get(skillId))?.recheckReason ?? null);
+    // A new title alone is not a changed runbook.
+    expect(await stamped(holders.reads)).toBeNull();
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: RUNBOOK.replace('twice', 'three times'),
+      contentHash: 'c'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await stamped(holders.reads)).toBe(
+      'its runbook "Refresh the tile" changed on 8 October 2026',
+    );
+    expect(await stamped(holders.readsAnother)).toBeNull();
+    const row = await harness.run(async (ctx) => await ctx.db.get(holders.reads));
+    expect(row).toMatchObject({ state: 'registered', recheckDueAt: Date.UTC(2026, 9, 8, 3, 0, 0) });
+  });
+
+  it('stamps nothing for a page stored before its hash whose redaction now reads otherwise: nothing says its text changed (second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const holder = await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'refresh.md',
+        title: 'Refresh the tile',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        surfaceClass: 'dashboard',
+        operation: 'refresh',
+        version: 1,
+        body: '# Refresh',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [{ sourceId, ref: 'refresh.md', title: 'Refresh the tile' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        body: '# Refresh',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK.replace('Press refresh twice.', 'Press refresh twice. <person: name>'),
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null),
+    ).toBeNull();
+  });
+});
+
+describe('the finish’s prune over a provider that lists in no fixed order (14-D ruling 1 (b), 8 October)', (): void => {
+  /** A source whose last complete walk (listing 1) named `kept.md` and `missed.md`, each mirrored. */
+  async function walkedSource(harness: TestConvex<typeof schema>): Promise<{
+    sourceId: Id<'docSources'>;
+  }> {
+    return await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Drive',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        listings: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'source test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+      for (const ref of ['kept.md', 'missed.md']) {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+        });
+        await ctx.db.insert('docPageListings', { sourceId, ref, seenBy: 1 });
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: mirroredDocSlug(sourceId, ref),
+          title: ref,
+          body: `# ${ref}`,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: ref,
+          updatedAt: 1,
+        });
+      }
+      const completed = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        pagesListed: 2,
+        credentialRefs: [],
+        pageCount: 2,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 1,
+        summary: {
+          pagesKept: 2,
+          pagesRemoved: 0,
+          mirrorsRemoved: 0,
+          credentialsSuperseded: 0,
+          surfacesToReapprove: 0,
+        },
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: completed });
+      return { sourceId };
+    });
+  }
+
+  /** One complete walk that lists the given refs. */
+  async function walk(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+    refs: string[],
+  ): Promise<Doc<'docSyncRuns'> | null> {
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await finishGeneration(harness, sourceId, runId, {
+      refs,
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    return await harness.run(async (ctx) => await ctx.db.get(runId));
+  }
+
+  /** The refs of the source's stored pages and of its mirrors. */
+  async function stored(
+    harness: TestConvex<typeof schema>,
+    sourceId: Id<'docSources'>,
+  ): Promise<{ pages: string[]; mirrors: string[] }> {
+    return await harness.run(async (ctx) => ({
+      pages: (
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((page) => page.ref)
+        .sort(),
+      mirrors: (
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_source', (index) => index.eq('sourceId', sourceId))
+          .collect()
+      )
+        .map((mirror) => mirror.sourceRef ?? '')
+        .sort(),
+    }));
+  }
+
+  it('keeps a page one complete walk missed, its mirror too, and prunes it when the next complete walk misses it again', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    const once = await walk(harness, sourceId, ['kept.md']);
+    expect(once).toMatchObject({ state: 'completed' });
+    expect(once?.summary).toMatchObject({ pagesRemoved: 0, mirrorsRemoved: 0 });
+    expect(await stored(harness, sourceId)).toEqual({
+      pages: ['kept.md', 'missed.md'],
+      mirrors: ['kept.md', 'missed.md'],
+    });
+
+    const twice = await walk(harness, sourceId, ['kept.md']);
+    expect(twice?.summary).toMatchObject({ pagesRemoved: 1, mirrorsRemoved: 1 });
+    expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
+  });
+
+  it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const ref = credentialSourceRef('missed.md', 'a'.repeat(32));
+    const credentialId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'Looker tile password',
+          ciphertext: 'encrypted',
+          iv: 'iv',
+          source: { sourceId, ref },
+          createdAt: 1,
+        }),
+    );
+    // The last complete walk stated it, as the page that holds it was read then.
+    await harness.run(async (ctx): Promise<void> => {
+      const source = await ctx.db.get(sourceId);
+      await ctx.db.patch(source!.lastCompletedSyncId!, { credentialRefs: [ref] });
+    });
+    const status = async (): Promise<string | undefined> =>
+      (await harness.run(async (ctx) => await ctx.db.get(credentialId)))?.status;
+
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await status()).toBeUndefined();
+
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await status()).toBe('superseded');
+  });
+
+  it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    await walk(harness, sourceId, ['kept.md']);
+    await walk(harness, sourceId, ['kept.md', 'missed.md']);
+    await walk(harness, sourceId, ['kept.md']);
+
+    expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
+  });
+
+  it('counts no walk that ended before it completed as a miss', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+
+    await walk(harness, sourceId, ['kept.md']);
+    // A walk superseded part-way: it named only `kept.md` before a newer sync took over.
+    const cutOff = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.recordSyncBatch, {
+      sourceId,
+      runId: cutOff,
+      nextCursor: 'after-1',
+      refs: ['kept.md'],
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+    });
+    await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
+
+    expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
   });
 });

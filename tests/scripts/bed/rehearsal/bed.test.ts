@@ -163,6 +163,8 @@ describe('bringing the bed up', (): void => {
     composeDown(runner, bed, false);
     expect(calls.map((call) => [call.command, ...call.args].join(' '))).toEqual([
       'pnpm exec tsx scripts/dev-no-auth-key.ts init',
+      // The backend runs the image built from docker/backend.Dockerfile (14-F ruling 1 (a)).
+      `docker ${compose.join(' ')} build backend`,
       `docker ${compose.join(' ')} up -d --no-build`,
       'docker compose -p day0-rehearsal-abc123 --env-file .env.local --profile real exec -T backend ./generate_admin_key.sh',
       'bash scripts/sync-convex-env.sh .env.local',

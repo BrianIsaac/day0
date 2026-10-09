@@ -26,6 +26,10 @@ KEYS=(
   SKILL_SANDBOX_SOCKET
   DAY0_SURFACE_MODE
   DAY0_PRIVATE_HOSTS
+  DAY0_GIT_HOSTS
+  # The CA bundle git trusts for a git server on an internal authority (W14-R41): an action's
+  # environment is the deployment's, so the container's own trust never reaches the clone.
+  GIT_SSL_CAINFO
   DAY0_DOCS_ROOT
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
@@ -116,6 +120,8 @@ CLEAR_WHEN_EMPTY=(
   DAY0_SURFACE_MODE
   # A host dropped from the list must stop being reachable, not linger there.
   DAY0_PRIVATE_HOSTS
+  DAY0_GIT_HOSTS
+  GIT_SSL_CAINFO
   DAY0_CREDENTIAL_KEY
   DAY0_NOTION_MCP_AUTH_TOKEN
   # A dropped secret must stop admitting the bridge, and turns the buttons off.

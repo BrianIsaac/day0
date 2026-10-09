@@ -40,6 +40,8 @@ import { redactTokenShapes } from '../surfaces/redact';
 import { verdictFor } from '../surfaces/verdict';
 import { actionModeInstruction, planPreconditionAudit } from './plan';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { parseProcedureContract, type ProcedureContract } from './procedure-contract';
+import { carriesCiteLines, withoutCiteLines } from '../docs/select';
 import { closingPhaseOwed } from './obligations';
 import { answeredQuestionLines } from './charter-answers';
 import { replyTargetLine, withoutOwnThreadReferences } from './reply-target';
@@ -47,7 +49,7 @@ import { executorCorrectionLines, type PlannerCorrection } from './corrections';
 import { executorAgreementLines, type PromptAgreement } from './agreements';
 import {
   fromLine,
-  namesAnyone,
+  namesEveryCollaborator,
   PEOPLE_HEADING,
   peopleBlockLines,
   type PromptNamed,
@@ -55,9 +57,9 @@ import {
 } from '../people/prompt-block';
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
+  boundEarlierWrites,
   isChatMessage,
   itemEvidence,
-  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -161,6 +163,15 @@ function workDoneOutput(item: number): string {
   return `  ${item}. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.`;
 }
 
+/**
+ * The run's declaration of what each message reports (the wave 13 review's D-5 (b)): asked in both
+ * modes, in the executor's reply and the closing set's. The apply binds a message to the writes it
+ * lists, and the words stay a tripwire over the list (`src/work/evidence-claims.ts`).
+ */
+function reportsOutput(item: number): string {
+  return `  ${item}. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action of this response from 0, reads included (a comment after a read and two posts lists [1, 2]), never a row of the applied ledger, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.`;
+}
+
 const REAL_PROCEDURE_TRAIL_INDEX =
   '  - A MAPPED actionIndex must reference an action emitted in the same response.';
 /**
@@ -196,11 +207,24 @@ const RESUMED_READS_REAL =
 const DEPENDENT_PHASE_MOCK =
   '  - Emit every action in this response and set `needsDependentPhase` to false: the mock environment treats it as one approval set and runs no second authoring phase.';
 
+/**
+ * How a mock run's writes land, and so how its messages are worded (finding 3 of the v0.17.0
+ * redeploy): every action waits for the manager, and a message is read once it has landed. The
+ * planner's line for the same mode tells a plan's step to say "waits for your approval"; a run
+ * that read it wrote "it waits for manager approval before it lands here" into posts that landed,
+ * and on the 14-FW bed one followed such a step literally, posting "Will post the answer here once
+ * approved." and the answer as a draft in the DM. So the run is told, as real mode's held-set rule
+ * says, that the approval is what sends each write.
+ */
+const MOCK_ACTION_MODE =
+  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
+
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   workDoneOutput(5),
+  reportsOutput(6),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
@@ -211,256 +235,17 @@ const MOCK_PREAMBLE = [
   '  - ticket.update:        { slug, status: value or null, comment: string or null }',
   '',
   'Discipline:',
-  `  - ${actionModeInstruction(false, 'mock')}`,
+  `  - ${MOCK_ACTION_MODE}`,
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',
 ].join('\n');
 
-const sourceCategorySchema = z.enum([
-  'inbox',
-  'ticket-queue',
-  'event-stream',
-  'live-document',
-  'meeting-transcript',
-  'calendar',
-]);
-
-const procedureDestinationSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('originating-reference'),
-      refPrefix: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('manager-channel'),
-      argument: z.string().min(1),
-      value: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('reply-target'),
-      argument: z.string().min(1),
-    })
-    .strict(),
-]);
-
-/** The procedure contract the executor answers with: which runtime trail each action follows, validated. */
-export const procedureContractSchema = z
-  .object({
-    trails: z.array(
-      z
-        .object({
-          id: z.string().min(1),
-          appliesTo: z
-            .object({
-              sourceCategories: z.array(sourceCategorySchema),
-            })
-            .strict(),
-          effect: z
-            .object({
-              tool: z.string().min(1),
-              destination: procedureDestinationSchema,
-              requiredPayload: z.array(z.string().min(1)),
-              nonEmptyPayload: z.array(z.string().min(1)),
-              statusTransition: z
-                .object({
-                  argument: z.string().min(1),
-                  full: z.string().min(1),
-                  partial: z.string().min(1),
-                })
-                .strict()
-                .nullable(),
-            })
-            .strict(),
-          evidence: z
-            .object({
-              documentRef: z.string().min(1),
-              title: z.string().min(1),
-              excerpt: z.string().min(1),
-            })
-            .strict(),
-        })
-        .strict(),
-    ),
-  })
-  .strict();
-
-/** A validated procedure contract. */
-export type ProcedureContract = z.infer<typeof procedureContractSchema>;
-
-type ProcedureDocument = MockSurfaceSnapshot['howToGuides'][number];
-
-const SOURCE_CATEGORIES = sourceCategorySchema.options;
-const STATUS_VALUE = '(open|in-progress|blocked|done)';
-
-function documentedSourceCategories(body: string): Array<z.infer<typeof sourceCategorySchema>> {
-  const lower = body.toLowerCase();
-  return SOURCE_CATEGORIES.filter((category) => {
-    const spaced = category.replaceAll('-', ' ');
-    return lower.includes(category) || lower.includes(spaced);
-  });
-}
-
-function firstCapture(body: string, patterns: RegExp[]): string | undefined {
-  for (const pattern of patterns) {
-    const value = pattern.exec(body)?.[1];
-    if (value) return value.toLowerCase();
-  }
-  return undefined;
-}
-
-function documentedFullStatus(body: string): string | undefined {
-  return firstCapture(body, [
-    new RegExp(
-      `status\\s*:\\s*[\u0060"']*${STATUS_VALUE}[\u0060"']*\\s+for\\s+(?:full|complete)`,
-      'i',
-    ),
-    new RegExp(
-      `(?:full(?:y)?\\s+(?:closed?|complete)|completed?[^.;\\n]{0,30})[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`,
-      'i',
-    ),
-  ]);
-}
-
-function documentedPartialStatus(body: string): string | undefined {
-  return firstCapture(body, [
-    new RegExp(`[\u0060"']*${STATUS_VALUE}[\u0060"']*\\s+for\\s+partial`, 'i'),
-    new RegExp(
-      `(?:unfinished|incomplete|partial(?:ly)?)[^.;\\n]{0,80}?status[\u0060"']*\\s+(?:to|as)\\s+[\u0060"']*${STATUS_VALUE}`,
-      'i',
-    ),
-  ]);
-}
-
-function documentedManagerDestination(body: string): string | undefined {
-  return firstCapture(body, [
-    /put\s+[`"']([^`"']+)[`"']\s+in\s+[`"']?channelSlug/i,
-    /(?:draft|recap|report|summary)[^\n.]{0,120}?(?:to|in)\s+[`"']([^`"']+)[`"']/i,
-    /channelSlug[`"']?\s+(?:to|is|value)?\s*[`"']([^`"']+)[`"']/i,
-  ]);
-}
-
-function procedureExcerpt(document: ProcedureDocument, pattern: RegExp): string {
-  return (
-    document.body
-      .split('\n')
-      .map((line) => line.trim())
-      .find((line) => pattern.test(line)) ?? document.body.trim().slice(0, 320)
-  );
-}
-
-function semanticTrailKey(trail: Omit<ProcedureContract['trails'][number], 'id'>): string {
-  return JSON.stringify({
-    appliesTo: trail.appliesTo,
-    tool: trail.effect.tool,
-    destination: trail.effect.destination,
-    statusTransition: trail.effect.statusTransition,
-  });
-}
-
-/**
- * Parse only procedure facts present in the runtime-loaded document bodies.
- * Unrecognised wording returns an empty contract; no built-in policy is used.
- */
-export function parseProcedureContract(
-  documents: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
-): ProcedureContract {
-  const candidates: Array<Omit<ProcedureContract['trails'][number], 'id'>> = [];
-  const loaded = [...documents.howToGuides, ...documents.teamDocs];
-  for (const document of loaded) {
-    const body = document.body;
-    if (/ticket\.update/i.test(body) && /originat(?:ing|ed)/i.test(body)) {
-      const full = documentedFullStatus(body);
-      const partial = documentedPartialStatus(body);
-      const sourceCategories = documentedSourceCategories(body);
-      const requiresComment =
-        /(?:non-empty|one-line)[^\n.]{0,30}[\u0060"']?comment/i.test(body) ||
-        /(?:add|supply|include)[^\n.]{0,50}[\u0060"']?comment[^\n.]{0,50}(?:summaris|summariz|explain|record)/i.test(
-          body,
-        );
-      if (full && partial && sourceCategories.length > 0) {
-        candidates.push({
-          appliesTo: { sourceCategories },
-          effect: {
-            tool: 'ticket.update',
-            destination: { kind: 'originating-reference', refPrefix: 'ticket://' },
-            requiredPayload: requiresComment ? ['comment'] : [],
-            nonEmptyPayload: requiresComment ? ['comment'] : [],
-            statusTransition: { argument: 'status', full, partial },
-          },
-          evidence: {
-            documentRef: document.slug,
-            title: document.title,
-            excerpt: procedureExcerpt(document, /originat(?:ing|ed)/i),
-          },
-        });
-      }
-    }
-
-    if (
-      /slack\.postMessage/i.test(body) &&
-      /(?:manager|supervisor|boss|lead)[^\n.]{0,80}(?:channel|dm|private)|(?:channel|dm|private)[^\n.]{0,80}(?:manager|supervisor|boss|lead)/i.test(
-        body,
-      ) &&
-      /(?:draft|recap|report|summary)/i.test(body) &&
-      /channelSlug/i.test(body) &&
-      /[\u0060"']?body[\u0060"']?/i.test(body)
-    ) {
-      const destination = documentedManagerDestination(body);
-      if (destination) {
-        candidates.push({
-          appliesTo: { sourceCategories: [] },
-          effect: {
-            tool: 'slack.postMessage',
-            destination: { kind: 'manager-channel', argument: 'channelSlug', value: destination },
-            requiredPayload: ['body'],
-            nonEmptyPayload: ['body'],
-            statusTransition: null,
-          },
-          evidence: {
-            documentRef: document.slug,
-            title: document.title,
-            excerpt: procedureExcerpt(document, /(?:manager|supervisor|boss|lead)/i),
-          },
-        });
-      }
-    }
-  }
-
-  const merged = new Map<string, Omit<ProcedureContract['trails'][number], 'id'>>();
-  for (const candidate of candidates) {
-    const key = semanticTrailKey(candidate);
-    const existing = merged.get(key);
-    if (!existing) {
-      merged.set(key, candidate);
-      continue;
-    }
-    const requiredPayload = [
-      ...new Set([...existing.effect.requiredPayload, ...candidate.effect.requiredPayload]),
-    ];
-    const nonEmptyPayload = [
-      ...new Set([...existing.effect.nonEmptyPayload, ...candidate.effect.nonEmptyPayload]),
-    ];
-    merged.set(key, {
-      ...existing,
-      effect: { ...existing.effect, requiredPayload, nonEmptyPayload },
-      evidence:
-        candidate.effect.nonEmptyPayload.length > existing.effect.nonEmptyPayload.length
-          ? candidate.evidence
-          : existing.evidence,
-    });
-  }
-  const trails = [...merged.values()].map((trail, index) => ({
-    id: `trail-${index + 1}`,
-    ...trail,
-  }));
-  const parsed = procedureContractSchema.safeParse({ trails });
-  return parsed.success ? parsed.data : { trails: [] };
-}
+export {
+  parseProcedureContract,
+  procedureContractSchema,
+  type ProcedureContract,
+} from './procedure-contract';
 
 function ticketClosureFromContract(
   contract: ProcedureContract,
@@ -496,6 +281,7 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
   workDoneOutput(6),
+  reportsOutput(7),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
@@ -528,7 +314,8 @@ const REAL_PREAMBLE = [
 /**
  * The executor preamble for one surface mode.
  *
- * The mock preamble is byte-for-byte the hosted demo's prompt. The real-mode
+ * The mock preamble is the hosted demo's prompt (moved at v0.18.0 by the `reports` item and the
+ * action-mode line, the standard's 15.2). The real-mode
  * preamble names only the two surface verbs: the four mock verbs are refused
  * by the registry in real mode, so telling the model about them would only
  * produce actions that fail the run.
@@ -564,6 +351,13 @@ const cellsSchema = z
   )
   .min(1);
 
+/**
+ * On an action that can carry a message, the places in this response of the earlier writes the
+ * message reports as made (the wave 13 review's D-5 (b)): required-but-nullable, null on an action
+ * that is no message, an empty list on a message that reports none.
+ */
+const reportsSchema = z.array(z.number().int().nonnegative()).nullable();
+
 /** One emitted action as the model returns it, either verb, validated before it reaches the gate. */
 export const generatedActionSchema = z.union([
   z
@@ -588,6 +382,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -599,6 +394,7 @@ export const generatedActionSchema = z.union([
           body: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -611,6 +407,7 @@ export const generatedActionSchema = z.union([
           comment: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -623,6 +420,7 @@ export const generatedActionSchema = z.union([
           toolArgsJson: z.string(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
   z
@@ -637,6 +435,7 @@ export const generatedActionSchema = z.union([
           body: z.string().nullable(),
         })
         .strict(),
+      reports: reportsSchema,
     })
     .strict(),
 ]);
@@ -969,14 +768,25 @@ function recordedPlanStepBasis(
 
 type GeneratedAction = z.infer<typeof generatedActionSchema>;
 
+/**
+ * An action's declared reports as the output keeps them, null included: a message whose `reports`
+ * is null while its words report earlier writes is a tripwire finding (W14-R8), so the null must
+ * reach the check.
+ */
+function reportsOf(action: GeneratedAction): Pick<MockAction, 'reports'> {
+  return 'reports' in action ? { reports: action.reports } : {};
+}
+
 function materialiseGeneratedAction(action: GeneratedAction): MockAction {
   switch (action.tool) {
     case 'spreadsheet.appendRow':
+      return action;
     case 'twitter.reply':
     case 'mcp.call':
-      return action;
+      return { tool: action.tool, args: action.args, ...reportsOf(action) };
     case 'slack.postMessage':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           channelSlug: action.args.channelSlug,
@@ -986,6 +796,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'ticket.update':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           slug: action.args.slug,
@@ -995,6 +806,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
       };
     case 'http.request':
       return {
+        ...reportsOf(action),
         tool: action.tool,
         args: {
           surface: action.args.surface,
@@ -1148,7 +960,12 @@ export function executorCharterLines(
     `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
     `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
     `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
-    ...(namesAnyone(reader.people)
+    // Left out only when the block prints every collaborator it names (W13-R22): one the manager
+    // never confirmed would otherwise leave the prompt with its topic.
+    ...(namesEveryCollaborator(
+      reader.people,
+      (charter.namedCollaborators ?? []).map((person) => person.name),
+    )
       ? []
       : [
           `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
@@ -1322,7 +1139,17 @@ function dropActions<T extends CorrectableOutput>(
     index - indices.filter((removedIndex) => removedIndex < index).length;
   return {
     ...output,
-    actions: output.actions.filter((_, index) => !removed.has(index)),
+    actions: output.actions
+      .filter((_, index) => !removed.has(index))
+      .map((action) =>
+        // A kept message's declared reports follow the writes they name to their new places.
+        !Array.isArray(action.reports)
+          ? action
+          : {
+              ...action,
+              reports: action.reports.filter((at) => !removed.has(at)).map(reindex),
+            },
+      ),
     ...(output.procedureTrailLimitations
       ? {
           procedureTrailLimitations: output.procedureTrailLimitations
@@ -1385,14 +1212,17 @@ export function withholdActions<T extends CorrectableOutput>(
   by: string = 'by the evidence check',
 ): T {
   if (refusals.length === 0) return output;
-  const reasons = new Map(refusals.map(({ index, reason }) => [index, reason]));
-  const withheld: WithheldAction[] = refusals.map(({ index, reason }) => ({
+  // A message bound to a write withheld here goes with it, by its declared reports (D-5 (b)) or its
+  // words (W14-R8): the apply would bind it the same way, so it must not land on what is left.
+  const all = withReportsOfWithheld(output.actions, refusals);
+  const reasons = new Map(all.map(({ index, reason }) => [index, reason]));
+  const withheld: WithheldAction[] = all.map(({ index, reason }) => ({
     action: output.actions[index]!,
     reason,
   }));
   const dropped = dropActions(
     output,
-    refusals.map(({ index }) => index),
+    all.map(({ index }) => index),
     (trailId, actionIndex) => ({
       trailId,
       state: 'inapplicable' as const,
@@ -1419,14 +1249,22 @@ export function withReportsOfWithheld(
   actions: readonly MockAction[],
   given: readonly AuditRefusal[],
 ): AuditRefusal[] {
+  return withBoundOf(actions, given, (action, index) =>
+    boundEarlierWrites(action, actions.slice(0, index)),
+  );
+}
+
+/** The refusals with every action whose bound earlier writes include a withheld one added, in index order. */
+function withBoundOf(
+  actions: readonly MockAction[],
+  given: readonly AuditRefusal[],
+  boundOf: (action: MockAction, index: number) => readonly number[],
+): AuditRefusal[] {
   const refusals = [...given];
   const withheld = new Map(given.map((refusal) => [refusal.index, refusal.reason]));
   actions.forEach((action, index): void => {
     if (withheld.has(index)) return;
-    const at = [...withheld.keys()]
-      .filter((earlier) => earlier < index)
-      .sort((a, b) => a - b)
-      .find((earlier) => reportsEarlierWrite(action, [actions[earlier]!]));
+    const at = boundOf(action, index).find((earlier) => earlier < index && withheld.has(earlier));
     if (at === undefined) return;
     const reason = `withheld with a write it reports, which was withheld: ${withheld.get(at)}`;
     withheld.set(index, reason);
@@ -1467,7 +1305,8 @@ async function withholdUnsupported<T extends CorrectableOutput>(
   for (let round = 0; round <= output.actions.length; round += 1) {
     const findings = findingsOf(corrected.actions);
     if (findings.length === 0) break;
-    const refusals = refusalsOf(findings);
+    // The messages bound to a withheld write go with it, and are recorded with it (W14-R8).
+    const refusals = withReportsOfWithheld(corrected.actions, refusalsOf(findings));
     corrected = withholdActions(corrected, refusals);
     await record?.(
       refusals.map((refusal) => refusal.index),
@@ -2938,6 +2777,21 @@ export function removePrewrittenClosingActions(
   };
 }
 
+/**
+ * What a real run is told of the cite lines the documentation selection prints (wave 14, 14-R),
+ * only when the documentation carries them: they label where text comes from, and a write that
+ * copies one would put Day0's bookkeeping in front of a colleague.
+ */
+export const CITE_LINES_EXECUTOR =
+  'Lines of the form `[cite: ...]` in the documentation label where the text below them comes from. Name a page in your own words when you quote it, and never copy a cite line into an action, a draft or a note.';
+
+/** Whether the loaded documentation was assembled by the selection, so carries cite lines. */
+function citedDocumentation(
+  mockEnv: Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>,
+): boolean {
+  return [...mockEnv.howToGuides, ...mockEnv.teamDocs].some((page) => carriesCiteLines(page.body));
+}
+
 /** Build the complete system prompt, including the final live-mode override. */
 export function executorInstructions(args: {
   mode: SurfaceMode;
@@ -2956,6 +2810,7 @@ export function executorInstructions(args: {
     '',
     '--- How-to guides (action format reference) ---',
     renderHowTos(args.mockEnv.howToGuides),
+    ...(args.mode === 'real' && citedDocumentation(args.mockEnv) ? [CITE_LINES_EXECUTOR] : []),
     '',
     '--- Skill body (apply as your behavioural prior) ---',
     args.skillBody,
@@ -3031,6 +2886,17 @@ async function withoutOwnThreadReferencesRecorded<
   return { ...output, actions: [...scrubbed.actions] };
 }
 
+/**
+ * The team documents' section of an executor user prompt. A real run reads it straight after the
+ * charter, before the approved plan and the candidate (wave 14, 14-R), so the item's own lines
+ * come last and a provider's prefix cache can hold the charter and the pages when two items read
+ * the same ones; the mock run keeps it after the candidate, so the hosted demo's prompt is
+ * unchanged.
+ */
+function teamDocsLines(mockEnv: Pick<MockSurfaceSnapshot, 'teamDocs'>): string[] {
+  return ['--- Team docs (read-only context) ---', renderTeamDocs(mockEnv.teamDocs)];
+}
+
 /** Execute one skill on one candidate through the model, with its output audited before it returns. */
 export async function runSkill(args: RunSkillArgs): Promise<ExecutionOutput> {
   return withoutOwnThreadReferencesRecorded(await authorSkillRun(args), args);
@@ -3065,6 +2931,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       currentManager: args.currentManager,
       ...(mode === 'real' && args.people ? { people: args.people } : {}),
     }),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((s, i) => `${i + 1}. ${s}`).join(' ')}`,
@@ -3095,9 +2962,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...(mode === 'mock'
       ? ['--- Current mock work environment ---', renderEnvSnapshot(mockEnv), '']
       : []),
-    '--- Team docs (read-only context) ---',
-    renderTeamDocs(mockEnv.teamDocs),
-    '',
+    ...(mode === 'real' ? [] : [...teamDocsLines(mockEnv), '']),
     mode === 'real'
       ? 'Produce the draft, notes, needsDependentPhase flag, prerequisite actions, and procedure-trail accounting now.'
       : 'Produce the draft, notes, actions, and procedure-trail accounting now.',
@@ -3150,7 +3015,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
         ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
       ].join('\n'),
       documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
-        (page) => `${page.title}\n${page.body}`,
+        (page) => `${page.title}\n${withoutCiteLines(page.body)}`,
       ),
       managerFeedback: [
         ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),
@@ -3878,6 +3743,7 @@ async function authorDependentSkillRun(
       currentManager: args.currentManager,
       ...(mode === 'real' && args.people ? { people: args.people } : {}),
     }),
+    ...(mode === 'real' ? ['', ...teamDocsLines(mockEnv)] : []),
     '',
     `Approved plan: ${plan.summary}`,
     `Plan steps: ${plan.steps.map((step, index) => `${index + 1}. ${step}`).join(' ')}`,
@@ -3903,9 +3769,7 @@ async function authorDependentSkillRun(
     '--- Procedure trail applicability for this candidate ---',
     renderProcedureApplicability(procedureContract, candidate, mode),
     '',
-    '--- Team docs (read-only context) ---',
-    renderTeamDocs(mockEnv.teamDocs),
-    '',
+    ...(mode === 'real' ? [] : [...teamDocsLines(mockEnv), '']),
     '--- Applied prerequisite ledger ---',
     appliedLedgerPrompt(args.initialOutput.actions, args.initialLedger),
     ...(args.initialFailure
@@ -3958,7 +3822,7 @@ async function authorDependentSkillRun(
       ...(mode === 'real' ? heldElsewhereRows(args.heldElsewhere) : []),
     ].join('\n'),
     documentation: [...mockEnv.howToGuides, ...mockEnv.teamDocs].map(
-      (page) => `${page.title}\n${page.body}`,
+      (page) => `${page.title}\n${withoutCiteLines(page.body)}`,
     ),
     managerFeedback: [
       ...(args.managerFeedback?.trim() ? [args.managerFeedback] : []),

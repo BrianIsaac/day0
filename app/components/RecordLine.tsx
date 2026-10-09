@@ -1,10 +1,23 @@
 import type { ReactNode } from 'react';
 
-/** What a line of the record says happened, drawn as the colour of its dot. */
-export type RecordKind = 'landed' | 'refused' | 'withheld' | 'held' | 'noted';
+/**
+ * What a line of the record says happened, drawn as the colour of its dot. A finished run that
+ * its own answer says was partly done or not done is drawn by that answer, not by its writes'
+ * landing (13-FD's R3, finding 4 of the v0.17.0 redeploy: "Landed:" beside "ended ... partly done").
+ */
+export type RecordKind =
+  | 'landed'
+  | 'partly-done'
+  | 'not-done'
+  | 'refused'
+  | 'withheld'
+  | 'held'
+  | 'noted';
 
 const DOT: Readonly<Record<RecordKind, string>> = {
   landed: 'bg-[var(--color-ok)]',
+  'partly-done': 'bg-[var(--color-warn)]',
+  'not-done': 'bg-[var(--color-muted)]',
   refused: 'bg-[var(--color-danger)]',
   withheld: 'bg-[var(--color-muted)]',
   held: 'bg-[var(--color-warn)]',
@@ -14,6 +27,8 @@ const DOT: Readonly<Record<RecordKind, string>> = {
 /** What a dot means, for a reader who cannot see its colour. */
 const SAID: Readonly<Record<RecordKind, string>> = {
   landed: 'Landed',
+  'partly-done': 'Partly done',
+  'not-done': 'Not done',
   refused: 'Refused',
   withheld: 'Withheld',
   held: 'Held',

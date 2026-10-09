@@ -10,6 +10,9 @@ import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
+import { pageContentHash } from '../src/docs/content-hash';
+import { knownValueSpans } from '../src/redaction/redact';
+import { credentialKeyId } from '../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
@@ -48,6 +51,17 @@ export { SYNC_HELD_REASON };
  * A larger page is not stored and keeps its last stored version (P5-11).
  */
 export const MAX_STORED_PAGE_BYTES = 768 * 1024;
+
+/**
+ * How many times one sync starts its listing again when the listing changed under its cursor
+ * before it stops (M19). A source written into all day would otherwise restart without end, its
+ * runs piling up and its status never leaving `linking`.
+ */
+export const MAX_LISTING_RESTARTS = 3;
+
+/** Why a sync stopped after {@link MAX_LISTING_RESTARTS} restarts, as the source's card says it. */
+export const LISTING_RESTARTS_REASON =
+  'The source kept changing while it was read: its listing changed under the sync and again after each of three fresh starts, so this sync stopped. The next scheduled sync reads it again from the first page.';
 
 /** What one batch persisted, and the pages it could not. */
 export interface PersistedBatch {
@@ -166,6 +180,10 @@ async function mirrorPages(
 /**
  * Store credentials, redact the raw body, and persist only safe page content.
  *
+ * A page whose hash before redaction is the one stored with it is kept as stored, with no
+ * redaction and no split (P8-10; 14-I): its stored credentials stay stated, and it is mirrored
+ * as before. Without a credential key no hash is taken and every page is redacted, as before.
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -203,9 +221,10 @@ export async function persistPageBatch(
   // Every value the owner already stores is removed from every page before
   // the model is asked; resolved once for the batch.
   const known = knownValues ?? (await ownerKnownValues(ctx, source.userId));
+  const key = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
   for (const page of pages) {
     try {
-      const stored = await persistPage(ctx, source, page, syncRunId, { model, known });
+      const stored = await persistPage(ctx, source, page, syncRunId, { model, known, key });
       safePages.push(stored.page);
       credentialRefs.push(...stored.credentialRefs);
       redactions += stored.credentialRefs.length;
@@ -232,7 +251,25 @@ export async function persistPageBatch(
 }
 
 /**
- * Redact one page, store its credentials and then the page.
+ * The key the batch's page hashes are taken under: the deployment's credential key, or none when
+ * it has none or holds one that is not a key, logged, so every page is redacted as before the
+ * hash rather than every page failing on it.
+ */
+function pageHashKey(key: string | undefined): string | undefined {
+  if (key === undefined || key === '') return undefined;
+  try {
+    credentialKeyId(key);
+    return key;
+  } catch {
+    // Not a key: the value itself is never logged, only that no hash is taken.
+    log.warn('documentation sync takes no page hash: the credential key is not a usable key');
+    return undefined;
+  }
+}
+
+/**
+ * Redact one page, store its credentials and then the page; or keep it as stored when its hash
+ * is unchanged.
  *
  * @throws Error when the page is too large to store, or any step refuses it.
  */
@@ -241,13 +278,24 @@ async function persistPage(
   source: Doc<'docSources'>,
   page: DocPage,
   syncRunId: Id<'docSyncRuns'>,
-  redaction: { readonly model: SpanModel | undefined; readonly known: readonly string[] },
+  redaction: {
+    readonly model: SpanModel | undefined;
+    readonly known: readonly string[];
+    /** The deployment's credential key, which keys the page's hash; none, no hash. */
+    readonly key: string | undefined;
+  },
 ): Promise<{ page: DocPage; credentialRefs: string[] }> {
   const bytes = Buffer.byteLength(page.markdown);
   if (bytes > MAX_STORED_PAGE_BYTES) {
     throw new Error(
       `The page is ${Math.ceil(bytes / 1024)} KiB, larger than the ${MAX_STORED_PAGE_BYTES / 1024} KiB Day0 stores.`,
     );
+  }
+  const contentHash =
+    redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  if (contentHash !== undefined) {
+    const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
+    if (kept !== undefined) return kept;
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
   const result = await redactCredentials(
@@ -282,16 +330,62 @@ async function persistPage(
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
   };
-  await ctx.runMutation(internal.docSources.upsertPage, { ...safePage, syncRunId });
+  await ctx.runMutation(internal.docSources.upsertPage, {
+    ...safePage,
+    syncRunId,
+    ...(contentHash !== undefined ? { contentHash } : {}),
+  });
   return { page: safePage, credentialRefs };
+}
+
+/**
+ * A page stored under the hash it has now, as the batch keeps it: the stored (redacted) title,
+ * address and body, and the refs of the credentials the page states, which are its stored rows
+ * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
+ * its stored text holds a value the owner stored since it was redacted, which only a new
+ * redaction removes.
+ */
+async function keptUnchangedPage(
+  ctx: ActionCtx,
+  source: Doc<'docSources'>,
+  page: DocPage,
+  contentHash: string,
+  known: readonly string[],
+): Promise<{ page: DocPage; credentialRefs: string[] } | undefined> {
+  const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
+    sourceId: source._id,
+    ref: page.ref,
+    contentHash,
+  });
+  if (stored === null) return undefined;
+  // In any form the exact layer removes (literal, JSON-escaped, URL-encoded).
+  if (
+    knownValueSpans(stored.markdown, known).length > 0 ||
+    knownValueSpans(stored.title, known).length > 0
+  ) {
+    return undefined;
+  }
+  const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
+    userId: source.userId,
+    sourceId: source._id,
+    pageRef: page.ref,
+  });
+  const credentialRefs = rows.flatMap((row): string[] =>
+    typeof row.source !== 'string' && row.status !== 'superseded' ? [row.source.ref] : [],
+  );
+  return {
+    page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
+    credentialRefs,
+  };
 }
 
 /**
  * What a generation keeps of the pages one batch could not read.
  *
- * Each keeps its stored version and its stored credentials: its ref and its
- * credential rows' refs go into the generation's current sets, so the final
- * batch neither deletes the page nor supersedes its values.
+ * Each one stored before keeps its stored version and its stored credentials: its ref and its
+ * credential rows' refs go into the generation's current sets, so the final batch neither deletes
+ * the page nor supersedes its values. One never stored keeps nothing and is not counted as a page
+ * the source holds (W14-R11); the run's record still names it.
  *
  * @returns The refs and credential refs to add to the batch's own.
  */
@@ -300,6 +394,11 @@ async function keptUnreadPages(
   source: Doc<'docSources'>,
   unread: readonly UnreadPage[],
 ): Promise<{ refs: string[]; credentialRefs: string[] }> {
+  if (unread.length === 0) return { refs: [], credentialRefs: [] };
+  const stored = await ctx.runQuery(internal.docPages.storedPageRefs, {
+    sourceId: source._id,
+    refs: unread.map((page): string => page.ref),
+  });
   const credentialRefs: string[] = [];
   for (const page of unread) {
     const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
@@ -311,7 +410,7 @@ async function keptUnreadPages(
       if (typeof row.source !== 'string') credentialRefs.push(row.source.ref);
     }
   }
-  return { refs: unread.map((page): string => page.ref), credentialRefs };
+  return { refs: stored, credentialRefs };
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
@@ -485,6 +584,21 @@ export const syncBatch = internalAction({
       return { ok: true, ...counts, complete: false };
     } catch (error) {
       if (error instanceof ListingChangedError) {
+        if ((context.run.restarts ?? 0) >= MAX_LISTING_RESTARTS) {
+          await ctx.runMutation(internal.docSources.failSync, {
+            sourceId: source._id,
+            runId: args.runId,
+            status: 'error',
+            reason: LISTING_RESTARTS_REASON,
+          });
+          return {
+            ok: false,
+            pages: 0,
+            redactions: 0,
+            complete: true,
+            reason: LISTING_RESTARTS_REASON,
+          };
+        }
         const restarted = await ctx.runMutation(internal.docSources.restartSync, {
           sourceId: source._id,
           runId: args.runId,
@@ -520,9 +634,9 @@ export const syncBatch = internalAction({
 /**
  * Finish a generation that has read every page, one bounded transaction at a time.
  *
- * From the point the run's cursor records, the stored pages it did not list,
- * the superseded page credentials that have aged out and then the mirrors it
- * did not list are removed a page at a time, the employees'
+ * From the point the run's cursor records, the stored pages neither it nor the
+ * complete walk before it listed, the superseded page credentials that have
+ * aged out and then those pages' mirrors are removed a page at a time, the employees'
  * intake scopes are re-read against the pages as they now stand (real mode),
  * and `finishSync` supersedes the credentials no page states and publishes
  * the synced state. Each step is fenced on the run's cursor, so a newer sync

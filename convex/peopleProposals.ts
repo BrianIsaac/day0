@@ -10,6 +10,7 @@ import { appendEvent } from './eventLog';
 import { employeeOwnerScope, ownerScope } from './ownership';
 import { retireEdgesOf } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
+import { proposedValues, sameValues } from '../src/people/proposed-change';
 import { normaliseManagerAddress } from '../src/agent/manager-address';
 import { transcriptTurns, type TranscriptTurn } from '../src/agent/transcript-turns';
 import { charterPeople, charterQuote, type CharterPerson } from '../src/people/charter-people';
@@ -206,7 +207,11 @@ export function notTheirAddressEvidence(address: string, at: number): Evidence {
   };
 }
 
-/** The addresses the manager said are not a person's ({@link notTheirAddressEvidence}). */
+/**
+ * The addresses a person's evidence marks as someone else's ({@link notTheirAddressEvidence}): the
+ * marker the `people-not-their-addresses` pass lifts into `people.notTheirAddresses`. Read by that
+ * pass alone since 14-FX; it goes with the marker in the release after (N10).
+ */
 export function notTheirAddresses(person: Pick<Doc<'people'>, 'evidence'>): ReadonlySet<string> {
   return new Set(
     person.evidence.flatMap((item) =>
@@ -298,12 +303,40 @@ async function proposeEdges(
 }
 
 /**
+ * The change a source proposes to a person the manager confirmed (W13-R3): the title, team and
+ * address it gives that differ from the confirmed ones, with the words that gave them; nothing
+ * when it gives none that differ, has no words, or proposes what the person already holds as its
+ * proposed change. The owner's own row is the Manager card's and is offered no change.
+ */
+function proposedChangeOf(
+  person: Doc<'people'>,
+  proposal: ProposedPerson,
+  address: string | undefined,
+  origin: ProposalOrigin,
+  now: number,
+): NonNullable<Doc<'people'>['proposedChange']> | undefined {
+  if (person.isOwner === true) return undefined;
+  const values = proposedValues(person, {
+    title: proposal.title,
+    team: proposal.team,
+    primaryEmail: address,
+  });
+  const evidence = proposal.evidence[0];
+  if (values === undefined || evidence === undefined) return undefined;
+  if (person.proposedChange !== undefined && sameValues(person.proposedChange, values)) {
+    return undefined;
+  }
+  return { ...values, source: origin.source, evidence, proposedAt: now };
+}
+
+/**
  * Merge a proposal into a person the graph holds, as evidence: the new words, identities nobody
  * holds, the edges it implies as proposals, and, while the person still waits on Confirm, an
  * address, title or team it has none of. A person the manager confirmed (active, or inactive
  * since) keeps the address, title and team as confirmed: a source never writes one, even where the
  * person has none (W13-R3), since the People block prints them to the planner and the executor;
- * the source's words stay as evidence.
+ * the source's words stay as evidence, and what it gives that differs is kept as the person's
+ * proposed change, for the manager to take or dismiss on the card.
  */
 async function mergeProposal(
   ctx: MutationCtx,
@@ -313,12 +346,14 @@ async function mergeProposal(
   origin: ProposalOrigin,
   now: number,
 ): Promise<void> {
-  const notTheirs = notTheirAddresses(person);
+  const notTheirs = new Set(person.notTheirAddresses ?? []);
   const given = normaliseManagerAddress(proposal.email);
   const address = given !== undefined && notTheirs.has(given) ? undefined : given;
   const fills = person.status === 'unverified';
+  const change = fills ? undefined : proposedChangeOf(person, proposal, address, origin, now);
   await ctx.db.patch(person._id, {
     evidence: withEvidence(person.evidence, proposal.evidence),
+    ...(change === undefined ? {} : { proposedChange: change }),
     ...(fills && person.primaryEmail === undefined && address !== undefined
       ? { primaryEmail: address }
       : {}),
@@ -950,6 +985,9 @@ export const lookupTargets = internalQuery({
 });
 
 /** The validator of an identity a lookup found. */
+/** The most of one person's identities a lookup reads: far past what one person holds. */
+const IDENTITIES_READ = 100;
+
 const foundIdentityValidator = v.object({
   provider: v.union(v.literal('slack'), v.literal('linear')),
   externalId: v.string(),
@@ -959,7 +997,8 @@ const foundIdentityValidator = v.object({
 
 /**
  * Internal, for `peopleLookupActions.lookUpAddresses`: record what a lookup by a person's address
- * found as their identities (`source: 'provider-lookup'`, verified now). An identity on a proposal
+ * found as their identities (`source: 'provider-lookup'`, verified now), and whether it failed
+ * (`lookupFailedAt`, W13-R25). An identity on a proposal
  * answers for nobody until Confirm (readers read confirmed people only); one another person
  * already holds is left for the manager to merge.
  *
@@ -971,6 +1010,11 @@ export const recordLookups = internalMutation({
     /** The address looked up: a lookup of one the person no longer holds records nothing (W13-R8). */
     address: v.optional(v.string()),
     found: v.array(foundIdentityValidator),
+    /**
+     * How the lookup ended (W13-R25): `failed` marks the person (`lookupFailedAt`) once its asks
+     * are spent or a provider refused, `answered` clears a mark; absent while it is still asked.
+     */
+    outcome: v.optional(v.union(v.literal('answered'), v.literal('failed'))),
   },
   returns: v.number(),
   handler: async (ctx, args): Promise<number> => {
@@ -978,16 +1022,45 @@ export const recordLookups = internalMutation({
     if (person === null || person.status === 'dismissed') return 0;
     if (
       args.address !== undefined &&
-      (person.primaryEmail !== args.address || notTheirAddresses(person).has(args.address))
+      (person.primaryEmail !== args.address ||
+        (person.notTheirAddresses ?? []).includes(args.address))
     ) {
       return 0;
     }
     const now = Date.now();
+    if (args.outcome === 'failed') {
+      await ctx.db.patch(person._id, { lookupFailedAt: now });
+    } else if (args.outcome === 'answered' && person.lookupFailedAt !== undefined) {
+      await ctx.db.patch(person._id, { lookupFailedAt: undefined });
+    }
     let added = 0;
+    let offerable: Id<'people'> | undefined;
+    // A confirmed person's own verified accounts: one in a workspace is theirs, so a lookup that
+    // answers another there (an address Take gave them was a colleague's) records none (W14-R18).
+    const own =
+      person.status === 'active'
+        ? (
+            await ctx.db
+              .query('personIdentities')
+              .withIndex('by_person', (q) => q.eq('personId', person._id))
+              .take(IDENTITIES_READ)
+          ).filter((row) => row.verifiedAt !== undefined)
+        : [];
     for (const identity of args.found) {
+      const second = own.some(
+        (row) =>
+          row.provider === identity.provider &&
+          row.providerWorkspaceId === identity.workspaceId &&
+          row.externalId !== identity.externalId,
+      );
+      if (second) continue;
       const held = (await identitiesUnder(ctx, person.userId, [identity])).filter(
         (row) => row.providerWorkspaceId === identity.workspaceId,
       );
+      // Another person holds it: the proposal is offered as possibly them, for the manager's merge
+      // (W13-R25), never given the identity.
+      const holder = held.find((row) => row.personId !== person._id)?.personId;
+      if (holder !== undefined && person.status === 'unverified') offerable ??= holder;
       if (held.length > 0) continue;
       await ctx.db.insert('personIdentities', {
         userId: person.userId,
@@ -1008,6 +1081,17 @@ export const recordLookups = internalMutation({
         createdAt: now,
       });
       added += 1;
+    }
+    // Never the owner's own row (the manager is never a merge target, the one-role rulings), nor a
+    // person the manager dismissed.
+    const holder = offerable === undefined ? null : await ctx.db.get(offerable);
+    if (
+      holder !== null &&
+      holder.isOwner !== true &&
+      holder.status !== 'dismissed' &&
+      person.possiblySameAs === undefined
+    ) {
+      await ctx.db.patch(person._id, { possiblySameAs: holder._id, updatedAt: now });
     }
     return added;
   },

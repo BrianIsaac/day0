@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { act } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('convex/react', () => ({
   useQuery: (): undefined => undefined,
@@ -14,6 +14,7 @@ import {
   planApprovalRequest,
 } from '../../../../app/agent/[agentId]/work/PlanApproval';
 import type { AgreementView } from '../../../../src/work/agreement-words';
+import { CHECK_STALE_MS } from '../../../../src/work/agreement-vocabulary';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { axeViolations } from '../../../fixtures/dom/axe';
 import { button, mount, press, said, settle, typeInto } from '../../../fixtures/dom/press';
@@ -59,7 +60,15 @@ const elsewhere: AgreementView = {
   sourceType: 'manager-card',
 };
 
+beforeEach((): void => {
+  // The page's clock decides when a kept agreement's check is stale (W13-R30): pinned just after
+  // the fixtures were kept, so a row waits on its check unless a test moves the clock.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(10_000);
+});
+
 afterEach((): void => {
+  vi.useRealTimers();
   document.body.replaceChildren();
 });
 
@@ -74,6 +83,9 @@ function proposals(rows: readonly AgreementView[], calls: string[] = []): Return
       }}
       onDismiss={async (id) => {
         calls.push(`dismiss ${id}`);
+      }}
+      onRecheck={async (id) => {
+        calls.push(`recheck ${id}`);
       }}
     />,
   );
@@ -110,6 +122,23 @@ describe('the promotion card', (): void => {
     );
     expect(calls).toEqual(['dismiss wa2']);
     expect(said(view.container).at(-1)).toBe('Withdrawn: it will not take effect.');
+    view.unmount();
+  });
+
+  it('says a check that could not be had once it is stale, and offers Try again beside Withdraw (W13-R30)', async (): Promise<void> => {
+    vi.setSystemTime(2 + CHECK_STALE_MS + 1);
+    const calls: string[] = [];
+    const view = proposals([checking], calls);
+    expect(view.container.textContent).toContain(
+      'Kept, but Day0 could not check “Comment on the ticket and let the account team email the customer.” against the charter yet, so it is not in effect. Try again, or withdraw it.',
+    );
+    await press(
+      view.container,
+      'Try the check of “Comment on the ticket and let the account team email the customer.” again',
+    );
+    expect(calls).toEqual(['recheck wa2']);
+    expect(said(view.container).at(-1)).toBe('Day0 is checking it again.');
+    expect(await axeViolations(view.container)).toEqual([]);
     view.unmount();
   });
 
@@ -219,7 +248,13 @@ describe('the plan approval tick', (): void => {
         gate="mock"
       />,
     );
-    expect(view.container.textContent).not.toContain('Keep this note');
+    // Re-pinned with 13-FD's R10 (14-FX): the hosted office's sentence names the option by its
+    // label, so "no tick" is read as no checkbox.
+    expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
+    // 13-FD's R10: the hosted office says where the tick lives instead of leaving it absent.
+    expect(view.container.textContent).toContain(
+      'Your answer is for this run. In a deployment of your own, “Keep this note for later work of this kind” keeps it as a working agreement.',
+    );
     expect(button(view.container, 'Approve plan with answers')).toBeDefined();
     view.unmount();
   });

@@ -77,6 +77,7 @@ import {
 } from '../fixtures/work/work-done-corpora';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
+import { replacePageBlocks } from '../../convex/docBlocks';
 import { versionBodyHash } from '../../src/work/skill-library';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
@@ -3428,9 +3429,10 @@ describe('executing an approved plan through the gate', (): void => {
     ).resolves.toEqual({ ok: true, reason: 'automatic actions applying' });
     expect(recorded.planSwitches).toEqual([true]);
     // The planner plans from the same evidence the executor acts on: the
-    // agent's surfaces with their verdicts and the loaded documentation.
+    // agent's surfaces with their verdicts and the loaded documentation, with
+    // the record of its selection since wave 14 (14-R), whose cites a step names.
     expect(recorded.planContexts).toEqual([
-      { surfaces: ['linear', 'slack'], documents: ['howToGuides', 'teamDocs'] },
+      { surfaces: ['linear', 'slack'], documents: ['documentation', 'howToGuides', 'teamDocs'] },
     ]);
     expect(recorded.skillSwitches).toEqual([true]);
     const approvals = (await on.run(async (ctx) => await ctx.db.query('events').collect())).filter(
@@ -3925,8 +3927,10 @@ describe('executing an approved plan through the gate', (): void => {
           .withIndex('by_agent', (q) => q.eq('agentId', agentId))
           .collect(),
     );
+    // The run's documentation selection is recorded once the snapshot is read (wave 14, 14-R).
     expect(events.map((event) => event.type)).toEqual([
       'work.execution-claimed',
+      'work.documentation-selected',
       'work.actions-auto-applying',
       'work.actions-applying',
       'work.actions-pending',
@@ -5830,6 +5834,7 @@ describe('the autonomous-actions switch through the gate', (): void => {
     // line under Refused and withheld (wave 12, the wave 6 review's D4 (b)).
     expect(types).toEqual([
       'work.execution-claimed',
+      'work.documentation-selected',
       'work.actions-auto-applying',
       'work.actions-applying',
       'work.completed',
@@ -9678,6 +9683,88 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     },
   );
 
+  it('marks the decided request in the DM when the park of its close comes before its own edit (W13-R50)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    // The card allows the edit that marks a request decided.
+    await harness.run(async (ctx) => {
+      const slack = await ctx.db.get(surfaceId);
+      await ctx.db.patch(surfaceId, {
+        toolAllowlist: [...(slack?.toolAllowlist ?? []), 'chat.update'],
+      });
+    });
+    // The request as it reached the DM, kept for the edit that marks it decided.
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+      text: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+      withButtons: true,
+    });
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The apply parks the close before the decided request's edit has run.
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept).toEqual([
+      expect.objectContaining({
+        decisionId: 'gh6npq',
+        ts: '1789000000.000100',
+        outcome: 'approved',
+        decidedVia: 'channel',
+        requestText: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+        withButtons: true,
+      }),
+    ]);
+    const edit = await harness.mutation(internal.work.prepareReplacedEdit, {
+      replacedId: kept[0]!._id,
+    });
+    expect(edit).toMatchObject({ prepared: true });
+    expect((edit as { text: string }).text).toMatch(
+      /\n\nDecided: approved in this DM \(gh6npq\)\. The ticket close it held waits on its card, and Day0 asks about it in a new message\.$/,
+    );
+    // The edit the approval scheduled finds its request moved on and does nothing more.
+    expect(
+      await harness.mutation(internal.work.prepareRequestClose, {
+        workItemId,
+        decisionId: 'gh6npq',
+      }),
+    ).toEqual({ prepared: false });
+  });
+
+  it('marks the decided request when its own edit was claimed and never finished before the park (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, surfaceId } = await heldOnChannel(harness);
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId,
+      decisionId: 'gh6npq',
+      ts: '1789000000.000100',
+      text: 'Priya holds 2 actions on REVOPS-5 for you. Reply approve gh6npq.',
+    });
+    await approveInSlack(harness, surfaceId, 'typed code');
+    // The edit's claim was taken and its action died before it recorded a result.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, closeClaimedAt: 5 } });
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('replacedDecisionRequests')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+          .collect(),
+    );
+    expect(kept.map((row) => [row.decisionId, row.outcome])).toEqual([['gh6npq', 'approved']]);
+  });
+
   it('then the close approved on its card lands alone, and the item completes', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(contractSchema(), allConvexModules());
@@ -10332,5 +10419,351 @@ describe('the People block in both executor phases (13-J)', (): void => {
     await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
     expect(recorded.skillPeople).toEqual([undefined]);
     expect(recorded.skillRequesters).toEqual([undefined]);
+  });
+});
+
+/** The queries one transaction may make in the fallback test: past the selection over 33 sources, inside every other read. */
+const SELECTION_QUERY_LIMIT = 120;
+
+describe('the documentation selection at the work loop’s sites (14-R)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A real-mode item whose plan reads Linear in phase one and closes in the closing phase. */
+  async function closingItem(harness: Harness) {
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [],
+    };
+    recorded.dependentOutput = {
+      draft: 'Nothing was changed.',
+      notes: '',
+      actions: [],
+      planStepOutcomes: [{ step: 1, status: 'blocked', evidence: 'No Linear read exists.' }],
+    };
+    const seeded = await seed(harness, 'real', ['linear:read'], { autonomousActions: true });
+    const blockIds = await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(seeded.agentId);
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: agent!.userId!,
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook\n\nRead the ticket.',
+        updatedAt: 3,
+      });
+      const standing = await ctx.db.insert('docBlocks', {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 0,
+        headingPath: ['Runbook'],
+        text: 'Read the ticket.',
+        searchText: 'Runbook\nRead the ticket.',
+        kind: 'text',
+        hash: 'hash-0',
+        chars: 16,
+      });
+      const gone = await ctx.db.insert('docBlocks', {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 1,
+        headingPath: ['Runbook', 'Closing'],
+        text: 'Comment, then close.',
+        searchText: 'Runbook Closing\nComment, then close.',
+        kind: 'text',
+        hash: 'hash-1',
+        chars: 20,
+      });
+      await ctx.db.patch(seeded.workItemId, {
+        plan: {
+          summary: 'Read the ticket.',
+          steps: ['Read the ticket in Linear'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Nothing is written.',
+          estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
+        },
+      });
+      return { standing, gone };
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, {
+      workItemId: seeded.workItemId,
+    });
+    const prepared = await readItem(harness, seeded.workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    expect((prepared.output as { phase?: string }).phase).toBe('dependent-authoring');
+    return { ...seeded, runId, blockIds };
+  }
+
+  /** Give the item's plan cites to the given blocks under one label each. */
+  async function cite(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+    cites: Array<{ label: string; blockId: Id<'docBlocks'>; index: number }>,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        plan: {
+          ...(row!.plan as ExecutionPlan),
+          cites: cites.map((entry) => ({
+            step: 1,
+            label: entry.label,
+            blocks: [{ id: entry.blockId, hash: `hash-${entry.index}` }],
+          })),
+        },
+      });
+    });
+  }
+
+  it('fails the closing check when a block the plan cited no longer exists, and runs no closing set', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId, blockIds } = await closingItem(harness);
+    await cite(harness, workItemId, [
+      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing, index: 0 },
+      { label: 'Handbook/runbook.md#Runbook > Closing', blockId: blockIds.gone, index: 1 },
+    ]);
+    await harness.run(async (ctx) => await ctx.db.delete(blockIds.gone));
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(
+      'Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook > Closing")',
+    );
+    expect(recorded.dependentRuns).toBe(0);
+  });
+
+  it('runs the closing set when every cited block stands, and records its selection', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId, blockIds } = await closingItem(harness);
+    await cite(harness, workItemId, [
+      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing, index: 0 },
+    ]);
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    expect(recorded.dependentRuns).toBe(1);
+    const selected = (await events(harness, agentId)).filter(
+      (event) => event.type === 'work.documentation-selected',
+    );
+    expect(selected.map((event) => (event.payload as { site: string }).site)).toEqual([
+      'execute',
+      'closing',
+    ]);
+  });
+
+  it('refuses the first phase before any write when a cited block was rewritten after approval', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [],
+    };
+    const { agentId, workItemId } = await seed(harness, 'real', ['linear:read'], {
+      autonomousActions: true,
+    });
+    const blockId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId);
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: agent!.userId!,
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook\n\nRead the ticket twice.',
+        updatedAt: 3,
+      });
+      const id = await ctx.db.insert('docBlocks', {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 0,
+        headingPath: ['Runbook'],
+        text: 'Read the ticket twice.',
+        searchText: 'Runbook\nRead the ticket twice.',
+        kind: 'text',
+        hash: 'hash-after-the-edit',
+        chars: 22,
+      });
+      await ctx.db.patch(workItemId, {
+        plan: {
+          summary: 'Read the ticket.',
+          steps: ['Read the ticket in Linear'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Nothing is written.',
+          estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
+          cites: [
+            {
+              step: 1,
+              label: 'Handbook/runbook.md#Runbook',
+              blocks: [{ id, hash: 'hash-when-cited' }],
+            },
+          ],
+        },
+      });
+      return id;
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain('Documentation the plan followed has since been changed');
+    expect(recorded.skillRuns).toBe(0);
+    expect(recorded.mcp).toEqual([]);
+    expect(blockId).toBeDefined();
+  });
+
+  it('reads the whole mirror when the selection throws, so the run goes on (W14-R4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    // A read limit only the selection over 33 sources passes stands in for a library past what one
+    // query can select from.
+    const harness = convexTest({
+      schema: contractSchema(),
+      modules: allConvexModules(),
+      transactionLimits: { databaseQueries: SELECTION_QUERY_LIMIT },
+    });
+    recorded.skillOutput = {
+      draft: 'Reading the ticket first.',
+      notes: '',
+      needsDependentPhase: false,
+      actions: [],
+    };
+    const seeded = await seed(harness, 'real', ['linear:read'], { autonomousActions: true });
+    for (let index = 0; index < 33; index += 1) {
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: `Source ${index}`,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        const generation = await ctx.db.insert('docSyncRuns', {
+          sourceId,
+          listing: 1,
+          credentialRefs: [],
+          pageCount: 1,
+          redactionCount: 0,
+          state: 'completed',
+          createdAt: 2,
+        });
+        const markdown = `# Ticket notes ${index}\n\nRead the ticket in Linear before closing it.`;
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `page-${index}.md`,
+          title: `Page ${index}`,
+          markdown,
+          updatedAt: 3,
+        });
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId,
+          pageRef: `page-${index}.md`,
+          generation,
+          markdown,
+        });
+        await ctx.db.insert('mockDocs', {
+          agentId: seeded.agentId,
+          slug: `source-page-${index}`,
+          title: `Page ${index}`,
+          body: markdown,
+          category: 'team-doc',
+          sourceId,
+          sourceRef: `page-${index}.md`,
+          updatedAt: 3,
+        });
+      });
+    }
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(seeded.workItemId, {
+        plan: {
+          summary: 'Read the ticket.',
+          steps: ['Read the ticket in Linear'],
+          expectedOutputType: 'ticket-update',
+          riskNotes: '',
+          reversibility: 'Nothing is written.',
+          estimatedMinutes: 5,
+          obligations: obligations([{ kind: 'read', reads: ['linear'] }]),
+        },
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, {
+      workItemId: seeded.workItemId,
+    });
+    const item = await readItem(harness, seeded.workItemId);
+    expect(item.state).not.toBe('failed');
+    expect(recorded.skillRuns).toBe(1);
+    // The whole mirror was read, so no selection is recorded for the run.
+    expect((await events(harness, seeded.agentId)).map((event) => event.type)).not.toContain(
+      'work.documentation-selected',
+    );
+  });
+
+  it('records no selection in mock mode, where the run reads the whole mirror (R3)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'mock');
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    expect((await events(harness, agentId)).map((event) => event.type)).not.toContain(
+      'work.documentation-selected',
+    );
+  });
+
+  it('reads the whole mirror in real mode when the test switch turns the selection off', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.stubEnv('DAY0_TEST_WHOLE_DOCUMENTATION', '1');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId } = await closingItem(harness);
+    expect((await events(harness, agentId)).map((event) => event.type)).not.toContain(
+      'work.documentation-selected',
+    );
   });
 });

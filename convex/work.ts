@@ -18,6 +18,7 @@ import {
   getCallerOrThrow,
 } from './ownership';
 import { confirmedPersonOf } from './itemPeople';
+import { resolvePerson } from './people';
 import { planAgreementsAtApproval } from './workingAgreements';
 import { isEvaluationAgent } from './metrics';
 import { openTicketsForDraftedWork } from './mock';
@@ -153,7 +154,11 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import type { ListedWorkItem, TicketHolderView } from '../src/work/item-display';
+import {
+  slackMentionIds,
+  type ListedWorkItem,
+  type TicketHolderView,
+} from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { compareProviderTs } from '../src/work/provider-ts';
@@ -360,8 +365,9 @@ export const listForAgent = query({
 
 /**
  * Each item with the name of the confirmed person its requester resolved to, where it resolved to
- * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member").
- * Each person is read once.
+ * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member"),
+ * and the confirmed people its text mentions by Slack user id (W13V-7's second half). Each person
+ * is read once.
  */
 async function withRequesterNames(
   ctx: QueryCtx,
@@ -379,10 +385,31 @@ async function withRequesterNames(
     names.set(resolution.personId, read);
     return read;
   };
+  const mentioned = new Map<string, Promise<string | undefined>>();
+  const mentionedName = (id: string): Promise<string | undefined> => {
+    const known = mentioned.get(id);
+    if (known !== undefined) return known;
+    const read = resolvePerson(ctx, scope, { provider: 'slack', externalId: id })
+      .then(async (resolution) => await confirmedPersonOf(ctx, scope, resolution))
+      .then((person) => person?.displayName);
+    mentioned.set(id, read);
+    return read;
+  };
   return await Promise.all(
     items.map(async (item): Promise<ListedWorkItem> => {
-      const requesterName = await nameOf(item.requesterPerson);
-      return requesterName === undefined ? item : { ...item, requesterName };
+      const ids = slackMentionIds(`${item.title}\n${item.contentSummary}`);
+      const [requesterName, mentionedNames] = await Promise.all([
+        nameOf(item.requesterPerson),
+        Promise.all(ids.map(async (id) => [id, await mentionedName(id)] as const)),
+      ]);
+      const mentionNames = Object.fromEntries(
+        mentionedNames.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]])),
+      );
+      return {
+        ...item,
+        ...(requesterName === undefined ? {} : { requesterName }),
+        ...(Object.keys(mentionNames).length === 0 ? {} : { mentionNames }),
+      };
     }),
   );
 }
@@ -3612,6 +3639,63 @@ export async function rememberReplacedRequest(
   }
 }
 
+/**
+ * Remember a decided request whose message the decision's own edit has not marked yet, before a
+ * park clears it (W13-R50): the apply of an approval that left a close for its card parks the
+ * close and asks about it again, and the edit the approval scheduled (`closeDecisionRequest`)
+ * finds its request gone if it runs after the park, so the request's message would read as still
+ * open. Kept with its outcome, the message is edited once by the replaced edit to say how it was
+ * decided and that the close is asked about again; its code is answered as decided and replaced.
+ *
+ * @param ctx - The park's transaction.
+ * @param row - The work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+async function rememberDecidedUnmarked(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (
+    decision === undefined ||
+    decision.decidedAt === undefined ||
+    decision.ts === undefined ||
+    decision.requestText === undefined ||
+    // An edit that recorded a result marked the message or said why not; one claimed with no
+    // result may have died, and the park leaves nothing its sweep could settle (the second pass).
+    decision.closedAt !== undefined ||
+    decision.closeFailure !== undefined
+  ) {
+    return;
+  }
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  const replacedId = await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    ts: decision.ts,
+    requestText: decision.requestText,
+    ...(decision.withButtons === true ? { withButtons: true } : {}),
+    replacedAt: now,
+    ...(decision.outcome === undefined ? {} : { outcome: decision.outcome }),
+    decidedAt: decision.decidedAt,
+    ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
+  });
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.markRequestReplaced, {
+    replacedId,
+  });
+}
+
 /** The most of an agent's recent acknowledgements the already-decided notice reads. */
 const ACKNOWLEDGEMENTS_READ = 50;
 
@@ -4529,7 +4613,12 @@ export const prepareReplacedEdit = internalMutation({
       channel: replaced.channel,
       ts: replaced.ts,
       withButtons: replaced.withButtons === true,
-      text: `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`,
+      // A decided request a park cleared before its own edit ran says how it was decided
+      // (`rememberDecidedUnmarked`); no other path keeps a decided request's text.
+      text:
+        replaced.outcome === undefined
+          ? `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`
+          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
     };
   },
 });
@@ -4979,8 +5068,13 @@ async function queueManagerReplyNotice(
     ...args,
     createdAt: Date.now(),
   });
+  // The request's thread is read now, while the item still holds the decision: by the time the
+  // acknowledgement is sent the item may have moved on and cleared it (W13V-3, reproduced: rows 2
+  // and 3 of the walk went needs-skill at once and their acknowledgements landed outside it).
+  const threadTs = await requestThreadOf(ctx, workItem, args.decisionId);
   await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerReplyNotice, {
     noticeId,
+    ...(threadTs === undefined ? {} : { threadTs }),
   });
   return true;
 }
@@ -6138,6 +6232,7 @@ export const setAwaitingApproval = internalMutation({
       index,
       reason,
     }));
+    if (afterApproval) await rememberDecidedUnmarked(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { goneCitesReason } from '../../../../../src/work/plan-cites';
 import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
@@ -1801,5 +1802,23 @@ describe('retryModeOf', (): void => {
     expect(retryModeOf({ state: 'executing' } as Doc<'workItems'>, undefined, undefined)).toBe(
       undefined,
     );
+  });
+
+  it('offers a failed run whose cited documentation changed a new plan, not the same one again (14-R, ruled 8 October)', (): void => {
+    const gone = goneCitesReason(['Handbook/refresh-tile.md#Refresh the tile > Closing']);
+    const failed = (skipReason: string): Doc<'workItems'> =>
+      ({
+        state: 'failed',
+        plan: { summary: 'Refresh.', steps: ['Refresh.'] },
+        skipReason,
+      }) as unknown as Doc<'workItems'>;
+    expect(retryModeOf(failed(`stopped: ${gone}`), undefined, undefined)).toEqual({
+      kind: 'cites-changed',
+    });
+    expect(retryModeOf(failed(gone), undefined, undefined)).toEqual({ kind: 'cites-changed' });
+    expect(retryModeOf(failed('the Linear MCP timed out'), undefined, undefined)).toEqual({
+      kind: 'retry-failed',
+      rejected: false,
+    });
   });
 });

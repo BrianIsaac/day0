@@ -11,7 +11,10 @@ import {
   refusalOffersAmendment,
   refusalSentence,
   sourceWords,
+  checkStale,
+  checkUnavailableLine,
 } from '../../../src/work/agreement-words';
+import { CHECK_STALE_MS } from '../../../src/work/agreement-vocabulary';
 import { AGREEMENT_SOURCE_TYPES } from '../../../src/work/agreement-vocabulary';
 
 describe('what the cards say of a working agreement', (): void => {
@@ -58,6 +61,37 @@ describe('what the cards say of a working agreement', (): void => {
     expect(refusalOffersAmendment({ reason: 'grants-permission' })).toBe(false);
     expect(refusalSentence({ reason: 'names-credential' }, 'Priya', 'charter')).toBe(
       'This names a credential, which a working agreement never keeps. It was not kept.',
+    );
+  });
+
+  it('says a keep for every employee refused past the employees its check reads, and offers no amendment (W13-R28)', (): void => {
+    const tooMany = { reason: 'every-employee-too-many' as const };
+    expect(refusalSentence(tooMany, 'Priya', 'charter')).toBe(
+      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you have more. You can keep it for a single employee instead.',
+    );
+    expect(refusalSentence(tooMany, 'Priya', 'work')).toBe(
+      refusalSentence(tooMany, 'Priya', 'charter'),
+    );
+    expect(refusalOffersAmendment(tooMany)).toBe(false);
+  });
+
+  it('says an agreement for every employee held for one employee alone stays in effect for the others (W14-R15)', (): void => {
+    const held = { reason: 'unchecked-for-employee' as const };
+    expect(refusalSentence(held, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines: Ines's charter was approved while you had more than 50 employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.",
+    );
+    expect(refusalOffersAmendment(held)).toBe(false);
+  });
+
+  it('reads a kept agreement as stale once its check has waited past its tries, and says so (W13-R30)', (): void => {
+    const kept = { status: 'proposed' as const, approvedAt: 1_000 };
+    expect(checkStale(kept, 1_000 + CHECK_STALE_MS)).toBe(false);
+    expect(checkStale(kept, 1_001 + CHECK_STALE_MS)).toBe(true);
+    expect(checkStale({ status: 'active' as const, approvedAt: 1_000 }, 10 * CHECK_STALE_MS)).toBe(
+      false,
+    );
+    expect(checkUnavailableLine('Name the carrier first.')).toBe(
+      'Kept, but Day0 could not check “Name the carrier first.” against the charter yet, so it is not in effect. Try again, or withdraw it.',
     );
   });
 

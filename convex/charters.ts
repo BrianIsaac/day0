@@ -36,6 +36,7 @@ import {
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
+import { scheduleCharterCheck } from './workingAgreements';
 import { questionKey } from '../src/agent/manager-questions';
 import type { AmendmentVia } from '../src/events/contract';
 
@@ -432,6 +433,8 @@ export const approve = mutation({
     });
     // Work parked while the charter waited (`awaiting-charter`) returns now.
     await scheduleReevaluation(ctx, charter.agentId, args.charterId);
+    // An employee hired after an agreement for every employee is checked against it now (13-W).
+    await scheduleCharterCheck(ctx, charter.agentId);
     return { ok: true };
   },
 });

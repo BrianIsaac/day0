@@ -9,6 +9,7 @@ import schema from '../../convex/schema';
 import { typedCodeReachOf } from '../../convex/slackMessagesTab';
 import { SLACK_KIT_BOT_SCOPES } from '../../src/surfaces/access-kit/slack';
 import { allConvexModules } from './all-modules';
+import { SURFACE_NOT_YOURS } from '../../src/agent/employee-access';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { LANDED_CONFIGURATION_TOKEN, LANDED_REFRESH_TOKEN } from './fakes/slack-api';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -214,6 +215,16 @@ describe('confirmMessagesTab', (): void => {
       .withIdentity(managerIdentity())
       .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId: refused });
     expect(await reach(harness, refused)).toEqual({ state: 'open' });
+  });
+
+  it("answers another owner's card as one that does not exist (W13-R13)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pasted = await card(harness, { name: 'Otto' });
+    await expect(
+      harness
+        .withIdentity(managerIdentity('someone-else'))
+        .mutation(api.slackMessagesTab.confirmMessagesTab, { surfaceId: pasted }),
+    ).rejects.toThrow(SURFACE_NOT_YOURS);
   });
 
   it('refuses a signed-out caller before it reads the card', async (): Promise<void> => {

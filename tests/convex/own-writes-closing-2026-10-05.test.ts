@@ -13,7 +13,10 @@ import { contractSchema } from './contract-schema';
 import { managerIdentity, MANAGER_ADDRESS } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
+  NOTE_1,
+  NOTE_2,
   OWN_WRITES_CLOSING,
+  OWN_WRITES_COMMENT,
   REVOPS_6,
   REVOPS_6_PLAN,
   STARTING_DM,
@@ -227,9 +230,12 @@ async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<
 }
 
 /** The closing set authored, held for the manager, and the request's pending id. */
-async function heldClosingSet(harness: Harness): Promise<Doc<'workItems'>> {
+async function heldClosingSet(
+  harness: Harness,
+  reply: unknown = OWN_WRITES_CLOSING,
+): Promise<Doc<'workItems'>> {
   const { workItemId, runId } = await seedAtClosing(harness);
-  recorded.closingReply = OWN_WRITES_CLOSING;
+  recorded.closingReply = reply;
   await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
   return await readItem(harness, workItemId);
 }
@@ -291,5 +297,81 @@ describe('REVOPS-6 through the real gate: a comment that reports its own set’s
       held: true,
       reason: WITHHELD_REPORTED_WRITE_NOT_LANDED,
     });
+  });
+});
+
+/** REVOPS-6's closing set with its comment worded and its reports declared as given. */
+function closingWith(body: string, reports: number[]): typeof OWN_WRITES_CLOSING {
+  return {
+    ...OWN_WRITES_CLOSING,
+    actions: [
+      { ...NOTE_1, reports: null },
+      { ...NOTE_2, reports: null },
+      {
+        ...OWN_WRITES_COMMENT,
+        args: {
+          ...OWN_WRITES_COMMENT.args,
+          toolArgsJson: JSON.stringify({ issueId: 'REVOPS-6', body }),
+        },
+        reports,
+      },
+    ] as typeof OWN_WRITES_CLOSING.actions,
+  };
+}
+
+describe("REVOPS-6 with the run's declared reports (the wave 13 review's D-5 (b))", (): void => {
+  beforeEach((): void => {
+    useSurfaceMode('real');
+  });
+
+  afterEach((): void => {
+    recorded.mcp.length = 0;
+    recorded.http.length = 0;
+    recorded.closingReply = undefined;
+    restoreSurfaceMode();
+  });
+
+  it('keeps the declaration on the held set and holds back a report the words miss without its post', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const held = await heldClosingSet(
+      harness,
+      closingWith('Both stop-drill notes reached #revops.', [0, 1]),
+    );
+    expect(held.state).toBe('actions-pending');
+    expect((held.output as { actions: Array<{ reports?: number[] }> }).actions[2]!.reports).toEqual(
+      [0, 1],
+    );
+    await harness.withIdentity(OWNER).mutation(api.work.approveActions, {
+      workItemId: held._id,
+      pendingRunId: held.pendingRunId!,
+      approvedIndexes: [0, 2],
+    });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId: held._id });
+    const after = await readItem(harness, held._id);
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http).toHaveLength(1);
+    expect(ledger(after).at(-1)).toMatchObject({
+      ok: true,
+      held: true,
+      reason: WITHHELD_REPORTED_WRITE_NOT_LANDED,
+    });
+  });
+
+  it('withholds at authoring a comment whose words report a post its reports leave out, naming the sentence', async (): Promise<void> => {
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const held = await heldClosingSet(
+      harness,
+      closingWith('Posted both stop-drill notes in #revops.', [0]),
+    );
+    const output = held.output as {
+      actions: unknown[];
+      withheldActions?: Array<{ reason: string }>;
+    };
+    expect(output.actions).toHaveLength(2);
+    expect(output.withheldActions?.map((row) => row.reason)).toEqual([
+      expect.stringContaining(
+        'reports a write its `reports` does not name: it says "Posted both stop-drill notes in #revops."',
+      ),
+    ]);
   });
 });

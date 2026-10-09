@@ -12,6 +12,7 @@ import type { MessagesTabOpenHow } from '@/surfaces/slack-messages-tab';
 import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
+import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -122,6 +123,25 @@ function modelCallLabel(payload: Read<'work.model-call'>): string {
       : '';
   const status = typeof payload.statusCode === 'number' ? ` (HTTP ${payload.statusCode})` : '';
   return `model call${stageWords} · ${outcome}${attempts}${status}`;
+}
+
+/** The model call site a documentation selection was made for, in words. */
+const DOCUMENTATION_SITE_WORDS: Readonly<Record<string, string>> = {
+  plan: 'plan draft',
+  execute: 'run',
+  closing: 'closing',
+};
+
+/** A documentation selection: the site, and how much of the documentation it carried. */
+function documentationSelectedLabel(payload: Read<'work.documentation-selected'>): string {
+  const site = text(payload.site);
+  const siteWords = site ? ` · ${DOCUMENTATION_SITE_WORDS[site] ?? site}` : '';
+  const sections = Array.isArray(payload.blockIds) ? payload.blockIds.length : 0;
+  const amount =
+    typeof payload.chars === 'number'
+      ? ` · ${payload.chars.toLocaleString('en-GB')} characters from ${sections} ${sections === 1 ? 'section' : 'sections'}`
+      : '';
+  return `documentation${siteWords}${amount}`;
 }
 
 /**
@@ -479,6 +499,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `skill authoring held: ${text(payload.name) ?? 'unnamed'}${because(payload.reason)}`,
   'skill.authoring-resumed': (payload) =>
     `skill authoring resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
+  'skill.authoring-hold-spent': (payload) =>
+    `skill authoring not resumed after the pause: ${text(payload.name) ?? 'unnamed'}`,
   'skill.authoring-claimed': (payload) =>
     payload.purpose === 'verify-stored'
       ? `skill check started: ${text(payload.name) ?? 'unnamed'}`
@@ -524,6 +546,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'surface.orientation-failed': (payload) => `orientation failed${because(payload.reason)}`,
   'surface.orientation-held': (payload) => `orientation held${because(payload.reason)}`,
   'surface.orientation-resumed': 'orientation resumed after the pause',
+  'surface.orientation-hold-spent': 'orientation not resumed after the pause',
   'surface.app-provisioned': (payload) =>
     `app registered${text(payload.appName) ? `: ${payload.appName}` : ''}`,
   'surface.app-forgotten': (payload) =>
@@ -657,6 +680,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-drafted': 'plan drafted',
   'work.plan-redrafting': (payload) =>
     `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
+  'work.plan-redraft': 'plan drafted again: documentation it followed has changed',
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
   'work.corrections-redaction-limited': 'kept corrections read with limited redaction',
@@ -667,9 +691,13 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       ? 'working agreement kept for every employee'
       : 'working agreement kept',
   'agreement.refused': (payload) =>
-    text(payload.clause)
-      ? `working agreement refused: it contradicts “${text(payload.clause)}”`
-      : 'working agreement refused: it would go beyond the charter',
+    payload.reason === 'every-employee-too-many'
+      ? `working agreement not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
+      : payload.reason === 'unchecked-for-employee'
+        ? `working agreement for every employee not in effect for this employee: you had more than ${EMPLOYEES_CHECKED} employees when its charter was approved`
+        : text(payload.clause)
+          ? `working agreement refused: it contradicts “${text(payload.clause)}”`
+          : 'working agreement refused: it would go beyond the charter',
   'agreement.retired': (payload) =>
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'
@@ -751,6 +779,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
           : 'a claim withheld a write'
     }`,
   'work.model-call': modelCallLabel,
+  'work.documentation-selected': documentationSelectedLabel,
   'work.manager-note-sending': (payload) =>
     `sending the manager a ${payload.kind === 'stopped' ? 'stop' : 'landed-work'} note`,
   'work.manager-note-failed': (payload) => `manager note not delivered${because(payload.reason)}`,
@@ -808,7 +837,9 @@ export function eventItemTitle(
  * most failures are the run stopping, not anyone refusing it; a draft is noted too, since the
  * line outlives the decision it waited for.
  */
-const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'noted'>>>> = {
+const RECORD_KINDS: Readonly<
+  Partial<Record<EventType, Exclude<RecordKind, 'noted' | 'partly-done' | 'not-done'>>>
+> = {
   'work.completed': 'landed',
   'work.provider-reconciled': 'landed',
   'charter.approved': 'landed',
@@ -852,11 +883,20 @@ const RECORD_KINDS: Readonly<Partial<Record<EventType, Exclude<RecordKind, 'note
 
 /**
  * What a record line's dot says an event did: landed, refused, withheld, held for the manager,
- * or, for every other event, noted. A type the contract no longer lists (a row an older release
- * wrote) is noted too.
+ * or, for every other event, noted. A finished run is drawn by its own answer when that says it
+ * was partly done or not done, as the line's words and its card say it (13-FD's R3, a product
+ * call built as the walk recommends): its writes landed, but the work did not. A type the
+ * contract no longer lists (a row an older release wrote) is noted too.
  *
  * @param event - The stored event.
  */
-export function recordKindOf(event: Pick<Doc<'events'>, 'type'>): RecordKind {
+export function recordKindOf(
+  event: Pick<Doc<'events'>, 'type'> & { payload?: unknown },
+): RecordKind {
+  if (event.type === 'work.completed') {
+    const output = (event.payload as { output?: unknown } | null | undefined)?.output;
+    const end = finishedAs(output);
+    if (end !== 'done') return end === 'partly done' ? 'partly-done' : 'not-done';
+  }
   return (isEventType(event.type) ? RECORD_KINDS[event.type] : undefined) ?? 'noted';
 }

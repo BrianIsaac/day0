@@ -76,7 +76,9 @@ describe('the charter as one document', (): void => {
     expect(html.match(/data-goal="gap"/g)).toHaveLength(1);
     expect(html).toContain('60 days · no goal stated');
     expect(html).toContain('<p>Salesforce (crm), Slack (chat)</p>');
-    expect(html).toContain('<b class="font-semibold">Priya</b>, segment and pipeline');
+    // Re-pinned for 13-FD's R11 (14-FX): a topic is set off by a dot, as the People tab sets it, so
+    // a topic the model capitalised ("Signs off the close") does not read as a broken sentence.
+    expect(html).toContain('<b class="font-semibold">Priya</b> · segment and pipeline');
   });
 
   it('draws a goal the model says was not given as a gap, whatever its words (C D11)', (): void => {
@@ -94,9 +96,31 @@ describe('the charter as one document', (): void => {
         strikes={{ pending: true, changes: [] }}
       />,
     );
-    expect(html.match(/data-goal="gap"/g)).toHaveLength(1);
+    // Re-pinned for W13-R37 (14-FX): the 60-day goal's words say no milestone was stated, so it is
+    // a gap though the model said it was stated.
+    expect(html.match(/data-goal="gap"/g)).toHaveLength(2);
     expect(html).toContain('90 days · no goal stated');
-    expect(html).not.toContain('60 days · no goal stated');
+    expect(html).toContain('60 days · no goal stated');
+  });
+
+  it("says a goal not given as one sentence, however the drafter wrote it (the redeploy's finding 5)", (): void => {
+    const html = render(
+      <CharterDocument
+        body={{
+          ...body,
+          shortTermGoals: {
+            day30: 'no goal was given',
+            day60: 'No goal was given.',
+            day90: 'Cover close-week tracker maintenance.',
+            stated: { day30: false, day60: false, day90: true },
+          },
+        }}
+        manager="sam@kestrel.example"
+        strikes={{ pending: true, changes: [] }}
+      />,
+    );
+    expect(html.match(/>No goal was given\.<\/p>/g)).toHaveLength(2);
+    expect(html).not.toContain('>no goal was given<');
   });
 
   it('names the manager it reports to and sends a handover to People, never to the header', (): void => {

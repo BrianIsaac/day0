@@ -3,7 +3,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
 import { appendEvent, eventsOfType } from './eventLog';
-import type { EventType } from '../src/events/contract';
+import type { EventType, HeldAuthoringSpentWhy } from '../src/events/contract';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { heldStartLine } from '../src/work/held-starts';
@@ -109,26 +109,32 @@ export const holdOrientation = internalMutation({
 });
 
 /**
- * The payloads of one employee's held starts of one kind since its last resume of that kind,
- * newest first: a resume records one resumed event per start it takes up, so every hold before
- * the newest of them has been taken up.
+ * The payloads of one employee's held starts of one kind since that kind was last taken up,
+ * newest first: a resume records, for each start it takes up, either that it started it or that
+ * its hold is spent (W13-R46), so every hold before the newest of either has been taken up.
  *
  * @param held - The kind's held event.
- * @param resumed - The kind's resumed event.
+ * @param takenUp - The kind's events that take a hold up: resumed, and spent.
  */
 async function heldSinceLastResume(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   held: Extract<EventType, 'skill.authoring-held' | 'surface.orientation-held'>,
-  resumed: Extract<EventType, 'skill.authoring-resumed' | 'surface.orientation-resumed'>,
+  takenUp: readonly Extract<
+    EventType,
+    | 'skill.authoring-resumed'
+    | 'skill.authoring-hold-spent'
+    | 'surface.orientation-resumed'
+    | 'surface.orientation-hold-spent'
+  >[],
 ): Promise<Doc<'events'>[]> {
-  const last = await eventsOfType(ctx, agentId, resumed).order('desc').first();
-  return await eventsOfType(
-    ctx,
-    agentId,
-    held,
-    last === null ? undefined : { after: last._creationTime },
-  )
+  // A hold is taken up by a resume that starts it or spends it (W13-R46), so the newest of either
+  // kind bounds what is still held.
+  const newest = await Promise.all(
+    takenUp.map(async (type) => await eventsOfType(ctx, agentId, type).order('desc').first()),
+  );
+  const last = Math.max(-1, ...newest.map((event) => event?._creationTime ?? -1));
+  return await eventsOfType(ctx, agentId, held, last < 0 ? undefined : { after: last })
     .order('desc')
     .take(HELD_STARTS_READ);
 }
@@ -137,7 +143,9 @@ async function heldSinceLastResume(
  * Start the authoring of every skill a pause held since the last resume, once each: a skill the
  * manager has since rejected, retired or given up, one a run holds now, and one claimed since its
  * hold (a stored version's check, a press after the pause) is left to the state it is in: its hold
- * is spent. The claim decides the rest, as it does for a manager's press.
+ * is spent, and recorded as spent with why, so no later resume reads it again and one skill
+ * started beside it cannot decide its fate instead (W13-R46). The claim decides the rest, as it
+ * does for a manager's press.
  *
  * @returns How many authorings were started.
  */
@@ -145,18 +153,36 @@ async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Pro
   const now = Date.now();
   const seen = new Set<string>();
   let started = 0;
-  for (const event of await heldSinceLastResume(
-    ctx,
-    agentId,
-    'skill.authoring-held',
+  for (const event of await heldSinceLastResume(ctx, agentId, 'skill.authoring-held', [
     'skill.authoring-resumed',
-  )) {
+    'skill.authoring-hold-spent',
+  ])) {
     const skillId = payloadId(event.payload, 'skillId') as Id<'skills'> | undefined;
     if (skillId === undefined || seen.has(skillId)) continue;
     seen.add(skillId);
     const skill = await ctx.db.get(skillId);
-    if (skill === null || !authoringMayResume(skill, now)) continue;
-    if (await claimedSince(ctx, agentId, skillId, event._creationTime)) continue;
+    const why =
+      skill === null
+        ? 'gone'
+        : (authoringSpentWhy(skill, now) ??
+          ((await claimedSince(ctx, agentId, skillId, event._creationTime))
+            ? 'claimed'
+            : undefined));
+    if (why !== undefined) {
+      const named = (event.payload as { name?: unknown }).name;
+      await appendEvent(ctx, {
+        agentId,
+        type: 'skill.authoring-hold-spent',
+        payload: {
+          skillId,
+          name: skill?.name ?? (typeof named === 'string' ? named : 'unnamed'),
+          why,
+        },
+        createdAt: now,
+      });
+      continue;
+    }
+    if (skill === null) continue;
     await ctx.scheduler.runAfter(0, internal.skillActions.authorAndRegisterSkillInternal, {
       skillId,
     });
@@ -192,37 +218,40 @@ async function claimedSince(
 }
 
 /**
- * Whether a held authoring goes on: the skill is in a state a claim takes, has attempts left, and
- * no live run holds it. What the manager decided since (a rejection, a give-up, a retire) stands.
+ * Why a held authoring does not go on, or undefined when it does: the skill is no longer in a
+ * state a claim takes or has no attempts left (`decided`: what the manager decided since, a
+ * rejection, a give-up, a retire, stands), or a live run holds it (`running`).
  *
  * @param skill - The skill as the resume reads it.
  * @param now - The instant to judge a run's claim against.
  */
-function authoringMayResume(skill: Doc<'skills'>, now: number): boolean {
-  if (!(AUTHORING_CLAIMABLE_STATES as readonly string[]).includes(skill.state)) return false;
+function authoringSpentWhy(
+  skill: Doc<'skills'>,
+  now: number,
+): Extract<HeldAuthoringSpentWhy, 'decided' | 'running'> | undefined {
+  if (!(AUTHORING_CLAIMABLE_STATES as readonly string[]).includes(skill.state)) return 'decided';
   if (skill.state === 'failed' && (skill.authoringAttempts ?? 0) >= MAX_AUTHORING_ATTEMPTS) {
-    return false;
+    return 'decided';
   }
-  return !holdsLiveAuthoringClaim(skill, now);
+  return holdsLiveAuthoringClaim(skill, now) ? 'running' : undefined;
 }
 
 /**
  * Orient again every system a pause held since the last resume, once each and as it was asked
  * for (the manager's request for its card kept when any of its holds carried one), clearing the
  * held line its card shows and recording the job as the surface's orientation in flight. A system
- * no longer declared (oriented by a manager's re-run, or found absent) is left as it is.
+ * no longer declared (oriented by a manager's re-run, or found absent) is left as it is, its hold
+ * recorded as spent.
  *
  * @returns How many orientations were started.
  */
 async function resumeHeldOrientation(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
   const now = Date.now();
   const requested = new Map<string, boolean>();
-  for (const event of await heldSinceLastResume(
-    ctx,
-    agentId,
-    'surface.orientation-held',
+  for (const event of await heldSinceLastResume(ctx, agentId, 'surface.orientation-held', [
     'surface.orientation-resumed',
-  )) {
+    'surface.orientation-hold-spent',
+  ])) {
     const surfaceId = payloadId(event.payload, 'surfaceId');
     if (surfaceId === undefined) continue;
     const asked = (event.payload as { requested?: unknown }).requested === true;
@@ -232,7 +261,16 @@ async function resumeHeldOrientation(ctx: MutationCtx, agentId: Id<'agents'>): P
   for (const [id, asked] of requested) {
     const surfaceId = id as Id<'surfaces'>;
     const surface = await ctx.db.get(surfaceId);
-    if (surface === null || surface.verdict !== 'declared') continue;
+    if (surface === null || surface.verdict !== 'declared') {
+      // Settled while the pause held it: the hold is spent (W13-R46).
+      await appendEvent(ctx, {
+        agentId,
+        type: 'surface.orientation-hold-spent',
+        payload: { surfaceId, why: 'settled' },
+        createdAt: now,
+      });
+      continue;
+    }
     const orientationJobId = await ctx.scheduler.runAfter(
       0,
       internal.orientationActions.orientOne,

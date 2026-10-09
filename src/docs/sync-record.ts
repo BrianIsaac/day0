@@ -77,15 +77,25 @@ export function withUnreadPages(
  * The record on one line, for the source's status on the documentation page.
  *
  * @param record - A completed run's record, or nothing.
+ * @param nothingStored - Whether the source holds no page at all, so no page keeps a last version
+ *   (W14-R11).
  * @returns The line, or undefined when the run read every page.
  */
-export function unreadPagesLine(record: UnreadRecord | undefined): string | undefined {
+export function unreadPagesLine(
+  record: UnreadRecord | undefined,
+  nothingStored = false,
+): string | undefined {
   if (record === undefined || record.count === 0) return undefined;
   const more = record.count - record.pages.length;
   const named = [
     ...record.pages.map((page): string => `${page.ref}: ${page.reason}`),
     ...(more > 0 ? [`and ${more} more`] : []),
   ].join('; ');
+  if (nothingStored) {
+    const pages = record.count === 1 ? '1 page' : `${record.count} pages`;
+    const it = record.count === 1 ? 'it' : 'them';
+    return `${pages} could not be read, and nothing from this source is stored yet: ${named.replace(/\.$/, '')}. Day0 reads ${it} again at the next sync; a page it refuses stays unread until the page or its address changes.`;
+  }
   return `${header(record.count)}: ${named.replace(/\.$/, '')}. The next sync reads them again.`;
 }
 

@@ -425,6 +425,48 @@ describe('verifyStoredSkill', (): void => {
     expect((await row(harness, held)).recheckDueAt).toBeUndefined();
   });
 
+  it('reads the documentation a window at a time when it writes a kept check, so a corpus past one read is no failure (F2 D5)', async (): Promise<void> => {
+    // The deployment's own read limit: 16 MiB a query.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { priya, versionId } = await seedOffice(harness, {});
+    const held = await registeredRow(harness, priya, versionId);
+    await harness.run(async (ctx) => await ctx.db.patch(held, { targetSurface: 'linear' }));
+    const sourceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Company folder',
+          kind: 'folder',
+          locator: 'company',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    // Thirty pages of about 600 KB, 18 MB in all, the runbook for the target near the end; one
+    // write each, as a sync stores them.
+    for (let index = 0; index < 30; index += 1) {
+      const runbook = index === 27;
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `page-${String(index).padStart(2, '0')}.md`,
+          title: runbook ? 'How to close a Linear ticket' : `Handbook page ${index}`,
+          markdown: `# ${runbook ? 'Close the ticket in Linear with a summary comment.' : 'Notes'}\n\n${'x'.repeat(600 * 1024)}`,
+          updatedAt: 1,
+        });
+      });
+    }
+    recorded.outputs.push({ body: BODY, smokeTest: SMOKE });
+
+    await expect(
+      harness.action(internal.storedVerification.verifyStoredSkill, { skillId: held }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(recorded.prompts).toHaveLength(1);
+    expect(recorded.prompts[0]).toContain('### How to close a Linear ticket');
+  }, 60_000);
+
   it('leaves a registered row running and still due when no sandbox ran', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { priya, versionId } = await seedOffice(harness);

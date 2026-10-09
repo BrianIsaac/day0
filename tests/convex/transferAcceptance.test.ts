@@ -612,7 +612,12 @@ describe('transferPreview: what the named manager reads before accepting (transf
     await expect(colleague.query(api.agents.get, { agentId: office.maya })).rejects.toMatchObject({
       data: EMPLOYEE_NOT_YOURS,
     });
-    await expect(colleague.query(api.mock.listDocs, { agentId: office.maya })).rejects.toThrow();
+    await expect(
+      colleague.query(api.mock.listDocs, {
+        agentId: office.maya,
+        paginationOpts: { numItems: 200, cursor: null },
+      }),
+    ).rejects.toThrow();
     const roster = await colleague.query(api.agents.rosterForUser, {});
     expect(roster.map((row) => row.name)).toEqual(['Priya']);
   });
@@ -727,7 +732,12 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
 
     const colleague = office.harness.withIdentity(COLLEAGUE);
     expect(
-      (await colleague.query(api.mock.listDocs, { agentId: office.maya })).map((doc) => doc.slug),
+      (
+        await colleague.query(api.mock.listDocs, {
+          agentId: office.maya,
+          paginationOpts: { numItems: 200, cursor: null },
+        })
+      ).page.map((doc) => doc.slug),
     ).toEqual(['office-welcome']);
     await office.harness.finishAllScheduledFunctions(vi.runAllTimers);
     const stored = await office.harness.run(async (ctx) => ({
@@ -819,7 +829,10 @@ describe('accept in real mode: two surfaces, one credential shared with a collea
     const answers: unknown[] = await Promise.all([
       colleague.query(api.agents.get, { agentId }),
       colleague.query(api.surfaces.listForAgent, { agentId }),
-      colleague.query(api.mock.listDocs, { agentId }),
+      colleague.query(api.mock.listDocs, {
+        agentId,
+        paginationOpts: { numItems: 200, cursor: null },
+      }),
       colleague.query(api.mock.getDoc, { agentId, slug: 'owner-runbook' }),
       colleague.query(api.events.recent, { agentId }),
       colleague.query(api.events.record, {

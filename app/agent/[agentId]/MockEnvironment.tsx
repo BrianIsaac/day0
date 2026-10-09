@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useQuery } from 'convex/react';
+import { usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { MOCK_OFFICE_SYSTEMS, mockActsAsWords } from '@/surfaces/mock-office';
 import type { SurfaceMode } from '@/surfaces/types';
-import { DocsTab } from './mock/DocsTab';
+import { DOCS_AT_A_TIME, DocsTab } from './mock/DocsTab';
 import { SpreadsheetTab } from './mock/SpreadsheetTab';
 import { SlackTab } from './mock/SlackTab';
 import { TwitterTab } from './mock/TwitterTab';
@@ -137,7 +137,12 @@ function MockOffice({
   onPick: (key: TabKey) => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
-  const docs = useQuery(api.mock.listDocs, { agentId });
+  // The office's fixed set fits the Docs tab's first page, so the count is the whole of it.
+  const { results: docs, status: docsStatus } = usePaginatedQuery(
+    api.mock.listDocs,
+    { agentId },
+    { initialNumItems: DOCS_AT_A_TIME },
+  );
   const channels = useQuery(api.mock.listChannels, { agentId });
   const tweets = useQuery(api.mock.listTweets, { agentId });
   const tickets = useQuery(api.mock.listTickets, { agentId });
@@ -145,7 +150,7 @@ function MockOffice({
   const counts: Partial<Record<TabKey, number>> = {
     slack: channels?.length,
     spreadsheet: spreadsheets?.length,
-    docs: docs?.length,
+    docs: docsStatus === 'LoadingFirstPage' ? undefined : docs.length,
     tweet: tweets?.length,
     tickets: tickets?.length,
   };
@@ -161,7 +166,7 @@ function MockOffice({
   }
 
   return (
-    <Card title="Mock office" meta={OFFICE_CAPTION}>
+    <Card title="Hosted office" meta={OFFICE_CAPTION}>
       {/* The same in every one of the office's systems, so above the strip, not in a tab. */}
       <dl className="mb-4 grid gap-1 text-sm sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-4">
         <dt className="text-[13px] text-[var(--color-muted)]">Acts as</dt>
@@ -172,7 +177,7 @@ function MockOffice({
       <div
         ref={strip}
         role="tablist"
-        aria-label="Mock office"
+        aria-label="Hosted office"
         className="-mt-1 flex flex-wrap gap-0.5 border-b border-[var(--color-border)]"
       >
         {OFFICE_TABS.map((tab, index) => {

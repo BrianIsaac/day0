@@ -107,8 +107,11 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    vendor from inside it, and an install where that dial cannot run stops
    there. Where its way out passes such a proxy, give the container the
    bundle: `SSL_CERT_FILE` for the check, `NODE_EXTRA_CA_CERTS` for the
-   deployment's calls. The kit sets neither, so agree with IT before the day
-   how the bundle reaches the container.
+   deployment's calls, and `GIT_SSL_CAINFO` in `.env.local` (the bundle's
+   path inside the container) for a git documentation source on a server the
+   same authority signs: the clone runs in the deployment's environment, which
+   `./scripts/sync-convex-env.sh` writes. The kit sets none of them, so agree
+   with IT before the day how the bundle reaches the container.
 7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
@@ -196,6 +199,17 @@ images, the pnpm store and a copy of the redactor's volumes (`--warm-from`):
 | `./setup.sh install`, the build and the live sign-in check included | 55 s |
 | **From a clean clone to a passing install** | **2 min 1 s** |
 
-A first install on a new machine adds the image pulls, the redactor's model
-download and IT's own steps at each vendor; time those with the customer and
-plan for them.
+A first install on a new machine adds the image pulls, the backend image's
+build, the redactor's model download and IT's own steps at each vendor; time
+those with the customer and plan for them.
+
+An install builds one image rather than pulling it: the backend, from the
+pinned Convex backend with `git` added and nothing else
+(`docker/backend.Dockerfile`), which a git documentation source on a host other
+than GitHub or GitLab needs to be cloned. The setup says so when it builds it,
+and `./setup.sh upgrade` builds it again, so a re-pinned base reaches the
+backend. The build fetches git's packages from the Ubuntu archive
+(`archive.ubuntu.com`, `security.ubuntu.com`), which `pnpm check:setup` lists
+among the machine's egress; a machine that cannot reach it needs the image
+built where it can and loaded (`docker save` and `docker load` of
+`day0-convex-backend:git`).

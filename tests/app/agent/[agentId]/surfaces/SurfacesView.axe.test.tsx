@@ -13,6 +13,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 
 vi.mock('convex/react', () => ({
+  // A paged query answers its whole fixture as one exhausted page (the Docs list, M17).
+  usePaginatedQuery: (reference: unknown) => ({
+    results: (backend.queries[getFunctionName(reference as never)] as unknown[] | undefined) ?? [],
+    status: 'Exhausted',
+    loadMore: (): void => undefined,
+  }),
   useQuery: (reference: unknown, args: unknown): unknown => {
     if (args === 'skip') return undefined;
     const name = getFunctionName(reference as never);
@@ -100,6 +106,11 @@ const OFFICE: Record<string, unknown> = {
       sourceUrl: 'https://docs.example/coverage',
     },
   ],
+  // The open document, read whole by its slug.
+  'mock:getDoc': (args: unknown): unknown =>
+    (OFFICE['mock:listDocs'] as Array<{ slug: string }>).find(
+      (doc) => doc.slug === (args as { slug: string }).slug,
+    ) ?? null,
   'docSources:byIds': [],
   'mock:listSpreadsheets': [{ _id: 's1', slug: 'q4', title: 'Q4 Revenue Tracker' }],
   'mock:getSpreadsheet': {
@@ -312,7 +323,7 @@ describe('the mock office on the Surfaces tab against the floor (N14)', (): void
     'has no axe violation, 44 px targets and named, reachable scroll regions on its %s tab',
     async (label): Promise<void> => {
       backend.queries = { ...OFFICE };
-      const view = await openTab('mock', 'Mock office');
+      const view = await openTab('mock', 'Hosted office');
       const tab = [...view.container.querySelectorAll<HTMLElement>('[role="tab"]')].find(
         (candidate) => candidate.textContent?.startsWith(label),
       );
@@ -335,7 +346,7 @@ describe('the mock office on the Surfaces tab against the floor (N14)', (): void
           (message) => message.channelSlug === (args as { channelSlug: string }).channelSlug,
         ),
     };
-    const view = await openTab('mock', 'Mock office');
+    const view = await openTab('mock', 'Hosted office');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toMatch(
       /^Slack/,
     );

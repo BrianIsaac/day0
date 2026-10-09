@@ -10,6 +10,7 @@ import type { SpanModel } from '../redaction/client';
 import { redactText } from '../redaction/redact';
 import { answeredQuestionLines } from './charter-answers';
 import { renderHowTos, renderTeamDocs } from './documents';
+import { resolvedPlanCites } from './plan-cites';
 import { surfaceSlug } from '../surfaces/slug';
 import { replyTargetLine } from './reply-target';
 import {
@@ -24,6 +25,7 @@ import {
   fromLine,
   type PromptNamed,
   type PromptPeople,
+  withoutIdentities,
 } from '../people/prompt-block';
 import type { ExecutionPlan, MockAction, MockSurfaceSnapshot, WorkCandidate } from './types';
 import { CANDIDATE_PROPERTIES, type CandidateProperty } from './candidate-properties';
@@ -52,12 +54,27 @@ const SYSTEM_PROMPT_HEAD = [
   'Draft a short execution plan. The live action mode below tells you whether later writes need another manager decision.',
   '',
   'Discipline:',
-  '  - Stay inside the charter willDo / willNotDo boundaries. If borderline, narrow the plan to the safest interpretation.',
+  // The clauses by their words, never the charter's field keys: a plan echoed "the willNotDo
+  // boundary" to a visitor (finding 3 of the v0.17.0 redeploy).
+  "  - Stay inside the charter's will-do and will-not-do clauses. If borderline, narrow the plan to the safest interpretation.",
   '  - Describe review and approval according to the live action mode; never assume the supervised mode.',
   '  - 2-5 short concrete steps.',
   `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
-  "  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.",
 ];
+
+/** How a plan rests on what it was shown, after the line that names where each part sits. */
+const EVIDENCE_RULE =
+  'Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.';
+
+/**
+ * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
+ * candidate and the surfaces after it (wave 14, 14-R); the mock line is the hosted demo's, pinned
+ * byte for byte, where both follow the candidate.
+ */
+const EVIDENCE_LINE: Readonly<Record<SurfaceMode, string>> = {
+  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE}`,
+  mock: `  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. ${EVIDENCE_RULE}`,
+};
 
 /**
  * The scope-not-gate invariant, real mode only: the mock planner text is the
@@ -76,6 +93,16 @@ export const SCOPE_NOT_GATE_PLANNER = [
 export const DECLARED_OBLIGATIONS_PLANNER = [
   '  - Beside the prose, declare what each step obliges: `stepObligations` has one row per step in order, with `kind` (read: gathers evidence from a surface or document; write: changes a surface; report: records something in the response and touches no surface; conditional-write: writes only if a stated condition holds), `reads` (the slugs of the connected surfaces the step itself reads; a surface it only writes to or only mentions is not read) and `writes` (the slugs of the connected surfaces it writes). Only a surface listed as connected may appear, by its slug exactly as listed.',
   '  - Declare `transition`, your word on the originating ticket state: promised (you will move it), conditional-on-evidence (only if what you read shows a stated condition holds), conditional-on-manager (only if or after the manager approves), withheld (you leave the state alone), none (the plan says nothing about it); and `transitionStep`, the one-based step that carries it, or null.',
+];
+
+/**
+ * The cites, real mode only (wave 14, 14-R): the selected documentation prints each block under
+ * a cite line, and the plan names the lines each step follows, so the closing phase can refuse
+ * to run on documentation that changed after approval. The mock planner text stays
+ * byte-identical.
+ */
+export const CITED_STEPS_PLANNER = [
+  '  - The documentation prints its text under lines of the form `[cite: <source>/<page>#<heading path>]`. Declare `stepCites`: one list per step, in step order. In each list put the text between `[cite: ` and the closing `]` of every cite line whose text that step follows, copied character for character (hyphens, `#` and `>` included, whatever the punctuation rule says of dashes). Use an empty list for a step no printed text prescribes, and null when no cite line is printed. Never invent a cite, and never copy a cite line into a step or `riskNotes`.',
 ];
 
 /**
@@ -131,10 +158,12 @@ export function planSystemPrompt(
 ): string {
   return [
     ...SYSTEM_PROMPT_HEAD,
+    EVIDENCE_LINE[surfaceMode],
     ...(surfaceMode === 'real'
       ? [
           ...SCOPE_NOT_GATE_PLANNER,
           ...DECLARED_OBLIGATIONS_PLANNER,
+          ...CITED_STEPS_PLANNER,
           ...SIGNED_TICKET_PLANNER,
           ...OWN_ITEM_READS_PLANNER,
           ...LIST_READ_PLANNER,
@@ -515,12 +544,16 @@ export const realPlanSchema = planSchema.extend({
   transitionStep: z.number().int().nullable(),
   appliedCorrections: z.array(z.string()).nullable(),
   appliedAgreements: z.array(z.string()).nullable(),
+  stepCites: z.array(z.array(z.string())).nullable(),
 });
 
 type RealPlanReply = z.infer<typeof realPlanSchema>;
 
-/** The documentation the planner may plan from: the same pages the executor cites. */
-export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs'>;
+/**
+ * The documentation the planner may plan from: the same pages the executor cites, and in real
+ * mode the record of the selection, whose cites a plan step may name (wave 14, 14-R).
+ */
+export type PlanDocuments = Pick<MockSurfaceSnapshot, 'howToGuides' | 'teamDocs' | 'documentation'>;
 
 /** What a grounding read fetched: a ticket's own record, or the thread a chat ask sits in. */
 export type CandidateRecordSubject = 'record' | 'thread';
@@ -865,7 +898,9 @@ export function renderPlanSurfaces(surfaces: readonly SurfaceRecord[], now: numb
  * documentation travel when the caller loads them, so a plan is drawn from
  * what the agent can reach and what the team has written down rather than
  * from the charter alone; a caller that passes neither gets the prompt as it
- * was before those sections existed.
+ * was before those sections existed. The documentation sits before the
+ * candidate (wave 14, 14-R), the surfaces after it; only real mode passes
+ * documentation.
  *
  * Args:
  *   args: The candidate, the charter and the optional grounding.
@@ -879,15 +914,28 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     `Role: ${charter.proposedFunction}`,
     '',
     '--- Charter boundaries ---',
-    `willDo: ${charter.proposedBoundaries.willDo.join(' | ')}`,
-    `willNotDo: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
-    `escalationTriggers: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
+    `Will do: ${charter.proposedBoundaries.willDo.join(' | ')}`,
+    `Will not do: ${charter.proposedBoundaries.willNotDo.join(' | ')}`,
+    `Escalates when: ${charter.proposedBoundaries.escalationTriggers.join(' | ')}`,
     ...answeredQuestionLines(charter),
+    // The documentation travels before the candidate (wave 14, 14-R), so a provider's prefix
+    // cache holds the role, the charter and the pages across the items that read the same pages.
+    ...(args.documents
+      ? [
+          '',
+          '--- How-to guides ---',
+          renderHowTos(args.documents.howToGuides),
+          '',
+          '--- Team docs (read-only context) ---',
+          renderTeamDocs(args.documents.teamDocs),
+        ]
+      : []),
     '',
     '--- Candidate ---',
     `Source: ${candidate.sourceSystem} / ${candidate.sourceCategory}`,
     fromLine(candidate.requesterLabel, args.surfaceMode === 'real' ? args.requester : undefined),
-    ...(candidate.owner ? [`Owner: ${candidate.owner}`] : []),
+    // The owner is a provider's label, kept free of identities as the From line is (W13-R19).
+    ...(candidate.owner ? [`Owner: ${withoutIdentities(candidate.owner) || '(unknown)'}`] : []),
     `Title: ${candidate.title}`,
     `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
@@ -907,16 +955,6 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
   }
   const people = args.surfaceMode === 'real' ? peopleBlockLines(args.people) : [];
   if (people.length > 0) lines.push('', PEOPLE_HEADING, ...people);
-  if (args.documents) {
-    lines.push(
-      '',
-      '--- How-to guides ---',
-      renderHowTos(args.documents.howToGuides),
-      '',
-      '--- Team docs (read-only context) ---',
-      renderTeamDocs(args.documents.teamDocs),
-    );
-  }
   if (args.surfaceMode === 'real') {
     lines.push(
       ...plannerCorrectionLines(args.corrections ?? []),
@@ -1000,11 +1038,21 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
       drafted = { ...plan, advisorySteps: audit.flagged };
     }
   }
-  return withCorrections(
-    await withObligations(drafted, reply, args, onObligationEvent),
+  return withCites(
+    withCorrections(await withObligations(drafted, reply, args, onObligationEvent), reply, args),
     reply,
     args,
   );
+}
+
+/** The plan with the documentation each step follows, as the selection the planner read printed it. */
+function withCites(plan: ExecutionPlan, reply: RealPlanReply, args: DraftPlanArgs): ExecutionPlan {
+  const cites = resolvedPlanCites(
+    reply.stepCites,
+    plan.steps.length,
+    args.documents?.documentation,
+  );
+  return cites.length > 0 ? { ...plan, cites } : plan;
 }
 
 /**

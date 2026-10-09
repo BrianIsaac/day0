@@ -128,7 +128,7 @@ function WhatItKnows() {
       ) : surfaceMode === 'real' ? (
         <Link href={office}>your own systems, each connected only once you approve it</Link>
       ) : (
-        <Link href={office}>the hosted mock office</Link>
+        <Link href={office}>the hosted office</Link>
       ),
     ],
     [

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SLACK_KIT_BOT_SCOPES } from '../../../src/surfaces/access-kit/slack';
 import {
+  scopesRequestedOf,
   accessRequestReason,
   issuerServesSystem,
   servedByIssuer,
@@ -563,5 +564,28 @@ describe('the access request’s words, the same wherever they are shown', (): v
     expect(quoted.match(/“/g)).toHaveLength(3);
     expect(quoted).not.toContain('4 x');
     expect(quoted.length).toBeLessThan(700);
+  });
+});
+
+describe('scopesRequestedOf (W13V-5)', (): void => {
+  it("names the employee's own app's scopes on a Slack card and the proposed scopes elsewhere", (): void => {
+    const slack = {
+      slug: 'slack',
+      displayName: 'Slack',
+      endpoint: 'https://slack.com/api/',
+      path: 'documented-api',
+      request: { scopeRequested: ['chat.postMessage'] },
+    };
+    expect(scopesRequestedOf(slack)).not.toContain('chat.postMessage');
+    expect(scopesRequestedOf(slack)).toContain('chat:write');
+    expect(
+      scopesRequestedOf({
+        slug: 'linear',
+        displayName: 'Linear',
+        endpoint: 'https://mcp.linear.app/mcp',
+        path: 'mcp',
+        request: { scopeRequested: ['read:issues'] },
+      }),
+    ).toEqual(['read:issues']);
   });
 });

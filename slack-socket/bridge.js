@@ -24,6 +24,9 @@ export const HELLO_TIMEOUT_MS = 10_000;
  * break with no close) can hold the app's presses.
  */
 export const MAX_CONNECTION_MS = 30 * 60_000;
+
+/** How long a due refresh waits for the connection the last one replaced to finish closing. */
+const REFRESH_WAIT_MS = 1_000;
 /** How long a press is offered to the backend before it is given up (a backend restart is shorter). */
 export const PRESS_RETRY_WINDOW_MS = 60_000;
 /** The first wait between offers of a press; it doubles to the cap. */
@@ -52,6 +55,27 @@ export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
  * service's five-second grace, so a clean stop reaches the card at once (D-6 (b)).
  */
 export const FAREWELL_TIMEOUT_MS = 3_000;
+/**
+ * How long the stop waits for a report already on the wire before its farewell (W13-R17): with
+ * the farewell's own bound, inside the compose service's five-second grace.
+ */
+export const FAREWELL_WAIT_MS = 1_500;
+/** The most apps one report names: the backend's heartbeat route takes no more in one call. */
+export const REPORT_PAGE = 1_000;
+
+/**
+ * A report in the pages the backend takes, each naming at most {@link REPORT_PAGE} apps.
+ *
+ * @param {{ apps: Array<Record<string, unknown>> }} body
+ * @returns {Array<{ apps: Array<Record<string, unknown>> }>}
+ */
+export function reportPages(body) {
+  const pages = [];
+  for (let start = 0; start < body.apps.length; start += REPORT_PAGE) {
+    pages.push({ apps: body.apps.slice(start, start + REPORT_PAGE) });
+  }
+  return pages;
+}
 
 /**
  * @typedef {object} BridgeOptions
@@ -120,6 +144,11 @@ export function createBridge(options) {
   let reportLoop = Promise.resolve();
   /** Whether the last report named any app, so a bridge holding none reports nothing again. */
   let reportedApps = false;
+  /**
+   * Apps dropped since the last report, by card: the next report names each down once (W13-R11),
+   * so its row does not read live until it ages.
+   */
+  const dropped = new Map();
   /** Whether the last report failed, so a backend that takes none is said once, not every sync. */
   let reportFailing = false;
 
@@ -138,19 +167,27 @@ export function createBridge(options) {
     return { status: response.status, body: parsed ?? {} };
   }
 
-  /** Each app the bridge holds, by its card and app, with whether it has a greeted connection. */
+  /**
+   * Each app the bridge holds, by its card and app, with whether it has a greeted connection, and
+   * each app it dropped since the last report, down.
+   */
   function heartbeat(live = true) {
+    const gone = [...dropped].map(([surfaceId, appId]) => ({ surfaceId, appId, live: false }));
+    dropped.clear();
     return {
-      apps: [...apps.values()].map((state) => {
-        const connected = live && state.live !== undefined;
-        return {
-          surfaceId: state.surfaceId,
-          appId: state.appId,
-          live: connected,
-          ...(connected ? { liveSince: state.liveSince } : {}),
-          ...(!connected && state.failure !== undefined ? { failure: state.failure } : {}),
-        };
-      }),
+      apps: [
+        ...[...apps.values()].map((state) => {
+          const connected = live && state.live !== undefined;
+          return {
+            surfaceId: state.surfaceId,
+            appId: state.appId,
+            live: connected,
+            ...(connected ? { liveSince: state.liveSince } : {}),
+            ...(!connected && state.failure !== undefined ? { failure: state.failure } : {}),
+          };
+        }),
+        ...gone,
+      ],
     };
   }
 
@@ -158,13 +195,17 @@ export function createBridge(options) {
    * Tell the backend which apps hold a live connection (wave 13, 13-FS; D-6 (b)), so the card's
    * buttons row and each request read a bridge that runs rather than one that is configured. A
    * failure is logged when it starts and when it ends: a backend from before 0.17.0 has no route.
+   * Answers whether every page was taken.
    */
   async function report(body, timeoutMs = BACKEND_TIMEOUT_MS) {
     try {
-      const answer = await backend('/slack-socket/heartbeat', body, timeoutMs);
-      if (answer.status !== 200) throw new Error(`the backend answered ${answer.status}`);
+      for (const page of reportPages(body)) {
+        const answer = await backend('/slack-socket/heartbeat', page, timeoutMs);
+        if (answer.status !== 200) throw new Error(`the backend answered ${answer.status}`);
+      }
       if (reportFailing) log({ level: 'info', message: 'the heartbeat is reported again' });
       reportFailing = false;
+      return true;
     } catch (error) {
       if (!reportFailing) {
         log({
@@ -174,6 +215,7 @@ export function createBridge(options) {
         });
       }
       reportFailing = true;
+      return false;
     }
   }
 
@@ -190,10 +232,20 @@ export function createBridge(options) {
           reportAgain = false;
           if (stopped) return;
           const body = heartbeat();
-          // Nothing held and nothing reported last: no row could change.
+          // Nothing held and nothing reported last: no row could change. An app reported down
+          // as it was dropped is said once (W13-R11).
           if (body.apps.length === 0 && !reportedApps) continue;
-          reportedApps = body.apps.length > 0;
-          await report(body);
+          reportedApps = apps.size > 0;
+          if (!(await report(body))) {
+            // A down report lost with the rest is said again at the next one (the second pass),
+            // unless the card's app came back meanwhile.
+            for (const app of body.apps) {
+              if (app.live === false && !apps.has(app.surfaceId) && !dropped.has(app.surfaceId)) {
+                dropped.set(app.surfaceId, app.appId);
+              }
+            }
+            if (dropped.size > 0) reportedApps = true;
+          }
         } while (reportAgain);
       } finally {
         reporting = false;
@@ -228,6 +280,8 @@ export function createBridge(options) {
       }
       for (const [surfaceId, { appId, appName, tokenRef }] of listed) {
         if (apps.has(surfaceId)) continue;
+        // The card's new app reports for it: its old app's row is replaced, not written down.
+        dropped.delete(surfaceId);
         const state = {
           surfaceId,
           appId,
@@ -269,6 +323,7 @@ export function createBridge(options) {
     state.removed = true;
     close(state);
     apps.delete(state.surfaceId);
+    dropped.set(state.surfaceId, state.appId);
     log({ level: 'info', message: 'app no longer carries presses', appId: state.appId });
   }
 
@@ -420,11 +475,18 @@ export function createBridge(options) {
     // The connection this one replaced, after a refresh, goes once this one is greeted.
     if (previous !== undefined && previous !== socket) previous.close();
     clearTimeout(state.refresh);
-    state.refresh = setTimeout(() => {
+    const refresh = () => {
+      // The connection the last refresh replaced is still closing, so the bridge holds two and
+      // `open` would do nothing: try again shortly, or the bridge stops refreshing for good.
+      if (state.sockets.size >= 2) {
+        state.refresh = setTimeout(refresh, REFRESH_WAIT_MS);
+        return;
+      }
       state.refresh = undefined;
       if (Date.now() - state.liveSince >= stableAfterMs) state.failures = 0;
       void open(state); // open records its own failure and schedules the retry
-    }, maxConnectionMs);
+    };
+    state.refresh = setTimeout(refresh, maxConnectionMs);
   }
 
   async function receive(state, socket, text) {
@@ -578,9 +640,27 @@ export function createBridge(options) {
         close(state);
       }
       apps.clear();
-      // A live report still on the wire would land after the farewell and read the apps live again.
-      await reportLoop;
-      if (farewell.apps.length > 0) await report(farewell, FAREWELL_TIMEOUT_MS);
+      // A live report still on the wire would land after the farewell and read the apps live
+      // again; one that hangs is waited for no longer than the grace allows (W13-R17).
+      let waited;
+      await Promise.race([
+        reportLoop,
+        new Promise((resolve) => {
+          waited = setTimeout(resolve, FAREWELL_WAIT_MS);
+        }),
+      ]);
+      clearTimeout(waited);
+      // Bounded as a whole: a farewell of several pages still ends within the grace.
+      if (farewell.apps.length > 0) {
+        let gaveUp;
+        await Promise.race([
+          report(farewell, FAREWELL_TIMEOUT_MS),
+          new Promise((resolve) => {
+            gaveUp = setTimeout(resolve, FAREWELL_TIMEOUT_MS);
+          }),
+        ]);
+        clearTimeout(gaveUp);
+      }
     },
     /** What the health check reports: the last list read and each app's connection. */
     status() {

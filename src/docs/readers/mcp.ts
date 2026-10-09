@@ -579,6 +579,14 @@ function continuationCursor(value: unknown, more?: boolean): string | undefined 
   return undefined;
 }
 
+/**
+ * The order a Notion walk lists pages in: by last edit, oldest first, so an edit made during the
+ * walk moves the page to the end of the walk, which still reaches it (M16). A page edited after
+ * the walk read it moves to the end too; should Notion's opaque cursor be a position, the page
+ * after it is skipped once, which the finish's two-walk prune keeps (14-D's ruling 1 (b)).
+ */
+const NOTION_WALK_ORDER = { timestamp: 'last_edited_time', direction: 'ascending' } as const;
+
 /** Reader for credential-bound MCP documentation locations. */
 export class McpReader implements DocumentationReader {
   /**
@@ -663,6 +671,11 @@ export class McpReader implements DocumentationReader {
     const tools = await client.listTools();
     const search = requiredTool(tools, 'search_files');
     const read = requiredTool(tools, 'read_file_content');
+    // Unordered: Google's `search_files` takes a query, a page size, a page token and the snippet
+    // switch, and no order (its reference, read 8 Oct 2026), so a file edited mid-walk can still
+    // move ahead of the cursor here as a Notion page could before M16, and this walk misses it.
+    // The finish prunes a page only once two complete walks in a row missed it (14-D's ruling
+    // 1 (b)), so an unordered walk loses a file only when two walks in a row skip it.
     const searchResult = providerPayload(
       await search.execute!(
         {
@@ -814,6 +827,9 @@ export class McpReader implements DocumentationReader {
       await search.execute!(
         {
           filter: { property: 'object', value: 'page' },
+          // Notion's default, newest edit first, moves a page edited mid-walk ahead
+          // of the cursor, where the walk misses it and the finish prunes it (M16).
+          sort: NOTION_WALK_ORDER,
           page_size: limit,
           ...(cursor ? { start_cursor: cursor } : {}),
         },

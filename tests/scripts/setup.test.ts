@@ -41,6 +41,10 @@ import {
   pushRefusalAdvice,
   sequenceSteps,
   setupEnvUpdates,
+  BACKEND_BUILD_FAILED_KEPT_LINE,
+  BACKEND_BUILD_LINE,
+  BACKEND_IMAGE_KEPT_LINE,
+  demoTileNote,
   shouldCaptureAdminKey,
   wrapIndented,
   writeEnvValues,
@@ -121,6 +125,12 @@ interface HarnessOptions {
   volumes?: string[];
   /** Commands answered with a failure, matched on the joined argument list. */
   failing?: { match: string; status: number; stderr: string }[];
+  /**
+   * The layers `docker image inspect` prints for the backend image (`built`, null when no image is
+   * here) and for the Dockerfile's pinned base. Absent, the inspect answers as any unscripted
+   * command does.
+   */
+  backendLayers?: { readonly built: readonly string[] | null; readonly base: readonly string[] };
   /** Whether the backend answers on its port. */
   backendUp?: boolean;
   environment?: Record<string, string | undefined>;
@@ -164,6 +174,14 @@ function harness(options: HarnessOptions = {}): Harness {
     }
     if (joined.startsWith('docker compose version')) {
       return { status: 0, stdout: 'Docker Compose version v5.5.1\n', stderr: '' };
+    }
+    if (joined.startsWith('docker image inspect') && options.backendLayers !== undefined) {
+      const layers = joined.includes('day0-convex-backend:git')
+        ? options.backendLayers.built
+        : options.backendLayers.base;
+      return layers === null
+        ? { status: 1, stdout: '', stderr: 'Error: No such image: day0-convex-backend:git' }
+        : { status: 0, stdout: `${JSON.stringify(layers)}\n`, stderr: '' };
     }
     if (joined.startsWith('docker volume ls')) {
       return { status: 0, stdout: `${volumes.join('\n')}\n`, stderr: '' };
@@ -258,6 +276,17 @@ function harness(options: HarnessOptions = {}): Harness {
  * Returns:
  *   Complete setup options.
  */
+/** The checkout's backend Dockerfile, and the base it pins (its FROM line's reference). */
+const BACKEND_DOCKERFILE = readFileSync(
+  fileURLToPath(new URL('../../docker/backend.Dockerfile', import.meta.url)),
+  'utf8',
+);
+/** An image built from the pinned base: the base's layers, then git's. */
+const CURRENT_LAYERS = {
+  built: ['sha256:base-1', 'sha256:base-2', 'sha256:git'],
+  base: ['sha256:base-1', 'sha256:base-2'],
+};
+
 function keyRoute(overrides: Partial<SetupOptions> = {}): SetupOptions {
   return {
     mode: 'mock',
@@ -949,6 +978,110 @@ describe('the values written into .env.local', (): void => {
     expect(updates.OPENAI_API_KEY).toBeUndefined();
   });
 
+  it('lists the demo tile among the private hosts in real mode when the file lists none, and only then (14-D ruling 2)', (): void => {
+    const real = (existing: Record<string, string>): Record<string, string> =>
+      setupEnvUpdates({
+        route: 'key',
+        project: 'day0-setup-abc',
+        ports: DEFAULT_PORTS,
+        existing,
+        mode: 'real',
+      });
+    expect(real({}).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: '' }).DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+    expect(real({ DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).not.toHaveProperty(
+      'DAY0_PRIVATE_HOSTS',
+    );
+    expect(
+      setupEnvUpdates({ route: 'key', project: 'p', ports: DEFAULT_PORTS, existing: {} }),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+  });
+
+  it('says so when the operator’s private hosts leave out the demo tile real mode starts (14-D ruling 2)', (): void => {
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(
+      'DAY0_PRIVATE_HOSTS does not list looker-tile, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add looker-tile to the list to use the tile.',
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal looker-tile' })).toBe(
+      undefined,
+    );
+    expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: '' })).toBe(undefined);
+    expect(demoTileNote('mock', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(undefined);
+  });
+
+  it('builds the backend image before it starts the backend, at every install, rerun and upgrade (14-F ruling 1 (a))', (): void => {
+    for (const input of [
+      {},
+      { mode: 'real' as const },
+      { existing: true, upgrade: true },
+      { mode: 'real' as const, existing: true, upgrade: true },
+    ]) {
+      const steps = sequenceSteps('key', input);
+      expect(steps.indexOf('backend:build')).toBeGreaterThanOrEqual(0);
+      expect(steps.indexOf('backend:build')).toBe(steps.indexOf('convex:up') - 1);
+    }
+  });
+
+  it('builds the backend image in mock mode only when none of the pinned base is here (W14-R17)', (): void => {
+    expect(sequenceSteps('key', { backendImage: 'current' })).not.toContain('backend:build');
+    for (const backendImage of ['missing', 'stale'] as const) {
+      expect(sequenceSteps('key', { backendImage })).toContain('backend:build');
+    }
+    expect(sequenceSteps('key', { mode: 'real', backendImage: 'current' })).toContain(
+      'backend:build',
+    );
+  });
+
+  it('uses the backend image already built from the pinned base in mock mode, building nothing (W14-R17)', async () => {
+    const h = harness({
+      answers: ['synthetic-key'],
+      services: ['backend', 'sandbox'],
+      backendLayers: CURRENT_LAYERS,
+    });
+    mkdirSync(join(h.directory, 'docker'), { recursive: true });
+    writeFileSync(join(h.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(BACKEND_IMAGE_KEPT_LINE);
+    expect(printed).not.toContain('pnpm backend:build');
+    expect(h.commands.some((entry) => entry.args.includes('backend:build'))).toBe(false);
+  });
+
+  it('goes on with an image of the pinned base when the build fails, and stops when none is here (W14-R17)', async () => {
+    const failing = [{ match: 'run backend:build', status: 1, stderr: 'apt: hash sum mismatch' }];
+    const kept = harness({
+      answers: ['synthetic-key'],
+      services: ['backend', 'sandbox'],
+      backendLayers: CURRENT_LAYERS,
+      failing,
+    });
+    mkdirSync(join(kept.directory, 'docker'), { recursive: true });
+    writeFileSync(join(kept.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+    expect(await runSetup(keyRoute({ mode: 'real' }), kept.io)).toBe(0);
+    expect(kept.output.join('\n')).toContain(BACKEND_BUILD_FAILED_KEPT_LINE);
+    for (const built of [null, ['sha256:older-base', 'sha256:git']]) {
+      const stopped = harness({
+        answers: ['synthetic-key'],
+        services: ['backend', 'sandbox'],
+        backendLayers: { built, base: CURRENT_LAYERS.base },
+        failing,
+      });
+      mkdirSync(join(stopped.directory, 'docker'), { recursive: true });
+      writeFileSync(join(stopped.directory, 'docker', 'backend.Dockerfile'), BACKEND_DOCKERFILE);
+      expect(await runSetup(keyRoute({ mode: 'real' }), stopped.io)).toBe(1);
+      expect(stopped.output.join('\n')).not.toContain(BACKEND_BUILD_FAILED_KEPT_LINE);
+    }
+  });
+
+  it('says what it builds before it builds the backend image (14-F ruling 1 (a))', async () => {
+    const h = harness({ answers: ['synthetic-key'], services: ['backend', 'sandbox'] });
+    expect(await runSetup(keyRoute(), h.io)).toBe(0);
+    const printed = h.output.join('\n');
+    expect(printed).toContain(BACKEND_BUILD_LINE);
+    expect(BACKEND_BUILD_LINE).toContain('docker/backend.Dockerfile');
+    expect(printed.indexOf(BACKEND_BUILD_LINE)).toBeLessThan(printed.indexOf('pnpm backend:build'));
+    expect(printed.indexOf('pnpm backend:build')).toBeLessThan(printed.indexOf('pnpm convex:up'));
+  });
+
   it('writes the model port only where a bundled model uses one', (): void => {
     const local = setupEnvUpdates({
       route: 'local',
@@ -994,6 +1127,7 @@ describe('the order the helpers run in', (): void => {
   it('is the one the README calls load-bearing', (): void => {
     expect(sequenceSteps('key')).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',
@@ -1006,6 +1140,7 @@ describe('the order the helpers run in', (): void => {
     ]);
     expect(sequenceSteps('local')).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'model:up',
       'model:pull',
@@ -1023,6 +1158,7 @@ describe('the order the helpers run in', (): void => {
   it('checks the release and pushes the functions before the env on a volume that already holds a deployment (step 14)', (): void => {
     expect(sequenceSteps('key', { existing: true })).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',
@@ -1039,6 +1175,7 @@ describe('the order the helpers run in', (): void => {
   it('puts the env first on a reused volume the release check found empty', (): void => {
     expect(sequenceSteps('key', { existing: true, empty: true })).toEqual([
       'dev:no-auth-key',
+      'backend:build',
       'convex:up',
       'sandbox:up',
       'admin-key',

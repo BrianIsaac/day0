@@ -25,6 +25,7 @@ import {
   type LinkedRunbookPage,
 } from './skillAuthorPrompt';
 import { holdSandboxLease, namedHarnessSurfaces, verifyAuthoredSkill } from './skillSandboxCheck';
+import { linkedRunbookPages } from './documentationWindows';
 import {
   FAILED_VERIFICATION_LOG_CHARS,
   keepRefusedDraft,
@@ -161,9 +162,14 @@ export async function authorAndRegister(
     internal.orientationData.surfacesForAgent,
     { agentId: claim.skill.agentId },
   );
-  const pageRows: Doc<'docPages'>[] = await ctx.runQuery(internal.orientationData.pagesForAgent, {
-    agentId: claim.skill.agentId,
-  });
+  // Read a window at a time, keeping only the pages the run can link (F2 D5).
+  const pageRows = await linkedRunbookPages(
+    ctx,
+    claim.skill.agentId,
+    claim.skill,
+    surfaceRows.map(toSurfaceRecord),
+    'skill-authoring',
+  );
   const run: AuthoringRun = {
     ctx,
     skillId,

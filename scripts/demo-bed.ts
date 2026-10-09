@@ -18,9 +18,11 @@
  * the redactor clone `up --warm-from` makes.
  *
  * Three things are deliberate about `up`. Images are never pulled
- * (`--pull never`): the venue network is not to be trusted with a 578 MB
- * download, so the compose file is pinned to digests present on the laptop and
- * a missing image is a pre-flight gap, not a wait. The deployment env is
+ * (`--pull never`) nor built (`--no-build`): the venue network is not to be
+ * trusted with a 578 MB download, so the compose file is pinned to digests
+ * present on the laptop, the backend's image is built there beforehand
+ * (`pnpm backend:build`, from the pinned base in `docker/backend.Dockerfile`),
+ * and a missing image is a pre-flight gap, not a wait. The deployment env is
  * pushed and the backend restarted before functions are used, because a
  * restored volume carries the recording bed's env and a module keeps whatever
  * it was first evaluated with. And the admin key is regenerated from the
@@ -67,6 +69,7 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { errorMessage } from '../src/lib/errors';
+import { listsDemoTile, withDemoTile } from './lib/demo-tile';
 
 const ENV_FILE = '.env.local';
 const COMPOSE_FILE = 'docker-compose.yml';
@@ -593,35 +596,124 @@ export function restoreCommand(
 /** One Compose service and the image reference it runs. */
 export interface ComposeImage {
   service: string;
+  /** The image it runs, or for a built service the image its Dockerfile starts from. */
   reference: string;
   pinned: boolean;
+  /** For a built service, the name compose gives what it builds (its `image:` line). */
+  builtAs?: string;
+}
+
+/** The image a Dockerfile starts from: its first `FROM`, without a stage name. */
+export function dockerfileBase(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    const from = /^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)/i.exec(line);
+    if (from) return from[1];
+  }
+  return undefined;
 }
 
 /**
- * Every `image:` line in the compose file with the service it belongs to.
+ * Every service's image in the compose file, in file order: the `image:` it runs, or for a service
+ * compose builds (a `build:` block, the backend since wave 14's 14-F ruling 1 (a)) the image its
+ * Dockerfile starts from, which is where that service's pin lives, with the name it is built as.
  *
  * Args:
  *   composeText: The compose file.
+ *   readText: Reads a Dockerfile by its path from the compose file's directory.
  *
  * Returns:
- *   One entry per service that names an image, in file order.
+ *   One entry per service that names an image or builds one.
  */
-export function composeImages(composeText: string): ComposeImage[] {
-  const images: ComposeImage[] = [];
-  let service = '';
+export function composeImages(
+  composeText: string,
+  readText: (path: string) => string = (path: string): string => readFileSync(path, 'utf8'),
+): ComposeImage[] {
+  const services: Array<{
+    service: string;
+    image?: string;
+    context?: string;
+    dockerfile?: string;
+  }> = [];
+  let current: (typeof services)[number] | undefined;
+  let inBuild = false;
   for (const line of composeText.split('\n')) {
     const serviceMatch = /^ {2}([a-z][a-z0-9-]*):\s*$/.exec(line);
     if (serviceMatch) {
-      service = serviceMatch[1];
+      current = { service: serviceMatch[1] };
+      services.push(current);
+      inBuild = false;
       continue;
     }
-    const imageMatch = /^\s+image:\s*'?([^'#\s]+)'?\s*$/.exec(line);
-    if (imageMatch && service) {
-      const reference = imageMatch[1];
-      images.push({ service, reference, pinned: /@sha256:[0-9a-f]{64}$/.test(reference) });
-    }
+    if (current === undefined) continue;
+    if (/^ {4}\S/.test(line)) inBuild = /^ {4}build:\s*$/.test(line);
+    const imageMatch = /^ {4}image:\s*'?([^'#\s]+)'?\s*$/.exec(line);
+    if (imageMatch) current.image = imageMatch[1];
+    const buildMatch = inBuild
+      ? /^ {6}(context|dockerfile):\s*'?([^'#\s]+)'?\s*$/.exec(line)
+      : null;
+    if (buildMatch) current[buildMatch[1] as 'context' | 'dockerfile'] = buildMatch[2];
   }
-  return images;
+  return services.flatMap((entry): ComposeImage[] => {
+    if (entry.context !== undefined) {
+      const path = `${entry.context}/${entry.dockerfile ?? 'Dockerfile'}`;
+      const reference = dockerfileBase(readText(path)) ?? path;
+      return [
+        {
+          service: entry.service,
+          reference,
+          pinned: /@sha256:[0-9a-f]{64}$/.test(reference),
+          ...(entry.image !== undefined ? { builtAs: entry.image } : {}),
+        },
+      ];
+    }
+    if (entry.image === undefined) return [];
+    return [
+      {
+        service: entry.service,
+        reference: entry.image,
+        pinned: /@sha256:[0-9a-f]{64}$/.test(entry.image),
+      },
+    ];
+  });
+}
+
+/**
+ * The pre-flight's line on the compose file's images: how many are present and pinned, and what
+ * each missing one needs before the venue. A built image (the backend's) is present when what it
+ * is built as is; it is pinned when its Dockerfile's base is, and a missing one is built, not pulled.
+ *
+ * Args:
+ *   images: The compose file's images (`composeImages`).
+ *   isPresent: Whether Docker holds an image by this reference.
+ *
+ * Returns:
+ *   The pre-flight item.
+ */
+export function imagesPreflightItem(
+  images: readonly ComposeImage[],
+  isPresent: (reference: string) => boolean,
+): ChecklistItem {
+  const missing = images.flatMap((image: ComposeImage): string[] => {
+    if (isPresent(image.builtAs ?? image.reference)) return [];
+    return [
+      image.builtAs === undefined
+        ? `missing: ${image.service} (${image.reference}); pull it before travelling, not at the venue`
+        : `missing: ${image.service} (${image.builtAs}, built from ${image.reference}); build it ` +
+          'with `pnpm backend:build` before travelling, not at the venue',
+    ];
+  });
+  const unpinned = images.filter((image: ComposeImage): boolean => !image.pinned);
+  const built = images.filter((image: ComposeImage): boolean => image.builtAs !== undefined);
+  return {
+    label: `Images: ${images.length - missing.length}/${images.length} present (${built.length} built here), ${images.length - unpinned.length}/${images.length} pinned`,
+    status: missing.length > 0 ? 'gap' : unpinned.length > 0 ? 'warn' : 'ok',
+    detail: [
+      ...missing,
+      ...unpinned.map(
+        (image: ComposeImage): string => `unpinned: ${image.service} (${image.reference})`,
+      ),
+    ].join('\n'),
+  };
 }
 
 /**
@@ -1551,6 +1643,9 @@ export function bedEnvDefaults(
     derived.DAY0_BROWSER_MCP_URL = BROWSER_MCP_URL;
   if (profiles.includes('redactor') && !values.DAY0_REDACTOR_URL)
     derived.DAY0_REDACTOR_URL = REDACTOR_URL;
+  // The tile is a web UI over plain http, opened only on a listed private host (14-D's ruling 2).
+  if (profiles.includes('demo') && !listsDemoTile(values.DAY0_PRIVATE_HOSTS))
+    derived.DAY0_PRIVATE_HOSTS = withDemoTile(values.DAY0_PRIVATE_HOSTS);
   if (profiles.includes('test')) {
     if (!values.DAY0_TEST_SLACK_API_URL) derived.DAY0_TEST_SLACK_API_URL = TEST_SLACK_API_URL;
     if (!values.DAY0_TEST_SLACK_AUTHORIZE_URL)
@@ -2029,7 +2124,7 @@ async function up(options: DemoBedOptions): Promise<void> {
   }
 
   log(
-    `[3/10] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled`,
+    `[3/10] Documentation directory, then compose up (${options.profiles.join(', ')}), images never pulled or built`,
   );
   must(
     run('pnpm', ['exec', 'tsx', 'scripts/dev-docs-dir.ts'], {
@@ -2299,26 +2394,13 @@ async function preflight(options: DemoBedOptions): Promise<number> {
         : 'the daemon did not answer; start Docker',
   });
 
-  const images = composeImages(readFileSync(COMPOSE_FILE, 'utf8'));
-  const missing: string[] = [];
-  const unpinned = images.filter((image: ComposeImage): boolean => !image.pinned);
-  for (const image of images) {
-    if (run('docker', ['image', 'inspect', image.reference], { timeoutMs: 15_000 }).status !== 0) {
-      missing.push(`${image.service} (${image.reference})`);
-    }
-  }
-  items.push({
-    label: `Images: ${images.length - missing.length}/${images.length} present, ${images.length - unpinned.length}/${images.length} pinned`,
-    status: missing.length > 0 ? 'gap' : unpinned.length > 0 ? 'warn' : 'ok',
-    detail: [
-      ...missing.map(
-        (name: string): string => `missing: ${name}; pull it before travelling, not at the venue`,
-      ),
-      ...unpinned.map(
-        (image: ComposeImage): string => `unpinned: ${image.service} (${image.reference})`,
-      ),
-    ].join('\n'),
-  });
+  items.push(
+    imagesPreflightItem(
+      composeImages(readFileSync(COMPOSE_FILE, 'utf8')),
+      (reference: string): boolean =>
+        run('docker', ['image', 'inspect', reference], { timeoutMs: 15_000 }).status === 0,
+    ),
+  );
 
   const services = projectServices(options.project);
   const running = (name: string): boolean =>

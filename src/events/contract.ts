@@ -31,7 +31,7 @@ import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
 import type {
   AgreementApprovedVia,
-  AgreementRefusalReason,
+  AgreementRowRefusalReason,
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
@@ -40,7 +40,7 @@ import type { PlannerObligations } from '../work/plan-obligations';
 import type { RelationshipType } from '../people/vocabulary';
 import type { ReconciliationEntry } from '../work/reconciliation';
 import type { TicketSnapshot } from '../work/ticket-ownership';
-import type { ExecutionPlan, PlanObligations } from '../work/types';
+import type { DocumentationSelectionRecord, ExecutionPlan, PlanObligations } from '../work/types';
 
 type WorkItemId = Id<'workItems'>;
 type SurfaceId = Id<'surfaces'>;
@@ -682,6 +682,21 @@ export type SkillAuthoringHeldPayload = SkillReason;
 /** The payload of `skill.authoring-resumed` (wave 13, D-8 (b)): the authoring a pause held goes on. */
 export type SkillAuthoringResumedPayload = SkillNamed;
 
+/**
+ * Why a resume did not start an authoring a pause held (W13-R46): the skill is no longer one a
+ * claim takes (the manager decided it, its attempts are spent, or it is gone), a run holds it
+ * now, or it was claimed since its hold.
+ */
+export type HeldAuthoringSpentWhy = 'decided' | 'running' | 'claimed' | 'gone';
+
+/**
+ * The payload of `skill.authoring-hold-spent` (W13-R46): a resume left a held authoring as it was,
+ * and its hold is spent, so no later resume reads it again.
+ */
+export interface SkillAuthoringHoldSpentPayload extends SkillNamed {
+  readonly why: HeldAuthoringSpentWhy;
+}
+
 /** The payload of `skill.authoring-claimed`. */
 export interface SkillAuthoringClaimedPayload extends SkillNamed {
   readonly fromState: Doc<'skills'>['state'];
@@ -816,6 +831,15 @@ export interface SurfaceOrientationHeldPayload extends SurfaceReason {
 
 /** The payload of `surface.orientation-resumed` (wave 13, D-8 (b)): the orientation a pause held goes on. */
 export type SurfaceOrientationResumedPayload = SurfaceNamed;
+
+/**
+ * The payload of `surface.orientation-hold-spent` (W13-R46): a resume left a held orientation as
+ * it was, the system no longer waiting to be found (`settled`: oriented since, found absent, or
+ * gone), and its hold is spent.
+ */
+export interface SurfaceOrientationHoldSpentPayload extends SurfaceNamed {
+  readonly why: 'settled';
+}
 
 /** The payload of `surface.app-provisioned`. */
 export interface SurfaceAppProvisionedPayload extends SurfaceNamed {
@@ -1315,6 +1339,15 @@ export interface WorkPlanRedraftingPayload extends WorkItemNamed {
   readonly slug: string;
 }
 
+/**
+ * The payload of `work.plan-redraft`: a plan whose cited documentation changed after its approval,
+ * drafted again on the manager's Retry (14-R's gone cite, ruled 8 October 2026).
+ */
+export interface WorkPlanRedraftPayload extends WorkItemNamed {
+  /** The failed run's reason, which named the changed documentation. */
+  readonly reason: string;
+}
+
 /** The payload of `work.corrections-applied`. */
 export interface WorkCorrectionsAppliedPayload extends WorkItemNamed {
   readonly correctionIds: Id<'corrections'>[];
@@ -1356,7 +1389,8 @@ export interface AgreementActivatedPayload extends AgreementNamed {
 
 /** The payload of `agreement.refused`: it would go beyond the charter (F11), with the clause. */
 export interface AgreementRefusedPayload extends AgreementNamed {
-  readonly reason: AgreementRefusalReason;
+  /** The judgement's verdict, or a keep for every employee past the employees its check reads. */
+  readonly reason: AgreementRowRefusalReason;
   /** The `willNotDo` clause it contradicts, word for word. */
   readonly clause?: string;
 }
@@ -1698,6 +1732,18 @@ export interface ClosingReauthoredForRound extends WorkItemRun {
 /** The payload of `work.closing-reauthored`, by why the set was authored again. */
 export type WorkClosingReauthoredPayload = ClosingReauthoredForHolder | ClosingReauthoredForRound;
 
+/**
+ * The payload of `work.documentation-selected` (wave 14, 14-R): the documentation one real-mode
+ * model call site's prompt carries for the item, by stored block and character count. Written
+ * once a site's snapshot is read; the retrieval figure counts the characters.
+ */
+export interface WorkDocumentationSelectedPayload {
+  readonly workItemId: WorkItemId;
+  readonly site: DocumentationSelectionRecord['site'];
+  readonly blockIds: string[];
+  readonly chars: number;
+}
+
 /** The payload of `work.model-call`. */
 export interface WorkModelCallPayload extends ModelCallReport {
   readonly workItemId?: WorkItemId;
@@ -1796,6 +1842,7 @@ export interface EventPayloads {
   'skill.authoring-superseded': SkillAuthoringSupersededPayload;
   'skill.authoring-held': SkillAuthoringHeldPayload;
   'skill.authoring-resumed': SkillAuthoringResumedPayload;
+  'skill.authoring-hold-spent': SkillAuthoringHoldSpentPayload;
   'skill.authoring-claimed': SkillAuthoringClaimedPayload;
   'skill.authoring': SkillAuthoringPayload;
   'skill.registered': SkillRegisteredPayload;
@@ -1815,6 +1862,7 @@ export interface EventPayloads {
   'surface.orientation-failed': SurfaceOrientationFailedPayload;
   'surface.orientation-held': SurfaceOrientationHeldPayload;
   'surface.orientation-resumed': SurfaceOrientationResumedPayload;
+  'surface.orientation-hold-spent': SurfaceOrientationHoldSpentPayload;
   'surface.app-provisioned': SurfaceAppProvisionedPayload;
   'surface.app-forgotten': SurfaceAppForgottenPayload;
   'surface.socket-token-landed': SurfaceSocketTokenLandedPayload;
@@ -1872,6 +1920,7 @@ export interface EventPayloads {
   'work.plan-grounding-read': WorkPlanGroundingReadPayload;
   'work.plan-drafted': WorkPlanDraftedPayload;
   'work.plan-redrafting': WorkPlanRedraftingPayload;
+  'work.plan-redraft': WorkPlanRedraftPayload;
   'work.corrections-applied': WorkCorrectionsAppliedPayload;
   'work.corrections-redaction-limited': WorkCorrectionsRedactionLimitedPayload;
   'work.correction-retired': WorkCorrectionRetiredPayload;
@@ -1917,6 +1966,7 @@ export interface EventPayloads {
   'work.carried-reads-applied': WorkCarriedReadsAppliedPayload;
   'work.closing-reauthored': WorkClosingReauthoredPayload;
   'work.model-call': WorkModelCallPayload;
+  'work.documentation-selected': WorkDocumentationSelectedPayload;
   'work.manager-note-sending': WorkManagerNoteSendingPayload;
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
@@ -1996,6 +2046,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'skill.authoring-superseded',
   'skill.authoring-held',
   'skill.authoring-resumed',
+  'skill.authoring-hold-spent',
   'skill.authoring-claimed',
   'skill.authoring',
   'skill.registered',
@@ -2015,6 +2066,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'surface.orientation-failed',
   'surface.orientation-held',
   'surface.orientation-resumed',
+  'surface.orientation-hold-spent',
   'surface.app-provisioned',
   'surface.app-forgotten',
   'surface.socket-token-landed',
@@ -2072,6 +2124,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.plan-grounding-read',
   'work.plan-drafted',
   'work.plan-redrafting',
+  'work.plan-redraft',
   'work.corrections-applied',
   'work.corrections-redaction-limited',
   'work.correction-retired',
@@ -2117,6 +2170,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.carried-reads-applied',
   'work.closing-reauthored',
   'work.model-call',
+  'work.documentation-selected',
   'work.manager-note-sending',
   'work.manager-note-failed',
   'work.manager-digest-sending',

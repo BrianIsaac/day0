@@ -275,6 +275,18 @@ describe('the token store component (join 9)', (): void => {
     expect(told.lines.join('\n')).not.toContain(nango.DAY0_NANGO_SECRET_KEY);
   });
 
+  it('names the Ubuntu archive the backend image’s build fetches git from, and the base among the pulls (14-F ruling 1 (a))', (): void => {
+    const rows = egressHosts({});
+    for (const host of ['archive.ubuntu.com', 'security.ubuntu.com']) {
+      expect(rows.find((row) => row.host === host)?.purpose).toBe(
+        "the backend image's build at setup and upgrade (git's packages, over http on port 80)",
+      );
+    }
+    expect(rows.find((row) => row.host === 'ghcr.io')?.purpose).toBe(
+      'image pulls at setup (the Convex backend the backend image is built from, and the dashboard)',
+    );
+  });
+
   it('names the token store’s images among the registry pulls', (): void => {
     const registry = egressHosts({}).find((row) => row.host === 'registry-1.docker.io');
     expect(registry?.purpose).toContain('nango-server');
@@ -318,6 +330,48 @@ describe('the support report', (): void => {
     for (const row of egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' })) {
       expect(row.purpose.length).toBeGreaterThan(0);
     }
+  });
+
+  it('names the Feishu open platform host of each region for a Feishu source, in real mode only (14-F)', (): void => {
+    const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
+    expect(rows.filter((row) => row.host.startsWith('open.'))).toEqual([
+      {
+        host: 'open.feishu.cn',
+        purpose: 'a Feishu documentation source in the Feishu region, when one is linked',
+      },
+      {
+        host: 'open.larksuite.com',
+        purpose: 'a Feishu documentation source in the Lark region, when one is linked',
+      },
+    ]);
+    expect(egressHosts({ OPENAI_API_KEY: 'k' }).map((row) => row.host)).not.toContain(
+      'open.feishu.cn',
+    );
+  });
+
+  it('names each git host DAY0_GIT_HOSTS lists, and none when the list is refused (14-F)', (): void => {
+    const rows = egressHosts({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      DAY0_GIT_HOSTS: 'gitee.com, git.acme.example .code.acme.example',
+    });
+    expect(rows.filter((row) => row.purpose.includes('DAY0_GIT_HOSTS'))).toEqual([
+      { host: 'gitee.com', purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists' },
+      {
+        host: 'git.acme.example',
+        purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists',
+      },
+      {
+        host: '*.code.acme.example',
+        purpose: 'a git documentation source on a host DAY0_GIT_HOSTS lists',
+      },
+    ]);
+    const refused = egressHosts({
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      DAY0_GIT_HOSTS: 'gitee.com localhost',
+    });
+    expect(refused.some((row) => row.purpose.includes('DAY0_GIT_HOSTS'))).toBe(false);
   });
 
   it('names the Socket Mode host the slack-socket component dials, as the walk saw it (W12V-17), and no Slack method (W13V-10)', (): void => {
@@ -637,6 +691,16 @@ describe('the settings worth a second look', (): void => {
     expect(lines).toContain('DAY0_APP_HOST=0.0.0.0 publishes the app');
     expect(lines).toContain('DAY0_PRIVATE_HOSTS is refused as it stands');
     expect(lines).toContain('every git source, GitHub and GitLab included');
+  });
+
+  it('warns on a refused git hosts list, which stops only the hosts it would list (14-F)', (): void => {
+    const lines =
+      settingsSection({ DAY0_GIT_HOSTS: 'gitee.com https://jihulab.com' })?.lines.join(' ') ?? '';
+    expect(lines).toContain('DAY0_GIT_HOSTS is refused as it stands');
+    expect(lines).toContain(
+      'so no git source outside GitHub, GitLab and DAY0_PRIVATE_HOSTS is read',
+    );
+    expect(settingsSection({ DAY0_GIT_HOSTS: 'gitee.com' })).toBeUndefined();
   });
 });
 

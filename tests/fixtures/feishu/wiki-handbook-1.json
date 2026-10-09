@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "items": [],
+    "page_token": "fixture-handbook-page-2",
+    "has_more": true
+  }
+}

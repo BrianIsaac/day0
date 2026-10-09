@@ -523,6 +523,8 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       },
       reorientation: { answered: 0, amended: 0, rate: null },
       hoursSaved: { estimatedItems: 0, hours: null },
+      // The 16 September recording predates the selection (wave 14, 14-R): no item read one, so
+      // the recompute shows no recall, as the backend does (re-pinned for W14-R6).
       retrieval: { tokens: null, recall: null },
     });
   });

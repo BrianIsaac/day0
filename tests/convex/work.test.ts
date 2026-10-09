@@ -29,7 +29,7 @@ import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
-import { seedEmployee, seedPerson } from './fakes/people-graph';
+import { seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
 import {
   GROUNDING_READ_AFTER_HANDOVER,
@@ -8611,5 +8611,32 @@ describe('work.listForAgent', (): void => {
       'C0ASKS:4': null,
       'C0ASKS:5': null,
     });
+  });
+
+  it('names each Slack user a listed ask mentions who is a confirmed person, and no other (W13V-7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const rowan = await seedPerson(harness, 'Rowan Hale');
+    await seedIdentity(harness, rowan, { provider: 'slack', externalId: 'U0C78V6LAPP' });
+    const gone = await seedPerson(harness, 'Dee Dismissed', { status: 'dismissed' } as never);
+    await seedIdentity(harness, gone, { provider: 'slack', externalId: 'U0DEEGONE1' });
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', {
+        agentId,
+        sourceCategory: 'event-stream',
+        sourceSystem: 'slack',
+        externalId: 'C0ASKS:9',
+        title: 'Slack mention in #revops-asks',
+        contentSummary: '<@U0C78V6LAPP> and <@U0DEEGONE1>, can you refresh the board?',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const [listed] = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    expect(listed?.mentionNames).toEqual({ U0C78V6LAPP: 'Rowan Hale' });
   });
 });

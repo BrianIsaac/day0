@@ -11,6 +11,16 @@ import type { Id } from '../../convex/_generated/dataModel';
 
 const query = vi.hoisted(() => ({ result: undefined as unknown }));
 
+/** A labelled-set grade, fixed so the cell's words do not move with the tracked grade. */
+const GRADED_RECALL = {
+  pages: 0.95,
+  blocks: 0.9333333333333333,
+  cases: 30,
+  corpusPages: 17,
+  gradedAt: '2026-10-07T19:39:48.260Z',
+  commit: '0123456789abcdef0123456789abcdef01234567',
+};
+
 vi.mock('convex/react', () => ({
   useQuery: (): unknown => query.result,
 }));
@@ -81,7 +91,7 @@ function agentMetrics(overrides: {
       },
       reorientation: { answered: 0, amended: 0, rate: null },
       hoursSaved: { estimatedItems: 0, hours: null },
-      retrieval: { tokens: null, recall: null },
+      retrieval: { tokens: null, recall: GRADED_RECALL },
     },
   };
 }
@@ -296,7 +306,7 @@ describe('the company supervision card', (): void => {
                   },
                   reorientation: { answered: 2, amended: 1, rate: 0.5 },
                   hoursSaved: { estimatedItems: 2, hours: 1.5 },
-                  retrieval: { tokens: null, recall: null },
+                  retrieval: { tokens: null, recall: GRADED_RECALL },
                 },
               },
             }
@@ -320,10 +330,65 @@ describe('the company supervision card', (): void => {
     expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');
     expect(priyaRow).toContain('1 of 2 answers');
     expect(priyaRow).toContain('1.5 h over 2 items');
-    expect(priyaRow).toContain('not measured yet');
+    // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
+    expect(priyaRow).toContain(
+      'no documentation counted yet; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
+    );
+    expect(pilot).not.toContain('not measured yet');
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe('the retrieval figure (14-R)', (): void => {
+  it('takes both columns of the stacked grid on a phone, as its words are the longest', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+    const pilot = html.slice(html.indexOf('Pilot figures'));
+    const cells =
+      pilot.match(
+        /<td role="cell" class="[^"]*"><span aria-hidden="true"[^>]*><span[^>]*>Retrieval</g,
+      ) ?? [];
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) expect(cell).toContain('max-lg:col-span-2');
+  });
+
+  const retrievalFigure = PILOT_FIGURES.find((figure) => figure.label === 'Retrieval')!;
+  const figures = (retrieval: PilotFigures['retrieval']): PilotFigures => ({
+    ...FIGURES.company.pilot,
+    retrieval,
+  });
+
+  it('says the documentation an item read against its billed input tokens, and the recall', (): void => {
+    expect(
+      retrievalFigure.value(
+        figures({
+          tokens: { items: 3, charsPerItem: 6_210.4, inputTokensPerItem: 31_402.6 },
+          recall: GRADED_RECALL,
+        }),
+      ),
+    ).toBe(
+      '6,210 characters of documentation and 31,403 input tokens billed an item; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
+    );
+  });
+
+  it('says no recall where no selection ran, as on the hosted mock office or a backend before 0.18.0 (W14-R6)', (): void => {
+    expect(retrievalFigure.value(figures({ tokens: null, recall: null }))).toBe(
+      'no documentation counted yet',
+    );
+  });
+
+  it('leaves the tokens out when no provider reported usage', (): void => {
+    expect(
+      retrievalFigure.value(
+        figures({
+          tokens: { items: 1, charsPerItem: 980, inputTokensPerItem: null },
+          recall: GRADED_RECALL,
+        }),
+      ),
+    ).toBe(
+      '980 characters of documentation an item; recall 95% of pages and 93% of sections on 30 test items over a 17-page test library',
+    );
   });
 });
 

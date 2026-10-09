@@ -293,6 +293,24 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(dropped.calls).toContain('convex env remove DAY0_NANGO_SECRET_KEY');
   });
 
+  it('puts the git hosts list on the deployment, and clears it once the file drops it (14-F)', (): void => {
+    const listed = runSync([], 'DAY0_SURFACE_MODE=mock\nDAY0_GIT_HOSTS=gitee.com\n');
+    expect(listed.status).toBe(0);
+    expect(listed.calls).toContain('convex env set DAY0_GIT_HOSTS -- gitee.com');
+    const dropped = runSync(['DAY0_GIT_HOSTS=gitee.com'], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove DAY0_GIT_HOSTS');
+    expect(dropped.deployment).not.toContain('DAY0_GIT_HOSTS=gitee.com');
+  });
+
+  it('pushes the CA bundle git trusts for a server on an internal authority, and clears it when emptied (W14-R41)', (): void => {
+    const bundle = '/etc/day0/internal-ca.pem';
+    const listed = runSync([], `DAY0_SURFACE_MODE=mock\nGIT_SSL_CAINFO=${bundle}\n`);
+    expect(listed.calls).toContain(`convex env set GIT_SSL_CAINFO -- ${bundle}`);
+    const dropped = runSync([`GIT_SSL_CAINFO=${bundle}`], 'DAY0_SURFACE_MODE=mock\n');
+    expect(dropped.calls).toContain('convex env remove GIT_SSL_CAINFO');
+    expect(dropped.deployment).not.toContain(`GIT_SSL_CAINFO=${bundle}`);
+  });
+
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {
     const configured = runSync(
       [],

@@ -10,7 +10,8 @@ import {
   ticketNowSentence,
   workingFrom,
   waitsAtClaim,
-  withoutSlackMentions,
+  slackMentionIds,
+  withSlackMentionsNamed,
   writesWhenRunFinishes,
   type RunHold,
 } from '../../../src/work/item-display';
@@ -384,16 +385,35 @@ describe('ticketNowSentence', (): void => {
   });
 });
 
-describe('withoutSlackMentions', (): void => {
+describe('withSlackMentionsNamed', (): void => {
   it('drops a raw Slack mention from the text a card shows, which says nothing to a manager (W13V-7)', (): void => {
-    expect(withoutSlackMentions('<@U0C78V6LAPP> can you refresh the board?')).toBe(
+    expect(withSlackMentionsNamed('<@U0C78V6LAPP> can you refresh the board?')).toBe(
       'can you refresh the board?',
     );
-    expect(withoutSlackMentions('Ask <@W0ABCDEF12|rowan> and <@U0BTFK6FLNL> first.')).toBe(
-      'Ask and first.',
+    // Re-pinned for W13V-7's second half (14-FX): a mention that carries its handle names it.
+    expect(withSlackMentionsNamed('Ask <@W0ABCDEF12|rowan> and <@U0BTFK6FLNL> first.')).toBe(
+      'Ask @rowan and first.',
     );
-    expect(withoutSlackMentions('No mention <#C0ASKS|revops-asks> here.')).toBe(
+    expect(withSlackMentionsNamed('No mention <#C0ASKS|revops-asks> here.')).toBe(
       'No mention <#C0ASKS|revops-asks> here.',
+    );
+  });
+
+  it('names a mentioned confirmed person, and lists the ids a text mentions (W13V-7)', (): void => {
+    expect(
+      withSlackMentionsNamed('<@U0C78V6LAPP> can you ask <@U0BTFK6FLNL|sam>?', {
+        U0C78V6LAPP: 'Rowan Hale',
+        U0BTFK6FLNL: 'Sam Lee',
+      }),
+    ).toBe('@Rowan Hale can you ask @Sam Lee?');
+    const crowd = Array.from(
+      { length: 30 },
+      (_, at) => `<@U0CROWD${String(at).padStart(4, '0')}>`,
+    ).join(' ');
+    // The second pass: a message mentioning hundreds asks the graph about at most ten.
+    expect(slackMentionIds(crowd)).toHaveLength(10);
+    expect(slackMentionIds('<@U0C78V6LAPP> and <@W0ABCDEF12|rowan>, twice <@U0C78V6LAPP>')).toEqual(
+      ['U0C78V6LAPP', 'W0ABCDEF12'],
     );
   });
 });

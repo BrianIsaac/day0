@@ -1,7 +1,15 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createBridge, responseUrlOf, type Bridge } from '../../slack-socket/bridge.js';
+import {
+  createBridge,
+  FAREWELL_TIMEOUT_MS,
+  FAREWELL_WAIT_MS,
+  REPORT_PAGE,
+  reportPages,
+  responseUrlOf,
+  type Bridge,
+} from '../../slack-socket/bridge.js';
 import { FAKE_BOT_TOKEN, startFakeSlack, type FakeSlack } from '../fake-slack/spawn';
 
 /*
@@ -178,7 +186,10 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  // What the backend and the bridge saw, so a timeout says why (W14-R37).
+  throw new Error(
+    `timed out waiting for ${what}: the backend opened ${backend.opened}, the bridge logged ${JSON.stringify(logged.slice(-8))}`,
+  );
 }
 
 async function proof(): Promise<{
@@ -501,6 +512,22 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     ).toBeGreaterThan(0);
   });
 
+  it('keeps refreshing when the connection a refresh replaced is slow to close (found by the pre-tag gate)', async (): Promise<void> => {
+    // A replaced connection still closing when the next refresh is due: the bridge holds two, and
+    // the refresh it skipped then was never scheduled again, so it stopped refreshing for good.
+    class SlowToClose extends WebSocket {
+      override close(code?: number, reason?: string): void {
+        setTimeout(() => super.close(code, reason), 400);
+      }
+    }
+    const running = start({
+      maxConnectionMs: 100,
+      WebSocket: SlowToClose as unknown as typeof WebSocket,
+    });
+    await running.start();
+    await until(() => backend.opened >= 4, 'three refreshes');
+  });
+
   it('opens the next connection before a long-lived one could have gone half-open', async (): Promise<void> => {
     const running = start({ maxConnectionMs: 200 });
     await running.start();
@@ -578,6 +605,59 @@ describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): v
     bridge = undefined;
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(lastReport()).toMatchObject({ surfaceId: 'surface-mateo', live: false });
+  });
+
+  it('reports an app it drops as down once, so its row does not read live until it ages (W13-R11)', async (): Promise<void> => {
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    backend.apps = [];
+    await until(() => running.status().apps.length === 0, 'the app dropped');
+    await until(() => lastReport()?.live === false, 'the app reported down');
+    expect(lastReport()).toEqual({ surfaceId: 'surface-mateo', appId: 'A_DAY0_FAKE', live: false });
+    // Said once: a bridge holding nothing reports nothing more.
+    const reports = backend.heartbeats.length;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(backend.heartbeats.length).toBe(reports);
+  });
+
+  it('reports a dropped app down at the next report the backend takes, when the first is lost (the second pass)', async (): Promise<void> => {
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(() => lastReport()?.live === true, 'the app reported live');
+    backend.heartbeatStatus = 503;
+    backend.apps = [];
+    await until(() => running.status().apps.length === 0, 'the app dropped');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    backend.heartbeatStatus = 200;
+    await until(
+      () => lastReport()?.live === false,
+      'the app reported down once the backend took it',
+    );
+  });
+
+  it('stops within the compose grace when a report on the wire hangs, its farewell sent all the same (W13-R17)', async (): Promise<void> => {
+    backend.liveHeartbeatDelayMs = 20_000;
+    const running = start();
+    await running.start();
+    await until(() => running.status().apps.some((app) => app.connected), 'the hello');
+    const began = Date.now();
+    await running.stop();
+    bridge = undefined;
+    expect(Date.now() - began).toBeLessThan(FAREWELL_WAIT_MS + FAREWELL_TIMEOUT_MS + 500);
+    expect(FAREWELL_WAIT_MS + FAREWELL_TIMEOUT_MS).toBeLessThan(5_000);
+    expect(lastReport()).toMatchObject({ surfaceId: 'surface-mateo', live: false });
+  });
+
+  it('reports in pages the backend takes in one call (W13-R17)', (): void => {
+    const apps = Array.from({ length: REPORT_PAGE * 2 + 1 }, (_, index) => ({
+      surfaceId: `s${index}`,
+      appId: 'A0OPS',
+      live: false,
+    }));
+    const pages = reportPages({ apps });
+    expect(pages.map((page) => page.apps.length)).toEqual([REPORT_PAGE, REPORT_PAGE, 1]);
+    expect(pages.flatMap((page) => page.apps)).toEqual(apps);
   });
 
   it('reports nothing while it holds no app, rather than an empty list every sync (13-FS second pass)', async (): Promise<void> => {

@@ -391,6 +391,76 @@ describe('registering a dedicated app', (): void => {
   });
 });
 
+describe('reading the documentation for the manifest (F2 D5)', (): void => {
+  it('reads the pages a window at a time, so a manifest past one read is still found', async (): Promise<void> => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL): Promise<Response> => {
+        if (String(input).endsWith('/auth.revoke')) {
+          return slackResponse({ ok: true, revoked: true });
+        }
+        return slackResponse({
+          ok: true,
+          app_id: 'A123',
+          credentials: { client_id: '111.222', client_secret: CLIENT_SECRET },
+        });
+      }),
+    );
+    const { api: liveApi } = await import('../../convex/_generated/api');
+    // The deployment's own read limit: 16 MiB a query.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { surfaceId } = await seedSlackSurface(harness);
+    const sourceId = await harness.run(async (ctx): Promise<Id<'docSources'>> => {
+      const page = await ctx.db.query('docPages').first();
+      if (page === null) throw new Error('the policy page was not seeded');
+      await ctx.db.patch(page._id, { markdown: '# Slack automation policy\n\nSee the app page.' });
+      return page.sourceId;
+    });
+    // Thirty pages of about 600 KB, 18 MB in all, then the page that carries the template; one
+    // write each, as a sync stores them.
+    for (let index = 0; index < 30; index += 1) {
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: `notes-${String(index).padStart(2, '0')}.md`,
+          title: `Handbook page ${index}`,
+          markdown: `# Notes\n\n${'x'.repeat(600 * 1024)}`,
+          updatedAt: 1,
+        });
+      });
+    }
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'slack-day0-app.md',
+        title: 'The Day0 Slack app',
+        markdown: POLICY,
+        updatedAt: 1,
+      });
+    });
+
+    const outcome = await harness
+      .withIdentity(managerIdentity())
+      .action(liveApi.slackProvisionActions.provisionApp, {
+        surfaceId,
+        configurationToken: CONFIG_TOKEN,
+      });
+
+    // The documented template's eight scopes, then the kit's it lacks: the page was found.
+    expect(new URL(outcome.installUrl).searchParams.get('scope')?.split(',')).toEqual([
+      'chat:write',
+      'channels:read',
+      'channels:history',
+      'im:read',
+      'im:write',
+      'im:history',
+      'users:read',
+      'users:read.email',
+      'channels:join',
+    ]);
+  }, 60_000);
+});
+
 describe('completing the install', (): void => {
   /** Register an app and return the state its install link carries. */
   async function provision(

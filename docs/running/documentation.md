@@ -12,6 +12,26 @@ documented-API example is checked that way once day0 reads that grammar.
 
 - A folder or git source reads every `.md` file under it. Other files, images included, are
   skipped.
+- A git source is a repository on GitHub or GitLab. IT can add other public code hosts in
+  `DAY0_GIT_HOSTS` (for example `gitee.com`, the JiHu host `jihulab.com`, or the company's own),
+  and hosts inside the company's network in `DAY0_PRIVATE_HOSTS`. A repository on any other host
+  is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host: a host listed
+  there must resolve to a public address, and one that resolves inside the network is refused
+  until it is listed in `DAY0_PRIVATE_HOSTS` instead.
+- A repository is cloned, which needs a `git` binary in the backend: from this release a
+  GitHub or GitLab repository is cloned first too, and read through the host's archive only when
+  the clone fails. The backend image an install builds carries git
+  (`docker/backend.Dockerfile`); on an image someone replaces with one that has none, the
+  source's status says so.
+- A git server whose certificate comes from the company's own certificate authority needs that
+  authority's bundle: mount it into the backend container and set `GIT_SSL_CAINFO` in
+  `.env.local` to its path inside the container (`./scripts/sync-convex-env.sh` puts it on the
+  deployment, whose environment the clone runs in). Without it the source reads "server
+  certificate verification failed".
+- A Feishu or Lark source reads a wiki space, or a Drive folder and the folders under it, as the
+  company's own app: every new-style document as Markdown, and every sheet, base, mind note or
+  file named as not read. How IT sets up the app, and what each refusal means:
+  [reader-feishu.md](reader-feishu.md).
 - A page's title is its first `# ` heading, or its file name when it has none.
 - Each linked source is read again on a schedule. A change reaches day0 at the next sync, not when
   you save.

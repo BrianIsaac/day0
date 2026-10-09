@@ -14,13 +14,12 @@ page carrying a manifest, section 2) offers the app with a configuration token
 pasted on the card, a page that records a bot token makes the card a
 pasted-token card, and with neither the card says what is missing.
 
-A dedicated Slack page that Day0 names after its own title rather than
-"Slack", such as the "Slack automation policy" page of the repository's own
-examples, is not read as Slack's Web API at v0.17.0: its card is reached by
-escalation and offers no app of its own. Until that is fixed, title the page
-"Slack", or link Slack from a page whose sentence giving
-`https://slack.com/api/` names Slack as the system; neither has yet been tried
-on a real workspace.
+From v0.18.0, a Slack page whose title opens with "Slack" (the "Slack automation
+policy" page of the repository's own examples) is read as Slack's Web API when a
+sentence on it names Slack and gives `https://slack.com/api/` ("Slack Web API
+over HTTPS at `https://slack.com/api/`"), and its card then offers the
+employee's own app. A page under any other title: name the page "Slack". Not
+yet tried on a real workspace.
 
 Slack is connected **per employee** only: one app per employee, its own bot
 user, its own permissions. The organisation's connection holds what Day0

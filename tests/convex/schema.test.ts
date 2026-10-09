@@ -2331,6 +2331,257 @@ describe('the wave 13 schema step (13-K, N10: additive and optional)', (): void 
   });
 });
 
+describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void => {
+  /** The names of a table's indexes, as the push declares them. */
+  const indexNames = (table: keyof typeof schema.tables): string[] =>
+    schema.tables[table][' indexes']().map((index) => index.indexDescriptor);
+
+  /** A table's search indexes as the push sends them. */
+  function searchIndexesOf(table: string): unknown[] {
+    // `export` is what the CLI pushes; Convex marks it internal, so it is not on the public type.
+    const pushed = schema as unknown as { readonly export: () => string };
+    const exported = JSON.parse(pushed.export()) as {
+      readonly tables: readonly { readonly tableName: string; readonly searchIndexes: unknown[] }[];
+    };
+    return exported.tables.find((entry) => entry.tableName === table)?.searchIndexes ?? [];
+  }
+
+  /** A linked folder source and one of its runs, the rows a block hangs on. */
+  async function sourceAndRun(
+    ctx: GenericMutationCtx<DataModel>,
+  ): Promise<{ sourceId: Id<'docSources'>; runId: Id<'docSyncRuns'> }> {
+    const sourceId = await ctx.db.insert('docSources', {
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: '.',
+      status: 'synced',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing: 1,
+      credentialRefs: [],
+      pageCount: 1,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: 2,
+    });
+    return { sourceId, runId };
+  }
+
+  /** A block of a page, with the fields a test gives it. */
+  const block = (
+    sourceId: Id<'docSources'>,
+    generation: Id<'docSyncRuns'>,
+    fields: Partial<WithoutSystemFields<Doc<'docBlocks'>>> = {},
+  ): WithoutSystemFields<Doc<'docBlocks'>> => ({
+    userId: 'owner',
+    sourceId,
+    pageRef: 'runbooks/refresh.md',
+    generation,
+    index: 0,
+    headingPath: ['Refreshing the tile'],
+    text: 'Press Refresh twice.',
+    searchText: 'Refreshing the tile\nPress Refresh twice.',
+    kind: 'text',
+    hash: 'a'.repeat(64),
+    chars: 20,
+    ...fields,
+  });
+
+  it("stores a page's blocks, read by page in document order and by generation, and searched by owner and source", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const { sourceId, runId } = await sourceAndRun(ctx);
+      const second = await ctx.db.insert(
+        'docBlocks',
+        block(sourceId, runId, { index: 1, kind: 'table', text: '| a |', searchText: '| a |' }),
+      );
+      const first = await ctx.db.insert('docBlocks', block(sourceId, runId));
+      const other = await ctx.db.insert(
+        'docBlocks',
+        block(sourceId, runId, { userId: 'another', pageRef: 'other.md' }),
+      );
+      return {
+        first,
+        second,
+        other,
+        ofPage: await ctx.db
+          .query('docBlocks')
+          .withIndex('by_source_page', (q) =>
+            q.eq('sourceId', sourceId).eq('pageRef', 'runbooks/refresh.md'),
+          )
+          .collect(),
+        ofGeneration: await ctx.db
+          .query('docBlocks')
+          .withIndex('by_source_generation', (q) =>
+            q.eq('sourceId', sourceId).eq('generation', runId),
+          )
+          .collect(),
+        found: await ctx.db
+          .query('docBlocks')
+          .withSearchIndex('by_text', (q) =>
+            q.search('searchText', 'refresh').eq('userId', 'owner').eq('sourceId', sourceId),
+          )
+          .take(12),
+      };
+    });
+    expect(read.ofPage.map((row) => row._id)).toEqual([read.first, read.second]);
+    expect(read.ofGeneration).toHaveLength(3);
+    expect(read.found.map((row) => row._id)).toEqual([read.first]);
+    expect(searchIndexesOf('docBlocks')).toEqual([
+      {
+        indexDescriptor: 'by_text',
+        searchField: 'searchText',
+        filterFields: ['userId', 'sourceId'],
+      },
+    ]);
+    expect(indexNames('docBlocks')).toEqual(
+      expect.arrayContaining(['by_source_page', 'by_source_generation']),
+    );
+  });
+
+  it('refuses a block kind the splitter does not write', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const { sourceId, runId } = await sourceAndRun(ctx);
+        await ctx.db.insert('docBlocks', {
+          ...block(sourceId, runId),
+          kind: 'image' as Doc<'docBlocks'>['kind'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('gives a page its content hash and a run its restarts, and links a Feishu source; older rows keep none', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const { sourceId, runId } = await sourceAndRun(ctx);
+      const page = { sourceId, ref: 'a.md', title: 'A', markdown: '# A', updatedAt: 3 };
+      const older = await ctx.db.insert('docPages', page);
+      const hashed = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'b.md',
+        contentHash: 'c'.repeat(32),
+      });
+      await ctx.db.patch(runId, { restarts: 2 });
+      return {
+        older: await ctx.db.get(older),
+        hashed: await ctx.db.get(hashed),
+        run: await ctx.db.get(runId),
+      };
+    });
+    expect(read.older).not.toHaveProperty('contentHash');
+    expect(read.hashed?.contentHash).toBe('c'.repeat(32));
+    expect(read.run?.restarts).toBe(2);
+  });
+
+  it("remembers the addresses that are not a person's, a change a page proposed and a failed lookup; an older person keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const base = {
+        userId: 'owner',
+        displayName: 'Aiko Tanaka',
+        nameKey: 'aiko tanaka',
+        status: 'active' as const,
+        source: 'documentation' as const,
+        evidence: [],
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const older = await ctx.db.insert('people', base);
+      const marked = await ctx.db.insert('people', {
+        ...base,
+        notTheirAddresses: ['aiko@other.example'],
+        proposedChange: {
+          title: 'Head of finance systems',
+          team: 'Finance',
+          primaryEmail: 'aiko@example.com',
+          source: 'documentation',
+          evidence: {
+            quote: 'Aiko now heads finance systems',
+            where: 'Access owners',
+            at: 2,
+            ref: 'a.md',
+          },
+          proposedAt: 2,
+        },
+        lookupFailedAt: 3,
+      });
+      return { older: await ctx.db.get(older), marked: await ctx.db.get(marked) };
+    });
+    expect(read.older).not.toHaveProperty('notTheirAddresses');
+    expect(read.older).not.toHaveProperty('proposedChange');
+    expect(read.older).not.toHaveProperty('lookupFailedAt');
+    expect(read.marked).toMatchObject({
+      notTheirAddresses: ['aiko@other.example'],
+      proposedChange: { title: 'Head of finance systems', proposedAt: 2 },
+      lookupFailedAt: 3,
+    });
+  });
+
+  it("reads one owner's agreements about one person by owner first, for the merge that repoints them (W13-R33)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const personOf = async (userId: string): Promise<Id<'people'>> =>
+        await ctx.db.insert('people', {
+          userId,
+          displayName: 'Aiko',
+          nameKey: 'aiko',
+          status: 'active',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const aiko = await personOf('owner');
+      const agreement = (userId: string, personId: Id<'people'>) => ({
+        userId,
+        kind: 'preference' as const,
+        statement: 'Copy Aiko on the close note.',
+        scope: 'person' as const,
+        personId,
+        sourceType: 'manager-card' as const,
+        status: 'active' as const,
+        createdAt: 2,
+        appliedTo: [],
+      });
+      const ours = await ctx.db.insert('workingAgreements', agreement('owner', aiko));
+      await ctx.db.insert('workingAgreements', agreement('another', await personOf('another')));
+      const about = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_person', (q) =>
+          q.eq('userId', 'owner').eq('personId', aiko).eq('status', 'active'),
+        )
+        .collect();
+      return { ours, about: about.map((row) => row._id) };
+    });
+    expect(read.about).toEqual([read.ours]);
+  });
+
+  it('refuses a proposed change that names neither a source nor when', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: 'Aiko',
+          nameKey: 'aiko',
+          status: 'active',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+          proposedChange: { title: 'Head' } as Doc<'people'>['proposedChange'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
+});
+
 describe('the schema module', (): void => {
   it('evaluates without reading an environment variable, which the backend refuses while it evaluates a schema', async (): Promise<void> => {
     // The day0-w13k bed, 5 October: a schema that imported a module whose import chain read the

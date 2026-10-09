@@ -11,11 +11,7 @@ import {
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
-import {
-  assertDocsComponentReachable,
-  componentFor,
-  isBundledNotionLocator,
-} from '../src/docs/components';
+import { assertDocsComponentReachable, componentFor } from '../src/docs/components';
 import { getCallerOrThrow } from './ownership';
 import { assertRealMode, SURFACE_MODE } from '../src/lib/surface-mode';
 import { readCardPages, reconcileDocumentedSystems } from './surfaces';
@@ -36,6 +32,13 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { credentialPageRef } from '../src/docs/credential-ref';
+import {
+  readsWithOwnSecret,
+  secretLabel,
+  validateLinkInput,
+  validateReaderSecret,
+  type LinkInput,
+} from '../src/docs/link-input';
 import { actsAsAtUpgrade } from '../src/surfaces/access-identity';
 import {
   FINISHING_CURSOR,
@@ -51,6 +54,7 @@ const sourceKind = v.union(
   v.literal('folder'),
   v.literal('git'),
   v.literal('urls'),
+  v.literal('feishu'),
 );
 
 const serverKind = v.union(
@@ -207,132 +211,7 @@ async function stampListed(
   }
 }
 
-export interface LinkInput {
-  label: string;
-  kind: 'mcp' | 'folder' | 'git' | 'urls';
-  locator: string;
-  serverKind?: 'notion' | 'confluence' | 'drive' | 'generic';
-}
-
-/**
- * Validate and normalise an owner-supplied documentation location.
- *
- * Args:
- *   input: Link form values.
- *
- * Returns:
- *   Trimmed values safe to persist.
- *
- * Raises:
- *   Error: If the source kind and locator fields are inconsistent.
- */
-export function validateLinkInput(input: LinkInput): LinkInput {
-  const label = input.label.trim();
-  const locator = input.locator.trim();
-  if (!label) throw new Error('Documentation label is required.');
-  if (!locator) throw new Error('Documentation locator is required.');
-  // The locator is stored on the row and shown on the page, so a token in it
-  // would sit in plaintext on both; no refusal repeats the locator.
-  // Read on the raw text as well as the parsed URL: a `#` before the `@`
-  // moves the userinfo into the fragment, where the parser does not see it.
-  const refuseUserinfo = (url: URL, raw: string): void => {
-    if (url.username !== '' || url.password !== '' || /^[a-z][a-z0-9+.-]*:\/\/[^/?]*@/i.test(raw)) {
-      throw new Error(
-        'Documentation locators must not carry a user name or password; a credential is ' +
-          'linked with the source, never inside its address.',
-      );
-    }
-  };
-  if (input.kind === 'folder') {
-    if (locator.startsWith('/') || locator.split(/[\\/]/).includes('..')) {
-      throw new Error('Folder locator must be relative and stay inside DAY0_DOCS_ROOT.');
-    }
-  } else if (input.kind === 'urls') {
-    const values = locator
-      .split(/\r?\n/)
-      .map((value: string): string => value.trim())
-      .filter(Boolean);
-    if (values.length === 0) throw new Error('At least one documentation URL is required.');
-    for (const value of values) {
-      const url = new URL(value);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        throw new Error('Documentation URLs must use HTTP or HTTPS.');
-      }
-      refuseUserinfo(url, value);
-    }
-  } else {
-    const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
-    const url = new URL(rawUrl);
-    refuseUserinfo(url, locator);
-    // Only Day0's own Notion component is reached over plain HTTP, on the
-    // compose network; every other MCP server gets a secret, and the reader
-    // connects to it over HTTPS at a checked public address alone (M16).
-    const bundled =
-      input.kind === 'mcp' && input.serverKind === 'notion' && isBundledNotionLocator(url.href);
-    if (url.protocol !== 'https:' && !(bundled && url.protocol === 'http:')) {
-      throw new Error('Remote documentation locators must use HTTPS.');
-    }
-  }
-  if (input.kind === 'mcp') {
-    if (!input.serverKind) throw new Error('MCP server kind is required.');
-  } else if (input.serverKind) {
-    throw new Error('Only MCP sources may name a server kind.');
-  }
-  return { ...input, label, locator };
-}
-
-/** The source kinds that read with a secret of their own: required for MCP, optional for the others. */
-const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set(['mcp', 'git', 'urls']);
-
-/**
- * Check the secret a source is linked with, before anything is stored (E-74).
- *
- * An MCP server needs its connection secret. A private git repository or a
- * wiki behind a login may be linked with the reader's own secret, which is
- * stored as a credential and never written into the locator. A URL list
- * read with a secret must list pages of one https site, since the secret is
- * that site's and is sent to no other. A folder is read from the mounted
- * directory and takes none.
- *
- * @param input - The validated link values.
- * @param secret - The secret the owner entered, if any.
- * @throws Error saying which rule the secret breaks; the message never repeats the secret.
- */
-export function validateReaderSecret(input: LinkInput, secret: string | undefined): void {
-  if (input.kind === 'mcp' && !secret) {
-    throw new Error('Connection secret is required for an MCP source.');
-  }
-  if (secret === undefined) return;
-  if (!SECRET_KINDS.has(input.kind)) {
-    throw new Error('A folder is read from the mounted directory and takes no secret.');
-  }
-  if (!secret) throw new Error('A secret, when given, cannot be empty.');
-  // A secret with a line break or a control character is cut apart by every
-  // record that words a failure, and no longer matches its own redaction.
-  if (/[\u0000-\u001f\u007f]/.test(secret)) {
-    throw new Error('A secret cannot contain a line break or a control character.');
-  }
-  if (input.kind === 'urls') {
-    const origins = new Set(
-      input.locator
-        .split(/\r?\n/)
-        .map((value: string): string => value.trim())
-        .filter(Boolean)
-        .map((value: string): string => new URL(value).origin),
-    );
-    const [origin] = [...origins];
-    if (origins.size !== 1 || !origin.startsWith('https://')) {
-      throw new Error(
-        'A reader secret belongs to one https site: list pages of one https site to read them with it.',
-      );
-    }
-  }
-}
-
-/** What a source's own secret is called on its credential row. */
-function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
-  return `${source.label} ${source.kind === 'mcp' ? 'connection secret' : 'reader secret'}`;
-}
+export { validateLinkInput, validateReaderSecret, type LinkInput };
 
 /**
  * Purge the credentials and discovered systems of one source being removed.
@@ -504,7 +383,7 @@ export const rotateCredential = action({
       sourceId: args.sourceId,
       userId: identity.ownerKey,
     });
-    if (!source || !SECRET_KINDS.has(source.kind)) {
+    if (!source || !readsWithOwnSecret(source.kind)) {
       throw new Error('Documentation source not found.');
     }
     validateReaderSecret(source, args.credential);
@@ -587,8 +466,17 @@ async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promis
   await ctx.scheduler.runAfter(0, internal.docSources.deleteSourceRows, { sourceId: source._id });
 }
 
-/** The tables a removed source leaves rows in, in the order they are deleted. */
-const SOURCE_ROW_TABLES = ['mockDocs', 'docPages', 'docPageListings', 'docSyncRuns'] as const;
+/**
+ * The tables a removed source leaves rows in, in the order they are deleted: what an employee
+ * reads directly first (its mirrors, then the blocks a search reads), the record last.
+ */
+const SOURCE_ROW_TABLES = [
+  'mockDocs',
+  'docBlocks',
+  'docPages',
+  'docPageListings',
+  'docSyncRuns',
+] as const;
 
 /**
  * Delete one bounded page of a removed source's rows in one table, and schedule the next.
@@ -604,10 +492,17 @@ export const deleteSourceRows = internalMutation({
   },
   handler: async (ctx, args): Promise<number> => {
     const table = args.table ?? SOURCE_ROW_TABLES[0];
-    const page = await ctx.db
-      .query(table)
-      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-      .paginate({ ...PAGED_READ, cursor: null });
+    // A source's blocks are read by their page index, which leads with the source.
+    const page =
+      table === 'docBlocks'
+        ? await ctx.db
+            .query('docBlocks')
+            .withIndex('by_source_page', (index) => index.eq('sourceId', args.sourceId))
+            .paginate({ ...PAGED_READ, cursor: null })
+        : await ctx.db
+            .query(table)
+            .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+            .paginate({ ...PAGED_READ, cursor: null });
     for (const row of page.page) await ctx.db.delete(row._id);
     const next = page.isDone ? SOURCE_ROW_TABLES[SOURCE_ROW_TABLES.indexOf(table) + 1] : table;
     if (next !== undefined) {
@@ -907,7 +802,8 @@ const LISTING_CHANGED_REASON =
  * Internal; the sync calls it when a reader finds its offset cursor was taken
  * from another listing (`ListingChangedError`). Reading on would miss a page
  * that moved behind the cursor and delete it at the end, so the new run reads
- * from page one and carries nothing over.
+ * from page one and carries nothing over but the count of restarts before it
+ * (`restarts`), which the sync's back-off reads (M19).
  *
  * @returns The new run's id, or null when the run is no longer the source's running one.
  */
@@ -931,6 +827,7 @@ export const restartSync = internalMutation({
       redactionCount: 0,
       state: 'running',
       createdAt: now,
+      restarts: (run.restarts ?? 0) + 1,
     });
     await ctx.db.patch(source._id, {
       activeSyncId: runId,
@@ -1128,12 +1025,13 @@ function phaseOf(checkpoint: string, phase: FinishingPhase): void {
 }
 
 /**
- * Delete one bounded page of the stored pages a finishing generation did not list.
+ * Delete one bounded page of the stored pages two complete walks in a row did not list.
  *
  * Internal; the finishing sync walks, with it, only the source's listing rows
- * an earlier listing stamped (D D2 (a)): a page this generation listed was
- * restamped by its batch, one it listed but could not read too (P5-11), so
- * the walk reads nothing a stable corpus keeps, whatever its size.
+ * stamped before the last complete walk's listing (D D2 (a); `pruneBelow`): a
+ * page this generation listed was restamped by its batch, one it listed but
+ * could not read too (P5-11), and one only this generation missed is kept for
+ * the next, so the walk reads nothing a stable corpus keeps, whatever its size.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  */
@@ -1143,11 +1041,11 @@ export const prunePages = internalMutation({
     phaseOf(args.checkpoint, 'pages');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = runListing(finishing.run);
+    const below = await pruneBelow(ctx, finishing.source);
     // A row this page deletes leaves the range behind the cursor.
     const page = await ctx.db
       .query('docPageListings')
-      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', listing))
+      .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', below))
       .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
     let removed = 0;
     for (const row of page.page) {
@@ -1159,6 +1057,11 @@ export const prunePages = internalMutation({
         .unique();
       if (stored !== null) {
         await ctx.db.delete(stored._id);
+        // Its blocks go in their own bounded pages, so this page stays small whatever their count.
+        await ctx.scheduler.runAfter(0, internal.docBlocks.prunePageBlocks, {
+          sourceId: args.sourceId,
+          pageRef: row.ref,
+        });
         removed += 1;
       }
       await ctx.db.delete(row._id);
@@ -1235,14 +1138,14 @@ export const pruneMirrors = internalMutation({
     phaseOf(args.checkpoint, 'mirrors');
     const finishing = await finishingRun(ctx, args.sourceId, args.runId, args.checkpoint);
     if (!finishing) return null;
-    const listing = runListing(finishing.run);
+    const below = await pruneBelow(ctx, finishing.source);
     const page = await ctx.db
       .query('mockDocs')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
       .paginate({ ...PAGED_READ, cursor: args.from });
     let removed = 0;
     for (const mirror of page.page) {
-      if (mirror.sourceRef && (await listedBy(ctx, args.sourceId, mirror.sourceRef, listing))) {
+      if (mirror.sourceRef && (await keptBy(ctx, args.sourceId, mirror.sourceRef, below))) {
         const slug = mirroredDocSlug(args.sourceId, mirror.sourceRef);
         if (mirror.slug === slug) continue;
         // An old-slug copy is the employee's only one until the page is
@@ -1316,18 +1219,52 @@ export const pruneDepartedMirrors = internalMutation({
   },
 });
 
-/** Whether a listing named a source's page: its listing row carries the listing's stamp. */
-async function listedBy(
+/**
+ * The listing below which a finish prunes (14-D's ruling 1 (b), 8 October 2026): the last complete
+ * walk's. A page that walk named and this one did not has been missed once and is kept, so a
+ * provider that lists in no fixed order (Drive; a Notion page edited after it was read) loses no
+ * page to one walk's miss; a page neither named has been missed by two complete walks and goes.
+ * Before any complete walk, nothing is pruned.
+ */
+async function pruneBelow(ctx: QueryCtx, source: Doc<'docSources'>): Promise<number> {
+  const previous = source.lastCompletedSyncId ? await ctx.db.get(source.lastCompletedSyncId) : null;
+  return previous?.listing ?? 0;
+}
+
+/**
+ * Whether a page is one this walk did not list but the finish keeps after a single miss
+ * (`pruneBelow`): its stamp is the last complete walk's or later, and not this walk's own.
+ */
+async function missedButKept(
+  ctx: QueryCtx,
+  page: {
+    readonly sourceId: Id<'docSources'>;
+    readonly pageRef: string;
+    readonly below: number;
+    readonly listing: number;
+  },
+): Promise<boolean> {
+  const row = await ctx.db
+    .query('docPageListings')
+    .withIndex('by_source_ref', (index) =>
+      index.eq('sourceId', page.sourceId).eq('ref', page.pageRef),
+    )
+    .unique();
+  return row !== null && row.seenBy >= page.below && row.seenBy !== page.listing;
+}
+
+/** Whether the finish keeps a source's page: its listing row is stamped at or after `below`. */
+async function keptBy(
   ctx: QueryCtx,
   sourceId: Id<'docSources'>,
   ref: string,
-  listing: number,
+  below: number,
 ): Promise<boolean> {
   const row = await ctx.db
     .query('docPageListings')
     .withIndex('by_source_ref', (index) => index.eq('sourceId', sourceId).eq('ref', ref))
     .unique();
-  return row?.seenBy === listing;
+  return row !== null && row.seenBy >= below;
 }
 
 /** The verdicts under which an approved or proposed intake scope is re-read after a sync. */
@@ -1457,7 +1394,7 @@ export const applyRestatedScope = internalMutation({
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
  * Internal. The sync action calls it last, once the generation has read every
- * page, removed the pages and mirrors it did not list and re-read the intake
+ * page, removed the pages and mirrors two complete walks in a row did not list and re-read the intake
  * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
  * steps removed as `pruned`; a resumed finish counts its own part only. A
  * caller that finishes a run from its last read batch passes that batch
@@ -1520,9 +1457,14 @@ export const finishSync = internalMutation({
       statedBefore: previous === null ? undefined : new Set(previous.credentialRefs),
     };
     let credentialsSuperseded = 0;
+    const below = await pruneBelow(ctx, source);
+    const listing = runListing(run);
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
+      // A page this walk missed but the finish keeps (two-walk prune) still states its values.
+      const pageRef = credentialPageRef(credential.source.ref);
+      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) continue;
       // An earlier sync already superseded it and unbound its surfaces; doing
       // it again would rewrite nothing but the count.
       if (credential.status === 'superseded') continue;
@@ -1552,11 +1494,14 @@ export const finishSync = internalMutation({
       unread: unreadRecord,
       summary: { pagesKept: pagesListed, ...pruned, credentialsSuperseded },
     });
+    // A generation that holds no page and read none is not read (W14-R11): "Read" with a page
+    // count would be untrue of it.
+    const nothingStored = pagesListed === 0 && (unreadRecord?.count ?? 0) > 0;
     await ctx.db.patch(source._id, {
       activeSyncId: undefined,
       lastCompletedSyncId: run._id,
-      status: 'synced',
-      lastError: unreadPagesLine(unreadRecord),
+      status: nothingStored ? 'error' : 'synced',
+      lastError: unreadPagesLine(unreadRecord, nothingStored),
       lastSyncAt: now,
       updatedAt: now,
     });
@@ -1866,6 +1811,11 @@ export const syncReport = internalQuery({
  * generation has superseded that one, so a stale action can never write back
  * a page the newer sync removed.
  *
+ * It stores the page's hash before redaction, schedules the split of every
+ * page it writes into blocks (`docBlocks.splitStoredPage`), and, when a stored
+ * page's body changed, the Re-check due stamp on the skills whose version read
+ * it (`skillVersions.stampChangedPage`; 14-I).
+ *
  * @throws Error when `syncRunId` is not the source's running generation.
  */
 export const upsertPage = internalMutation({
@@ -1877,6 +1827,8 @@ export const upsertPage = internalMutation({
     url: v.optional(v.string()),
     markdown: v.string(),
     updatedAt: v.number(),
+    /** The page's hash before redaction (`pageContentHash`); absent where the deployment has no key. */
+    contentHash: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docPages'>> => {
     await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);
@@ -1886,11 +1838,22 @@ export const upsertPage = internalMutation({
         index.eq('sourceId', args.sourceId).eq('ref', args.ref),
       )
       .unique();
+    // A changed page carries its new hash, or none, so an old hash never vouches for a new body.
     const page = {
       title: args.title,
       url: args.url,
       markdown: args.markdown,
       updatedAt: args.updatedAt,
+      contentHash: args.contentHash,
+    };
+    // The page's blocks are split from the page as stored, in a job of their own that reads it
+    // then, so a later write of the page is never undone by an earlier split (14-I).
+    const splitStored = async (): Promise<void> => {
+      await ctx.scheduler.runAfter(0, internal.docBlocks.splitStoredPage, {
+        sourceId: args.sourceId,
+        ref: args.ref,
+        generation: args.syncRunId,
+      });
     };
     if (existing) {
       // An unchanged page is not written again, so every subscriber to the
@@ -1899,15 +1862,58 @@ export const upsertPage = internalMutation({
         existing.title === page.title &&
         existing.url === page.url &&
         existing.markdown === page.markdown;
-      if (!unchanged) await ctx.db.patch(existing._id, page);
+      if (unchanged) {
+        // A page stored before its hash or under another key takes the hash, with its body
+        // and time left as they were; and an unchanged page the sync stores again (its split
+        // never landed, or it was redacted again) is split again.
+        if (args.contentHash !== undefined) {
+          if (existing.contentHash !== args.contentHash) {
+            await ctx.db.patch(existing._id, { contentHash: args.contentHash });
+          }
+          await splitStored();
+        }
+        return existing._id;
+      }
+      await ctx.db.patch(existing._id, page);
+      await splitStored();
+      // A changed runbook re-checks the skills that read it (the enhancements plan, 4.1): its
+      // text changed and both hashes say so; a page stored before its hash may only have been
+      // redacted to other words, which is no change a skill must be checked against.
+      const textChanged =
+        existing.contentHash !== undefined &&
+        args.contentHash !== undefined &&
+        existing.contentHash !== args.contentHash;
+      if (textChanged && existing.markdown !== page.markdown) {
+        const source = await ctx.db.get(args.sourceId);
+        if (source !== null) {
+          await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPage, {
+            userId: source.userId,
+            sourceId: args.sourceId,
+            ref: args.ref,
+            title: page.title,
+            changedAt: Date.now(),
+            cursor: null,
+          });
+        }
+      }
       return existing._id;
     }
     // Every stored page carries a listing row, so a page whose batch never
-    // recorded is still found, and removed, by the next finish that did not list it.
+    // recorded is still found, and removed once two complete finishes in a row did not list it.
     const run = await ctx.db.get(args.syncRunId);
     if (!run) throw new Error('Documentation sync run not found.');
     await stampListed(ctx, args.sourceId, [args.ref], runListing(run));
-    return await ctx.db.insert('docPages', { sourceId: args.sourceId, ref: args.ref, ...page });
+    const pageId = await ctx.db.insert('docPages', {
+      sourceId: args.sourceId,
+      ref: args.ref,
+      title: page.title,
+      url: page.url,
+      markdown: page.markdown,
+      updatedAt: page.updatedAt,
+      ...(args.contentHash !== undefined ? { contentHash: args.contentHash } : {}),
+    });
+    await splitStored();
+    return pageId;
   },
 });
 

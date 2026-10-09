@@ -1,6 +1,7 @@
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import type { MockAction, MockSurfaceSnapshot } from '../work/types';
+import type { SelectionRequest } from '../docs/select';
 import type { PersistedSurfaceVerdict } from './verdict';
 
 /** The deployment's surface mode: the seeded mock office, or the reader's real systems. */
@@ -283,10 +284,19 @@ export interface SurfaceAdapter {
     baseKey: string,
   ): Promise<SessionRestoreResult>;
   /**
+   * Read the adapter's part of the work environment. `selection` (real mode, wave 14) asks the
+   * documentation's reader for the pages and blocks one item needs; an adapter that holds no
+   * documentation ignores it.
+   */
+  read(
+    ctx: ActionCtx,
+    agentId: Id<'agents'>,
+    selection?: SelectionRequest,
+  ): Promise<Partial<MockSurfaceSnapshot>>;
+  /**
    * Apply one action. The adapter receives the action after the registry has
    * parsed its arguments, checked the grant, and decided whether it is held.
    */
-  read(ctx: ActionCtx, agentId: Id<'agents'>): Promise<Partial<MockSurfaceSnapshot>>;
   apply(
     ctx: ActionCtx,
     run: AdapterRun,

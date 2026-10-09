@@ -9,6 +9,7 @@ import {
   isEvaluationAgent,
 } from '../../convex/metrics';
 import type { OwnerMetrics } from '../../src/metrics/types';
+import { RETRIEVAL_RECALL } from '../../src/metrics/retrieval-recall';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -281,6 +282,7 @@ describe('agent evaluation metrics', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
+        // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
       },
     });
@@ -883,6 +885,7 @@ describe('supervision figures for a company of employees', (): void => {
         },
         reorientation: { answered: 0, amended: 0, rate: null },
         hoursSaved: { estimatedItems: 0, hours: null },
+        // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
       },
     });
@@ -1937,6 +1940,74 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     expect(metrics.actions).toMatchObject({ held: 2, approved: 0, rejected: 2 });
   });
 
+  it("counts an approval that left a close for its card and the card's decision on that close as one decision (W13-R50)", (): void => {
+    const requested = (decisionId: string, at: number): Doc<'events'> =>
+      event('work.decision-requesting', { workItemId: 'wi', decisionId, kind: 'actions' }, at);
+    const approved = (
+      approvedIndexes: number[],
+      rejectedIndexes: number[],
+      at: number,
+      extra: Record<string, unknown> = {},
+    ): Doc<'events'> =>
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes,
+          rejectedIndexes,
+          refusedIndexes: [],
+          autoIndexes: [],
+          decidedVia: extra.decidedVia ?? 'dashboard',
+          ...extra,
+        },
+        at,
+      );
+    const parked = (heldIndexes: number[], at: number, extra: Record<string, unknown> = {}) =>
+      event(
+        'work.actions-pending',
+        { workItemId: 'wi', runId: 'run-1', heldIndexes, refusedIndexes: [], ...extra },
+        at,
+      );
+    const first = [
+      requested('a1', 1_000),
+      parked([0, 1, 2], 1_001),
+      // Approved by the typed code: the posts go, the close the tripwire held is left for its card.
+      approved([0, 1], [], 2_000, { leftForCard: [2], decidedVia: 'channel' }),
+      parked([2], 3_000, { leftForCard: true }),
+      requested('a2', 3_001),
+    ];
+    // "Finish without the close" on the card: the set was approved in part.
+    const withheld = computeAgentMetrics([...first, approved([], [2], 9_000)], [], []);
+    expect(withheld.decisions).toMatchObject({
+      requested: 2,
+      approved: 1,
+      rejected: 0,
+      partiallyApproved: 1,
+    });
+    // The close approved on its card: the set was approved whole.
+    const whole = computeAgentMetrics([...first, approved([2], [], 9_000)], [], []);
+    expect(whole.decisions).toMatchObject({ approved: 1, rejected: 0, partiallyApproved: 0 });
+    // The run rejected on the card instead: the rest of the same decision, approved in part.
+    const rejectedOnCard = computeAgentMetrics(
+      [
+        ...first,
+        event(
+          'work.actions-rejected',
+          { workItemId: 'wi', reason: 'Not this close.', decidedVia: 'dashboard' },
+          9_000,
+        ),
+      ],
+      [],
+      [],
+    );
+    expect(rejectedOnCard.decisions).toMatchObject({
+      approved: 1,
+      rejected: 0,
+      partiallyApproved: 1,
+    });
+  });
+
   it('dates Working from a write the employee applied on its own when it came first, never a message to the manager (walk m12)', (): void => {
     const completed = (channel: string, at: number): Doc<'events'> =>
       event(
@@ -2203,6 +2274,59 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     ).toEqual({ reads: 0, managerMessages: 1, writes: 1 });
   });
 
+  it('counts the documentation an item’s prompts carried against its billed input tokens, with the graded recall (14-R)', (): void => {
+    const events = [
+      event(
+        'work.documentation-selected',
+        { workItemId: 'a', site: 'plan', blockIds: ['b1'], chars: 6_000 },
+        1_000,
+      ),
+      event(
+        'work.documentation-selected',
+        { workItemId: 'a', site: 'execute', blockIds: ['b2'], chars: 4_000 },
+        2_000,
+      ),
+      event(
+        'work.model-call',
+        { workItemId: 'a', stage: 'draft', outcome: 'ok', inputTokens: 9_000 },
+        1_500,
+      ),
+      event(
+        'work.model-call',
+        { workItemId: 'a', stage: 'execution', outcome: 'ok', inputTokens: 11_000 },
+        2_500,
+      ),
+      event(
+        'work.documentation-selected',
+        { workItemId: 'b', site: 'plan', blockIds: [], chars: 2_000 },
+        3_000,
+      ),
+      event('work.model-call', { workItemId: 'b', stage: 'draft', outcome: 'ok' }, 3_500),
+      event(
+        'work.model-call',
+        { workItemId: 'c', stage: 'evaluation', outcome: 'ok', inputTokens: 500 },
+        4_000,
+      ),
+    ];
+    expect(
+      computeAgentMetrics(events, [item('a'), item('b'), item('c')], []).pilot.retrieval,
+    ).toEqual({
+      // Item a alone reported usage, so both halves describe it: b's 2,000 characters wait.
+      tokens: { items: 1, charsPerItem: 10_000, inputTokensPerItem: 20_000 },
+      recall: RETRIEVAL_RECALL,
+    });
+    // Re-pinned for W14-R6: the recall is a grade of the selection, shown only where a selection
+    // ran (real mode); a deployment with none, the hosted mock one included, shows none.
+    expect(computeAgentMetrics([], [], []).pilot.retrieval).toEqual({
+      tokens: null,
+      recall: null,
+    });
+    const unbilled = events.filter((row) => row.type === 'work.documentation-selected');
+    expect(
+      computeAgentMetrics(unbilled, [item('a'), item('b')], []).pilot.retrieval.tokens,
+    ).toEqual({ items: 2, charsPerItem: 6_000, inputTokensPerItem: null });
+  });
+
   it('computes skill reuse, cycle time from the ask, reorientation acceptance and the hours-saved gauge', (): void => {
     const events = [
       event('work.discovered', { workItemId: 'a' }, 1_500),
@@ -2236,6 +2360,7 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       },
       reorientation: { answered: 2, amended: 1, rate: 0.5 },
       hoursSaved: { estimatedItems: 2, hours: 1.5 },
+      // Re-pinned for W14-R6: no selection ran, so no recall is shown.
       retrieval: { tokens: null, recall: null },
     });
   });

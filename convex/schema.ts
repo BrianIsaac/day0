@@ -19,6 +19,7 @@ import {
   TOKEN_STORES,
 } from '../src/surfaces/access-identity';
 import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
+import { BLOCK_KINDS } from '../src/docs/blocks';
 import {
   IDENTITY_PROVIDERS,
   PEOPLE_SOURCES,
@@ -29,6 +30,7 @@ import {
 import {
   AGREEMENT_APPROVED_VIA,
   AGREEMENT_KINDS,
+  AGREEMENT_KEEP_REFUSAL_REASONS,
   AGREEMENT_REFUSAL_REASONS,
   AGREEMENT_SCOPES,
   AGREEMENT_SOURCE_TYPES,
@@ -382,7 +384,18 @@ export default defineSchema({
   docSources: defineTable({
     userId: v.string(),
     label: v.string(),
-    kind: v.union(v.literal('mcp'), v.literal('folder'), v.literal('git'), v.literal('urls')),
+    kind: v.union(
+      v.literal('mcp'),
+      v.literal('folder'),
+      v.literal('git'),
+      v.literal('urls'),
+      /**
+       * A Feishu or Lark wiki space or Drive folder (wave 14, 14-F). The region is the locator's
+       * host (`open.feishu.cn` or `open.larksuite.com`); the app's ID and secret are the reader
+       * secret, held as `credentialId`. No field of its own.
+       */
+      v.literal('feishu'),
+    ),
     locator: v.string(),
     serverKind: v.optional(
       v.union(
@@ -462,6 +475,12 @@ export default defineSchema({
     ),
     createdAt: v.number(),
     completedAt: v.optional(v.number()),
+    /**
+     * How many times the run started its listing again from page one because the listing changed
+     * under it (wave 14, 14-I for 14-D; M19): the back-off ends the run with its reason after
+     * three. Written by `restartSync`; absent on a run that never restarted, read as 0.
+     */
+    restarts: v.optional(v.number()),
     /** Why the run ended without completing, on one line: the failure it recorded, or the newer run that superseded it. */
     reason: v.optional(v.string()),
     /**
@@ -501,9 +520,67 @@ export default defineSchema({
     url: v.optional(v.string()),
     markdown: v.string(),
     updatedAt: v.number(),
+    /**
+     * A keyed hash of the page as its reader returned it, before redaction (wave 14, 14-I; P8-10):
+     * `pageContentHash` (`src/docs/content-hash.ts`), an HMAC under the deployment's credential key
+     * bound to the owner, so the row is no test of a guessed secret. Written by `upsertPage` with
+     * every page a sync stores; read by the sync, which skips the redaction and the split of a
+     * page whose hash is unchanged. Absent on a page stored before 0.18.0 or without a key: such
+     * a page is redacted again at its next sync, which then writes the hash.
+     */
+    contentHash: v.optional(v.string()),
   })
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),
+
+  /**
+   * A stored page as blocks for the search index (wave 14, 14-I; the wave file's section 6.1):
+   * split at headings after redaction by `splitPage` (`src/docs/blocks.ts`), so a block holds
+   * nothing its page does not. Real mode only, as `docPages` is (R3: mock mode reads the whole
+   * mirror). Written by `docBlocks.splitStoredPage`, which `upsertPage` schedules for each page
+   * it writes, and by the `docs-backfill-blocks` pass (both through `replacePageBlocks`,
+   * `convex/docBlocks.ts`); pruned with its page (`prunePages`, scheduling
+   * `docBlocks.prunePageBlocks`) and its source (`deleteSourceRows`). Read by
+   * `docBlocks.searchBlocks` (14-R's selection), `docBlocks.unchangedPage` and by id.
+   */
+  docBlocks: defineTable({
+    /** The source owner's key (`docSources.userId`): every search filters on it first. */
+    userId: v.string(),
+    sourceId: v.id('docSources'),
+    /** The page's `docPages.ref`. */
+    pageRef: v.string(),
+    /** The sync run that wrote this version of the block; the backfill's, the source's last completed run. */
+    generation: v.id('docSyncRuns'),
+    /** The block's place in its page, from 0. */
+    index: v.number(),
+    /** The headings it sits under, outermost first. */
+    headingPath: v.array(v.string()),
+    text: v.string(),
+    /** The heading path, the text, and the bigrams of every CJK run (R1): what the index reads. */
+    searchText: v.string(),
+    kind: v.union(...BLOCK_KINDS.map((kind) => v.literal(kind))),
+    /** SHA-256 of the heading path, kind and text: a re-split leaves an unchanged block's row. */
+    hash: v.string(),
+    chars: v.number(),
+  })
+    /** A page's blocks in document order: the replace, the prune and an assembled citation. */
+    .index('by_source_page', ['sourceId', 'pageRef', 'index'])
+    /**
+     * A page's block by its content: a plan's cite is read by the hash it was cited under, one row
+     * a cite, never the whole page (the second pass on W14-R2).
+     */
+    .index('by_source_page_hash', ['sourceId', 'pageRef', 'hash'])
+    /**
+     * A source's blocks by the run that wrote them (the wave file's index; nothing reads it yet: a
+     * source's removal pages through `by_source_page`, which also leads with the source).
+     */
+    .index('by_source_generation', ['sourceId', 'generation'])
+    /**
+     * At most 16 terms are read and 1,024 results scanned; filter on `userId` and one `sourceId`
+     * a query (two equalities on `sourceId` are an AND), at most 8 filter expressions (14-I's
+     * proof). Wave 15 adds `status` to the filters.
+     */
+    .searchIndex('by_text', { searchField: 'searchText', filterFields: ['userId', 'sourceId'] }),
 
   /**
    * The listing that last named each page of a source (D D2 (a)). Each batch
@@ -829,8 +906,8 @@ export default defineSchema({
      * re-approval (A25): the marker the kept-identity sweep reads in place of the card's reason
      * words, and the start of its `KEPT_IDENTITY_WAIT_MS` wait (the round's review m16). Written by
      * the handover's keep (`reapprovePatch`) from v0.16.0 and cleared by an approval, a cut, a
-     * rejection and the identity's end; the `surfaces-kept-identity-since` pass marks the cards
-     * kept before it, after which the sweep's reason-word fallback goes (the release after).
+     * rejection and the identity's end; the `surfaces-kept-identity-since` pass (0.17.0) marked
+     * the cards kept before it, so from 0.18.0 the sweep reads the mark alone (14-I).
      */
     keptIdentitySince: v.optional(v.number()),
     createdAt: v.number(),
@@ -1784,6 +1861,37 @@ export default defineSchema({
     evidence: v.array(peopleEvidenceValidator),
     /** A proposal whose name alone matches this person (C5): offered, merged only by the manager. */
     possiblySameAs: v.optional(v.id('people')),
+    /**
+     * Addresses the manager said are someone else's (wave 14, 14-I for 14-FX; W13-R8's "A different
+     * person"), normalised: never merged onto this person again, and a lookup by one is not this
+     * person's. Replaces the `not-their-address:` evidence marker, which the
+     * `people-not-their-addresses` pass lifts into it; 14-FX writes it at "A different person" and
+     * reads it in the merge and the lookup. The marker goes in a later release (N10).
+     */
+    notTheirAddresses: v.optional(v.array(v.string())),
+    /**
+     * A title, team or address a source proposed for a person the manager already confirmed (wave
+     * 14, 14-I for 14-FX; W13-R3): kept beside the confirmed values, never over them, until the
+     * manager takes or dismisses it on the card. One at a time: a newer proposal replaces it.
+     * Written by the merge (`peopleProposals.mergeProposal`), read by the person's card; 14-FX's.
+     */
+    proposedChange: v.optional(
+      v.object({
+        title: v.optional(v.string()),
+        team: v.optional(v.string()),
+        primaryEmail: v.optional(v.string()),
+        source: peopleSourceValidator,
+        evidence: peopleEvidenceValidator,
+        proposedAt: v.number(),
+      }),
+    ),
+    /**
+     * When a provider lookup for this person last failed and was not retried within its bound
+     * (wave 14, 14-I for 14-FX; W13-R25: a Slack 429 was logged and dropped). Written by the
+     * lookup (`convex/peopleLookupActions.ts`), cleared by the next one that answers; read by the
+     * person's card. 14-FX's.
+     */
+    lookupFailedAt: v.optional(v.number()),
     confirmedAt: v.optional(v.number()),
     dismissedAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -1897,7 +2005,11 @@ export default defineSchema({
     /** Why a `refused` statement was refused before it was shown (F11), quoting the clause. */
     refusal: v.optional(
       v.object({
-        reason: v.union(...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason))),
+        /** A judgement's verdict, or a keep refused before any judgement (14-FX, W13-R28). */
+        reason: v.union(
+          ...AGREEMENT_REFUSAL_REASONS.map((reason) => v.literal(reason)),
+          ...AGREEMENT_KEEP_REFUSAL_REASONS.map((reason) => v.literal(reason)),
+        ),
         clause: v.optional(v.string()),
         judgedAt: v.number(),
       }),
@@ -1925,7 +2037,13 @@ export default defineSchema({
      * One owner's agreements for one employee, or for every employee (absent `agentId`), in one
      * standing: selection reads the candidate's and the every-employee rows, owner first.
      */
-    .index('by_user_agent_status', ['userId', 'agentId', 'status']),
+    .index('by_user_agent_status', ['userId', 'agentId', 'status'])
+    /**
+     * One owner's agreements about one person, in one standing (wave 14, 14-I for 14-FX; W13-R33):
+     * the merge of two people repoints a person-scoped agreement from the one merged away, read
+     * whole rather than past a bounded scan of every agreement.
+     */
+    .index('by_user_person', ['userId', 'personId', 'status']),
 
   /**
    * The lease on the verification sandbox: at most one row, the skill whose

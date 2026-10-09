@@ -37,8 +37,9 @@ and licence:
 2. Images the compose file runs
 -------------------------------
 
-The compose file pulls these images by digest; the repository does not
-contain or redistribute them.
+The compose file pulls these images by digest, the backend's through
+docker/backend.Dockerfile, which adds git to it on the machine that builds
+it; the repository does not contain or redistribute them.
 
 - Convex backend and dashboard (ghcr.io/get-convex/convex-backend,
   ghcr.io/get-convex/convex-dashboard): FSL-1.1-ALv2, Copyright 2026
@@ -46,6 +47,9 @@ contain or redistribute them.
   Convex; each release converts to Apache-2.0 on the second anniversary of
   its publication. Day0 is an application on the backend, not a substitute
   for it (decision A15). SQLite is the supported store.
+- git (installed into the backend image by docker/backend.Dockerfile from the
+  Ubuntu archive, on the machine that builds it): GPL-2.0-only, Copyright
+  (c) Linus Torvalds and the git contributors. Day0 runs it as a program.
 - Ollama (ollama/ollama), the bundled local model service: MIT,
   Copyright (c) Ollama.
 - Playwright MCP (mcr.microsoft.com/playwright/mcp), the browser component:

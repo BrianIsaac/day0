@@ -44,7 +44,9 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  CITE_LINES_EXECUTOR,
   deferralAudit,
+  executorInstructions,
   executorPreamble,
   runDependentSkill,
   runSkill,
@@ -128,6 +130,77 @@ describe('documentation grounding in the executor prompts', (): void => {
   beforeEach((): void => {
     recorded.users.length = 0;
     recorded.instructions.length = 0;
+  });
+
+  it('puts the team docs before the candidate in both real phases, and keeps the mock run’s order (14-R)', async (): Promise<void> => {
+    const plan = {
+      summary: 'Record the review.',
+      steps: ['Comment on the ticket.'],
+      expectedOutputType: 'ticket-update' as const,
+      riskNotes: '',
+      reversibility: 'Reversible.',
+      estimatedMinutes: 2,
+    };
+    const skill = { name: 'tracker-action', description: 'Tracker work.', body: '# Skill' };
+    await runSkill({ skill, plan, candidate, charter, mockEnv, mode: 'real', surfaces: [] });
+    await runDependentSkill({
+      skill,
+      plan,
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'real',
+      surfaces: [],
+      initialOutput: {
+        draft: '',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+    });
+    // A message plan, so the stub's empty reply meets the mock action contract.
+    await runSkill({
+      skill,
+      plan: { ...plan, expectedOutputType: 'message' },
+      candidate,
+      charter,
+      mockEnv,
+      mode: 'mock',
+      surfaces: [],
+    });
+    const [phaseOne, closing, mock] = recorded.users;
+    const before = (user: string): boolean =>
+      user.indexOf('--- Team docs (read-only context) ---') < user.indexOf('--- Candidate ---');
+    expect(before(phaseOne)).toBe(true);
+    expect(before(closing)).toBe(true);
+    expect(before(mock)).toBe(false);
+  });
+
+  it('tells a real run what the cite lines are only when its documentation carries them (14-R)', (): void => {
+    const cited = {
+      ...mockEnv,
+      teamDocs: [
+        {
+          slug: 'team-handbook',
+          title: 'Team handbook',
+          body: '[cite: Handbook/handbook.md#Close]\nClose checklist: reconcile the ledger.',
+        },
+      ],
+    } as MockSurfaceSnapshot;
+    const prompt = (mode: 'real' | 'mock', env: MockSurfaceSnapshot): string =>
+      executorInstructions({
+        mode,
+        autonomousActions: false,
+        skillBody: '# Skill',
+        surfaces: [],
+        mockEnv: env,
+        now: 0,
+      });
+    expect(prompt('real', cited)).toContain(CITE_LINES_EXECUTOR);
+    expect(prompt('real', mockEnv)).not.toContain(CITE_LINES_EXECUTOR);
+    expect(prompt('mock', cited)).not.toContain(CITE_LINES_EXECUTOR);
   });
 
   it('tells the real-mode executor that loaded documentation is citable evidence', (): void => {
@@ -1921,17 +1994,17 @@ describe('what stands after the evidence check withholds a message', (): void =>
     expect(recorded.users[1]).toContain('action 0 (slack POST /chat.postMessage)');
     expect(recorded.users[1]).not.toContain('action 1 (slack POST /chat.postMessage)');
     expect(output.actions).toEqual([]);
+    // Re-pinned for W14-R8: the DM's words report the reply, so the withhold takes it with the
+    // reply in the same round (the union of the declaration and the words), where it went on its
+    // own claim in a second round before.
     expect(output.withheldActions).toEqual([
       { action: reply, reason: expect.stringContaining('All three standup deals are reconciled') },
       {
         action: escalation,
-        reason: expect.stringContaining('Reply sent in thread 1789000000.000200'),
+        reason: expect.stringContaining('withheld with a write it reports, which was withheld'),
       },
     ]);
-    expect(corrections).toEqual([
-      [[0], expect.stringContaining(WITHHELD_BY_EVIDENCE)],
-      [[0], expect.stringContaining('Reply sent in thread')],
-    ]);
+    expect(corrections).toEqual([[[0, 1], expect.stringContaining(WITHHELD_BY_EVIDENCE)]]);
   });
 
   it('keeps a DM that stands on its own after the reply beside it is withheld', async (): Promise<void> => {

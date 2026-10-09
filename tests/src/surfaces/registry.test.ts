@@ -4,6 +4,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import { HttpAdapter } from '../../../src/surfaces/http';
 import { McpAdapter, type McpClientLike, type McpClientOptions } from '../../../src/surfaces/mcp';
 import { mockAdapter } from '../../../src/surfaces/mock';
+import { withChannelMethods } from '../../../src/surfaces/slack-own-channel';
 import { MOCK_ACTION_TOOLS } from '../../../src/work/types';
 import {
   AWAITING_APPROVAL,
@@ -1100,6 +1101,53 @@ describe('applying surface actions', (): void => {
           text: 'Decided: approved in this DM (ab3xyz).\n\n-- Priya (Day0) · run wi_1/run_1',
         },
       },
+    ]);
+  });
+
+  it("posts and edits on an employee's own app through the registry with the channel's methods, though its page names none (W13-R12)", async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const own: SurfaceRecord = {
+      ...slack,
+      toolAllowlist: [],
+      credentialKind: 'oauth',
+      ownSlackApp: true,
+    };
+    const grants = new Set(['boss:message']);
+    const refused = await applySurfaceActions(ctx, 'real', [own], run, [dm], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+    expect(refused[0]?.ok).toBe(false);
+    expect(recorded.http).toEqual([]);
+    const posted = await applySurfaceActions(ctx, 'real', [withChannelMethods(own)], run, [dm], {
+      deps: deps(recorded),
+      grants,
+      now,
+    });
+    expect(posted[0]).toMatchObject({ ok: true });
+    const edit: MockAction = {
+      tool: 'http.request',
+      args: {
+        ...dm.args,
+        path: '/chat.update',
+        body: JSON.stringify({
+          channel: 'D0MANAGER',
+          ts: '1787738163.314789',
+          text: 'Decided: approved in this DM (ab3xyz).',
+        }),
+      },
+    };
+    const edited = await applySurfaceActions(ctx, 'real', [withChannelMethods(own)], run, [edit], {
+      deps: deps(recorded),
+      grants,
+      now,
+      requestEdit: { channel: 'D0MANAGER', ts: '1787738163.314789' },
+    });
+    expect(edited[0]).toMatchObject({ ok: true });
+    expect(recorded.http.map((call) => call.url)).toEqual([
+      'https://slack.com/api/chat.postMessage',
+      'https://slack.com/api/chat.update',
     ]);
   });
 
@@ -2251,5 +2299,134 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
     expect(applied[1]).toMatchObject({ ok: true });
     expect(applied[1]!.held).toBeUndefined();
     expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+});
+
+describe("a message bound by the run's declared reports (the wave 13 review's D-5 (b))", (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+  const comment = (body: string, reports: number[]): MockAction => ({
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: JSON.stringify({ issueId: 'REVOPS-6', body }),
+    },
+    reports,
+  });
+  const missed = 'Both stop-drill notes reached #revops.';
+
+  it('holds back a report the words miss when a post its reports name was not approved', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment(missed, [0, 1])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('holds back a message whose reports name the one write that did not land', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment(missed, [0])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([1, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+    expect(recorded.http).toHaveLength(1);
+  });
+
+  it('sends a message whose reports name only writes that landed', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment('The drill-end note reached #revops.', [1])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([1, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true });
+    expect(applied[2]!.held).toBeUndefined();
+    expect(recorded.mcp.map((call) => call.tool)).toEqual(['save_comment']);
+  });
+
+  it('holds back a report by its words when reports is empty, as before the field', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [])],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('holds back a mock office comment whose reports name a post the manager withheld', async (): Promise<void> => {
+    const applied = await applySurfaceActions(
+      ctx,
+      'mock',
+      [],
+      run,
+      [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'office-asks', threadKey: 'thread-monitor', body: 'Hi Sara, ...' },
+        },
+        {
+          tool: 'ticket.update',
+          args: { slug: 'REVOPS-205', comment: 'Sara has her answer in the thread.' },
+          reports: [0],
+        },
+      ],
+      { approvedIndexes: new Set([1]), now },
+    );
+    expect(applied[0]).toMatchObject({ ok: true, held: true, reason: HELD_NOT_APPROVED });
+    expect(applied[1]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+  });
+});
+
+describe('a write whose own words report the writes before it (W13-R43)', (): void => {
+  const WITHHELD_REPORT =
+    'withheld: it reports a write of this set that did not land, so it would say something untrue';
+  const both = new Set(['linear:write', 'slack:write', 'slack:read', 'linear:read']);
+
+  it('holds back a new issue whose description reports a post that was not approved', async (): Promise<void> => {
+    const recorded: Recorded = { mcp: [], http: [] };
+    const described: MockAction = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: JSON.stringify({
+          team: 'REVOPS',
+          title: 'Stop drill follow-up',
+          description: 'Posted both stop-drill notes in #revops.',
+        }),
+      },
+    };
+    const applied = await applySurfaceActions(
+      ctx,
+      'real',
+      [linear, slack],
+      run,
+      [NOTE_1, NOTE_2, described],
+      { deps: deps(recorded), grants: both, approvedIndexes: new Set([0, 2]), now },
+    );
+    expect(applied[2]).toMatchObject({ ok: true, held: true, reason: WITHHELD_REPORT });
+    expect(recorded.mcp).toEqual([]);
   });
 });

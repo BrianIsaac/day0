@@ -182,8 +182,13 @@ describe('MCP documentation reader', (): void => {
       'notion-token': secret,
       Authorization: 'Bearer transport-contract-value',
     });
+    // Re-pinned at 14-D: the search names its order, oldest edit first (M16).
     expect(search).toHaveBeenCalledWith(
-      { filter: { property: 'object', value: 'page' }, page_size: 25 },
+      {
+        filter: { property: 'object', value: 'page' },
+        sort: { timestamp: 'last_edited_time', direction: 'ascending' },
+        page_size: 25,
+      },
       {},
     );
     expect(retrieve).toHaveBeenCalledWith({ page_id: 'page-1', include_transcript: false }, {});
@@ -608,6 +613,95 @@ describe('MCP documentation continuations (P10-1)', (): void => {
         25,
       ),
     ).resolves.toMatchObject({ nextCursor: undefined });
+  });
+});
+
+describe('the Notion walk under an edit (M16)', (): void => {
+  /**
+   * A Notion workspace as its search answers: pages ordered by `last_edited_time` in the
+   * direction the request's `sort` names, most recently edited first when it names none (Notion's
+   * documented default), and a cursor that is a position in the order as it stands when the next
+   * page is asked for.
+   */
+  function notionWorkspace(edited: Record<string, number>): {
+    readonly reader: McpReader;
+    readonly edit: (pageId: string, at: number) => void;
+  } {
+    const answer = (args: Record<string, unknown>): Record<string, unknown> => {
+      const sort = args.sort as { timestamp?: string; direction?: string } | undefined;
+      const ascending = sort?.timestamp === 'last_edited_time' && sort.direction === 'ascending';
+      const order = Object.keys(edited).sort((left, right) =>
+        ascending ? edited[left] - edited[right] : edited[right] - edited[left],
+      );
+      const start = typeof args.start_cursor === 'string' ? Number(args.start_cursor) : 0;
+      const size = Number(args.page_size);
+      const listed = order.slice(start, start + size);
+      const more = start + size < order.length;
+      return textResult({
+        results: listed.map((id) => ({
+          id,
+          last_edited_time: new Date(edited[id]).toISOString(),
+        })),
+        has_more: more,
+        next_cursor: more ? String(start + size) : null,
+      });
+    };
+    const reader = new McpReader(
+      () => ({
+        listTools: async () => ({
+          'docs_API-post-search': {
+            execute: async (args: Record<string, unknown>) => answer(args),
+          },
+          'docs_API-retrieve-page-markdown': {
+            execute: async () => textResult({ markdown: '# Page' }),
+          },
+        }),
+        resources: { list: async () => ({}), read: async () => ({ contents: [] }) },
+        disconnect: async (): Promise<void> => undefined,
+      }),
+      componentUp,
+    );
+    return {
+      reader,
+      edit: (pageId: string, at: number): void => {
+        edited[pageId] = at;
+      },
+    };
+  }
+
+  it('lists a page edited mid-walk, so the finish does not prune it', async (): Promise<void> => {
+    const source: DocSourceRecord = {
+      _id: 'source-notion-walk' as Id<'docSources'>,
+      label: 'Handbook',
+      kind: 'mcp',
+      locator: 'https://notion.example.test/mcp',
+      serverKind: 'notion',
+    };
+    const workspace = notionWorkspace({
+      'page-a': Date.UTC(2026, 9, 1),
+      'page-b': Date.UTC(2026, 9, 2),
+      'page-c': Date.UTC(2026, 9, 3),
+      'page-d': Date.UTC(2026, 9, 4),
+      'page-e': Date.UTC(2026, 9, 5),
+    });
+    const listed: string[] = [];
+    let cursor: string | undefined;
+    let batches = 0;
+    do {
+      const batch = await workspace.reader.listPageBatch(source, 'ntn_walk', cursor, 2);
+      listed.push(...batch.pages.map((page) => page.ref));
+      cursor = batch.nextCursor;
+      batches += 1;
+      // An author edits a page the walk has not reached yet, after its first batch.
+      if (batches === 1) {
+        const unread = ['page-a', 'page-b', 'page-c', 'page-d', 'page-e'].find(
+          (id) => !listed.includes(id),
+        );
+        if (unread === undefined) throw new Error('the first batch listed every page');
+        workspace.edit(unread, Date.UTC(2026, 9, 6));
+      }
+    } while (cursor !== undefined && batches < 10);
+    expect([...new Set(listed)].sort()).toEqual(['page-a', 'page-b', 'page-c', 'page-d', 'page-e']);
   });
 });
 

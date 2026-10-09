@@ -7,6 +7,13 @@ import { INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { type ChangeOutcome, refusalText } from '../../../components/use-change';
 
+/**
+ * What an employee's own Slack app calls whatever the approved list says (D-3, as ruled; W13-R15):
+ * the manager's DM and the edit of Day0's own request (wording draft).
+ */
+export const OWN_APP_CHANNEL_NOTE =
+  "Whatever this list says, this employee's own app can always message you and edit its own requests for your approval.";
+
 /** A surface as the tools row reads it. */
 export type ToolsSurface = Pick<
   Doc<'surfaces'>,
@@ -31,9 +38,12 @@ export type ToolsSurface = Pick<
  */
 export function ToolsRow({
   surface,
+  ownSlackApp = false,
   onApprove,
 }: {
   surface: ToolsSurface;
+  /** A Slack card on the employee's own app, whose manager channel is Day0's (D-3, W13-R15). */
+  ownSlackApp?: boolean;
   onApprove: (tools: string[]) => Promise<unknown>;
 }): React.ReactNode {
   const [editing, setEditing] = useState(false);
@@ -113,6 +123,9 @@ export function ToolsRow({
         <p className="text-[13px] text-[var(--color-muted)]">
           Approved, not offered by the provider at the last check: {notOffered.join(', ')}
         </p>
+      ) : null}
+      {ownSlackApp ? (
+        <p className="text-[13px] text-[var(--color-muted)]">{OWN_APP_CHANNEL_NOTE}</p>
       ) : null}
       {keptBack.length > 0 ? (
         <p className="text-[var(--color-warn)]">

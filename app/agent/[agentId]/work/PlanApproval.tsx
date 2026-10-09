@@ -6,7 +6,7 @@ import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { Help, ItemFoot, ItemSection } from './ItemParts';
-import { KEEP_NOTE_LABEL, keepNoteHint } from '@/work/agreement-words';
+import { KEEP_NOTE_IN_MOCK, KEEP_NOTE_LABEL, keepNoteHint } from '@/work/agreement-words';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -207,6 +207,8 @@ export function PlanApprovalForm({
                 {keepNoteHint(employeeName)}
               </p>
             </div>
+          ) : gate === 'mock' ? (
+            <p className="mt-1 text-[13px] text-[var(--color-muted)]">{KEEP_NOTE_IN_MOCK}</p>
           ) : null}
         </ItemSection>
       ) : null}

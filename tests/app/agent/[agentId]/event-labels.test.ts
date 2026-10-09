@@ -471,6 +471,27 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a documentation selection by its site, its characters and its blocks (14-R)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.documentation-selected',
+        payload: { site: 'plan', blockIds: ['b1', 'b2'], chars: 6210 },
+      }),
+    ).toBe('documentation · plan draft · 6,210 characters from 2 sections');
+    expect(
+      eventLabel({
+        type: 'work.documentation-selected',
+        payload: { site: 'closing', blockIds: ['b1'], chars: 980 },
+      }),
+    ).toBe('documentation · closing · 980 characters from 1 section');
+  });
+
+  it('labels a plan drafted again because the documentation it followed changed (14-R, ruled 8 October)', (): void => {
+    expect(
+      eventLabel({ type: 'work.plan-redraft', payload: { workItemId: 'w1', reason: 'x' } }),
+    ).toBe('plan drafted again: documentation it followed has changed');
+  });
+
   it('labels the model-call and restart events in words (P7-18)', (): void => {
     expect(
       eventLabel({
@@ -687,6 +708,21 @@ describe('what a record line says an event did', (): void => {
     expect(recordKindOf({ type: 'work.waiting-for-skill' })).toBe('held');
   });
 
+  it("draws a finished run by its own answer when it was not done, as the line's words say it (13-FD's R3)", (): void => {
+    const finished = (workDone?: string) =>
+      recordKindOf({
+        type: 'work.completed',
+        payload: {
+          workItemId: 'w1',
+          output: workDone === undefined ? {} : { workDone, workDoneWhy: 'Its one line of why.' },
+        },
+      } as never);
+    expect(finished('partial')).toBe('partly-done');
+    expect(finished('not-done')).toBe('not-done');
+    expect(finished('done')).toBe('landed');
+    expect(finished()).toBe('landed');
+  });
+
   it('draws every line the Refused and withheld chip lists as refused or set aside, never noted (m34)', (): void => {
     for (const type of eventTypesIn('refused')) {
       expect(['refused', 'withheld'], type).toContain(recordKindOf({ type }));
@@ -774,5 +810,22 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         payload: { heldIndexes: [1], leftForCard: true },
       }),
     ).toBe('ticket close held, waiting on its card');
+  });
+
+  it('labels a working agreement refused for every employee past the employees its check reads (14-FX, W13-R28)', (): void => {
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
+      }),
+    ).toBe('working agreement not in effect for every employee: you have more than 50 employees');
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
+      }),
+    ).toBe(
+      'working agreement for every employee not in effect for this employee: you had more than 50 employees when its charter was approved',
+    );
   });
 });

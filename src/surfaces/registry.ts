@@ -2,8 +2,9 @@ import type { SpanModel } from '../redaction/client';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Id } from '../../convex/_generated/dataModel';
 import { actionIdempotencyKey } from '../work/idempotency';
-import { reportedEarlierWrites } from '../work/evidence-claims';
+import { boundEarlierWrites, messageTexts } from '../work/evidence-claims';
 import { MOCK_ACTION_TOOLS, type MockAction, type MockSurfaceSnapshot } from '../work/types';
+import type { SelectionRequest } from '../docs/select';
 import type { DecryptCredential } from './credentials';
 import { HttpAdapter, type ApiConnector, type FetchLike } from './http';
 import { McpAdapter, type CreateMcpClient } from './mcp';
@@ -258,6 +259,9 @@ export function resolveAdapters(
  *   agentId: Agent whose workbench is read.
  *   mode: Deployment surface mode.
  *   surfaces: The agent's surfaces.
+ *   selection: Real mode only: the item the documentation is selected for (wave 14, 14-R).
+ *     Without it the guides and team documents are the whole mirror, as mock mode and the
+ *     frozen evaluation read them (R3).
  *
  * Returns:
  *   Complete environment snapshot consumed by skill execution.
@@ -267,24 +271,27 @@ export async function readSurfaceSnapshot(
   agentId: Id<'agents'>,
   mode: SurfaceMode,
   surfaces: readonly SurfaceRecord[],
+  selection?: SelectionRequest,
 ): Promise<MockSurfaceSnapshot> {
   const adapters = new Set(resolveAdapters(mode, surfaces).values());
-  const snapshot: MockSurfaceSnapshot = {
+  const lists = {
     howToGuides: [],
     teamDocs: [],
     spreadsheets: [],
     slackChannels: [],
     tweets: [],
     tickets: [],
-  };
+  } satisfies Omit<MockSurfaceSnapshot, 'documentation'>;
+  let documentation: MockSurfaceSnapshot['documentation'];
   for (const adapter of adapters) {
-    const fragment = await adapter.read(ctx, agentId);
-    for (const key of Object.keys(snapshot) as Array<keyof MockSurfaceSnapshot>) {
+    const fragment = await adapter.read(ctx, agentId, selection);
+    for (const key of Object.keys(lists) as Array<keyof typeof lists>) {
       const values = fragment[key];
-      if (values) snapshot[key].push(...(values as never[]));
+      if (values) (lists[key] as unknown[]).push(...values);
     }
+    documentation ??= fragment.documentation;
   }
-  return snapshot;
+  return documentation === undefined ? lists : { ...lists, documentation };
 }
 
 function refused(tool: string, reason: string, idempotencyKey: string): AppliedAction {
@@ -339,7 +346,7 @@ function writeDidNotLand(
  * (not approved, withheld, held by a claim) or with its outcome unknown. A carried row that landed
  * counts as landed; a write the message does not report is not its business.
  *
- * @param reported - The places of the writes the message reports (`reportedEarlierWrites`).
+ * @param reported - The places of the writes the message is bound to (`boundEarlierWrites`).
  */
 function reportedWriteNotLanded(
   applied: readonly AppliedAction[],
@@ -629,6 +636,15 @@ export async function applySurfaceActions(
         continue;
       }
       if (!isSurfaceTool(action.tool)) {
+        // A mock office message is bound to the writes its run declared it reports (D-5 (b)): one
+        // the manager withheld leaves the report untrue, as on a connected surface.
+        if (
+          messageTexts(action).length > 0 &&
+          reportedWriteNotLanded(applied, boundEarlierWrites(action, actions.slice(0, index)))
+        ) {
+          await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
+          continue;
+        }
         const outcome = await adapter.apply(
           ctx,
           run as AdapterRun,
@@ -766,11 +782,14 @@ export async function applySurfaceActions(
         continue;
       }
       // A message that reports a write of its own set is bound to the writes
-      // it reports (the evidence check counted them as its evidence): one held
-      // back (not approved, held by a claim) leaves its report untrue too.
+      // it reports, as the run declared them and as its words read (the
+      // evidence check counted them as its evidence): one held back (not
+      // approved, held by a claim) leaves its report untrue too. Any write
+      // that carries words the evidence check reads (an issue's description,
+      // a note) is bound as a message is (W13-R43).
       if (
-        isMessage(parsed.action, surface) &&
-        reportedWriteNotLanded(applied, reportedEarlierWrites(action, actions.slice(0, index)))
+        (isMessage(parsed.action, surface) || messageTexts(action).length > 0) &&
+        reportedWriteNotLanded(applied, boundEarlierWrites(action, actions.slice(0, index)))
       ) {
         await settle(index, heldRow(action, WITHHELD_REPORTED_WRITE_NOT_LANDED, idempotencyKey));
         continue;

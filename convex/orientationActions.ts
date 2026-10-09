@@ -14,6 +14,7 @@ import { browserSignedInMarker, browserTitleMarker } from '../src/surfaces/brows
 import { awaitsManagerProposal, charterNamesWorkSystems } from '../src/surfaces/charter-cards';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { approvedMcpEndpoint, McpAddressRefusal } from '../src/surfaces/mcp-address';
+import { webUiAddressRefusal } from '../src/surfaces/browser-address';
 import type { PrivateHostAllowlist } from '../src/lib/private-hosts';
 import type { ReopenOutcome } from './surfaceReopen';
 import {
@@ -124,6 +125,11 @@ export interface DocumentedEndpoints {
   webUi?: string;
   /** A plaintext `http:` endpoint on a public host that was refused as an API or MCP base. */
   insecure?: string;
+  /**
+   * The first web UI the browser rung would not open (`webUiAddressRefusal`: plain http on a host
+   * `DAY0_PRIVATE_HOSTS` does not list), when no other page became the web UI.
+   */
+  refusedWebUi?: string;
   /** The first MCP endpoint the probe's address rule refuses, with the probe's own reason. */
   refusedMcp?: RefusedEndpoint;
   /** The first API base the probe's address rule refuses, with the probe's own reason. */
@@ -594,8 +600,10 @@ export function hostCarriesSlug(host: string, slug: string): boolean {
  *
  * A URL belongs to a system only when the prose of the sentence it appears
  * in names the system as a whole word (the URL text itself does not count),
- * or when the URL host carries the system slug as whole labels.
- * Co-occurrence in a paragraph is not attribution: a page that documents
+ * when the URL host carries the system slug as whole labels, or when the
+ * sentence names the system's vendor word and the host carries it too: a page
+ * titled "Slack automation policy" documents "Slack Web API over HTTPS at
+ * `https://slack.com/api/`" for itself (W13V-1). Co-occurrence in a paragraph is not attribution: a page that documents
  * Linear's MCP endpoint and mentions Slack in the next sentence documents
  * nothing for Slack, and a sentence about Slackbot documents nothing for
  * Slack. A sentence that denies a surface contributes no URL at all.
@@ -610,19 +618,64 @@ export function hostCarriesSlug(host: string, slug: string): boolean {
  */
 export function attributedUrls(text: string, system: string, slug: string): string[] {
   const pattern = systemNamePattern(system);
+  const vendor = vendorWord(system);
   const urls = new Set<string>();
   for (const line of text.split('\n')) {
     for (const sentence of line.split(SENTENCE_BOUNDARY)) {
       if (NO_SURFACE_PATTERN.test(sentence)) continue;
-      const named = pattern.test(sentence.replace(URL_PATTERN, ' '));
+      const prose = sentence.replace(URL_PATTERN, ' ');
+      const named = pattern.test(prose);
+      const vendorNamed = vendor !== undefined && systemNamePattern(vendor).test(prose);
       for (const raw of sentence.match(URL_PATTERN) ?? []) {
         const url = raw.replace(/[.,;:!?]+$/, '');
-        if (named || hostCarriesSlug(hostOf(url), slug)) urls.add(url);
+        const host = hostOf(url);
+        if (
+          named ||
+          hostCarriesSlug(host, slug) ||
+          (vendorNamed && hostCarriesSlug(host, vendor))
+        ) {
+          urls.add(url);
+        }
       }
     }
   }
   return [...urls];
 }
+
+/**
+ * The word a system's name opens on when the name says more than the system ("Slack" of "Slack
+ * automation policy"), or nothing for a one-word name or a lead word too short to name a vendor.
+ */
+function vendorWord(system: string): string | undefined {
+  const words = system
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const lead = words[0];
+  return words.length > 1 && lead !== undefined && lead.length >= 3 && !NOT_A_VENDOR.has(lead)
+    ? lead
+    : undefined;
+}
+
+/** Lead words of a page title that name no vendor ("The team wiki", "Our CRM"). */
+const NOT_A_VENDOR: ReadonlySet<string> = new Set([
+  'the',
+  'our',
+  'your',
+  'team',
+  'company',
+  'support',
+  'internal',
+  'customer',
+  'shared',
+  'general',
+  'main',
+  'help',
+  'service',
+  'admin',
+  'access',
+  'policy',
+]);
 
 /**
  * Decide whether a host is private to this machine or the compose network.
@@ -686,9 +739,10 @@ export function isCredentialSafeEndpoint(url: string): boolean {
  * @param urls - URLs attributed to one system.
  * @param privateHosts - The operator's private-host allowlist; the environment's when omitted.
  * @returns The first MCP endpoint and the first API base the probe would admit, the first
- *   other URL on a host nothing refused, the first plaintext public endpoint refused as an
- *   MCP or API base, and the first MCP endpoint and API base the probe's address rule refuses
- *   when none of their kind is admitted.
+ *   other URL on a host nothing refused that the browser rung would open (`webUiAddressRefusal`)
+ *   and, when there is none, the first it would not, the first plaintext public endpoint refused
+ *   as an MCP or API base, and the first MCP endpoint and API base the probe's address rule
+ *   refuses when none of their kind is admitted.
  */
 export function documentedEndpoints(
   urls: string[],
@@ -721,18 +775,24 @@ export function documentedEndpoints(
       ...plaintextPublic,
     ].map(hostnameOf),
   );
-  const webUi = urls.find((url: string): boolean => {
+  const webUiCandidates = urls.filter((url: string): boolean => {
     const bare = withoutFragment(url);
     return (
       bare !== mcp && bare !== api && !carriesUserinfo(url) && !refusedHosts.has(hostnameOf(url))
     );
   });
+  // The browser rung signs in over the page's own scheme, so a plaintext page is a web UI only
+  // on a host the operator listed (M20, R9).
+  const webUi = webUiCandidates.find(
+    (url: string): boolean => webUiAddressRefusal(url, privateHosts) === undefined,
+  );
   const refusedApi = api === undefined ? firstRefused(judgedApi) : undefined;
   return {
     mcp,
     api,
     webUi,
     insecure: plaintextPublic[0],
+    refusedWebUi: webUi === undefined ? webUiCandidates[0] : undefined,
     refusedMcp: mcp === undefined ? firstRefused(judgedMcp) : undefined,
     // The address rule is the MCP client's; only the noun on the card differs.
     refusedApi:
@@ -1511,8 +1571,15 @@ export function surfaceDocumentation(
   const explicitNone = matches.some((page: Doc<'docPages'>): boolean =>
     explicitlyDeniesSurface(page.markdown, surface.displayName, page.title),
   );
+  // A web UI the browser rung refused is documented, not absent: its card says why it was not
+  // opened (M20).
   const absent =
-    matches.length === 0 || (explicitNone && !endpoints.mcp && !endpoints.api && !endpoints.webUi);
+    matches.length === 0 ||
+    (explicitNone &&
+      !endpoints.mcp &&
+      !endpoints.api &&
+      !endpoints.webUi &&
+      !endpoints.refusedWebUi);
   return { matches, relevantText, endpoints, absent };
 }
 
@@ -1635,6 +1702,10 @@ export async function orientSurface(
     openQuestions.push(
       `The documented endpoint ${endpoints.insecure} is plaintext http on a public host and was not admitted; a credential is only sent over https.`,
     );
+  }
+  if (endpoints.refusedWebUi) {
+    const refusal = webUiAddressRefusal(endpoints.refusedWebUi);
+    if (refusal !== undefined) openQuestions.push(refusal);
   }
   if (endpoints.refusedMcp) {
     openQuestions.push(

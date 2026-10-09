@@ -6,6 +6,7 @@ import {
   formatAccessChecks,
   noConnectionLine,
   parseConnectionRows,
+  linearBedRefusal,
   slackApiBaseForCheck,
   type AccessCheck,
   type ConnectionRow,
@@ -856,5 +857,31 @@ describe('check:access: whether the typed code reaches each employee app (W12V-7
       status: 'warn',
       detail: 'Not read: the deployment did not answer.',
     });
+  });
+});
+
+describe('the bed guard for Linear (W13-R48)', (): void => {
+  const BED = { DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/' };
+  const PRELOAD = '--import /checkout/fake-linear/host-preload.mjs';
+
+  it('refuses to reach Linear from a bed unless the fake Linear preload is loaded', (): void => {
+    expect(linearBedRefusal(BED, {})).toMatch(
+      /^DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself/,
+    );
+    expect(linearBedRefusal(BED, { FAKE_LINEAR_HOST_URL: 'https://127.0.0.1:3694' })).toMatch(
+      /host-preload\.mjs/,
+    );
+    expect(linearBedRefusal(BED, { NODE_OPTIONS: PRELOAD })).toMatch(/FAKE_LINEAR_HOST_URL/);
+    expect(
+      linearBedRefusal(BED, {
+        FAKE_LINEAR_HOST_URL: 'https://127.0.0.1:3694',
+        NODE_OPTIONS: PRELOAD,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('leaves a deployment that names no fake Slack to reach Linear itself', (): void => {
+    expect(linearBedRefusal({}, {})).toBeUndefined();
+    expect(linearBedRefusal({ DAY0_TEST_SLACK_API_URL: ' ' }, {})).toBeUndefined();
   });
 });

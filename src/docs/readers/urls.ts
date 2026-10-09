@@ -12,11 +12,50 @@ import {
 } from './batch';
 import { markdownPageTitle } from './folder';
 import { authorizationHeader } from './mcp';
+import {
+  checkPageAddress,
+  isListedPageHost,
+  PageAddressRefusal,
+  pinnedPageFetch,
+  type CheckedPageAddress,
+  type PageFetch,
+} from './page-address';
+import { PRIVATE_HOSTS_VAR, type PrivateHostAllowlist } from '../../lib/private-hosts';
+import { resolveHostname, type HostResolver } from '../../surfaces/mcp-address';
 
 const MAX_PAGE_BYTES = 2 * 1024 * 1024;
 
-/** The most redirects a page read with a secret follows, all within its site. */
-const MAX_SECRET_REDIRECTS = 5;
+/** The most redirects a page read follows; with a secret, all within its site. */
+const MAX_REDIRECTS = 5;
+
+/** How the reader reaches a page: the resolver its address is checked with, and the dial. */
+export interface PageConnection {
+  /** Resolves a page's host to every address it answers with. */
+  readonly resolve: HostResolver;
+  /** The fetch that reaches one checked address through its checked answers only. */
+  readonly dial: (checked: CheckedPageAddress) => PageFetch;
+  /** The operator's private-host list; the environment's on every check when omitted. */
+  readonly privateHosts?: PrivateHostAllowlist;
+}
+
+/** The system's resolver and Node's own transports, pinned to the checked answers. */
+const SYSTEM_CONNECTION: PageConnection = {
+  resolve: resolveHostname,
+  dial: (checked: CheckedPageAddress): PageFetch => pinnedPageFetch(checked, MAX_PAGE_BYTES),
+};
+
+/** The connection a reader built without one uses; a test replaces it. */
+let defaultConnection: PageConnection = SYSTEM_CONNECTION;
+
+/**
+ * Replace the connection every reader built without one uses, or restore the system's.
+ *
+ * The test seam for a sync that builds its reader through `readerFor`: a convex test's page
+ * hosts neither resolve nor answer.
+ */
+export function __setPageConnectionForTest(connection: PageConnection | undefined): void {
+  defaultConnection = connection ?? SYSTEM_CONNECTION;
+}
 
 /** How a page is fetched: the secret's header, and the one site it may be sent to. */
 interface PageAccess {
@@ -106,13 +145,24 @@ export function htmlPageTitle(html: string, fallback: string): string {
     .trim();
 }
 
-/** Reader for an explicit allowlist of web documentation pages. */
+/**
+ * Reader for an explicit allowlist of web documentation pages.
+ *
+ * Every page, and every address a redirect leads to, is checked before it is fetched
+ * (`src/docs/readers/page-address.ts`): https on a public host, or a host `DAY0_PRIVATE_HOSTS`
+ * lists over either scheme, its answers checked and dialled as checked (R9).
+ */
 export class UrlsReader implements DocumentationReader {
   private readonly backoff: BackoffPolicy;
+  private readonly connection: PageConnection;
 
-  /** @param backoff - How a rate-limited or failed page read is tried again. */
-  constructor(backoff: BackoffPolicy = PROVIDER_BACKOFF) {
+  /**
+   * @param backoff - How a rate-limited or failed page read is tried again.
+   * @param connection - How a page is reached; the system's resolver and transports by default.
+   */
+  constructor(backoff: BackoffPolicy = PROVIDER_BACKOFF, connection?: PageConnection) {
     this.backoff = backoff;
+    this.connection = connection ?? defaultConnection;
   }
 
   /**
@@ -168,9 +218,11 @@ export class UrlsReader implements DocumentationReader {
   ): Promise<Array<DocPage | UnreadPage>> {
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const reads: Array<DocPage | UnreadPage> = [];
-    // Read through the global fetch at call time, one timeout per try.
+    // Each try checks the address again and dials only what it checked, one timeout per try.
+    const { resolve, dial, privateHosts } = this.connection;
     const read = fetchWithBackoff(
-      (input: URL, init?: RequestInit): Promise<Response> => fetch(input, init),
+      async (input: URL, init?: RequestInit): Promise<Response> =>
+        await dial(await checkPageAddress(input, resolve, privateHosts))(input, init),
       20_000,
       this.backoff,
     );
@@ -192,7 +244,9 @@ export class UrlsReader implements DocumentationReader {
     turndown: TurndownService,
     access: PageAccess,
   ): Promise<DocPage> {
-    const response = await fetchWithinSite(url, read, access);
+    const response = await fetchWithinSite(url, read, access, (address: URL): boolean =>
+      isListedPageHost(address, this.connection.privateHosts),
+    );
     const declaredLength = Number(response.headers.get('content-length') || 0);
     if (!response.ok || declaredLength > MAX_PAGE_BYTES) {
       // The refused answer is let go, so its connection is freed for the next page.
@@ -221,37 +275,52 @@ export class UrlsReader implements DocumentationReader {
 }
 
 /**
- * Fetch one page, carrying a reader secret only within its site.
+ * Fetch one page, following its redirects by hand, each one through the checked read.
  *
- * Without a secret the fetch follows redirects as any reader would. With
- * one, redirects are followed by hand and only within the secret's site, so
- * the header never reaches another host (E-74).
+ * Every hop is checked before it is dialled (`read`), so a redirect cannot carry the read to an
+ * address the page itself could not name. A chain that has been on a host `DAY0_PRIVATE_HOSTS` does
+ * not list is never followed onto one it lists (W14-R12), whether it began there or came back
+ * through a listed host's redirect: a public page's redirect would otherwise read any path on a
+ * private host for whoever controls the public page. With a reader secret,
+ * redirects are followed only within the secret's site, so the header never reaches another host
+ * (E-74).
  *
- * @throws Error when a page read with a secret redirects to another site, or too often.
+ * @param isListed - Whether a host is one the operator listed.
+ * @throws PageAddressRefusal when a page from outside the listed hosts redirects onto one.
+ * @throws Error when a page read with a secret redirects to another site, or a page redirects
+ *   too often.
  */
 async function fetchWithinSite(
   url: URL,
   read: (input: URL, init?: RequestInit) => Promise<Response>,
   access: PageAccess,
+  isListed: (address: URL) => boolean,
 ): Promise<Response> {
-  const accept = 'text/markdown, text/html;q=0.9, text/plain;q=0.8';
-  if (access.authorization === undefined) return await read(url, { headers: { Accept: accept } });
+  let leftListed = !isListed(url);
+  const headers: Record<string, string> = {
+    Accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8',
+    ...(access.authorization === undefined ? {} : { Authorization: access.authorization }),
+  };
   let current = url;
-  for (let hop = 0; hop <= MAX_SECRET_REDIRECTS; hop += 1) {
-    const response = await read(current, {
-      headers: { Accept: accept, Authorization: access.authorization },
-      redirect: 'manual',
-    });
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const response = await read(current, { headers, redirect: 'manual' });
     const location = response.headers.get('location');
     if (response.status < 300 || response.status >= 400 || location === null) return response;
     await response.body?.cancel();
     const next = new URL(location, current);
-    if (next.origin !== access.origin) {
+    if (access.authorization !== undefined && next.origin !== access.origin) {
       throw new Error(
         `${url.href} redirects to ${next.origin}; a page read with a secret is not followed off its site.`,
       );
     }
+    const nextListed = isListed(next);
+    if (leftListed && nextListed) {
+      throw new PageAddressRefusal(
+        `${url.href} redirects to ${next.origin}, a host ${PRIVATE_HOSTS_VAR} lists; Day0 does not follow a page from outside your network into it.`,
+      );
+    }
+    leftListed ||= !nextListed;
     current = next;
   }
-  throw new Error(`${url.href} redirected more than ${MAX_SECRET_REDIRECTS} times.`);
+  throw new Error(`${url.href} redirected more than ${MAX_REDIRECTS} times.`);
 }

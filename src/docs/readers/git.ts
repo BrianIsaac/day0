@@ -1,12 +1,14 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isIP } from 'node:net';
 import { basename, join } from 'node:path';
-import { isDiallablePrivateAddress } from '../../lib/network-addresses';
+import { isDiallablePrivateAddress, isNonPublicAddress } from '../../lib/network-addresses';
 import {
+  configuredGitHosts,
   configuredPrivateHosts,
+  isGitHostListed,
   isPrivateHostAllowed,
   type PrivateHostAllowlist,
 } from '../../lib/private-hosts';
@@ -17,9 +19,18 @@ import { readMarkdownDirectoryBatch } from './folder';
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
+/**
+ * Which rule admitted a repository's host (14-F's ruling 2 (b)): GitHub and GitLab by name, a host
+ * inside the operator's network through `DAY0_PRIVATE_HOSTS`, or another public code host through
+ * `DAY0_GIT_HOSTS`, which must then answer with public addresses only.
+ */
+export type GitHostAdmission = 'archive-host' | 'private-hosts' | 'git-hosts';
+
 export interface GitLocator {
   url: URL;
   ref: string;
+  /** The rule that admitted the host; the clone holds its answers to that rule. */
+  admittedBy: GitHostAdmission;
 }
 
 /** The public hosts whose archives are read when the backend cannot clone. */
@@ -32,16 +43,20 @@ const ARCHIVE_HOSTS = ['github.com', 'gitlab.com'];
  * only, and a user name or token in the URL would be stored on the source row
  * and shown back on the page. It is refused, and no refusal repeats the
  * locator. A repository on a host inside the operator's network is read once
- * that host is listed in `DAY0_PRIVATE_HOSTS`.
+ * that host is listed in `DAY0_PRIVATE_HOSTS`, and one on another public code
+ * host (Gitee, JiHu, the customer's own) once it is listed in `DAY0_GIT_HOSTS`.
  *
  * @param locator - Repository locator supplied by the owner.
  * @param privateHosts - Hosts inside the operator's network; the environment's by default.
+ * @param gitHosts - Further public git hosts; the environment's by default, read only for a
+ *   host neither GitHub, GitLab nor private, so a refused list stops only the hosts it would list.
  * @returns HTTPS repository URL and requested ref.
  * @throws Error when the locator is not an HTTPS URL, carries credentials, or names an unsupported host.
  */
 export function parseGitLocator(
   locator: string,
   privateHosts: PrivateHostAllowlist = configuredPrivateHosts(),
+  gitHosts?: PrivateHostAllowlist,
 ): GitLocator {
   const separator = locator.lastIndexOf('#');
   const rawUrl = separator === -1 ? locator : locator.slice(0, separator);
@@ -59,14 +74,22 @@ export function parseGitLocator(
         'the backend can read without one.',
     );
   }
-  if (!ARCHIVE_HOSTS.includes(url.hostname) && !isPrivateHostAllowed(url.hostname, privateHosts)) {
+  // A host in both lists is inside the network: that list's meaning is the wider one.
+  const admittedBy: GitHostAdmission | undefined = ARCHIVE_HOSTS.includes(url.hostname)
+    ? 'archive-host'
+    : isPrivateHostAllowed(url.hostname, privateHosts)
+      ? 'private-hosts'
+      : isGitHostListed(url.hostname, gitHosts ?? configuredGitHosts())
+        ? 'git-hosts'
+        : undefined;
+  if (admittedBy === undefined) {
     throw new Error(
       'Git documentation supports GitHub and GitLab archive URLs, and repositories on hosts ' +
-        'listed in DAY0_PRIVATE_HOSTS.',
+        'listed in DAY0_GIT_HOSTS or DAY0_PRIVATE_HOSTS.',
     );
   }
   if (!ref.trim()) throw new Error('Git documentation ref cannot be empty.');
-  return { url, ref };
+  return { url, ref, admittedBy };
 }
 
 /**
@@ -171,9 +194,10 @@ export function gitPinsResolve(version: string): boolean {
  * The `git` arguments that clone one locator into a checkout directory.
  *
  * GitHub and GitLab are cloned by name. A host the operator listed in
- * `DAY0_PRIVATE_HOSTS` is resolved once, every answer is checked the way a
+ * `DAY0_PRIVATE_HOSTS` or `DAY0_GIT_HOSTS` is resolved once, every answer is checked the way a
  * listed MCP server's are (never loopback, link-local, multicast or
- * unspecified), and git is told to dial only the first checked answer and to
+ * unspecified), and a host only `DAY0_GIT_HOSTS` admitted must answer with public addresses
+ * alone; git is told to dial only the first checked answer and to
  * follow no redirect, so neither a later DNS answer nor a 302 to a metadata
  * address reaches past the check.
  *
@@ -185,7 +209,8 @@ export function gitPinsResolve(version: string): boolean {
  * @param resolve - The resolver; the system's by default.
  * @param withSecret - Whether the clone carries the source's reader secret.
  * @returns The arguments after `git`.
- * @throws Error naming the host when it does not resolve or answers with an address day0 never dials.
+ * @throws Error naming the host when it does not resolve, answers with an address day0 never
+ *   dials, or was admitted as a public git host and answers with an address that is not public.
  */
 export async function cloneArguments(
   locator: GitLocator,
@@ -221,6 +246,17 @@ export async function cloneArguments(
     throw new Error(
       `The git host ${host} answers with an address day0 never dials (loopback, link-local, ` +
         'multicast or unspecified), listed or not.',
+    );
+  }
+  // A public code host is never a way into the network (14-F's ruling 2 (b)): a `.suffix` entry on
+  // a domain whose names someone else can point inward would otherwise be one.
+  const inside =
+    locator.admittedBy === 'git-hosts' ? addresses.find(isNonPublicAddress) : undefined;
+  if (inside !== undefined) {
+    throw new Error(
+      `The git host ${host} answers with an address that is not public (${inside}), and ` +
+        'DAY0_GIT_HOSTS lists public hosts only: list a host inside your network in ' +
+        'DAY0_PRIVATE_HOSTS instead.',
     );
   }
   const pinned = isIP(addresses[0]) === 6 ? `[${addresses[0]}]` : addresses[0];
@@ -285,10 +321,7 @@ export function cloneEnvironment(
  * @param hostname - The repository's host.
  * @param cloned - The finished `git clone`.
  */
-export function cloneFailure(
-  hostname: string,
-  cloned: Pick<SpawnSyncReturns<string>, 'error' | 'stderr'>,
-): string {
+export function cloneFailure(hostname: string, cloned: Pick<GitRun, 'error' | 'stderr'>): string {
   if ((cloned.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
     return (
       `The backend has no git binary, so the repository on ${hostname} cannot be cloned; ` +
@@ -299,13 +332,49 @@ export function cloneFailure(
   return `Git clone from ${hostname} failed${reason ? `: ${reason}` : ''}.`;
 }
 
-/** Reader for public GitHub and GitLab Markdown repositories, and repositories on listed private hosts. */
+/** What one `git` run answered. */
+export interface GitRun {
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: Error;
+}
+
+/** How a `git` run is started: its arguments, and the time and environment it runs with. */
+export interface GitRunOptions {
+  readonly timeout: number;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/** Runs `git` with these arguments. */
+export type GitRunner = (args: readonly string[], options: GitRunOptions) => Promise<GitRun>;
+
+/** The machine's own `git`, run as a child process. */
+const spawnGit: GitRunner = async (args, options): Promise<GitRun> => {
+  const run = spawnSync('git', args, { encoding: 'utf8', ...options });
+  return {
+    status: run.status,
+    stdout: run.stdout ?? '',
+    stderr: run.stderr ?? '',
+    error: run.error,
+  };
+};
+
+/**
+ * Reader for public GitHub and GitLab Markdown repositories, and repositories on
+ * the hosts listed in `DAY0_GIT_HOSTS` or `DAY0_PRIVATE_HOSTS`.
+ */
 export class GitReader implements DocumentationReader {
   private readonly resolve: HostResolver;
+  private readonly runGit: GitRunner;
 
-  /** @param resolve - Resolves a listed host's name; the system's resolver by default. */
-  constructor(resolve: HostResolver = resolveHostname) {
+  /**
+   * @param resolve - Resolves a listed host's name; the system's resolver by default.
+   * @param runGit - Runs `git`; the machine's own by default.
+   */
+  constructor(resolve: HostResolver = resolveHostname, runGit: GitRunner = spawnGit) {
     this.resolve = resolve;
+    this.runGit = runGit;
   }
 
   /**
@@ -356,7 +425,7 @@ export class GitReader implements DocumentationReader {
     const locator = parseGitLocator(source.locator);
     const archived = ARCHIVE_HOSTS.includes(locator.url.hostname);
     if (!archived || secret !== undefined) {
-      const version = spawnSync('git', ['--version'], { encoding: 'utf8', timeout: 10_000 });
+      const version = await this.runGit(['--version'], { timeout: 10_000 });
       if (version.error || version.status !== 0) {
         throw new Error(cloneFailure(locator.url.hostname, version));
       }
@@ -378,12 +447,10 @@ export class GitReader implements DocumentationReader {
     const temporary = await mkdtemp(join(tmpdir(), 'day0-docs-git-'));
     const checkout = join(temporary, 'checkout');
     try {
-      const cloned = spawnSync(
-        'git',
+      const cloned = await this.runGit(
         await cloneArguments(locator, checkout, this.resolve, withSecret),
         // A repository that wants credentials fails at once rather than waiting on a prompt.
         {
-          encoding: 'utf8',
           timeout: 30_000,
           env: cloneEnvironment(
             archived,

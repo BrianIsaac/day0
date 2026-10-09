@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { appliedLedgerPrompt } from '../../../src/work/execute-skill';
 import type { MockAction } from '../../../src/work/types';
 import {
+  boundEarlierWrites,
   heldWithReportedWrites,
   isChatMessage,
   itemEvidence,
@@ -979,5 +980,197 @@ describe("the report binding, the second pass's probes (W13-R2)", (): void => {
         commentOn('REVOPS-6', 'Close-week step logged.'),
       ]),
     ).toContain(0);
+  });
+});
+
+describe("the run's declared reports on a message (the wave 13 review's D-5 (b))", (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  const comment = (body: string, reports?: number[]): MockAction => ({
+    ...commentOn('REVOPS-6', body),
+    ...(reports === undefined ? {} : { reports }),
+  });
+
+  it('binds a message to the writes its reports name, where the words read no report', (): void => {
+    const missed = 'Both stop-drill notes reached #revops.';
+    expect(reportedEarlierWrites(comment(missed), [NOTE_1, NOTE_2])).toEqual([]);
+    expect(boundEarlierWrites(comment(missed, [0, 1]), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment(missed, [1]), [NOTE_1, NOTE_2])).toEqual([1]);
+  });
+
+  it('binds by the words alone when reports is empty or was never declared, as before', (): void => {
+    const said = 'Posted both stop-drill notes in #revops.';
+    expect(boundEarlierWrites(comment(said, []), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment(said), [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(boundEarlierWrites(comment('Which channel?', []), [NOTE_1, NOTE_2])).toEqual([]);
+  });
+
+  it('binds no place that is not a write before the message', (): void => {
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-6"}' },
+    };
+    expect(
+      boundEarlierWrites(comment('Both stop-drill notes reached #revops.', [0, 1, 2, 7]), [
+        read,
+        NOTE_1,
+      ]),
+    ).toEqual([1]);
+  });
+
+  it('holds a message whose words report a write its reports leave out, naming the sentence', (): void => {
+    const findings = unsupportedClaimFindings(
+      [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [0])],
+      empty,
+    );
+    expect(findings).toEqual([
+      {
+        index: 2,
+        issue:
+          'action 2 (linear save_comment) reports a write its `reports` does not name: it says "Posted both stop-drill notes in #revops." and `reports` names [0], while its words report [0, 1]; list in `reports` every earlier write of this set the message reports, or word the message as what it reports',
+      },
+    ]);
+  });
+
+  it('holds a message whose reports name a place that is not a write before it', (): void => {
+    const findings = unsupportedClaimFindings(
+      [NOTE_1, comment('Both stop-drill notes reached #revops.', [0, 2])],
+      empty,
+    );
+    expect(findings).toEqual([
+      {
+        index: 1,
+        issue:
+          'action 1 (linear save_comment) names in `reports` [2], which is not a write before it in this set; a message reports only the writes this response emits before it',
+      },
+    ]);
+  });
+
+  // Phase one's claim check reads only chat messages; the apply binds every message, so the
+  // tripwire reads a ticket comment there too.
+  it('reads every message for the tripwire, the ones the claim check leaves out included', (): void => {
+    const read: MockAction = {
+      tool: 'http.request',
+      args: { surface: 'slack', method: 'POST', path: '/conversations.list', body: '{}' },
+    };
+    const findings = unsupportedClaimFindings(
+      [read, NOTE_1, NOTE_2, comment('Both stop-drill notes are now in #revops.', [0, 1])],
+      empty,
+      () => false,
+    );
+    expect(findings.map((finding) => finding.index)).toEqual([3, 3]);
+    expect(findings[0]!.issue).toContain('names in `reports` [0], which is not a write before it');
+    expect(findings[1]!.issue).toContain('while its words report [1, 2]');
+  });
+
+  it('holds nothing when the reports cover what the words report, or are empty', (): void => {
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [0, 1])],
+        empty,
+      ),
+    ).toEqual([]);
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [])],
+        empty,
+      ),
+    ).toEqual([]);
+  });
+
+  it('holds a message with the held writes its reports name, though its words name none', (): void => {
+    const held = { disposition: 'held', reason: 'write held for the manager' } as const;
+    expect(
+      heldWithReportedWrites(
+        [NOTE_1, comment('Both stop-drill notes reached #revops.', [0])],
+        [held, { disposition: 'auto' }],
+      ),
+    ).toEqual([
+      held,
+      {
+        disposition: 'held',
+        reason: 'held with the writes it reports: it is sent only once they land',
+      },
+    ]);
+  });
+});
+
+describe('the declared reports in the claim floor and the binding (W14-R7, W14-R8)', (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  const comment = (body: string, reports?: number[] | null): MockAction => ({
+    ...commentOn('REVOPS-6', body),
+    ...(reports === undefined ? {} : { reports: reports as number[] }),
+  });
+  const summary = slackPost('C0BSQTE1H7E', 'Weekly pipeline summary: coverage is 3.1x');
+
+  it.each([
+    'Posted it in #revops.',
+    'Posted the update in #revops.',
+    'Sent the digest to the team.',
+    'I have posted my answer.',
+  ])('takes %j as supported by the post its reports name (W14-R7)', (said): void => {
+    expect(unsupportedClaimFindings([summary, comment(said, [0])], empty)).toEqual([]);
+  });
+
+  it('still refuses a figure the declared write does not carry (W14-R7)', (): void => {
+    const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 68%.');
+    const claim = comment('Posted the pipeline coverage of 74% in #revops.', [0]);
+    expect(
+      unsupportedClaimFindings([coverage, claim], empty).map((finding) => finding.index),
+    ).toEqual([1]);
+  });
+
+  it('binds only the write a precise declaration names, the kind guess dropped (W14-R8)', (): void => {
+    const second = comment('Posted the second note in #revops.', [1]);
+    expect(boundEarlierWrites(second, [NOTE_1, NOTE_2])).toEqual([1]);
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, second], empty)).toEqual([]);
+  });
+
+  it('binds nothing by the kind guess for a message that declares none (W14-R8)', (): void => {
+    const unrelated = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 68%.');
+    expect(
+      boundEarlierWrites(comment('Posted both stop-drill notes in #revops.', []), [unrelated]),
+    ).toEqual([]);
+  });
+
+  it('asks for the field on a message whose words report a write and whose reports is null (W14-R8)', (): void => {
+    const said = 'Posted both stop-drill notes in #revops.';
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said, null)], empty)).toEqual([
+      {
+        index: 2,
+        issue:
+          'action 2 (linear save_comment) reports earlier writes of this set in its words and declares no `reports`: it says "Posted both stop-drill notes in #revops.", which reports [0, 1]; list in `reports` every earlier write of this set the message reports, or [] when it reports none',
+      },
+    ]);
+    // A reply recorded before the field has none, and its words bind it as before.
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said)], empty)).toEqual([]);
+    expect(
+      unsupportedClaimFindings(
+        [NOTE_1, comment('Which channel should the note go to?', null)],
+        empty,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("the item's own figures beside a report of the set's writes (W13-R44)", (): void => {
+  const asked: ClaimEvidence = {
+    ledger: '',
+    documentation: [],
+    managerFeedback: [],
+    item: ['Post the pipeline coverage of 74% in #revops, then comment on REVOPS-6.'],
+  };
+
+  it('refuses a figure the reported write does not carry, though the item asks for it', (): void => {
+    const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 68%.');
+    const claim = commentOn('REVOPS-6', 'Posted the pipeline coverage of 74% in #revops.');
+    expect(
+      unsupportedClaimFindings([coverage, claim], asked).map((finding) => finding.index),
+    ).toEqual([1]);
+  });
+
+  it("takes the item's own key in a report of the writes, which names the item and reports no value", (): void => {
+    const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 74%.');
+    const claim = commentOn('REVOPS-6', 'Posted the REVOPS-6 coverage of 74% in #revops.');
+    expect(unsupportedClaimFindings([coverage, claim], asked)).toEqual([]);
   });
 });

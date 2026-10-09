@@ -40,6 +40,16 @@ describe('the bed environment', (): void => {
     expect(values.DAY0_TEST_SLACK_AUTHORIZE_URL).toBe('');
   });
 
+  it('lists the demo tile among the private hosts, since every rehearsal bed runs the demo profile (14-D ruling 2)', (): void => {
+    const values = bedEnvValues({
+      project: 'day0-rehearsal-1',
+      ports,
+      docsHostDir: '/d',
+      source: { OPENAI_API_KEY: 'sk-test', NEXT_PUBLIC_DEMO_BOSS_EMAIL: 'boss@example.com' },
+    });
+    expect(values.DAY0_PRIVATE_HOSTS).toBe('looker-tile');
+  });
+
   it('copies only the allowlisted application values from the source file', (): void => {
     const source: Record<string, string> = {
       OPENAI_API_KEY: 'sk-test',

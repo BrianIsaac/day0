@@ -1,5 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { isPrivateHostAllowed, privateHostAllowlist } from '../../../src/lib/private-hosts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  configuredGitHosts,
+  configuredPrivateHosts,
+  gitHostAllowlist,
+  isGitHostListed,
+  isPrivateHostAllowed,
+  privateHostAllowlist,
+} from '../../../src/lib/private-hosts';
 
 describe('the private-host allowlist', (): void => {
   it('is empty when unset', (): void => {
@@ -59,5 +66,40 @@ describe('the private-host allowlist', (): void => {
     expect(isPrivateHostAllowed('git.corp.internal', allowlist)).toBe(false);
     expect(isPrivateHostAllowed('evil-mcp.corp.internal', allowlist)).toBe(false);
     expect(isPrivateHostAllowed('[fd00::7]', privateHostAllowlist('fd00::7'))).toBe(true);
+  });
+});
+
+describe('the git hosts list (DAY0_GIT_HOSTS)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('takes the same entries as the private list and names its own variable in a refusal', (): void => {
+    expect(gitHostAllowlist('Gitee.com., git.acme.example .code.acme.example')).toEqual({
+      names: ['gitee.com', 'git.acme.example'],
+      suffixes: ['.code.acme.example'],
+    });
+    expect(gitHostAllowlist(undefined)).toEqual({ names: [], suffixes: [] });
+    expect(() => gitHostAllowlist('https://gitee.com')).toThrow('DAY0_GIT_HOSTS');
+    expect(() => gitHostAllowlist('gitee.com 127.0.0.1')).toThrow(
+      'DAY0_GIT_HOSTS lists "127.0.0.1", which is this machine or an address day0 never dials',
+    );
+  });
+
+  it('refuses an address inside a private network, which belongs in DAY0_PRIVATE_HOSTS', (): void => {
+    for (const entry of ['10.0.0.5', '192.168.1.20', 'fd12::5']) {
+      expect(() => gitHostAllowlist(`gitee.com ${entry}`), entry).toThrow(
+        `DAY0_GIT_HOSTS lists "${entry}", an address that is not public: list a host inside your network in DAY0_PRIVATE_HOSTS instead.`,
+      );
+    }
+    expect(gitHostAllowlist('1.1.1.1').names).toEqual(['1.1.1.1']);
+  });
+
+  it('admits a listed git host and leaves it out of the private hosts', (): void => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'git.corp.internal');
+    expect(isGitHostListed('GITEE.com.', configuredGitHosts())).toBe(true);
+    expect(isPrivateHostAllowed('gitee.com', configuredPrivateHosts())).toBe(false);
+    expect(isGitHostListed('git.corp.internal', configuredGitHosts())).toBe(false);
   });
 });

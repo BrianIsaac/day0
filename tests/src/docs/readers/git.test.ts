@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   archiveUrlFor,
@@ -10,8 +12,15 @@ import {
   gitPinsResolve,
   GitReader,
   parseGitLocator,
+  type GitRun,
+  type GitRunner,
 } from '../../../../src/docs/readers/git';
-import { privateHostAllowlist } from '../../../../src/lib/private-hosts';
+import {
+  configuredPrivateHosts,
+  gitHostAllowlist,
+  isPrivateHostAllowed,
+  privateHostAllowlist,
+} from '../../../../src/lib/private-hosts';
 import { PROVIDER_BACKOFF } from '../../../../src/lib/transport-error';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import type { DocSourceRecord } from '../../../../src/docs/types';
@@ -224,6 +233,137 @@ describe('the clone of a listed git host', (): void => {
       ).rejects.toThrow('answers with an address day0 never dials');
     },
   );
+});
+
+describe('a public git host listed in DAY0_GIT_HOSTS', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  const answering =
+    (...addresses: string[]) =>
+    async (): Promise<string[]> =>
+      addresses;
+
+  /** A git that answers its version and, for a clone, writes one runbook into the checkout. */
+  function recordingGit(runs: string[][]): GitRunner {
+    return async (args: readonly string[]): Promise<GitRun> => {
+      runs.push([...args]);
+      if (args[0] === '--version') return { status: 0, stdout: 'git version 2.43.0\n', stderr: '' };
+      const checkout = args[args.length - 1];
+      await mkdir(checkout, { recursive: true });
+      await writeFile(join(checkout, 'runbook.md'), '# Refresh the tile\n\nOpen the tile.\n');
+      return { status: 0, stdout: '', stderr: '' };
+    };
+  }
+
+  const source = (locator: string): DocSourceRecord => ({
+    _id: 'source' as Id<'docSources'>,
+    kind: 'git',
+    label: 'Runbooks',
+    locator,
+  });
+
+  it('the git reader clones a listed public host and refuses an unlisted one', async (): Promise<void> => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    const runs: string[][] = [];
+    const reader = new GitReader(answering('93.184.216.34'), recordingGit(runs));
+    const batch = await reader.listPageBatch(
+      source('https://gitee.com/acme/runbooks.git#main'),
+      undefined,
+      undefined,
+      25,
+    );
+    expect(batch.pages.map((page) => [page.ref, page.title])).toEqual([
+      ['runbook.md', 'Refresh the tile'],
+    ]);
+    expect(runs.find((args) => args.includes('clone'))).toContain(
+      'http.curloptResolve=gitee.com:443:93.184.216.34',
+    );
+
+    const refused: string[][] = [];
+    await expect(
+      new GitReader(answering('93.184.216.36'), recordingGit(refused)).listPageBatch(
+        source('https://jihulab.com/acme/runbooks.git#main'),
+        undefined,
+        undefined,
+        25,
+      ),
+    ).rejects.toThrow('listed in DAY0_GIT_HOSTS or DAY0_PRIVATE_HOSTS');
+    expect(refused.some((args) => args.includes('clone'))).toBe(false);
+  });
+
+  it('a listed git host is pinned to its resolved address and is not a private host', async (): Promise<void> => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    const locator = parseGitLocator('https://gitee.com/acme/runbooks#ops');
+    await expect(
+      cloneArguments(locator, '/tmp/checkout', answering('93.184.216.34', '93.184.216.35')),
+    ).resolves.toEqual([
+      '-c',
+      'http.followRedirects=false',
+      '-c',
+      'http.curloptResolve=gitee.com:443:93.184.216.34',
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'ops',
+      '--',
+      'https://gitee.com/acme/runbooks',
+      '/tmp/checkout',
+    ]);
+    expect(isPrivateHostAllowed('gitee.com', configuredPrivateHosts())).toBe(false);
+    // The pinning's own refusals hold for a listed git host as for a private one.
+    await expect(
+      cloneArguments(locator, '/tmp/checkout', answering('169.254.169.254')),
+    ).rejects.toThrow('The git host gitee.com answers with an address day0 never dials');
+    expect(() => archiveUrlFor(locator)).toThrow('no archive fallback');
+  });
+
+  it('refuses a listed git host that resolves to a private address, which only DAY0_PRIVATE_HOSTS admits (14-F ruling 2 (b))', async (): Promise<void> => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'git.acme.test');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    const listed = parseGitLocator('https://git.acme.test/acme/runbooks#main');
+    await expect(cloneArguments(listed, '/tmp/checkout', answering('10.20.30.40'))).rejects.toThrow(
+      'The git host git.acme.test answers with an address that is not public (10.20.30.40), and DAY0_GIT_HOSTS lists public hosts only: list a host inside your network in DAY0_PRIVATE_HOSTS instead.',
+    );
+    await expect(
+      cloneArguments(listed, '/tmp/checkout', answering('93.184.216.34', '10.20.30.40')),
+    ).rejects.toThrow('not public (10.20.30.40)');
+
+    // The same name listed as a host inside the network is cloned at that address.
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'git.acme.test');
+    const inside = parseGitLocator('https://git.acme.test/acme/runbooks#main');
+    await expect(
+      cloneArguments(inside, '/tmp/checkout', answering('10.20.30.40')),
+    ).resolves.toContain('http.curloptResolve=git.acme.test:443:10.20.30.40');
+  });
+
+  it('stops only the hosts it would list when the list is refused', (): void => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com localhost');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'git.corp.internal');
+    expect(parseGitLocator('https://github.com/acme/runbooks').url.hostname).toBe('github.com');
+    expect(parseGitLocator('https://git.corp.internal/acme/runbooks').url.hostname).toBe(
+      'git.corp.internal',
+    );
+    expect(() => parseGitLocator('https://gitee.com/acme/runbooks')).toThrow(
+      'DAY0_GIT_HOSTS lists "localhost"',
+    );
+  });
+
+  it('takes the list the caller passes before the environment', (): void => {
+    vi.stubEnv('DAY0_GIT_HOSTS', '');
+    expect(
+      parseGitLocator(
+        'https://gitee.com/acme/runbooks',
+        privateHostAllowlist(''),
+        gitHostAllowlist('gitee.com'),
+      ).url.hostname,
+    ).toBe('gitee.com');
+    expect(() => parseGitLocator('https://gitee.com/acme/runbooks')).toThrow('DAY0_GIT_HOSTS');
+  });
 });
 
 describe('the repository archive download', (): void => {

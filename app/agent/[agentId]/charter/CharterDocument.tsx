@@ -157,9 +157,25 @@ function Goal({
         {label}
         {gap ? ' · no goal stated' : ''}
       </p>
-      <p className="leading-snug">{text.trim() || 'Nothing was said for this checkpoint.'}</p>
+      <p className="leading-snug">
+        {text.trim() === ''
+          ? 'Nothing was said for this checkpoint.'
+          : gap
+            ? asSentence(text)
+            : text.trim()}
+      </p>
     </div>
   );
+}
+
+/**
+ * A gap's words as one sentence, opening on a capital and closed with a stop, so two drafts that
+ * wrote "no goal was given" and "No goal was given." read the same (the redeploy's finding 5).
+ */
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  const opened = `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+  return /[.!?]$/.test(opened) ? opened : `${opened}.`;
 }
 
 /** The check an answered open question carries where the list draws its bullet. */
@@ -291,7 +307,8 @@ export function CharterDocument({
           <ul className="grid list-disc gap-1 pl-5">
             {body.namedCollaborators.map((person) => (
               <li key={person.name}>
-                <b className="font-semibold">{person.name}</b>, {person.topic}
+                {/* Set off by a dot, as the People tab does: the model may capitalise a topic. */}
+                <b className="font-semibold">{person.name}</b> · {person.topic}
               </li>
             ))}
           </ul>

@@ -108,7 +108,7 @@ describe('header state pill', (): void => {
         pill({ ...agent, state: 'day-one-in-progress' }, { ...charter, approved: false }),
       ).toContain('Charter to review');
       expect(pill({ ...agent, autonomousActions: true }, charter)).toContain('Active · Autonomous');
-      expect(pill(agent, charter)).toContain('>mock office</span>');
+      expect(pill(agent, charter)).toContain('>hosted office</span>');
     } finally {
       delete backend.queries['config:surfaceMode'];
     }

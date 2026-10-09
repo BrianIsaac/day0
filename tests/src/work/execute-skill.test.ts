@@ -310,6 +310,7 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+            reports: null,
           },
         ],
       }).success,
@@ -321,10 +322,12 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'project-room', threadKey: null, body: 'Handoff.' },
+            reports: null,
           },
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'lead-desk', threadKey: null, body: 'Recap.' },
+            reports: null,
           },
         ],
       }).success,
@@ -377,6 +380,7 @@ describe('executor output contract', (): void => {
           {
             tool: 'slack.postMessage',
             args: { channelSlug: 'lead-desk', threadKey: null, body: 'Escalation.' },
+            reports: null,
           },
         ],
         procedureTrails: [{ trailId: 'trail-1', actionIndex: 0, inapplicabilityReason: null }],
@@ -1384,18 +1388,22 @@ describe('executor output contract', (): void => {
       'slack.postMessage': {
         tool: 'slack.postMessage',
         args: { channelSlug: 'dm-manager', threadKey: null, body: 'Prepared.' },
+        reports: null,
       },
       'twitter.reply': {
         tool: 'twitter.reply',
         args: { tweetSlug: 'tweet-1', body: 'Thanks.' },
+        reports: null,
       },
       'ticket.update': {
         tool: 'ticket.update',
         args: { slug: 'REVOPS-1', status: 'done', comment: 'Complete.' },
+        reports: [],
       },
       'mcp.call': {
         tool: 'mcp.call',
         args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"x"}' },
+        reports: null,
       },
       'http.request': {
         tool: 'http.request',
@@ -1406,6 +1414,7 @@ describe('executor output contract', (): void => {
           headersJson: null,
           body: '{"channel":"D0MANAGER","text":"hi"}',
         },
+        reports: null,
       },
     } satisfies Record<(typeof ACTION_TOOLS)[number], unknown>;
 
@@ -1552,6 +1561,7 @@ describe('executor output contract', (): void => {
     const action = {
       tool: 'mcp.call' as const,
       args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{}' },
+      reports: null,
     };
     expect(DEPENDENT_ACTION_CAP).toBe(CLOSING_SET_CAP + DEFERRED_SEQUENCE_ALLOWANCE);
     expect(
@@ -1630,7 +1640,7 @@ describe('executor output contract', (): void => {
           charterClause: null,
         },
       ],
-      actions: Array.from({ length: count }, () => read),
+      actions: Array.from({ length: count }, () => ({ ...read, reports: null })),
     });
     const closingSetOnly = dependentExecuteSchemaForProcedureContract(
       { trails: [] },
@@ -1680,6 +1690,7 @@ describe('executor output contract', (): void => {
         headersJson: null,
         body: '',
       },
+      reports: null,
     };
     const validParsed = dependentExecuteSchema.safeParse({
       draft: 'd',
@@ -2097,6 +2108,7 @@ describe('frozen prompt text', (): void => {
         3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
         4. Procedure trails: one \`procedureTrails\` row for every parsed runtime trail listed below. Map an applicable trail to the zero-based index of its emitted action; otherwise leave the index null and give a concrete inapplicability reason.
         5. Work done: \`workDone\` and \`workDoneWhy\`. \`workDone\` says whether the work this item asks for is done once your actions land: "done" when every part of it is, "partial" when some of it is and some is not, "not-done" when none of it is (you could not find, reach or do what it needs). \`workDoneWhy\` is one sentence, in your own words, saying why. The status you set must agree: a closing state such as \`done\` only with "done"; with "partial" or "not-done" leave the ticket open and say in the comment what is left.
+        6. Reports: \`reports\`, beside \`tool\` and \`args\` on every action that can carry a comment, a post, a reply or a DM. On a message, it lists the indexes in \`actions\` of the writes earlier in this response that the message reports as made, counting every action of this response from 0, reads included (a comment after a read and two posts lists [1, 2]), never a row of the applied ledger, and is [] when it reports none of them; on an action that is not a message it is null. Day0 sends a message only once every write it lists has landed, and holds it back otherwise, so list each write the message reports, and never one after it.
 
       The draft is written before a single action has been applied, so anything it claims about completed work is a prediction, and a wrong one costs the manager their trust in every other line of it. Therefore:
         - The draft may describe only what the actions in THIS response do. One change is one action: three rows appended means three \`spreadsheet.appendRow\` actions, not one action and a sentence saying three.
@@ -2112,7 +2124,7 @@ describe('frozen prompt text', (): void => {
         - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
-        - Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode.
+        - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer \`workDone\` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
         - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
@@ -2388,6 +2400,19 @@ it('keeps the mock phase-one provider schema byte-identical', () => {
     z.toJSONSchema(executeSchemaForProcedureContract({ trails: [] }, undefined, undefined, 'mock')),
   );
   expect(createHash('sha256').update(schema).digest('hex')).toMatchInlineSnapshot(
-    `"51b468bba40b43bab5184557185981354603c6f854599746100e42628f3ea0c2"`,
+    `"14a42d0cdc469ee250a192093743471840789385644c4a3d9b1235b4527af808"`,
   );
+});
+
+describe('the words a mock run writes into a message (finding 3 of the v0.17.0 redeploy)', (): void => {
+  // Pip's posts in #office-asks landed, after approval, reading "drafting a reply for you now ...;
+  // it waits for manager approval before it lands here": the mock preamble told the run to word
+  // a step as "waits for your approval", a line written for the planner's steps.
+  it('tells a mock run its messages are read once they land, never that they wait for approval', (): void => {
+    const preamble = executorPreamble('mock');
+    expect(preamble).toContain(
+      "  - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.",
+    );
+    expect(preamble).not.toContain('waits for your approval');
+  });
 });

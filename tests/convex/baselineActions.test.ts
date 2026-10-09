@@ -195,6 +195,84 @@ describe('ordinary-agent comparison arm', (): void => {
     expect(model.calls).toBe(1);
   });
 
+  it('reads the whole mirror, never a selection, even where the page has stored blocks (R3; 14-R)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { api } = await import('../../convex/_generated/api');
+    const { replacePageBlocks } = await import('../../convex/docBlocks');
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const { agentId } = await owner.action(api.baselineActions.deployBaseline, {
+      evaluationAddress: BASELINE_ADDRESS,
+    });
+    const body = [
+      '# Pipeline tracker',
+      '',
+      '## Appending a row',
+      '',
+      'Append the Globex row to the pipeline tab.',
+      '',
+      '## Owners',
+      '',
+      'Sara owns the Globex account.',
+    ].join('\n');
+    await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId);
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: agent!.userId!,
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'tracker.md',
+        title: 'Pipeline tracker',
+        markdown: body,
+        updatedAt: 3,
+      });
+      await replacePageBlocks(ctx, {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'tracker.md',
+        generation,
+        markdown: body,
+      });
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: 'source-tracker',
+        title: 'Pipeline tracker',
+        body,
+        category: 'team-doc',
+        sourceId,
+        sourceRef: 'tracker.md',
+        updatedAt: 3,
+      });
+    });
+    const workItemId = await seedWork(harness, agentId, 'EVAL-WRITE-01');
+    let found: unknown;
+    model.run = async (tools) => {
+      found = await tools['docs.lookup'].execute?.({ query: 'pipeline tracker Globex' } as never);
+      return { text: 'No action taken.' };
+    };
+    await owner.action(api.baselineActions.executeTask, { workItemId });
+    expect(JSON.stringify(found)).toContain(JSON.stringify(body).slice(1, -1));
+    expect(JSON.stringify(found)).not.toContain('[cite:');
+    const events = await harness.run(async (ctx) => await ctx.db.query('events').collect());
+    expect(events.map((event) => event.type)).not.toContain('work.documentation-selected');
+  });
+
   it('records a no-tool refusal as a fenced work failure with the model reason', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { api } = await import('../../convex/_generated/api');

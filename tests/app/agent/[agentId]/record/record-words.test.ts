@@ -497,6 +497,38 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says how much documentation a prompt read for the item, and from how many sections (14-R)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.documentation-selected',
+          payload: { site: 'execute', blockIds: ['b1', 'b2', 'b3'], chars: 12_400 },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The run for \u201cDraft response for new tier-two RevOps ask\u201d read 12,400 characters of documentation from 3 sections.',
+    );
+  });
+
+  it('says a plan is drafted again in the words of the run its changed documentation failed (14-R, ruled 8 October)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-redraft',
+          payload: {
+            workItemId: 'w1',
+            reason:
+              'Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for \u201cDraft response for new tier-two RevOps ask\u201d is drafted again. Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',
@@ -1323,5 +1355,73 @@ describe('recordWords: the people graph (wave 13, 13-P)', (): void => {
         subject,
       ),
     ).toBe("You ended Mira's escalation contact Dana Okafor.");
+  });
+});
+
+describe('a held start the resume did not take up, in the record (W13-R46)', (): void => {
+  it('says the skill or the system did not go on after the pause, and why', (): void => {
+    const spent = (why: string): string =>
+      recordWords(
+        { type: 'skill.authoring-hold-spent', payload: { skillId: 's1', name: 'kanban', why } },
+        { name: 'Mira' },
+      );
+    expect(spent('decided')).toBe(
+      'Writing the skill kanban did not go on after the pause: it was decided while the pause held it.',
+    );
+    expect(spent('running')).toBe(
+      'Writing the skill kanban did not go on after the pause: a run held it when the pause ended.',
+    );
+    expect(spent('claimed')).toBe(
+      'Writing the skill kanban did not go on after the pause: it was started while the pause held it.',
+    );
+    expect(
+      recordWords(
+        { type: 'surface.orientation-hold-spent', payload: { surfaceId: 'f1', why: 'settled' } },
+        { name: 'Mira', connection: 'Linear' },
+      ),
+    ).toBe(
+      'Finding a way to reach Linear did not go on after the pause: it was settled while the pause held it.',
+    );
+  });
+});
+
+describe('recordWords: a working agreement refused for every employee (14-FX, W13-R28)', (): void => {
+  it('says a keep for every employee refused past the employees its check reads, and a refusal by its clause as before', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement is not in effect for every employee: you have more than 50 employees.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement for every employee is not in effect for Mira: you had more than 50 employees when its charter was approved, so it was never checked against it.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: {
+            agreementId: 'a1',
+            everyEmployee: true,
+            reason: 'contradicts-will-not-do',
+            clause: 'email customers directly',
+          },
+        },
+        subject,
+      ),
+    ).toBe('A working agreement was refused: it contradicts “email customers directly”.');
   });
 });

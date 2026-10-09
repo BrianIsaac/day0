@@ -18,7 +18,7 @@ import {
 } from '@/surfaces/browser';
 import type { SurfaceDiscoveryEvidence } from '@/docs/system-discovery';
 import { keepsPageScan, scopeFieldsFor } from '@/surfaces/intake-scope';
-import { organisationSystemOf, servedByIssuer } from '@/surfaces/access-request';
+import { organisationSystemOf, scopesRequestedOf, servedByIssuer } from '@/surfaces/access-request';
 import { deploymentZone } from '@/lib/zone';
 import { typedCodeReaches } from '@/surfaces/slack-messages-tab';
 import { Button } from '../../../components/Button';
@@ -57,6 +57,7 @@ import { CredentialField } from './CredentialField';
 import { DisconnectDialog } from './DisconnectDialog';
 import { ExpiryBlock, type MoveOffer, type Renewed } from './ExpiryBlock';
 import { ToolsRow } from './SurfaceControls';
+import { holdsOwnSlackApp } from '@/surfaces/slack-own-channel';
 import {
   AccessRequestRow,
   ApprovalRow,
@@ -346,6 +347,7 @@ export function SurfaceCard({
     reason: surface.reason,
     keptAppNotReinstalled: surface.keptAppNotReinstalled === true,
     provisioningRowShown,
+    provisioningControlShown: provisioningPresentation.stage !== 'unavailable',
     displayName: surface.displayName,
   });
   const credentialLabel = presentation.label ?? `${surface.displayName} credential`;
@@ -552,7 +554,11 @@ export function SurfaceCard({
           />
         ) : null}
         {keepsPageScan(surface) ? <PageScanRow system={surface.displayName} /> : null}
-        <ToolsRow surface={surface} onApprove={actions.approveTools} />
+        <ToolsRow
+          surface={surface}
+          ownSlackApp={holdsOwnSlackApp(surface)}
+          onApprove={actions.approveTools}
+        />
         <ExpiryBlock
           surface={surface}
           now={context.now}
@@ -753,7 +759,9 @@ function ProposalFacts({
     <>
       {surface.verdict === 'connected' ? null : (
         <Fact label="Scopes requested">
-          {request.scopeRequested?.join(', ') || 'none requested'}
+          {organisationSystemOf(surface) === 'slack'
+            ? scopesRequestedOf(surface).join(', ')
+            : request.scopeRequested?.join(', ') || 'none requested'}
         </Fact>
       )}
       <Fact label="Blast radius">{request.blastRadius || 'not stated'}</Fact>

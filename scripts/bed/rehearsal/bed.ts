@@ -188,13 +188,23 @@ export function warmRedactorVolumes(runner: Runner, fromProject: string, bed: Be
 }
 
 /**
- * Start the bed's containers.
+ * Start the bed's containers, the backend's image built first from the clone's
+ * `docker/backend.Dockerfile` (wave 14, 14-F's ruling 1 (a)): a cached build is quick, and one
+ * whose base or Dockerfile changed reaches the backend. Nothing is pulled at the `up`.
  *
  * Args:
  *   runner: The process runner.
  *   bed: The bed.
  */
 export function composeUp(runner: Runner, bed: Bed): void {
+  must(
+    runner('docker', [...composeCommand(bed), 'build', 'backend'], {
+      cwd: bed.clone,
+      env: bed.env,
+      timeoutMs: LONG_STEP_MS,
+    }),
+    'docker compose build backend',
+  );
   must(
     runner('docker', [...composeCommand(bed), 'up', '-d', '--no-build'], {
       cwd: bed.clone,

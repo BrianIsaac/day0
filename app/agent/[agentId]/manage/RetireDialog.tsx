@@ -163,7 +163,7 @@ export function retireLines(
  */
 export function retireAlternative(agent: Doc<'agents'>, mode: RetirePreview['mode']): string {
   if (mode === 'mock') {
-    return `Not sure? Keep ${agent.name}: in the hosted office nothing it does leaves the mock office, and every write waits for your decision.`;
+    return `Not sure? Keep ${agent.name}: in the hosted office nothing it does leaves that office, and every write waits for your decision.`;
   }
   return autonomousActionsOn(agent)
     ? `Not sure? Keep ${agent.name} and turn autonomous actions off instead: nothing but reads and the DM to you lands without your approval, and nothing is deleted.`

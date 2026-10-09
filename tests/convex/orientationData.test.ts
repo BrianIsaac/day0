@@ -1,4 +1,4 @@
-import { convexTest, type TestConvex } from 'convex-test';
+import { convexTest } from 'convex-test';
 import type { GenericId } from 'convex/values';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
@@ -8,82 +8,7 @@ import { isReprobeCandidate } from '../../convex/orientationData';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
-/**
- * Seed one owner-level source with a single page.
- *
- * Args:
- *   harness: Convex test harness.
- *   userId: Owner subject.
- *   label: Source label, also used as the page ref.
- *
- * Returns:
- *   The source id.
- */
-async function seedSource(
-  harness: TestConvex<typeof schema>,
-  userId: string,
-  label: string,
-): Promise<Id<'docSources'>> {
-  return await harness.run(async (ctx): Promise<Id<'docSources'>> => {
-    const sourceId = await ctx.db.insert('docSources', {
-      userId,
-      label,
-      kind: 'folder',
-      locator: label.toLowerCase(),
-      status: 'synced',
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await ctx.db.insert('docPages', {
-      sourceId,
-      ref: `${label.toLowerCase()}.md`,
-      title: label,
-      markdown: `# ${label}`,
-      updatedAt: 1,
-    });
-    return sourceId;
-  });
-}
-
 describe('orientation data boundary', (): void => {
-  it('returns only the pages the agent inherits from its owner', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const kept = await seedSource(harness, 'owner', 'Kept');
-    const excluded = await seedSource(harness, 'owner', 'Excluded');
-    await seedSource(harness, 'other-owner', 'Foreign');
-    const agentId = await harness.run(
-      async (ctx): Promise<Id<'agents'>> =>
-        await ctx.db.insert('agents', {
-          bossEmail: MANAGER_ADDRESS,
-          name: 'orientation data test',
-          userId: 'owner',
-          excludedDocSourceIds: [excluded],
-          state: 'active',
-          createdAt: 1,
-        }),
-    );
-    const pages = await harness.query(internal.orientationData.pagesForAgent, { agentId });
-    expect(pages.map((page): string => page.ref)).toEqual(['kept.md']);
-    expect(pages[0].sourceId).toBe(kept);
-  });
-
-  it('returns nothing for an agent without an owner', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    await seedSource(harness, 'owner', 'Kept');
-    const agentId = await harness.run(
-      async (ctx): Promise<Id<'agents'>> =>
-        await ctx.db.insert('agents', {
-          bossEmail: MANAGER_ADDRESS,
-          name: 'legacy agent',
-          state: 'active',
-          createdAt: 1,
-        }),
-    );
-    await expect(
-      harness.query(internal.orientationData.pagesForAgent, { agentId }),
-    ).resolves.toEqual([]);
-  });
-
   it('returns only the surfaces of the requested agent', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const [mine, theirs] = await harness.run(async (ctx): Promise<Id<'agents'>[]> => {
