@@ -118,6 +118,7 @@ import type * as work from '../work.js';
 import type * as workActions from '../workActions.js';
 import type * as workLedger from '../workLedger.js';
 import type * as workLoop from '../workLoop.js';
+import type * as workReevaluation from '../workReevaluation.js';
 import type * as workRuns from '../workRuns.js';
 import type * as workingAgreementActions from '../workingAgreementActions.js';
 import type * as workingAgreements from '../workingAgreements.js';
@@ -236,6 +237,7 @@ declare const fullApi: ApiFromModules<{
   workActions: typeof workActions;
   workLedger: typeof workLedger;
   workLoop: typeof workLoop;
+  workReevaluation: typeof workReevaluation;
   workRuns: typeof workRuns;
   workingAgreementActions: typeof workingAgreementActions;
   workingAgreements: typeof workingAgreements;

@@ -16,11 +16,11 @@ import {
   MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
   PLAN_CANCELLED_REASON,
-  REEVALUATION_BATCH,
   THREAD_NOT_FOUND_REASON,
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
