@@ -21,7 +21,6 @@ import {
   assertSameAgent,
   failInTransaction,
   interruptedApplyLedger,
-  managerText,
   NOTHING_TO_DECIDE_REASON,
   parkOnConnection,
   queueManagerNote,
@@ -30,6 +29,7 @@ import {
   SKILL_UNDER_REVISION_REASON,
   surfaceAwaitingConnection,
 } from './work';
+import { managerText } from './managerDecisions';
 import { rememberRetriedRequest, scheduleDecisionRequest } from './decisionRequests';
 import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';

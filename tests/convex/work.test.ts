@@ -13,11 +13,11 @@ import {
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
   NOTHING_TO_DECIDE_REASON,
-  PLAN_CANCELLED_REASON,
   THREAD_NOT_FOUND_REASON,
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { PLAN_CANCELLED_REASON } from '../../convex/managerDecisions';
 import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
 import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
