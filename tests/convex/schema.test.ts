@@ -2847,6 +2847,30 @@ describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void 
     );
   });
 
+  it('remembers the proposed changes the manager dismissed on a person, by hash; an older person keeps none (W14-R52)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const base = {
+        userId: 'owner',
+        displayName: 'Aiko Tanaka',
+        nameKey: 'aiko tanaka',
+        status: 'active' as const,
+        source: 'documentation' as const,
+        evidence: [],
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const older = await ctx.db.insert('people', base);
+      const dismissed = await ctx.db.insert('people', {
+        ...base,
+        dismissedChanges: ['a'.repeat(64), 'b'.repeat(64)],
+      });
+      return { older: await ctx.db.get(older), dismissed: await ctx.db.get(dismissed) };
+    });
+    expect(read.older).not.toHaveProperty('dismissedChanges');
+    expect(read.dismissed?.dismissedChanges).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+  });
+
   it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(

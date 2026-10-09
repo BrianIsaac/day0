@@ -2029,6 +2029,14 @@ export default defineSchema({
      * person's card. 14-FX's.
      */
     lookupFailedAt: v.optional(v.number()),
+    /**
+     * The proposed changes the manager dismissed on the person's card, each as a hash of the
+     * change, the newest 20 (wave 15, 15-K for 15-FX; W14-R52, K-4): the next extraction does not
+     * propose a dismissed title, team or address again. A field of its own rather than a marker in
+     * the evidence, the pattern 0.19.0 retired with `people-not-their-addresses`. Absent reads as
+     * none dismissed.
+     */
+    dismissedChanges: v.optional(v.array(v.string())),
     confirmedAt: v.optional(v.number()),
     dismissedAt: v.optional(v.number()),
     createdAt: v.number(),
