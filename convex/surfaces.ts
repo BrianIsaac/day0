@@ -27,11 +27,9 @@ import {
 } from '../src/docs/system-discovery';
 import { sameSurfaceSystem, surfaceIdentity } from '../src/surfaces/identity';
 import { surfaceSlug } from '../src/surfaces/slug';
-import {
-  redraftPlansDraftedWithout,
-  reevaluatePendingInTransaction,
-  resendDecisionsAfterManagerChange,
-} from './work';
+import { redraftPlansDraftedWithout } from './work';
+import { resendDecisionsAfterManagerChange } from './decisionRequests';
+import { reevaluatePendingInTransaction } from './workReevaluation';
 import schema from './schema';
 import { scheduleNextStep } from './workLoop';
 import { presentScopeDrift, restatedScope, type ScopeValue } from '../src/surfaces/intake-scope';

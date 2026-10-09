@@ -26,7 +26,7 @@ import {
   type TraceRows,
   type TraceSection,
 } from '../src/export/trace';
-import { WORK_LISTED_EVENT } from './work';
+import { WORK_LISTED_EVENT } from './ticketListings';
 import { EVENT_TYPES, isEventOf } from '../src/events/contract';
 import { ledgerLineOf } from './connectionEvents';
 import { eventTypesIn, RECORD_FILTERS, type RecordEntry } from '../src/events/record-filters';

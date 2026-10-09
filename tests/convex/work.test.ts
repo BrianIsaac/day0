@@ -12,15 +12,15 @@ import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
-  LISTING_AFTER_HANDOVER,
-  MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
-  PLAN_CANCELLED_REASON,
-  REEVALUATION_BATCH,
   THREAD_NOT_FOUND_REASON,
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { PLAN_CANCELLED_REASON } from '../../convex/managerDecisions';
+import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
+import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
+import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -31,12 +31,12 @@ import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
+import { GROUNDING_READ_AFTER_HANDOVER } from '../../convex/work';
 import {
-  GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
   voidDecisionRequestsForHandover,
-} from '../../convex/work';
+} from '../../convex/decisionRequests';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
 // Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
@@ -8489,7 +8489,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement on the record once, however often the mock loop asks again', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 3; ask += 1) {
@@ -8504,7 +8504,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('leaves real mode as it was: every judgement of a queued row is written', async (): Promise<void> => {
     useSurfaceMode('real');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 2; ask += 1) {
@@ -8517,7 +8517,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement again under a newer approved charter, so the record names the rules that decided', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     const charter = async (version: string): Promise<Id<'charters'>> =>
@@ -8545,7 +8545,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('still writes the claim once a slot frees', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     await harness.run(async (ctx) => {

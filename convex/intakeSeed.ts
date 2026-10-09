@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalMutation, internalQuery } from './_generated/server';
 import { ticketSnapshotValidator } from './schema';
-import { LISTING_AFTER_HANDOVER, seedItemInTransaction, workItemSeedFields } from './work';
+import { LISTING_AFTER_HANDOVER, seedItemInTransaction, workItemSeedFields } from './workSeeding';
 
 /*
  * Intake's seed of a listed item, fenced by the owner its poll read the employee under (the wave

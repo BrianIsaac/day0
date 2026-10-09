@@ -34,7 +34,7 @@ import {
   type TransferPreview,
 } from './transferPreview';
 import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
-import { returnApprovalsForHandover, voidDecisionRequestsForHandover } from './work';
+import { returnApprovalsForHandover, voidDecisionRequestsForHandover } from './decisionRequests';
 import { stopRunsForHandover } from './workRuns';
 import { moveGraphInTransaction } from './peopleProposals';
 import {

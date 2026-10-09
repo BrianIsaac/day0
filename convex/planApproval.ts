@@ -12,12 +12,8 @@ import {
   scheduleProposalsAfterPlan,
 } from './workingAgreements';
 import { appendEvent } from './eventLog';
-import {
-  approvePlanInTransaction,
-  MANAGER_FEEDBACK_MAX_CHARS,
-  sendBackToDrafting,
-  type ManagerAnswerRow,
-} from './work';
+import { MANAGER_FEEDBACK_MAX_CHARS, sendBackToDrafting } from './work';
+import { approvePlanInTransaction, type ManagerAnswerRow } from './managerDecisions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';

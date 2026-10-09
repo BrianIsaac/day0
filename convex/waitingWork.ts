@@ -3,7 +3,9 @@ import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent } from './eventLog';
-import { applyVerdict, releaseExternalClaim, skillRejectedReason } from './work';
+import { skillRejectedReason } from './work';
+import { applyVerdict } from './workVerdicts';
+import { releaseExternalClaim } from './workClaims';
 import { scheduleNextStep } from './workLoop';
 
 /*
