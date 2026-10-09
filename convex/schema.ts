@@ -21,6 +21,14 @@ import {
 import { MESSAGES_TAB_OPEN_HOWS } from '../src/surfaces/slack-messages-tab-hows';
 import { BLOCK_KINDS } from '../src/docs/blocks';
 import {
+  DEFAULT_PAGE_STATUSES,
+  PAGE_STATUSES,
+  RELATION_KINDS,
+  RELATION_STATUSES,
+  SOURCE_AUTHORITIES,
+  STATUS_SOURCES,
+} from '../src/docs/authority';
+import {
   IDENTITY_PROVIDERS,
   PEOPLE_SOURCES,
   PERSON_STATUSES,
@@ -36,6 +44,12 @@ import {
   AGREEMENT_SOURCE_TYPES,
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
+
+/** A documentation page's status (wave 15, 15-K): `PAGE_STATUSES`. */
+const pageStatus = v.union(...PAGE_STATUSES.map((status) => v.literal(status)));
+
+/** How far a documentation source or page is trusted (wave 15, 15-K): `SOURCE_AUTHORITIES`. */
+const sourceAuthority = v.union(...SOURCE_AUTHORITIES.map((authority) => v.literal(authority)));
 
 /**
  * A tracker ticket as one intake listing showed it: who is assigned, its
@@ -395,6 +409,21 @@ export default defineSchema({
        * secret, held as `credentialId`. No field of its own.
        */
       v.literal('feishu'),
+      /**
+       * The wave 15 readers' kinds (15-K for 15-X; K-3), each declared before its reader lands so
+       * one push proves them all: until it lands, `readerFor` names the kind as not read yet and
+       * the link refuses it. A SharePoint site's document library and pages, read through
+       * Microsoft Graph.
+       */
+      v.literal('sharepoint'),
+      /** A Confluence Cloud space, read through its v2 REST API. */
+      v.literal('confluence-v2'),
+      /** A Confluence Data Center space on the customer's own host, read through its REST API. */
+      v.literal('confluence-dc'),
+      /** A Yuque knowledge base, read through its open API. */
+      v.literal('yuque'),
+      /** A Google Drive folder read directly through the Drive API, not through an MCP server. */
+      v.literal('drive'),
     ),
     locator: v.string(),
     serverKind: v.optional(
@@ -406,6 +435,18 @@ export default defineSchema({
       ),
     ),
     credentialId: v.optional(v.id('credentials')),
+    /**
+     * How far the manager trusts the source's pages (wave 15, 15-K for 15-A; A5, A19): official
+     * beats team beats personal, and within a source a page's own status decides. Absent reads as
+     * `team` (`sourceAuthorityOf`, `src/docs/authority.ts`).
+     */
+    authority: v.optional(sourceAuthority),
+    /**
+     * The status the source's pages take when neither the manager, the source, a marker in the
+     * page nor a confirmed relation decides one (wave 15, 15-K for 15-A). Absent reads as
+     * `active`.
+     */
+    defaultStatus: v.optional(v.union(...DEFAULT_PAGE_STATUSES.map((status) => v.literal(status)))),
     activeSyncId: v.optional(v.id('docSyncRuns')),
     /** The completed generation whose pages are currently authoritative. */
     lastCompletedSyncId: v.optional(v.id('docSyncRuns')),
@@ -529,9 +570,81 @@ export default defineSchema({
      * a page is redacted again at its next sync, which then writes the hash.
      */
     contentHash: v.optional(v.string()),
+    /**
+     * The page's status, the outcome of the inputs below (wave 15, 15-K for 15-A; K-2). Absent
+     * reads as `active` (`pageStatusOf`, `src/docs/authority.ts`). Never part of `contentHash`: a
+     * status reaches the row beside it, so an unchanged page whose status changed is marked
+     * without being redacted or split again.
+     */
+    status: v.optional(pageStatus),
+    /** What decided `status`. */
+    statusSource: v.optional(v.union(...STATUS_SOURCES.map((source) => v.literal(source)))),
+    /** What the reader, the page's front matter or its path said of its status, kept as said. */
+    nativeStatus: v.optional(pageStatus),
+    /**
+     * The model's judgement of a free-text marker in the page ("deprecated", "do not use"; N20):
+     * the status it read, the words it read it from and when.
+     */
+    marker: v.optional(v.object({ status: pageStatus, quote: v.string(), judgedAt: v.number() })),
+    /** The manager's verified address, when the manager decided `status`. */
+    decidedBy: v.optional(v.string()),
+    /** When the manager decided `status`. */
+    decidedAt: v.optional(v.number()),
+    /**
+     * The page's revision as its source numbers it (wave 15, 15-K for 15-X; 14-F's ruling 3):
+     * Feishu's `revision_id`, Confluence's `version.number`, Drive's `version`, SharePoint's
+     * `cTag`, Yuque's `content_updated_at`. One field for every reader; absent where the source
+     * gives none.
+     */
+    sourceRevision: v.optional(v.string()),
+    /** From when the page says it holds, and until when. */
+    effectiveFrom: v.optional(v.number()),
+    effectiveUntil: v.optional(v.number()),
+    /** The page that superseded this one, by source and ref. */
+    supersededBy: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
+    /** The manager's trust for this page alone, over its source's `authority`. */
+    authorityOverride: v.optional(sourceAuthority),
   })
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),
+
+  /**
+   * Two pages that look related (wave 15, 15-K for 15-A; the wave file's section 6.1): one may be
+   * the other again, a later version of it, or disagree with it. Proposed by the relation measures
+   * and confirmed or dismissed by the manager on a card; never merged by code. Owner-level, as its
+   * pages are; deleted with either end's source (`deleteSourceRows`, by `by_from` and `by_to`),
+   * and so with its owner (`deleteOwnedDocumentation` removes every source).
+   */
+  docRelations: defineTable({
+    /** The owner's key (`docSources.userId`) both pages' sources are under. */
+    userId: v.string(),
+    from: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+    to: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+    kind: v.union(...RELATION_KINDS.map((kind) => v.literal(kind))),
+    /**
+     * What proposed it, measure by measure: a shared share of the text, a title that differs only
+     * by a version, a figure that differs under one heading; with the blocks each read, by their
+     * hash (`docBlocks.hash`) on their page.
+     */
+    evidence: v.array(
+      v.object({
+        measure: v.string(),
+        value: v.number(),
+        blockRefs: v.optional(v.array(v.string())),
+      }),
+    ),
+    status: v.union(...RELATION_STATUSES.map((status) => v.literal(status))),
+    /** The manager's verified address, once they confirmed or dismissed it. */
+    decidedBy: v.optional(v.string()),
+    decidedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    /** The owner's relations in one standing: the cards still to decide, the confirmed ones. */
+    .index('by_user_status', ['userId', 'status'])
+    /** The relations from one page, or every page of one source: its status and its unlink. */
+    .index('by_from', ['from.sourceId', 'from.ref'])
+    /** The relations to one page, or every page of one source. */
+    .index('by_to', ['to.sourceId', 'to.ref']),
 
   /**
    * A stored page as blocks for the search index (wave 14, 14-I; the wave file's section 6.1):
@@ -549,7 +662,12 @@ export default defineSchema({
     sourceId: v.id('docSources'),
     /** The page's `docPages.ref`. */
     pageRef: v.string(),
-    /** The sync run that wrote this version of the block; the backfill's, the source's last completed run. */
+    /**
+     * The sync run that scheduled the split that wrote the block (the backfill's: the source's last
+     * completed run), not the last writer: a re-split keeps an unchanged block's row, and its
+     * generation with it (`replacePageBlocks`). No reader (W14-R21: documented rather than dropped,
+     * since dropping a field is a narrowing that costs a release for nothing).
+     */
     generation: v.id('docSyncRuns'),
     /** The block's place in its page, from 0. */
     index: v.number(),
@@ -562,6 +680,13 @@ export default defineSchema({
     /** SHA-256 of the heading path, kind and text: a re-split leaves an unchanged block's row. */
     hash: v.string(),
     chars: v.number(),
+    /**
+     * Its page's status, copied so the search filters on it (wave 15, 15-K; K-1): a filter is an
+     * equality and matches no absent field, so the `docs-blocks-status` pass writes `active` on
+     * every block stored before 0.19.0 (every page was active then), and a split writes its
+     * page's status from then on (15-A). Absent only before that pass, read as `active`.
+     */
+    status: v.optional(pageStatus),
   })
     /** A page's blocks in document order: the replace, the prune and an assembled citation. */
     .index('by_source_page', ['sourceId', 'pageRef', 'index'])
@@ -571,25 +696,36 @@ export default defineSchema({
      */
     .index('by_source_page_hash', ['sourceId', 'pageRef', 'hash'])
     /**
-     * A source's blocks by the run that wrote them (the wave file's index; nothing reads it yet: a
-     * source's removal pages through `by_source_page`, which also leads with the source).
+     * A source's blocks by the run that scheduled their split, not their last writer (see
+     * `generation`). No reader: a source's removal pages through `by_source_page`, which also
+     * leads with the source (W14-R21: documented rather than dropped, as dropping an index is a
+     * narrowing that costs a release for nothing).
      */
     .index('by_source_generation', ['sourceId', 'generation'])
     /**
      * At most 16 terms are read and 1,024 results scanned; filter on `userId` and one `sourceId`
      * a query (two equalities on `sourceId` are an AND), at most 8 filter expressions (14-I's
-     * proof). Wave 15 adds `status` to the filters.
+     * proof). `status` is the third filter (wave 15, 15-K; K-1, V14-1: the push redefines the
+     * index and the backend rebuilds it), so a query for current pages is `userId`, one
+     * `sourceId` and `status` `active`: three expressions.
      */
-    .searchIndex('by_text', { searchField: 'searchText', filterFields: ['userId', 'sourceId'] }),
+    .searchIndex('by_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'sourceId', 'status'],
+    }),
 
   /**
    * The listing that last named each page of a source (D D2 (a)). Each batch
-   * stamps the refs it listed; a finishing sync removes the pages whose stamp
-   * is older than its own listing, reading only those. A slim row of its own
-   * rather than a field on `docPages`, so restamping every listed page each
-   * sync never rewrites a page body or wakes the page's readers (P5-18).
-   * Every stored page has one (`upsertPage`, the `doc-page-listings`
-   * migration); a listed page not stored yet may have one without a page.
+   * stamps the refs it listed; a finishing sync removes only the pages whose
+   * stamp is older than the last complete walk's listing (`pruneBelow`), so a
+   * page goes when two complete walks in a row did not list it, never on one
+   * miss (wave 14, 14-D's ruling 1 (b), 14-J): a provider that lists in no
+   * fixed order, or a page edited mid-walk, keeps its page for one more walk.
+   * A slim row of its own rather than a field on `docPages`, so restamping
+   * every listed page each sync never rewrites a page body or wakes the page's
+   * readers (P5-18). Every stored page has one (`upsertPage`, the
+   * `doc-page-listings` migration); a listed page not stored yet may have one
+   * without a page.
    */
   docPageListings: defineTable({
     sourceId: v.id('docSources'),
@@ -597,7 +733,7 @@ export default defineSchema({
     /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
     seenBy: v.number(),
   })
-    /** By source, then listing: the finish's walk of what a listing did not name. */
+    /** By source, then listing: the finish's walk of the pages two complete walks did not name. */
     .index('by_source', ['sourceId', 'seenBy'])
     .index('by_source_ref', ['sourceId', 'ref']),
 
@@ -778,8 +914,8 @@ export default defineSchema({
          * for the Slack fix; W12V-7): `open`, with how Day0 knows it (`MESSAGES_TAB_OPEN_HOWS`)
          * and when, or `refused`, with Slack's words for the last refused opening, when, and how
          * many openings were refused, so the card stops trying at every probe. The
-         * `surfaces-messages-tab` pass copies the open state from the employee's record, where
-         * `surface.app-messages-open` kept it before this field.
+         * `surfaces-messages-tab` pass (0.17.0, retired at 0.19.0) copied the open state from the
+         * employee's record, where `surface.app-messages-open` kept it before this field.
          */
         messagesTab: v.optional(
           v.union(
@@ -1864,9 +2000,10 @@ export default defineSchema({
     /**
      * Addresses the manager said are someone else's (wave 14, 14-I for 14-FX; W13-R8's "A different
      * person"), normalised: never merged onto this person again, and a lookup by one is not this
-     * person's. Replaces the `not-their-address:` evidence marker, which the
-     * `people-not-their-addresses` pass lifts into it; 14-FX writes it at "A different person" and
-     * reads it in the merge and the lookup. The marker goes in a later release (N10).
+     * person's. Written at "A different person" and read in the merge and the lookup (14-FX); the
+     * `people-not-their-addresses` pass (0.18.0) lifted the older `not-their-address:` evidence
+     * markers into it, and left with the markers' reader at 0.19.0 (15-K). The evidence line
+     * itself stays, as what the card shows.
      */
     notTheirAddresses: v.optional(v.array(v.string())),
     /**
@@ -1892,6 +2029,14 @@ export default defineSchema({
      * person's card. 14-FX's.
      */
     lookupFailedAt: v.optional(v.number()),
+    /**
+     * The proposed changes the manager dismissed on the person's card, each as a hash of the
+     * change, the newest 20 (wave 15, 15-K for 15-FX; W14-R52, K-4): the next extraction does not
+     * propose a dismissed title, team or address again. A field of its own rather than a marker in
+     * the evidence, the pattern 0.19.0 retired with `people-not-their-addresses`. Absent reads as
+     * none dismissed.
+     */
+    dismissedChanges: v.optional(v.array(v.string())),
     confirmedAt: v.optional(v.number()),
     dismissedAt: v.optional(v.number()),
     createdAt: v.number(),

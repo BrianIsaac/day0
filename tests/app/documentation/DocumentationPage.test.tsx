@@ -217,6 +217,36 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
     view.unmount();
   });
 
+  it('names a source of each kind whose reader has not landed by its reader (15-K)', (): void => {
+    state.sources = (
+      [
+        ['sharepoint', 'SharePoint'],
+        ['confluence-v2', 'Confluence Cloud'],
+        ['confluence-dc', 'Confluence Data Center'],
+        ['yuque', 'Yuque'],
+        ['drive', 'Google Drive'],
+      ] as const
+    ).map(([kind]) => ({
+      _id: `source-${kind}`,
+      label: kind,
+      kind,
+      locator: `https://${kind}.example.test/docs`,
+      status: 'error',
+      pageCount: 0,
+    }));
+    const text = mount(<DocumentationPage />);
+    for (const name of [
+      'SharePoint',
+      'Confluence Cloud',
+      'Confluence Data Center',
+      'Yuque',
+      'Google Drive',
+    ]) {
+      expect(text.container.textContent).toContain(`${name} · https://`);
+    }
+    text.unmount();
+  });
+
   it('lets the owner rotate or revoke a git source’s secret as an MCP source’s', (): void => {
     state.sources = [
       {

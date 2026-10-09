@@ -7,8 +7,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
-import { isEventOf } from '../src/events/contract';
-import { appendEvent, eventsOfType } from './eventLog';
+import { appendEvent } from './eventLog';
 import { endedByItsRevoke } from './organisationConnectionReads';
 import { assertOwnsSurface } from './ownership';
 import { assertRealMode } from '../src/lib/surface-mode';
@@ -25,71 +24,15 @@ import {
  * the record's `surface.app-messages-open` line when Day0 created the app from a manifest that
  * opens the tab, opened the tab itself, found it open, or the manager said a person opened it; or
  * `refused`, with Slack's words and how many openings it refused, so the card's probe stops asking
- * until a person does. Every reader goes through `typedCodeReachOf`; the record's lines are what
- * the `surfaces-messages-tab` pass copied onto cards opened before 0.17.0.
+ * until a person does. Every reader goes through `typedCodeReachOf`; the record's lines are the
+ * record, which the `surfaces-messages-tab` pass (0.17.0, retired at 0.19.0) copied onto cards
+ * opened before 0.17.0.
  */
-
-/** The most `surface.app-messages-open` events one read walks: one per app the card has had. */
-const OPEN_EVENTS_READ = 50;
 
 /** How many chat cards one page of the report reads. */
 const REPORT_PAGE = 200;
 
 const howValidator = v.union(...MESSAGES_TAB_OPEN_HOWS.map((how) => v.literal(how)));
-
-/**
- * The newest `surface.app-messages-open` line the employee's record holds for the app, if any: the
- * backfill's source.
- */
-async function newestOpening(
-  ctx: Pick<QueryCtx, 'db'>,
-  agentId: Id<'agents'>,
-  appId: string,
-): Promise<{ readonly how: MessagesTabOpenHow; readonly at: number } | undefined> {
-  const opened = await eventsOfType(ctx, agentId, 'surface.app-messages-open')
-    .order('desc')
-    .take(OPEN_EVENTS_READ);
-  for (const event of opened) {
-    if (!isEventOf(event, 'surface.app-messages-open') || event.payload.appId !== appId) continue;
-    return { how: event.payload.how, at: event.createdAt };
-  }
-  return undefined;
-}
-
-/** How many chat cards one page of the messages tab backfill reads; each may read its record. */
-const MESSAGES_TAB_BACKFILL_PAGE = 25;
-
-/**
- * Copy onto each chat card's app the open state the employee's record kept (the
- * `surfaces-messages-tab` pass, 13-K; W12V-7): the newest `surface.app-messages-open` line for
- * the card's app, as `provisioning.messagesTab` (`open`, how, when). A card with no app of Day0's,
- * an app the record does not name, and an app whose state is already written (the newer word) are
- * left, so a second run changes nothing.
- *
- * @param ctx - The migration page's mutation context.
- * @param cursor - Where the previous page stopped, or null for the first.
- */
-export async function backfillMessagesTabPage(
-  ctx: MutationCtx,
-  cursor: string | null,
-): Promise<{ read: number; changed: number; cursor: string; isDone: boolean }> {
-  const page = await ctx.db
-    .query('surfaces')
-    .withIndex('by_class', (q) => q.eq('class', 'chat'))
-    .paginate({ numItems: MESSAGES_TAB_BACKFILL_PAGE, cursor });
-  let changed = 0;
-  for (const surface of page.page) {
-    const app = surface.provisioning;
-    if (app === undefined || app.messagesTab !== undefined) continue;
-    const opening = await newestOpening(ctx, surface.agentId, app.appId);
-    if (opening === undefined) continue;
-    await ctx.db.patch(surface._id, {
-      provisioning: { ...app, messagesTab: { state: 'open', how: opening.how, at: opening.at } },
-    });
-    changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
 
 /** Whether the configuration connection that created the card's app is still active. */
 async function creatorActive(

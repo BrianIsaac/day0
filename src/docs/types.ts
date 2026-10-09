@@ -1,11 +1,48 @@
 import type { Id } from '../../convex/_generated/dataModel';
 import { droppedScriptSuffix } from '../lib/short-hash';
+import type { PageStatus } from './authority';
 
 /**
- * How a documentation source is read: an MCP server, a folder, a git repository, a URL list, or
- * a Feishu (or Lark) wiki space or folder.
+ * How a documentation source is read: an MCP server, a folder, a git repository, a URL list, a
+ * Feishu (or Lark) wiki space or folder, or one of wave 15's readers (`PENDING_READER_NAMES`
+ * until each lands).
  */
-export type DocSourceKind = 'mcp' | 'folder' | 'git' | 'urls' | 'feishu';
+export type DocSourceKind =
+  | 'mcp'
+  | 'folder'
+  | 'git'
+  | 'urls'
+  | 'feishu'
+  | 'sharepoint'
+  | 'confluence-v2'
+  | 'confluence-dc'
+  | 'yuque'
+  | 'drive';
+
+/**
+ * The kinds the schema declares before their readers land (wave 15, 15-K; K-3), each by its
+ * reader's name. A reader that lands takes its kind out of this list.
+ */
+export const PENDING_READER_NAMES = {
+  sharepoint: 'SharePoint',
+  'confluence-v2': 'Confluence Cloud',
+  'confluence-dc': 'Confluence Data Center',
+  yuque: 'Yuque',
+  drive: 'Google Drive',
+} as const satisfies Partial<Record<DocSourceKind, string>>;
+
+/** A kind whose reader has not landed. */
+export type PendingReaderKind = keyof typeof PENDING_READER_NAMES;
+
+/** Whether a kind's reader has not landed yet. */
+export function isPendingReaderKind(kind: DocSourceKind): kind is PendingReaderKind {
+  return Object.hasOwn(PENDING_READER_NAMES, kind);
+}
+
+/** Why a source of a kind whose reader has not landed is neither linked nor read. */
+export function notReadYet(kind: PendingReaderKind): string {
+  return `Day0 does not read ${PENDING_READER_NAMES[kind]} sources yet.`;
+}
 /** Which MCP documentation server a source speaks to. */
 export type DocServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
 
@@ -27,6 +64,13 @@ export interface DocPage {
   url?: string;
   markdown: string;
   updatedAt: number;
+  /**
+   * What the source says of the page's status (an archive, a trash, a draft flag, front matter or
+   * a path), where its reader reads one; stored as `docPages.nativeStatus` (wave 15, 15-K).
+   */
+  nativeStatus?: PageStatus;
+  /** The page's revision as its source numbers it, where it gives one (`docPages.sourceRevision`). */
+  sourceRevision?: string;
 }
 
 /** What every documentation reader provides: one batch of pages at a time. */

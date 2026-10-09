@@ -2431,11 +2431,12 @@ describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void 
     expect(read.ofPage.map((row) => row._id)).toEqual([read.first, read.second]);
     expect(read.ofGeneration).toHaveLength(3);
     expect(read.found.map((row) => row._id)).toEqual([read.first]);
+    // Re-pinned at 0.19.0: `status` is the index's third filter (15-K; K-1).
     expect(searchIndexesOf('docBlocks')).toEqual([
       {
         indexDescriptor: 'by_text',
         searchField: 'searchText',
-        filterFields: ['userId', 'sourceId'],
+        filterFields: ['userId', 'sourceId', 'status'],
       },
     ]);
     expect(indexNames('docBlocks')).toEqual(
@@ -2577,6 +2578,315 @@ describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void 
           updatedAt: 1,
           proposedChange: { title: 'Head' } as Doc<'people'>['proposedChange'],
         });
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void => {
+  /** A linked source with the fields a test gives it. */
+  const docSource = (
+    fields: Partial<WithoutSystemFields<Doc<'docSources'>>> = {},
+  ): WithoutSystemFields<Doc<'docSources'>> => ({
+    userId: 'owner',
+    label: 'Handbook',
+    kind: 'folder',
+    locator: '.',
+    status: 'synced',
+    createdAt: 1,
+    updatedAt: 1,
+    ...fields,
+  });
+
+  it("gives a source its authority and pages' default status, and stores each kind a wave 15 reader reads; an older source keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const older = await ctx.db.insert('docSources', docSource());
+      const official = await ctx.db.insert(
+        'docSources',
+        docSource({ authority: 'official', defaultStatus: 'draft' }),
+      );
+      const kinds = [];
+      for (const kind of [
+        'sharepoint',
+        'confluence-v2',
+        'confluence-dc',
+        'yuque',
+        'drive',
+      ] as const) {
+        const id = await ctx.db.insert('docSources', docSource({ kind, locator: kind }));
+        kinds.push((await ctx.db.get(id))?.kind);
+      }
+      return { older: await ctx.db.get(older), official: await ctx.db.get(official), kinds };
+    });
+    expect(read.older).not.toHaveProperty('authority');
+    expect(read.older).not.toHaveProperty('defaultStatus');
+    expect(read.official).toMatchObject({ authority: 'official', defaultStatus: 'draft' });
+    expect(read.kinds).toEqual(['sharepoint', 'confluence-v2', 'confluence-dc', 'yuque', 'drive']);
+  });
+
+  it("gives a page its status with what decided it and the inputs kept beside it, its source's revision, its dates, its successor and its trust; an older page keeps none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', docSource());
+      const page = {
+        sourceId,
+        ref: 'v1.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 3,
+      };
+      const older = await ctx.db.insert('docPages', page);
+      const decided = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'v2.md',
+        status: 'superseded',
+        statusSource: 'manager',
+        nativeStatus: 'active',
+        marker: { status: 'superseded', quote: 'Deprecated: use v3.', judgedAt: 4 },
+        decidedBy: MANAGER_ADDRESS,
+        decidedAt: 5,
+        sourceRevision: '42',
+        effectiveFrom: 6,
+        effectiveUntil: 7,
+        supersededBy: { sourceId, ref: 'v3.md' },
+        authorityOverride: 'official',
+      });
+      return { older: await ctx.db.get(older), decided: await ctx.db.get(decided) };
+    });
+    for (const field of [
+      'status',
+      'statusSource',
+      'nativeStatus',
+      'marker',
+      'decidedBy',
+      'decidedAt',
+      'sourceRevision',
+      'effectiveFrom',
+      'effectiveUntil',
+      'supersededBy',
+      'authorityOverride',
+    ]) {
+      expect(read.older).not.toHaveProperty(field);
+    }
+    expect(read.decided).toMatchObject({
+      status: 'superseded',
+      statusSource: 'manager',
+      nativeStatus: 'active',
+      marker: { status: 'superseded', quote: 'Deprecated: use v3.', judgedAt: 4 },
+      decidedBy: MANAGER_ADDRESS,
+      sourceRevision: '42',
+      supersededBy: { ref: 'v3.md' },
+      authorityOverride: 'official',
+    });
+  });
+
+  it('refuses a page status, a decider or a marker the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertPage = async (fields: Partial<WithoutSystemFields<Doc<'docPages'>>>) =>
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', docSource());
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: 'a.md',
+          title: 'A',
+          markdown: '# A',
+          updatedAt: 1,
+          ...fields,
+        });
+      });
+    await expect(
+      insertPage({ status: 'deprecated' as Doc<'docPages'>['status'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertPage({ statusSource: 'model' as Doc<'docPages'>['statusSource'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertPage({ marker: { status: 'superseded', quote: 'Old' } as Doc<'docPages'>['marker'] }),
+    ).rejects.toThrow();
+  });
+
+  it('stores a relation between two pages with its evidence, read by owner and status, by the page it is from and by the page it is to', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const wiki = await ctx.db.insert('docSources', docSource({ label: 'Wiki' }));
+      const howTos = await ctx.db.insert('docSources', docSource({ label: 'How-tos' }));
+      const relation = await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId: wiki, ref: 'escalation.md' },
+        to: { sourceId: howTos, ref: 'escalation-v2.md' },
+        kind: 'possible_successor',
+        evidence: [{ measure: 'text-overlap', value: 0.78, blockRefs: ['a'.repeat(64)] }],
+        status: 'proposed',
+        createdAt: 1,
+      });
+      await ctx.db.insert('docRelations', {
+        userId: 'another',
+        from: { sourceId: wiki, ref: 'other.md' },
+        to: { sourceId: howTos, ref: 'other-v2.md' },
+        kind: 'possible_duplicate',
+        evidence: [],
+        status: 'dismissed',
+        decidedBy: MANAGER_ADDRESS,
+        decidedAt: 2,
+        createdAt: 1,
+      });
+      const ids = async (rows: Promise<Doc<'docRelations'>[]>) => (await rows).map((r) => r._id);
+      return {
+        relation,
+        proposed: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'proposed'))
+            .collect(),
+        ),
+        fromWiki: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_from', (q) =>
+              q.eq('from.sourceId', wiki).eq('from.ref', 'escalation.md'),
+            )
+            .collect(),
+        ),
+        toHowTos: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_to', (q) => q.eq('to.sourceId', howTos))
+            .collect(),
+        ),
+      };
+    });
+    expect(read.proposed).toEqual([read.relation]);
+    expect(read.fromWiki).toEqual([read.relation]);
+    expect(read.toHowTos).toHaveLength(2);
+  });
+
+  it('refuses a relation kind or status the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertRelation = async (fields: Partial<WithoutSystemFields<Doc<'docRelations'>>>) =>
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', docSource());
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId, ref: 'a.md' },
+          to: { sourceId, ref: 'b.md' },
+          kind: 'possible_conflict',
+          evidence: [],
+          status: 'proposed',
+          createdAt: 1,
+          ...fields,
+        });
+      });
+    await insertRelation({});
+    await expect(
+      insertRelation({ kind: 'merged' as Doc<'docRelations'>['kind'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertRelation({ status: 'superseded' as Doc<'docRelations'>['status'] }),
+    ).rejects.toThrow();
+  });
+
+  it("gives a block its page's status and searches by owner, source and status; a block with none matches no status (K-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', docSource());
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      const block = (pageRef: string, status?: Doc<'docBlocks'>['status']) => ({
+        userId: 'owner',
+        sourceId,
+        pageRef,
+        generation: runId,
+        index: 0,
+        headingPath: ['Refreshing the tile'],
+        text: 'Press Refresh twice.',
+        searchText: 'Refreshing the tile\nPress Refresh twice.',
+        kind: 'text' as const,
+        hash: 'a'.repeat(64),
+        chars: 20,
+        ...(status === undefined ? {} : { status }),
+      });
+      await ctx.db.insert('docBlocks', block('active.md', 'active'));
+      await ctx.db.insert('docBlocks', block('superseded.md', 'superseded'));
+      await ctx.db.insert('docBlocks', block('older.md'));
+      const search = async (status: 'active' | 'superseded') =>
+        (
+          await ctx.db
+            .query('docBlocks')
+            .withSearchIndex('by_text', (q) =>
+              q
+                .search('searchText', 'refresh')
+                .eq('userId', 'owner')
+                .eq('sourceId', sourceId)
+                .eq('status', status),
+            )
+            .take(12)
+        ).map((row) => row.pageRef);
+      return { active: await search('active'), superseded: await search('superseded') };
+    });
+    expect(read).toEqual({ active: ['active.md'], superseded: ['superseded.md'] });
+    const pushed = schema as unknown as { readonly export: () => string };
+    const exported = JSON.parse(pushed.export()) as {
+      readonly tables: readonly { readonly tableName: string; readonly searchIndexes: unknown[] }[];
+    };
+    expect(exported.tables.find((entry) => entry.tableName === 'docBlocks')?.searchIndexes).toEqual(
+      [
+        {
+          indexDescriptor: 'by_text',
+          searchField: 'searchText',
+          filterFields: ['userId', 'sourceId', 'status'],
+        },
+      ],
+    );
+  });
+
+  it('remembers the proposed changes the manager dismissed on a person, by hash; an older person keeps none (W14-R52)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const base = {
+        userId: 'owner',
+        displayName: 'Aiko Tanaka',
+        nameKey: 'aiko tanaka',
+        status: 'active' as const,
+        source: 'documentation' as const,
+        evidence: [],
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const older = await ctx.db.insert('people', base);
+      const dismissed = await ctx.db.insert('people', {
+        ...base,
+        dismissedChanges: ['a'.repeat(64), 'b'.repeat(64)],
+      });
+      return { older: await ctx.db.get(older), dismissed: await ctx.db.get(dismissed) };
+    });
+    expect(read.older).not.toHaveProperty('dismissedChanges');
+    expect(read.dismissed?.dismissedChanges).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+  });
+
+  it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'docSources',
+          docSource({ authority: 'company' as Doc<'docSources'>['authority'] }),
+        );
+      }),
+    ).rejects.toThrow();
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'docSources',
+          docSource({ defaultStatus: 'superseded' as Doc<'docSources'>['defaultStatus'] }),
+        );
       }),
     ).rejects.toThrow();
   });

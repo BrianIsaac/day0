@@ -22,6 +22,11 @@ const KIND_NAMES: Readonly<Record<LinkedSource['kind'], string>> = {
   urls: 'URLs',
   mcp: 'MCP server',
   feishu: 'Feishu',
+  sharepoint: 'SharePoint',
+  'confluence-v2': 'Confluence Cloud',
+  'confluence-dc': 'Confluence Data Center',
+  yuque: 'Yuque',
+  drive: 'Google Drive',
 };
 
 /**
@@ -39,6 +44,12 @@ function rotateFieldName(kind: LinkedSource['kind']): string {
     case 'folder':
     case 'git':
     case 'urls':
+    // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
+    case 'sharepoint':
+    case 'confluence-v2':
+    case 'confluence-dc':
+    case 'yuque':
+    case 'drive':
       return 'New reader secret';
   }
 }

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -7,6 +8,7 @@ import schema from '../../convex/schema';
 import {
   FINISHING_CURSOR,
   RUN_HISTORY_MS,
+  RUNS_READ_BY_MIGRATION,
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   SUPERSEDED_CREDENTIAL_KEEP_MS,
@@ -16,6 +18,7 @@ import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
+import { MIGRATION_NAMES } from '../../convex/migrations';
 
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -519,6 +522,91 @@ describe('documentation sources in real mode', (): void => {
       source: false,
     });
   });
+
+  it("unlinks a source's page relations, those from its pages and those to them, and keeps another pair's (15-K)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const kept = await harness.run(async (ctx) => {
+      const other = async (label: string): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label,
+          kind: 'folder',
+          locator: label,
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const [wiki, howTos] = [await other('wiki'), await other('how-tos')];
+      const relation = async (
+        from: Id<'docSources'>,
+        to: Id<'docSources'>,
+      ): Promise<Id<'docRelations'>> =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: from, ref: 'page.md' },
+          to: { sourceId: to, ref: 'page.md' },
+          kind: 'possible_duplicate',
+          evidence: [],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      await relation(sourceId, wiki);
+      await relation(howTos, sourceId);
+      return await relation(wiki, howTos);
+    });
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
+    expect(left.map((row) => row._id)).toEqual([kept]);
+  });
+
+  it("unlinks a source's relations inside a transaction's read limit however much evidence each holds, across pages from both ends (15-K, second pass)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { sourceId } = await seedSyncedSource(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'wiki',
+          kind: 'folder',
+          locator: 'wiki',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    // The schema bounds no relation's evidence: each row here is about 900 KB of block refs, so
+    // a page of twenty such rows from one end reads past 16 MiB.
+    const blockRefs = Array.from({ length: 14_000 }, (_unused, index) =>
+      index.toString(16).padStart(64, '0'),
+    );
+    for (let index = 0; index < 21; index += 1) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from:
+            index % 2 === 0 ? { sourceId, ref: `a-${index}.md` } : { sourceId: other, ref: 'b.md' },
+          to:
+            index % 2 === 0 ? { sourceId: other, ref: 'b.md' } : { sourceId, ref: `a-${index}.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'text-overlap', value: 0.9, blockRefs }],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      });
+    }
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(
+      async (ctx) => (await ctx.db.query('docRelations').take(5)).length,
+    );
+    expect(left).toBe(0);
+  }, 120_000);
 
   it('deletes the ciphertext of every credential an unlink revokes and keeps the row', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -3371,5 +3459,13 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
 
     expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
+  });
+});
+
+describe('the import cycle through the documentation store (the helpers split, S-2; 15-K)', (): void => {
+  it('imports nothing from the migrations, and keeps its run pruner on a migration the upgrade runs', (): void => {
+    const source = readFileSync(new URL('../../convex/docSources.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/from '\.\/migrations'/);
+    expect(MIGRATION_NAMES).toContain(RUNS_READ_BY_MIGRATION);
   });
 });

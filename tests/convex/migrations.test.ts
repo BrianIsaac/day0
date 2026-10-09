@@ -856,14 +856,6 @@ describe('the declarations the next release retires (N10, Q D2)', (): void => {
   });
 });
 
-describe('the messages tab pass, described as the tree stands (13-FS Findings 6, 13-J)', (): void => {
-  it('names nothing left to remove: the typed-code reader reads the card alone', (): void => {
-    const described = MIGRATIONS['surfaces-messages-tab'];
-    expect(described.thenRemoves).not.toMatch(/event read in typedCodeReachOf goes/);
-    expect(described.thenRemoves).toMatch(/^nothing: /);
-  });
-});
-
 describe('the avatar id rewrite (U15 D1 (a), N6)', (): void => {
   it('gives an agent stored under a handle-keyed avatar id the face the dashboard shows for it, and leaves a listed one', async (): Promise<void> => {
     const harness = limitedHarness();
@@ -1010,22 +1002,22 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.18.0, the wave 14 schema step (its two passes), from 0.6.0, 0.10.0, 0.13.0,
-    // 0.14.0, 0.15.0, 0.16.0 and 0.17.0: a stamp names a release no older than the newest a
-    // shipped migration names.
+    // Re-pinned at 0.19.0, the wave 15 schema step (its block status pass), from 0.6.0, 0.10.0,
+    // 0.13.0, 0.14.0, 0.15.0, 0.16.0, 0.17.0 and 0.18.0: a stamp names a release no older than
+    // the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.18.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.19.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.18.0', previous: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.19.0', previous: '0.19.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.19.0', previous: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.20.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.20.0', previous: '0.19.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.19.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.20.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2832,7 +2824,8 @@ describe('the kept identity mark pass, retired at 0.18.0 with the reason-word fa
     expect(Object.keys(MIGRATIONS)).not.toContain('surfaces-kept-identity-since');
   });
 
-  it("runs every pass and stamps 0.18.0 over a 0.17.0 deployment's finished row of it", async (): Promise<void> => {
+  // Re-pinned at 0.19.0 (15-K): the stamp names the newest release a shipped migration names.
+  it("runs every pass and stamps the newest release over a 0.17.0 deployment's finished row of it", async (): Promise<void> => {
     const harness = limitedHarness();
     await harness.run(async (ctx) => {
       await ctx.db.insert('migrations', {
@@ -2846,124 +2839,78 @@ describe('the kept identity mark pass, retired at 0.18.0 with the reason-word fa
     });
     await runAll(harness);
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0' }),
-    ).resolves.toMatchObject({ release: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: NEWEST_MIGRATION_RELEASE }),
+    ).resolves.toMatchObject({ release: NEWEST_MIGRATION_RELEASE });
   });
 });
 
-describe('the messages tab state backfill (W12V-7; 13-K)', (): void => {
-  /** A chat card with the employee's own app, as the access kit made it. */
-  async function appCard(
-    harness: Harness,
-    agentId: Id<'agents'>,
-    slug: string,
-    provisioning: Partial<NonNullable<Doc<'surfaces'>['provisioning']>> | null,
-  ): Promise<Id<'surfaces'>> {
-    return await harness.run(async (ctx) => {
-      const secret = await ctx.db.insert('credentials', {
-        userId: ORGANISATION_OWNER_KEY,
-        holder: ORGANISATION_HOLDER,
-        kind: 'oauth',
-        label: `${slug} client secret`,
-        source: 'oauth',
-        createdAt: 1,
-      });
-      return await ctx.db.insert('surfaces', {
-        agentId,
-        slug,
-        displayName: slug,
-        class: 'chat',
-        verdict: 'connected',
-        whereFound: [],
-        credentialLanded: true,
-        createdAt: 1,
-        ...(provisioning === null
-          ? {}
-          : {
-              provisioning: {
-                appId: 'A0123',
-                appName: 'Day0 Priya',
-                clientId: '123.456',
-                clientSecretCredentialId: secret,
-                installUrl: 'https://slack.com/oauth/v2/authorize',
-                redirectUrl: 'http://localhost:3000/api/oauth/slack',
-                scopes: ['chat:write'],
-                createdAt: 1,
-                installedAt: 2,
-                ...provisioning,
-              },
-            }),
-      });
-    });
-  }
-
-  it('is registered at 0.17.0 after the wave 12 passes', (): void => {
-    expect(MIGRATIONS['surfaces-messages-tab'].release).toBe('0.17.0');
-    // Re-pinned at 0.18.0: the kept identity mark it followed left the list (14-I).
-    expect(MIGRATION_NAMES.indexOf('surfaces-messages-tab')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('work-decision-closed'),
+describe('the messages tab and not-their-address passes, retired at 0.19.0 (N10, 15-K)', (): void => {
+  it('leave the list with their pages: 0.18.0 ran both, and a stamp waits for every pass', async (): Promise<void> => {
+    for (const name of ['surfaces-messages-tab', 'people-not-their-addresses']) {
+      expect(MIGRATION_NAMES, name).not.toContain(name);
+      expect(Object.keys(MIGRATIONS), name).not.toContain(name);
+    }
+    // Their pages went with them: nothing but the passes read either.
+    expect(await import('../../convex/slackMessagesTab')).not.toHaveProperty(
+      'backfillMessagesTabPage',
     );
+    expect(await import('../../convex/peopleProposals')).not.toHaveProperty('notTheirAddresses');
   });
 
-  it("copies onto each app the open state the employee's record kept, leaves an app the record does not name, and is safe to run twice", async (): Promise<void> => {
+  it("runs every pass and stamps 0.19.0 over a 0.18.0 deployment's finished rows of both, its marked person unchanged", async (): Promise<void> => {
     const harness = limitedHarness();
-    const priya = await agent(harness, { userId: 'owner' });
-    const opened = await appCard(harness, priya, 'slack', {});
-    const otherApp = await appCard(harness, priya, 'slack-2', { appId: 'A0999' });
-    const noApp = await appCard(harness, priya, 'slack-3', null);
-    const alreadyRefused = await appCard(harness, priya, 'slack-4', {
-      appId: 'A0444',
-      messagesTab: { state: 'refused', reason: 'not_allowed', at: 6, attempts: 2 },
-    });
-    await harness.run(async (ctx) => {
-      for (const [appId, how, createdAt, surfaceId] of [
-        ['A0123', 'created', 10, opened],
-        ['A0123', 'opened', 20, opened],
-        ['A0444', 'confirmed', 30, alreadyRefused],
+    const person = await harness.run(async (ctx) => {
+      for (const [name, release] of [
+        ['surfaces-messages-tab', '0.17.0'],
+        ['people-not-their-addresses', '0.18.0'],
       ] as const) {
-        await ctx.db.insert('events', {
-          agentId: priya,
-          type: 'surface.app-messages-open',
-          payload: { surfaceId, slug: 'slack', displayName: 'Slack', appId, appName: 'Day0', how },
-          createdAt,
+        await ctx.db.insert('migrations', {
+          name,
+          release,
+          read: 1,
+          changed: 1,
+          startedAt: 1,
+          completedAt: 2,
         });
       }
+      // As 0.18.0 left a person the manager said an address was not: the marker kept beside the
+      // field the pass filled, the evidence line the card shows.
+      return await ctx.db.insert('people', {
+        userId: 'owner',
+        displayName: 'Aiko Tanaka',
+        nameKey: 'aiko tanaka',
+        status: 'active',
+        source: 'documentation',
+        evidence: [
+          {
+            quote: 'aiko@other.example is not Aiko Tanaka',
+            where: 'A different person',
+            at: 3,
+            ref: 'not-their-address:aiko@other.example',
+          },
+        ],
+        notTheirAddresses: ['aiko@other.example'],
+        createdAt: 1,
+        updatedAt: 3,
+      });
     });
-
+    const before = await harness.run(async (ctx) => await ctx.db.get(person));
     await runAll(harness);
-
-    const read = await harness.run(async (ctx) => ({
-      opened: (await ctx.db.get(opened))?.provisioning?.messagesTab,
-      otherApp: (await ctx.db.get(otherApp))?.provisioning,
-      noApp: await ctx.db.get(noApp),
-      alreadyRefused: (await ctx.db.get(alreadyRefused))?.provisioning?.messagesTab,
-    }));
-    // The newest line for the app is the one that stands.
-    expect(read.opened).toEqual({ state: 'open', how: 'opened', at: 20 });
-    expect(read.otherApp).not.toHaveProperty('messagesTab');
-    expect(read.noApp).not.toHaveProperty('provisioning');
-    // A state already written is the newer word; the pass never overwrites it.
-    expect(read.alreadyRefused).toEqual({
-      state: 'refused',
-      reason: 'not_allowed',
-      at: 6,
-      attempts: 2,
-    });
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'surfaces-messages-tab')).toMatchObject({
-      release: '0.17.0',
-      changed: 1,
-    });
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'surfaces-messages-tab'))
-        .unique();
-      if (row !== null) await ctx.db.delete(row._id);
-    });
     await expect(
-      harness.mutation(internal.migrations.runMigrationPage, { name: 'surfaces-messages-tab' }),
-    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0' }),
+    ).resolves.toMatchObject({ release: '0.19.0' });
+    expect(await harness.run(async (ctx) => await ctx.db.get(person))).toEqual(before);
+    const rows = await harness.run(async (ctx) => await ctx.db.query('migrations').collect());
+    expect(
+      rows
+        .filter((row) => ['surfaces-messages-tab', 'people-not-their-addresses'].includes(row.name))
+        .map((row) => [row.name, row.release, row.completedAt]),
+    ).toEqual([
+      ['surfaces-messages-tab', '0.17.0', 2],
+      ['people-not-their-addresses', '0.18.0', 2],
+    ]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.map((row) => row.name)).not.toContain('people-not-their-addresses');
   });
 });
 
@@ -3042,11 +2989,12 @@ function nestedHanPage(seed: number): string {
 }
 
 describe('the block backfill (14-I)', (): void => {
-  it('is registered at 0.18.0 after the wave 13 passes, the newest release any migration names', (): void => {
+  // Re-pinned at 0.19.0: the newest release a migration names is document authority's (15-K).
+  it('is registered at 0.18.0 after the wave 13 passes', (): void => {
     expect(MIGRATIONS['docs-backfill-blocks'].release).toBe('0.18.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.18.0');
+    // Re-pinned at 0.19.0: the 0.17.0 pass it followed left the list (15-K).
     expect(MIGRATION_NAMES.indexOf('docs-backfill-blocks')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('surfaces-messages-tab'),
+      MIGRATION_NAMES.indexOf('work-decision-closed'),
     );
   });
 
@@ -3277,74 +3225,158 @@ describe('the block backfill (14-I)', (): void => {
   });
 });
 
-describe("the lift of W13-R8's evidence marker into the person's field (14-I)", (): void => {
-  it('is registered at 0.18.0 after the block backfill', (): void => {
-    expect(MIGRATIONS['people-not-their-addresses'].release).toBe('0.18.0');
-    expect(MIGRATION_NAMES.indexOf('people-not-their-addresses')).toBeGreaterThan(
+describe('the block status pass (15-K; K-1)', (): void => {
+  /** Every block's page and status, in page order, read a page at a time inside the read limit. */
+  const blockStatuses = async (harness: Harness): Promise<Array<[string, string | undefined]>> => {
+    const statuses: Array<[string, string | undefined]> = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const page: { page: Doc<'docBlocks'>[]; isDone: boolean; continueCursor: string } =
+        await harness.run(
+          async (ctx) => await ctx.db.query('docBlocks').paginate({ numItems: 500, cursor }),
+        );
+      statuses.push(
+        ...page.page.map((block): [string, string | undefined] => [block.pageRef, block.status]),
+      );
+      if (page.isDone) return statuses.sort(([a], [b]) => a.localeCompare(b));
+      cursor = page.continueCursor;
+    }
+  };
+
+  it('is registered at 0.19.0 after the block backfill, the newest release any migration names', (): void => {
+    expect(MIGRATIONS['docs-blocks-status'].release).toBe('0.19.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.19.0');
+    expect(MIGRATION_NAMES.indexOf('docs-blocks-status')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('docs-backfill-blocks'),
     );
   });
 
-  it('lifts every marked address into the field beside any already there, keeps the evidence, leaves a person with none, and is safe to run twice', async (): Promise<void> => {
+  it("writes active on every block, the status every page had before 0.19.0, leaves a block's own status, and is safe to run twice", async (): Promise<void> => {
     const harness = limitedHarness();
-    const marker = (address: string, at: number) => ({
-      quote: `${address} is someone else's address`,
-      where: 'you, on A different person',
-      at,
-      ref: `not-their-address:${address}`,
+    const sourceId = await source(harness, 'owner');
+    const runId = await completedRun(harness, sourceId);
+    await storedPage(harness, {
+      sourceId,
+      ref: 'a.md',
+      markdown: '# A\n\nAlpha.\n\n## B\n\nBeta.',
     });
-    const page = { quote: 'Aiko owns the ledger', where: 'Access owners', at: 1, ref: 'a.md' };
-    const ids = await harness.run(async (ctx) => {
-      const person = (fields: Partial<Doc<'people'>>) =>
-        ctx.db.insert('people', {
-          userId: 'owner',
-          displayName: 'Aiko',
-          nameKey: 'aiko',
-          status: 'active',
-          source: 'documentation',
-          evidence: [],
-          createdAt: 1,
-          updatedAt: 1,
-          ...fields,
-        });
-      return {
-        marked: await person({
-          evidence: [page, marker('aiko@other.example', 2), marker('a.t@other.example', 3)],
-        }),
-        both: await person({
-          evidence: [marker('aiko@other.example', 2)],
-          notTheirAddresses: ['old@other.example', 'aiko@other.example'],
-        }),
-        none: await person({ evidence: [page] }),
-      };
-    });
-
-    await runAll(harness);
-
-    const read = await harness.run(async (ctx) => ({
-      marked: await ctx.db.get(ids.marked),
-      both: await ctx.db.get(ids.both),
-      none: await ctx.db.get(ids.none),
-    }));
-    expect(read.marked?.notTheirAddresses).toEqual(['aiko@other.example', 'a.t@other.example']);
-    expect(read.marked?.evidence).toHaveLength(3);
-    expect(read.both?.notTheirAddresses).toEqual(['old@other.example', 'aiko@other.example']);
-    expect(read.none).not.toHaveProperty('notTheirAddresses');
-    const status = await harness.query(internal.migrations.status, {});
-    expect(
-      status.migrations.find((row) => row.name === 'people-not-their-addresses'),
-    ).toMatchObject({ release: '0.18.0', read: 3, changed: 1 });
+    await storedPage(harness, { sourceId, ref: 'c.md', markdown: '# C\n\nGamma.' });
+    // A block a split wrote with its page's status after the push and before the pass ran.
     await harness.run(async (ctx) => {
-      const row = await ctx.db
+      await ctx.db.insert('docBlocks', {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'd.md',
+        generation: runId,
+        index: 0,
+        headingPath: ['D'],
+        text: 'Delta.',
+        searchText: 'D\nDelta.',
+        kind: 'text',
+        hash: 'd'.repeat(64),
+        chars: 6,
+        status: 'draft',
+      });
+    });
+    await runAll(harness);
+    expect(await blockStatuses(harness)).toEqual([
+      ['a.md', 'active'],
+      ['a.md', 'active'],
+      ['c.md', 'active'],
+      ['d.md', 'draft'],
+    ]);
+    const row = async () =>
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (entry) => entry.name === 'docs-blocks-status',
+      );
+    expect(await row()).toMatchObject({
+      release: '0.19.0',
+      read: 4,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+    await harness.run(async (ctx) => {
+      const done = await ctx.db
         .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'people-not-their-addresses'))
+        .withIndex('by_name', (q) => q.eq('name', 'docs-blocks-status'))
         .unique();
-      if (row !== null) await ctx.db.delete(row._id);
+      if (done !== null) await ctx.db.delete(done._id);
     });
     await expect(
-      harness.mutation(internal.migrations.runMigrationPage, {
-        name: 'people-not-their-addresses',
-      }),
-    ).resolves.toMatchObject({ changed: 0, completedAt: expect.any(Number) });
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-blocks-status' }),
+    ).resolves.toMatchObject({ read: 4, changed: 0 });
+  });
+
+  it("finds an active block by the search's status filter once the pass has run, and none before", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await completedRun(harness, sourceId);
+    await storedPage(harness, {
+      sourceId,
+      ref: 'refresh.md',
+      markdown: '# Refreshing the tile\n\nPress Refresh twice.',
+    });
+    const found = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docBlocks')
+            .withSearchIndex('by_text', (q) =>
+              q
+                .search('searchText', 'refresh')
+                .eq('userId', 'owner')
+                .eq('sourceId', sourceId)
+                .eq('status', 'active'),
+            )
+            .take(12)
+        ).map((block) => block.pageRef),
+      );
+    await harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-backfill-blocks' });
+    expect(await found()).toEqual([]);
+    await runAll(harness);
+    expect(await found()).toEqual(['refresh.md']);
+  });
+
+  it("stamps blocks dense enough to pass a transaction's limits in one read, a bounded page at a time", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const runId = await completedRun(harness, sourceId);
+    // 2,500 blocks of about 3 KiB of Han text and its bigrams: more than one page's byte bound.
+    const han = '管道看板'.repeat(250);
+    for (let start = 0; start < 2_500; start += 500) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < start + 500; index += 1) {
+          await ctx.db.insert('docBlocks', {
+            userId: 'owner',
+            sourceId,
+            pageRef: `dense-${Math.floor(index / 100)}.md`,
+            generation: runId,
+            index: index % 100,
+            headingPath: ['Dense'],
+            text: han,
+            searchText: `Dense\n${han}\n${han}`,
+            kind: 'text',
+            hash: index.toString(16).padStart(64, '0'),
+            chars: han.length,
+          });
+        }
+      });
+    }
+    await runAll(harness);
+    const statuses = await blockStatuses(harness);
+    expect(statuses).toHaveLength(2_500);
+    expect(statuses.every(([, status]) => status === 'active')).toBe(true);
+  }, 120_000);
+
+  it('reads nothing on a deployment that stores no block, as the hosted mock deployment does', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await agent(harness, { userId: 'owner' });
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'docs-blocks-status')).toMatchObject({
+      read: 0,
+      changed: 0,
+      completedAt: expect.any(Number),
+    });
   });
 });
