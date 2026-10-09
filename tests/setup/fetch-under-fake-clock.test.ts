@@ -189,7 +189,11 @@ describe('fetch under a faked clock', (): void => {
         // Under the nested run's 5 s test timeout: a stall would end there, a refusal in milliseconds.
         expect(test.duration ?? Number.POSITIVE_INFINITY).toBeLessThan(3_000);
       }
-      for (const test of [...quiet, ...passedThrough]) expect(test.status).toBe('passed');
+      // Named with the nested run's own failure: one full-suite gate on 9 October saw one of
+      // these fail and the assertion alone could not say which, or why (not reproduced since).
+      for (const test of [...quiet, ...passedThrough]) {
+        expect(test.status, `${test.title}: ${test.failureMessages.join('\n')}`).toBe('passed');
+      }
     } finally {
       rmSync(reportDir, { recursive: true, force: true });
     }
