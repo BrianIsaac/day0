@@ -23,6 +23,8 @@ import { BLOCK_KINDS } from '../src/docs/blocks';
 import {
   DEFAULT_PAGE_STATUSES,
   PAGE_STATUSES,
+  RELATION_KINDS,
+  RELATION_STATUSES,
   SOURCE_AUTHORITIES,
   STATUS_SOURCES,
 } from '../src/docs/authority';
@@ -605,6 +607,44 @@ export default defineSchema({
   })
     .index('by_source', ['sourceId'])
     .index('by_source_ref', ['sourceId', 'ref']),
+
+  /**
+   * Two pages that look related (wave 15, 15-K for 15-A; the wave file's section 6.1): one may be
+   * the other again, a later version of it, or disagree with it. Proposed by the relation measures
+   * and confirmed or dismissed by the manager on a card; never merged by code. Owner-level, as its
+   * pages are; deleted with either end's source (`deleteSourceRows`, by `by_from` and `by_to`),
+   * and so with its owner (`deleteOwnedDocumentation` removes every source).
+   */
+  docRelations: defineTable({
+    /** The owner's key (`docSources.userId`) both pages' sources are under. */
+    userId: v.string(),
+    from: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+    to: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
+    kind: v.union(...RELATION_KINDS.map((kind) => v.literal(kind))),
+    /**
+     * What proposed it, measure by measure: a shared share of the text, a title that differs only
+     * by a version, a figure that differs under one heading; with the blocks each read, by their
+     * hash (`docBlocks.hash`) on their page.
+     */
+    evidence: v.array(
+      v.object({
+        measure: v.string(),
+        value: v.number(),
+        blockRefs: v.optional(v.array(v.string())),
+      }),
+    ),
+    status: v.union(...RELATION_STATUSES.map((status) => v.literal(status))),
+    /** The manager's verified address, once they confirmed or dismissed it. */
+    decidedBy: v.optional(v.string()),
+    decidedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    /** The owner's relations in one standing: the cards still to decide, the confirmed ones. */
+    .index('by_user_status', ['userId', 'status'])
+    /** The relations from one page, or every page of one source: its status and its unlink. */
+    .index('by_from', ['from.sourceId', 'from.ref'])
+    /** The relations to one page, or every page of one source. */
+    .index('by_to', ['to.sourceId', 'to.ref']),
 
   /**
    * A stored page as blocks for the search index (wave 14, 14-I; the wave file's section 6.1):

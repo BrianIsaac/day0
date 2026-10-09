@@ -941,7 +941,7 @@ It resolves values the way the running app does, which matters more than it soun
 
 ## Schema (`convex/schema.ts`)
 
-The schema contains 45 tables: 27 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), seven hold owner-level documentation and credential state, one is the owner's skill library, three hold the owner's people graph, one is the transient lease on the verification sandbox, two are the deployment's own record of the migrations it has run and the release its rows are at, and two hold the systems IT connected for the whole organisation and their ledger, which no owner's reset touches.
+The schema contains 46 tables: 27 carry per-agent or agent-owned runtime state, two keep the records that outlive an employee (the owner's record of the employees it retired, and the requests to hand an employee to another manager), eight hold owner-level documentation and credential state, one is the owner's skill library, three hold the owner's people graph, one is the transient lease on the verification sandbox, two are the deployment's own record of the migrations it has run and the release its rows are at, and two hold the systems IT connected for the whole organisation and their ledger, which no owner's reset touches.
 
 | Table | Purpose |
 |---|---|
@@ -955,6 +955,7 @@ The schema contains 45 tables: 27 carry per-agent or agent-owned runtime state, 
 | `docPages` | Normalised, credential-redacted pages keyed by source and stable reference |
 | `docBlocks` | Each stored page split at its headings into blocks after redaction, with a search index over their text and the bigrams of every Chinese, Japanese or Korean run, filtered by owner and source; real mode only |
 | `docPageListings` | The listing of its source that last named each page, which a finishing sync prunes by |
+| `docRelations` | Two pages that look like the same document, a later version of one another or in disagreement, with the measures that proposed it, confirmed or dismissed by the manager and never merged by code; deleted with either page's source |
 | `docSystemDiscoveries` | Current and retired evidence-backed system candidates derived from each source |
 | `surfaces` | Per-agent system connection cards, approvals, paths, probe results, tool catalogues and intake checkpoints |
 | `voiceSessions` | Day-1 1:1 sessions (`elevenlabs` / `gemini-live` / `chat`) |

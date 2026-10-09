@@ -473,15 +473,38 @@ async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promis
 
 /**
  * The tables a removed source leaves rows in, in the order they are deleted: what an employee
- * reads directly first (its mirrors, then the blocks a search reads), the record last.
+ * reads directly first (its mirrors, then the blocks a search reads, then the relations that
+ * decide which page is read), the record last.
  */
 const SOURCE_ROW_TABLES = [
   'mockDocs',
   'docBlocks',
+  'docRelations',
   'docPages',
   'docPageListings',
   'docSyncRuns',
 ] as const;
+
+/**
+ * One bounded page of the relations from a source's pages, or, once none is left, to them: a
+ * relation goes with either end's source. Read with `take`, as a function may paginate once; a
+ * relation row is a few hundred bytes, so a page stays well inside a transaction's read limit.
+ */
+async function sourceRelationsPage(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+): Promise<{ page: Doc<'docRelations'>[]; isDone: boolean }> {
+  const from = await ctx.db
+    .query('docRelations')
+    .withIndex('by_from', (index) => index.eq('from.sourceId', sourceId))
+    .take(PAGED_READ.numItems);
+  if (from.length > 0) return { page: from, isDone: false };
+  const to = await ctx.db
+    .query('docRelations')
+    .withIndex('by_to', (index) => index.eq('to.sourceId', sourceId))
+    .take(PAGED_READ.numItems);
+  return { page: to, isDone: to.length < PAGED_READ.numItems };
+}
 
 /**
  * Delete one bounded page of a removed source's rows in one table, and schedule the next.
@@ -497,17 +520,20 @@ export const deleteSourceRows = internalMutation({
   },
   handler: async (ctx, args): Promise<number> => {
     const table = args.table ?? SOURCE_ROW_TABLES[0];
-    // A source's blocks are read by their page index, which leads with the source.
+    // A source's blocks are read by their page index, which leads with the source; its relations
+    // by either end.
     const page =
       table === 'docBlocks'
         ? await ctx.db
             .query('docBlocks')
             .withIndex('by_source_page', (index) => index.eq('sourceId', args.sourceId))
             .paginate({ ...PAGED_READ, cursor: null })
-        : await ctx.db
-            .query(table)
-            .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-            .paginate({ ...PAGED_READ, cursor: null });
+        : table === 'docRelations'
+          ? await sourceRelationsPage(ctx, args.sourceId)
+          : await ctx.db
+              .query(table)
+              .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+              .paginate({ ...PAGED_READ, cursor: null });
     for (const row of page.page) await ctx.db.delete(row._id);
     const next = page.isDone ? SOURCE_ROW_TABLES[SOURCE_ROW_TABLES.indexOf(table) + 1] : table;
     if (next !== undefined) {
@@ -1926,7 +1952,9 @@ export const upsertPage = internalMutation({
  * Delete all documentation owned by one caller during an explicit full reset.
  *
  * Each source goes now, with its credentials and discovered systems; its
- * pages, mirrors and runs are deleted in scheduled pages (`deleteSourceRows`).
+ * pages, mirrors, blocks, relations and runs are deleted in scheduled pages
+ * (`deleteSourceRows`). Both ends of an owner's relation are the owner's
+ * sources, so every relation goes with them.
  *
  * Args:
  *   ctx: Convex mutation context.

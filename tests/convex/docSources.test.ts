@@ -520,6 +520,46 @@ describe('documentation sources in real mode', (): void => {
     });
   });
 
+  it("unlinks a source's page relations, those from its pages and those to them, and keeps another pair's (15-K)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const kept = await harness.run(async (ctx) => {
+      const other = async (label: string): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label,
+          kind: 'folder',
+          locator: label,
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const [wiki, howTos] = [await other('wiki'), await other('how-tos')];
+      const relation = async (
+        from: Id<'docSources'>,
+        to: Id<'docSources'>,
+      ): Promise<Id<'docRelations'>> =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: from, ref: 'page.md' },
+          to: { sourceId: to, ref: 'page.md' },
+          kind: 'possible_duplicate',
+          evidence: [],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      await relation(sourceId, wiki);
+      await relation(howTos, sourceId);
+      return await relation(wiki, howTos);
+    });
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
+    expect(left.map((row) => row._id)).toEqual([kept]);
+  });
+
   it('deletes the ciphertext of every credential an unlink revokes and keeps the row', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

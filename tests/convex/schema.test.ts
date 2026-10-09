@@ -2705,6 +2705,86 @@ describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void 
     ).rejects.toThrow();
   });
 
+  it('stores a relation between two pages with its evidence, read by owner and status, by the page it is from and by the page it is to', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const wiki = await ctx.db.insert('docSources', docSource({ label: 'Wiki' }));
+      const howTos = await ctx.db.insert('docSources', docSource({ label: 'How-tos' }));
+      const relation = await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId: wiki, ref: 'escalation.md' },
+        to: { sourceId: howTos, ref: 'escalation-v2.md' },
+        kind: 'possible_successor',
+        evidence: [{ measure: 'text-overlap', value: 0.78, blockRefs: ['a'.repeat(64)] }],
+        status: 'proposed',
+        createdAt: 1,
+      });
+      await ctx.db.insert('docRelations', {
+        userId: 'another',
+        from: { sourceId: wiki, ref: 'other.md' },
+        to: { sourceId: howTos, ref: 'other-v2.md' },
+        kind: 'possible_duplicate',
+        evidence: [],
+        status: 'dismissed',
+        decidedBy: MANAGER_ADDRESS,
+        decidedAt: 2,
+        createdAt: 1,
+      });
+      const ids = async (rows: Promise<Doc<'docRelations'>[]>) => (await rows).map((r) => r._id);
+      return {
+        relation,
+        proposed: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'proposed'))
+            .collect(),
+        ),
+        fromWiki: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_from', (q) =>
+              q.eq('from.sourceId', wiki).eq('from.ref', 'escalation.md'),
+            )
+            .collect(),
+        ),
+        toHowTos: await ids(
+          ctx.db
+            .query('docRelations')
+            .withIndex('by_to', (q) => q.eq('to.sourceId', howTos))
+            .collect(),
+        ),
+      };
+    });
+    expect(read.proposed).toEqual([read.relation]);
+    expect(read.fromWiki).toEqual([read.relation]);
+    expect(read.toHowTos).toHaveLength(2);
+  });
+
+  it('refuses a relation kind or status the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertRelation = async (fields: Partial<WithoutSystemFields<Doc<'docRelations'>>>) =>
+      await harness.run(async (ctx) => {
+        const sourceId = await ctx.db.insert('docSources', docSource());
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId, ref: 'a.md' },
+          to: { sourceId, ref: 'b.md' },
+          kind: 'possible_conflict',
+          evidence: [],
+          status: 'proposed',
+          createdAt: 1,
+          ...fields,
+        });
+      });
+    await insertRelation({});
+    await expect(
+      insertRelation({ kind: 'merged' as Doc<'docRelations'>['kind'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertRelation({ status: 'superseded' as Doc<'docRelations'>['status'] }),
+    ).rejects.toThrow();
+  });
+
   it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(

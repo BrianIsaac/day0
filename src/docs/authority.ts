@@ -1,7 +1,7 @@
 /**
  * Document authority's vocabulary (wave 15, 15-K; A5, A19): how far the manager trusts a
- * documentation source, and what status a page has and who or what decided it. Pure, and read by
- * `convex/schema.ts`, so it reads no environment variable at load.
+ * documentation source, what status a page has and who or what decided it, and how two pages may
+ * relate. Pure, and read by `convex/schema.ts`, so it reads no environment variable at load.
  */
 
 /**
@@ -43,3 +43,23 @@ export const STATUS_SOURCES = [
 
 /** What decided one page's status. */
 export type StatusSource = (typeof STATUS_SOURCES)[number];
+
+/**
+ * How two pages may relate, as a measure proposes it: the same document twice, one a later version
+ * of the other, or two pages that disagree. Never merged by code: the manager confirms or
+ * dismisses each on a card.
+ */
+export const RELATION_KINDS = [
+  'possible_duplicate',
+  'possible_successor',
+  'possible_conflict',
+] as const;
+
+/** One relation's kind. */
+export type RelationKind = (typeof RELATION_KINDS)[number];
+
+/** Where a proposed relation stands: waiting on the manager, confirmed, or dismissed. */
+export const RELATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+
+/** One relation's standing. */
+export type RelationStatus = (typeof RELATION_STATUSES)[number];
