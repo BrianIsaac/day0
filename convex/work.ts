@@ -160,7 +160,7 @@ import {
 } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
-import { compareProviderTs } from '../src/work/provider-ts';
+import { compareProviderTs, providerTsToMs } from '../src/work/provider-ts';
 import { actionsOf, indexesWith, ledgerOf, refusedReasonEntries, verdictList } from './workLedger';
 
 /**
@@ -6582,26 +6582,6 @@ async function rejectActionsInTransaction(
 }
 
 /** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
-/**
- * Read a chat provider's message timestamp as epoch milliseconds.
- *
- * Slack and the Slack-shaped MCP tools give `seconds.fraction`; a generic
- * history tool may give an ISO date. Anything else reads as unknown, so a
- * provider with an unfamiliar clock keeps today's behaviour rather than
- * having its replies dropped.
- *
- * Args:
- *   ts: The provider's message timestamp as received.
- *
- * Returns:
- *   Epoch milliseconds, or null when the string is not a timestamp.
- */
-export function providerTsToMs(ts: string): number | null {
-  if (/^\d+(\.\d+)?$/.test(ts)) return Number(ts) * 1_000;
-  const parsed = Date.parse(ts);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
 /** Why a reply naming a replaced request decided nothing, on its ignored event. */
 export const REPLACED_DECISION_REASON = 'the request was replaced by a newer one';
 
