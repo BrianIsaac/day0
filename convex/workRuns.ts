@@ -20,15 +20,17 @@ import { appendEvent } from './eventLog';
 import {
   assertSameAgent,
   failInTransaction,
-  interruptedApplyLedger,
   NOTHING_TO_DECIDE_REASON,
-  parkOnConnection,
   queueManagerNote,
-  reviewHeldActions,
   SKILL_OUT_OF_USE_REASONS,
   SKILL_UNDER_REVISION_REASON,
-  surfaceAwaitingConnection,
 } from './work';
+import {
+  interruptedApplyLedger,
+  parkOnConnection,
+  reviewHeldActions,
+  surfaceAwaitingConnection,
+} from './workApply';
 import { managerText } from './managerDecisions';
 import { rememberRetriedRequest, scheduleDecisionRequest } from './decisionRequests';
 import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
