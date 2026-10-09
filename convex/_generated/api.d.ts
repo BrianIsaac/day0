@@ -59,6 +59,7 @@ import type * as metrics from '../metrics.js';
 import type * as migrations from '../migrations.js';
 import type * as mock from '../mock.js';
 import type * as mockSeed from '../mockSeed.js';
+import type * as needsYou from '../needsYou.js';
 import type * as onboarding from '../onboarding.js';
 import type * as oneToOne from '../oneToOne.js';
 import type * as organisationConnectionReads from '../organisationConnectionReads.js';
@@ -185,6 +186,7 @@ declare const fullApi: ApiFromModules<{
   migrations: typeof migrations;
   mock: typeof mock;
   mockSeed: typeof mockSeed;
+  needsYou: typeof needsYou;
   onboarding: typeof onboarding;
   oneToOne: typeof oneToOne;
   organisationConnectionReads: typeof organisationConnectionReads;

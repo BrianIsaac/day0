@@ -7,7 +7,7 @@ import { readableDocs } from './mock';
 import { RETIRE_PREVIEW_ROW_LIMIT } from './reset';
 import { surfaceHandoversOf } from './surfaces';
 import { runsInFlight } from './transferInFlight';
-import { needsYouOfEmployee, type NeedsYouEntry } from './work';
+import { needsYouOfEmployee, type NeedsYouEntry } from './needsYou';
 import type { CharterConstraint } from '../src/agent/charter-constraints';
 import { clippedEmployeeName } from '../src/agent/employee-name';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
