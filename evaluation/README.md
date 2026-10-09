@@ -490,9 +490,22 @@ pages, the one rehearsal page that is not a copy of them, and a Chinese runbook
 selector at the checked-out commit without a model and writes `retrieval/<stamp>/grade.json` and
 `.md`: recall at 6 pages and at 12 blocks against R2's bar (0.9 and 0.8). The backend's search
 ranking cannot run in a test, so the scout is emulated: each query's blocks that hold a query term,
-at most 12 a source, ranked by how many terms they hold. The newest grade is the recall half of
-the supervision page's retrieval figure; a test reproduces every tracked grade from the current
-selector, so a change that moves recall is graded again before it lands.
+at most 12 a source, ranked by how many terms they hold. The newest emulated grade is the recall
+half of the supervision page's retrieval figure; a test reproduces every tracked emulated grade
+from the current selector, so a change that moves recall is graded again before it lands.
+
+On 9 October 2026 the same thirty items were graded once with the backend's own search as the
+scout ([`retrieval/2026-10-09T00-23-40Z/`](retrieval/2026-10-09T00-23-40Z/grade.md)): the 17
+pages ingested and split on a real-mode bed, each item's queries answered by the backend's
+block search index at most 12 blocks a source as the product asks, and the rest of the
+selection as above. **Emulated scout (7 October 2026): pages 95.0%, sections 93.3%; the
+backend's search (9 October 2026): pages 95.0%, sections 91.7%.** The two scouts part on one
+item, whose tile-runbook section the backend's ranking did not reach, so on this set the
+emulation overstates section recall by 1.7 points and both stay above the 0.9 and 0.8 bar.
+That grade carries `scout: "backend"`: the test lists it and checks its record but cannot run a
+backend, so it reproduces only the emulated grades, and the supervision page's figure stays the
+newest emulated one. `evaluation/retrieval/backend-run.ts` grades again against a real-mode bed
+(its arguments are in the file).
 
 ## Controlled arms
 
