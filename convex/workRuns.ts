@@ -21,10 +21,10 @@ import {
   assertSameAgent,
   failInTransaction,
   NOTHING_TO_DECIDE_REASON,
-  queueManagerNote,
   SKILL_OUT_OF_USE_REASONS,
   SKILL_UNDER_REVISION_REASON,
 } from './work';
+import { queueManagerNote } from './managerNotes';
 import {
   interruptedApplyLedger,
   parkOnConnection,

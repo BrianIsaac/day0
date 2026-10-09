@@ -49,6 +49,7 @@ import type * as linearIdentity from '../linearIdentity.js';
 import type * as linearIdentityActions from '../linearIdentityActions.js';
 import type * as managerChannelActions from '../managerChannelActions.js';
 import type * as managerDecisions from '../managerDecisions.js';
+import type * as managerNotes from '../managerNotes.js';
 import type * as managerQuestions from '../managerQuestions.js';
 import type * as managerReplies from '../managerReplies.js';
 import type * as managerTransfers from '../managerTransfers.js';
@@ -177,6 +178,7 @@ declare const fullApi: ApiFromModules<{
   linearIdentityActions: typeof linearIdentityActions;
   managerChannelActions: typeof managerChannelActions;
   managerDecisions: typeof managerDecisions;
+  managerNotes: typeof managerNotes;
   managerQuestions: typeof managerQuestions;
   managerReplies: typeof managerReplies;
   managerTransfers: typeof managerTransfers;
