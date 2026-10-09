@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -7,6 +8,7 @@ import schema from '../../convex/schema';
 import {
   FINISHING_CURSOR,
   RUN_HISTORY_MS,
+  RUNS_READ_BY_MIGRATION,
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   SUPERSEDED_CREDENTIAL_KEEP_MS,
@@ -16,6 +18,7 @@ import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
+import { MIGRATION_NAMES } from '../../convex/migrations';
 
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -3411,5 +3414,13 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
 
     expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
+  });
+});
+
+describe('the import cycle through the documentation store (the helpers split, S-2; 15-K)', (): void => {
+  it('imports nothing from the migrations, and keeps its run pruner on a migration the upgrade runs', (): void => {
+    const source = readFileSync(new URL('../../convex/docSources.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/from '\.\/migrations'/);
+    expect(MIGRATION_NAMES).toContain(RUNS_READ_BY_MIGRATION);
   });
 });

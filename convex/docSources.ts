@@ -46,7 +46,6 @@ import {
   finishingStep,
   type FinishingPhase,
 } from '../src/docs/finishing';
-import type { MigrationName } from './migrations';
 import schema from './schema';
 
 const sourceKind = v.union(
@@ -121,8 +120,11 @@ const RUN_PRUNE_BATCH = 32;
 /**
  * The migration that reads completed runs by their completion time
  * (`credentials-sync-revoke`): completed runs are kept for it until it has run.
+ * Typed by its literal rather than `MigrationName`, so this module imports
+ * nothing from `./migrations` (the import cycle, the helpers split's S-2); its
+ * test holds it to `MIGRATION_NAMES`.
  */
-const RUNS_READ_BY_MIGRATION: MigrationName = 'credentials-sync-revoke';
+export const RUNS_READ_BY_MIGRATION = 'credentials-sync-revoke';
 
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
