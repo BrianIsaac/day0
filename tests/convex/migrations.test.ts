@@ -1010,22 +1010,22 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.18.0, the wave 14 schema step (its two passes), from 0.6.0, 0.10.0, 0.13.0,
-    // 0.14.0, 0.15.0, 0.16.0 and 0.17.0: a stamp names a release no older than the newest a
-    // shipped migration names.
+    // Re-pinned at 0.19.0, the wave 15 schema step (its block status pass), from 0.6.0, 0.10.0,
+    // 0.13.0, 0.14.0, 0.15.0, 0.16.0, 0.17.0 and 0.18.0: a stamp names a release no older than
+    // the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.18.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.19.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.18.0', previous: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.19.0', previous: '0.19.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.19.0', previous: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.20.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.20.0', previous: '0.19.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.19.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.20.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2832,7 +2832,8 @@ describe('the kept identity mark pass, retired at 0.18.0 with the reason-word fa
     expect(Object.keys(MIGRATIONS)).not.toContain('surfaces-kept-identity-since');
   });
 
-  it("runs every pass and stamps 0.18.0 over a 0.17.0 deployment's finished row of it", async (): Promise<void> => {
+  // Re-pinned at 0.19.0 (15-K): the stamp names the newest release a shipped migration names.
+  it("runs every pass and stamps the newest release over a 0.17.0 deployment's finished row of it", async (): Promise<void> => {
     const harness = limitedHarness();
     await harness.run(async (ctx) => {
       await ctx.db.insert('migrations', {
@@ -2846,8 +2847,8 @@ describe('the kept identity mark pass, retired at 0.18.0 with the reason-word fa
     });
     await runAll(harness);
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.18.0' }),
-    ).resolves.toMatchObject({ release: '0.18.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: NEWEST_MIGRATION_RELEASE }),
+    ).resolves.toMatchObject({ release: NEWEST_MIGRATION_RELEASE });
   });
 });
 
@@ -3042,9 +3043,9 @@ function nestedHanPage(seed: number): string {
 }
 
 describe('the block backfill (14-I)', (): void => {
-  it('is registered at 0.18.0 after the wave 13 passes, the newest release any migration names', (): void => {
+  // Re-pinned at 0.19.0: the newest release a migration names is document authority's (15-K).
+  it('is registered at 0.18.0 after the wave 13 passes', (): void => {
     expect(MIGRATIONS['docs-backfill-blocks'].release).toBe('0.18.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.18.0');
     expect(MIGRATION_NAMES.indexOf('docs-backfill-blocks')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('surfaces-messages-tab'),
     );
@@ -3273,6 +3274,163 @@ describe('the block backfill (14-I)', (): void => {
     expect(status.migrations.find((row) => row.name === 'docs-backfill-blocks')).toMatchObject({
       read: 0,
       changed: 0,
+    });
+  });
+});
+
+describe('the block status pass (15-K; K-1)', (): void => {
+  /** Every block's page and status, in page order, read a page at a time inside the read limit. */
+  const blockStatuses = async (harness: Harness): Promise<Array<[string, string | undefined]>> => {
+    const statuses: Array<[string, string | undefined]> = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const page: { page: Doc<'docBlocks'>[]; isDone: boolean; continueCursor: string } =
+        await harness.run(
+          async (ctx) => await ctx.db.query('docBlocks').paginate({ numItems: 500, cursor }),
+        );
+      statuses.push(
+        ...page.page.map((block): [string, string | undefined] => [block.pageRef, block.status]),
+      );
+      if (page.isDone) return statuses.sort(([a], [b]) => a.localeCompare(b));
+      cursor = page.continueCursor;
+    }
+  };
+
+  it('is registered at 0.19.0 after the block backfill, the newest release any migration names', (): void => {
+    expect(MIGRATIONS['docs-blocks-status'].release).toBe('0.19.0');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.19.0');
+    expect(MIGRATION_NAMES.at(-1)).toBe('docs-blocks-status');
+    expect(MIGRATION_NAMES.indexOf('docs-blocks-status')).toBeGreaterThan(
+      MIGRATION_NAMES.indexOf('docs-backfill-blocks'),
+    );
+  });
+
+  it("writes active on every block, the status every page had before 0.19.0, leaves a block's own status, and is safe to run twice", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const runId = await completedRun(harness, sourceId);
+    await storedPage(harness, {
+      sourceId,
+      ref: 'a.md',
+      markdown: '# A\n\nAlpha.\n\n## B\n\nBeta.',
+    });
+    await storedPage(harness, { sourceId, ref: 'c.md', markdown: '# C\n\nGamma.' });
+    // A block a split wrote with its page's status after the push and before the pass ran.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docBlocks', {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'd.md',
+        generation: runId,
+        index: 0,
+        headingPath: ['D'],
+        text: 'Delta.',
+        searchText: 'D\nDelta.',
+        kind: 'text',
+        hash: 'd'.repeat(64),
+        chars: 6,
+        status: 'draft',
+      });
+    });
+    await runAll(harness);
+    expect(await blockStatuses(harness)).toEqual([
+      ['a.md', 'active'],
+      ['a.md', 'active'],
+      ['c.md', 'active'],
+      ['d.md', 'draft'],
+    ]);
+    const row = async () =>
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (entry) => entry.name === 'docs-blocks-status',
+      );
+    expect(await row()).toMatchObject({
+      release: '0.19.0',
+      read: 4,
+      changed: 3,
+      completedAt: expect.any(Number),
+    });
+    await harness.run(async (ctx) => {
+      const done = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'docs-blocks-status'))
+        .unique();
+      if (done !== null) await ctx.db.delete(done._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-blocks-status' }),
+    ).resolves.toMatchObject({ read: 4, changed: 0 });
+  });
+
+  it("finds an active block by the search's status filter once the pass has run, and none before", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await completedRun(harness, sourceId);
+    await storedPage(harness, {
+      sourceId,
+      ref: 'refresh.md',
+      markdown: '# Refreshing the tile\n\nPress Refresh twice.',
+    });
+    const found = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docBlocks')
+            .withSearchIndex('by_text', (q) =>
+              q
+                .search('searchText', 'refresh')
+                .eq('userId', 'owner')
+                .eq('sourceId', sourceId)
+                .eq('status', 'active'),
+            )
+            .take(12)
+        ).map((block) => block.pageRef),
+      );
+    await harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-backfill-blocks' });
+    expect(await found()).toEqual([]);
+    await runAll(harness);
+    expect(await found()).toEqual(['refresh.md']);
+  });
+
+  it("stamps blocks dense enough to pass a transaction's limits in one read, a bounded page at a time", async (): Promise<void> => {
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    const runId = await completedRun(harness, sourceId);
+    // 2,500 blocks of about 3 KiB of Han text and its bigrams: more than one page's byte bound.
+    const han = '管道看板'.repeat(250);
+    for (let start = 0; start < 2_500; start += 500) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < start + 500; index += 1) {
+          await ctx.db.insert('docBlocks', {
+            userId: 'owner',
+            sourceId,
+            pageRef: `dense-${Math.floor(index / 100)}.md`,
+            generation: runId,
+            index: index % 100,
+            headingPath: ['Dense'],
+            text: han,
+            searchText: `Dense\n${han}\n${han}`,
+            kind: 'text',
+            hash: index.toString(16).padStart(64, '0'),
+            chars: han.length,
+          });
+        }
+      });
+    }
+    await runAll(harness);
+    const statuses = await blockStatuses(harness);
+    expect(statuses).toHaveLength(2_500);
+    expect(statuses.every(([, status]) => status === 'active')).toBe(true);
+  }, 120_000);
+
+  it('reads nothing on a deployment that stores no block, as the hosted mock deployment does', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await agent(harness, { userId: 'owner' });
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((row) => row.name === 'docs-blocks-status')).toMatchObject({
+      read: 0,
+      changed: 0,
+      completedAt: expect.any(Number),
     });
   });
 });

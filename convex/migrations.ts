@@ -100,6 +100,7 @@ export const MIGRATION_NAMES = [
   'surfaces-messages-tab',
   'docs-backfill-blocks',
   'people-not-their-addresses',
+  'docs-blocks-status',
 ] as const;
 
 /** One migration's name. */
@@ -182,6 +183,12 @@ const PEOPLE_RELEASE = '0.17.0';
  * page stored before it, and the people field wave 13 kept as evidence (14-I).
  */
 const RETRIEVAL_RELEASE = '0.18.0';
+
+/**
+ * The release of document authority (wave 15): the status every block of the documentation
+ * search carries, which its search now filters on (15-K).
+ */
+const DOCUMENT_AUTHORITY_RELEASE = '0.19.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -333,6 +340,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'copies every address a person’s evidence marks as someone else’s (the not-their-address: marker of W13-R8’s A different person) into the person’s notTheirAddresses, after any already there, keeping the evidence; a person with no marker is left, and mock mode stores no person',
     thenRemoves:
       'the marker evidence and its reader (notTheirAddresses in convex/peopleProposals.ts) the release after, once every writer writes the field and every reader reads it (14-FX)',
+  },
+  'docs-blocks-status': {
+    release: DOCUMENT_AUTHORITY_RELEASE,
+    does: 'writes active as the status of every block of the documentation search, the status every page had before this release, so the search’s filter on status finds it; a block that has a status is left, and mock mode stores no block',
+    thenRemoves:
+      'nothing: every block a split writes from this release carries its page’s status (15-A)',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -957,6 +970,7 @@ const MIGRATION_PAGES: Readonly<
   'surfaces-messages-tab': async (ctx, cursor) => await backfillMessagesTabPage(ctx, cursor),
   'docs-backfill-blocks': backfillBlocks,
   'people-not-their-addresses': liftNotTheirAddresses,
+  'docs-blocks-status': stampBlockStatus,
 };
 
 /**
@@ -1073,6 +1087,29 @@ async function liftNotTheirAddresses(
     const lifted = [...notTheirAddresses(person)].filter((address) => !held.includes(address));
     if (lifted.length === 0) continue;
     await ctx.db.patch(person._id, { notTheirAddresses: [...held, ...lifted] });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the block
+ * backfill is, since each patch writes its block again; a block is at most a 1,200-character
+ * window with its heading path and bigrams, so the byte bound ends a page of CJK blocks first.
+ */
+const BLOCK_STATUS_READ = { numItems: 1_000, maximumBytesRead: 4 * 1024 * 1024 } as const;
+
+/**
+ * One page of the block status pass (15-K; K-1): every block with no status gets `active`, which
+ * every page was before 0.19.0, so the search's status filter (an equality, which matches no
+ * absent field) finds it. A block that has a status is left, so a second run changes nothing.
+ */
+async function stampBlockStatus(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docBlocks').paginate({ ...BLOCK_STATUS_READ, cursor });
+  let changed = 0;
+  for (const block of page.page) {
+    if (block.status !== undefined) continue;
+    await ctx.db.patch(block._id, { status: 'active' });
     changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };

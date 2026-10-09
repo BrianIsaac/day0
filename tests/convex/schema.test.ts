@@ -2431,11 +2431,12 @@ describe('the wave 14 schema step (14-I, N10: additive and optional)', (): void 
     expect(read.ofPage.map((row) => row._id)).toEqual([read.first, read.second]);
     expect(read.ofGeneration).toHaveLength(3);
     expect(read.found.map((row) => row._id)).toEqual([read.first]);
+    // Re-pinned at 0.19.0: `status` is the index's third filter (15-K; K-1).
     expect(searchIndexesOf('docBlocks')).toEqual([
       {
         indexDescriptor: 'by_text',
         searchField: 'searchText',
-        filterFields: ['userId', 'sourceId'],
+        filterFields: ['userId', 'sourceId', 'status'],
       },
     ]);
     expect(indexNames('docBlocks')).toEqual(
@@ -2783,6 +2784,67 @@ describe('the wave 15 schema step (15-K, N10: additive and optional)', (): void 
     await expect(
       insertRelation({ status: 'superseded' as Doc<'docRelations'>['status'] }),
     ).rejects.toThrow();
+  });
+
+  it("gives a block its page's status and searches by owner, source and status; a block with none matches no status (K-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', docSource());
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      const block = (pageRef: string, status?: Doc<'docBlocks'>['status']) => ({
+        userId: 'owner',
+        sourceId,
+        pageRef,
+        generation: runId,
+        index: 0,
+        headingPath: ['Refreshing the tile'],
+        text: 'Press Refresh twice.',
+        searchText: 'Refreshing the tile\nPress Refresh twice.',
+        kind: 'text' as const,
+        hash: 'a'.repeat(64),
+        chars: 20,
+        ...(status === undefined ? {} : { status }),
+      });
+      await ctx.db.insert('docBlocks', block('active.md', 'active'));
+      await ctx.db.insert('docBlocks', block('superseded.md', 'superseded'));
+      await ctx.db.insert('docBlocks', block('older.md'));
+      const search = async (status: 'active' | 'superseded') =>
+        (
+          await ctx.db
+            .query('docBlocks')
+            .withSearchIndex('by_text', (q) =>
+              q
+                .search('searchText', 'refresh')
+                .eq('userId', 'owner')
+                .eq('sourceId', sourceId)
+                .eq('status', status),
+            )
+            .take(12)
+        ).map((row) => row.pageRef);
+      return { active: await search('active'), superseded: await search('superseded') };
+    });
+    expect(read).toEqual({ active: ['active.md'], superseded: ['superseded.md'] });
+    const pushed = schema as unknown as { readonly export: () => string };
+    const exported = JSON.parse(pushed.export()) as {
+      readonly tables: readonly { readonly tableName: string; readonly searchIndexes: unknown[] }[];
+    };
+    expect(exported.tables.find((entry) => entry.tableName === 'docBlocks')?.searchIndexes).toEqual(
+      [
+        {
+          indexDescriptor: 'by_text',
+          searchField: 'searchText',
+          filterFields: ['userId', 'sourceId', 'status'],
+        },
+      ],
+    );
   });
 
   it('refuses an authority or a default status the vocabulary does not have', async (): Promise<void> => {

@@ -675,6 +675,13 @@ export default defineSchema({
     /** SHA-256 of the heading path, kind and text: a re-split leaves an unchanged block's row. */
     hash: v.string(),
     chars: v.number(),
+    /**
+     * Its page's status, copied so the search filters on it (wave 15, 15-K; K-1): a filter is an
+     * equality and matches no absent field, so the `docs-blocks-status` pass writes `active` on
+     * every block stored before 0.19.0 (every page was active then), and a split writes its
+     * page's status from then on (15-A). Absent only before that pass, read as `active`.
+     */
+    status: v.optional(pageStatus),
   })
     /** A page's blocks in document order: the replace, the prune and an assembled citation. */
     .index('by_source_page', ['sourceId', 'pageRef', 'index'])
@@ -691,9 +698,14 @@ export default defineSchema({
     /**
      * At most 16 terms are read and 1,024 results scanned; filter on `userId` and one `sourceId`
      * a query (two equalities on `sourceId` are an AND), at most 8 filter expressions (14-I's
-     * proof). Wave 15 adds `status` to the filters.
+     * proof). `status` is the third filter (wave 15, 15-K; K-1, V14-1: the push redefines the
+     * index and the backend rebuilds it), so a query for current pages is `userId`, one
+     * `sourceId` and `status` `active`: three expressions.
      */
-    .searchIndex('by_text', { searchField: 'searchText', filterFields: ['userId', 'sourceId'] }),
+    .searchIndex('by_text', {
+      searchField: 'searchText',
+      filterFields: ['userId', 'sourceId', 'status'],
+    }),
 
   /**
    * The listing that last named each page of a source (D D2 (a)). Each batch
