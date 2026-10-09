@@ -1,0 +1,9 @@
+Compose project: day0-w14q
+Command: pnpm setup:local clear --yes --purge-env (exit 0): 2 containers, day0-w14q_convex_data,
+day0-w14q_sandbox_socket and the network removed; the bed's .env.local removed with them.
+Verified 2026-10-09T00:04:57Z: no containers, volumes or networks remain for this project.
+Ports 3860, 3861, 7360, 3560, 3563, 3564 and 3250 free.
+The function-log watcher started for structured-output.json was stopped by its own pid before the
+teardown. No app server was started on 3560. The kept bed day0-live-275f3e-store and the
+day0-redactor-warm volumes were never operated on. No Vercel, cloud Convex or primary
+environment change.

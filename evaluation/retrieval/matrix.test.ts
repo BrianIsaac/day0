@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { scoutQueries } from '../../src/docs/select';
 import { RETRIEVAL_CASES, retrievalPages } from './fixture';
 import {
   RECALL_BAR,
@@ -7,17 +8,22 @@ import {
   gradeCase,
   renderRetrievalGrade,
   scoutedBlocks,
+  selectionRequestOf,
   type RetrievalGradeEvidence,
 } from './matrix';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 
-/** Every tracked grade. */
-function trackedGrades(): URL[] {
+/** Every tracked grade, with its file. */
+function trackedGrades(): { file: URL; grade: RetrievalGradeEvidence }[] {
   return readdirSync(new URL('./', import.meta.url), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== 'pages')
     .map((entry) => new URL(`./${entry.name}/grade.json`, import.meta.url))
-    .filter((url) => existsSync(url));
+    .filter((url) => existsSync(url))
+    .map((file) => ({
+      file,
+      grade: JSON.parse(readFileSync(file, 'utf8')) as RetrievalGradeEvidence,
+    }));
 }
 
 describe('the retrieval labelled set', (): void => {
@@ -59,15 +65,50 @@ describe('the retrieval labelled set', (): void => {
     ]);
   });
 
-  it('reproduces every tracked grade from the current selector, so a published recall cannot drift', (): void => {
+  it('reproduces every tracked grade of the emulated scout from the current selector, so a published recall cannot drift', (): void => {
     const current = buildRetrievalGrade(COMMIT);
-    const files = trackedGrades();
-    expect(files.length).toBeGreaterThanOrEqual(1);
-    for (const file of files) {
-      const published = JSON.parse(readFileSync(file, 'utf8')) as RetrievalGradeEvidence;
+    const emulated = trackedGrades().filter(({ grade }) => grade.scout !== 'backend');
+    expect(emulated.length).toBeGreaterThanOrEqual(1);
+    for (const { file, grade } of emulated) {
       expect({ observations: current.observations, recall: current.recall }, file.pathname).toEqual(
-        { observations: published.observations, recall: published.recall },
+        { observations: grade.observations, recall: grade.recall },
       );
+    }
+  });
+
+  it('grades with the scout it is given, the emulation by default', (): void => {
+    const pages = retrievalPages();
+    const entry = RETRIEVAL_CASES[0];
+    const asked: string[][] = [];
+    gradeCase(entry, pages, (queries) => {
+      asked.push([...queries]);
+      return [];
+    });
+    expect(asked).toEqual([scoutQueries(selectionRequestOf(entry), pages)]);
+    expect(gradeCase(entry, pages, scoutedBlocks)).toEqual(gradeCase(entry, pages));
+    // A scout that finds nothing leaves the pages always included alone: reader 2's probe of the
+    // review (W14-R30) read 25.0% of pages from them.
+    const alone = buildRetrievalGrade(COMMIT, new Date('2026-10-09T00:00:00.000Z'), {
+      scout: () => [],
+    });
+    expect(alone.recall.pages).toBeCloseTo(0.25, 3);
+    expect(alone.observations.every((row) => row.ranked.pages?.recall !== 1)).toBe(true);
+  });
+
+  it('lists a grade whose scout was the backend’s search and does not reproduce it, since no test can run the backend', (): void => {
+    const backend = trackedGrades().filter(({ grade }) => grade.scout === 'backend');
+    expect(backend.length).toBeGreaterThanOrEqual(1);
+    for (const { file, grade } of backend) {
+      expect(grade.cases, file.pathname).toBe(30);
+      expect(grade.backend?.pagesStored, file.pathname).toBe(17);
+      expect(grade.backend?.image, file.pathname).toMatch(/^sha256:[0-9a-f]{64}$/);
+      expect(grade.backend?.searches, file.pathname).toBeGreaterThan(0);
+      const emulated = trackedGrades().find(
+        ({ file: other }) => other.pathname.split('/').at(-2) === grade.backend?.emulated.stamp,
+      );
+      expect(emulated?.grade.scout, file.pathname).toBeUndefined();
+      expect(grade.backend?.emulated.recall, file.pathname).toEqual(emulated?.grade.recall);
+      expect(renderRetrievalGrade(grade), file.pathname).toContain('the backend’s search');
     }
   });
 });
