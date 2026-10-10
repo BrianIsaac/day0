@@ -46,6 +46,7 @@ import {
   withinDocumentedSurface,
   type SnapshotElement,
 } from './browser';
+import { webUiAddressRefusal } from './browser-address';
 import type {
   ActedElement,
   ActionAuthority,
@@ -872,6 +873,11 @@ export class McpAdapter implements SurfaceAdapter {
       url = new URL(surface.endpoint ?? '');
     }
     if (browserDriven) {
+      // The probe's own rule, held at every action (W14-R31): a card connected before the rule,
+      // or before the list changed, signs in over plain http no longer.
+      const plaintext =
+        surface.endpoint === undefined ? undefined : webUiAddressRefusal(surface.endpoint);
+      if (plaintext) return { tool: action.tool, ok: false, reason: plaintext, idempotencyKey };
       const outside = navigationRefusal(call.tool, call.toolArgs, surface.endpoint);
       if (outside) return { tool: action.tool, ok: false, reason: outside, idempotencyKey };
     }

@@ -27,7 +27,37 @@ export function listsDemoTile(value: string | undefined): boolean {
  * @param value - The list as the env file holds it.
  */
 export function withDemoTile(value: string | undefined): string {
-  if (listsDemoTile(value)) return value ?? '';
+  return withPrivateHosts(value, [DEMO_TILE_HOST]);
+}
+
+/** A list entry as it is compared: lower case, no trailing dot. */
+function entryKey(entry: string): string {
+  return entry.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/**
+ * A `DAY0_PRIVATE_HOSTS` value with hosts added after the operator's own entries, each once: an
+ * entry the list already names, in any case, is not added again, and a list that gains nothing is
+ * returned as given (`--add-private-host`, W14-R36).
+ *
+ * @param value - The list as the env file holds it: entries separated by commas or whitespace.
+ * @param hosts - The hosts to add, in order.
+ */
+export function withPrivateHosts(value: string | undefined, hosts: readonly string[]): string {
+  const held = new Set(
+    (value ?? '')
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(entryKey),
+  );
+  const added: string[] = [];
+  for (const host of hosts) {
+    const key = entryKey(host);
+    if (key === '' || held.has(key)) continue;
+    held.add(key);
+    added.push(host.trim());
+  }
+  if (added.length === 0) return value ?? '';
   const own = (value ?? '').trim().replace(/,\s*$/, '');
-  return own === '' ? DEMO_TILE_HOST : `${own},${DEMO_TILE_HOST}`;
+  return [...(own === '' ? [] : [own]), ...added].join(',');
 }

@@ -18,6 +18,15 @@ documented-API example is checked that way once day0 reads that grammar.
   is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host: a host listed
   there must resolve to a public address, and one that resolves inside the network is refused
   until it is listed in `DAY0_PRIVATE_HOSTS` instead.
+- A URLs source reads a public page over `https` only. Plain `http` is read only from a host
+  `DAY0_PRIVATE_HOSTS` lists, and only while that host answers with addresses inside your
+  network: a listed name that answers a public address is read over `https` like any other page.
+  A page an earlier release read over public `http` is not read again, but **the copy it stored
+  stays in the employee's reading**: day0 does not remove it by itself. Unlink the source, or
+  link the page by its `https` address, to stop it being read.
+- A machine behind a fake-IP proxy (one that answers every name from `198.18.0.0/15`) sees every
+  public host refused, since the address says nothing of what it reaches: set the proxy's DNS to
+  answer real addresses, or list the hosts day0 reads in `DAY0_PRIVATE_HOSTS`.
 - A repository is cloned, which needs a `git` binary in the backend: from this release a
   GitHub or GitLab repository is cloned first too, and read through the host's archive only when
   the clone fails. The backend image an install builds carries git

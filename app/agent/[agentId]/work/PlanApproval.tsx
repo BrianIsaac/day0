@@ -6,7 +6,13 @@ import { type WorkGate, writesWhenRunFinishes } from '@/work/item-display';
 import { Button } from '../../../components/Button';
 import { Field, INPUT_CLASS } from '../../../components/Field';
 import { Help, ItemFoot, ItemSection } from './ItemParts';
-import { KEEP_NOTE_IN_MOCK, KEEP_NOTE_LABEL, keepNoteHint } from '@/work/agreement-words';
+import {
+  KEEP_NOTE_IN_MOCK,
+  KEEP_NOTE_LABEL,
+  keepNoteForRequesterHint,
+  keepNoteForRequesterLabel,
+  keepNoteHint,
+} from '@/work/agreement-words';
 
 /** What the manager decided with the plan: the answers given, and a note to the planner's own. */
 export interface PlanApproval {
@@ -16,6 +22,8 @@ export interface PlanApproval {
   manualEstimateMinutes?: number;
   /** "Keep this note for later work of this kind" (13-W): the note becomes a working agreement. */
   keepNote?: boolean;
+  /** What the note is kept for: work of this kind (the default), or the requester's later asks. */
+  keepNoteFor?: 'kind' | 'requester';
 }
 
 /**
@@ -39,6 +47,7 @@ export function planApprovalRequest(
   note?: string;
   manualEstimateMinutes?: number;
   keepNote?: true;
+  keepNoteFor?: 'requester';
 } {
   return {
     workItemId,
@@ -48,6 +57,9 @@ export function planApprovalRequest(
       ? { manualEstimateMinutes: decision.manualEstimateMinutes }
       : {}),
     ...(decision.note && decision.keepNote === true ? { keepNote: true as const } : {}),
+    ...(decision.note && decision.keepNote === true && decision.keepNoteFor === 'requester'
+      ? { keepNoteFor: 'requester' as const }
+      : {}),
   };
 }
 
@@ -100,6 +112,7 @@ export function PlanApprovalForm({
   onCancel,
   busy = false,
   employeeName = 'the employee',
+  requesterName,
   autonomousActions = false,
   gate = 'real',
 }: {
@@ -112,6 +125,11 @@ export function PlanApprovalForm({
   busy?: boolean;
   /** Who drafted the plan, as the help under a question names them. */
   employeeName?: string;
+  /**
+   * The confirmed person the item's requester resolved to, when there is one: the note can then
+   * be kept for their later asks (15-FX).
+   */
+  requesterName?: string;
   /** Whether autonomous actions are on, for the consequence line. */
   autonomousActions?: boolean;
   /** The deployment's gate, for the consequence line. */
@@ -122,7 +140,8 @@ export function PlanApprovalForm({
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
   const [estimate, setEstimate] = useState('');
-  const [keepNote, setKeepNote] = useState(false);
+  // One note is kept one way: for work of this kind, for the requester's asks, or not at all.
+  const [keepFor, setKeepFor] = useState<'kind' | 'requester' | null>(null);
   const open = questions.filter((question) => !question.answer);
   const planNote = riskNotes.trim();
   const minutes = typedEstimateMinutes(estimate);
@@ -145,7 +164,10 @@ export function PlanApprovalForm({
       }),
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(typeof minutes === 'number' ? { manualEstimateMinutes: minutes } : {}),
-      ...(note.trim() && keepNote && gate === 'real' ? { keepNote: true } : {}),
+      ...(note.trim() && keepFor !== null && gate === 'real' ? { keepNote: true } : {}),
+      ...(note.trim() && keepFor === 'requester' && gate === 'real'
+        ? { keepNoteFor: 'requester' as const }
+        : {}),
     };
   }
   return (
@@ -195,9 +217,9 @@ export function PlanApprovalForm({
               <label className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--color-fg)]">
                 <input
                   type="checkbox"
-                  checked={keepNote && note.trim() !== ''}
+                  checked={keepFor === 'kind' && note.trim() !== ''}
                   disabled={busy || note.trim() === ''}
-                  onChange={(event) => setKeepNote(event.target.checked)}
+                  onChange={(event) => setKeepFor(event.target.checked ? 'kind' : null)}
                   aria-describedby={`${id}-keep-why`}
                   className="size-4 accent-[var(--color-accent)]"
                 />
@@ -206,6 +228,27 @@ export function PlanApprovalForm({
               <p id={`${id}-keep-why`} className="pl-6 text-[13px] text-[var(--color-muted)]">
                 {keepNoteHint(employeeName)}
               </p>
+              {requesterName === undefined ? null : (
+                <>
+                  <label className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--color-fg)]">
+                    <input
+                      type="checkbox"
+                      checked={keepFor === 'requester' && note.trim() !== ''}
+                      disabled={busy || note.trim() === ''}
+                      onChange={(event) => setKeepFor(event.target.checked ? 'requester' : null)}
+                      aria-describedby={`${id}-keep-for-why`}
+                      className="size-4 accent-[var(--color-accent)]"
+                    />
+                    {keepNoteForRequesterLabel(requesterName)}
+                  </label>
+                  <p
+                    id={`${id}-keep-for-why`}
+                    className="pl-6 text-[13px] text-[var(--color-muted)]"
+                  >
+                    {keepNoteForRequesterHint(employeeName, requesterName)}
+                  </p>
+                </>
+              )}
             </div>
           ) : gate === 'mock' ? (
             <p className="mt-1 text-[13px] text-[var(--color-muted)]">{KEEP_NOTE_IN_MOCK}</p>

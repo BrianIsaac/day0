@@ -62,7 +62,9 @@ export function ChangesRequest({
       id={CHANGES_REQUEST_ID}
       tabIndex={-1}
       aria-labelledby={`${CHANGES_REQUEST_ID}-title`}
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]"
+      // The card scrolls this form to the top (`CharterCard`): the margin keeps its heading clear
+      // of the sticky header, as the amend panel's does (W14-R56).
+      className="scroll-mt-24 rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]"
       onSubmit={(e) => {
         e.preventDefault();
         send();

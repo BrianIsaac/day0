@@ -304,6 +304,28 @@ describe('the backend image (14-F ruling 1 (a), 8 October)', (): void => {
     expect(run).toContain('apt-get update');
     expect(run).toContain('apt-get install -y --no-install-recommends git &&');
     expect(run).toContain('rm -rf /var/lib/apt/lists/*');
-    expect(instructions.filter((line) => !/^(?:FROM|RUN)\s/i.test(line))).toEqual([]);
+    // Re-taken (15-FX, D-2 (a)'s remainder): beside FROM and the one RUN, the mirror's argument
+    // and the label that says which base the image was built from; nothing else.
+    expect(instructions.filter((line) => !/^(?:FROM|RUN)\s/i.test(line))).toEqual([
+      'ARG APT_MIRROR=""',
+      expect.stringMatching(/^LABEL dev\.dayzer0\.backend\.base="sha256:[0-9a-f]{64}"$/),
+    ]);
+  });
+
+  it('labels the image with the digest of its own FROM line, so the pin is still one value (W14-R20)', (): void => {
+    const pinned = /^FROM \S+@(sha256:[0-9a-f]{64})$/m.exec(dockerfile)?.[1];
+    const label = /^LABEL dev\.dayzer0\.backend\.base="(sha256:[0-9a-f]{64})"$/m.exec(
+      dockerfile,
+    )?.[1];
+    expect(pinned).toBeDefined();
+    expect(label).toBe(pinned);
+  });
+
+  it('reads apt from a mirror only when the build names one, for the archive, security and ports hosts alike (D-2 (a))', (): void => {
+    const run = instructions.find((line) => /^RUN\s/i.test(line))!.replace(/\s+/g, ' ');
+    expect(run).toContain('if [ -n "$APT_MIRROR" ]; then');
+    expect(run).toContain('(archive|security|ports)');
+    // With no mirror named the sources are as the base image wrote them.
+    expect(run.indexOf('if [ -n "$APT_MIRROR" ]')).toBeLessThan(run.indexOf('apt-get update'));
   });
 });

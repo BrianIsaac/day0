@@ -10,7 +10,12 @@ import { appendEvent } from './eventLog';
 import { employeeOwnerScope, ownerScope } from './ownership';
 import { retireEdgesOf } from './reset';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
-import { proposedValues, sameValues } from '../src/people/proposed-change';
+import {
+  changeDigest,
+  isNotTheirAddress,
+  proposedValues,
+  sameValues,
+} from '../src/people/proposed-change';
 import { normaliseManagerAddress } from '../src/agent/manager-address';
 import { transcriptTurns, type TranscriptTurn } from '../src/agent/transcript-turns';
 import { charterPeople, charterQuote, type CharterPerson } from '../src/people/charter-people';
@@ -290,8 +295,9 @@ async function proposeEdges(
 /**
  * The change a source proposes to a person the manager confirmed (W13-R3): the title, team and
  * address it gives that differ from the confirmed ones, with the words that gave them; nothing
- * when it gives none that differ, has no words, or proposes what the person already holds as its
- * proposed change. The owner's own row is the Manager card's and is offered no change.
+ * when it gives none that differ, has no words, proposes what the person already holds as its
+ * proposed change, or proposes a change the manager dismissed (`people.dismissedChanges`,
+ * W14-R52). The owner's own row is the Manager card's and is offered no change.
  */
 function proposedChangeOf(
   person: Doc<'people'>,
@@ -311,6 +317,7 @@ function proposedChangeOf(
   if (person.proposedChange !== undefined && sameValues(person.proposedChange, values)) {
     return undefined;
   }
+  if ((person.dismissedChanges ?? []).includes(changeDigest(values))) return undefined;
   return { ...values, source: origin.source, evidence, proposedAt: now };
 }
 
@@ -331,9 +338,9 @@ async function mergeProposal(
   origin: ProposalOrigin,
   now: number,
 ): Promise<void> {
-  const notTheirs = new Set(person.notTheirAddresses ?? []);
+  const notTheirs = person.notTheirAddresses;
   const given = normaliseManagerAddress(proposal.email);
-  const address = given !== undefined && notTheirs.has(given) ? undefined : given;
+  const address = given !== undefined && isNotTheirAddress(notTheirs, given) ? undefined : given;
   const fills = person.status === 'unverified';
   const change = fills ? undefined : proposedChangeOf(person, proposal, address, origin, now);
   await ctx.db.patch(person._id, {
@@ -354,7 +361,10 @@ async function mergeProposal(
   const identities = proposal.identities.filter(
     (identity) =>
       identity.provider !== 'email' ||
-      !notTheirs.has(normaliseManagerAddress(identity.externalId) ?? identity.externalId),
+      !isNotTheirAddress(
+        notTheirs,
+        normaliseManagerAddress(identity.externalId) ?? identity.externalId,
+      ),
   );
   await addIdentities(ctx, scope, person._id, identities, origin, now);
   // The owner is the manager: no edge ends at their own row (the one-role rulings).

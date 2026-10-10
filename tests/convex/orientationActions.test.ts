@@ -18,6 +18,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   attributedUrls,
+  hostIsVendors,
   choosePath,
   connectionLadder,
   documentedEndpoints,
@@ -746,6 +747,64 @@ describe('URL attribution', (): void => {
         'support-desk',
       ),
     ).toEqual([]);
+  });
+
+  it("attaches no sibling product's URL, and no URL on a generic first word, through the vendor word (W14-R53)", (): void => {
+    const pairs: readonly (readonly [string, string])[] = [
+      [
+        'Google Sheets',
+        'Google keeps the shared files at https://drive.google.com/drive/folders/abc.',
+      ],
+      ['Microsoft Teams guide', 'Microsoft documents it at https://learn.microsoft.com/teams.'],
+      ['Apple device policy', 'Apple answers device questions at https://support.apple.com/guide.'],
+      ['Atlassian Jira', 'Atlassian posts outages at https://status.atlassian.com.'],
+      ['Zoom Rooms', 'Join the weekly Zoom call at https://us02web.zoom.us/j/123.'],
+      ['GitHub Actions', 'Raise a GitHub issue at https://github.com/acme/ops/issues.'],
+      ['Data warehouse', 'The data team publishes at https://data.acme.test/reports.'],
+      ['Order management', 'Every order is posted to https://order.acme.test/api.'],
+      ['Mail rules', 'Mail is read at https://mail.acme.test.'],
+      ['Slack automation policy', 'Slack answers questions at https://support.slack.com/help.'],
+    ];
+    const attached = pairs
+      .filter(([system, sentence]) => {
+        const slug = system.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        return attributedUrls(sentence, system, slug).length > 0;
+      })
+      .map(([system]) => system);
+    expect(attached).toEqual([]);
+  });
+
+  it("still attaches the vendor's own host, its apex or an interface of it, to a name the vendor opens (W14-R53)", (): void => {
+    expect(
+      attributedUrls(
+        'Linear is reached over MCP at https://mcp.linear.app/mcp.',
+        'Linear triage rules',
+        'linear-triage-rules',
+      ),
+    ).toEqual(['https://mcp.linear.app/mcp']);
+    expect(
+      attributedUrls(
+        'Call the Slack Web API at https://api.slack.com/methods.',
+        'Slack automation policy',
+        'slack-automation-policy',
+      ),
+    ).toEqual(['https://api.slack.com/methods']);
+    expect(
+      attributedUrls(
+        'Kestrel staff sign in at https://kestrel.co.uk/login.',
+        'Kestrel payroll',
+        'kestrel-payroll',
+      ),
+    ).toEqual(['https://kestrel.co.uk/login']);
+  });
+
+  it("reads a vendor's own host by its apex and its interfaces only (W14-R53)", (): void => {
+    for (const host of ['slack.com', 'api.slack.com', 'mcp.slack.com:8443', 'slack.co.uk']) {
+      expect(hostIsVendors(host, 'slack'), host).toBe(true);
+    }
+    for (const host of ['support.slack.com', 'acme.slack.com', 'slack.acme.test', 'slackbot.com']) {
+      expect(hostIsVendors(host, 'slack'), host).toBe(false);
+    }
   });
 
   it('matches a system as a whole word, so Slackbot text is not Slack evidence', (): void => {
@@ -2339,7 +2398,8 @@ describe('the browser floor in orientation', (): void => {
     expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(reports.endpoint).toBeUndefined();
     expect(reports.request?.openQuestions).toContain(
-      'The web UI http://reports.example.test/forecast is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it: a sign-in there would cross the network unencrypted. Document its https address, or list the host in DAY0_PRIVATE_HOSTS if it is inside this network.',
+      // Re-taken (W14-R32): what to do comes first, since the card's reason is cut at 300.
+      'Document the https address of the web UI http://reports.example.test/forecast, or list its host in DAY0_PRIVATE_HOSTS if it is inside this network: it is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it (a sign-in there would cross the network unencrypted).',
     );
   });
 

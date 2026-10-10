@@ -123,12 +123,15 @@ import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from '
 import {
   BACKEND_IMAGE,
   backendImageState,
+  baseLabelInspect,
   layersInspect,
+  referenceDigest,
   pinnedNodeImage,
   redactorVolumeClone,
   REDACTOR_VOLUME_SUFFIXES,
 } from './lib/docker';
-import { DEMO_TILE_HOST, listsDemoTile } from './lib/demo-tile';
+import { DEMO_TILE_HOST, listsDemoTile, withPrivateHosts } from './lib/demo-tile';
+import { privateHostAllowlist } from '../src/lib/private-hosts';
 import { isLoopback, setupRoute } from './setup-route';
 import {
   checkoutReleases,
@@ -318,6 +321,11 @@ export interface SetupOptions {
   sandbox?: SandboxChoice;
   /** The manager's address, stored on the agent at deploy in real mode. */
   bossEmail?: string;
+  /**
+   * Hosts to add to `DAY0_PRIVATE_HOSTS` beside the operator's own (`--add-private-host`,
+   * W14-R36): the way an install whose own list leaves out the demo tile gets it listed.
+   */
+  addPrivateHosts?: string[];
   /** Real mode: copy the company bed's pages in afterwards and print its hand steps. */
   company?: boolean;
   /** Print the plan of commands and write nothing. */
@@ -489,6 +497,8 @@ export const SETUP_USAGE = `Usage: pnpm setup:local [options]
   --sandbox <local|daytona>     real mode: what verifies authored skills (default daytona
                                 when .env.local holds DAYTONA_API_KEY, else local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
+  --add-private-host <host>     add a host to DAY0_PRIVATE_HOSTS beside your own entries (repeat
+                                for more); the demo tile is looker-tile
   --company                     real mode: then copy the company bed's pages into the
                                 documentation folder (scripts/bed/company.ts docs), print
                                 its hand steps and run its check
@@ -572,6 +582,25 @@ Hold the deployment's scheduled jobs (the polls, the digests, the sweeps and the
 Your own copy on Convex cloud and Vercel, as the hosted demo runs, is the cloud
 verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
 hosted copy".`;
+
+/**
+ * The hosts given to one `--add-private-host`, each held to what `DAY0_PRIVATE_HOSTS` takes before
+ * anything is written: the list's own parser refuses this machine's names and the addresses Day0
+ * never dials, and a list that cannot be parsed refuses every private host afterwards. One
+ * argument may carry several, separated as the list separates them.
+ *
+ * @throws Error naming the flag and the parser's reason.
+ */
+function privateHostArguments(value: string): string[] {
+  try {
+    privateHostAllowlist(value);
+  } catch (error) {
+    throw new Error(
+      `--add-private-host: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return value.split(/[\s,]+/).filter(Boolean);
+}
 
 /**
  * Read the command line.
@@ -688,6 +717,11 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.warmFrom = take();
     } else if (argument === '--boss-email') {
       options.bossEmail = take();
+    } else if (argument === '--add-private-host') {
+      options.addPrivateHosts = [
+        ...(options.addPrivateHosts ?? []),
+        ...privateHostArguments(take()),
+      ];
     } else if (argument === '--provider') {
       options.signIn = {
         ...options.signIn,
@@ -1287,6 +1321,8 @@ export interface EnvPlanInput {
   sandbox?: SandboxChoice;
   /** Real mode: the manager's address, when known. */
   bossEmail?: string;
+  /** Hosts `--add-private-host` named: added to the list beside the operator's own. */
+  addPrivateHosts?: readonly string[];
   /** An explicit GPU choice is written; `auto` leaves the file's own value. */
   gpu?: GpuChoice;
   /**
@@ -1376,6 +1412,16 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     if (input.bossEmail) selected.NEXT_PUBLIC_DEMO_BOSS_EMAIL = input.bossEmail;
   }
 
+  // Hosts the operator asked to add are written on a resume too (W14-R36): an empty real-mode
+  // list takes the tile first, as it would have without the flag.
+  if ((input.addPrivateHosts ?? []).length > 0) {
+    const held = input.existing.DAY0_PRIVATE_HOSTS ?? '';
+    selected.DAY0_PRIVATE_HOSTS = withPrivateHosts(
+      held.trim() === '' && mode === 'real' ? DEMO_TILE_HOST : held,
+      input.addPrivateHosts ?? [],
+    );
+  }
+
   const updates: Record<string, string> = { ...selected };
   for (const [name, value] of Object.entries(derived)) {
     if (name in selected) continue;
@@ -1396,15 +1442,18 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
  *
  * @param mode - The mode being set up.
  * @param existing - The env file as it stands.
+ * @param updates - What this run writes to it: the list is read as the file will hold it, so a
+ *   run that adds the tile (`--add-private-host`) does not say it is missing.
  * @returns The line, or undefined when there is nothing to say.
  */
 export function demoTileNote(
   mode: SetupMode,
   existing: Readonly<Record<string, string>>,
+  updates: Readonly<Record<string, string>> = {},
 ): string | undefined {
-  const listed = existing.DAY0_PRIVATE_HOSTS ?? '';
+  const listed = updates.DAY0_PRIVATE_HOSTS ?? existing.DAY0_PRIVATE_HOSTS ?? '';
   if (mode !== 'real' || listed.trim() === '' || listsDemoTile(listed)) return undefined;
-  return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add ${DEMO_TILE_HOST} to the list to use the tile.`;
+  return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http. Run this command again with \`--add-private-host ${DEMO_TILE_HOST}\` to add it to the list, or add it to the list yourself.`;
 }
 
 /**
@@ -3198,6 +3247,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       docsHostDir,
       sandbox,
       bossEmail: bossEmail || undefined,
+      addPrivateHosts: options.addPrivateHosts,
       gpu: options.gpu,
       resume: options.resumed,
     };
@@ -3221,6 +3271,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const backendBase = dockerfileBase(
       readIfPresent(join(checkoutRoot, 'docker', 'backend.Dockerfile')) ?? '',
     );
+    const backendBaseDigest = referenceDigest(backendBase);
     const sequence: SequenceInput = {
       mode: options.mode,
       warm,
@@ -3235,6 +3286,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         backendBase === undefined
           ? undefined
           : io.run('docker', layersInspect(backendBase), { timeoutMs: 30_000 }),
+        backendBaseDigest === undefined
+          ? undefined
+          : {
+              inspected: io.run('docker', baseLabelInspect(BACKEND_IMAGE), { timeoutMs: 30_000 }),
+              digest: backendBaseDigest,
+            },
       ),
     };
     let steps = sequenceSteps(route, sequence);
@@ -3343,7 +3400,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('');
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
     }
-    const tileNote = demoTileNote(real ? 'real' : 'mock', existing);
+    const tileNote = demoTileNote(real ? 'real' : 'mock', existing, updates);
     if (tileNote !== undefined) io.log(tileNote);
     if (keptByResume.length > 0) {
       io.log(

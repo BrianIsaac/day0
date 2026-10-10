@@ -687,14 +687,16 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.correction-retired': 'kept correction retired',
   'agreement.proposed': 'working agreement proposed',
   'agreement.activated': (payload) =>
-    payload.everyEmployee === true
-      ? 'working agreement kept for every employee'
-      : 'working agreement kept',
+    payload.afterHold === true
+      ? 'working agreement for every employee now in effect for this employee: checked against its charter'
+      : payload.everyEmployee === true
+        ? 'working agreement kept for every employee'
+        : 'working agreement kept',
   'agreement.refused': (payload) =>
     payload.reason === 'every-employee-too-many'
       ? `working agreement not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : payload.reason === 'unchecked-for-employee'
-        ? `working agreement for every employee not in effect for this employee: you had more than ${EMPLOYEES_CHECKED} employees when its charter was approved`
+        ? 'working agreement for every employee not in effect for this employee: not checked against its charter'
         : text(payload.clause)
           ? `working agreement refused: it contradicts “${text(payload.clause)}”`
           : 'working agreement refused: it would go beyond the charter',

@@ -5,6 +5,13 @@
  */
 import { assertNotProtected, composeImages } from '../demo-bed';
 
+export {
+  BACKEND_BASE_LABEL,
+  baseLabelInspect,
+  dockerfileBaseLabel,
+  referenceDigest,
+} from './backend-image';
+
 /** The redactor's cache volumes, in the order the compose file declares them. */
 export const REDACTOR_VOLUME_SUFFIXES: readonly string[] = ['redactor_venv', 'redactor_models'];
 
@@ -90,6 +97,20 @@ export function redactorVolumeClone(
 /** The backend image the setup builds (`pnpm backend:build`) and the compose file runs. */
 export const BACKEND_IMAGE = 'day0-convex-backend:git';
 
+/** What `docker image inspect` answered. */
+export interface Inspected {
+  readonly status: number | null;
+  readonly stdout: string;
+}
+
+/** The built image's base label as Docker printed it, beside the digest the checkout pins. */
+export interface LabelledBase {
+  /** What `docker image inspect` with {@link baseLabelInspect} answered for the built image. */
+  readonly inspected: Inspected;
+  /** The digest of the Dockerfile's `FROM` reference. */
+  readonly digest: string;
+}
+
 /** `docker image inspect` arguments that print an image's layers, as JSON. */
 export function layersInspect(reference: string): string[] {
   return ['image', 'inspect', reference, '--format', '{{json .RootFS.Layers}}'];
@@ -112,17 +133,24 @@ function layersOf(inspected: {
 
 /**
  * Whether the backend image on this machine is built from the base the checkout pins (W14-R17):
- * missing, current (its layers start with the pinned base's), or stale (built from an earlier
- * pin, or the pinned base is not here to compare with).
+ * missing, current, or stale. An image that carries its base label is read by it (W14-R20):
+ * current when the label is the pinned digest, whether or not the base image is here (a built
+ * image loaded from a file has no base beside it), stale when it names another. An image built
+ * before the label is read by its layers: current when they start with the pinned base's, stale
+ * when they do not or the pinned base is not here to compare with.
  *
  * @param built - What `docker image inspect` with {@link layersInspect} answered for the image.
  * @param base - The same for the Dockerfile's `FROM` reference, when the checkout names one.
+ * @param labelled - The image's base label and the pinned digest, when the checkout pins one.
  */
 export function backendImageState(
-  built: { readonly status: number | null; readonly stdout: string },
-  base: { readonly status: number | null; readonly stdout: string } | undefined,
+  built: Inspected,
+  base: Inspected | undefined,
+  labelled?: LabelledBase,
 ): 'missing' | 'current' | 'stale' {
   if (built.status !== 0) return 'missing';
+  const label = labelled?.inspected.status === 0 ? labelled.inspected.stdout.trim() : '';
+  if (/^sha256:[0-9a-f]{64}$/.test(label)) return label === labelled?.digest ? 'current' : 'stale';
   const own = layersOf(built);
   const pinned = base === undefined ? [] : layersOf(base);
   const fromPin =

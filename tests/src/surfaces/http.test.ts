@@ -571,6 +571,63 @@ describe('the content type of a body the action sends', (): void => {
   });
 });
 
+describe('a form body by its shape (W14-R55)', (): void => {
+  async function sent(body: string): Promise<{ type: string | undefined; body: unknown }> {
+    const fetchImpl = fakeFetch(
+      (): Response => Response.json({ ok: true, channel: 'C1', ts: '1787654400.000100' }),
+    );
+    const action: MockAction = {
+      tool: 'http.request',
+      args: {
+        surface: 'slack',
+        method: 'POST',
+        path: '/chat.postMessage',
+        headersJson: JSON.stringify({ Authorization: 'Bearer {{secret}}' }),
+        body,
+      },
+    };
+    await adapter(fetchImpl).apply(ctx, run, action, 0, 'k');
+    const init = fetchImpl.calls[0]?.init;
+    return {
+      type: (init?.headers as Record<string, string> | undefined)?.['Content-Type'],
+      body: init?.body,
+    };
+  }
+
+  it('labels a form whose value holds a space, and encodes the space on the way out', async (): Promise<void> => {
+    expect(await sent('channel=C1&text=hello world')).toEqual({
+      type: 'application/x-www-form-urlencoded',
+      body: 'channel=C1&text=hello%20world',
+    });
+    expect(await sent('channel=C1&text=100% sure, see #ops')).toEqual({
+      type: 'application/x-www-form-urlencoded',
+      body: 'channel=C1&text=100%25%20sure%2C%20see%20%23ops',
+    });
+  });
+
+  it('sends a form already encoded byte for byte, its plus signs and escapes kept', async (): Promise<void> => {
+    expect(await sent('channel=C1&text=a+b%20c&ratio=50%25&flag=')).toEqual({
+      type: 'application/x-www-form-urlencoded',
+      body: 'channel=C1&text=a+b%20c&ratio=50%25&flag=',
+    });
+  });
+
+  it('does not read base64 padding or prose with an equals sign as a form', async (): Promise<void> => {
+    for (const body of [
+      'dGVzdA==',
+      'dGVzdGE=',
+      'Result: x=1 and y=2',
+      'see a=b for details',
+      // Lines of settings are text, not one form (the second pass).
+      'env=prod\nregion=eu',
+      // A value Day0 cannot encode goes as it was written, never as a thrown error.
+      'text=broken \ud800 half',
+    ]) {
+      expect(await sent(body), body).toEqual({ type: undefined, body });
+    }
+  });
+});
+
 describe("a Slack card's transport, whatever its slug (the pre-tag bed)", (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();

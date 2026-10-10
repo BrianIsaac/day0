@@ -549,6 +549,7 @@ export function WorkItemCard({
           questions={questions}
           busy={deciding}
           employeeName={employeeName}
+          requesterName={item.requesterName}
           autonomousActions={autonomousActions}
           gate={gate}
           onApprove={(decision) =>

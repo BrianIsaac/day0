@@ -71,9 +71,13 @@ const NAME_MAX_CHARS = 60;
 /** The longest role the block prints, in characters, before it is cut at a word. */
 const ROLE_MAX_CHARS = 80;
 
-/** Top-level domains a host in a name, role or scope is read by (W13-R19): never "js" of Node.js. */
+/**
+ * Top-level domains a host in a name, role or scope is read by (W13-R19): never "js" of Node.js.
+ * The private ones a company's own network uses are among them (W14-R54): `corp`, `lan`,
+ * `intranet`, `home`, `private`.
+ */
 const HOST_TLDS =
-  'com|net|org|io|app|dev|test|co|ai|edu|gov|mil|int|info|biz|cloud|tech|site|online|xyz|local|internal|example|invalid|uk|us|eu|sg|de|fr|nl|se|no|dk|fi|es|it|ch|at|be|ie|pl|cn|jp|kr|hk|tw|in|au|nz|ca|br|mx|za';
+  'com|net|org|io|app|dev|test|co|ai|edu|gov|mil|int|info|biz|cloud|tech|site|online|xyz|local|internal|corp|lan|intranet|home|private|example|invalid|uk|us|eu|sg|de|fr|nl|se|no|dk|fi|es|it|ch|at|be|ie|pl|cn|jp|kr|hk|tw|in|au|nz|ca|br|mx|za';
 
 /*
  * What a printed name, role or scope never carries: an address (plain, in brackets, with no dot
@@ -111,25 +115,63 @@ const SLACK_ID_SHAPE = /(?<![A-Za-z0-9])[UWCGTDBASEF][A-Z0-9]{8,10}(?![A-Za-z0-9
  * Whether a token shaped like a Slack id is one (W13-R19): Slack writes them with a `0` after the
  * prefix (`U0ANA12345`, `A0B1C2D3E4`), or, in older workspaces, with digits among letters that
  * spell nothing (`UL4E2FNRK`, `U1234ABCD`); `D365FINANCE`, `W2REPORTING` and `DEPT12345` are words.
+ * Digits in two places or more make an id whatever letters run between them (`U1ABCDE2F`,
+ * W14-R54); a token of letters alone (`UABCDEFGH`) cannot be told from an upper-case word
+ * (`TREASURER`, `ENGINEERING`) and stays.
  */
 function isSlackId(token: string): boolean {
   if (!/\d/.test(token)) return false;
   if (token[1] === '0') return true;
+  const digitRuns = (token.match(/\d+/g) ?? []).length;
+  if (digitRuns >= 2) return true;
   if (/[A-Z]{5}/.test(token)) return false;
-  return /\d/.test(token[1] ?? '') || (token.match(/\d+/g) ?? []).length >= 2;
+  return /\d/.test(token[1] ?? '');
 }
 
-/** A run that may be a phone number: digits with the spaces, dots, dashes and brackets they use. */
-const PHONE_SHAPE = /(?<![\w+])\+?\(?\d[\d\s().-]{6,}\d(?![\w])/g;
+/**
+ * A run that may be a phone number: digits with the spaces, dots, dashes and brackets they use,
+ * never one that follows a currency sign or a lettered prefix ("INV-45678901" is a reference).
+ */
+const PHONE_SHAPE = /(?<![\w+$\u20ac\u00a3\u00a5])(?<![A-Za-z]-)\+?\(?\d[\d\s().-]{6,}\d(?![\w])/g;
+
+/** Four digits that read as a year of this century or the last. */
+const YEAR_SHAPE = /^(?:19|20)\d\d$/;
+
+/** Four digits that read as a time of day: "0900", "1730". */
+const CLOCK_SHAPE = /^(?:[01]\d|2[0-4])[0-5]\d$/;
+
+/** Eight digits that read as a date: "20261008". */
+const DATE_SHAPE = /^(?:19|20)\d\d(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/;
 
 /**
- * Whether a run is a phone number (W13-R19): one written with a country code or brackets, or of
- * nine digits or more in three groups or more joined by one kind of dot or dash; a date
- * ("2026-10-08"), a year or a list of years is not.
+ * Whether a run of eight digits is a local phone number (W14-R54): two groups of four joined by a
+ * space ("6123 4567") unless both read as years or as times of day ("2024 2025"); or eight digits
+ * together ("90123456") that open with 2 to 9 and are neither a date ("20261008") nor a round
+ * amount ("25000000"). Two groups joined by a dash are a range ("1000-5000", "0900-1730"), never a
+ * number.
+ */
+function isLocalNumber(run: string): boolean {
+  const pair = /^(\d{4}) (\d{4})$/.exec(run);
+  if (pair !== null) {
+    const groups = [pair[1] ?? '', pair[2] ?? ''];
+    return (
+      !groups.every((group) => YEAR_SHAPE.test(group)) &&
+      !groups.every((group) => CLOCK_SHAPE.test(group))
+    );
+  }
+  return /^[2-9]\d{7}$/.test(run) && !run.endsWith('000') && !DATE_SHAPE.test(run);
+}
+
+/**
+ * Whether a run is a phone number (W13-R19): one written with a country code or brackets, one of
+ * eight digits that {@link isLocalNumber} reads as a local number, or one of nine digits or more
+ * in three groups or more joined by one kind of dot or dash; a date ("2026-10-08"), a year or a
+ * list of years is not.
  */
 function isPhoneNumber(run: string): boolean {
   const digits = run.replace(/\D/g, '').length;
   if (run.startsWith('+') || run.includes('(')) return digits >= 8;
+  if (digits === 8) return isLocalNumber(run);
   // Spaced digits with no country code or brackets are numbers in prose ("2024 2025 2026"); one
   // separator, a dot or a dash, between three groups or more is how a bare number is written.
   if (/\s/.test(run) || digits < 9) return false;

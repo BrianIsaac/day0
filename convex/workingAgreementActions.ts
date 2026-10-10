@@ -282,7 +282,14 @@ export const settleKept = internalAction({
  * one the charter refuses is refused on its row (`settleCharterCheck`); once the owner has more
  * employees than the check reads, every one is held for this employee alone and stays in effect for
  * the others (`holdForEmployee`, W14-R15). A check that could not be had is tried again after each
- * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone.
+ * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone; after the
+ * last, each of those is held for this employee too, since nothing checked it against the charter
+ * (15-FX: it stayed binding unchecked, with nothing on a row to say so). An agreement held for the
+ * employee that the check allows is in effect for it from then (`liftHold`): the hold's lift, by
+ * this check, the employee's next stored plan, its resume, the stalled-step sweep
+ * (`scheduleDueHoldChecks`), or Check now on its card. A check held by a pause asks no model and
+ * holds each agreement too, so the end of a pause of the whole deployment, which resumes no
+ * employee by name, still finds what to check.
  */
 export const checkForCharter = internalAction({
   args: {
@@ -293,7 +300,7 @@ export const checkForCharter = internalAction({
   },
   handler: async (ctx, args): Promise<void> => {
     if (SURFACE_MODE !== 'real') return;
-    if (!(await mayRun(ctx, args.agentId))) return;
+    const paused = !(await mayRun(ctx, args.agentId));
     const inputs = await ctx.runQuery(internal.workingAgreements.charterCheckInputs, {
       agentId: args.agentId,
       ...(args.agreementIds === undefined ? {} : { agreementIds: args.agreementIds }),
@@ -301,8 +308,10 @@ export const checkForCharter = internalAction({
     if (inputs === null) return;
     // Past the check, the agreements stay in effect for the employees they were checked against,
     // and are held for this one alone (W14-R15): ended for everyone, the fiftieth's agreement went
-    // with the fifty-first's hire.
-    if (inputs.pastTheCheck) {
+    // with the fifty-first's hire. A check a pause holds asks no model either, and holds them the
+    // same way (15-FX): the pause's end has no record of a check it held, so the hold is the
+    // record, and the sweep, the resume or the next plan lifts it.
+    if (inputs.pastTheCheck || paused) {
       for (const agreement of inputs.agreements) {
         await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
           agreementId: agreement._id,
@@ -327,7 +336,15 @@ export const checkForCharter = internalAction({
         });
         continue;
       }
-      if (outcome.outcome !== 'refused') continue;
+      if (outcome.outcome !== 'refused') {
+        if (inputs.held.includes(agreement._id)) {
+          await ctx.runMutation(internal.workingAgreements.liftHold, {
+            agreementId: agreement._id,
+            agentId: args.agentId,
+          });
+        }
+        continue;
+      }
       await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
         agreementId: agreement._id,
         agentId: args.agentId,
@@ -335,11 +352,19 @@ export const checkForCharter = internalAction({
       });
     }
     const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
-    if (unavailable.length > 0 && delay !== undefined) {
+    if (unavailable.length === 0) return;
+    if (delay !== undefined) {
       await ctx.scheduler.runAfter(delay, internal.workingAgreementActions.checkForCharter, {
         agentId: args.agentId,
         attempt: args.attempt + 1,
         agreementIds: unavailable,
+      });
+      return;
+    }
+    for (const agreementId of unavailable) {
+      await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
+        agreementId,
+        agentId: args.agentId,
       });
     }
   },

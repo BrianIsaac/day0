@@ -69,6 +69,7 @@ import {
   type VenvDevice,
 } from './redactor-device';
 import { errorMessage } from '../src/lib/errors';
+import { baseLabelInspect, referenceDigest } from './lib/backend-image';
 import { listsDemoTile, withDemoTile } from './lib/demo-tile';
 
 const ENV_FILE = '.env.local';
@@ -685,6 +686,9 @@ export function composeImages(
  * Args:
  *   images: The compose file's images (`composeImages`).
  *   isPresent: Whether Docker holds an image by this reference.
+ *   builtBase: The base digest a built image's label names (`baseLabelInspect`), when Docker
+ *     holds the image and it carries one. Given, a built image is trusted by its label, never by
+ *     its tag (W14-R20): one built from another base is a gap, as a missing one is.
  *
  * Returns:
  *   The pre-flight item.
@@ -692,9 +696,13 @@ export function composeImages(
 export function imagesPreflightItem(
   images: readonly ComposeImage[],
   isPresent: (reference: string) => boolean,
+  builtBase?: (reference: string) => string | undefined,
 ): ChecklistItem {
   const missing = images.flatMap((image: ComposeImage): string[] => {
-    if (isPresent(image.builtAs ?? image.reference)) return [];
+    if (isPresent(image.builtAs ?? image.reference)) {
+      const stale = image.builtAs === undefined ? undefined : staleBuiltImage(image, builtBase);
+      return stale === undefined ? [] : [stale];
+    }
     return [
       image.builtAs === undefined
         ? `missing: ${image.service} (${image.reference}); pull it before travelling, not at the venue`
@@ -714,6 +722,53 @@ export function imagesPreflightItem(
       ),
     ].join('\n'),
   };
+}
+
+/** A digest as a line shows it: its algorithm and first twelve characters. */
+function shortDigest(digest: string): string {
+  return digest.slice(0, 'sha256:'.length + 12);
+}
+
+/**
+ * Why a built image that is present cannot be trusted by its tag (W14-R20): its label names
+ * another base than the one this checkout's Dockerfile pins. The tag is one name for the whole
+ * machine, so another checkout's build may hold it. An image with no label was built before the
+ * label and is left to the setup's layer comparison.
+ */
+function staleBuiltImage(
+  image: ComposeImage,
+  builtBase: ((reference: string) => string | undefined) | undefined,
+): string | undefined {
+  const pinned = referenceDigest(image.reference);
+  const labelled = image.builtAs === undefined ? undefined : builtBase?.(image.builtAs);
+  if (pinned === undefined || labelled === undefined || labelled === pinned) return undefined;
+  return (
+    `stale: ${image.service} (${image.builtAs} was built from ${shortDigest(labelled)}, and this ` +
+    `checkout pins ${shortDigest(pinned)}); build it with \`pnpm backend:build\` before travelling, ` +
+    'not at the venue'
+  );
+}
+
+/**
+ * The refusal `up` gives before it writes anything when a service the bed builds has no image of
+ * the pinned base here (W14-R19): `compose up --pull never --no-build` would otherwise fail, with
+ * Docker's own words, after the env file, the keys and the redactor volumes were written.
+ *
+ * @param images - The compose file's images (`composeImages`).
+ * @param isPresent - Whether Docker holds an image by this reference.
+ * @param builtBase - The base digest a built image's label names.
+ * @returns The refusal, or undefined when every built image is here and of the pinned base.
+ */
+export function builtImagesRefusal(
+  images: readonly ComposeImage[],
+  isPresent: (reference: string) => boolean,
+  builtBase?: (reference: string) => string | undefined,
+): string | undefined {
+  const built = images.filter((image: ComposeImage): boolean => image.builtAs !== undefined);
+  const item = imagesPreflightItem(built, isPresent, builtBase);
+  return item.status === 'gap'
+    ? `the bed cannot start: ${item.detail.replace(/ before travelling, not at the venue/g, '')}`
+    : undefined;
 }
 
 /**
@@ -2038,6 +2093,18 @@ async function restore(options: DemoBedOptions): Promise<void> {
 
 /* ----------------------------------- up ------------------------------------ */
 
+/** Whether Docker holds an image by this reference. */
+function imageIsPresent(reference: string): boolean {
+  return run('docker', ['image', 'inspect', reference], { timeoutMs: 15_000 }).status === 0;
+}
+
+/** The base digest a built image's label names, or nothing for an image with no such label. */
+function builtImageBase(reference: string): string | undefined {
+  const inspected = run('docker', baseLabelInspect(reference), { timeoutMs: 15_000 });
+  const label = inspected.status === 0 ? inspected.stdout.trim() : '';
+  return /^sha256:[0-9a-f]{64}$/.test(label) ? label : undefined;
+}
+
 async function up(options: DemoBedOptions): Promise<void> {
   assertBedProject(options.project);
   if (options.warmFrom !== undefined) {
@@ -2073,6 +2140,15 @@ async function up(options: DemoBedOptions): Promise<void> {
         'remove that line (and any .convex/ directory an anonymous deployment left) before continuing.',
     );
   }
+
+  // After the project's and the file's own refusals, which ask Docker nothing, and before
+  // anything is written (W14-R19): the bed runs an image it never builds itself.
+  const noImage = builtImagesRefusal(
+    composeImages(readFileSync(COMPOSE_FILE, 'utf8')),
+    imageIsPresent,
+    builtImageBase,
+  );
+  if (noImage !== undefined) throw new Error(noImage);
 
   // Decided before anything is written: a bed that would download, or a
   // warm project this kit may not read, is refused with the file untouched.
@@ -2397,8 +2473,8 @@ async function preflight(options: DemoBedOptions): Promise<number> {
   items.push(
     imagesPreflightItem(
       composeImages(readFileSync(COMPOSE_FILE, 'utf8')),
-      (reference: string): boolean =>
-        run('docker', ['image', 'inspect', reference], { timeoutMs: 15_000 }).status === 0,
+      imageIsPresent,
+      builtImageBase,
     ),
   );
 

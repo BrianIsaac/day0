@@ -825,7 +825,21 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
       }),
     ).toBe(
-      'working agreement for every employee not in effect for this employee: you had more than 50 employees when its charter was approved',
+      // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
+      'working agreement for every employee not in effect for this employee: not checked against its charter',
+    );
+    expect(
+      eventLabel({
+        type: 'agreement.activated',
+        payload: {
+          agreementId: 'a2',
+          everyEmployee: true,
+          approvedVia: 'promotion-card',
+          afterHold: true,
+        },
+      }),
+    ).toBe(
+      'working agreement for every employee now in effect for this employee: checked against its charter',
     );
   });
 });

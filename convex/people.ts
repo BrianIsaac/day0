@@ -955,7 +955,11 @@ async function personAt(
     : undefined;
 }
 
-/** One employee's edges under the owner scope (the index leads with the employee, not the owner). */
+/**
+ * One employee's edges under the owner scope (the index leads with the employee, not the owner),
+ * the newest of each type first (W14-R57): the readers want the edges in force now, and an
+ * employee's superseded and retired edges are its oldest.
+ */
 async function employeeEdges(
   ctx: QueryCtx,
   scope: string,
@@ -968,6 +972,7 @@ async function employeeEdges(
         await ctx.db
           .query('relationships')
           .withIndex('by_from_agent_type', (q) => q.eq('fromAgentId', agentId).eq('type', type))
+          .order('desc')
           .take(GRAPH_READ_LIMIT),
     ),
   );

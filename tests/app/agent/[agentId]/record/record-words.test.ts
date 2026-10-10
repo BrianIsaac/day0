@@ -1426,7 +1426,24 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
         subject,
       ),
     ).toBe(
-      'A working agreement for every employee is not in effect for Mira: you had more than 50 employees when its charter was approved, so it was never checked against it.',
+      // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
+      'A working agreement for every employee is not in effect for Mira: Day0 has not checked it against its charter.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'agreement.activated',
+          payload: {
+            agreementId: 'a2',
+            everyEmployee: true,
+            approvedVia: 'promotion-card',
+            afterHold: true,
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement for every employee is now in effect for Mira: Day0 checked it against its charter.',
     );
     expect(
       recordWords(

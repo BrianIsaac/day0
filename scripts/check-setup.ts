@@ -79,6 +79,7 @@ import {
   type ModelDial,
 } from './model-reach';
 import { errorMessage } from '../src/lib/errors';
+import { dockerfilePinnedDigest } from './lib/backend-image';
 import { isLoopback, setupRoute } from './setup-route';
 import {
   fetchFromContainer,
@@ -1724,12 +1725,16 @@ function marker(status: Status): string {
   return status === 'ok' ? 'ok  ' : status === 'warn' ? 'note' : 'GAP ';
 }
 
-/** The files whose digests say which redactor wheels and model a machine runs. */
-const REPORTED_FILES = [
+/**
+ * The files whose digests say which redactor wheels and model a machine runs, and which backend
+ * image it builds: the Dockerfile decides the base and what is added to it (W14-R20).
+ */
+export const REPORTED_FILES = [
   'redactor/requirements.txt',
   'redactor/requirements-cuda.txt',
   'redactor/models.sha256',
   'docker-compose.yml',
+  'docker/backend.Dockerfile',
 ] as const;
 
 /** One outbound host this installation may dial, and when. */
@@ -1742,6 +1747,11 @@ export interface EgressHost {
 export interface ComposeImage {
   service: string;
   image: string;
+  /**
+   * For a service compose builds: the digest of the base its Dockerfile pins, which is what the
+   * built tag is trusted by (the tag itself is one name for the whole machine, W14-R20).
+   */
+  base?: string;
 }
 
 /** The support bundle A12 describes: versions, digests, egress and health, no content. */
@@ -1813,6 +1823,7 @@ function outboundHost(url: string | undefined): string | undefined {
 export function egressHosts(
   values: Readonly<Record<string, string>>,
   connections: readonly ConnectionRow[] = [],
+  architecture: string = process.arch,
 ): EgressHost[] {
   const rows: EgressHost[] = [];
   const add = (host: string | undefined, purpose: string): void => {
@@ -1922,8 +1933,10 @@ export function egressHosts(
     'image pulls at setup (the Convex backend the backend image is built from, and the dashboard)',
   );
   // The backend image is built at setup and upgrade (docker/backend.Dockerfile): git from the
-  // archive of its Ubuntu base.
-  for (const host of ['archive.ubuntu.com', 'security.ubuntu.com']) {
+  // archive of its Ubuntu base, which on arm64 is the ports archive (D-2 (a)).
+  const archives =
+    architecture === 'arm64' ? ['ports.ubuntu.com'] : ['archive.ubuntu.com', 'security.ubuntu.com'];
+  for (const host of archives) {
     add(
       host,
       "the backend image's build at setup and upgrade (git's packages, over http on port 80)",
@@ -1933,16 +1946,38 @@ export function egressHosts(
   return rows;
 }
 
+/** The Dockerfile a compose service is built from, by its path from the compose file. */
+function buildDockerfile(definition: unknown): string | undefined {
+  const build =
+    definition && typeof definition === 'object'
+      ? (definition as { build?: unknown }).build
+      : undefined;
+  if (!build || typeof build !== 'object') return undefined;
+  const { context, dockerfile } = build as { context?: unknown; dockerfile?: unknown };
+  if (typeof context !== 'string') return undefined;
+  return `${context}/${typeof dockerfile === 'string' ? dockerfile : 'Dockerfile'}`;
+}
+
+/** A Dockerfile's text, or nothing where the checkout has none at that path. */
+function readDockerfile(path: string): string | undefined {
+  return existsSync(path) ? readFileSync(path, 'utf8') : undefined;
+}
+
 /**
- * The image each compose service runs, as the compose file pins it.
+ * The image each compose service runs, as the compose file pins it; for a service compose builds,
+ * the tag it is built as with the digest of the base its Dockerfile pins.
  *
  * Args:
  *   compose: The compose file's text.
+ *   read: Reads a Dockerfile by its path from the compose file's directory.
  *
  * Returns:
  *   One row per service that names an image.
  */
-export function composeImages(compose: string): ComposeImage[] {
+export function composeImages(
+  compose: string,
+  read: (path: string) => string | undefined = readDockerfile,
+): ComposeImage[] {
   const parsed: unknown = parseYaml(compose);
   const services =
     parsed && typeof parsed === 'object' ? (parsed as { services?: unknown }).services : undefined;
@@ -1953,7 +1988,11 @@ export function composeImages(compose: string): ComposeImage[] {
         definition && typeof definition === 'object'
           ? (definition as { image?: unknown }).image
           : undefined;
-      return typeof image === 'string' ? [{ service, image }] : [];
+      if (typeof image !== 'string') return [];
+      const dockerfile = buildDockerfile(definition);
+      const base =
+        dockerfile === undefined ? undefined : dockerfilePinnedDigest(read(dockerfile) ?? '');
+      return [{ service, image, ...(base === undefined ? {} : { base }) }];
     },
   );
 }
