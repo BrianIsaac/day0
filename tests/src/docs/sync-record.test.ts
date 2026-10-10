@@ -66,12 +66,12 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
   it('says a page of a kind Day0 does not read is that, and promises to read again only what it failed to read (W14-R40)', (): void => {
     const sheets = withUnreadPages(undefined, [sheet(1), sheet(2)]);
     expect(unreadPagesLine(sheets)).toBe(
-      '2 listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+      '2 listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
     );
     expect(unreadPagesLine(sheets)).not.toMatch(/could not be read|reads them again/);
     const mixed = withUnreadPages(sheets, [forbidden]);
     expect(unreadPagesLine(mixed)).toBe(
-      '1 page could not be read this sync and keeps its last stored version: wikcnPayroll: The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member. The next sync reads them again. 2 more listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+      '1 page could not be read this sync and keeps its last stored version: wikcnPayroll: The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member. The next sync reads them again. 2 more listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
     );
   });
 
@@ -103,6 +103,18 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     ]) {
       expect(isKindNotRead(reason), reason).toBe(false);
     }
+  });
+
+  it('joins the named pages without a full stop before each semicolon', (): void => {
+    const line = unreadPagesLine(
+      withUnreadPages(undefined, [
+        { ref: 'a.md', reason: 'HTTP 404.' },
+        { ref: 'b.md', reason: 'HTTP 500.' },
+      ]),
+    );
+    expect(line).toBe(
+      '2 pages could not be read this sync and keep their last stored version: a.md: HTTP 404; b.md: HTTP 500. The next sync reads them again.',
+    );
   });
 
   it('says nothing for a run that read every page', (): void => {

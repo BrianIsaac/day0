@@ -119,12 +119,11 @@ export function unreadPagesLine(
   const kindCount = record.count - failures;
   const unnamed = record.count - record.pages.length;
   const named = (pages: readonly UnreadPage[], more: number): string =>
+    // Each reason is a sentence of its own; joined, only the line's last full stop is kept.
     [
-      ...pages.map((page): string => `${page.ref}: ${page.reason}`),
+      ...pages.map((page): string => `${page.ref}: ${page.reason.replace(/\.$/, '')}`),
       ...(more > 0 ? [`and ${more} more`] : []),
-    ]
-      .join('; ')
-      .replace(/\.$/, '');
+    ].join('; ');
   const kindLine =
     kindCount === 0
       ? undefined

@@ -42,6 +42,7 @@ import {
   linkFormAfterLink,
   locatorForSourceKind,
 } from '../../../app/documentation/LinkSourceForm';
+import { ReaderCredentialFields } from '../../../app/documentation/ReaderFields';
 
 beforeEach((): void => {
   state.sources = [];
@@ -256,6 +257,12 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
       ).toBe(words);
       view.unmount();
     }
+  });
+
+  it('leaves the cloud ID field empty rather than showing a sample that reads as a value (15-X)', (): void => {
+    const markup = renderToStaticMarkup(<ReaderCredentialFields kind="confluence-v2" />);
+    expect(markup).toContain('id="reader-cloud-id"');
+    expect(markup).not.toMatch(/placeholder="[0-9a-f]{8}-/);
   });
 
   it('says each new kind needs nothing running, and links the guide IT follows (15-X)', (): void => {

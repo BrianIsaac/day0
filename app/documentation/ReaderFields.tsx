@@ -19,13 +19,7 @@ const FIELDS: Readonly<Record<ReaderKind, readonly ReaderField[]>> = {
     { id: 'reader-client-secret', name: 'clientSecret', label: 'Client secret', secret: true },
   ],
   'confluence-v2': [
-    {
-      id: 'reader-cloud-id',
-      name: 'cloudId',
-      label: 'Cloud ID',
-      secret: false,
-      placeholder: '1a11d016-8984-4c3e-b9ab-142dd06acb1b',
-    },
+    { id: 'reader-cloud-id', name: 'cloudId', label: 'Cloud ID', secret: false },
     { id: 'reader-token', name: 'credential', label: 'API token', secret: true },
   ],
   'confluence-dc': [
