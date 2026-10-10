@@ -8,7 +8,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
-import { redraftPlansDraftedWithout } from '../../convex/work';
+import { redraftPlansDraftedWithout } from '../../convex/planRedraft';
 import { MANAGER_CLAIM_LAPSED_REASON, MANAGER_CLAIM_LEASE_MS } from '../../convex/workLoop';
 import {
   NOTICE_TO_A_GUEST,
