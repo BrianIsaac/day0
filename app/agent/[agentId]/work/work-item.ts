@@ -647,6 +647,7 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
   ).slice(0, UNFINISHED_SHOWN);
 }
 
+/** A finished run's end as the record says it: the word its card leads with (13-FD). */
 export type { FinishedAs };
 
 /**

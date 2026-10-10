@@ -206,7 +206,7 @@ describe('the stalled-step sweep', (): void => {
     await expect(
       harness.mutation(
         internal.workLoop.resumeStalledStepsAfter,
-        handedOn[0]!.args[0] as { after: number },
+        handedOn[0]!.args[0] as { cursor: string },
       ),
     ).resolves.toEqual({ rescheduled: 1 });
     const queued = await harness.run(

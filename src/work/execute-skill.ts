@@ -221,16 +221,20 @@ const DEPENDENT_PHASE_MOCK =
 const MOCK_ACTION_MODE =
   "Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
 
+/** Where `reports` sits in each preamble's numbered list; the action format line names it. */
+const MOCK_REPORTS_ITEM = 6;
+const REAL_REPORTS_ITEM = 7;
+
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   workDoneOutput(5),
-  reportsOutput(6),
+  reportsOutput(MOCK_REPORTS_ITEM),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
-  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }, with `reports` beside them on a verb that can carry a message (item 6). The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
+  `Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }, with \`reports\` beside them on a verb that can carry a message (item ${MOCK_REPORTS_ITEM}). The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:`,
   '  - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }',
   '  - slack.postMessage:    { channelSlug, threadKey: string or null, body }',
   '  - twitter.reply:        { tweetSlug, body }',
@@ -283,14 +287,14 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
   workDoneOutput(6),
-  reportsOutput(7),
+  reportsOutput(REAL_REPORTS_ITEM),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
   RESUMED_READS_REAL,
   REAL_PROCEDURE_TRAIL_INDEX,
   '',
-  'Action format: each action is { tool: string, args: object }, with `reports` beside them (item 7). The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  `Action format: each action is { tool: string, args: object }, with \`reports\` beside them (item ${REAL_REPORTS_ITEM}). The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are \`mcp.call\` and \`http.request\`, described with the connected surfaces below when any surface is connected.`,
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
   '',

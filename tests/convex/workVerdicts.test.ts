@@ -284,4 +284,28 @@ describe('readmitSatisfiedInTransaction', (): void => {
       at: 50,
     });
   });
+
+  it('takes the deferral reason off a row it sends back, so no card says a granted permission is missing (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const { readmitSatisfiedInTransaction } = await verdictsModule();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'deferred', {
+      decision: 'defer',
+      reason: 'awaiting-permission',
+      missingPermissions: ['linear:read'],
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason:
+          'Deferred: this work needs linear:read, a permission Aiko does not hold. It is evaluated again once you grant it.',
+      });
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'linear:read', createdAt: 1 });
+    });
+
+    await harness.run(async (ctx) => await readmitSatisfiedInTransaction(ctx, { agentId }, 50));
+
+    const back = await row(harness, workItemId);
+    expect(back.state).toBe('discovered');
+    expect(back.skipReason).toBeUndefined();
+  });
 });

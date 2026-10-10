@@ -3,6 +3,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { isAuditComment, parseSurfaceAction } from '../src/surfaces/policy';
 import { CLAIMED_BY_COLLEAGUE_SKIP_PREFIX, type LandedWrite } from '../src/work/types';
 import {
+  NAMED_TICKET_LIMIT,
   providerItemKey,
   settledByColleagueReason,
   ticketIdsNamedIn,
@@ -222,9 +223,9 @@ const TAKEN_ANYWAY_READ = 50;
  * refused it: the ask was evaluated and planned, the manager approved the plan, and only the apply
  * withheld the write (`work:writeClaimHolder`, 14-FW's 7c, which stays for every case this read
  * leaves). Read here, at the claim step and before any model call, the same claim is found from
- * the ask's words: for each ticket the ask names, under each of the employee's tracker cards, a
- * live claim whose holder is another employee's finished work item that landed a comment on the
- * ticket. Work still in flight has settled nothing and is left to the apply. A row the manager
+ * the ask's words: for every ticket the ask names (none left unsettled, and no more than the claim
+ * reads), under each of the employee's tracker cards, a live claim whose holder is another
+ * employee's finished work item that landed a comment on the ticket. Work still in flight has settled nothing and is left to the apply. A row the manager
  * sent back with Retry is theirs to give and is never refused here again.
  *
  * @param ctx - The claiming transaction.
@@ -238,58 +239,87 @@ async function settledByColleague(
   userId: string,
 ): Promise<{ key: string; heldBy: HeldElsewhere } | undefined> {
   const tickets = ticketIdsNamedIn(`${row.title}\n${row.contentSummary}`);
-  if (tickets.length === 0) return undefined;
+  if (tickets.length === 0 || tickets.length > NAMED_TICKET_LIMIT) return undefined;
   const cards = await ctx.db
     .query('surfaces')
     .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
     .take(EMPLOYEE_CARDS_READ);
   if (cards.find((card) => card.slug === row.sourceSystem)?.class !== 'chat') return undefined;
   const trackers = cards.filter((card) => card.class === 'kanban').slice(0, NAMED_TICKET_TRACKERS);
+  // Every ticket the ask names must be settled: one nobody settled is work the ask may be for
+  // ("compare with FIN-1, then post the note on FIN-9"), and anything shaped like an id counts.
+  const settled: SettledElsewhere[] = [];
   for (const ticket of tickets) {
-    for (const tracker of trackers) {
-      const key = providerItemKey(
-        tracker,
-        { sourceSystem: tracker.slug, externalId: ticket },
-        SURFACE_MODE,
-      );
-      if (key === undefined) continue;
-      const live = await ctx.db
-        .query('externalClaims')
-        .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
-        .filter((q) => q.eq(q.field('releasedAt'), undefined))
-        .collect();
-      for (const claim of live) {
-        if (claim.agentId === row.agentId || claim.writeTarget !== undefined) continue;
-        const holding = await ctx.db.get(claim.workItemId);
-        if (holding?.state !== 'completed') continue;
-        const comment = landedComments(holding).at(-1);
-        if (comment === undefined) continue;
-        if (await takenAnyway(ctx, row)) return undefined;
-        const [holder, asking] = await Promise.all([
-          ctx.db.get(claim.agentId),
-          ctx.db.get(row.agentId),
-        ]);
-        const commentedAt = comment.applied.landedAt;
-        return {
-          key,
-          heldBy: {
-            holder: {
-              claimId: claim._id,
-              agentId: claim.agentId,
-              workItemId: claim.workItemId,
-              name: holder?.name ?? 'another employee',
-              title: holding.title,
-              settled: {
-                ticket,
-                ...(commentedAt === undefined
-                  ? {}
-                  : { commentedAt, commentedOn: dayLabelAt(commentedAt, agentZone(asking ?? {})) }),
-              },
-            },
-            state: holding.state,
-          },
-        };
-      }
+    const found = await settledTicket(ctx, row, userId, ticket, trackers);
+    if (found === undefined) return undefined;
+    settled.push(found);
+  }
+  const first = settled[0];
+  if (first === undefined || (await takenAnyway(ctx, row))) return undefined;
+  const [holder, asking] = await Promise.all([
+    ctx.db.get(first.claim.agentId),
+    ctx.db.get(row.agentId),
+  ]);
+  const commentedAt = first.comment.applied.landedAt;
+  return {
+    key: first.key,
+    heldBy: {
+      holder: {
+        claimId: first.claim._id,
+        agentId: first.claim.agentId,
+        workItemId: first.claim.workItemId,
+        name: holder?.name ?? 'another employee',
+        title: first.holding.title,
+        settled: {
+          ticket: first.ticket,
+          ...(commentedAt === undefined
+            ? {}
+            : { commentedAt, commentedOn: dayLabelAt(commentedAt, agentZone(asking ?? {})) }),
+        },
+      },
+      state: first.holding.state,
+    },
+  };
+}
+
+/** A ticket an ask names, with the colleague's finished work item that landed a comment on it. */
+interface SettledElsewhere {
+  readonly ticket: string;
+  readonly key: string;
+  readonly claim: Doc<'externalClaims'>;
+  readonly holding: Doc<'workItems'>;
+  readonly comment: LandedWrite;
+}
+
+/**
+ * The live claim on one named ticket whose holder is another employee's finished work item that
+ * landed a comment on it, read under each of the asking employee's tracker cards.
+ */
+async function settledTicket(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  userId: string,
+  ticket: string,
+  trackers: readonly Doc<'surfaces'>[],
+): Promise<SettledElsewhere | undefined> {
+  for (const tracker of trackers) {
+    const key = providerItemKey(
+      tracker,
+      { sourceSystem: tracker.slug, externalId: ticket },
+      SURFACE_MODE,
+    );
+    if (key === undefined) continue;
+    const live = await ctx.db
+      .query('externalClaims')
+      .withIndex('by_user_key', (q) => q.eq('userId', userId).eq('key', key))
+      .filter((q) => q.eq(q.field('releasedAt'), undefined))
+      .collect();
+    for (const claim of live) {
+      if (claim.agentId === row.agentId || claim.writeTarget !== undefined) continue;
+      const holding = await ctx.db.get(claim.workItemId);
+      if (holding?.state !== 'completed') continue;
+      const comment = landedComments(holding).at(-1);
+      if (comment !== undefined) return { ticket, key, claim, holding, comment };
     }
   }
   return undefined;

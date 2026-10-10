@@ -555,19 +555,22 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
 /** A ticket id as a plan step writes one: `FIN-1`, `REVOPS-27`. */
 const TICKET_ID = /(?<![A-Za-z0-9-])[A-Za-z][A-Za-z0-9]{1,9}-\d+(?![A-Za-z0-9])/g;
 
-/** The most tickets read off one ask at the claim step: each costs a claim read per tracker. */
+/**
+ * The most tickets the claim step looks up for one ask: each costs a claim read per tracker. An
+ * ask that names more is left to its evaluation, since not all of them can be read.
+ */
 export const NAMED_TICKET_LIMIT = 4;
 
 /**
  * The ticket ids a chat ask's words name, each once in the order named and in the capitals a
- * tracker prints (`fin-1` is `FIN-1`), at most {@link NAMED_TICKET_LIMIT}. An id inside a longer
- * word or a date is none.
+ * tracker prints (`fin-1` is `FIN-1`). An id inside a longer word or a date is none; anything of
+ * the shape is one (`INV-2207`, `Q3-2026`), which is why the claim step asks that every one be
+ * settled before it skips.
  *
  * @param text - The ask as intake stored it: its title and its words.
  */
 export function ticketIdsNamedIn(text: string): string[] {
-  const named = (text.match(TICKET_ID) ?? []).map((id) => id.toUpperCase());
-  return [...new Set(named)].slice(0, NAMED_TICKET_LIMIT);
+  return [...new Set((text.match(TICKET_ID) ?? []).map((id) => id.toUpperCase()))];
 }
 
 function namesWhole(text: string, name: string): boolean {

@@ -319,6 +319,8 @@ export async function readmitSatisfiedInTransaction(
       await ctx.db.patch(row._id, {
         state: 'discovered',
         verdict: undefined,
+        // The wait is over, so the reason that said what it waited on goes with it (RM12 (c)).
+        skipReason: undefined,
         reevaluation: reevaluationStamp(row, 'check', satisfied.key, now),
         evaluationAttempts: undefined,
         evaluationUnavailableAt: undefined,
@@ -525,7 +527,8 @@ export async function applyVerdict(
   else if (decision === 'defer') {
     nextState = 'deferred';
     // A deferral for a missing permission says which, in words the manager reads (RM12 (c)): the
-    // row held only the verdict's code. The readmission that sends the row back clears it.
+    // row held only the verdict's code. Whatever sends the row back clears it: the readmission of
+    // a satisfied wait below, and the re-evaluation of parked rows (`workReevaluation.ts`).
     if (effective.reason === 'awaiting-permission') {
       const employee = await ctx.db.get(row.agentId);
       deferralReason = permissionDeferralReason(

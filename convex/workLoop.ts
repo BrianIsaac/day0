@@ -838,35 +838,31 @@ export const STALLED_SWEEP_AGENTS = 50;
 
 /**
  * Reschedule every step the loop lost, for every employee: one pass of
- * {@link resumeAgentStepsInTransaction} each, a page of employees a transaction, oldest first.
- * When employees are left after the page, the rest are handed to
- * `workLoop:resumeStalledStepsAfter` in a transaction of its own, so the sweep's reads are
- * bounded however many employees the deployment holds.
+ * {@link resumeAgentStepsInTransaction} each, a page of employees a transaction. When employees
+ * are left after the page, the rest are handed to `workLoop:resumeStalledStepsAfter` in a
+ * transaction of its own, so the sweep's reads are bounded however many employees the deployment
+ * holds. The pages follow the table's own cursor, so two employees created in one instant (an
+ * import that kept its times) are each swept once.
  *
  * @param ctx - Mutation context.
  * @param now - The instant to judge claims against.
- * @param after - The creation time of the last employee an earlier page swept; none at the start.
+ * @param cursor - Where the page before this one ended; null at the start.
  * @returns How many steps this transaction scheduled.
  */
 export async function resumeStalledStepsInTransaction(
   ctx: MutationCtx,
   now: number,
-  after?: number,
+  cursor: string | null = null,
 ): Promise<{ rescheduled: number }> {
   if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
-  const page = await ctx.db
-    .query('agents')
-    .withIndex('by_creation_time', (q) => (after === undefined ? q : q.gt('_creationTime', after)))
-    .take(STALLED_SWEEP_AGENTS + 1);
-  const agents = page.slice(0, STALLED_SWEEP_AGENTS);
+  const page = await ctx.db.query('agents').paginate({ numItems: STALLED_SWEEP_AGENTS, cursor });
   let rescheduled = 0;
-  for (const agent of agents) {
+  for (const agent of page.page) {
     rescheduled += await resumeAgentStepsInTransaction(ctx, agent._id, now);
   }
-  const last = agents.at(-1);
-  if (page.length > STALLED_SWEEP_AGENTS && last !== undefined) {
+  if (!page.isDone) {
     await ctx.scheduler.runAfter(0, internal.workLoop.resumeStalledStepsAfter, {
-      after: last._creationTime,
+      cursor: page.continueCursor,
     });
   }
   return { rescheduled };
@@ -878,9 +874,9 @@ export async function resumeStalledStepsInTransaction(
  * queued step on each row it reschedules.
  */
 export const resumeStalledStepsAfter = internalMutation({
-  args: { after: v.number() },
+  args: { cursor: v.string() },
   handler: async (ctx, args): Promise<{ rescheduled: number }> =>
-    await resumeStalledStepsInTransaction(ctx, Date.now(), args.after),
+    await resumeStalledStepsInTransaction(ctx, Date.now(), args.cursor),
 });
 
 /**

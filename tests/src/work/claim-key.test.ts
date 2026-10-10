@@ -12,6 +12,7 @@ import {
   heldItemReplyFindings,
   plannedWriteTargets,
   writtenBrowserSurfaces,
+  NAMED_TICKET_LIMIT,
   providerItemKey,
   settledByColleagueReason,
   ticketIdsNamedIn,
@@ -519,13 +520,9 @@ describe('the tickets an ask names (D-1 (a))', (): void => {
     expect(ticketIdsNamedIn('See pre-FIN-1x, the 2026-09-19 note; coverage is 3.1x.')).toEqual([]);
   });
 
-  it('reads at most four, since each is a claim read at the claim step', (): void => {
-    expect(ticketIdsNamedIn('FIN-1 FIN-2 FIN-3 FIN-4 FIN-5 FIN-6')).toEqual([
-      'FIN-1',
-      'FIN-2',
-      'FIN-3',
-      'FIN-4',
-    ]);
+  it('reads every id an ask names: the claim step decides how many it will look up', (): void => {
+    expect(ticketIdsNamedIn('FIN-1 FIN-2 FIN-3 FIN-4 FIN-5 FIN-6')).toHaveLength(6);
+    expect(NAMED_TICKET_LIMIT).toBe(4);
   });
 });
 

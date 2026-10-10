@@ -1160,6 +1160,29 @@ describe("a Slack ask naming a ticket a colleague settled (the wave 14 review's 
     }
   });
 
+  it('is left for its evaluation when it names another ticket nobody settled, or more tickets than the claim reads (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: SETTLED_OUTPUT });
+    // FIN-1 is settled; FIN-9 is work of its own, so the ask is not settled by FIN-1's comment.
+    const two = await seedAsk(t, aiko, '@Day0 compare with FIN-1, then post the note on FIN-9.');
+    const many = await seedAsk(
+      t,
+      aiko,
+      '@Day0 post the status of FIN-1, FIN-2, FIN-3, FIN-4 and FIN-5 in the thread.',
+    );
+
+    for (const workItemId of [two, many]) {
+      const claim = await t.mutation(internal.work.claimLoopStep, {
+        workItemId,
+        step: 'evaluation',
+      });
+      expect(claim.claimed).toBe(true);
+    }
+  });
+
   it('is evaluated once the manager takes it anyway with Retry', async (): Promise<void> => {
     useSurfaceMode('real');
     const t = convexTest(contractSchema(), allConvexModules());
