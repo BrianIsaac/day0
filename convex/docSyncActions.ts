@@ -37,6 +37,7 @@ import {
   finishingStep,
   type FinishingStep,
 } from '../src/docs/finishing';
+import { listingOverrun } from '../src/docs/listing-bounds';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
 import { RELATION_PAGES_PER_SYNC, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
@@ -540,6 +541,18 @@ export const syncBatch = internalAction({
       const finishing = finishingStep(args.cursor);
       if (finishing !== undefined)
         return await finishGeneration(ctx, source, args.runId, finishing);
+      // A listing that keeps saying more follows is stopped here, whichever reader reads it
+      // (W15-R8): the run's own counts say when it is repeating itself or has asked too often.
+      const overrun = listingOverrun(context.run);
+      if (overrun !== undefined) {
+        await ctx.runMutation(internal.docSources.failSync, {
+          sourceId: source._id,
+          runId: args.runId,
+          status: 'error',
+          reason: overrun,
+        });
+        return { ok: false, pages: 0, redactions: 0, complete: true, reason: overrun };
+      }
       known = await ownerKnownValues(ctx, source.userId);
       // An MCP source always reads with its connection secret; a git or URL
       // source reads with its own secret when it was linked with one (E-74).
@@ -563,6 +576,11 @@ export const syncBatch = internalAction({
       if (batch.nextCursor?.startsWith('\u0000')) {
         throw new Error('Documentation reader returned a continuation Day0 reserves.');
       }
+      // Asked before the batch is stored, which stamps each stored page with the listing too.
+      const relisted = await ctx.runQuery(internal.docSources.relistedRefs, {
+        runId: args.runId,
+        refs: [...batch.pages, ...batch.unread].map((page): string => page.ref),
+      });
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
       });
@@ -600,6 +618,7 @@ export const syncBatch = internalAction({
         pageCount: persisted.pages,
         redactionCount: persisted.redactions,
         unread,
+        relisted,
       });
       const counts = { pages: persisted.pages, redactions: persisted.redactions };
       if (!recorded) return { ok: false, ...counts, complete: true };

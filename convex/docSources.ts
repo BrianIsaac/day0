@@ -822,6 +822,8 @@ export const beginSync = internalMutation({
       cursor: resumed?.cursor,
       listing: resumed === undefined ? await nextListing(ctx, source) : runListing(resumed),
       pagesListed: resumed === undefined ? 0 : listedCount(resumed),
+      ...(resumed?.batches === undefined ? {} : { batches: resumed.batches }),
+      ...(resumed?.relisted === undefined ? {} : { relisted: resumed.relisted }),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
@@ -949,6 +951,30 @@ export const syncContext = internalQuery({
 });
 
 /**
+ * How many of the refs a batch's reader named the run's listing had already named (W15-R8).
+ *
+ * Internal; the sync asks before it stores the batch, since storing a page stamps its ref with
+ * the listing too. A listing that keeps naming pages it has named is one that does not end
+ * (`src/docs/listing-bounds.ts`). One indexed read a ref, at most a batch of them.
+ */
+export const relistedRefs = internalQuery({
+  args: { runId: v.id('docSyncRuns'), refs: v.array(v.string()) },
+  handler: async (ctx, args): Promise<number> => {
+    const run = await ctx.db.get(args.runId);
+    if (run === null || run.listing === undefined) return 0;
+    let relisted = 0;
+    for (const ref of new Set(args.refs)) {
+      const row = await ctx.db
+        .query('docPageListings')
+        .withIndex('by_source_ref', (index) => index.eq('sourceId', run.sourceId).eq('ref', ref))
+        .unique();
+      if (row?.seenBy === run.listing) relisted += 1;
+    }
+    return relisted;
+  },
+});
+
+/**
  * Record one non-final batch and advance its provider-safe cursor.
  *
  * The batch's `refs` and `credentialRefs` include the pages it could not
@@ -967,6 +993,8 @@ export const recordSyncBatch = internalMutation({
     pageCount: v.number(),
     redactionCount: v.number(),
     unread: unreadPages,
+    /** How many of the refs the reader named the run's listing had already named (`relistedRefs`). */
+    relisted: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
@@ -983,6 +1011,8 @@ export const recordSyncBatch = internalMutation({
     await ctx.db.patch(run._id, {
       cursor: args.nextCursor,
       pagesListed: listedCount(run) + args.refs.length,
+      batches: (run.batches ?? 0) + 1,
+      relisted: (run.relisted ?? 0) + (args.relisted ?? 0),
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,

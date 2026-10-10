@@ -497,6 +497,14 @@ export default defineSchema({
     listing: v.optional(v.number()),
     /** How many page refs the run's listing has named so far, a resumed run's carried. */
     pagesListed: v.optional(v.number()),
+    /**
+     * How many parts of its listing the run has read, and how many of the refs they named the
+     * listing had already named, a resumed run's carried (W15-R8): what stops a listing that
+     * does not end (`src/docs/listing-bounds.ts`). Written by `recordSyncBatch` from 0.19.0;
+     * absent on an older run, read as 0.
+     */
+    batches: v.optional(v.number()),
+    relisted: v.optional(v.number()),
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),

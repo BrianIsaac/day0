@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 
-import { randomBytes } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
@@ -8,7 +8,15 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
 import { internal } from '../../convex/_generated/api';
+import { MAX_SYNC_BATCHES } from '../../src/docs/listing-bounds';
+import type { DocumentationReader } from '../../src/docs/readers/batch';
+import { ConfluenceDataCenterReader } from '../../src/docs/readers/confluence-dc';
+import { ConfluenceCloudReader } from '../../src/docs/readers/confluence-v2';
+import { GoogleDriveReader } from '../../src/docs/readers/drive';
 import { FolderReader } from '../../src/docs/readers/folder';
+import { SharePointReader } from '../../src/docs/readers/sharepoint';
+import { YuqueReader } from '../../src/docs/readers/yuque';
+import { sharePointReaderSecret } from '../../src/docs/sharepoint-source';
 import { UrlsReader, __setPageConnectionForTest } from '../../src/docs/readers/urls';
 import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { RedactorUnavailableError } from '../../src/redaction/client';
@@ -24,7 +32,7 @@ import {
   persistPageBatch,
   safeSyncError,
 } from '../../convex/docSyncActions';
-import type { DocPage } from '../../src/docs/types';
+import type { DocPage, DocSourceRecord } from '../../src/docs/types';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../../src/docs/status';
 import { FINISHING_CURSOR } from '../../convex/docSources';
 import {
@@ -1812,4 +1820,255 @@ describe('documentation sync batching', (): void => {
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);
   });
+
+  /** A provider answer of reader 3's loops.mts. */
+  function loopAnswer(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+  }
+
+  /** A Confluence page as the probe listed it. */
+  function loopPage(id: string): unknown {
+    return {
+      id,
+      title: `T${id}`,
+      status: 'current',
+      body: { storage: { value: '<p>x</p>' } },
+      version: { number: 1 },
+    };
+  }
+
+  /** What each probe reader waits and reads the clock with: nothing waits. */
+  const loopClock = { sleep: async (): Promise<void> => undefined, now: (): number => 1_000_000 };
+
+  /** One provider whose listing never ends: its real reader over the probe's answers. */
+  interface EndlessProvider {
+    readonly reader: DocumentationReader;
+    readonly record: Pick<DocSourceRecord, 'kind' | 'locator' | 'label'>;
+    readonly secret: string;
+  }
+
+  /**
+   * Reader 3's loops.mts (W15-R8), shape for shape: five providers that say more of a listing
+   * follows for ever, each answered as the probe answered it and read by its own reader.
+   */
+  const ENDLESS_WITH_PAGES: Readonly<Record<string, () => EndlessProvider>> = {
+    'a Confluence Cloud cursor that alternates A, B, A': () => {
+      let call = 0;
+      return {
+        reader: new ConfluenceCloudReader({
+          ...loopClock,
+          fetch: async (url: URL): Promise<Response> => {
+            if (url.pathname.endsWith('/spaces'))
+              return loopAnswer(200, { results: [{ id: '10' }] });
+            call += 1;
+            return loopAnswer(
+              200,
+              { results: [loopPage(String(call % 2))] },
+              {
+                link: `<https://api.atlassian.com/ex/confluence/x/wiki/api/v2/spaces/10/pages?cursor=${call % 2 === 1 ? 'B' : 'A'}>; rel="next"`,
+              },
+            );
+          },
+        }),
+        record: {
+          kind: 'confluence-v2',
+          label: 'Ops wiki',
+          locator:
+            'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+        },
+        secret: 'fixture-confluence-token',
+      };
+    },
+    'a Confluence Data Center that ignores start and always names a next page': () => ({
+      reader: new ConfluenceDataCenterReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> =>
+          url.pathname.includes('/rest/api/space/')
+            ? loopAnswer(200, { key: 'OPS' })
+            : loopAnswer(200, {
+                results: [loopPage('1'), loopPage('2')],
+                _links: { next: '/rest/api/content?start=2', base: 'https://wiki.acme.corp' },
+              }),
+      }),
+      record: {
+        kind: 'confluence-dc',
+        label: 'Ops wiki',
+        locator: 'https://wiki.acme.corp/display/OPS',
+      },
+      secret: 'fixture-confluence-pat',
+    }),
+    'a Yuque total of a million over one repeating page': () => ({
+      reader: new YuqueReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> =>
+          /docs\/\d+$/.test(url.pathname)
+            ? loopAnswer(200, {
+                data: {
+                  format: 'markdown',
+                  body: 'x',
+                  slug: 's',
+                  status: 1,
+                  content_updated_at: '2026-01-01T00:00:00Z',
+                },
+              })
+            : loopAnswer(200, {
+                data: [{ id: 1, title: 'a', type: 'Doc' }],
+                meta: { total: 1_000_000 },
+              }),
+      }),
+      record: { kind: 'yuque', label: 'Ops', locator: 'https://www.yuque.com/acme/ops' },
+      secret: 'fixture-yuque-token',
+    }),
+    'a SharePoint next link that alternates A, B, A': () => {
+      let call = 0;
+      const graph = async (url: URL): Promise<Response> => {
+        if (url.host === 'login.microsoftonline.com')
+          return loopAnswer(200, { access_token: 'at' });
+        if (url.pathname.endsWith('/content')) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://acme.sharepoint.com/dl' },
+          });
+        }
+        if (url.pathname.startsWith('/v1.0/sites/acme.sharepoint.com')) {
+          return loopAnswer(200, { id: 'site1' });
+        }
+        call += 1;
+        return loopAnswer(200, {
+          value: [{ id: `i${call % 2}`, name: 'a.md', size: 1, parentReference: { driveId: 'd' } }],
+          '@odata.nextLink': `https://graph.microsoft.com/v1.0/sites/site1/drive/root/delta?token=${call % 2 === 1 ? 'B' : 'A'}`,
+        });
+      };
+      return {
+        reader: new SharePointReader({
+          ...loopClock,
+          fetch: graph,
+          download: async (): Promise<Response> => new Response('# Hi', { status: 200 }),
+        }),
+        record: { kind: 'sharepoint', label: 'Site', locator: 'https://acme.sharepoint.com' },
+        secret: sharePointReaderSecret({
+          tenantId: '9188040d-6c67-4c5b-b112-36a304b66dad',
+          clientId: '6731de76-14a6-49ae-97bc-6eba6914391e',
+          clientSecret: 'fixture-client-secret',
+        }),
+      };
+    },
+  };
+
+  /** A folder source whose reads are answered by an endless provider's own reader. */
+  async function sourceOn(
+    harness: TestConvex<typeof schema>,
+    provider: EndlessProvider,
+  ): Promise<Id<'docSources'>> {
+    const root = temporary('day0-sync-endless-');
+    await mkdir(join(root, 'endless'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Endless',
+      kind: 'folder',
+      locator: 'endless',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit) =>
+        await provider.reader.listPageBatch(
+          { ...provider.record, _id: source._id },
+          provider.secret,
+          cursor,
+          limit,
+        ),
+    );
+    return sourceId;
+  }
+
+  /** Run the sync's scheduled batches, at most this many, and say how many are still waiting. */
+  async function drainAtMost(harness: TestConvex<typeof schema>, rounds: number): Promise<number> {
+    for (let round = 0; round < rounds && (await scheduled(harness)).length > 0; round += 1) {
+      drainScheduled();
+      await harness.finishInProgressScheduledFunctions();
+    }
+    return (await scheduled(harness)).length;
+  }
+
+  it.each(Object.keys(ENDLESS_WITH_PAGES))(
+    'ends a sync whose listing never ends, with its reason on the source and its pages kept: %s (W15-R8)',
+    async (shape: string): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const sourceId = await sourceOn(harness, ENDLESS_WITH_PAGES[shape]());
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      // On the base every one of these was still asking for its next batch after 300.
+      expect(await drainAtMost(harness, 300)).toBe(0);
+      const state = await harness.run(async (ctx) => ({
+        source: await ctx.db.get(sourceId),
+        runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+        pages: await ctx.db.query('docPages').collect(),
+      }));
+      expect(state.source?.status).toBe('error');
+      expect(state.source?.activeSyncId).toBeUndefined();
+      expect(state.source?.lastError).toMatch(
+        /^The source's listing did not end: it named 2\d\d pages this sync had already read, /,
+      );
+      expect(state.runs).toHaveLength(1);
+      expect(state.runs[0].state).toBe('error');
+      // What the listing did name stays stored.
+      expect(state.pages.length).toBeGreaterThan(0);
+    },
+    120_000,
+  );
+
+  it('ends a sync whose listing names no page and never ends, once it has asked as often as one sync may (W15-R8)', async (): Promise<void> => {
+    // The probe's fifth shape: Google Drive's page token alternating P1, P2 over empty pages.
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    let call = 0;
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await sourceOn(harness, {
+      reader: new GoogleDriveReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> => {
+          if (url.host === 'oauth2.googleapis.com') return loopAnswer(200, { access_token: 'at' });
+          if (/\/files\/[^/]+$/.test(url.pathname) && !url.searchParams.has('q')) {
+            return loopAnswer(200, { id: 'F', mimeType: 'application/vnd.google-apps.folder' });
+          }
+          call += 1;
+          return loopAnswer(200, { files: [], nextPageToken: call % 2 === 1 ? 'P1' : 'P2' });
+        },
+      }),
+      record: {
+        kind: 'drive',
+        label: 'Drive',
+        locator: `https://drive.google.com/drive/folders/${'a'.repeat(20)}`,
+      },
+      secret: JSON.stringify({
+        client_email: 'reader@fixture.iam.gserviceaccount.com',
+        private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      }),
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    expect(await drainAtMost(harness, 20)).toBe(1);
+    const runId = await harness.run(async (ctx) => {
+      const [run] = await ctx.db.query('docSyncRuns').collect();
+      // The run counts what it has asked for: the first batch and twenty more.
+      expect(run.batches).toBe(21);
+      // As a run that has been asking all along stands just before its last allowed batch.
+      await ctx.db.patch(run._id, { batches: MAX_SYNC_BATCHES - 2 });
+      return run._id;
+    });
+    expect(await drainAtMost(harness, 20)).toBe(0);
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      run: await ctx.db.get(runId),
+    }));
+    expect(state.run).toMatchObject({ state: 'error', batches: MAX_SYNC_BATCHES });
+    expect(state.source?.status).toBe('error');
+    expect(state.source?.lastError).toMatch(
+      /^The source's listing did not end within the 4,000 parts Day0 reads of one listing in a sync, /,
+    );
+  }, 120_000);
 });
