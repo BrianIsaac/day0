@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   confluenceStorageToMarkdown,
+  DocumentConversionError,
   documentHtmlToMarkdown,
   htmlToMarkdown,
   underTitle,
@@ -186,5 +187,54 @@ describe('underTitle', (): void => {
       '# Close the quarter\n\nLock the books.',
     );
     expect(underTitle('  Runbook\n index ', '')).toBe('# Runbook index');
+  });
+});
+
+describe('what the document conversion refuses', (): void => {
+  it('refuses a document nested deeper than it can convert, in words a reader puts after its title (W15-R9)', (): void => {
+    // The review's four shapes (reader 3's deep.mts): each overflowed the converter's stack.
+    for (const [tag, depth] of [
+      ['div', 2_000],
+      ['ul><li', 2_000],
+      ['blockquote', 3_000],
+      ['table><tr><td', 1_500],
+    ] as const) {
+      const names = tag.split('><');
+      const nested =
+        names
+          .map((name) => `<${name}>`)
+          .join('')
+          .repeat(depth) +
+        'x' +
+        [...names]
+          .reverse()
+          .map((name) => `</${name}>`)
+          .join('')
+          .repeat(depth);
+      for (const convert of [documentHtmlToMarkdown, confluenceStorageToMarkdown]) {
+        expect(() => convert(nested), `${tag} x ${depth}`).toThrow(DocumentConversionError);
+        expect(() => convert(nested), `${tag} x ${depth}`).toThrow(
+          'it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one another, many levels down',
+        );
+      }
+    }
+    // An ordinary depth still converts.
+    expect(documentHtmlToMarkdown(`${'<div>'.repeat(100)}x${'</div>'.repeat(100)}`)).toBe('x');
+  });
+
+  it('refuses a document of more elements than it converts in the time a batch has, before converting any (W15-R9)', (): void => {
+    const started = performance.now();
+    expect(() => documentHtmlToMarkdown('<br/>'.repeat(200_000))).toThrow(
+      'it holds more than the 20,000 paragraphs, list items and table cells Day0 converts of one page',
+    );
+    // The review measured 35 s for this input; the refusal reads it once.
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(documentHtmlToMarkdown('<p>Step.</p>'.repeat(2_000))).toContain('Step.');
+  });
+
+  it('refuses a document past the size it converts', (): void => {
+    expect(() => documentHtmlToMarkdown(`<p>${'x'.repeat(4 * 1024 * 1024)}</p>`)).toThrow(
+      'it is larger than the 4 MiB Day0 converts of one page',
+    );
   });
 });

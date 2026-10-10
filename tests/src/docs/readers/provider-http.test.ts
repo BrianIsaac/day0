@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PageTooLargeError } from '../../../../src/docs/readers/page-address';
 import {
   AnswerTooLargeError,
   answerText,
@@ -133,6 +134,24 @@ describe('a reader’s connection to its provider', (): void => {
   it('refuses an answer larger than the request’s bound', async (): Promise<void> => {
     const { http } = connection([new Response('x'.repeat(2_000))]);
     await expect(http.send(URL_A, { maxBytes: 1_000 })).rejects.toBeInstanceOf(AnswerTooLargeError);
+  });
+
+  it('says a body its own fetch bounded is too large, once, whatever its address holds (W15-R11)', async (): Promise<void> => {
+    // The checked page fetch errors its stream past its bound; a download address may hold any
+    // words, a transport marker among them, and the answer is still too large, not a transient.
+    const address = new URL('https://files.example.test/terminated-contracts.docx');
+    const { http, sent } = connection([
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(new Uint8Array(10));
+            controller.error(new PageTooLargeError(address, 16 * 1024 * 1024));
+          },
+        }),
+      ),
+    ]);
+    await expect(http.send(address)).rejects.toBeInstanceOf(AnswerTooLargeError);
+    expect(sent).toHaveLength(1);
   });
 });
 

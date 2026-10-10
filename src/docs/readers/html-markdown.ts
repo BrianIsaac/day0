@@ -106,14 +106,71 @@ export function htmlToMarkdown(html: string): string {
 }
 
 /**
+ * The largest document HTML converted. A page the store takes is under a mebibyte of Markdown, so
+ * a document past this is named unread by its reader rather than converted and refused later.
+ */
+export const MAX_DOCUMENT_HTML_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The most elements one document may hold. The conversion's cost grows with the square of the
+ * elements that sit side by side (10,000 paragraphs take about two seconds here, 50,000 about a
+ * minute), and a batch converts up to 25 documents inside one action's time.
+ */
+export const MAX_DOCUMENT_ELEMENTS = 20_000;
+
+/** What is said of a document nested past what a conversion's recursion reaches. */
+export const NESTED_TOO_DEEPLY =
+  'it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one ' +
+  'another, many levels down';
+
+/**
+ * Why a document's HTML was not converted, in words that follow "it" after the document's title.
+ *
+ * The failure is the document's own, so its reader names that one document unread and reads on.
+ */
+export class DocumentConversionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DocumentConversionError';
+  }
+}
+
+/**
  * Convert a document's HTML to Markdown, with its tables as pipe tables and its checkboxes as a
  * checklist.
  *
  * @param html - A document's HTML: a SharePoint page's web parts, a Yuque body, a converted Word
  *   document, or Confluence storage after its pre-pass.
+ * @throws DocumentConversionError for a document past the size or the element count converted,
+ *   one nested deeper than the conversion's recursion reaches, or one the converter fails on.
  */
 export function documentHtmlToMarkdown(html: string): string {
-  return documentService().turndown(html);
+  if (html.length > MAX_DOCUMENT_HTML_BYTES) {
+    throw new DocumentConversionError(
+      `it is larger than the ${MAX_DOCUMENT_HTML_BYTES / (1024 * 1024)} MiB Day0 converts of one page`,
+    );
+  }
+  let elements = 0;
+  for (let at = html.indexOf('<'); at !== -1; at = html.indexOf('<', at + 1)) {
+    const next = html.charCodeAt(at + 1) | 0x20;
+    // An opening tag: `<` then a letter.
+    if (next >= 0x61 && next <= 0x7a) elements += 1;
+    if (elements > MAX_DOCUMENT_ELEMENTS) {
+      throw new DocumentConversionError(
+        `it holds more than the ${MAX_DOCUMENT_ELEMENTS.toLocaleString('en-GB')} paragraphs, ` +
+          'list items and table cells Day0 converts of one page',
+      );
+    }
+  }
+  try {
+    return documentService().turndown(html);
+  } catch (error) {
+    // The converter walks the document by recursion, so one nested past its stack overflows it.
+    if (error instanceof RangeError) throw new DocumentConversionError(NESTED_TOO_DEEPLY);
+    throw new DocumentConversionError(
+      `it could not be converted (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
 }
 
 /**

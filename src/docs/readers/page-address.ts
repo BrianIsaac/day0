@@ -238,6 +238,19 @@ function decodedBody(url: URL, response: IncomingMessage): { body: Readable; dec
   return { body: response.pipe(decoder), decoded: true };
 }
 
+/**
+ * A page's body ran past the most the fetch reads of it.
+ *
+ * An error of its own, so a reader tells a page that is too large, which is that page's and stays
+ * so at the next sync, from a read that failed and is worth another try (W15-R11).
+ */
+export class PageTooLargeError extends Error {
+  constructor(url: URL, limitBytes: number) {
+    super(`${url.href} exceeds ${byteSize(limitBytes)}.`);
+    this.name = 'PageTooLargeError';
+  }
+}
+
 /** A body that errors once more than `limit` bytes have arrived, counted after decoding. */
 function boundedBody(url: URL, response: Readable, limit: number): ReadableStream<Uint8Array> {
   let settled = false;
@@ -253,7 +266,7 @@ function boundedBody(url: URL, response: Readable, limit: number): ReadableStrea
         if (settled) return;
         received += chunk.byteLength;
         if (received > limit) {
-          fail(new Error(`${url.href} exceeds ${byteSize(limit)}.`));
+          fail(new PageTooLargeError(url, limit));
           response.destroy();
           return;
         }

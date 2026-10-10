@@ -17,6 +17,7 @@ import {
   withBackoff,
   type BackoffPolicy,
 } from '../../lib/transport-error';
+import { PageTooLargeError } from './page-address';
 
 /** How one request is made: the platform's `fetch`, which a test answers in-process. */
 export type ProviderFetch = (input: URL, init: RequestInit) => Promise<Response>;
@@ -121,14 +122,27 @@ function innermostMessage(error: unknown): string {
   return current instanceof Error ? current.message : String(current);
 }
 
-/** A response's body, read whole or refused once it passes the bound. */
+/**
+ * A response's body, read whole or refused once it passes the bound.
+ *
+ * A fetch that bounds its own body (the checked page fetch a download goes through) errors its
+ * stream past that bound; that is the same refusal, said as this one, so it is never read as a
+ * transport failure by the words its address happens to hold.
+ */
 async function boundedBytes(response: Response, url: URL, maxBytes: number): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try {
+      read = await reader.read();
+    } catch (error) {
+      if (error instanceof PageTooLargeError) throw new AnswerTooLargeError(url, maxBytes);
+      throw error;
+    }
+    const { done, value } = read;
     if (done) break;
     received += value.byteLength;
     if (received > maxBytes) {

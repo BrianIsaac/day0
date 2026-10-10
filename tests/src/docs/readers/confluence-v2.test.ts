@@ -275,4 +275,125 @@ describe('the Confluence Cloud documentation reader', (): void => {
     );
     expect(requests).toEqual([]);
   });
+
+  it('names a page nested too deeply to convert unread, and reads the pages beside it (W15-R9)', async (): Promise<void> => {
+    // Reader 3's poison.mts: two good pages and one of 3,000 nested divs in one window.
+    const good = (id: string): unknown => ({
+      id,
+      title: `Good ${id}`,
+      status: 'current',
+      body: { storage: { value: '<p>fine</p>' } },
+      version: { number: 1 },
+    });
+    const deep = `${'<div>'.repeat(3_000)}x${'</div>'.repeat(3_000)}`;
+    const { reader } = readerOnSite((request) =>
+      request.url.pathname.endsWith('/pages')
+        ? json(200, {
+            results: [
+              good('1'),
+              { ...(good('2') as object), title: 'Poison', body: { storage: { value: deep } } },
+              good('3'),
+            ],
+          })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(space, TOKEN, undefined, 25);
+    expect(batch.pages.map((page) => page.ref)).toEqual(['1', '3']);
+    expect(batch.unread).toEqual([
+      {
+        ref: '2',
+        reason:
+          '"Poison" is not read: it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one another, many levels down.',
+      },
+    ]);
+  });
+
+  it('asks for fewer pages when a window of them is more than it reads of one answer, and loses none (W15-R11)', async (): Promise<void> => {
+    // Reader 3's big.mts: 13 pages of 3.9 MiB in one 25-page window are past the 48 MiB bound.
+    const body = `<p>${'y'.repeat(Math.floor(3.9 * 1024 * 1024))}</p>`;
+    const { reader, requests } = readerOnSite((request) => {
+      if (!request.url.pathname.endsWith('/pages')) return undefined;
+      const limit = Number(request.url.searchParams.get('limit'));
+      const from = Number(request.url.searchParams.get('cursor') ?? 0);
+      const results = Array.from({ length: Math.min(limit, 13 - from) }, (_unused, index) => ({
+        id: String(from + index + 1),
+        title: `P${from + index + 1}`,
+        status: 'current',
+        body: { storage: { value: body } },
+        version: { number: 1 },
+      }));
+      const next = from + results.length;
+      return json(
+        200,
+        { results },
+        next < 13 ? { link: `</wiki/api/v2/spaces/1048578/pages?cursor=${next}>; rel="next"` } : {},
+      );
+    });
+    const first = await reader.listPageBatch(space, TOKEN, undefined, 25);
+    expect(first.pages.map((page) => page.ref)).toEqual(
+      Array.from({ length: 12 }, (_unused, index) => String(index + 1)),
+    );
+    expect(first.unread).toEqual([]);
+    expect(first.nextCursor).toBe('v2|1048578|12');
+    const second = await reader.listPageBatch(space, TOKEN, first.nextCursor, 25);
+    expect(second.pages.map((page) => page.ref)).toEqual(['13']);
+    expect(second.nextCursor).toBeUndefined();
+    const asked = requests
+      .filter((request) => request.url.pathname.endsWith('/pages'))
+      .map((request) => request.url.searchParams.get('limit'));
+    expect(asked).toEqual(['25', '12', '25']);
+  }, 60_000);
+
+  it('names a single page past what it reads of one answer unread, from a listing without its body (W15-R11)', async (): Promise<void> => {
+    const huge = 'z'.repeat(49 * 1024 * 1024);
+    const { reader, requests } = readerOnSite((request) => {
+      if (!request.url.pathname.endsWith('/pages')) return undefined;
+      const withBody = request.url.searchParams.get('body-format') === 'storage';
+      const from = request.url.searchParams.get('cursor');
+      const results =
+        from === null
+          ? [
+              {
+                id: '7',
+                title: 'Everything we ever wrote',
+                status: 'current',
+                ...(withBody ? { body: { storage: { value: huge } } } : {}),
+                version: { number: 4 },
+              },
+            ]
+          : [
+              {
+                id: '8',
+                title: 'After it',
+                status: 'current',
+                body: { storage: { value: '<p>fine</p>' } },
+                version: { number: 1 },
+              },
+            ];
+      return json(
+        200,
+        { results },
+        from === null
+          ? { link: '</wiki/api/v2/spaces/1048578/pages?cursor=after-7>; rel="next"' }
+          : {},
+      );
+    });
+    const batch = await reader.listPageBatch(space, TOKEN, undefined, 1);
+    expect(batch.pages).toEqual([]);
+    expect(batch.unread).toEqual([
+      {
+        ref: '7',
+        reason:
+          '"Everything we ever wrote" is larger than the 4 MiB Day0 converts of one Confluence page.',
+      },
+    ]);
+    expect(batch.nextCursor).toBe('v2|1048578|after-7');
+    const listings = requests.filter((request) => request.url.pathname.endsWith('/pages'));
+    expect(listings.map((request) => request.url.searchParams.get('body-format'))).toEqual([
+      'storage',
+      null,
+    ]);
+    const after = await reader.listPageBatch(space, TOKEN, batch.nextCursor, 1);
+    expect(after.pages.map((page) => page.ref)).toEqual(['8']);
+  }, 60_000);
 });
