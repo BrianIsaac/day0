@@ -2,6 +2,7 @@ import type { MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { waitingStamp } from '../src/work/needs-manager';
+import { permissionDeferralReason } from '../src/work/deferral-reason';
 import { openSlotCount, scheduleNextStep, STEP_LEASE_MS } from './workLoop';
 import { verdictFor } from '../src/surfaces/verdict';
 import { autonomousActionsOn } from '../src/work/autonomy';
@@ -515,19 +516,31 @@ export async function applyVerdict(
   const decision = effective.decision;
   let nextState: Doc<'workItems'>['state'] = 'discovered';
   let skipReason: string | undefined;
+  let deferralReason: string | undefined;
   if (decision === 'claim') nextState = 'claimed';
   else if (decision === 'skip') {
     nextState = 'skipped';
     skipReason = effective.reason as string | undefined;
   } else if (decision === 'queue') nextState = 'discovered';
-  else if (decision === 'defer') nextState = 'deferred';
-  else if (decision === 'needs-skill') nextState = 'needs-skill';
+  else if (decision === 'defer') {
+    nextState = 'deferred';
+    // A deferral for a missing permission says which, in words the manager reads (RM12 (c)): the
+    // row held only the verdict's code. The readmission that sends the row back clears it.
+    if (effective.reason === 'awaiting-permission') {
+      const employee = await ctx.db.get(row.agentId);
+      deferralReason = permissionDeferralReason(
+        { missingPermissions: effective.missingPermissions },
+        employee?.name ?? 'the employee',
+      );
+    }
+  } else if (decision === 'needs-skill') nextState = 'needs-skill';
   await ctx.db.patch(workItemId, {
     verdict: effective,
     state: nextState,
     ...waitingStamp(nextState, Date.now()),
     ...(nextState === 'claimed' ? { claimedAt: Date.now() } : {}),
     ...(skipReason ? { skipReason } : {}),
+    ...(deferralReason ? { skipReason: deferralReason } : {}),
     // The verdict ends the evaluation step; a row queued at the cap must be
     // evaluable again the moment a slot frees, and counts no attempt.
     ...(row.evaluationClaimedAt !== undefined ? { evaluationClaimedAt: undefined } : {}),

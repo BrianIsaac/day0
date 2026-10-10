@@ -101,6 +101,50 @@ describe('applyVerdict', (): void => {
     ]);
   });
 
+  it('parks a row that lacks a permission with a reason naming it, as a sentence the manager reads (RM12 (c))', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { applyVerdict } = await verdictsModule();
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'discovered');
+
+    await harness.run(
+      async (ctx) =>
+        await applyVerdict(ctx, workItemId, {
+          decision: 'defer',
+          reason: 'awaiting-permission',
+          missingPermissions: ['northstar:write'],
+        }),
+    );
+
+    expect(await row(harness, workItemId)).toMatchObject({
+      state: 'deferred',
+      skipReason:
+        'Deferred: this work needs northstar:write, a permission Aiko does not hold. It is evaluated again once you grant it.',
+    });
+    // A deferral ends nothing: the row waits, and no skip is recorded.
+    expect((await events(harness, agentId)).map((event) => event.type)).toEqual(['work.evaluated']);
+  });
+
+  it('writes no such reason on a deferral that waits on something else', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { applyVerdict } = await verdictsModule();
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'discovered');
+
+    await harness.run(
+      async (ctx) =>
+        await applyVerdict(ctx, workItemId, {
+          decision: 'defer',
+          reason: 'awaiting-connection',
+          missingSurface: 'northstar-crm',
+        }),
+    );
+
+    const parked = await row(harness, workItemId);
+    expect(parked.state).toBe('deferred');
+    expect(parked.skipReason).toBeUndefined();
+  });
+
   it('claims under the cap and names the approved charter that decided, not a draft above it', async (): Promise<void> => {
     useSurfaceMode('mock');
     const { applyVerdict } = await verdictsModule();
