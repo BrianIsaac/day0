@@ -184,21 +184,25 @@ export function CharterCard({
           strikes={documentStrikes(body, charter.approved)}
           actors={actors}
         />
-        <div className="grid gap-4 border-t border-[var(--color-border)] pt-5">
-          <ConstraintList
-            constraints={constraints}
-            approved={charter.approved}
-            name={name}
-            actors={actors}
-            busy={change.busy}
-            onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
-            onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
-            onKeep={charter.approved ? keepAsClause : askForChanges}
-            previewStrike={(index) => strikePreview(body, index)}
-            placementOf={(constraint) => rulePlacement(body, constraint)}
-          />
-          <SynthesisNotes notes={synthesisNotes(body)} />
-        </div>
+        {/* Ruled off only when it holds something: a charter with no rule and no note drew an
+            empty band above the foot (found on the 15-FX bed). */}
+        {constraints.length > 0 || synthesisNotes(body).length > 0 ? (
+          <div className="grid gap-4 border-t border-[var(--color-border)] pt-5">
+            <ConstraintList
+              constraints={constraints}
+              approved={charter.approved}
+              name={name}
+              actors={actors}
+              busy={change.busy}
+              onStrike={charter.approved ? undefined : (index) => toggleStrike(index, true)}
+              onRestore={charter.approved ? undefined : (index) => toggleStrike(index, false)}
+              onKeep={charter.approved ? keepAsClause : askForChanges}
+              previewStrike={(index) => strikePreview(body, index)}
+              placementOf={(constraint) => rulePlacement(body, constraint)}
+            />
+            <SynthesisNotes notes={synthesisNotes(body)} />
+          </div>
+        ) : null}
         {charter.approved && pageDrivesWork ? (
           <p className="text-sm text-[var(--color-fg-2)]">
             <Link href={employeeTabHref(charter.agentId, 'work')} className={INLINE_LINK}>

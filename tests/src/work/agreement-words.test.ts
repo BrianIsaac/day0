@@ -68,7 +68,8 @@ describe('what the cards say of a working agreement', (): void => {
   it('says a keep for every employee refused past the employees its check reads, and offers no amendment (W13-R28)', (): void => {
     const tooMany = { reason: 'every-employee-too-many' as const };
     expect(refusalSentence(tooMany, 'Priya', 'charter')).toBe(
-      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you have more. You can keep it for a single employee instead.',
+      // Re-taken (found on the 15-FX bed): the row outlives the count, so it says when that was.
+      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you had more when you kept it. You can keep it for a single employee instead.',
     );
     expect(refusalSentence(tooMany, 'Priya', 'work')).toBe(
       refusalSentence(tooMany, 'Priya', 'charter'),

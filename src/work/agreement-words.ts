@@ -131,7 +131,7 @@ export function refusedKicker(row: Pick<AgreementView, 'effectiveFrom' | 'refusa
  * row is drawn on every employee's card, so it names none of them (found on the bed: "Keep it for
  * Ines alone" on a card whose proposal was Priya's).
  */
-export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. You can keep it for a single employee instead.`;
+export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you had more when you kept it. You can keep it for a single employee instead.`;
 
 /**
  * The label of the control behind {@link EVERY_EMPLOYEE_TOO_MANY}'s last sentence (W14-R15; wording
