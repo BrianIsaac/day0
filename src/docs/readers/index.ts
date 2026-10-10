@@ -8,6 +8,7 @@ import { GitReader } from './git';
 import { McpReader } from './mcp';
 import { SharePointReader } from './sharepoint';
 import { UrlsReader } from './urls';
+import { YuqueReader } from './yuque';
 
 /**
  * Resolve a documentation reader.
@@ -40,6 +41,7 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
     case 'sharepoint':
       return new SharePointReader();
     case 'yuque':
+      return new YuqueReader();
     case 'drive':
       // Declared by the schema before its reader lands (K-3); the link refuses such a source.
       throw new Error(notReadYet(kind));

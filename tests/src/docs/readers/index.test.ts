@@ -8,6 +8,7 @@ import { McpReader } from '../../../../src/docs/readers/mcp';
 import { SharePointReader } from '../../../../src/docs/readers/sharepoint';
 import { readerFor } from '../../../../src/docs/readers';
 import { UrlsReader } from '../../../../src/docs/readers/urls';
+import { YuqueReader } from '../../../../src/docs/readers/yuque';
 
 describe('documentation reader registry', (): void => {
   it('resolves every non-credential reader', (): void => {
@@ -36,8 +37,11 @@ describe('documentation reader registry', (): void => {
     expect(readerFor('sharepoint')).toBeInstanceOf(SharePointReader);
   });
 
+  it('resolves the Yuque reader, which reads with a token (15-X)', (): void => {
+    expect(readerFor('yuque')).toBeInstanceOf(YuqueReader);
+  });
+
   it('names each kind whose reader has not landed as not read yet, rather than reading it as another', (): void => {
-    expect(() => readerFor('yuque')).toThrow('Day0 does not read Yuque sources yet.');
     expect(() => readerFor('drive')).toThrow('Day0 does not read Google Drive sources yet.');
   });
 });

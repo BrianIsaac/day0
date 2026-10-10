@@ -41,6 +41,8 @@ export interface ProviderFixture {
   readonly reference: ReadonlyArray<{ readonly url: string; readonly read: string }>;
   /** The `Authorization` every route needs unless it says otherwise. */
   readonly authorization: string;
+  /** The header a provider takes its token in, when it is not `Authorization` (Yuque). */
+  readonly tokenHeader?: { readonly name: string; readonly value: string };
   /** What a request without that header is answered. */
   readonly unauthorised: { readonly status: number; readonly body?: string };
   /** What a token route answers a form it does not accept; `unauthorised` when absent. */
@@ -64,6 +66,8 @@ export interface FakeRequest {
   readonly method: string;
   readonly url: URL;
   readonly authorization?: string;
+  /** Every header the request carried. */
+  readonly headers: Headers;
   readonly body?: string;
   readonly at: number;
 }
@@ -171,6 +175,7 @@ export function providerFake(
       method: init.method ?? 'GET',
       url: new URL(input instanceof Request ? input.url : input),
       authorization: new Headers(init.headers).get('authorization') ?? undefined,
+      headers: new Headers(init.headers),
       ...(typeof init.body === 'string' ? { body: init.body } : {}),
       at: options.now?.() ?? 0,
     };
@@ -198,7 +203,11 @@ export function providerFake(
       return answer(fixture.unauthorised.status, fixture.unauthorised.body);
     }
     const needed = route.authorization ?? fixture.authorization;
-    if (route.open !== true && request.authorization !== needed) {
+    const authorised =
+      fixture.tokenHeader === undefined
+        ? request.authorization === needed
+        : request.headers.get(fixture.tokenHeader.name) === fixture.tokenHeader.value;
+    if (route.open !== true && !authorised) {
       return answer(fixture.unauthorised.status, fixture.unauthorised.body);
     }
     return answer(route.status, route.body, route.headers);

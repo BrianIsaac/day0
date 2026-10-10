@@ -216,6 +216,28 @@ describe('the secret a source reads with', (): void => {
     expect(readsWithOwnSecret('sharepoint')).toBe(true);
   });
 
+  it("takes a Yuque repository's address with its token, and no other host (15-X)", (): void => {
+    const locator = 'https://acme.yuque.com/revops/runbooks';
+    const repository = validateLinkInput({ label: 'Runbooks', kind: 'yuque', locator });
+    expect(repository.locator).toBe(locator);
+    expect(() => validateReaderSecret(repository, undefined)).toThrow(
+      'A Yuque source needs a token.',
+    );
+    expect(() => validateReaderSecret(repository, 'two words')).toThrow(
+      'A Yuque token is one line with no spaces',
+    );
+    expect(() => validateReaderSecret(repository, 'fixture-yuque-token')).not.toThrow();
+    expect(() =>
+      validateLinkInput({
+        label: 'Runbooks',
+        kind: 'yuque',
+        locator: 'https://yuque.example/revops/runbooks',
+      }),
+    ).toThrow("A Yuque location is a repository's address");
+    expect(secretLabel({ label: 'Runbooks', kind: 'yuque' })).toBe('Runbooks token');
+    expect(readsWithOwnSecret('yuque')).toBe(true);
+  });
+
   it('names the secret by what it is for, and lets every kind but a folder rotate one (14-F)', (): void => {
     expect(secretLabel({ label: 'Runbooks', kind: 'git' })).toBe('Runbooks reader secret');
     expect(secretLabel({ label: 'Notion', kind: 'mcp' })).toBe('Notion connection secret');
@@ -235,8 +257,5 @@ describe('the secret a source reads with', (): void => {
         locator: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
       }),
     ).toThrow('Day0 does not read Google Drive sources yet.');
-    expect(() =>
-      validateLinkInput({ label: 'Team space', kind: 'yuque', locator: 'https://www.yuque.com/t' }),
-    ).toThrow('Day0 does not read Yuque sources yet.');
   });
 });

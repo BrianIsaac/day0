@@ -24,7 +24,6 @@ export type DocSourceKind =
  * reader's name. A reader that lands takes its kind out of this list.
  */
 export const PENDING_READER_NAMES = {
-  yuque: 'Yuque',
   drive: 'Google Drive',
 } as const satisfies Partial<Record<DocSourceKind, string>>;
 
