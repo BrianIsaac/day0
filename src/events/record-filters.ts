@@ -214,6 +214,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.closing-reauthored': NONE,
   'work.model-call': NONE,
   'work.documentation-selected': NONE,
+  'work.documentation-selection-failed': NONE,
   'work.manager-note-sending': WRITES,
   'work.manager-note-failed': WRITES,
   'work.manager-digest-sending': WRITES,

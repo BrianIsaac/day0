@@ -1808,6 +1808,18 @@ export interface WorkDocumentationSelectedPayload {
   readonly chars: number;
 }
 
+/**
+ * The payload of `work.documentation-selection-failed` (wave 15, 15-A; the wave 14 pre-tag's
+ * item): a real-mode site's selection could not be made, so the run read the whole mirror
+ * instead, as mock mode does. The run goes on; the record says the prompt carried everything.
+ */
+export interface WorkDocumentationSelectionFailedPayload {
+  readonly workItemId: WorkItemId;
+  readonly site: DocumentationSelectionRecord['site'];
+  /** Why the selection could not be made, bounded and with nothing token-shaped. */
+  readonly reason: string;
+}
+
 /** The payload of `work.model-call`. */
 export interface WorkModelCallPayload extends ModelCallReport {
   readonly workItemId?: WorkItemId;
@@ -2034,6 +2046,7 @@ export interface EventPayloads {
   'work.closing-reauthored': WorkClosingReauthoredPayload;
   'work.model-call': WorkModelCallPayload;
   'work.documentation-selected': WorkDocumentationSelectedPayload;
+  'work.documentation-selection-failed': WorkDocumentationSelectionFailedPayload;
   'work.manager-note-sending': WorkManagerNoteSendingPayload;
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
@@ -2241,6 +2254,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.closing-reauthored',
   'work.model-call',
   'work.documentation-selected',
+  'work.documentation-selection-failed',
   'work.manager-note-sending',
   'work.manager-note-failed',
   'work.manager-digest-sending',

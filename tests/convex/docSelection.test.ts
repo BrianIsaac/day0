@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -10,8 +10,18 @@ import type { SelectionRequest } from '../../src/docs/select';
 import { renderHowTos, renderTeamDocs } from '../../src/work/documents';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 type Harness = TestConvex<typeof schema>;
+
+// The selection is real mode's (R3). Set for every test here by 15-A: the snapshot now ignores a
+// selection in any other mode (W14-R26), where it took one from whoever passed it.
+beforeEach((): void => {
+  useSurfaceMode('real');
+});
+afterEach((): void => {
+  restoreSurfaceMode();
+});
 
 const TICKET_RUNBOOK = [
   '# How to update a ticket',
@@ -888,5 +898,47 @@ describe('docSelection.changedCitedBlocks and a page’s status (15-A; W14-R25, 
       blocks: blocks.map((block) => ({ id: block._id as string, hash: block.hash })),
     });
     expect(gone.map((entry) => entry.status)).toEqual(blocks.map(() => 'archived'));
+  });
+});
+
+describe('snapshotInternal and a selection outside real mode (W14-R26)', (): void => {
+  it('ignores the selection in mock mode and reads the office’s own bounded set, whole', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: 'office-holidays',
+        title: 'Office holidays',
+        body: HOLIDAYS,
+        category: 'team-doc',
+        updatedAt: 1,
+      });
+    });
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    expect(snapshot.documentation).toBeUndefined();
+    expect(snapshot.teamDocs).toEqual([
+      { slug: 'office-holidays', title: 'Office holidays', body: HOLIDAYS },
+    ]);
+    // And the mock office's bound holds: a caller passing a selection cannot read past it.
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 32; index += 1) {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: `office-${index}`,
+          title: `Office ${index}`,
+          body: '# Note',
+          category: 'team-doc',
+          updatedAt: 1,
+        });
+      }
+    });
+    await expect(
+      harness.query(internal.mock.snapshotInternal, { agentId, selection: request }),
+    ).rejects.toThrow('more than 32 documents');
   });
 });

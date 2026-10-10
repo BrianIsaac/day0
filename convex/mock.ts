@@ -107,13 +107,16 @@ async function snapshotDocs(db: DatabaseReader, agentId: Id<'agents'>): Promise<
  * by {@link snapshotDocs} (a mock office at most {@link MOCK_OFFICE_DOCS_READ}); with `selection`
  * (real mode only, wave 14's 14-R) the pages and blocks one item needs from the whole mirror,
  * cited, within 24,000 characters (`docSelection.selectedDocumentation`). Mock mode and the frozen
- * evaluation pass no selection (R3).
+ * evaluation pass no selection (R3), and one passed outside real mode is ignored (W14-R26).
  */
 export const snapshotInternal = internalQuery({
   args: { agentId: v.id('agents'), selection: v.optional(selectionRequestValidator) },
   handler: async (ctx, args): Promise<MockSurfaceSnapshot> => {
+    // A selection is real mode's alone (R3, W14-R26): passed in any other mode it is ignored, so
+    // a mock office is read by its own bounded set whoever calls.
+    const selection = SURFACE_MODE === 'real' ? args.selection : undefined;
     const [stored, sheets, rows, channels, messages, tweets, tickets] = await Promise.all([
-      args.selection === undefined
+      selection === undefined
         ? snapshotDocs(ctx.db, args.agentId)
         : ctx.db
             .query('mockDocs')
@@ -148,7 +151,6 @@ export const snapshotInternal = internalQuery({
     // Only current pages reach a run (15-A): a superseded, archived or draft page stays in the
     // mirror for the Docs tab and is left out here, with a selection or whole.
     const docs = await currentDocs(ctx.db, await readableDocs(ctx.db, agent, stored));
-    const { selection } = args;
     const selected =
       selection === undefined
         ? undefined

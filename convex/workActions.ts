@@ -4206,11 +4206,16 @@ class GoneCitesError extends Error {}
 /** The cited blocks one check reads; the check's own bound is the search's 512. */
 const CITE_CHECK_BATCH = 256;
 
+/** The most of a failed selection's reason its event keeps. */
+const SELECTION_FAILURE_CHARS = 300;
+
 /**
  * Read an employee's environment for one model call site. In real mode the guides and team
  * documents are the ones the item needs (wave 14, 14-R), and what was selected is recorded on
  * the item as `work.documentation-selected`; in mock mode, or with the test switch
- * `DAY0_TEST_WHOLE_DOCUMENTATION` set on a bed, they are the whole mirror (R3).
+ * `DAY0_TEST_WHOLE_DOCUMENTATION` set on a bed, they are the whole mirror (R3). A selection
+ * that cannot be made falls back to the whole mirror and says so on the record
+ * (`work.documentation-selection-failed`).
  *
  * @param input - The agent and item, whether the read has no caller (a scheduled step), and the
  *   selection request, when the site makes one.
@@ -4242,12 +4247,22 @@ async function siteSnapshot(
     if (selection === undefined) throw error;
     // A selection the query could not finish (a library past its reads, W14-R4) falls back to the
     // whole mirror in a transaction of its own, as mock mode reads it, rather than failing the item.
+    const reason = redactTokenShapes(error instanceof Error ? error.message : String(error));
     log.warn('documentation selection failed; the whole mirror is read instead', {
       workItemId: input.workItemId,
       site: selection.site,
-      reason: error instanceof Error ? error.message : String(error),
+      reason,
     });
     snapshot = await read(undefined);
+    await logEvent(ctx, {
+      agentId: input.agentId,
+      type: 'work.documentation-selection-failed',
+      payload: {
+        workItemId: input.workItemId,
+        site: selection.site,
+        reason: reason.slice(0, SELECTION_FAILURE_CHARS),
+      },
+    });
   }
   if (snapshot.documentation !== undefined) {
     await logEvent(ctx, {

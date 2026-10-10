@@ -10807,9 +10807,19 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
     expect(item.state).not.toBe('failed');
     expect(recorded.skillRuns).toBe(1);
     // The whole mirror was read, so no selection is recorded for the run.
-    expect((await events(harness, seeded.agentId)).map((event) => event.type)).not.toContain(
-      'work.documentation-selected',
+    const recordedEvents = await events(harness, seeded.agentId);
+    expect(recordedEvents.map((event) => event.type)).not.toContain('work.documentation-selected');
+    // And the record says the selection fell back, at which site and why (15-A).
+    const fellBack = recordedEvents.filter(
+      (event) => event.type === 'work.documentation-selection-failed',
     );
+    expect(fellBack.map((event) => event.payload)).toEqual([
+      {
+        workItemId: seeded.workItemId,
+        site: 'execute',
+        reason: expect.stringContaining('Too many index ranges read'),
+      },
+    ]);
   });
 
   it('records no selection in mock mode, where the run reads the whole mirror (R3)', async (): Promise<void> => {

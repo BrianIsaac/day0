@@ -804,6 +804,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'work.model-call': modelCallLabel,
   'work.documentation-selected': documentationSelectedLabel,
+  'work.documentation-selection-failed': (payload) =>
+    `documentation not selected${
+      text(payload.site)
+        ? ` · ${DOCUMENTATION_SITE_WORDS[payload.site as string] ?? payload.site}`
+        : ''
+    } · every page was read instead`,
   'work.manager-note-sending': (payload) =>
     `sending the manager a ${payload.kind === 'stopped' ? 'stop' : 'landed-work'} note`,
   'work.manager-note-failed': (payload) => `manager note not delivered${because(payload.reason)}`,

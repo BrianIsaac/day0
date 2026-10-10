@@ -1345,6 +1345,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       sections ? ` from ${sections}` : ''
     }`;
   },
+  'work.documentation-selection-failed': (p, subject) => {
+    const site = text(p.site);
+    return `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(
+      subject,
+    )} read every documentation page, since the pages it needed could not be selected${because(p.reason)}`;
+  },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(
       subject,
