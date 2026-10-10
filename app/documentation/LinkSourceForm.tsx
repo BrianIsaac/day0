@@ -281,14 +281,26 @@ export function LinkSourceForm(): React.ReactNode {
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: credentialForLink(kind, credential),
       });
-      // A new source is a team source (A19); another trust is set on it once it is linked.
-      if (authority !== 'team') await setAuthority({ sourceId, authority });
-      setAuthorityChoice('team');
-      // Only now: a refused link keeps its fields, the secret among them, to be corrected.
+      // Only now: a refused link keeps its fields, the secret among them, to be corrected. The
+      // source is linked from here on, whatever becomes of its trust, so the form is cleared
+      // first and a second press cannot link the same location again.
       form.reset();
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
       setLocator(cleared.locator);
+      setAuthorityChoice('team');
+      // A new source is a team source (A19); another trust is set on it once it is linked.
+      if (authority !== 'team') {
+        try {
+          await setAuthority({ sourceId, authority });
+        } catch {
+          // The failure is the trust's alone, and the table's Trust select is where it is put
+          // right: said as that, never as a link that did not happen.
+          setError(
+            `The location was linked, as a team source: its trust could not be set to ${TRUST_NAMES[authority].toLowerCase()}. Set it in the Trust column of the table.`,
+          );
+        }
+      }
     } catch (failure) {
       setError(refusalText(failure, 'The location was not linked.'));
     } finally {

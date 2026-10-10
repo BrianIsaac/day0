@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   refusal: undefined as string | undefined,
+  trustRefusal: undefined as string | undefined,
 }));
 
 vi.mock('convex/react', () => ({
@@ -22,6 +23,7 @@ vi.mock('convex/react', () => ({
     (reference: unknown) =>
     async (args: unknown): Promise<null> => {
       backend.calls.push({ name: getFunctionName(reference as never), args });
+      if (backend.trustRefusal !== undefined) throw new Error(backend.trustRefusal);
       return null;
     },
 }));
@@ -39,6 +41,7 @@ function field<Element extends HTMLElement>(scope: ParentNode, id: string): Elem
 afterEach((): void => {
   backend.calls = [];
   backend.refusal = undefined;
+  backend.trustRefusal = undefined;
 });
 
 describe('LinkSourceForm and the trust of a new source (15-A; A19)', (): void => {
@@ -83,6 +86,27 @@ describe('LinkSourceForm and the trust of a new source (15-A; A19)', (): void =>
     ]);
     expect(backend.calls[1].args).toEqual({ sourceId: 'source-1', authority: 'official' });
     // The next source starts as a team source again.
+    expect(field<HTMLSelectElement>(view.container, 'source-trust').value).toBe('team');
+    view.unmount();
+  });
+
+  it('says a source was linked when only its trust could not be set, and clears the form so it is not linked twice', async (): Promise<void> => {
+    // The second pass's minor 12: the link landed and the trust call failed, and the form said
+    // "The location was not linked" with every field kept, so a retry linked it a second time.
+    const view = mount(<LinkSourceForm />);
+    typeInto(field(view.container, 'source-label'), 'Official runbooks');
+    choose(view.container, 'source-trust', 'official');
+    backend.trustRefusal = 'the backend is restarting';
+    await press(view.container, 'Link location');
+    await settle();
+    expect(backend.calls.map((call) => call.name)).toEqual([
+      'docSources:link',
+      'docStatus:setSourceAuthority',
+    ]);
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'The location was linked, as a team source: its trust could not be set to official. Set it in the Trust column of the table.',
+    );
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('');
     expect(field<HTMLSelectElement>(view.container, 'source-trust').value).toBe('team');
     view.unmount();
   });
