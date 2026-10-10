@@ -62,7 +62,8 @@ describe('LinkSourceForm and the trust of a new source (15-A; A19)', (): void =>
     ]);
     expect(trust.value).toBe('team');
     expect(view.container.textContent).toContain(
-      'Official beats team beats personal. Within a source, a page’s own status decides; recency only breaks ties.',
+      // The words follow the selection: trust is a weight on the ranking, not a rule (minor 3).
+      'Official is weighed above team, and team above personal, when pages answer alike. Within a source, a page’s own status decides; recency only breaks ties.',
     );
     view.unmount();
   });

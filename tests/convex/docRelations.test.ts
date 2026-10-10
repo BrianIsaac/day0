@@ -561,14 +561,36 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await standingOf(harness, relation._id)).toBeNull();
   });
 
-  it('lets no conflict stand between pages of unequal trust: official over team settles it', async (): Promise<void> => {
+  it('lets no conflict stand between pages of unequal trust, and offers no "They disagree" that would hold nothing', async (): Promise<void> => {
+    // The second pass's minor 3: "They disagree" on such a pair was recorded, tagged no cite,
+    // held no plan and took the card away, while the card said a step would be held.
     const harness = convexTest(schema, allConvexModules());
-    const { finance } = await twoThatDisagree(harness, { finance: 'official' });
+    const { finance, handbook } = await twoThatDisagree(harness, { finance: 'official' });
     await measure(harness, finance, 'escalation.md');
     const [relation] = await relations(harness);
+    const [card] = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(card.offered).toEqual(['from-is-right', 'to-is-right', 'both-hold']);
+    expect([card.from.authority, card.to.authority]).toEqual(['official', 'team']);
+    await expect(
+      asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision: 'disagree',
+      }),
+    ).rejects.toThrow(DECISION_NOT_OFFERED);
+    expect((await relations(harness))[0].status).toBe('proposed');
+    // A conflict confirmed between equals stops standing once the manager trusts one page more.
+    await asManager(harness).mutation(api.docStatus.setSourceAuthority, {
+      sourceId: finance.sourceId,
+      authority: 'team',
+    });
     await asManager(harness).mutation(api.docRelations.decide, {
       relationId: relation._id,
       decision: 'disagree',
+    });
+    expect(await standingOf(harness, relation._id)).not.toBeNull();
+    await asManager(harness).mutation(api.docStatus.setSourceAuthority, {
+      sourceId: handbook.sourceId,
+      authority: 'official',
     });
     expect(await standingOf(harness, relation._id)).toBeNull();
   });

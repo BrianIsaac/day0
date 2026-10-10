@@ -20,9 +20,12 @@ export const TRUST_NAMES: Readonly<Record<SourceAuthority, string>> = {
   personal: 'Personal',
 };
 
-/** What the Trust select means, under it where there is room to say so. */
+/**
+ * What the Trust select means, under it where there is room to say so. Trust weighs the ranking
+ * (`AUTHORITY_WEIGHT`); it is no rule that one source's page always wins.
+ */
 export const TRUST_HELP =
-  'Official beats team beats personal. Within a source, a page’s own status decides; recency only breaks ties.';
+  'Official is weighed above team, and team above personal, when pages answer alike. Within a source, a page’s own status decides; recency only breaks ties.';
 
 /** One linked source as `docSources.listMine` lists it, with its stored page count. */
 export type LinkedSource = FunctionReturnType<typeof api.docSources.listMine>[number];

@@ -453,7 +453,16 @@ export async function standingConflictOf(
 async function standingWithPages(
   ctx: QueryCtx,
   relation: Doc<'docRelations'> | null,
-): Promise<{ conflict: StandingConflict; from: Doc<'docPages'>; to: Doc<'docPages'> } | undefined> {
+): Promise<
+  | {
+      conflict: StandingConflict;
+      from: Doc<'docPages'>;
+      to: Doc<'docPages'>;
+      /** The trust the two pages share. */
+      trust: SourceAuthority;
+    }
+  | undefined
+> {
   if (relation === null || relation.kind !== 'possible_conflict') return undefined;
   if (relation.status !== 'confirmed') return undefined;
   // The blocks first: a settled conflict costs a few small rows and no page's text.
@@ -467,8 +476,10 @@ async function standingWithPages(
   ]);
   if (from === null || to === null || fromSource === null || toSource === null) return undefined;
   if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') return undefined;
-  if (authorityOf(from, fromSource) !== authorityOf(to, toSource)) return undefined;
+  const trust = authorityOf(from, fromSource);
+  if (trust !== authorityOf(to, toSource)) return undefined;
   return {
+    trust,
     conflict: {
       relationId: relation._id,
       from: named(from, fromSource),
@@ -600,14 +611,22 @@ export const DECISION_NOT_OFFERED = 'That card has changed: this answer is no lo
  * The answers a relation offers as it stands. An answered relation offers "Undo", so no answer
  * is one the manager cannot take back; all but a confirmed conflict, which keeps its own three
  * answers while it stands, and whose "{A} is right" is taken back on the superseded page's own
- * row ("This is current" or "Clear"), after which the conflict stands again.
+ * row ("This is current" or "Clear"), after which the conflict stands again. A proposed conflict
+ * between pages that are not trusted alike offers no "They disagree": no conflict stands between
+ * them (`standingConflictOf`), so the answer would hold nothing.
+ *
+ * @param relation - The relation as stored.
+ * @param equalTrust - Whether its two pages are trusted alike; read only for a proposed conflict.
  */
 export function decisionsOffered(
   relation: Pick<Doc<'docRelations'>, 'kind' | 'status'>,
+  equalTrust = true,
 ): readonly RelationDecision[] {
   if (relation.kind === 'possible_conflict') {
     if (relation.status === 'proposed') {
-      return ['disagree', 'from-is-right', 'to-is-right', 'both-hold'];
+      return equalTrust
+        ? ['disagree', 'from-is-right', 'to-is-right', 'both-hold']
+        : ['from-is-right', 'to-is-right', 'both-hold'];
     }
     return relation.status === 'confirmed'
       ? ['from-is-right', 'to-is-right', 'both-hold']
@@ -664,7 +683,19 @@ export const decide = mutation({
     const relation = await ctx.db.get(args.relationId);
     if (relation === null) throw new ConvexError('That relation is no longer stored.');
     if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
-    if (!decisionsOffered(relation).includes(args.decision)) {
+    const [from, to, fromSource, toSource] = await Promise.all([
+      pageAt(ctx, relation.from),
+      pageAt(ctx, relation.to),
+      ctx.db.get(relation.from.sourceId),
+      ctx.db.get(relation.to.sourceId),
+    ]);
+    const equalTrust =
+      from === null ||
+      to === null ||
+      fromSource === null ||
+      toSource === null ||
+      authorityOf(from, fromSource) === authorityOf(to, toSource);
+    if (!decisionsOffered(relation, equalTrust).includes(args.decision)) {
       throw new ConvexError(DECISION_NOT_OFFERED);
     }
     const now = Date.now();
@@ -679,12 +710,6 @@ export const decide = mutation({
             decidedAt: now,
           },
     );
-    const [from, to, fromSource, toSource] = await Promise.all([
-      pageAt(ctx, relation.from),
-      pageAt(ctx, relation.to),
-      ctx.db.get(relation.from.sourceId),
-      ctx.db.get(relation.to.sourceId),
-    ]);
     if (from === null || to === null || fromSource === null || toSource === null) return null;
     // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
     if (
@@ -723,13 +748,25 @@ export const decide = mutation({
   },
 });
 
+/** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
+type CardPage = NamedPage & { readonly updatedAt: number; readonly authority: SourceAuthority };
+
+/** A stored page as a relation's card draws it. */
+function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
+  return {
+    ...named(page, source),
+    updatedAt: page.updatedAt,
+    authority: authorityOf(page, source),
+  };
+}
+
 /** A relation as its card draws it. */
 export interface RelationCardRow {
   readonly _id: Id<'docRelations'>;
   readonly kind: RelationKind;
   readonly status: 'proposed' | 'confirmed';
-  readonly from: NamedPage & { readonly updatedAt: number };
-  readonly to: NamedPage & { readonly updatedAt: number };
+  readonly from: CardPage;
+  readonly to: CardPage;
   /** The measures that proposed it, strongest first. */
   readonly evidence: Array<{ measure: string; value: number }>;
   /** For a conflict: the heading and the figures each page gives, when its blocks still disagree. */
@@ -795,11 +832,16 @@ export const listOpen = query({
         _id: relation._id,
         kind: relation.kind,
         status: 'proposed',
-        from: { ...named(from, fromSource), updatedAt: from.updatedAt },
-        to: { ...named(to, toSource), updatedAt: to.updatedAt },
+        from: cardPage(from, fromSource),
+        to: cardPage(to, toSource),
         evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
         ...(disagreement !== undefined ? { disagreement } : {}),
-        offered: [...decisionsOffered(relation)],
+        offered: [
+          ...decisionsOffered(
+            relation,
+            authorityOf(from, fromSource) === authorityOf(to, toSource),
+          ),
+        ],
       });
     }
     const proposedCards = cards.length;
@@ -815,8 +857,8 @@ export const listOpen = query({
         _id: relation._id,
         kind: relation.kind,
         status: 'confirmed',
-        from: { ...conflict.from, updatedAt: standing.from.updatedAt },
-        to: { ...conflict.to, updatedAt: standing.to.updatedAt },
+        from: { ...conflict.from, updatedAt: standing.from.updatedAt, authority: standing.trust },
+        to: { ...conflict.to, updatedAt: standing.to.updatedAt, authority: standing.trust },
         evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
         disagreement: { heading: conflict.heading, figures: conflict.figures },
         offered: [...decisionsOffered(relation)],

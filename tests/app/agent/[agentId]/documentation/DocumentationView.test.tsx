@@ -325,6 +325,29 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('says a proposed conflict between pages of unequal trust holds nothing, and offers no answer that would', () => {
+    // The second pass's minor 3: the card promised a hold that the trust order never gives.
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...RELATIONS[1],
+        status: 'proposed',
+        from: { ...RELATIONS[1].from, authority: 'official' },
+        to: { ...RELATIONS[1].to, authority: 'team' },
+        offered: ['from-is-right', 'to-is-right', 'both-hold'],
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const text = view.container.textContent ?? '';
+    expect(text).toContain(
+      'may disagree under “Thresholds”: 10,000 against 5,000. Nothing is held for it: “Finance escalation” is in an official source and “Close checklist” in a team one, so Mira weighs the first above the second. Say which is right to take the other out of what Mira reads.',
+    );
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'They disagree',
+    );
+    view.unmount();
+  });
+
   it('keeps what the manager answered once its card has gone, and takes it back with Undo', async () => {
     // The second pass's major 1: a wrong "supersedes" left no control to undo it, and the card
     // took its own "done" line away with it.

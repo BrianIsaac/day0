@@ -3,6 +3,7 @@
 import { useRef } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
@@ -10,12 +11,20 @@ import { useChange } from '../../../components/use-change';
 import type { AnsweredRelation } from './RelationAnswered';
 import type { RelationAnswer, RelationCardRow } from './RelationCard';
 
+/** A source's trust inside a sentence: "an official" source, "a team" one. */
+const TRUST_SOURCE: Readonly<Record<SourceAuthority, string>> = {
+  official: 'an official',
+  team: 'a team',
+  personal: 'a personal',
+};
+
 /**
  * The card for two pages that disagree (the wave file's section 8). A conflict the measures
  * proposed says the two "may disagree" and holds nothing; the manager confirms it ("They
  * disagree") or settles it at once. A confirmed conflict is the one the employee holds steps for:
  * a plan that follows the disputed passage waits until the manager says which page is right or
- * that both hold.
+ * that both hold. Between two pages that are not trusted alike no conflict stands and nothing is
+ * ever held, so the card says how the two are weighed and offers only the answers that settle it.
  *
  * @param relation - The conflict, with the heading and the figures each page gives.
  * @param name - The employee's name, when the card is on an employee's tab.
@@ -51,6 +60,17 @@ export function ConflictCard({
         });
       },
     });
+  // Named most trusted first: the selection weighs that page above the other.
+  const [more, less] =
+    SOURCE_AUTHORITIES.indexOf(from.authority) <= SOURCE_AUTHORITIES.indexOf(to.authority)
+      ? [from, to]
+      : [to, from];
+  const reader = name ?? 'each employee';
+  const held = confirmed
+    ? `${name ?? 'Each employee'} holds any step that relies on it and asks you.`
+    : from.authority === to.authority
+      ? 'Nothing is held until you say they disagree.'
+      : `Nothing is held for it: “${more.title}” is in ${TRUST_SOURCE[more.authority]} source and “${less.title}” in ${TRUST_SOURCE[less.authority]} one, so ${reader} weighs the first above the second. Say which is right to take the other out of what ${reader} reads.`;
   const under = disagreement ? ` under “${disagreement.heading}”` : '';
   const figures = disagreement
     ? `: ${disagreement.figures.from} against ${disagreement.figures.to}`
@@ -66,10 +86,7 @@ export function ConflictCard({
           “{from.title}” ({from.source}) and “{to.title}” ({to.source}){' '}
           {confirmed ? 'disagree' : 'may disagree'}
           {under}
-          {figures}.{' '}
-          {confirmed
-            ? `${name ?? 'Each employee'} holds any step that relies on it and asks you.`
-            : 'Nothing is held until you say they disagree.'}
+          {figures}. {held}
         </p>
         <div className="flex flex-wrap gap-2">
           {relation.offered.includes('disagree') ? (
