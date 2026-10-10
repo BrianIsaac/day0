@@ -46,6 +46,20 @@ export function nativeStatusOfWord(word: string): PageStatus | undefined {
   return PAGE_STATUSES.find((status) => NATIVE_WORDS[status].includes(normalised));
 }
 
+/**
+ * A provider's word for a page, as a reader stores it: the status it comes to when that is not
+ * `active`, and nothing otherwise. A provider calls every ordinary page current, and a native
+ * `active` stands over a marker and a confirmed relation (the rules' order), which only an
+ * author's own word on the page should: so a reader of a provider reports only what is not
+ * current, and front matter alone may say `active`.
+ *
+ * @param word - The provider's word, when it gave one.
+ */
+export function notCurrentWord(word: unknown): Exclude<PageStatus, 'active'> | undefined {
+  const status = typeof word === 'string' ? nativeStatusOfWord(word) : undefined;
+  return status === undefined || status === 'active' ? undefined : status;
+}
+
 /** A front matter flag that states a status by being true: `draft: true`, `archived: true`. */
 const FRONT_MATTER_FLAGS: Readonly<Record<string, PageStatus>> = {
   draft: 'draft',

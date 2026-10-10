@@ -11,6 +11,7 @@ import {
   markerJudgementSchema,
   markerStands,
   nativeStatusOfWord,
+  notCurrentWord,
   pathStatus,
   withoutFrontMatter,
 } from '../../../src/docs/status';
@@ -28,6 +29,20 @@ describe('a source’s own word for a page', (): void => {
     expect(nativeStatusOfWord('已废止')).toBe('superseded');
     expect(nativeStatusOfWord('reviewed')).toBeUndefined();
     expect(nativeStatusOfWord('')).toBeUndefined();
+  });
+});
+
+describe('what a provider says of a page it no longer serves as current', (): void => {
+  it('is its word when that is not current, and nothing for an ordinary page', (): void => {
+    expect(notCurrentWord('archived')).toBe('archived');
+    expect(notCurrentWord('trashed')).toBe('archived');
+    expect(notCurrentWord('draft')).toBe('draft');
+    // A provider calls every ordinary page current: saying so of each would stand over a marker
+    // and a confirmed relation, which only an author's explicit word should.
+    expect(notCurrentWord('current')).toBeUndefined();
+    expect(notCurrentWord('unknown-word')).toBeUndefined();
+    expect(notCurrentWord(undefined)).toBeUndefined();
+    expect(notCurrentWord(42)).toBeUndefined();
   });
 });
 
