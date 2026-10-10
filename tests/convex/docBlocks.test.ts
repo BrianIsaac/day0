@@ -522,6 +522,69 @@ describe('unchangedPage and a split that never landed (second pass)', (): void =
   });
 });
 
+describe('unchangedPage and a re-split that never landed (W14-R23)', (): void => {
+  it("answers no page whose stored blocks are an older version's, so the sync stores and splits it again", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    // The page changed and was stored; its split failed, so its blocks are still the old text's.
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    const edited = RUNBOOK.replace('Press refresh twice.', 'Press refresh three times.');
+    const pageId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref: 'runbooks/refresh.md',
+          title: 'Refresh',
+          markdown: edited,
+          updatedAt: 1,
+          contentHash: 'a'.repeat(32),
+        }),
+    );
+    const ask = async () =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        contentHash: 'a'.repeat(32),
+      });
+    expect(await ask()).toBeNull();
+    // A page that lost a section keeps no stale block either.
+    const shorter = edited.slice(0, edited.indexOf('# Posting'));
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(pageId, { markdown: shorter });
+    });
+    expect(await ask()).toBeNull();
+    await split(harness, { sourceId, runId }, shorter);
+    expect(await ask()).toMatchObject({ title: 'Refresh', markdown: shorter });
+  });
+
+  it("answers no page whose blocks hold another status than its row's, so its next split restates them", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+        status: 'archived',
+        statusSource: 'source-native',
+      });
+    });
+    const ask = async () =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        contentHash: 'a'.repeat(32),
+      });
+    expect(await ask()).toBeNull();
+    await split(harness, { sourceId, runId, status: 'archived' }, RUNBOOK);
+    expect(await ask()).toMatchObject({ title: 'Refresh' });
+  });
+});
+
 describe('prunePageBlocks', (): void => {
   it('deletes the blocks of a page that is gone, and leaves those of a page stored again', async (): Promise<void> => {
     vi.useFakeTimers();

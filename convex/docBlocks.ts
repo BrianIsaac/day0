@@ -1,5 +1,10 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -305,12 +310,35 @@ export const splitStoredPage = internalMutation({
 });
 
 /**
+ * Whether a page's stored blocks are the blocks of its stored text, each under the page's status:
+ * as many, in document order, hash for hash. A page whose split never landed holds none, and one
+ * whose re-split failed still holds the blocks of its older text (W14-R23), which would stay
+ * current and citable.
+ */
+async function blocksAreThePages(
+  ctx: QueryCtx,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'markdown' | 'status'>,
+): Promise<boolean> {
+  const blocks = splitPage(page.markdown);
+  const stored = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
+    .take(MAX_BLOCKS_PER_PAGE + 1);
+  if (stored.length !== blocks.length) return false;
+  const status = pageStatusOf(page);
+  return blocks.every(
+    (block, index) => stored[index].hash === block.hash && stored[index].status === status,
+  );
+}
+
+/**
  * The stored page under a ref whose hash is the one given: the sync keeps it as stored, with no
- * redaction and no split (P8-10). Internal; reads one page, writes nothing.
+ * redaction and no split (P8-10). Internal; reads one page and its blocks, writes nothing.
  *
  * @returns The stored title, address and (redacted) Markdown, or null when the page is not
- *   stored, was stored without a hash, has changed, or holds text but no block (its split
- *   failed), so the sync stores it again and its split is scheduled again.
+ *   stored, was stored without a hash, has changed, or its stored blocks are not the blocks of
+ *   its text under its status (its split failed, or never landed), so the sync stores it again
+ *   and its split is scheduled again.
  */
 export const unchangedPage = internalQuery({
   args: { sourceId: v.id('docSources'), ref: v.string(), contentHash: v.string() },
@@ -320,12 +348,8 @@ export const unchangedPage = internalQuery({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null || page.contentHash !== args.contentHash) return null;
-    // A page whose split never landed is not kept: its next store schedules the split again.
-    const block = await ctx.db
-      .query('docBlocks')
-      .withIndex('by_source_page', (q) => q.eq('sourceId', args.sourceId).eq('pageRef', args.ref))
-      .first();
-    if (block === null && splitPage(page.markdown).length > 0) return null;
+    // A page whose split did not land is not kept: its next store schedules the split again.
+    if (!(await blocksAreThePages(ctx, page))) return null;
     return {
       title: page.title,
       ...(page.url !== undefined ? { url: page.url } : {}),
