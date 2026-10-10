@@ -802,7 +802,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       return agentId;
     });
     await measure(harness, pages.finance, 'escalation.md');
-    const [relation] = await relations(harness);
+    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
     return { ...pages, agentId, relationId: relation._id };
   }
 
@@ -856,6 +856,47 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       decision: 'both-hold',
     });
     expect((await selection(harness, agentId)).lines.join('\n')).not.toContain('[conflict]');
+  });
+
+  it('sees a confirmed conflict among any number of other confirmed relations, older or newer', async (): Promise<void> => {
+    // The second pass's major 2: the selection read the owner's oldest 64 confirmed relations of
+    // every kind, and every kept version and settled conflict stays confirmed for good, so past
+    // 64 a newly confirmed conflict tagged no cite and held no plan; and its card, read newest
+    // first, went the same way once 64 later answers stood above it.
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const kept = await syncingSource(harness, 'Kept versions');
+    /** 65 relations the manager confirmed that are no conflict: two versions, both kept. */
+    const keptVersions = async (from: number): Promise<void> =>
+      await harness.run(async (ctx) => {
+        for (let pair = from; pair < from + 65; pair += 1) {
+          await ctx.db.insert('docRelations', {
+            userId: 'owner',
+            from: { sourceId: kept.sourceId, ref: `kept-${pair}-v2.md` },
+            to: { sourceId: kept.sourceId, ref: `kept-${pair}.md` },
+            kind: 'possible_duplicate',
+            evidence: [{ measure: 'shared-text', value: 80 }],
+            status: 'confirmed',
+            decidedAt: 5,
+            createdAt: 5,
+          });
+        }
+      });
+    await keptVersions(0);
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    await keptVersions(65);
+    const { lines } = await selection(harness, agentId);
+    expect(lines.filter((line) => line.endsWith('[conflict]')).sort()).toEqual([
+      '[cite: Finance wiki/escalation.md#Finance escalation > Thresholds] [conflict]',
+      '[cite: Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Thresholds] [conflict]',
+    ]);
+    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
+      { _id: relationId, kind: 'possible_conflict', status: 'confirmed' },
+    ]);
   });
 
   it('holds a plan that cites the disputed passage for the manager, naming the two pages and the heading, and lets it go once both hold', async (): Promise<void> => {

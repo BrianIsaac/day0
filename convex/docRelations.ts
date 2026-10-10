@@ -19,6 +19,7 @@ import {
 import {
   pageStatusOf,
   sourceAuthorityOf,
+  type PageStatus,
   type RelationKind,
   type SourceAuthority,
 } from '../src/docs/authority';
@@ -376,12 +377,12 @@ export interface StandingConflict {
   readonly blocks: readonly string[];
 }
 
-/** The blocks of a page under the given hashes, as the measures read them. */
+/** The blocks of a page under the given hashes, as the measures read them, each with its status. */
 async function blocksUnder(
   ctx: QueryCtx,
   page: PageName,
   hashes: readonly string[],
-): Promise<MeasuredBlock[]> {
+): Promise<Array<MeasuredBlock & { readonly status: PageStatus }>> {
   const rows = await Promise.all(
     hashes.map(
       async (hash) =>
@@ -394,11 +395,24 @@ async function blocksUnder(
     ),
   );
   return rows.flatMap((row) =>
-    row === null ? [] : [{ hash: row.hash, headingPath: row.headingPath, text: row.text }],
+    row === null
+      ? []
+      : [
+          {
+            hash: row.hash,
+            headingPath: row.headingPath,
+            text: row.text,
+            status: row.status ?? 'active',
+          },
+        ],
   );
 }
 
-/** What a conflict's two pages say, read from the blocks its evidence names. */
+/**
+ * What a conflict's two pages say, read from the blocks its evidence names: small rows, so a
+ * conflict that no longer disagrees, or one of whose pages is no longer current (a block carries
+ * its page's status), is set aside before either page's row, which holds its whole text, is read.
+ */
 async function disagreementOf(
   ctx: QueryCtx,
   relation: Doc<'docRelations'>,
@@ -408,6 +422,7 @@ async function disagreementOf(
     blocksUnder(ctx, relation.from, hashes),
     blocksUnder(ctx, relation.to, hashes),
   ]);
+  if ([...from, ...to].some((block) => block.status !== 'active')) return undefined;
   const [first] = headingFigures({ blocks: from }, { blocks: to });
   return first === undefined
     ? undefined
@@ -428,8 +443,22 @@ export async function standingConflictOf(
   ctx: QueryCtx,
   relation: Doc<'docRelations'> | null,
 ): Promise<StandingConflict | undefined> {
+  return (await standingWithPages(ctx, relation))?.conflict;
+}
+
+/**
+ * `standingConflictOf`, with the two page rows it read, for a caller that draws them (the cards)
+ * and so reads, and counts, each once.
+ */
+async function standingWithPages(
+  ctx: QueryCtx,
+  relation: Doc<'docRelations'> | null,
+): Promise<{ conflict: StandingConflict; from: Doc<'docPages'>; to: Doc<'docPages'> } | undefined> {
   if (relation === null || relation.kind !== 'possible_conflict') return undefined;
   if (relation.status !== 'confirmed') return undefined;
+  // The blocks first: a settled conflict costs a few small rows and no page's text.
+  const disagreement = await disagreementOf(ctx, relation);
+  if (disagreement === undefined) return undefined;
   const [from, to, fromSource, toSource] = await Promise.all([
     pageAt(ctx, relation.from),
     pageAt(ctx, relation.to),
@@ -439,19 +468,41 @@ export async function standingConflictOf(
   if (from === null || to === null || fromSource === null || toSource === null) return undefined;
   if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') return undefined;
   if (authorityOf(from, fromSource) !== authorityOf(to, toSource)) return undefined;
-  const disagreement = await disagreementOf(ctx, relation);
-  if (disagreement === undefined) return undefined;
   return {
-    relationId: relation._id,
-    from: named(from, fromSource),
-    to: named(to, toSource),
-    ...disagreement,
-    blocks: conflictBlocks(relation),
+    conflict: {
+      relationId: relation._id,
+      from: named(from, fromSource),
+      to: named(to, toSource),
+      ...disagreement,
+      blocks: conflictBlocks(relation),
+    },
+    from,
+    to,
   };
 }
 
-/** The most confirmed relations of an owner read for its conflicts. */
-const CONFIRMED_READ = 64;
+/**
+ * The most conflicts an owner's manager confirmed that one read takes, newest first: each is an
+ * answer given by hand on a card, and its row is under a kilobyte (`RELATION_EVIDENCE_BLOCKS`),
+ * so the read stays under a megabyte.
+ */
+export const CONFIRMED_CONFLICTS_READ = 512;
+
+/**
+ * The conflicts the owner's manager confirmed, newest first, read by their own index: the kept
+ * versions, the confirmed successors and the dismissed proposals, which only ever grow, take no
+ * place in the read (the second pass's major 2). A conflict the manager settled by saying which
+ * page is right stays among them, and stands again if that page is made current again.
+ */
+async function confirmedConflicts(ctx: QueryCtx, userId: string): Promise<Doc<'docRelations'>[]> {
+  return await ctx.db
+    .query('docRelations')
+    .withIndex('by_user_kind_status', (q) =>
+      q.eq('userId', userId).eq('kind', 'possible_conflict').eq('status', 'confirmed'),
+    )
+    .order('desc')
+    .take(CONFIRMED_CONFLICTS_READ);
+}
 
 /**
  * The owner's confirmed conflicts whose evidence names any of the given block hashes and that
@@ -470,11 +521,7 @@ export async function standingConflictsOn(
 ): Promise<Map<string, StandingConflict>> {
   const byHash = new Map<string, StandingConflict>();
   if (hashes.size === 0) return byHash;
-  const confirmed = await ctx.db
-    .query('docRelations')
-    .withIndex('by_user_status', (q) => q.eq('userId', userId).eq('status', 'confirmed'))
-    .take(CONFIRMED_READ);
-  for (const relation of confirmed) {
+  for (const relation of await confirmedConflicts(ctx, userId)) {
     if (!conflictBlocks(relation).some((hash) => hashes.has(hash))) continue;
     const standing = await standingConflictOf(ctx, relation);
     if (standing === undefined) continue;
@@ -711,19 +758,23 @@ function rowBytes(page: Doc<'docPages'> | null): number {
  * conflict that stands, newest first, at most `RELATION_CARDS_READ` of each and
  * `CARD_PAGES_BYTES` of their pages a read. Public; the caller's own. A relation one of whose
  * pages is gone or no longer current is not drawn (its source's unlink deletes it; a page that
- * came back draws it again). Writes nothing.
+ * came back draws it again). The confirmed conflicts are the ones the selection reads
+ * (`confirmedConflicts`), so a conflict that holds a plan has its card. Writes nothing.
  */
 export const listOpen = query({
   args: {},
   handler: async (ctx): Promise<RelationCardRow[]> => {
     const caller = await getCallerOrThrow(ctx);
-    const read = async (status: 'proposed' | 'confirmed'): Promise<Doc<'docRelations'>[]> =>
-      await ctx.db
+    const [proposed, confirmed] = await Promise.all([
+      ctx.db
         .query('docRelations')
-        .withIndex('by_user_status', (q) => q.eq('userId', caller.ownerKey).eq('status', status))
+        .withIndex('by_user_status', (q) =>
+          q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
+        )
         .order('desc')
-        .take(status === 'proposed' ? RELATION_CARDS_READ : CONFIRMED_READ);
-    const [proposed, confirmed] = await Promise.all([read('proposed'), read('confirmed')]);
+        .take(RELATION_CARDS_READ),
+      confirmedConflicts(ctx, caller.ownerKey),
+    ]);
     const cards: RelationCardRow[] = [];
     let bytes = 0;
     for (const relation of proposed) {
@@ -751,22 +802,23 @@ export const listOpen = query({
         offered: [...decisionsOffered(relation)],
       });
     }
+    const proposedCards = cards.length;
     for (const relation of confirmed) {
-      if (cards.length >= 2 * RELATION_CARDS_READ) break;
-      if (relation.kind !== 'possible_conflict') continue;
-      const [from, to] = await Promise.all([pageAt(ctx, relation.from), pageAt(ctx, relation.to)]);
-      bytes += rowBytes(from) + rowBytes(to);
-      if (bytes > CARD_PAGES_BYTES) return cards;
-      const standing = await standingConflictOf(ctx, relation);
+      if (cards.length >= proposedCards + RELATION_CARDS_READ) break;
+      // Its blocks first, then its two pages, each read once and counted once.
+      const standing = await standingWithPages(ctx, relation);
       if (standing === undefined) continue;
+      bytes += rowBytes(standing.from) + rowBytes(standing.to);
+      if (bytes > CARD_PAGES_BYTES) return cards;
+      const { conflict } = standing;
       cards.push({
         _id: relation._id,
         kind: relation.kind,
         status: 'confirmed',
-        from: { ...standing.from, updatedAt: from?.updatedAt ?? 0 },
-        to: { ...standing.to, updatedAt: to?.updatedAt ?? 0 },
+        from: { ...conflict.from, updatedAt: standing.from.updatedAt },
+        to: { ...conflict.to, updatedAt: standing.to.updatedAt },
         evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-        disagreement: { heading: standing.heading, figures: standing.figures },
+        disagreement: { heading: conflict.heading, figures: conflict.figures },
         offered: [...decisionsOffered(relation)],
       });
     }

@@ -641,6 +641,12 @@ export default defineSchema({
   })
     /** The owner's relations in one standing: the cards still to decide, the confirmed ones. */
     .index('by_user_status', ['userId', 'status'])
+    /**
+     * The owner's relations of one kind in one standing: the conflicts the manager confirmed,
+     * which the selection and the cards read apart from every kept version and confirmed
+     * successor, however many of those there are (15-A).
+     */
+    .index('by_user_kind_status', ['userId', 'kind', 'status'])
     /** The relations from one page, or every page of one source: its status and its unlink. */
     .index('by_from', ['from.sourceId', 'from.ref'])
     /** The relations to one page, or every page of one source. */
