@@ -284,7 +284,10 @@ export const settleKept = internalAction({
  * the others (`holdForEmployee`, W14-R15). A check that could not be had is tried again after each
  * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone; after the
  * last, each of those is held for this employee too, since nothing checked it against the charter
- * (15-FX: it stayed binding unchecked, with nothing on a row to say so). An agreement held for the
+ * (15-FX: it stayed binding unchecked, with nothing on a row to say so). **The hold is a first
+ * charter's alone** (W15-R12; D-2 (c)): an amendment of an established employee's charter holds
+ * nothing, since its agreements were checked against the charter it amends; they stay in effect
+ * while the re-check is owed, and only a refusal ends one. An agreement held for the
  * employee that the check allows is in effect for it from then (`liftHold`): the hold's lift, by
  * this check, the employee's next stored plan, its resume, the stalled-step sweep
  * (`scheduleDueHoldChecks`), or Check now on its card. A check held by a pause asks no model and
@@ -311,7 +314,11 @@ export const checkForCharter = internalAction({
     // with the fifty-first's hire. A check a pause holds asks no model either, and holds them the
     // same way (15-FX): the pause's end has no record of a check it held, so the hold is the
     // record, and the sweep, the resume or the next plan lifts it.
-    if (inputs.pastTheCheck || paused) {
+    // An amendment is another matter (W15-R12; D-2 (c)): the agreements were checked against the
+    // charter it amends, so they stay in effect for the employee while this check is owed, and
+    // only a refusal ends one. Past the check nothing can be asked, so nothing changes; under a
+    // pause the check is asked again after each wait, as one the model could not answer is.
+    if ((inputs.pastTheCheck || paused) && !inputs.established) {
       for (const agreement of inputs.agreements) {
         await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
           agreementId: agreement._id,
@@ -320,8 +327,13 @@ export const checkForCharter = internalAction({
       }
       return;
     }
+    if (inputs.pastTheCheck) return;
     const unavailable: Id<'workingAgreements'>[] = [];
     for (const agreement of inputs.agreements) {
+      if (paused) {
+        unavailable.push(agreement._id);
+        continue;
+      }
       const outcome = await checkedOrUnavailable(ctx, {
         agreement,
         charters: [inputs.charter],
@@ -358,6 +370,14 @@ export const checkForCharter = internalAction({
         agentId: args.agentId,
         attempt: args.attempt + 1,
         agreementIds: unavailable,
+      });
+      return;
+    }
+    if (inputs.established) {
+      log.warn('working agreements: an amended charter was not checked against these agreements', {
+        agentId: args.agentId,
+        agreementIds: unavailable,
+        reason: 'the check could not be had after its last retry; they stay in effect',
       });
       return;
     }

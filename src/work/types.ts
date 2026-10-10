@@ -191,6 +191,12 @@ export interface ExecutionPlan {
   /** Set when the agreements the planner saw were scrubbed without the span model. */
   agreementsRedaction?: 'structural-only';
   /**
+   * The statements of the working agreements the plan was drafted with that no longer bound the
+   * employee when it was stored or approved (retired, refused or held meanwhile; W15-R35): the
+   * steps may still follow them, so the card says so. Written by `setPlan` and the approval.
+   */
+  agreementsLeftOut?: string[];
+  /**
    * The documentation each step follows, real mode only (wave 14, 14-R): the cite lines the
    * planner named for a step, each with the stored blocks under it in the planner's selection.
    * The closing phase refuses to run on a plan whose cited block is gone.
