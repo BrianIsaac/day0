@@ -192,16 +192,17 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
     const labels = [...view.container.querySelectorAll('button')].map(
       (button) => button.getAttribute('aria-label') ?? button.textContent,
     );
-    // Clear is offered only where the manager decided the status by hand.
+    // Clear is offered only where the manager decided the status by hand. Re-pinned by the
+    // second pass's minor 11: each name now opens with the words its button shows.
     expect(labels).toEqual([
-      'Mark Pipeline runbook superseded by the chosen page',
-      'Mark Pipeline runbook archived',
-      'Pipeline runbook is a draft',
+      'Mark superseded: Pipeline runbook, by the chosen page',
+      'Mark archived: Pipeline runbook',
+      'This is a draft: Pipeline runbook',
       'This is current: Pipeline runbook',
       'Clear your status for Pipeline runbook',
-      'Mark Pipeline runbook, version 2 superseded by the chosen page',
-      'Mark Pipeline runbook, version 2 archived',
-      'Pipeline runbook, version 2 is a draft',
+      'Mark superseded: Pipeline runbook, version 2, by the chosen page',
+      'Mark archived: Pipeline runbook, version 2',
+      'This is a draft: Pipeline runbook, version 2',
     ]);
     view.unmount();
   });
@@ -210,9 +211,9 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
     backend.pages = listed;
     backend.readState = null;
     const view = mount(<PageTable source={SOURCE} zone="UTC" />);
-    await press(view.container, 'Mark Pipeline runbook, version 2 archived');
+    await press(view.container, 'Mark archived: Pipeline runbook, version 2');
     await settle();
-    await press(view.container, 'Pipeline runbook, version 2 is a draft');
+    await press(view.container, 'This is a draft: Pipeline runbook, version 2');
     await settle();
     await press(view.container, 'Clear your status for Pipeline runbook');
     await settle();
@@ -258,7 +259,7 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
     backend.readState = null;
     const view = mount(<PageTable source={SOURCE} zone="UTC" />);
     const mark = view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Mark Pipeline runbook, version 2 superseded by the chosen page"]',
+      'button[aria-label="Mark superseded: Pipeline runbook, version 2, by the chosen page"]',
     )!;
     expect(mark.disabled).toBe(true);
     const picker = view.container.querySelector<HTMLSelectElement>('#successor-p2')!;
@@ -272,7 +273,7 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
       setter?.call(picker, 'p1');
       picker.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await press(view.container, 'Mark Pipeline runbook, version 2 superseded by the chosen page');
+    await press(view.container, 'Mark superseded: Pipeline runbook, version 2, by the chosen page');
     await settle();
     expect(backend.calls).toEqual([
       {
@@ -280,6 +281,23 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
         args: { pageId: 'p2', status: 'superseded', supersededBy: 'p1' },
       },
     ]);
+    view.unmount();
+  });
+
+  it('names every control with the words it shows, so the name a voice says is the one on the button (WCAG 2.5.3)', (): void => {
+    // The second pass's minor 11: "Mark archived" was named "Mark Pipeline runbook archived" and
+    // "This is a draft" was named "Pipeline runbook is a draft", so saying the words on the
+    // button found no control.
+    backend.pages = listed;
+    backend.readState = null;
+    const view = mount(<PageTable source={SOURCE} zone="UTC" />);
+    const named = [...view.container.querySelectorAll('button[aria-label]')];
+    expect(named.length).toBeGreaterThan(0);
+    for (const button of named) {
+      const shown = (button.textContent ?? '').trim();
+      const name = button.getAttribute('aria-label') ?? '';
+      expect(name.startsWith(shown), `"${shown}" is named "${name}"`).toBe(true);
+    }
     view.unmount();
   });
 

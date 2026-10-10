@@ -99,7 +99,8 @@ export function decidedByWords(page: PageRow, zone: string | undefined): string 
  * that takes its place, "Mark archived", "This is a draft", and "Clear", back to what the page
  * and its source say, for a status the manager gave by hand. A page that is not current, whatever
  * decided it (a marker, a relation, its source, the manager), also offers "This is current": the
- * manager's word that it stands, so no status is one the manager cannot leave.
+ * manager's word that it stands, so no status is one the manager cannot leave. Each button's
+ * name opens with the words it shows and then says which page (WCAG 2.5.3, Label in Name).
  *
  * @param page - The page.
  * @param others - The other pages listed, any of which may be named as its successor.
@@ -141,7 +142,7 @@ function PageControls({
           <Button
             size="small"
             disabled={change.busy || successor === ''}
-            aria-label={`Mark ${page.title} superseded by the chosen page`}
+            aria-label={`Mark superseded: ${page.title}, by the chosen page`}
             onClick={() => {
               if (successor === '') return;
               change.run(
@@ -162,7 +163,7 @@ function PageControls({
       <Button
         size="small"
         disabled={change.busy}
-        aria-label={`Mark ${page.title} archived`}
+        aria-label={`Mark archived: ${page.title}`}
         onClick={() =>
           change.run(() => setStatus({ pageId: page._id, status: 'archived' }), {
             done: `“${page.title}” is archived.`,
@@ -175,7 +176,7 @@ function PageControls({
       <Button
         size="small"
         disabled={change.busy}
-        aria-label={`${page.title} is a draft`}
+        aria-label={`This is a draft: ${page.title}`}
         onClick={() =>
           change.run(() => setStatus({ pageId: page._id, status: 'draft' }), {
             done: `“${page.title}” is a draft.`,
