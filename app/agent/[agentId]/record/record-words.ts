@@ -1130,8 +1130,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${counted(p.readmitted, 'parked item') ?? 'Parked items'} sent back to be evaluated: ${
       REQUEUED_BECAUSE[text(p.trigger) ?? ''] ?? 'a policy changed'
     }`,
-  'work.claim-refused': (_, subject) =>
-    `${subject.name} did not take ${itemOf(subject)}: another employee holds the ticket`,
+  'work.claim-refused': (p, subject) => {
+    const { name, settled } = p.holder ?? {};
+    const on = text(settled?.commentedOn);
+    return settled === undefined
+      ? `${subject.name} did not take ${itemOf(subject)}: another employee holds the ticket`
+      : `${subject.name} did not take ${itemOf(subject)}: ${text(name) ?? 'another employee'} settled ${text(settled.ticket) ?? 'the ticket it names'} with a comment${on ? ` on ${on}` : ''}`;
+  },
   'work.evaluated': (p, subject) => {
     const decision = text(p.decision);
     if (decision === REEVALUATION) {
@@ -1184,14 +1189,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       p.source === 'correction-promotion' ? 'corrections' : 'words'
     }`,
   'agreement.activated': (p, subject) =>
-    `${decider(subject)} kept a working agreement${
-      p.everyEmployee === true ? ' for every employee' : ''
-    }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
+    p.afterHold === true
+      ? `A working agreement for every employee is now in effect for ${subject.name}: Day0 checked it against its charter`
+      : `${decider(subject)} kept a working agreement${
+          p.everyEmployee === true ? ' for every employee' : ''
+        }${p.approvedVia === 'plan-approval' ? ' from a plan approval note' : ''}`,
   'agreement.refused': (p, subject) =>
     p.reason === 'every-employee-too-many'
       ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : p.reason === 'unchecked-for-employee'
-        ? `A working agreement for every employee is not in effect for ${subject.name}: you had more than ${EMPLOYEES_CHECKED} employees when its charter was approved, so it was never checked against it`
+        ? `A working agreement for every employee is not in effect for ${subject.name}: Day0 has not checked it against its charter`
         : text(p.clause)
           ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
           : `A working agreement was refused: it would go beyond the charter`,

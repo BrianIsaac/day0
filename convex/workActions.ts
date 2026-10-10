@@ -3175,18 +3175,19 @@ async function reusedRows(
   const earlier: LandedWrite[] =
     (dependent ? output.initial.landedWrites : output.landedWrites) ?? [];
   const resumed = dependent && output.initial.resumedClosing;
-  const managerFeedback =
+  const stored =
     dependent || earlier.length > 0
-      ? liveManagerFeedback(
-          (await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId }))
-            ?.managerFeedback,
-        )
+      ? (await ctx.runQuery(internal.work.getInternal, { workItemId: run.workItemId }))
+          ?.managerFeedback
       : undefined;
+  const managerFeedback = liveManagerFeedback(stored);
   // A closing set's message identical to one its own first phase landed is that message
-  // (W12V-13), unless the manager's note asks for it again (W13-R47).
+  // (W12V-13), unless the manager's note asks for it again (W13-R47) and that phase ran before
+  // the note was given (W14-R45).
   const fromThisRun = dependent
     ? reusedFromThisRun(output.actions, thisRunWrites(output.initial, run), run, {
         managerFeedback,
+        ...(stored === undefined ? {} : { feedbackAt: stored.at }),
       })
     : output.actions.map(() => undefined);
   const rows =

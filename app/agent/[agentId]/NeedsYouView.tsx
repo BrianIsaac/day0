@@ -86,7 +86,11 @@ export function skippedSentence(
     return `${skipped}: it did not look worth doing as it stands.`;
   }
   if (reason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)) {
-    return `${skipped}: a colleague is working it.`;
+    const settled = (item.verdict as { claimedBy?: { settled?: unknown } } | undefined)?.claimedBy
+      ?.settled;
+    return settled === undefined
+      ? `${skipped}: a colleague is working it.`
+      : `${skipped}: a colleague already settled the ticket it names.`;
   }
   return `${skipped}.`;
 }

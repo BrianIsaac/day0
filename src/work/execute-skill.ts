@@ -136,7 +136,7 @@ function skillInputLines(skillBody: string, candidate: WorkCandidate, mode: Surf
 const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
   'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
-  'Apply the skill to the candidate. Produce three things:',
+  'Apply the skill to the candidate. Produce every numbered item below:',
   '  1. A draft (human-readable): the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes: short assumptions or open questions (single sentence).',
 ];
@@ -214,21 +214,27 @@ const DEPENDENT_PHASE_MOCK =
  * that read it wrote "it waits for manager approval before it lands here" into posts that landed,
  * and on the 14-FW bed one followed such a step literally, posting "Will post the answer here once
  * approved." and the answer as a draft in the DM. So the run is told, as real mode's held-set rule
- * says, that the approval is what sends each write.
+ * says, that the approval is what sends each write. A visitor may untick a row, so the line says
+ * the approval may be of part of the set and that a message waits on the writes it reports
+ * (W14-R48, with W14-R44's binding of the mock verbs).
  */
 const MOCK_ACTION_MODE =
-  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
+  "Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
+
+/** Where `reports` sits in each preamble's numbered list; the action format line names it. */
+const MOCK_REPORTS_ITEM = 6;
+const REAL_REPORTS_ITEM = 7;
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
   '  3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.',
   PROCEDURE_TRAIL_OUTPUT,
   workDoneOutput(5),
-  reportsOutput(6),
+  reportsOutput(MOCK_REPORTS_ITEM),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
-  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
+  `Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }, with \`reports\` beside them on a verb that can carry a message (item ${MOCK_REPORTS_ITEM}). The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:`,
   '  - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }',
   '  - slack.postMessage:    { channelSlug, threadKey: string or null, body }',
   '  - twitter.reply:        { tweetSlug, body }',
@@ -281,14 +287,14 @@ const REAL_PREAMBLE = [
   REAL_PROCEDURE_TRAIL_OUTPUT,
   OPEN_QUESTION_OUTPUT_REAL,
   workDoneOutput(6),
-  reportsOutput(7),
+  reportsOutput(REAL_REPORTS_ITEM),
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_REAL,
   BROWSER_SESSION_REAL,
   RESUMED_READS_REAL,
   REAL_PROCEDURE_TRAIL_INDEX,
   '',
-  'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  `Action format: each action is { tool: string, args: object }, with \`reports\` beside them (item ${REAL_REPORTS_ITEM}). The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are \`mcp.call\` and \`http.request\`, described with the connected surfaces below when any surface is connected.`,
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
   '',
@@ -737,7 +743,7 @@ export function normalisePlanStepOutcomes(
  * The quote is checked against the charter and kept with the outcome.
  */
 const CHARTER_CLAUSE_RULE =
-  "When a charter clause decides a step's outcome (a willNotDo clause or an escalation trigger that blocks or withholds it, or the willDo clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
+  "When a charter clause decides a step's outcome (a will-not-do clause or an escalation trigger that blocks or withholds it, or the will-do clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
 
 /**
  * A closing outcome as it is kept: the basis only when it is not the ledger,
@@ -929,6 +935,8 @@ function clauseList(values: readonly string[]): string {
  * escalation triggers, the adjacent roles, the named systems and
  * collaborators, who approves, and the questions the manager has answered,
  * so both phases see the whole contract they are told to stay inside (P8-9).
+ * Each line is labelled in the planner's words ("Will do:", "Escalates when:"), never a field's
+ * name: a run's notes or its one line of why can quote a label to a visitor (W14-R50).
  * The constraints are not repeated: their wording lives in the clauses. The
  * People block (13-J) follows the charter's lines under its own heading, and
  * takes the place of the charter's named collaborators once it names anyone
@@ -950,16 +958,16 @@ export function executorCharterLines(
   const lines = [
     `Role: ${charter.proposedFunction}`,
     '',
-    `Charter willDo: ${boundaries.willDo.join(' | ')}`,
-    `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
+    `Will do: ${boundaries.willDo.join(' | ')}`,
+    `Will not do: ${boundaries.willNotDo.join(' | ')}`,
   ];
   if (mode !== 'real') return lines;
   const people = peopleBlockLines(reader.people);
   return [
     ...lines,
-    `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
-    `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
-    `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
+    `Escalates when: ${clauseList(boundaries.escalationTriggers)}`,
+    `Neighbouring roles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    `Systems the charter names: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
     // Left out only when the block prints every collaborator it names (W13-R22): one the manager
     // never confirmed would otherwise leave the prompt with its topic.
     ...(namesEveryCollaborator(
@@ -968,9 +976,9 @@ export function executorCharterLines(
     )
       ? []
       : [
-          `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+          `People the charter names: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
         ]),
-    `Charter approvalChain: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
+    `Approved by: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
     ...answeredQuestionLines(charter),
     ...(people.length > 0 ? ['', PEOPLE_HEADING, ...people] : []),
   ];
@@ -2853,7 +2861,7 @@ const RESUMED_FAILURE_IS_EARLIER =
  * approval" landed beside them, untrue.
  */
 export const HELD_SET_REAL =
-  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write before it has landed, and holds it back with them otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write it reports has landed, and holds it back otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';

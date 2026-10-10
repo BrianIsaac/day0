@@ -352,10 +352,11 @@ describe('a strike that takes only the clauses carrying its rule (W13-R6, W13-R7
       'keeps the clause “Promise a refund in a reply.” because another rule still needs it: “Never promise a refund in a reply.”',
     );
     expect(html).toContain(
-      'keeps the clause “Read each social mention.”: it does not carry your words',
+      // Re-taken (14-FX's n14): no colon after a quoted clause's own full stop.
+      'keeps the clause “Read each social mention.”, which does not carry your words',
     );
     expect(html).toContain(
-      'keeps the clause “Draft replies.”: your words are not in it to take out',
+      'keeps the clause “Draft replies.”, since your words are not in it to take out',
     );
     // Named once, by its kept line; the note names only a bound clause no kept line names.
     expect(html).not.toContain('Also linked to this rule');

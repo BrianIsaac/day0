@@ -8565,6 +8565,49 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 });
 
 describe('work.listForAgent', (): void => {
+  it('reads the newest items up to its bound, in the order the page has always been given (W14-R51)', async (): Promise<void> => {
+    const { WORK_LIST_LIMIT } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const states = ['discovered', 'completed', 'skipped'] as const;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let item = 0; item <= WORK_LIST_LIMIT; item += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${item}`,
+          title: 'Add the close-summary audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: states[item % states.length]!,
+          observedAt: item,
+          createdAt: item,
+        });
+      }
+    });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+
+    // One more item than the bound: the oldest is the one left out.
+    expect(listed).toHaveLength(WORK_LIST_LIMIT);
+    expect(listed.map((item) => item.externalId)).not.toContain('REVOPS-0');
+    // The order below the bound is unchanged: by state, last first, the newest first within one.
+    expect(listed.slice(0, 2).map((item) => [item.state, item.externalId])).toEqual([
+      [
+        'skipped',
+        `REVOPS-${WORK_LIST_LIMIT - (WORK_LIST_LIMIT % 3 === 2 ? 0 : (WORK_LIST_LIMIT % 3) + 1)}`,
+      ],
+      [
+        'skipped',
+        `REVOPS-${WORK_LIST_LIMIT - (WORK_LIST_LIMIT % 3 === 2 ? 0 : (WORK_LIST_LIMIT % 3) + 1) - 3}`,
+      ],
+    ]);
+    expect(listed.at(-1)?.state).toBe('completed');
+  });
+
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

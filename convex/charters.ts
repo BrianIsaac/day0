@@ -587,6 +587,8 @@ export async function amendCharterInTransaction(
   }
 
   await scheduleReevaluation(ctx, args.agentId, charterId);
+  // An amended charter is checked against the agreements for every employee, as an approved one is.
+  await scheduleCharterCheck(ctx, args.agentId);
   return { charterId, version, previousVersion: previous.version };
 }
 

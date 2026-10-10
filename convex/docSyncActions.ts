@@ -349,6 +349,8 @@ async function persistPage(
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
   };
+  // The page store takes what it stores, by name: the status and revision a reader reports ride
+  // beside the page's hash and never through `upsertPage` (A-2), whose validator takes neither.
   await ctx.runMutation(internal.docSources.upsertPage, {
     sourceId: safePage.sourceId,
     ref: safePage.ref,

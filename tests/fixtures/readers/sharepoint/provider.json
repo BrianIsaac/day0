@@ -1,0 +1,255 @@
+{
+  "reference": [
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/driveitem-delta.md",
+      "read": "2026-10-10 (the source of learn.microsoft.com/graph/api/driveitem-delta: value, @odata.nextLink then @odata.deltaLink, the deleted facet, 410 Gone with resyncChangesApplyDifferences and a Location; application permission Files.Read.All)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/driveitem-get-content.md",
+      "read": "2026-10-10 (302 Found with a Location to a pre-authenticated address, fetched with no Authorization header)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/resources/driveitem.md",
+      "read": "2026-10-10 (id, name, cTag, size, webUrl, lastModifiedDateTime, file, folder, deleted, parentReference)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/site-getbypath.md",
+      "read": "2026-10-10 (GET /sites/{hostname}:/{relative-path}; application permission Sites.Read.All)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/sitepage-list.md",
+      "read": "2026-10-10 (GET /sites/{site-id}/pages/microsoft.graph.sitePage, $top; publishingState.level and versionId; application permission Sites.Read.All)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/sitepage-get.md",
+      "read": "2026-10-10 ($expand=canvasLayout: horizontalSections, columns, webparts, a text web part's innerHtml)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/concepts/auth-v2-service.md",
+      "read": "2026-10-10 (ms.date 2025-08-29: the client credentials token request and its answer)"
+    },
+    {
+      "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/concepts/throttling.md",
+      "read": "2026-10-10 (ms.date 2025-01-14, context: 429 with Retry-After)"
+    }
+  ],
+  "unverified": "The download address's host, the token route's refusal body and a text web part's @odata.type (the get example says #oneDrive.textWebPart, the resource page microsoft.graph.textWebPart) are as the reference prints them, not as a tenant sent them.",
+  "authorization": "Bearer fixture-graph-token",
+  "unauthorised": {
+    "status": 401,
+    "body": "unauthorised.json"
+  },
+  "refusedForm": {
+    "status": 401,
+    "body": "token-refused.json"
+  },
+  "notFound": {
+    "status": 404,
+    "body": "not-found.json"
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "host": "login.microsoftonline.com",
+      "path": "/9188040d-6c67-4c5b-b112-36a304b66dad/oauth2/v2.0/token",
+      "open": true,
+      "form": {
+        "client_id": "6731de76-14a6-49ae-97bc-6eba6914391e",
+        "scope": "https://graph.microsoft.com/.default",
+        "client_secret": "fixture-client-secret",
+        "grant_type": "client_credentials"
+      },
+      "status": 200,
+      "body": "token.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com:/sites/Runbooks",
+      "status": 200,
+      "body": "site.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/drive/root/delta",
+      "query": [
+        [
+          "$top",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "delta-1.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/drive/root/delta",
+      "query": [
+        [
+          "token",
+          "fixture-delta-page-2"
+        ]
+      ],
+      "status": 200,
+      "body": "delta-2.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/drives/b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5/items/01CLOSE/content",
+      "status": 302,
+      "headers": {
+        "location": "https://acme.sharepoint.com/sites/Runbooks/_layouts/15/download.aspx?UniqueId=01CLOSE&tempauth=fixture-preauthenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/drives/b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5/items/01OPSZH/content",
+      "status": 302,
+      "headers": {
+        "location": "https://acme.sharepoint.com/sites/Runbooks/_layouts/15/download.aspx?UniqueId=01OPSZH&tempauth=fixture-preauthenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "host": "acme.sharepoint.com",
+      "path": "/sites/Runbooks/_layouts/15/download.aspx",
+      "query": [
+        [
+          "UniqueId",
+          "01CLOSE"
+        ],
+        [
+          "tempauth",
+          "fixture-preauthenticated"
+        ]
+      ],
+      "open": true,
+      "status": 200,
+      "headers": {
+        "content-type": "application/octet-stream"
+      },
+      "body": "close-the-quarter.md"
+    },
+    {
+      "method": "GET",
+      "host": "acme.sharepoint.com",
+      "path": "/sites/Runbooks/_layouts/15/download.aspx",
+      "query": [
+        [
+          "UniqueId",
+          "01OPSZH"
+        ],
+        [
+          "tempauth",
+          "fixture-preauthenticated"
+        ]
+      ],
+      "open": true,
+      "status": 200,
+      "headers": {
+        "content-type": "application/octet-stream"
+      },
+      "body": "ops-handbook-zh.md"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/microsoft.graph.sitePage",
+      "query": [
+        [
+          "$top",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "pages-1.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/microsoft.graph.sitePage",
+      "query": [
+        [
+          "$skiptoken",
+          "fixture-pages-2"
+        ]
+      ],
+      "status": 200,
+      "body": "pages-2.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/0a1b2c3d-0000-4000-8000-000000000001/microsoft.graph.sitePage",
+      "query": [
+        [
+          "$expand",
+          "canvasLayout"
+        ]
+      ],
+      "status": 200,
+      "body": "page-refresh.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/0a1b2c3d-0000-4000-8000-000000000002/microsoft.graph.sitePage",
+      "query": [
+        [
+          "$expand",
+          "canvasLayout"
+        ]
+      ],
+      "status": 200,
+      "body": "page-draft.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/0a1b2c3d-0000-4000-8000-000000000003/microsoft.graph.sitePage",
+      "query": [
+        [
+          "$expand",
+          "canvasLayout"
+        ]
+      ],
+      "status": 200,
+      "body": "page-zh.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/drives/b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5/items/01ESCAL/content",
+      "status": 302,
+      "headers": {
+        "location": "https://acme.sharepoint.com/sites/Runbooks/_layouts/15/download.aspx?UniqueId=01ESCAL&tempauth=fixture-preauthenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "host": "acme.sharepoint.com",
+      "path": "/sites/Runbooks/_layouts/15/download.aspx",
+      "query": [
+        [
+          "UniqueId",
+          "01ESCAL"
+        ],
+        [
+          "tempauth",
+          "fixture-preauthenticated"
+        ]
+      ],
+      "open": true,
+      "status": 200,
+      "headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      "body": "../word/escalation-paths.docx"
+    }
+  ],
+  "word": "The .docx files under ../word were written by hand as WordprocessingML and zipped with Python's zipfile on 2026-10-10 (no Word was used): `unzip -p <file> word/document.xml` shows each body."
+}

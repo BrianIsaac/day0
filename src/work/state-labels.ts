@@ -152,15 +152,23 @@ export function employeeStateLabel(
     : words;
 }
 
+/** A finished run's end in its own answer: the word its card leads with and the record says. */
+export type FinishedAs = 'done' | 'partly done' | 'not done';
+
 /**
  * A work item's state in the manager's words (round two section 3.7), the enum itself kept for
  * the Work tab's glossary and the export. A failed item the manager's own rejection stopped reads
- * "Rejected by you", not as a failure.
+ * "Rejected by you", not as a failure. A finished item reads as its run answered: "Landed" only
+ * when it said the work was done, "Partly done" in the held colour and "Not done" in the
+ * set-aside colour otherwise, as the record's dot does, so no green chip stands above a card that
+ * says the work was not done (W14-R47).
  *
  * @param item - The item's state, and the reason it was stopped when it was.
+ * @param finished - How the finished run ended by its own answer; read for a completed item only.
  */
 export function workItemStateLabel(
   item: Pick<Doc<'workItems'>, 'state' | 'skipReason'>,
+  finished: FinishedAs = 'done',
 ): StateLabel {
   switch (item.state) {
     case 'discovered':
@@ -179,6 +187,8 @@ export function workItemStateLabel(
     case 'deferred':
       return { text: 'Parked', tone: 'warn' };
     case 'completed':
+      if (finished === 'partly done') return { text: 'Partly done', tone: 'warn' };
+      if (finished === 'not done') return { text: 'Not done', tone: 'muted' };
       return { text: 'Landed', tone: 'ok' };
     case 'failed':
       return item.skipReason?.startsWith(MANAGER_REJECTION_PREFIX) === true

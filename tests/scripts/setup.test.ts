@@ -997,14 +997,83 @@ describe('the values written into .env.local', (): void => {
     ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
   });
 
+  it('adds a host to the operator’s own private hosts on --add-private-host, once, on a first run or a resume (W14-R36)', (): void => {
+    const real = {
+      route: 'key' as const,
+      project: 'p',
+      ports: DEFAULT_PORTS,
+      mode: 'real' as const,
+    };
+    // An upgraded install: its own list, which leaves the tile out, and a resume that keeps
+    // what the file holds.
+    const upgraded = setupEnvUpdates({
+      ...real,
+      existing: { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+      resume: { endpoint: false, modelPort: false },
+      addPrivateHosts: ['looker-tile'],
+    });
+    expect(upgraded.DAY0_PRIVATE_HOSTS).toBe('mcp.linear.app,looker-tile');
+    // Listed already, in any case: nothing is written.
+    expect(
+      setupEnvUpdates({
+        ...real,
+        existing: { DAY0_PRIVATE_HOSTS: 'mcp.linear.app Looker-Tile' },
+        resume: { endpoint: false, modelPort: false },
+        addPrivateHosts: ['looker-tile'],
+      }),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+    // An empty list takes the tile by itself and the host named beside it.
+    expect(
+      setupEnvUpdates({ ...real, existing: {}, addPrivateHosts: ['wiki.corp.internal'] })
+        .DAY0_PRIVATE_HOSTS,
+    ).toBe('looker-tile,wiki.corp.internal');
+    // Without the flag the operator's list is theirs, as before.
+    expect(
+      setupEnvUpdates({
+        ...real,
+        existing: { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+        resume: { endpoint: false, modelPort: false },
+      }),
+    ).not.toHaveProperty('DAY0_PRIVATE_HOSTS');
+  });
+
+  it('reads --add-private-host from the command line, more than once, and refuses a host the list never takes', (): void => {
+    expect(
+      parseSetupArguments([
+        '--add-private-host',
+        'looker-tile',
+        '--add-private-host',
+        '.corp.internal',
+      ]).addPrivateHosts,
+    ).toEqual(['looker-tile', '.corp.internal']);
+    // A list in one argument is its entries, each added once (the second pass).
+    expect(
+      parseSetupArguments(['--add-private-host', 'looker-tile, wiki.corp.internal'])
+        .addPrivateHosts,
+    ).toEqual(['looker-tile', 'wiki.corp.internal']);
+    expect(() => parseSetupArguments(['--add-private-host', 'localhost'])).toThrow(
+      /--add-private-host: .*localhost/,
+    );
+  });
+
   it('says so when the operator’s private hosts leave out the demo tile real mode starts (14-D ruling 2)', (): void => {
+    // Re-taken (W14-R36): the line names the one flag that adds it, on a setup or an upgrade.
     expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(
-      'DAY0_PRIVATE_HOSTS does not list looker-tile, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add looker-tile to the list to use the tile.',
+      'DAY0_PRIVATE_HOSTS does not list looker-tile, the demo tile real mode starts, so Day0 refuses its web UI over plain http. Run this command again with `--add-private-host looker-tile` to add it to the list, or add it to the list yourself.',
     );
     expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal looker-tile' })).toBe(
       undefined,
     );
     expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: '' })).toBe(undefined);
+    // Found on the bed (15-FX): the run that adds the tile read the list as it stood before its
+    // own write, and told the operator to add what it had just added.
+    expect(
+      demoTileNote(
+        'real',
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app,looker-tile' },
+      ),
+    ).toBe(undefined);
     expect(demoTileNote('mock', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(undefined);
   });
 

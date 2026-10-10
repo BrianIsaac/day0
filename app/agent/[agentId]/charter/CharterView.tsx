@@ -127,6 +127,13 @@ export function CharterView() {
               via: 'agreements-card',
             })
           }
+          onKeepForOne={(agreementId) =>
+            keepAgreement({
+              ...onCard(agreementId),
+              forEveryEmployee: false,
+              via: 'agreements-card',
+            })
+          }
           onEdit={(agreementId, statement) => editAgreement({ ...onCard(agreementId), statement })}
           onRetire={(agreementId) => retireAgreement(onCard(agreementId))}
           onDismiss={(agreementId) => dismissAgreement(onCard(agreementId))}

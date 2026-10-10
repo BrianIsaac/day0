@@ -30,6 +30,7 @@ import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
 import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
+import type { FinishedAs } from '@/work/state-labels';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -220,6 +221,17 @@ export function cancelledReason(item: {
   return 'cancelled by the manager';
 }
 
+/** The colleague a claim-refused skip names, with what it settled when the skip is for that. */
+export interface ColleagueHolding {
+  readonly agentId: string;
+  readonly name: string;
+  /**
+   * Set when the row is an ask skipped for naming a ticket the colleague had settled (D-1 (a)):
+   * the ticket, the colleague's work item, and the day its comment landed when that was kept.
+   */
+  readonly settled?: { readonly ticket: string; readonly title: string; readonly on?: string };
+}
+
 /**
  * The colleague a claim-refused skip names, for the card's link to them.
  *
@@ -231,10 +243,18 @@ export function cancelledReason(item: {
  */
 export function colleagueHolding(
   item: Pick<Doc<'workItems'>, 'state' | 'verdict'>,
-): { agentId: string; name: string } | undefined {
+): ColleagueHolding | undefined {
   if (item.state !== 'skipped') return undefined;
   const verdict = item.verdict as
-    | { reason?: unknown; claimedBy?: { agentId?: unknown; name?: unknown } }
+    | {
+        reason?: unknown;
+        claimedBy?: {
+          agentId?: unknown;
+          name?: unknown;
+          title?: unknown;
+          settled?: { ticket?: unknown; commentedOn?: unknown };
+        };
+      }
     | undefined;
   const holder = verdict?.claimedBy;
   if (
@@ -244,7 +264,21 @@ export function colleagueHolding(
     return undefined;
   }
   if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
-  return { agentId: holder.agentId, name: holder.name };
+  const ticket = holder.settled?.ticket;
+  const on = holder.settled?.commentedOn;
+  return {
+    agentId: holder.agentId,
+    name: holder.name,
+    ...(typeof ticket === 'string'
+      ? {
+          settled: {
+            ticket,
+            title: typeof holder.title === 'string' ? holder.title : '',
+            ...(typeof on === 'string' ? { on } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -614,7 +648,7 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
 }
 
 /** A finished run's end as the record says it: the word its card leads with (13-FD). */
-export type FinishedAs = 'done' | 'partly done' | 'not done';
+export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event

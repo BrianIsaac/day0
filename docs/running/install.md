@@ -209,7 +209,36 @@ pinned Convex backend with `git` added and nothing else
 than GitHub or GitLab needs to be cloned. The setup says so when it builds it,
 and `./setup.sh upgrade` builds it again, so a re-pinned base reaches the
 backend. The build fetches git's packages from the Ubuntu archive
-(`archive.ubuntu.com`, `security.ubuntu.com`), which `pnpm check:setup` lists
-among the machine's egress; a machine that cannot reach it needs the image
-built where it can and loaded (`docker save` and `docker load` of
-`day0-convex-backend:git`).
+(`archive.ubuntu.com` and `security.ubuntu.com`; on an arm64 machine
+`ports.ubuntu.com`), which `pnpm check:setup` lists among the machine's egress.
+
+A machine that reaches a mirror of the archive and not the archive itself
+builds from the mirror, named by its whole address:
+
+```bash
+pnpm backend:build --build-arg APT_MIRROR=https://mirror.example/ubuntu
+```
+
+(`https://mirror.example/ubuntu-ports` on arm64.) Build it that way before
+`./setup.sh`: a real-mode setup or an upgrade then tries its own build from the
+archive, and when that fails it goes on with the image already here, built from
+the same pinned backend, and says so. A machine that reaches neither needs the
+image built where one can be reached and loaded (`docker save` and `docker
+load` of `day0-convex-backend:git`).
+
+The built image carries a label, `dev.dayzer0.backend.base`, with the digest
+of the pinned backend it was built from. `day0-convex-backend:git` is one name
+for the whole machine, so the setup, the demo bed and
+`pnpm check:setup --report` trust the image by that label, never by its name:
+an image built from another checkout's pin is built again, and one loaded from
+a file is used as it is. To read it:
+
+```bash
+docker image inspect day0-convex-backend:git \
+  --format '{{index .Config.Labels "dev.dayzer0.backend.base"}}'
+```
+
+If your IT does not allow a build at install at all, tell us: building the
+image only for an install that lists a git host (`DAY0_GIT_HOSTS`, or a git
+source on a private host) is the better long-term shape, and it is not built
+yet.

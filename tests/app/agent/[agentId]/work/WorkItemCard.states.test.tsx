@@ -764,6 +764,22 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     expect(nell).toContain('The October deal list is not in the tracker.');
   });
 
+  it("draws the state chip in the run's own answer, never Landed above Partly done or Not done (W14-R47)", (): void => {
+    /** The state chip's words: the first thing in the row above the card's title. */
+    const chip = (item: Doc<'workItems'>): string | null | undefined =>
+      card(item).container.querySelector('h3')?.previousElementSibling?.firstElementChild
+        ?.textContent;
+    expect(chip(answered('done', QUILL_COMMENT, 'All three deals match the tracker.'))).toBe(
+      'Landed',
+    );
+    expect(chip(answered('partial', ROOK_COMMENT, 'One of the three deals is reconciled.'))).toBe(
+      'Partly done',
+    );
+    expect(
+      chip(answered('not-done', ROOK_COMMENT, 'The October deal list is not in the tracker.')),
+    ).toBe('Not done');
+  });
+
   it("says a ticket this run closed beside a run that answered partial, so a Done ticket never stands under Partly done unsaid (12-D's Minor 5)", (): void => {
     const drawn = DRAWN.landed.output as { actions: unknown[]; applied: unknown[] };
     const view = card({

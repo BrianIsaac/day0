@@ -456,11 +456,47 @@ describe('MCP adapter', (): void => {
       tool: 'mcp.call',
       args: { surface: 'dashboard', tool: 'browser_snapshot', toolArgsJson: '{}' },
     };
+    // The page is plain http inside the network, so the deployment lists its host (W14-R31).
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'dashboard.internal');
     const result = await adapter(client, [browser]).apply(ctx, run, call, 0, 'k');
+    vi.unstubAllEnvs();
     expect(result.ok).toBe(true);
     expect(client.options).toEqual([
       { serverName: 'dashboard', url: new URL('http://playwright-mcp:8931/mcp') },
     ]);
+  });
+
+  it('holds a browser-driven surface to the plaintext rule before every action, and opens no driver for one it refuses (W14-R31)', async (): Promise<void> => {
+    const client = fakeClient({
+      portal_browser_snapshot: async (): Promise<unknown> => ({
+        content: [{ type: 'text', text: 'ok' }],
+      }),
+    });
+    // Connected before the rule, or before the list changed: its row still reads `connected`.
+    const portal: SurfaceRecord = {
+      ...linear,
+      slug: 'portal',
+      displayName: 'Partner portal',
+      path: 'browser-driven',
+      endpoint: 'http://portal.example.com/login',
+      credentialId: undefined,
+      toolAllowlist: ['browser_snapshot'],
+    };
+    const call: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'portal', tool: 'browser_snapshot', toolArgsJson: '{}' },
+    };
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
+    const refused = await adapter(client, [portal]).apply(ctx, run, call, 0, 'k');
+    expect(refused).toMatchObject({ ok: false });
+    expect(refused.reason).toContain(
+      'it is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it',
+    );
+    expect(client.options).toHaveLength(0);
+    // Listed, the same card is driven as before.
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile portal.example.com');
+    expect((await adapter(client, [portal]).apply(ctx, run, call, 0, 'k')).ok).toBe(true);
+    vi.unstubAllEnvs();
   });
 
   it('rejects malformed arguments before touching the network', async (): Promise<void> => {

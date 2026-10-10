@@ -674,7 +674,7 @@ export async function synthesiseCharter(args: SynthesiseCharterArgs): Promise<Ch
 export function renderCharter(c: Charter, date = new Date()): string {
   const isoDate = date.toISOString().slice(0, 10);
   const lines: string[] = [
-    `DRAFT CHARTER — Day0 v${c.version} — ${isoDate}`,
+    `DRAFT CHARTER - Day0 v${c.version} - ${isoDate}`,
     `SOURCE: ${c.source}`,
     '',
     'WHY THIS HIRE                                              [from manager 1:1]',
@@ -717,13 +717,13 @@ export function renderCharter(c: Charter, date = new Date()): string {
     `  - Boss: ${c.approvalChain.boss}`,
     `  - Confidence: ${c.approvalChain.confidence}`,
     '',
-    'OPEN QUESTIONS — to follow up',
+    'OPEN QUESTIONS: to follow up',
     ...renderBullets(c.openQuestions, '  '),
     '',
     ...((c.answeredQuestions ?? []).length > 0
       ? [
           'ANSWERED QUESTIONS                                         [from manager, after approval]',
-          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} — ${q.answer}`),
+          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} Answer: ${q.answer}`),
           '',
         ]
       : []),
@@ -745,12 +745,12 @@ function renderEvidence(items: EvidenceItem[]): string[] {
 
 function renderCollaborators(items: NamedCollaborator[]): string[] {
   if (items.length === 0) return ['  - (none yet)'];
-  return items.map((n) => `  - ${n.name} — ${n.topic} — intro path: ${n.introPath}`);
+  return items.map((n) => `  - ${n.name}: ${n.topic}; intro path: ${n.introPath}`);
 }
 
 function renderAdjacents(items: AdjacentRole[]): string[] {
   if (items.length === 0) return ['  - (none flagged yet)'];
-  return items.map((a) => `  - ${a.who} — ${a.staysOutOfTheirLaneBy}`);
+  return items.map((a) => `  - ${a.who}: ${a.staysOutOfTheirLaneBy}`);
 }
 
 /** The one line that names the employee's role, from the charter's function or its reason for hire. */

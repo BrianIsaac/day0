@@ -1449,6 +1449,11 @@ export interface AgreementActivatedPayload extends AgreementNamed {
   readonly supersedes?: Id<'workingAgreements'>;
   /** The plan approval whose note the manager kept. */
   readonly workItemId?: WorkItemId;
+  /**
+   * An agreement for every employee, in effect for this employee once the check its hold waited
+   * on allowed it (15-FX, W14-R15's lift): no keep of the manager's, so the record says the check.
+   */
+  readonly afterHold?: boolean;
 }
 
 /** The payload of `agreement.refused`: it would go beyond the charter (F11), with the clause. */

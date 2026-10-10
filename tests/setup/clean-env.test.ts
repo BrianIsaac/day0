@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { inheritedProductVariables } from './clean-env';
+import { inheritedProductVariables, SUITE_PRIVATE_HOSTS } from './clean-env';
 
 /** The repository root, found from this file rather than the working directory. */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -52,8 +52,11 @@ describe('the suite environment', (): void => {
     ]);
   });
 
-  it('starts every test file with none of them', (): void => {
-    expect(inheritedProductVariables(process.env)).toEqual([]);
+  it('starts every test file with none of them but the private hosts the suite sets itself', (): void => {
+    // Re-taken (15-FX, W14-R31): the executor holds a browser card to `DAY0_PRIVATE_HOSTS` at
+    // every action, so the suite's deployment lists the demo tile, the same on every machine.
+    expect(inheritedProductVariables(process.env)).toEqual(['DAY0_PRIVATE_HOSTS']);
+    expect(process.env.DAY0_PRIVATE_HOSTS).toBe(SUITE_PRIVATE_HOSTS);
   });
 
   it('passes the model-address tests from a shell that exports a local model', (): void => {

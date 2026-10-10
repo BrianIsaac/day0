@@ -1135,6 +1135,21 @@ export function slackApiBaseForCheck(values: Values): URL {
 /** The preload that sends this machine's `fetch` to Linear to a bed's fake Linear instead. */
 const FAKE_LINEAR_PRELOAD = 'fake-linear/host-preload.mjs';
 
+/** The mark the preload leaves on the global object when it loads: the fake it sends to. */
+export const FAKE_LINEAR_PRELOADED: unique symbol = Symbol.for('day0.fake-linear.host-preload');
+
+/**
+ * The fake Linear this process's `fetch` is sent to, when the bed's preload is loaded in it
+ * (W14-R51): read from the mark the preload leaves, never from `NODE_OPTIONS`, whose text says
+ * only that the file was named there.
+ *
+ * @param scope - The global object of the process.
+ */
+export function loadedFakeLinear(scope: object = globalThis): string | undefined {
+  const mark = (scope as { readonly [FAKE_LINEAR_PRELOADED]?: unknown })[FAKE_LINEAR_PRELOADED];
+  return typeof mark === 'string' && mark.trim() !== '' ? mark : undefined;
+}
+
 /**
  * Why the check may not reach Linear from this process, or undefined when it may (W13-R48): a bed
  * (its env file names a fake Slack) never calls Linear itself, and this machine's Node resolves
@@ -1143,22 +1158,16 @@ const FAKE_LINEAR_PRELOAD = 'fake-linear/host-preload.mjs';
  * to Linear itself that way. A deployment that names no fake Slack reaches Linear itself.
  *
  * @param values - The env file's values.
- * @param env - This process's environment.
+ * @param preloadedFake - The fake the loaded preload sends to ({@link loadedFakeLinear}).
  */
 export function linearBedRefusal(
   values: Values,
-  env: Readonly<Record<string, string | undefined>>,
+  preloadedFake: string | undefined,
 ): string | undefined {
   if (!(values.DAY0_TEST_SLACK_API_URL ?? '').trim()) return undefined;
-  const lacking = [
-    ...((env.NODE_OPTIONS ?? '').includes(FAKE_LINEAR_PRELOAD)
-      ? []
-      : [`the preload (NODE_OPTIONS="--import <checkout>/${FAKE_LINEAR_PRELOAD}")`]),
-    ...((env.FAKE_LINEAR_HOST_URL ?? '').trim() ? [] : ['FAKE_LINEAR_HOST_URL']),
-  ];
-  return lacking.length === 0
+  return preloadedFake !== undefined
     ? undefined
-    : `DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself: run the check with ${lacking.join(' and ')} as the bed's recipe says, or check another system with --system.`;
+    : `DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself: run the check with the preload (NODE_OPTIONS="--import <checkout>/${FAKE_LINEAR_PRELOAD}") and FAKE_LINEAR_HOST_URL as the bed's recipe says, or check another system with --system.`;
 }
 
 /** The loopback hosts a bed publishes a fake on. */
@@ -1347,7 +1356,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     );
     slackApiBase = slackApiBaseForCheck(values);
     const linearRefused = rows.some((row) => row.system === 'linear')
-      ? linearBedRefusal(values, process.env)
+      ? linearBedRefusal(values, loadedFakeLinear())
       : undefined;
     if (linearRefused !== undefined) throw new Error(linearRefused);
   } catch (err) {

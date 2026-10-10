@@ -176,6 +176,124 @@ describe('LinkSourceForm', (): void => {
     view.unmount();
   });
 
+  /** Choose a value in one of the form's selects. */
+  function choose(scope: ParentNode, id: string, value: string): void {
+    const select = field<HTMLSelectElement>(scope, id);
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    act((): void => {
+      setter?.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it.each([
+    {
+      kind: 'confluence-v2',
+      typed: 'https://acme.atlassian.net/wiki/spaces/OPS/overview',
+      fields: {
+        'reader-cloud-id': '1A11D016-8984-4C3E-B9AB-142DD06ACB1B',
+        'reader-token': 'fixture-confluence-token',
+      },
+      locator:
+        'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+      credential: 'fixture-confluence-token',
+    },
+    {
+      kind: 'confluence-dc',
+      typed: 'https://wiki.acme.corp/confluence/spaces/OPS/overview',
+      fields: { 'reader-token': 'fixture-confluence-pat' },
+      locator: 'https://wiki.acme.corp/confluence/display/OPS',
+      credential: 'fixture-confluence-pat',
+    },
+    {
+      kind: 'sharepoint',
+      typed: 'https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/Forms/AllItems.aspx',
+      fields: {
+        'reader-tenant-id': ' tenant-id ',
+        'reader-client-id': 'client-id',
+        'reader-client-secret': 'fixture-client-secret',
+      },
+      locator: 'https://acme.sharepoint.com/sites/Runbooks',
+      credential: 'tenant-id:client-id:fixture-client-secret',
+    },
+    {
+      kind: 'yuque',
+      typed: 'https://acme.yuque.com/revops/runbooks/close-the-quarter',
+      fields: { 'reader-token': 'fixture-yuque-token' },
+      locator: 'https://acme.yuque.com/revops/runbooks',
+      credential: 'fixture-yuque-token',
+    },
+    {
+      kind: 'drive',
+      typed:
+        'https://drive.google.com/drive/u/0/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=sharing',
+      fields: {
+        'reader-key': '{ "client_email": "day0-reader@acme-docs.iam.gserviceaccount.com" }',
+      },
+      locator: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+      credential: '{"client_email":"day0-reader@acme-docs.iam.gserviceaccount.com"}',
+    },
+  ])(
+    'links a $kind source from the address the browser shows and its own secret fields, and clears them (15-X)',
+    async ({ kind, typed, fields, locator, credential }): Promise<void> => {
+      const view = mount(<LinkSourceForm />);
+      choose(view.container, 'source-kind', kind);
+      typeInto(field(view.container, 'source-label'), 'Runbooks');
+      typeInto(field(view.container, 'source-locator'), typed);
+      for (const [id, value] of Object.entries(fields)) {
+        field<HTMLInputElement>(view.container, id).value = value;
+      }
+
+      await press(view.container, 'Link location');
+      await settle();
+
+      expect(backend.calls).toEqual([
+        {
+          name: 'docSources:link',
+          args: { label: 'Runbooks', kind, locator, serverKind: undefined, credential },
+        },
+      ]);
+      for (const id of Object.keys(fields)) {
+        expect(field<HTMLInputElement>(view.container, id).value).toBe('');
+      }
+      view.unmount();
+    },
+  );
+
+  it('never carries a secret typed for one kind into another kind’s field (second pass)', (): void => {
+    const view = mount(<LinkSourceForm />);
+    choose(view.container, 'source-kind', 'confluence-dc');
+    field<HTMLInputElement>(view.container, 'reader-token').value = 'fixture-confluence-pat';
+    choose(view.container, 'source-kind', 'yuque');
+    expect(field<HTMLInputElement>(view.container, 'reader-token').value).toBe('');
+    view.unmount();
+  });
+
+  it('keeps what was typed, the region and the secret with it, when the link is refused, so it can be corrected (W14-R38)', async (): Promise<void> => {
+    backend.refusal = 'Uncaught Error: Feishu refused the app ID and secret this source uses.';
+    const view = mount(<LinkSourceForm />);
+    choose(view.container, 'source-kind', 'feishu');
+    choose(view.container, 'feishu-region', 'lark');
+    typeInto(field(view.container, 'source-label'), 'RevOps wiki');
+    typeInto(field(view.container, 'source-locator'), '7300000000000000001');
+    field<HTMLInputElement>(view.container, 'feishu-app-id').value = 'cli_fixture_app';
+    field<HTMLInputElement>(view.container, 'feishu-app-secret').value = 'fixture-app-secret';
+
+    await press(view.container, 'Link location');
+    await settle();
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe(
+      'Feishu refused the app ID and secret this source uses.',
+    );
+    expect(field<HTMLSelectElement>(view.container, 'feishu-region').value).toBe('lark');
+    expect(field<HTMLInputElement>(view.container, 'feishu-app-id').value).toBe('cli_fixture_app');
+    expect(field<HTMLInputElement>(view.container, 'feishu-app-secret').value).toBe(
+      'fixture-app-secret',
+    );
+    expect(field<HTMLInputElement>(view.container, 'source-label').value).toBe('RevOps wiki');
+    view.unmount();
+  });
+
   it('says a refusal under the form without the transport envelope', async (): Promise<void> => {
     backend.refusal =
       '[CONVEX A(docSources:link)] [Request ID: 1] Server Error\nUncaught Error: Documentation linking is a real-mode feature.\n    at handler (../convex/docSources.ts:1:1)';

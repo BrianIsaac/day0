@@ -26,7 +26,7 @@ const wiki: DocSourceRecord = {
   locator: `https://open.feishu.cn/wiki/spaces/${feishuTenant.spaceId}`,
 };
 
-/** A reader on the recorded tenant with a clock that moves only when the reader waits. */
+/** A reader on the fixture tenant with a clock that moves only when the reader waits. */
 function readerOnTenant(
   options: {
     readonly tokens?: readonly string[];
@@ -140,8 +140,60 @@ describe('the Feishu documentation reader', (): void => {
     const chinese = batch.pages.filter((page) => !/[A-Za-z]/.test(page.title));
     expect(chinese.map((page) => page.title)).toEqual(['刷新看板', '运维规则']);
     expect(chinese[0].markdown).toContain('每周一上午刷新管道看板。');
+    // Each is mirrored under its own node token: a title with no Latin letter names nothing in a
+    // slug, so the reference must (N8), and the fallback name must never stand in for it.
+    expect(chinese.map((page) => page.ref)).toEqual([NODES.zh1.node, NODES.zh2.node]);
     const slugs = chinese.map((page) => mirroredDocSlug(wiki._id, page.ref));
-    expect(new Set(slugs).size).toBe(2);
+    expect(slugs).toEqual([
+      `source-${String(wiki._id).slice(-10)}-${NODES.zh1.node.toLowerCase()}`,
+      `source-${String(wiki._id).slice(-10)}-${NODES.zh2.node.toLowerCase()}`,
+    ]);
+    expect(slugs.every((slug) => !slug.endsWith('-page'))).toBe(true);
+  });
+
+  it("captures each document's revision_id as its revision (15-X)", async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages.map((page) => [page.ref, page.sourceRevision])).toEqual([
+      [NODES.handbook.node, '12'],
+      [NODES.zh1.node, '3'],
+      [NODES.zh2.node, '5'],
+      [NODES.refresh.node, '7'],
+    ]);
+  });
+
+  it('names a shortcut unread as a page read where it lives, and asks nothing of it (W14-R43)', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname.endsWith('/nodes') &&
+        request.url.searchParams.get('parent_node_token') === null &&
+        request.url.searchParams.get('page_token') === null
+          ? nodePage([
+              {
+                node_token: 'wikcnShortcut00000000000001',
+                obj_token: 'doxcnElsewhere0000000000001',
+                obj_type: 'docx',
+                node_type: 'shortcut',
+                origin_node_token: 'wikcnOrigin0000000000000001',
+                has_child: true,
+                title: 'Handbook (shortcut)',
+                obj_edit_time: '1759312800',
+              },
+            ])
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages).toEqual([]);
+    expect(batch.unread).toEqual([
+      {
+        ref: 'wikcnShortcut00000000000001',
+        reason:
+          '"Handbook (shortcut)" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
+      },
+    ]);
+    // Neither its content nor its children are asked for.
+    expect(requests.some((request) => request.url.href.includes('doxcnElsewhere'))).toBe(false);
+    expect(requests.filter((request) => request.url.pathname.endsWith('/nodes'))).toHaveLength(1);
   });
 
   it('names a sheet node unread with its reason', async (): Promise<void> => {
@@ -293,9 +345,41 @@ describe('the Feishu documentation reader', (): void => {
       message = error instanceof Error ? error.message : String(error);
     }
     expect(message).toBe(
-      "Feishu refused the app ID and secret this source uses (Feishu code 10014, app secret invalid): use Rotate on the source's row to enter the app's current ID and secret.",
+      "Feishu refused the app ID and secret this source uses (Feishu code 10014, app secret invalid): use Rotate on the source's row to enter the app's current ID and secret. Rotate cannot change the region: this source asks Feishu (open.feishu.cn), so if the app was made on Lark (open.larksuite.com), unlink the source and link it again with that region.",
     );
     expect(message).not.toContain('not-the-fixture-secret');
+  });
+
+  it('names the other region when a Lark source’s app is refused, since Rotate cannot change it (W14-R38)', async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    await expect(
+      reader.listPageBatch(
+        { ...wiki, locator: `https://open.larksuite.com/wiki/spaces/${feishuTenant.spaceId}` },
+        feishuReaderSecret(feishuTenant.app.appId, 'not-the-fixture-secret'),
+        undefined,
+        25,
+      ),
+    ).rejects.toThrow(
+      'Rotate cannot change the region: this source asks Lark (open.larksuite.com), so if the app was made on Feishu (open.feishu.cn), unlink the source and link it again with that region.',
+    );
+  });
+
+  it('says the host could not be reached when a firewall or a missing name stops the request (W14-R39)', async (): Promise<void> => {
+    for (const [code, cause] of [
+      ['ENOTFOUND', 'getaddrinfo ENOTFOUND open.feishu.cn'],
+      ['ECONNREFUSED', 'connect ECONNREFUSED 10.0.0.7:443'],
+    ] as const) {
+      const reader = new FeishuReader({
+        fetch: async (): Promise<Response> => {
+          throw new TypeError('fetch failed', {
+            cause: Object.assign(new Error(cause), { code }),
+          });
+        },
+      });
+      await expect(reader.listPageBatch(wiki, SECRET, undefined, 25)).rejects.toThrow(
+        `Day0 could not reach open.feishu.cn: ${cause}. The machine Day0's backend runs on must reach open.feishu.cn directly over HTTPS, with no proxy in between: ask IT to allow it.`,
+      );
+    }
   });
 
   it('says how to add the app when the wiki space does not admit it', async (): Promise<void> => {

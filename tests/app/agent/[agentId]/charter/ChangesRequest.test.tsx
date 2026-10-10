@@ -56,6 +56,9 @@ describe('asking the employee for changes (round two section 3.5)', (): void => 
         onSentBack={(id, outcome) => page.push([id, outcome])}
       />,
     );
+    // W14-R56: the card scrolls the form to the top, where the sticky header would cover its
+    // heading without the same margin the amend panel has.
+    expect(view.container.querySelector('form')?.className).toContain('scroll-mt-24');
     expect(view.container.textContent).toContain(
       'Mira redrafts from your transcript and this note. Nothing you said is thrown away.',
     );

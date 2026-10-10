@@ -420,6 +420,19 @@ describe("the synthesiser's notes on the charter card", (): void => {
     },
   } as unknown as Doc<'charters'>;
 
+  it('draws no empty ruled band for a charter with no rules and no notes (found on the 15-FX bed; 14-FX\u2019s n20)', (): void => {
+    const bare = {
+      ...charter,
+      body: { ...(charter.body as Record<string, unknown>), constraints: [], synthesisNotes: [] },
+    } as unknown as Doc<'charters'>;
+    const view = document.createElement('div');
+    view.innerHTML = renderToStaticMarkup(<CharterCard charter={bare} name="Priya" />);
+    const emptyRuled = [...view.querySelectorAll('div')].filter(
+      (node) => node.className.includes('border-t') && node.textContent === '',
+    );
+    expect(emptyRuled).toEqual([]);
+  });
+
   it('says where the page starts the work when it drives it, and nothing where the server does (D-5 (a))', (): void => {
     const shown = (pageDrivesWork: boolean): string =>
       renderToStaticMarkup(

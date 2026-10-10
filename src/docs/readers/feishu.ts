@@ -19,9 +19,17 @@
  * out for the seconds `x-ogw-ratelimit-reset` names.
  */
 import { log } from '../../lib/logger';
-import { TransientProviderError, withBackoff, type BackoffPolicy } from '../../lib/transport-error';
+import {
+  TransientProviderError,
+  transportFailureKind,
+  withBackoff,
+  type BackoffPolicy,
+} from '../../lib/transport-error';
 import {
   BROWSER_HOSTS,
+  FEISHU_REGION_NAMES,
+  FEISHU_REGIONS,
+  otherFeishuRegion,
   parseFeishuLocator,
   parseFeishuSecret,
   type FeishuApp,
@@ -35,6 +43,7 @@ import {
   type UnreadPage,
 } from './batch';
 import { firstWalk, walkCursor, walkFromCursor, type FeishuWalk } from './feishu-walk';
+import { ProviderUnreachableError } from './provider-http';
 
 /** How one request is made: the reader's fetch, which a test answers in-process. */
 export type FeishuFetch = (input: URL, init: RequestInit) => Promise<Response>;
@@ -249,7 +258,7 @@ const TYPE_NOUNS: Readonly<Record<string, string>> = {
 /** Why a listed node is not read, when it is not a document. */
 function notReadReason(entry: ListedEntry): string {
   if (entry.shortcut) {
-    return `"${entry.title}" is a shortcut; day0 reads the page it points to where that page lives, if that is in this source.`;
+    return `"${entry.title}" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.`;
   }
   const noun = TYPE_NOUNS[entry.type] ?? `${entry.type} node`;
   return `"${entry.title}" is a Feishu ${noun}, which day0 does not read: only documents (docx) are read, as Markdown.`;
@@ -604,9 +613,9 @@ export class FeishuReader implements DocumentationReader {
   }
 
   /**
-   * One document as Markdown. Its `revision_id` is then read and logged for
-   * wave 15's change check (the store has no field for it yet); a refusal of
-   * that read is logged and the page kept, since nothing depends on it.
+   * One document as Markdown, with its `revision_id` as the page's revision
+   * (`docPages.sourceRevision`); a refusal of that read is logged and the page
+   * kept without one, since the page was read.
    */
   private async readDocument(
     session: FeishuSession,
@@ -622,11 +631,7 @@ export class FeishuReader implements DocumentationReader {
     if (markdown === undefined) {
       throw new FeishuApiError(0, 200, 'the answer carried no Markdown');
     }
-    log.info('feishu document read', {
-      sourceId: source._id,
-      ref: entry.ref,
-      revision: await this.revision(session, entry),
-    });
+    const revision = await this.revision(session, entry);
     return {
       sourceId: source._id,
       ref: entry.ref,
@@ -634,6 +639,7 @@ export class FeishuReader implements DocumentationReader {
       ...(entry.url === undefined ? {} : { url: entry.url }),
       markdown,
       updatedAt: entry.editedAt ?? this.now(),
+      ...(revision === null ? {} : { sourceRevision: String(revision) }),
     };
   }
 
@@ -649,8 +655,8 @@ export class FeishuReader implements DocumentationReader {
       const revision = field(field(document, 'document'), 'revision_id');
       return typeof revision === 'number' ? revision : null;
     } catch (error) {
-      // Whatever went wrong, the page was read and the revision is kept nowhere yet (W14-R10):
-      // logged, never the page's or the batch's failure.
+      // Whatever went wrong, the page was read (W14-R10): it is kept without a revision, and the
+      // failure is logged, never the page's or the batch's.
       log.warn('feishu document revision not read', {
         ref: entry.ref,
         reason: error instanceof Error ? error.message : String(error),
@@ -722,10 +728,16 @@ export class FeishuReader implements DocumentationReader {
       );
     } catch (error) {
       if (!(error instanceof FeishuApiError)) throw error;
+      // An app made in the other region is refused the same way, and Rotate changes the secret,
+      // never the region the source asks (W14-R38).
+      const { region } = session.locator;
+      const other = otherFeishuRegion(region);
       throw new Error(
         `Feishu refused the app ID and secret this source uses (Feishu code ${error.code}, ` +
           `${error.feishuMessage}): use Rotate on the source's row to enter the app's current ID ` +
-          'and secret.',
+          `and secret. Rotate cannot change the region: this source asks ${FEISHU_REGION_NAMES[region]} ` +
+          `(${FEISHU_REGIONS[region]}), so if the app was made on ${FEISHU_REGION_NAMES[other]} ` +
+          `(${FEISHU_REGIONS[other]}), unlink the source and link it again with that region.`,
         { cause: error },
       );
     }
@@ -746,12 +758,22 @@ export class FeishuReader implements DocumentationReader {
    */
   private async request(endpoint: Endpoint, url: URL, init: RequestInit): Promise<FeishuBody> {
     await this.pace(endpoint);
-    const response = await this.fetch(url, {
-      ...init,
-      // A redirect would carry the token to wherever it points.
-      redirect: 'error',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+      response = await this.fetch(url, {
+        ...init,
+        // A redirect would carry the token to wherever it points.
+        redirect: 'error',
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // A firewall or a name that does not resolve is said as that, not as "fetch failed"
+      // (W14-R39); a read cut off in flight is the backoff's to try again.
+      if (transportFailureKind(error) === 'refused') {
+        throw new ProviderUnreachableError(url.host, error);
+      }
+      throw error;
+    }
     const body = await readBody(response);
     if (response.status === 429 || body?.code === RATE_LIMITED) {
       throw new TransientProviderError(

@@ -6,11 +6,13 @@ import { managerFeedbackLabel, type ManagerFeedbackKind } from '../../../src/wor
 import {
   awaitingCheck,
   awaitingManager,
+  CHECK_HOLD_NOW,
+  checkingHoldLine,
   checkingLine,
   checkStale,
   checkUnavailableLine,
   CHECKING_AGAIN,
-  NOT_KEPT,
+  keepForOneLabel,
   PROPOSALS_DONE,
   PROPOSALS_TITLE,
   proposalQuestion,
@@ -18,6 +20,7 @@ import {
   WITHDRAWN,
   refusalOffersAmendment,
   refusalSentence,
+  refusedKicker,
   type AgreementView,
 } from '../../../src/work/agreement-words';
 import { Button, ButtonLink } from '../../components/Button';
@@ -302,7 +305,7 @@ export function AgreementProposals({
                 {row.status === 'refused' ? (
                   <>
                     <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
-                      {NOT_KEPT}
+                      {refusedKicker(row)}
                     </p>
                     <p
                       id={about}
@@ -326,16 +329,48 @@ export function AgreementProposals({
                           Amend the charter
                         </ButtonLink>
                       ) : null}
-                      <Button
-                        variant="quiet"
-                        size="small"
-                        disabled={change.busy}
-                        aria-label={`Dismiss the refused agreement “${row.statement}”`}
-                        className={ROW_BUTTON}
-                        onClick={() => dismiss(row, true)}
-                      >
-                        Dismiss
-                      </Button>
+                      {row.refusal?.reason === 'every-employee-too-many' ? (
+                        <Button
+                          size="small"
+                          disabled={change.busy}
+                          aria-label={`${keepForOneLabel(employeeName)}: “${row.statement}”`}
+                          className={ROW_BUTTON}
+                          onClick={() => keep(row, false)}
+                        >
+                          {keepForOneLabel(employeeName)}
+                        </Button>
+                      ) : null}
+                      {row.refusal?.reason === 'unchecked-for-employee' ? (
+                        row.refusal.checkable === true ? (
+                          <Button
+                            size="small"
+                            disabled={change.busy}
+                            aria-label={`Check “${row.statement}” against ${employeeName}'s charter now`}
+                            className={ROW_BUTTON}
+                            onClick={() =>
+                              change.run(() => onRecheck(row._id), {
+                                done: checkingHoldLine(employeeName),
+                                refused: 'The check was not started.',
+                              })
+                            }
+                          >
+                            {CHECK_HOLD_NOW}
+                          </Button>
+                        ) : null
+                      ) : (
+                        // A hold is not the manager's to dismiss: dismissed, the agreement would
+                        // bind the employee unchecked (the backend refuses it).
+                        <Button
+                          variant="quiet"
+                          size="small"
+                          disabled={change.busy}
+                          aria-label={`Dismiss the refused agreement “${row.statement}”`}
+                          className={ROW_BUTTON}
+                          onClick={() => dismiss(row, true)}
+                        >
+                          Dismiss
+                        </Button>
+                      )}
                     </div>
                   </>
                 ) : awaitingCheck(row) ? (
