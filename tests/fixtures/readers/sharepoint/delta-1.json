@@ -1,0 +1,79 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+  "value": [
+    {
+      "id": "01ROOT",
+      "name": "root",
+      "folder": {
+        "childCount": 7
+      },
+      "root": {},
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary"
+      }
+    },
+    {
+      "id": "01CLOSE",
+      "name": "close-the-quarter.md",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/close-the-quarter.md",
+      "cTag": "\"c:{11111111-1111-4111-8111-111111111111},7\"",
+      "eTag": "\"{11111111-1111-4111-8111-111111111111},1\"",
+      "size": 412,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-10-01T09:30:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "text/markdown",
+        "hashes": {
+          "quickXorHash": "fixture"
+        }
+      }
+    },
+    {
+      "id": "01ESCAL",
+      "name": "Escalation paths.docx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/Escalation paths.docx",
+      "cTag": "\"c:{22222222-2222-4222-8222-222222222222},3\"",
+      "eTag": "\"{22222222-2222-4222-8222-222222222222},1\"",
+      "size": 18432,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-12T10:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }
+    },
+    {
+      "id": "01DECK",
+      "name": "Q3 board deck.pptx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/Q3 board deck.pptx",
+      "cTag": "\"c:{33333333-3333-4333-8333-333333333333},2\"",
+      "eTag": "\"{33333333-3333-4333-8333-333333333333},1\"",
+      "size": 2400000,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-30T10:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      }
+    }
+  ],
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/drive/root/delta?token=fixture-delta-page-2"
+}

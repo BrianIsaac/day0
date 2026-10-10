@@ -1,0 +1,129 @@
+{
+  "reference": [
+    {
+      "url": "https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json",
+      "read": "2026-10-10 (info.version 2.0.0: GET /spaces, GET /spaces/{id}/pages, PageBulk, Version, BodyBulk, MultiEntityLinks, the Link header)"
+    },
+    {
+      "url": "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/",
+      "read": "2026-10-10 (modified 2026-02-25: the gateway address and the bearer token)"
+    },
+    {
+      "url": "https://developer.atlassian.com/cloud/confluence/rate-limiting/",
+      "read": "2026-10-10 (last updated 2026-10-09: Retry-After on a 429, and on some 503s)"
+    }
+  ],
+  "authorization": "Bearer fixture-confluence-token",
+  "unauthorised": {
+    "status": 401,
+    "body": "unauthorised.json"
+  },
+  "notFound": {
+    "status": 404,
+    "body": "not-found.json"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "host": "api.atlassian.com",
+      "path": "/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/api/v2/spaces",
+      "query": [
+        [
+          "keys",
+          "OPS"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ],
+      "status": 200,
+      "body": "spaces-ops.json"
+    },
+    {
+      "method": "GET",
+      "host": "api.atlassian.com",
+      "path": "/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/api/v2/spaces",
+      "query": [
+        [
+          "keys",
+          "NONE"
+        ],
+        [
+          "limit",
+          "1"
+        ]
+      ],
+      "status": 200,
+      "body": "spaces-none.json"
+    },
+    {
+      "method": "GET",
+      "host": "api.atlassian.com",
+      "path": "/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/api/v2/spaces/1048578/pages",
+      "query": [
+        [
+          "status",
+          "current"
+        ],
+        [
+          "status",
+          "archived"
+        ],
+        [
+          "body-format",
+          "storage"
+        ],
+        [
+          "sort",
+          "id"
+        ],
+        [
+          "limit",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "pages-1.json",
+      "headers": {
+        "link": "</wiki/api/v2/spaces/1048578/pages?cursor=fixture-cursor-2&status=current&status=archived&body-format=storage&sort=id&limit=3>; rel=\"next\", <https://acme.atlassian.net/wiki>; rel=\"base\""
+      }
+    },
+    {
+      "method": "GET",
+      "host": "api.atlassian.com",
+      "path": "/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/api/v2/spaces/1048578/pages",
+      "query": [
+        [
+          "status",
+          "current"
+        ],
+        [
+          "status",
+          "archived"
+        ],
+        [
+          "body-format",
+          "storage"
+        ],
+        [
+          "sort",
+          "id"
+        ],
+        [
+          "limit",
+          "*"
+        ],
+        [
+          "cursor",
+          "fixture-cursor-2"
+        ]
+      ],
+      "status": 200,
+      "body": "pages-2.json",
+      "headers": {
+        "link": "<https://acme.atlassian.net/wiki>; rel=\"base\""
+      }
+    }
+  ]
+}

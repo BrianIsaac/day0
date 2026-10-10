@@ -33,6 +33,7 @@ import {
 } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { ownerValuesRef } from '../../src/redaction/known-values';
+import { providerFake } from '../fixtures/readers/fake';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
 const temporary = temporaryDirectories();
@@ -1224,6 +1225,61 @@ describe('documentation sync batching', (): void => {
     expect(stored.runs[0].unread?.pages[0].reason).toContain('<redacted>');
     expect(JSON.stringify(stored)).not.toContain(secret);
     expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 12));
+  });
+
+  it('stores the pages of a Confluence Cloud space, each read with its revision and its own status (15-X)', async (): Promise<void> => {
+    const token = 'fixture-confluence-token';
+    const key = process.env.DAY0_CREDENTIAL_KEY ?? '';
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(async (ctx) => {
+      const credentialId = await ctx.db.insert('credentials', {
+        userId: 'owner',
+        kind: 'value',
+        label: 'Ops wiki API token',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(token, key),
+      });
+      return await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Ops wiki',
+        kind: 'confluence-v2',
+        locator:
+          'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+        credentialId,
+        status: 'linking',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+    });
+    // Atlassian's gateway is answered from the fixtures; the in-process redactor keeps the rest.
+    const site = providerFake('confluence-v2');
+    vi.stubGlobal('fetch', async (input: URL | string | Request, init?: RequestInit) =>
+      new URL(input instanceof Request ? input.url : input).host === 'api.atlassian.com'
+        ? await site.fetch(input, init)
+        : await redactorFetch(input, init),
+    );
+    await expect(
+      harness.action(internal.docSyncActions.syncSource, { sourceId }),
+    ).resolves.toMatchObject({ ok: true, pages: 3, complete: false });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    const stored = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      pages: await ctx.db.query('docPages').collect(),
+      runs: await ctx.db.query('docSyncRuns').collect(),
+    }));
+    // A reader's revision and status ride beside the page's hash, never through the page store,
+    // whose validator takes neither: before 15-X's line every page here was refused by it.
+    expect(stored.runs[0].unread?.pages.map((page) => page.ref)).toEqual(['98315']);
+    expect(stored.pages.map((page) => [page.ref, page.title])).toEqual([
+      ['98311', 'Close the quarter'],
+      ['98312', 'Escalation paths (2024)'],
+      ['98313', '运维手册'],
+      ['98314', '刷新看板'],
+      ['98316', 'Runbook index'],
+    ]);
+    expect(stored.source).toMatchObject({ status: 'synced' });
+    expect(JSON.stringify(stored)).not.toContain(token);
   });
 
   it('decrypts the owner list once per batch, not once per page, and keeps its values out of every page', async (): Promise<void> => {

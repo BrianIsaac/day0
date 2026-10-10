@@ -1,0 +1,18 @@
+{
+  "id": 98306,
+  "key": "OPS",
+  "name": "Operations",
+  "type": "global",
+  "_links": {
+    "webui": "/display/OPS",
+    "self": "https://wiki.acme.corp/confluence/rest/api/space/OPS",
+    "base": "https://wiki.acme.corp/confluence",
+    "context": "/confluence"
+  },
+  "_expandable": {
+    "metadata": "",
+    "icon": "",
+    "description": "",
+    "homepage": "/rest/api/content/4587520"
+  }
+}

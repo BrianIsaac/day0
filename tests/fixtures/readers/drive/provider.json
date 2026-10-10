@@ -1,0 +1,277 @@
+{
+  "reference": [
+    {
+      "url": "https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list",
+      "read": "2026-10-10 (last updated 2026-07-07: q, pageSize, pageToken, fields, supportsAllDrives, includeItemsFromAllDrives; files[] and nextPageToken, absent at the list's end)"
+    },
+    {
+      "url": "https://developers.google.com/workspace/drive/api/reference/rest/v3/files",
+      "read": "2026-10-10 (last updated 2026-07-14: id, name, mimeType, trashed, version, modifiedTime, webViewLink, size)"
+    },
+    {
+      "url": "https://developers.google.com/workspace/drive/api/reference/rest/v3/files/export",
+      "read": "2026-10-10 (last updated 2025-08-26: GET files/{fileId}/export?mimeType=; the exported content is limited to 10 MB)"
+    },
+    {
+      "url": "https://developers.google.com/workspace/drive/api/guides/ref-export-formats",
+      "read": "2026-10-10 (last updated 2026-09-03: a Google Doc exports to text/markdown)"
+    },
+    {
+      "url": "https://developers.google.com/workspace/drive/api/guides/handle-errors",
+      "read": "2026-10-10 (last updated 2026-09-03: the error body; 403 userRateLimitExceeded and rateLimitExceeded; 404 notFound)"
+    },
+    {
+      "url": "https://developers.google.com/workspace/drive/api/guides/limits",
+      "read": "2026-10-10 (last updated 2026-09-11: quota units; a 403 or a 429, with exponential back-off)"
+    },
+    {
+      "url": "https://developers.google.com/identity/protocols/oauth2/service-account",
+      "read": "2026-10-10 (last updated 2026-03-23: the RS256 assertion's claims, the token request and its answer)"
+    }
+  ],
+  "unverified": "The reason word of an export past 10 MB (exportSizeLimitExceeded) and the token route's refusal body are as Google's guides print them, not as a project sent them; whether a folder in a shared drive lists with these parameters is unverified.",
+  "authorization": "Bearer fixture-google-token",
+  "unauthorised": {
+    "status": 401,
+    "body": "unauthorised.json"
+  },
+  "refusedForm": {
+    "status": 400,
+    "body": "token-refused.json"
+  },
+  "notFound": {
+    "status": 404,
+    "body": "not-found.json"
+  },
+  "assertion": {
+    "path": "/token",
+    "field": "assertion",
+    "claims": {
+      "iss": "day0-reader@acme-docs.iam.gserviceaccount.com",
+      "scope": "https://www.googleapis.com/auth/drive.readonly",
+      "aud": "https://oauth2.googleapis.com/token"
+    }
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "host": "oauth2.googleapis.com",
+      "path": "/token",
+      "open": true,
+      "form": {
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": "*"
+      },
+      "status": 200,
+      "body": "token.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "query": [
+        [
+          "fields",
+          "*"
+        ],
+        [
+          "supportsAllDrives",
+          "true"
+        ]
+      ],
+      "status": 200,
+      "body": "folder.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files",
+      "query": [
+        [
+          "q",
+          "'1AbCdEfGhIjKlMnOpQrStUvWxYz012345' in parents and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'application/pdf' or mimeType = 'application/msword')"
+        ],
+        [
+          "pageSize",
+          "*"
+        ],
+        [
+          "fields",
+          "*"
+        ],
+        [
+          "supportsAllDrives",
+          "true"
+        ],
+        [
+          "includeItemsFromAllDrives",
+          "true"
+        ]
+      ],
+      "status": 200,
+      "body": "list-root-1.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files",
+      "query": [
+        [
+          "q",
+          "'1AbCdEfGhIjKlMnOpQrStUvWxYz012345' in parents and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'application/pdf' or mimeType = 'application/msword')"
+        ],
+        [
+          "pageSize",
+          "*"
+        ],
+        [
+          "fields",
+          "*"
+        ],
+        [
+          "supportsAllDrives",
+          "true"
+        ],
+        [
+          "includeItemsFromAllDrives",
+          "true"
+        ],
+        [
+          "pageToken",
+          "fixture-page-2"
+        ]
+      ],
+      "status": 200,
+      "body": "list-root-2.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files",
+      "query": [
+        [
+          "q",
+          "'1ArchiveFolder0000000000000000001' in parents and (mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' or mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.presentation' or mimeType = 'application/pdf' or mimeType = 'application/msword')"
+        ],
+        [
+          "pageSize",
+          "*"
+        ],
+        [
+          "fields",
+          "*"
+        ],
+        [
+          "supportsAllDrives",
+          "true"
+        ],
+        [
+          "includeItemsFromAllDrives",
+          "true"
+        ]
+      ],
+      "status": 200,
+      "body": "list-archive.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1DocCloseTheQuarter00000000000000001/export",
+      "query": [
+        [
+          "mimeType",
+          "text/markdown"
+        ]
+      ],
+      "status": 200,
+      "headers": {
+        "content-type": "text/markdown"
+      },
+      "body": "export-close.md"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1DocOpsHandbook000000000000000000001/export",
+      "query": [
+        [
+          "mimeType",
+          "text/markdown"
+        ]
+      ],
+      "status": 200,
+      "headers": {
+        "content-type": "text/markdown"
+      },
+      "body": "export-ops.md"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1DocOldCloseProcess00000000000000001/export",
+      "query": [
+        [
+          "mimeType",
+          "text/markdown"
+        ]
+      ],
+      "status": 200,
+      "headers": {
+        "content-type": "text/markdown"
+      },
+      "body": "export-old.md"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1DocRefreshTheTile000000000000000001/export",
+      "query": [
+        [
+          "mimeType",
+          "text/markdown"
+        ]
+      ],
+      "status": 200,
+      "headers": {
+        "content-type": "text/markdown"
+      },
+      "body": "export-tile.md"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1DocFullCrmExport000000000000000001/export",
+      "query": [
+        [
+          "mimeType",
+          "text/markdown"
+        ]
+      ],
+      "status": 403,
+      "headers": {
+        "content-type": "application/json; charset=UTF-8"
+      },
+      "body": "export-too-large.json"
+    },
+    {
+      "method": "GET",
+      "host": "www.googleapis.com",
+      "path": "/drive/v3/files/1WordEscalationPaths0000000000000001",
+      "query": [
+        [
+          "alt",
+          "media"
+        ],
+        [
+          "supportsAllDrives",
+          "true"
+        ]
+      ],
+      "status": 200,
+      "headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      "body": "../word/escalation-paths.docx"
+    }
+  ]
+}

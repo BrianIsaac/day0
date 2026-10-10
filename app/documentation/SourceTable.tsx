@@ -31,7 +31,8 @@ const KIND_NAMES: Readonly<Record<LinkedSource['kind'], string>> = {
 
 /**
  * What the rotate field asks for: an MCP server's connection secret, a Feishu app's ID and
- * secret in the one field, or another source's reader secret.
+ * secret in the one field, the secret one of wave 15's readers takes (in the one field, in the
+ * shape its reader reads), or another source's reader secret.
  *
  * @param kind - The source's kind.
  */
@@ -41,15 +42,19 @@ function rotateFieldName(kind: LinkedSource['kind']): string {
       return 'New connection secret';
     case 'feishu':
       return 'New app ID and secret, as app ID:secret';
+    case 'sharepoint':
+      return 'New app registration, as tenant ID:client ID:client secret';
+    case 'confluence-v2':
+      return 'New API token';
+    case 'confluence-dc':
+      return 'New personal access token';
+    case 'yuque':
+      return 'New token';
+    case 'drive':
+      return 'New service account key, the JSON file’s contents';
     case 'folder':
     case 'git':
     case 'urls':
-    // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
-    case 'sharepoint':
-    case 'confluence-v2':
-    case 'confluence-dc':
-    case 'yuque':
-    case 'drive':
       return 'New reader secret';
   }
 }

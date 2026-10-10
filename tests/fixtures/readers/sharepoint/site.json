@@ -1,0 +1,9 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites/$entity",
+  "id": "acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe",
+  "name": "Runbooks",
+  "displayName": "Runbooks",
+  "webUrl": "https://acme.sharepoint.com/sites/Runbooks",
+  "createdDateTime": "2026-06-01T08:00:00Z",
+  "lastModifiedDateTime": "2026-10-01T08:00:00Z"
+}
