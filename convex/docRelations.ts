@@ -18,6 +18,7 @@ import {
   restatePage,
   stampStatusChanges,
   statusSourceOf,
+  SUCCESSOR_NOT_CURRENT,
 } from './docStatus';
 import {
   pageStatusOf,
@@ -737,7 +738,9 @@ export interface SupersedeOutcome {
  * and restates the page a confirmed successor had superseded; the rest change no page.
  *
  * @returns For "supersedes", what became of the older page; null for every other answer.
- * @throws ConvexError when the relation is gone or its card no longer offers the answer.
+ * @throws ConvexError when the relation is gone, its card no longer offers the answer (a confirmed
+ *   conflict that no longer stands among them), or the page the answer would make stand in for
+ *   the other is not current.
  */
 export const decide = mutation({
   args: {
@@ -763,6 +766,25 @@ export const decide = mutation({
       authorityOf(from, fromSource) === authorityOf(to, toSource);
     if (!decisionsOffered(relation, equalTrust).includes(args.decision)) {
       throw new ConvexError(DECISION_NOT_OFFERED);
+    }
+    // A confirmed conflict takes its answers only while it stands (W15-R6): once one page was
+    // named right, a second answer from a card drawn before would supersede the other page too.
+    if (
+      relation.kind === 'possible_conflict' &&
+      relation.status === 'confirmed' &&
+      (await standingConflictOf(ctx, relation)) === undefined
+    ) {
+      throw new ConvexError(DECISION_NOT_OFFERED);
+    }
+    // The page an answer makes stand in for the other must be current itself.
+    const successor =
+      args.decision === 'supersedes' || args.decision === 'from-is-right'
+        ? from
+        : args.decision === 'to-is-right'
+          ? to
+          : null;
+    if (successor !== null && pageStatusOf(successor) !== 'active') {
+      throw new ConvexError(SUCCESSOR_NOT_CURRENT);
     }
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);

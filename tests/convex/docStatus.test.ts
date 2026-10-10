@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
+import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import { markerCandidate } from '../../src/docs/status';
 import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
@@ -771,6 +772,34 @@ describe('the manager’s own status for a page', (): void => {
     await expect(set(pageId)).rejects.toThrow('A page cannot supersede itself.');
     await expect(set(theirs)).rejects.toThrow('forbidden');
     expect((await pageOf(harness, pageId)).status).toBeUndefined();
+  });
+
+  it('refuses a successor that is not current itself, so two pages never supersede each other (W15-R6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const older = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const newer = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook-v2.md' });
+    const supersede = async (pageId: Id<'docPages'>, supersededBy: Id<'docPages'>) =>
+      await asManager(harness).mutation(api.docStatus.setPageStatus, {
+        pageId,
+        status: 'superseded',
+        supersededBy,
+      });
+    await supersede(older, newer);
+    // The other way round would leave neither page current.
+    await expect(supersede(newer, older)).rejects.toThrow(
+      'That page is not current itself, so it cannot stand in for another: make it current first, or name a page that is.',
+    );
+    expect((await pageOf(harness, newer)).status).toBeUndefined();
+    // Nor a draft or an archived page.
+    const draft = await storedPage(harness, source, { ref: 'drafts/next.md' });
+    await asManager(harness).mutation(api.docStatus.setPageStatus, {
+      pageId: draft,
+      status: 'draft',
+    });
+    const third = await storedPage(harness, source, { ref: 'runbooks/other.md' });
+    await expect(supersede(third, draft)).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(harness, third)).status).toBeUndefined();
   });
 
   it('clears back to what the page and its source say: the source’s own word, or the default', async (): Promise<void> => {

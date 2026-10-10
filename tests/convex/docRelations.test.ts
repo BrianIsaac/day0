@@ -5,6 +5,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
+import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import type { SourceAuthority } from '../../src/docs/authority';
 import { RELATION_PROPOSALS_PER_SYNC } from '../../src/docs/relations';
 import type { SelectionRequest } from '../../src/docs/select';
@@ -714,6 +715,78 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     });
     expect((await pageOf(harness, a)).status).toBeUndefined();
     expect(await standingOf(harness, relation._id)).toBeNull();
+  });
+
+  it('refuses a stale second answer on a conflict already settled, so the two pages never supersede each other (W15-R6)', async (): Promise<void> => {
+    // Reader 2's vt/a.test.ts R2-A: two tabs show the proposed card; one answers "{A} is right",
+    // the other, stale, "{B} is right". The second was taken, and neither page was current.
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance, a, b } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [relation] = await relations(harness);
+    expect(relation.from.sourceId).toBe(finance.sourceId);
+    const answer = async (decision: 'from-is-right' | 'to-is-right' | 'both-hold') =>
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision,
+      });
+    await answer('from-is-right');
+    expect(await pageOf(harness, a)).toMatchObject({
+      status: 'superseded',
+      supersededBy: { sourceId: finance.sourceId, ref: 'escalation.md' },
+    });
+    for (const stale of ['to-is-right', 'from-is-right', 'both-hold'] as const) {
+      await expect(answer(stale), stale).rejects.toThrow(DECISION_NOT_OFFERED);
+    }
+    // The page the first answer named right is still current, and the other still gives way to it.
+    expect((await pageOf(harness, b)).status).toBeUndefined();
+    expect((await pageOf(harness, a)).status).toBe('superseded');
+    expect((await relations(harness))[0]).toMatchObject({ status: 'confirmed' });
+    // "This is current" on the superseded page's row is the way back: the conflict stands again
+    // and takes its answers.
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId: a, status: 'active' });
+    expect(await standingOf(harness, relation._id)).not.toBeNull();
+    await answer('to-is-right');
+    expect((await pageOf(harness, b)).status).toBe('superseded');
+    expect((await pageOf(harness, a)).status).toBe('active');
+    expect(handbook.sourceId).toBe(relation.to.sourceId);
+  });
+
+  it('refuses an answer that would make a page that is not current stand in for another (W15-R6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { finance, a, b } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [conflict] = await relations(harness);
+    // The card was drawn while both pages were current; the finance page is then archived by hand.
+    await asManager(harness).mutation(api.docStatus.setPageStatus, {
+      pageId: b,
+      status: 'archived',
+    });
+    await expect(
+      asManager(harness).mutation(api.docRelations.decide, {
+        relationId: conflict._id,
+        decision: 'from-is-right',
+      }),
+    ).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(harness, a)).status).toBeUndefined();
+    expect((await relations(harness))[0]).toMatchObject({ status: 'proposed' });
+
+    const versions = convexTest(schema, allConvexModules());
+    const { official, v1, v2 } = await twoVersions(versions);
+    await measure(versions, official, 'pipeline-runbook-v2.md');
+    const [successor] = await relations(versions);
+    await asManager(versions).mutation(api.docStatus.setPageStatus, {
+      pageId: v2,
+      status: 'draft',
+    });
+    await expect(
+      asManager(versions).mutation(api.docRelations.decide, {
+        relationId: successor._id,
+        decision: 'supersedes',
+      }),
+    ).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(versions, v1)).status).toBeUndefined();
+    expect((await relations(versions))[0]).toMatchObject({ status: 'proposed' });
   });
 
   it('lets no conflict stand between pages of unequal trust, and offers no "They disagree" that would hold nothing', async (): Promise<void> => {

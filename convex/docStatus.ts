@@ -530,6 +530,14 @@ export const NAME_THE_SUCCESSOR = 'Name the page that supersedes it.';
 export const NOT_ITS_OWN_SUCCESSOR = 'A page cannot supersede itself.';
 
 /**
+ * Why an answer that would make one page stand in for another was refused: the page named as the
+ * successor is itself superseded, archived or a draft (W15-R6). Two pages each superseded by the
+ * other leave neither to be read, and nothing but "This is current" on a row brings one back.
+ */
+export const SUCCESSOR_NOT_CURRENT =
+  'That page is not current itself, so it cannot stand in for another: make it current first, or name a page that is.';
+
+/**
  * A page of the caller's with its source, read after the caller is known.
  *
  * @throws ConvexError when the page or its source is gone; Error `forbidden` for another owner's.
@@ -555,7 +563,8 @@ async function ownedPage(
  * the caller's verified address and the time, its blocks' status, and, on a change, the record
  * and parked work of every employee that reads the source.
  *
- * @throws ConvexError when a superseded page names no successor, or itself.
+ * @throws ConvexError when a superseded page names no successor, itself, or a page that is not
+ *   current.
  */
 export const setPageStatus = mutation({
   args: {
@@ -572,6 +581,7 @@ export const setPageStatus = mutation({
       if (args.supersededBy === undefined) throw new ConvexError(NAME_THE_SUCCESSOR);
       if (args.supersededBy === args.pageId) throw new ConvexError(NOT_ITS_OWN_SUCCESSOR);
       const successor = await ownedPage(ctx, caller.ownerKey, args.supersededBy);
+      if (pageStatusOf(successor.page) !== 'active') throw new ConvexError(SUCCESSOR_NOT_CURRENT);
       supersededBy = { sourceId: successor.page.sourceId, ref: successor.page.ref };
     }
     await decideByHand(ctx, {
