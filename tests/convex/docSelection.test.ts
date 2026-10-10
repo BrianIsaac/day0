@@ -621,12 +621,12 @@ describe('docSelection.changedCitedBlocks', (): void => {
         ],
       }),
     ).resolves.toEqual([]);
-    // Re-pinned by 15-A, as above.
+    // Re-pinned by 15-A, as above: the gone block with its page, as its three neighbours assert.
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, {
         blocks: [{ id: first._id, hash: 'a-hash-no-block-on-the-page-holds' }],
       }),
-    ).resolves.toMatchObject([{ id: first._id }]);
+    ).resolves.toEqual([{ id: first._id, page: `Handbook/${ref}` }]);
   });
 });
 

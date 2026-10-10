@@ -26,7 +26,8 @@ import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/author
  * schedules for each page it writes (it splits the page as stored when it runs, so it converges
  * on the newest write), and directly in the `docs-backfill-blocks` pass;
  * `copyPageStatusToBlocks`, for a page whose status changed and whose text did not (wave 15,
- * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`, scheduled by `docSources.prunePages` for a page a finish removed; and
+ * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`,
+ * scheduled by `docSources.prunePages` for a page a finish removed; and
  * `docSources.deleteSourceRows` for a removed source. Readers: `searchBlocks` (14-R's selection
  * calls it from `docSelection`) and `unchangedPage` (the sync's skip of an unchanged page).
  * Nothing here is public, so no caller reaches it without a guarded public function first.

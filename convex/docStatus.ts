@@ -523,8 +523,10 @@ export async function decideByHand(
   await stampStatusChanges(ctx, args.source, [change], args.now);
 }
 
-/** Why a page marked superseded was refused: it names no successor, or names itself. */
+/** Why a page marked superseded was refused: it names no successor. */
 export const NAME_THE_SUCCESSOR = 'Name the page that supersedes it.';
+
+/** Why a page marked superseded was refused: the successor it names is itself. */
 export const NOT_ITS_OWN_SUCCESSOR = 'A page cannot supersede itself.';
 
 /**
