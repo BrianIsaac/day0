@@ -309,6 +309,52 @@ describe('measurePage: the relations a finishing sync proposes', (): void => {
     expect((await relations(harness)).map((row) => row.status)).toEqual(['dismissed', 'proposed']);
   });
 
+  it('proposes a conflict again once the one it holds no longer disagrees, and removes the proposal nobody could answer', async (): Promise<void> => {
+    // The second pass's minor 4: a conflict whose blocks no longer disagree is drawn on no card,
+    // so it cannot be answered, and it still counted as held: a later conflict between the same
+    // two pages was never proposed.
+    const harness = convexTest(schema, allConvexModules());
+    const { finance } = await twoThatDisagree(harness);
+    /** Store the finance page again with another figure, as a sync that read an edit does. */
+    const editFinance = async (figure: string): Promise<void> =>
+      await harness.run(async (ctx) => {
+        const edited = FINANCE.replace('10,000', figure);
+        const page = await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', finance.sourceId).eq('ref', 'escalation.md'),
+          )
+          .unique();
+        await ctx.db.patch(page!._id, { markdown: edited });
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId: finance.sourceId,
+          pageRef: 'escalation.md',
+          generation: finance.runId,
+          markdown: edited,
+        });
+      });
+    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
+    const [first] = await relations(harness);
+    // Unanswered, and the page is edited to another figure: the row names blocks that are gone.
+    await editFinance('20,000');
+    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toEqual([]);
+    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
+    const afterEdit = await relations(harness);
+    expect(afterEdit.map((row) => [row.kind, row.status])).toEqual([
+      ['possible_conflict', 'proposed'],
+    ]);
+    expect(afterEdit[0]._id).not.toBe(first._id);
+    // A conflict the manager confirmed is their answer and is kept; it blocks nothing once stale.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: afterEdit[0]._id,
+      decision: 'disagree',
+    });
+    await editFinance('30,000');
+    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
+    expect((await relations(harness)).map((row) => row.status)).toEqual(['confirmed', 'proposed']);
+  });
+
   it('measures against the owner’s own active pages only, and proposes nothing for a page that is not current', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const theirs = await syncingSource(harness, 'Their wiki', { userId: 'another-owner' });
@@ -729,6 +775,52 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),
     ).toEqual([]);
+  });
+
+  it('draws a live card behind any number of proposals whose pages are no longer current', async (): Promise<void> => {
+    // The second pass's minor 4: the read took the newest 20 proposals and drew the live ones
+    // among them, so 20 dead rows above a live card hid it.
+    const harness = convexTest(schema, allConvexModules());
+    const { official } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const dead = await syncingSource(harness, 'Old wiki');
+    for (let pair = 0; pair < 25; pair += 1) {
+      await storedPage(harness, dead, {
+        ref: `old-${pair}.md`,
+        title: `Old ${pair}`,
+        markdown: `# Old ${pair}\n\nRetired.`,
+      });
+      await harness.run(async (ctx) => {
+        const page = await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', dead.sourceId).eq('ref', `old-${pair}.md`),
+          )
+          .unique();
+        await ctx.db.patch(page!._id, { status: 'archived', statusSource: 'manager' });
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId: dead.sourceId,
+          pageRef: `old-${pair}.md`,
+          generation: dead.runId,
+          markdown: page!.markdown,
+          status: 'archived',
+        });
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+          to: { sourceId: dead.sourceId, ref: `old-${pair}.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 70 }],
+          status: 'proposed',
+          createdAt: 10 + pair,
+        });
+      });
+    }
+    const cards = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(cards.map((card) => [card.kind, card.to.title])).toEqual([
+      ['possible_successor', 'Pipeline runbook'],
+    ]);
   });
 
   it('draws cards only while their pages fit one read, and the rest once those are answered', async (): Promise<void> => {

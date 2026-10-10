@@ -23,6 +23,7 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
+import { forgetProposalsOf } from './docRelations';
 import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
@@ -1115,6 +1116,12 @@ export const prunePages = internalMutation({
     }
     // A removed or moved runbook re-checks the skills that read it (W14-R22).
     await stampRemovedPages(ctx, finishing.source, gone, Date.now());
+    // Its unanswered relations go with it: no card draws a page that is gone.
+    await forgetProposalsOf(
+      ctx,
+      args.sourceId,
+      gone.map((page) => page.ref),
+    );
     return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'credentials', {
       ...page,
       removed: gone.length,

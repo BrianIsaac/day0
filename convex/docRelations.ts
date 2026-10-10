@@ -4,9 +4,11 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { firstBlockStatus } from './docBlocks';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -189,25 +191,67 @@ function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>): string
 /**
  * Whether a pair already holds the relation a proposal would write, so it is not proposed again:
  * versions of one document (a duplicate or a successor) once, whatever the manager decided; a
- * conflict while one is open or confirmed, or was set aside over the same blocks. A conflict the
- * manager set aside is proposed again only when the blocks that disagree are other blocks, which
- * is to say a page changed.
+ * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
+ * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
+ * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
+ * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
+ * left unanswered, it is a proposal nobody can answer, and is deleted here.
  */
-function alreadyHeld(
+async function alreadyHeld(
+  ctx: MutationCtx,
   existing: readonly Doc<'docRelations'>[],
   proposed: ProposedRelation,
-): boolean {
+): Promise<boolean> {
   if (proposed.kind !== 'possible_conflict') {
     return existing.some((row) => row.kind !== 'possible_conflict');
   }
   const blocks = new Set(
     proposed.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [],
   );
-  return existing.some(
-    (row) =>
-      row.kind === 'possible_conflict' &&
-      (row.status !== 'dismissed' || conflictBlocks(row).every((hash) => blocks.has(hash))),
-  );
+  let held = false;
+  for (const row of existing) {
+    if (row.kind !== 'possible_conflict') continue;
+    if (row.status === 'dismissed') {
+      held ||= conflictBlocks(row).every((hash) => blocks.has(hash));
+    } else if ((await disagreementOf(ctx, row)) !== undefined) {
+      held = true;
+    } else if (row.status === 'proposed') {
+      await ctx.db.delete(row._id);
+    }
+  }
+  return held;
+}
+
+/**
+ * Delete the proposals that name a page its source no longer has (`docSources.prunePages` calls
+ * it with the pages a finish removed): drawn on no card, they could never be answered, and they
+ * filled the read of the cards still to answer. What the manager decided is kept: it is their
+ * answer, and a confirmed successor's older page is restated only by a decision.
+ *
+ * @param ctx - The pruning mutation's context.
+ * @param sourceId - The source the pages left.
+ * @param refs - The removed pages' refs.
+ */
+export async function forgetProposalsOf(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+  refs: readonly string[],
+): Promise<void> {
+  for (const ref of refs) {
+    const [from, to] = await Promise.all([
+      ctx.db
+        .query('docRelations')
+        .withIndex('by_from', (q) => q.eq('from.sourceId', sourceId).eq('from.ref', ref))
+        .take(RELATIONS_OF_A_PAGE),
+      ctx.db
+        .query('docRelations')
+        .withIndex('by_to', (q) => q.eq('to.sourceId', sourceId).eq('to.ref', ref))
+        .take(RELATIONS_OF_A_PAGE),
+    ]);
+    for (const relation of [...from, ...to]) {
+      if (relation.status === 'proposed') await ctx.db.delete(relation._id);
+    }
+  }
 }
 
 /** A stored page with its source's label, as a card and an event name it. */
@@ -266,7 +310,7 @@ export const measurePage = internalMutation({
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
       const relation = measureRelation(self, await measured(ctx, other));
       if (relation === undefined) continue;
-      if (alreadyHeld(await relationsBetween(ctx, page, other), relation)) continue;
+      if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
       const [from, to] = relation.from === self.key ? [page, other] : [other, page];
       const relationId = await ctx.db.insert('docRelations', {
         userId: source.userId,
@@ -779,6 +823,13 @@ export interface RelationCardRow {
 export const RELATION_CARDS_READ = 20;
 
 /**
+ * The most proposals one read of the tab looks through for the cards it draws: a proposal one of
+ * whose pages is no longer current is passed over by a small row each, so such rows above a live
+ * card do not hide it.
+ */
+const PROPOSALS_READ = 5 * RELATION_CARDS_READ;
+
+/**
  * The most page bytes the cards' read draws, counted at three bytes a character (the most UTF-8
  * takes): a card reads its two pages' rows, which carry their whole Markdown, so the cards are
  * drawn while their pages fit one query's read and the rest once those are answered.
@@ -809,12 +860,24 @@ export const listOpen = query({
           q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
         )
         .order('desc')
-        .take(RELATION_CARDS_READ),
+        .take(PROPOSALS_READ),
       confirmedConflicts(ctx, caller.ownerKey),
     ]);
     const cards: RelationCardRow[] = [];
     let bytes = 0;
     for (const relation of proposed) {
+      if (cards.length >= RELATION_CARDS_READ) break;
+      // By a small row first: a proposal whose page a block says is no longer current is passed
+      // over for none of the read's page bytes. A page with no block is judged by its row, below.
+      const statuses = await Promise.all(
+        [relation.from, relation.to].map(
+          async (page) => await firstBlockStatus(ctx.db, page.sourceId, page.ref),
+        ),
+      );
+      if (statuses.some((status) => status !== undefined && status !== 'active')) continue;
+      const disagreement =
+        relation.kind === 'possible_conflict' ? await disagreementOf(ctx, relation) : undefined;
+      if (relation.kind === 'possible_conflict' && disagreement === undefined) continue;
       const [from, to, fromSource, toSource] = await Promise.all([
         pageAt(ctx, relation.from),
         pageAt(ctx, relation.to),
@@ -825,9 +888,6 @@ export const listOpen = query({
       if (bytes > CARD_PAGES_BYTES) return cards;
       if (from === null || to === null || fromSource === null || toSource === null) continue;
       if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') continue;
-      const disagreement =
-        relation.kind === 'possible_conflict' ? await disagreementOf(ctx, relation) : undefined;
-      if (relation.kind === 'possible_conflict' && disagreement === undefined) continue;
       cards.push({
         _id: relation._id,
         kind: relation.kind,

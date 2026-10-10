@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
+  type DatabaseReader,
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
@@ -45,6 +46,51 @@ export const SEARCH_BLOCKS_LIMIT = 512;
 
 /** One bounded page of a pruned page's blocks: under a mutation's read and write limits. */
 const PRUNE_READ = { numItems: 200, maximumBytesRead: 4 * 1024 * 1024 } as const;
+
+/**
+ * A stored page's status as its first block says it, which a split and every change of status
+ * keep the page's own (`docBlocks.status`): one small row. Undefined for a page with no block (a
+ * page of headings alone, one whose split is still due, or one that is not stored).
+ *
+ * @param db - Any database reader.
+ * @param sourceId - The page's source.
+ * @param pageRef - The page's ref within it.
+ */
+export async function firstBlockStatus(
+  db: DatabaseReader,
+  sourceId: Id<'docSources'>,
+  pageRef: string,
+): Promise<PageStatus | undefined> {
+  const block = await db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', sourceId).eq('pageRef', pageRef))
+    .first();
+  return block === null ? undefined : pageStatusOf(block);
+}
+
+/**
+ * A stored page's status as a read of one small row finds it: its first block's
+ * (`firstBlockStatus`), or the page row's for a page with no block. Reading the page row for
+ * every mirrored page would read every body a second time. A page that is not stored reads as
+ * active: there is nothing to say otherwise.
+ *
+ * @param db - Any database reader.
+ * @param sourceId - The page's source.
+ * @param pageRef - The page's ref within it.
+ */
+export async function storedPageStatus(
+  db: DatabaseReader,
+  sourceId: Id<'docSources'>,
+  pageRef: string,
+): Promise<PageStatus> {
+  const byBlock = await firstBlockStatus(db, sourceId, pageRef);
+  if (byBlock !== undefined) return byBlock;
+  const page = await db
+    .query('docPages')
+    .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', pageRef))
+    .unique();
+  return page === null ? 'active' : pageStatusOf(page);
+}
 
 /** A stored page's identity and Markdown, as the replace reads it. */
 export interface PageToSplit {

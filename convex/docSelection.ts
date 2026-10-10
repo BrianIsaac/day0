@@ -2,7 +2,12 @@ import { v } from 'convex/values';
 import { internalQuery, type DatabaseReader, type QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { SEARCH_BLOCKS_LIMIT, SEARCH_SOURCES_LIMIT, type FoundBlock } from './docBlocks';
+import {
+  SEARCH_BLOCKS_LIMIT,
+  SEARCH_SOURCES_LIMIT,
+  storedPageStatus,
+  type FoundBlock,
+} from './docBlocks';
 import { citeConflictOf, standingConflictsOn } from './docRelations';
 import { eventsOfType } from './eventLog';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
@@ -42,29 +47,6 @@ import {
  */
 
 /**
- * A stored page's status as a read of one small row finds it: its first block's, which a split
- * and every change of status keep the page's own (`docBlocks.status`), or the page row's for a
- * page with no block (a page of headings alone, or one whose split is still due). Reading the
- * page row for every mirrored page would read every body a second time.
- */
-async function storedStatus(
-  db: DatabaseReader,
-  sourceId: Id<'docSources'>,
-  pageRef: string,
-): Promise<PageStatus> {
-  const block = await db
-    .query('docBlocks')
-    .withIndex('by_source_page', (q) => q.eq('sourceId', sourceId).eq('pageRef', pageRef))
-    .first();
-  if (block !== null) return pageStatusOf(block);
-  const page = await db
-    .query('docPages')
-    .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', pageRef))
-    .unique();
-  return page === null ? 'active' : pageStatusOf(page);
-}
-
-/**
  * The mirrored pages that are current, in the order given: every office page with no source, and
  * each page of a source whose status is `active` (A20: a draft is left out of what an employee
  * works from, as a superseded or archived page is). What a run's snapshot reads, with a
@@ -81,7 +63,7 @@ export async function currentDocs(
     docs.map(async (doc) =>
       doc.sourceId === undefined || doc.sourceRef === undefined
         ? true
-        : (await storedStatus(db, doc.sourceId, doc.sourceRef)) === 'active',
+        : (await storedPageStatus(db, doc.sourceId, doc.sourceRef)) === 'active',
     ),
   );
   return docs.filter((_doc, index) => current[index]);

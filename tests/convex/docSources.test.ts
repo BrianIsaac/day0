@@ -3441,6 +3441,50 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     );
   });
 
+  it('removes the proposals of a page it removes, which nobody could answer, and keeps what the manager decided (15-A)', async (): Promise<void> => {
+    // The second pass's minor 4: a removed page's proposals stayed, drawn on no card, in the
+    // read of the cards still to answer.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    await harness.run(async (ctx) => {
+      const relation = {
+        userId: 'owner',
+        kind: 'possible_duplicate' as const,
+        evidence: [{ measure: 'shared-text', value: 80 }],
+        createdAt: 1,
+      };
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'missed.md' },
+        to: { sourceId, ref: 'kept.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'confirmed',
+      });
+    });
+    const standings = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (await ctx.db.query('docRelations').collect()).map((row) => row.status),
+      );
+    // Missed once, the page is kept, and so is everything that names it.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['proposed', 'proposed', 'confirmed']);
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['confirmed']);
+  });
+
   it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
