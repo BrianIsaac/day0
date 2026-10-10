@@ -1200,7 +1200,7 @@ export const pruneMirrors = internalMutation({
       await ctx.db.delete(mirror._id);
       removed += 1;
     }
-    return await closeFinishingPage(ctx, finishing.run, args, 'mirrors', 'scopes', {
+    return await closeFinishingPage(ctx, finishing.run, args, 'mirrors', 'status', {
       ...page,
       removed,
     });

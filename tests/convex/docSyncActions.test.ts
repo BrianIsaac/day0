@@ -25,6 +25,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+import { MARKER_JUDGEMENTS_PER_SYNC } from '../../src/docs/status';
 import { FINISHING_CURSOR } from '../../convex/docSources';
 import {
   credentialValueFingerprint,
@@ -65,9 +66,23 @@ vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
 
 const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
 
+/**
+ * The marker judgement's scripted model (15-A): each call's prompt, and the reply a test gives
+ * for it. With no script the judgement fails, as a model that cannot be reached does.
+ */
+const markerModel = vi.hoisted(() => ({
+  prompts: [] as string[],
+  reply: undefined as ((prompt: string) => unknown) | undefined,
+}));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: schemaChecked(() => ({ systems: [] })),
+  agentJson: schemaChecked((call) => {
+    if (call.agent.name !== 'day0-doc-marker') return { systems: [] };
+    markerModel.prompts.push(call.user);
+    if (markerModel.reply === undefined) throw new Error('the marker model is not scripted');
+    return markerModel.reply(call.user);
+  }),
 }));
 
 /**
@@ -516,6 +531,143 @@ describe('the status a source gives a page, beside its hash (15-A; A-2)', (): vo
       sourceRevision: '3',
     });
   });
+});
+
+describe('the status phase of a finishing sync (15-A; N20)', (): void => {
+  const CLOSE = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。\n\n## 步骤\n\n关账。\n';
+  const ARCHIVING = '# How to archive a ticket\n\nAn archived ticket leaves the board.\n';
+
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+    markerModel.prompts.length = 0;
+    // The model as a careful reader: only a page that says of itself that it is void is superseded.
+    markerModel.reply = (prompt: string): unknown =>
+      prompt.includes('本文件已废止')
+        ? { status: 'superseded', quote: '本文件已废止' }
+        : prompt.includes('DRAFT')
+          ? { status: 'draft', quote: 'DRAFT' }
+          : { status: 'active', quote: '' };
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    markerModel.reply = undefined;
+  });
+
+  /** A folder source over `files`, linked for the owner. */
+  async function folderOf(
+    files: Readonly<Record<string, string>>,
+  ): Promise<{ harness: TestConvex<typeof schema>; sourceId: Id<'docSources'>; root: string }> {
+    const root = temporary('day0-sync-status-');
+    for (const [name, body] of Object.entries(files)) {
+      await mkdir(join(root, 'docs', name, '..'), { recursive: true });
+      await writeFile(join(root, 'docs', name), body, 'utf8');
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: 'docs',
+    });
+    return { harness, sourceId, root };
+  }
+
+  /** Run one whole sync of the source. */
+  async function sync(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    return await harness.query(internal.docSources.syncReport, { sourceId });
+  }
+
+  /** Each stored page's status, what decided it and its marker's status (null: none), by ref. */
+  async function statuses(harness: TestConvex<typeof schema>) {
+    return await harness.run(async (ctx) =>
+      Object.fromEntries(
+        (await ctx.db.query('docPages').collect()).map((page) => [
+          page.ref,
+          [page.status ?? null, page.statusSource ?? null, page.marker?.status ?? null],
+        ]),
+      ),
+    );
+  }
+
+  it('judges a Chinese marker and supersedes its page with its blocks, and decides nothing on a hit the model reads as the page’s subject', async (): Promise<void> => {
+    const { harness, sourceId } = await folderOf({
+      'finance/close.md': CLOSE,
+      'howto/archive-a-ticket.md': ARCHIVING,
+      'plain.md': '# Holidays\n\nThe office closes in August.\n',
+    });
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 3 });
+    expect(await statuses(harness)).toEqual({
+      'finance/close.md': ['superseded', 'marker', 'superseded'],
+      // The pre-filter hit on "archived"; the judgement said the page is about archiving.
+      'howto/archive-a-ticket.md': [null, null, 'active'],
+      'plain.md': [null, null, null],
+    });
+    expect(markerModel.prompts).toHaveLength(2);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(
+      blocks.filter((block) => block.pageRef === 'finance/close.md').map((block) => block.status),
+    ).toEqual(['superseded', 'superseded']);
+    expect(
+      blocks.filter((block) => block.pageRef !== 'finance/close.md').map((block) => block.status),
+    ).toEqual(['active', 'active']);
+  }, 30_000);
+
+  it('asks the model once a page and text: a second sync asks nothing, and a page whose top changed is asked again', async (): Promise<void> => {
+    const { harness, sourceId, root } = await folderOf({
+      'finance/close.md': CLOSE,
+      'howto/archive-a-ticket.md': ARCHIVING,
+    });
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(2);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(2);
+    // The page is reinstated at its source: its top no longer says it is void.
+    await writeFile(
+      join(root, 'docs', 'finance/close.md'),
+      CLOSE.replace('本文件已废止,请参阅《月结流程(2026版)》。', '本文件替代已废止的旧版。'),
+      'utf8',
+    );
+    markerModel.reply = (): unknown => ({ status: 'active', quote: '' });
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(3);
+    expect((await statuses(harness))['finance/close.md']).toEqual(['active', 'default', 'active']);
+  }, 30_000);
+
+  it('leaves a page as it was when the model cannot answer, and the sync still completes: a hit alone decides nothing', async (): Promise<void> => {
+    const { harness, sourceId } = await folderOf({ 'finance/close.md': CLOSE });
+    markerModel.reply = undefined;
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(markerModel.prompts).toHaveLength(1);
+    expect(await statuses(harness)).toEqual({
+      'finance/close.md': [null, null, null],
+    });
+  }, 30_000);
+
+  it('asks about at most twenty pages a sync, and the rest at the next', async (): Promise<void> => {
+    expect(MARKER_JUDGEMENTS_PER_SYNC).toBe(20);
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 23 }, (_unused, index) => [
+          `notes/idea-${String(index).padStart(2, '0')}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(20);
+    const drafts = async (): Promise<number> =>
+      Object.values(await statuses(harness)).filter(([status]) => status === 'draft').length;
+    expect(await drafts()).toBe(20);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(23);
+    expect(await drafts()).toBe(23);
+  }, 60_000);
 });
 
 describe('documentation sync batching', (): void => {

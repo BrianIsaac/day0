@@ -38,6 +38,9 @@ import {
   type FinishingStep,
 } from '../src/docs/finishing';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
+import { MARKER_JUDGEMENTS_PER_SYNC } from '../src/docs/status';
+import { judgeMarker } from '../src/docs/marker-judge';
+import type { StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -660,7 +663,8 @@ export const syncBatch = internalAction({
  *
  * From the point the run's cursor records, the stored pages neither it nor the
  * complete walk before it listed, the superseded page credentials that have
- * aged out and then those pages' mirrors are removed a page at a time, the employees'
+ * aged out and then those pages' mirrors are removed a page at a time, the status of
+ * every page it keeps is restated with its markers judged (`walkStatusPhase`), the employees'
  * intake scopes are re-read against the pages as they now stand (real mode),
  * and `finishSync` supersedes the credentials no page states and publishes
  * the synced state. Each step is fenced on the run's cursor, so a newer sync
@@ -717,6 +721,16 @@ async function finishGeneration(
     if (mirrors === null) return stopped;
     mirrorsRemoved = mirrors.removed;
     checkpoint = mirrors.checkpoint;
+  }
+  if (finishWalks(from.phase, 'status')) {
+    const status = await walkStatusPhase(ctx, {
+      sourceId: source._id,
+      runId,
+      checkpoint,
+      from: from.phase === 'status' ? from.cursor : null,
+    });
+    if (status === null) return stopped;
+    checkpoint = status.checkpoint;
   }
   const surfacesToReapprove =
     SURFACE_MODE === 'real' ? await restateScopes(ctx, source._id, runId) : 0;
@@ -790,6 +804,64 @@ async function walkFinishingPhase(
     removed += page.removed;
     checkpoint = page.checkpoint;
     if (page.done) return { removed, checkpoint };
+    from = page.from;
+  }
+}
+
+/**
+ * Walk the status phase to its end: every page the generation keeps is restated a bounded page
+ * per transaction (`docStatus.restatePages`), and between pages the model is asked about each
+ * page whose marker lines no stored judgement stands for, one call a page, at most
+ * `MARKER_JUDGEMENTS_PER_SYNC` a finish (N20; the rest are asked at the next sync). A judgement
+ * the model could not give leaves the page as it was and is logged: a marker is never why a sync
+ * fails, and a vocabulary hit alone decides nothing.
+ *
+ * @returns The run's cursor after the phase (the scopes phase's start), or null when the run
+ *   moved on from under the finish.
+ */
+async function walkStatusPhase(
+  ctx: ActionCtx,
+  start: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly checkpoint: string;
+    readonly from: string | null;
+  },
+): Promise<{ checkpoint: string } | null> {
+  let checkpoint = start.checkpoint;
+  let from = start.from;
+  let judged = 0;
+  for (let walked = 1; ; walked += 1) {
+    const page: StatusPhasePage | null = await ctx.runMutation(internal.docStatus.restatePages, {
+      sourceId: start.sourceId,
+      runId: start.runId,
+      checkpoint,
+      from,
+      record: walked % FINISHING_CHECKPOINT_EVERY === 0,
+    });
+    if (page === null) return null;
+    checkpoint = page.checkpoint;
+    for (const marker of page.toJudge) {
+      if (judged >= MARKER_JUDGEMENTS_PER_SYNC) break;
+      judged += 1;
+      try {
+        const status = await judgeMarker(marker);
+        await ctx.runMutation(internal.docStatus.recordMarker, {
+          sourceId: start.sourceId,
+          syncRunId: start.runId,
+          ref: marker.ref,
+          quote: marker.quote,
+          status,
+        });
+      } catch (error) {
+        log.warn('documentation marker not judged: the page keeps its status', {
+          sourceId: start.sourceId,
+          ref: marker.ref,
+          reason: safeSyncError(error),
+        });
+      }
+    }
+    if (page.done) return { checkpoint };
     from = page.from;
   }
 }

@@ -267,6 +267,13 @@ const MARKER_MATCHERS: readonly RegExp[] = MARKER_VOCABULARY.map((word) => {
 /** The most characters of marker lines kept as a judgement's quote. */
 const MARKER_QUOTE_LIMIT = 400;
 
+/**
+ * The most marker judgements one finishing sync asks of the model; the pages past it keep no
+ * judgement and are asked at the next sync. A library linked whole judges this many pages a sync
+ * until its pre-filter hits are all judged; after that only a page whose top changed is asked.
+ */
+export const MARKER_JUDGEMENTS_PER_SYNC = 20;
+
 /** The top of a page a marker may sit in, and the lines of it the pre-filter hit. */
 export interface MarkerCandidate {
   /** The page's title and the first `MARKER_EXCERPT_CHARS` characters of its body. */

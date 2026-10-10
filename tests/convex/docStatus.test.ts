@@ -5,6 +5,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { markerCandidate } from '../../src/docs/status';
+import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
@@ -450,5 +451,173 @@ describe('a change of status', (): void => {
     expect(
       (await eventsOf(harness, agentId, 'work.requeued')).filter((event) => event.key === key),
     ).toHaveLength(1);
+  });
+});
+
+describe('restatePages: the status phase of a finishing sync', (): void => {
+  const CHINESE = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。\n\n## 步骤\n\n关账。';
+  const STATUS = finishingCursor({ phase: 'status', cursor: null });
+
+  /** Put the source's running sync at a point of its finish. */
+  async function standAt(
+    harness: Harness,
+    source: { runId: Id<'docSyncRuns'> },
+    cursor: string,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(source.runId, { cursor });
+    });
+  }
+
+  it('restates every page the generation keeps and hands back the pages whose marker lines no judgement stands for', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    await storedPage(harness, source, { ref: 'a-plain.md' });
+    await storedPage(harness, source, { ref: 'b-close.md', title: '月结流程', markdown: CHINESE });
+    const judged = markerCandidate('Close checklist (DEPRECATED)', RUNBOOK)!;
+    const standing = await storedPage(harness, source, {
+      ref: 'c-judged.md',
+      title: 'Close checklist (DEPRECATED)',
+      marker: { status: 'superseded', quote: judged.quote, judgedAt: 3 },
+    });
+    const stale = await storedPage(harness, source, {
+      ref: 'd-stale.md',
+      title: 'Onboarding',
+      status: 'draft',
+      statusSource: 'marker',
+      marker: { status: 'draft', quote: 'DRAFT, not yet approved', judgedAt: 3 },
+    });
+    await standAt(harness, source, STATUS);
+    const page = await harness.mutation(internal.docStatus.restatePages, {
+      sourceId: source.sourceId,
+      runId: source.runId,
+      checkpoint: STATUS,
+      from: null,
+      record: false,
+    });
+    expect(page).toMatchObject({
+      changed: 2,
+      done: true,
+      checkpoint: finishingCursor({ phase: 'scopes', cursor: null }),
+    });
+    // Only the Chinese page awaits a judgement: its lines hit the pre-filter and none is stored.
+    expect(page?.toJudge).toEqual([
+      { ref: 'b-close.md', ...markerCandidate('月结流程', CHINESE)! },
+    ]);
+    // A standing judgement decides; one of lines the page no longer holds is removed with its status.
+    expect(await pageOf(harness, standing)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+    });
+    const cleared = await pageOf(harness, stale);
+    expect([cleared.status, cleared.statusSource, cleared.marker]).toEqual([
+      'active',
+      'default',
+      undefined,
+    ]);
+    // The run's cursor now starts the scopes phase, where the finish goes on.
+    expect((await harness.run(async (ctx) => await ctx.db.get(source.runId)))?.cursor).toBe(
+      finishingCursor({ phase: 'scopes', cursor: null }),
+    );
+  });
+
+  it('runs in its own phase only, and stops for a run a newer sync moved on', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    await storedPage(harness, source, { ref: 'a-plain.md' });
+    const mirrors = finishingCursor({ phase: 'mirrors', cursor: null });
+    await standAt(harness, source, mirrors);
+    const walk = async (checkpoint: string) =>
+      await harness.mutation(internal.docStatus.restatePages, {
+        sourceId: source.sourceId,
+        runId: source.runId,
+        checkpoint,
+        from: null,
+        record: false,
+      });
+    await expect(walk(mirrors)).rejects.toThrow('runs in its status phase only');
+    // The run stands elsewhere than the caller last saw: another finish, or a newer sync.
+    expect(await walk(STATUS)).toBeNull();
+    await standAt(harness, source, STATUS);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(source.runId, { state: 'superseded' });
+    });
+    expect(await walk(STATUS)).toBeNull();
+  });
+});
+
+describe('recordMarker: a judgement of a page’s marker lines', (): void => {
+  const CHINESE = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。';
+
+  it('stores the judgement with the lines it is of, and supersedes the page with its blocks', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, {
+      ref: 'finance/close.md',
+      title: '月结流程',
+      markdown: CHINESE,
+    });
+    const { quote } = markerCandidate('月结流程', CHINESE)!;
+    expect(
+      await harness.mutation(internal.docStatus.recordMarker, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'finance/close.md',
+        quote,
+        status: 'superseded',
+      }),
+    ).toBe(true);
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+      marker: { status: 'superseded', quote, judgedAt: expect.any(Number) },
+    });
+    expect(await blockStatuses(harness, source.sourceId, 'finance/close.md')).toEqual([
+      'superseded',
+    ]);
+  });
+
+  it('keeps a judgement of active as the cache it is, and leaves the page current', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const markdown = '# How to archive a ticket\n\nAn archived ticket leaves the board.';
+    const pageId = await storedPage(harness, source, {
+      ref: 'howto/archive.md',
+      title: 'How to archive a ticket',
+      markdown,
+    });
+    const { quote } = markerCandidate('How to archive a ticket', markdown)!;
+    await harness.mutation(internal.docStatus.recordMarker, {
+      sourceId: source.sourceId,
+      syncRunId: source.runId,
+      ref: 'howto/archive.md',
+      quote,
+      status: 'active',
+    });
+    const page = await pageOf(harness, pageId);
+    expect(page.marker).toMatchObject({ status: 'active', quote });
+    expect([page.status, page.statusSource]).toEqual([undefined, undefined]);
+  });
+
+  it('takes nothing for lines the page no longer holds, or a generation that is not the running one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, {
+      ref: 'finance/close.md',
+      title: '月结流程',
+      markdown: CHINESE,
+    });
+    const record = async (quote: string, syncRunId: Id<'docSyncRuns'>): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordMarker, {
+        sourceId: source.sourceId,
+        syncRunId,
+        ref: 'finance/close.md',
+        quote,
+        status: 'superseded',
+      });
+    expect(await record('本文件已废止,请参阅《月结流程(2025版)》。', source.runId)).toBe(false);
+    const other = await syncingSource(harness);
+    expect(await record(markerCandidate('月结流程', CHINESE)!.quote, other.runId)).toBe(false);
+    expect((await pageOf(harness, pageId)).marker).toBeUndefined();
   });
 });
