@@ -123,7 +123,9 @@ import { COMPANY_COMMAND, COMPANY_SCRIPT, companyHandSteps, loadBedSpec } from '
 import {
   BACKEND_IMAGE,
   backendImageState,
+  baseLabelInspect,
   layersInspect,
+  referenceDigest,
   pinnedNodeImage,
   redactorVolumeClone,
   REDACTOR_VOLUME_SUFFIXES,
@@ -3262,6 +3264,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     const backendBase = dockerfileBase(
       readIfPresent(join(checkoutRoot, 'docker', 'backend.Dockerfile')) ?? '',
     );
+    const backendBaseDigest = referenceDigest(backendBase);
     const sequence: SequenceInput = {
       mode: options.mode,
       warm,
@@ -3276,6 +3279,12 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
         backendBase === undefined
           ? undefined
           : io.run('docker', layersInspect(backendBase), { timeoutMs: 30_000 }),
+        backendBaseDigest === undefined
+          ? undefined
+          : {
+              inspected: io.run('docker', baseLabelInspect(BACKEND_IMAGE), { timeoutMs: 30_000 }),
+              digest: backendBaseDigest,
+            },
       ),
     };
     let steps = sequenceSteps(route, sequence);
