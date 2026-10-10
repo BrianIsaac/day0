@@ -88,7 +88,11 @@ export function unreadPagesLine(
   if (record === undefined || record.count === 0) return undefined;
   const more = record.count - record.pages.length;
   const named = [
-    ...record.pages.map((page): string => `${page.ref}: ${page.reason}`),
+    // A reason that names its page (a URL reader's does, since a redirect may end elsewhere)
+    // is not prefixed with it again.
+    ...record.pages.map((page): string =>
+      page.reason.includes(page.ref) ? page.reason : `${page.ref}: ${page.reason}`,
+    ),
     ...(more > 0 ? [`and ${more} more`] : []),
   ].join('; ');
   if (nothingStored) {

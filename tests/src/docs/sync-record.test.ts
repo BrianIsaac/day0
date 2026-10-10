@@ -52,6 +52,21 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     );
   });
 
+  it('names a page once when its reason already names it (14-D: a URL reader reason names its page)', (): void => {
+    const reason =
+      'http://example.com/handbook is plain http, which Day0 reads only for a host you list';
+    expect(
+      unreadPagesLine(
+        withUnreadPages(undefined, [
+          { ref: 'http://example.com/handbook', reason },
+          { ref: 'b.md', reason: 'HTTP 404' },
+        ]),
+      ),
+    ).toBe(
+      `2 pages could not be read this sync and keep their last stored version: ${reason}; b.md: HTTP 404. The next sync reads them again.`,
+    );
+  });
+
   it('keeps each page to one bounded line, whatever lines its failure has', (): void => {
     const record = withUnreadPages(undefined, [
       {
