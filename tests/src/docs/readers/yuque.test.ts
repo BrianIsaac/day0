@@ -99,6 +99,16 @@ describe('the Yuque documentation reader', (): void => {
     });
   });
 
+  it('reads on while the total says more follows, though a page came back shorter than asked', async (): Promise<void> => {
+    // The sync asks for 25 at a time; a space that answers three and a total of six has three more.
+    const { reader, requests } = readerOnSpace();
+    const first = await reader.listPageBatch(repository, TOKEN, undefined, 25);
+    expect(first.pages.map((page) => page.ref)).toEqual(['210000001', '210000002']);
+    const second = await reader.listPageBatch(repository, TOKEN, first.nextCursor, 25);
+    expect(second.pages.map((page) => page.ref)).toEqual(['210000004', '210000005']);
+    expect(listings(requests)).toEqual(['live@0', 'live@3']);
+  });
+
   it("reads a Markdown document's body as it is and any other through its HTML, each under its title", async (): Promise<void> => {
     const { reader } = readerOnSpace();
     const { pages } = await wholeRepository(reader);

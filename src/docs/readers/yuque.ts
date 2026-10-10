@@ -181,10 +181,10 @@ export class YuqueReader implements DocumentationReader {
     }
     const total = field(field(body, 'meta'), 'total');
     const end = offset + entries.length;
-    return {
-      entries,
-      more: entries.length === limit && (typeof total !== 'number' || end < total),
-    };
+    // The listing's own total says whether more follows, where it gives one: a space may answer
+    // fewer than were asked for. An empty page ends the walk whatever the total says.
+    const more = typeof total === 'number' ? end < total : entries.length === limit;
+    return { entries, more: entries.length > 0 && more };
   }
 
   /** One listed entry: a document read, or anything else named unread. */
