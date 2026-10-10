@@ -1351,6 +1351,75 @@ describe('documentation sync batching', (): void => {
     expect(await scheduled(harness)).toEqual([]);
   });
 
+  it('gives each scheduled sync after the cap one fresh start of its own, not three more, until a walk completes (W14-R33)', async (): Promise<void> => {
+    const root = temporary('day0-sync-changing-again-');
+    await mkdir(join(root, 'changing'));
+    for (let index = 1; index <= 30; index += 1) {
+      await writeFile(
+        join(root, 'changing', `page-${String(index).padStart(2, '0')}.md`),
+        `# Page ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Changing',
+      kind: 'folder',
+      locator: 'changing',
+    });
+    // The review's input: a listing that changes inside every walk, sync after sync.
+    const read = FolderReader.prototype.listPageBatch;
+    let renames = 0;
+    let changing = true;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (changing && args[2] !== undefined) {
+        const from = renames === 0 ? 'page-01.md' : `renamed-${renames}.md`;
+        renames += 1;
+        await rename(join(root, 'changing', from), join(root, 'changing', `renamed-${renames}.md`));
+      }
+      return await read.apply(this, args);
+    });
+    const sync = async (fresh?: true): Promise<Array<[string, number | undefined]>> => {
+      const before = await harness.run(
+        async (ctx) => (await ctx.db.query('docSyncRuns').collect()).length,
+      );
+      await harness.action(internal.docSyncActions.syncSource, {
+        sourceId,
+        ...(fresh ? { fresh } : {}),
+      });
+      await harness.finishAllScheduledFunctions(drainScheduled);
+      const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
+      return runs.slice(before).map((run) => [run.state, run.restarts]);
+    };
+    expect(await sync()).toEqual([
+      ['superseded', undefined],
+      ['superseded', 1],
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    // The next scheduled syncs carry the count, less one: two runs each, where there were four.
+    expect(await sync()).toEqual([
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    expect(await sync()).toEqual([
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    // A re-read by hand starts over, as a person asked for it.
+    expect((await sync(true)).map(([, restarts]) => restarts)).toEqual([undefined, 1, 2, 3]);
+    // The source goes quiet: the walk completes, and the sync after it owes nothing.
+    changing = false;
+    const quiet = await sync();
+    expect(quiet.at(-1)?.[0]).toBe('completed');
+    expect(await sync()).toEqual([['completed', undefined]]);
+  }, 30_000);
+
   it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.run(async (ctx) => {

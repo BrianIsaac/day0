@@ -773,7 +773,8 @@ export const sourcesForAgentInternal = internalQuery({
  * start (`fresh`, as a new connection secret needs), a run too old or a
  * resume that got nowhere reads from page one (`runToResume`) and starts the
  * source's next listing, so every page an earlier one named is pruned unless
- * this one names it again.
+ * this one names it again. Either way it carries the count of listing restarts an unfinished
+ * sync before it spent, less one (W14-R33); only a completed walk or `fresh` clears it.
  *
  * @returns The new run's id; its `cursor` is where its first batch reads from.
  */
@@ -789,6 +790,11 @@ export const beginSync = internalMutation({
       .order('desc')
       .take(2);
     const resumed = args.fresh === true ? undefined : runToResume(latest, previous, now);
+    // The restarts an unfinished sync spent carry into the next, less one, so each scheduled sync
+    // after the cap has one fresh start of its own, not three more (W14-R33). A walk that
+    // completes owes nothing, and a re-read by hand starts over.
+    const spent =
+      args.fresh === true || latest?.state === 'completed' ? 0 : (latest?.restarts ?? 0);
     const active = source.activeSyncId ? await ctx.db.get(source.activeSyncId) : null;
     if (active?.state === 'running') {
       await ctx.db.patch(active._id, {
@@ -821,6 +827,7 @@ export const beginSync = internalMutation({
       unread: unreadRecordIn(resumed),
       state: 'running',
       createdAt: now,
+      ...(spent > 1 ? { restarts: spent - 1 } : {}),
     });
     await ctx.db.patch(source._id, {
       activeSyncId: runId,
