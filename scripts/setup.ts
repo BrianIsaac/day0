@@ -128,7 +128,8 @@ import {
   redactorVolumeClone,
   REDACTOR_VOLUME_SUFFIXES,
 } from './lib/docker';
-import { DEMO_TILE_HOST, listsDemoTile } from './lib/demo-tile';
+import { DEMO_TILE_HOST, listsDemoTile, withPrivateHosts } from './lib/demo-tile';
+import { privateHostAllowlist } from '../src/lib/private-hosts';
 import { isLoopback, setupRoute } from './setup-route';
 import {
   checkoutReleases,
@@ -318,6 +319,11 @@ export interface SetupOptions {
   sandbox?: SandboxChoice;
   /** The manager's address, stored on the agent at deploy in real mode. */
   bossEmail?: string;
+  /**
+   * Hosts to add to `DAY0_PRIVATE_HOSTS` beside the operator's own (`--add-private-host`,
+   * W14-R36): the way an install whose own list leaves out the demo tile gets it listed.
+   */
+  addPrivateHosts?: string[];
   /** Real mode: copy the company bed's pages in afterwards and print its hand steps. */
   company?: boolean;
   /** Print the plan of commands and write nothing. */
@@ -489,6 +495,8 @@ export const SETUP_USAGE = `Usage: pnpm setup:local [options]
   --sandbox <local|daytona>     real mode: what verifies authored skills (default daytona
                                 when .env.local holds DAYTONA_API_KEY, else local)
   --boss-email <address>        real mode: the manager's address, stored on the agent at deploy
+  --add-private-host <host>     add a host to DAY0_PRIVATE_HOSTS beside your own entries (repeat
+                                for more); the demo tile is looker-tile
   --company                     real mode: then copy the company bed's pages into the
                                 documentation folder (scripts/bed/company.ts docs), print
                                 its hand steps and run its check
@@ -585,6 +593,24 @@ hosted copy".`;
  * Raises:
  *   Error: If a flag is unknown, or its value is not one this helper has.
  */
+/**
+ * A host given to `--add-private-host`, held to what `DAY0_PRIVATE_HOSTS` takes before anything
+ * is written: the list's own parser refuses this machine's names and the addresses Day0 never
+ * dials, and a list that cannot be parsed refuses every private host afterwards.
+ *
+ * @throws Error naming the flag and the parser's reason.
+ */
+function privateHostArgument(host: string): string {
+  try {
+    privateHostAllowlist(host);
+  } catch (error) {
+    throw new Error(
+      `--add-private-host: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return host;
+}
+
 export function parseSetupArguments(argv: readonly string[]): SetupOptions {
   const options: SetupOptions = {
     mode: 'mock',
@@ -688,6 +714,8 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
       options.warmFrom = take();
     } else if (argument === '--boss-email') {
       options.bossEmail = take();
+    } else if (argument === '--add-private-host') {
+      options.addPrivateHosts = [...(options.addPrivateHosts ?? []), privateHostArgument(take())];
     } else if (argument === '--provider') {
       options.signIn = {
         ...options.signIn,
@@ -1287,6 +1315,8 @@ export interface EnvPlanInput {
   sandbox?: SandboxChoice;
   /** Real mode: the manager's address, when known. */
   bossEmail?: string;
+  /** Hosts `--add-private-host` named: added to the list beside the operator's own. */
+  addPrivateHosts?: readonly string[];
   /** An explicit GPU choice is written; `auto` leaves the file's own value. */
   gpu?: GpuChoice;
   /**
@@ -1376,6 +1406,16 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
     if (input.bossEmail) selected.NEXT_PUBLIC_DEMO_BOSS_EMAIL = input.bossEmail;
   }
 
+  // Hosts the operator asked to add are written on a resume too (W14-R36): an empty real-mode
+  // list takes the tile first, as it would have without the flag.
+  if ((input.addPrivateHosts ?? []).length > 0) {
+    const held = input.existing.DAY0_PRIVATE_HOSTS ?? '';
+    selected.DAY0_PRIVATE_HOSTS = withPrivateHosts(
+      held.trim() === '' && mode === 'real' ? DEMO_TILE_HOST : held,
+      input.addPrivateHosts ?? [],
+    );
+  }
+
   const updates: Record<string, string> = { ...selected };
   for (const [name, value] of Object.entries(derived)) {
     if (name in selected) continue;
@@ -1404,7 +1444,7 @@ export function demoTileNote(
 ): string | undefined {
   const listed = existing.DAY0_PRIVATE_HOSTS ?? '';
   if (mode !== 'real' || listed.trim() === '' || listsDemoTile(listed)) return undefined;
-  return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http; add ${DEMO_TILE_HOST} to the list to use the tile.`;
+  return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http. Run this command again with \`--add-private-host ${DEMO_TILE_HOST}\` to add it to the list, or add it to the list yourself.`;
 }
 
 /**
@@ -3198,6 +3238,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       docsHostDir,
       sandbox,
       bossEmail: bossEmail || undefined,
+      addPrivateHosts: options.addPrivateHosts,
       gpu: options.gpu,
       resume: options.resumed,
     };
