@@ -1,12 +1,14 @@
-import { v } from 'convex/values';
-import { internalMutation, type MutationCtx, type QueryCtx } from './_generated/server';
+import { ConvexError, v } from 'convex/values';
+import { internalMutation, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
+import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
   PAGE_STATUSES,
+  SOURCE_AUTHORITIES,
   defaultStatusOf,
   pageStatusOf,
   type PageStatus,
@@ -16,6 +18,7 @@ import {
   decidePageStatus,
   markerCandidate,
   markerStands,
+  type DecidedStatus,
   type MarkerCandidate,
 } from '../src/docs/status';
 import { finishingCursor, finishingStep } from '../src/docs/finishing';
@@ -72,10 +75,7 @@ async function confirmedSuccessor(
 }
 
 /** Whether two page names are the same page, or both absent. */
-function samePage(
-  left: { sourceId: Id<'docSources'>; ref: string } | undefined,
-  right: { sourceId: Id<'docSources'>; ref: string } | undefined,
-): boolean {
+function samePage(left: PageName | undefined, right: PageName | undefined): boolean {
   return left?.sourceId === right?.sourceId && left?.ref === right?.ref;
 }
 
@@ -134,8 +134,38 @@ export async function restatePage(
         : decided.statusSource === 'relation'
           ? successor
           : undefined;
+  return await writeStatus(ctx, { source, page, decided, supersededBy, now });
+}
+
+/** A page's name within its owner's documentation. */
+interface PageName {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+}
+
+/**
+ * Write a decided status on a page's row when it differs, and set off what a change of status
+ * sets off: the blocks, each reading employee's record and parked work.
+ *
+ * @param args - The page, the status decided for it with its successor, and, when the manager
+ *   decided it by hand, who and when (written even when the status itself stands).
+ * @returns The change, or null when the page's status itself stands.
+ */
+async function writeStatus(
+  ctx: MutationCtx,
+  args: {
+    readonly source: Doc<'docSources'>;
+    readonly page: Doc<'docPages'>;
+    readonly decided: DecidedStatus;
+    readonly supersededBy: PageName | undefined;
+    readonly manager?: { readonly decidedBy: string | undefined; readonly decidedAt: number };
+    readonly now: number;
+  },
+): Promise<StatusChange | null> {
+  const { source, page, decided, supersededBy, now } = args;
   const from = pageStatusOf(page);
   if (
+    args.manager === undefined &&
     from === decided.status &&
     statusSourceOf(page) === decided.statusSource &&
     samePage(page.supersededBy, supersededBy)
@@ -146,7 +176,8 @@ export async function restatePage(
     status: decided.status,
     statusSource: decided.statusSource,
     supersededBy,
-    ...(decided.statusSource === 'manager' ? {} : { decidedBy: undefined, decidedAt: undefined }),
+    decidedBy: args.manager?.decidedBy,
+    decidedAt: args.manager?.decidedAt,
   });
   if (from === decided.status) return null;
   await copyPageStatusToBlocks(ctx, {
@@ -362,5 +393,116 @@ export const recordMarker = internalMutation({
     await ctx.db.patch(page._id, { marker });
     await restatePage(ctx, { source, page: { ...page, marker }, now });
     return true;
+  },
+});
+
+/** The statuses the manager may give a page by hand; `active` is what Clear falls back to. */
+const MANAGER_STATUSES = ['superseded', 'archived', 'draft'] as const;
+
+/** Why a page marked superseded was refused: it names no successor, or names itself. */
+export const NAME_THE_SUCCESSOR = 'Name the page that supersedes it.';
+export const NOT_ITS_OWN_SUCCESSOR = 'A page cannot supersede itself.';
+
+/**
+ * A page of the caller's with its source, read after the caller is known.
+ *
+ * @throws ConvexError when the page or its source is gone; Error `forbidden` for another owner's.
+ */
+async function ownedPage(
+  ctx: QueryCtx,
+  ownerKey: string,
+  pageId: Id<'docPages'>,
+): Promise<{ page: Doc<'docPages'>; source: Doc<'docSources'> }> {
+  const page = await ctx.db.get(pageId);
+  const source = page === null ? null : await ctx.db.get(page.sourceId);
+  if (page === null || source === null) throw new ConvexError('That page is no longer stored.');
+  if (source.userId !== ownerKey) throw new Error('forbidden');
+  return { page, source };
+}
+
+/**
+ * Give a page the manager's own status: superseded by another page, archived, or a draft (the
+ * Documentation tab's "Mark superseded by ...", "Mark archived" and "This is a draft"). Public;
+ * the caller must own the page's source, and the successor's. The manager's word stands over
+ * everything the page and its source say until `clearPageStatus`. Writes the page's status with
+ * the caller's verified address and the time, its blocks' status, and, on a change, the record
+ * and parked work of every employee that reads the source.
+ *
+ * @throws ConvexError when a superseded page names no successor, or itself.
+ */
+export const setPageStatus = mutation({
+  args: {
+    pageId: v.id('docPages'),
+    status: v.union(...MANAGER_STATUSES.map((status) => v.literal(status))),
+    /** The page that supersedes it; required for `superseded`, ignored otherwise. */
+    supersededBy: v.optional(v.id('docPages')),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const caller = await getCallerOrThrow(ctx);
+    const { page, source } = await ownedPage(ctx, caller.ownerKey, args.pageId);
+    let supersededBy: PageName | undefined;
+    if (args.status === 'superseded') {
+      if (args.supersededBy === undefined) throw new ConvexError(NAME_THE_SUCCESSOR);
+      if (args.supersededBy === args.pageId) throw new ConvexError(NOT_ITS_OWN_SUCCESSOR);
+      const successor = await ownedPage(ctx, caller.ownerKey, args.supersededBy);
+      supersededBy = { sourceId: successor.page.sourceId, ref: successor.page.ref };
+    }
+    const now = Date.now();
+    await writeStatus(ctx, {
+      source,
+      page,
+      decided: { status: args.status, statusSource: 'manager' },
+      supersededBy,
+      manager: { decidedBy: verifiedAddressOf(caller), decidedAt: now },
+      now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Take the manager's own status off a page, back to what the page and its source say (the
+ * tab's "Clear"): the source's own word, a judged marker, a confirmed relation, or the source's
+ * default, in that order, from what the row kept beside the manager's decision (K-2), with no
+ * re-read. Public; the caller must own the page's source. A page the manager never decided is
+ * left as it is.
+ */
+export const clearPageStatus = mutation({
+  args: { pageId: v.id('docPages') },
+  handler: async (ctx, args): Promise<null> => {
+    const caller = await getCallerOrThrow(ctx);
+    const { page, source } = await ownedPage(ctx, caller.ownerKey, args.pageId);
+    if (page.statusSource !== 'manager') return null;
+    const undecided = {
+      statusSource: undefined,
+      decidedBy: undefined,
+      decidedAt: undefined,
+      supersededBy: undefined,
+    };
+    await ctx.db.patch(page._id, undecided);
+    await restatePage(ctx, { source, page: { ...page, ...undecided }, now: Date.now() });
+    return null;
+  },
+});
+
+/**
+ * Say how far a documentation source is trusted: official, team or personal (the tab's Trust
+ * select; A5, A19). Public; the caller must own the source. Writes the source's `authority`,
+ * which the selection weighs at its next read; no page's status changes with it.
+ */
+export const setSourceAuthority = mutation({
+  args: {
+    sourceId: v.id('docSources'),
+    authority: v.union(...SOURCE_AUTHORITIES.map((authority) => v.literal(authority))),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const caller = await getCallerOrThrow(ctx);
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null) throw new ConvexError('That source is no longer linked.');
+    if (source.userId !== caller.ownerKey) throw new Error('forbidden');
+    if (source.authority !== args.authority) {
+      await ctx.db.patch(source._id, { authority: args.authority, updatedAt: Date.now() });
+    }
+    return null;
   },
 });

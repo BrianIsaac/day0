@@ -1,13 +1,14 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { markerCandidate } from '../../src/docs/status';
 import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { sourceAuthorityOf } from '../../src/docs/authority';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -619,5 +620,146 @@ describe('recordMarker: a judgement of a page’s marker lines', (): void => {
     const other = await syncingSource(harness);
     expect(await record(markerCandidate('月结流程', CHINESE)!.quote, other.runId)).toBe(false);
     expect((await pageOf(harness, pageId)).marker).toBeUndefined();
+  });
+});
+
+describe('the manager’s own status for a page', (): void => {
+  /** The owner signed in with a verified address. */
+  const asManager = (harness: Harness) => harness.withIdentity(managerIdentity());
+
+  it('marks a page a draft, archived, or superseded by another page, with who decided and when', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const successor = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook-v2.md' });
+    const agentId = await employee(harness, 'Priya');
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'draft' });
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'draft',
+      statusSource: 'manager',
+      decidedBy: MANAGER_ADDRESS,
+      decidedAt: Date.parse('2026-10-10T09:00:00.000Z'),
+    });
+    expect(await blockStatuses(harness, source.sourceId, 'runbooks/pipeline-runbook.md')).toEqual([
+      'draft',
+      'draft',
+    ]);
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    expect((await pageOf(harness, pageId)).status).toBe('archived');
+    await asManager(harness).mutation(api.docStatus.setPageStatus, {
+      pageId,
+      status: 'superseded',
+      supersededBy: successor,
+    });
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'manager',
+      supersededBy: { sourceId: source.sourceId, ref: 'runbooks/pipeline-runbook-v2.md' },
+    });
+    expect(
+      (await eventsOf(harness, agentId, 'documentation.page-status-changed')).map((event) => [
+        event.from,
+        event.to,
+        event.decidedBy,
+      ]),
+    ).toEqual([
+      ['active', 'draft', 'manager'],
+      ['draft', 'archived', 'manager'],
+      ['archived', 'superseded', 'manager'],
+    ]);
+  });
+
+  it('refuses a superseded page with no successor, itself as its successor, or a successor that is not the manager’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const other = await syncingSource(harness, { userId: 'another-owner' });
+    const theirs = await storedPage(harness, other, { ref: 'theirs.md' });
+    const set = async (supersededBy?: Id<'docPages'>) =>
+      await asManager(harness).mutation(api.docStatus.setPageStatus, {
+        pageId,
+        status: 'superseded',
+        ...(supersededBy !== undefined ? { supersededBy } : {}),
+      });
+    await expect(set()).rejects.toThrow('Name the page that supersedes it.');
+    await expect(set(pageId)).rejects.toThrow('A page cannot supersede itself.');
+    await expect(set(theirs)).rejects.toThrow('forbidden');
+    expect((await pageOf(harness, pageId)).status).toBeUndefined();
+  });
+
+  it('clears back to what the page and its source say: the source’s own word, or the default', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const native = await storedPage(harness, source, {
+      ref: 'archive/old.md',
+      status: 'archived',
+      statusSource: 'source-native',
+      nativeStatus: 'archived',
+    });
+    for (const id of [pageId, native]) {
+      await asManager(harness).mutation(api.docStatus.setPageStatus, {
+        pageId: id,
+        status: 'draft',
+      });
+      await asManager(harness).mutation(api.docStatus.clearPageStatus, { pageId: id });
+    }
+    const cleared = await pageOf(harness, pageId);
+    expect([cleared.status, cleared.statusSource, cleared.decidedBy, cleared.decidedAt]).toEqual([
+      'active',
+      'default',
+      undefined,
+      undefined,
+    ]);
+    expect(await blockStatuses(harness, source.sourceId, 'runbooks/refresh.md')).toEqual([
+      'active',
+      'active',
+    ]);
+    expect(await pageOf(harness, native)).toMatchObject({
+      status: 'archived',
+      statusSource: 'source-native',
+    });
+    // Clear on a page the manager never decided changes nothing.
+    await asManager(harness).mutation(api.docStatus.clearPageStatus, { pageId: native });
+    expect((await pageOf(harness, native)).statusSource).toBe('source-native');
+  });
+
+  it('is the owner’s alone: another signed-in manager is refused, and an anonymous caller before any read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    await expect(
+      stranger.mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' }),
+    ).rejects.toThrow('forbidden');
+    await expect(stranger.mutation(api.docStatus.clearPageStatus, { pageId })).rejects.toThrow(
+      'forbidden',
+    );
+    await expect(
+      stranger.mutation(api.docStatus.setSourceAuthority, {
+        sourceId: source.sourceId,
+        authority: 'official',
+      }),
+    ).rejects.toThrow('forbidden');
+    await expect(
+      harness.mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' }),
+    ).rejects.toThrow();
+    expect((await pageOf(harness, pageId)).status).toBeUndefined();
+  });
+});
+
+describe('the trust the manager gives a source', (): void => {
+  it('is stored on the source, and reads as team until it is set', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const read = async () =>
+      sourceAuthorityOf((await harness.run(async (ctx) => await ctx.db.get(source.sourceId)))!);
+    expect(await read()).toBe('team');
+    await harness.withIdentity(managerIdentity()).mutation(api.docStatus.setSourceAuthority, {
+      sourceId: source.sourceId,
+      authority: 'official',
+    });
+    expect(await read()).toBe('official');
   });
 });

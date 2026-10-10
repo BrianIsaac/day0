@@ -21,9 +21,11 @@ interface RegisteredFunction {
 
 /**
  * Re-pinned with the function added or removed named in the commit (207 at v0.17.0; 210 with
- * wave 14's `personChanges:take`, `personChanges:dismiss` and `workingAgreements:recheck`).
+ * wave 14's `personChanges:take`, `personChanges:dismiss` and `workingAgreements:recheck`; 213
+ * with 15-A's `docStatus:setPageStatus`, `docStatus:clearPageStatus` and
+ * `docStatus:setSourceAuthority`).
  */
-const PINNED_COUNT = 210;
+const PINNED_COUNT = 213;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 
