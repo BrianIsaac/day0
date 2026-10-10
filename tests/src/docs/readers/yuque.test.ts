@@ -155,11 +155,12 @@ describe('the Yuque documentation reader', (): void => {
     expect(unread).toEqual([
       {
         ref: '210000003',
-        reason: '"Q3 numbers" is a Yuque sheet, not a document, so Day0 does not read it.',
+        reason: '"Q3 numbers" is a Yuque sheet, which Day0 does not read: only documents are read.',
       },
       {
         ref: '210000006',
-        reason: '"Pipeline map" is a Yuque board, not a document, so Day0 does not read it.',
+        reason:
+          '"Pipeline map" is a Yuque board, which Day0 does not read: only documents are read.',
       },
     ]);
     for (const id of ['210000003', '210000006', '210000009']) {
@@ -178,7 +179,8 @@ describe('the Yuque documentation reader', (): void => {
     const batch = await reader.listPageBatch(repository, TOKEN, undefined, 3);
     expect(batch.unread[0]).toEqual({
       ref: '210000001',
-      reason: '"Close the quarter" is a Yuque sheet, not a document, so Day0 does not read it.',
+      reason:
+        '"Close the quarter" is a Yuque sheet, which Day0 does not read: only documents are read.',
     });
   });
 

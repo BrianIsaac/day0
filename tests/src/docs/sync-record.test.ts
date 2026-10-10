@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_UNREAD_LISTED,
   endedShort,
+  isKindNotRead,
   legacyUnreadRecord,
   reasonWithoutLegacyRecord,
   unreadPagesLine,
@@ -37,6 +38,71 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     expect(record?.pages).toHaveLength(MAX_UNREAD_LISTED);
     expect(withUnreadPages(record, [{ ref: 'x.md', reason: 'gone' }])?.count).toBe(13);
     expect(unreadPagesLine(record)).toMatch(/page-9\.md: HTTP 500; and 2 more\. The next sync/);
+  });
+
+  /** A sheet the Feishu reader lists and does not read, in its own words. */
+  const sheet = (index: number): { ref: string; reason: string } => ({
+    ref: `wikcnSheet${index}`,
+    reason: `"Sheet ${index}" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.`,
+  });
+  const forbidden = {
+    ref: 'wikcnPayroll',
+    reason:
+      'The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member.',
+  };
+
+  it('never lets pages of a kind Day0 does not read crowd a page it failed to read out of the ten named (W14-R40)', (): void => {
+    // The review's input: a wiki with ten sheets and mind notes, then the one forbidden document.
+    const tenSheets = Array.from({ length: 10 }, (_value, index) => sheet(index));
+    const record = withUnreadPages(withUnreadPages(undefined, tenSheets), [forbidden, sheet(10)]);
+    expect(record?.count).toBe(12);
+    expect(record?.pages).toHaveLength(MAX_UNREAD_LISTED);
+    expect(record?.pages[0]).toEqual(forbidden);
+    expect(record?.pages.slice(1).map((page) => page.ref)).toEqual(
+      tenSheets.slice(0, 9).map((page) => page.ref),
+    );
+  });
+
+  it('says a page of a kind Day0 does not read is that, and promises to read again only what it failed to read (W14-R40)', (): void => {
+    const sheets = withUnreadPages(undefined, [sheet(1), sheet(2)]);
+    expect(unreadPagesLine(sheets)).toBe(
+      '2 listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+    );
+    expect(unreadPagesLine(sheets)).not.toMatch(/could not be read|reads them again/);
+    const mixed = withUnreadPages(sheets, [forbidden]);
+    expect(unreadPagesLine(mixed)).toBe(
+      '1 page could not be read this sync and keeps its last stored version: wikcnPayroll: The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member. The next sync reads them again. 2 more listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+    );
+  });
+
+  it('counts the pages it names no kind for with the rest, once ten failures fill the list', (): void => {
+    const failures = Array.from({ length: 11 }, (_value, index) => ({
+      ref: `page-${index}.md`,
+      reason: 'HTTP 500',
+    }));
+    const record = withUnreadPages(withUnreadPages(undefined, [sheet(1)]), failures);
+    expect(record?.pages.every((page) => page.reason === 'HTTP 500')).toBe(true);
+    expect(unreadPagesLine(record)).toMatch(
+      /^12 pages could not be read this sync and keep their last stored version: page-0\.md: HTTP 500; .*; and 2 more\. The next sync reads them again\.$/,
+    );
+  });
+
+  it('knows a reason that names a kind from one that names a failure', (): void => {
+    for (const reason of [
+      sheet(1).reason,
+      '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
+      '"Q3 numbers" is a Yuque sheet, which Day0 does not read: only documents are read.',
+      '"Handbook (shortcut)" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
+    ]) {
+      expect(isKindNotRead(reason), reason).toBe(true);
+    }
+    for (const reason of [
+      forbidden.reason,
+      'HTTP 404',
+      '"x.docx" is not read: it is not a .docx file Day0 can open.',
+    ]) {
+      expect(isKindNotRead(reason), reason).toBe(false);
+    }
   });
 
   it('says nothing for a run that read every page', (): void => {

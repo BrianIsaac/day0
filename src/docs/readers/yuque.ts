@@ -61,7 +61,7 @@ const NOT_DOCUMENTS: Readonly<Record<string, string>> = {
 
 /** Why an entry that is not a document is not read. */
 function notDocument(title: string, noun: string): string {
-  return `"${title}" is a Yuque ${noun}, not a document, so Day0 does not read it.`;
+  return `"${title}" is a Yuque ${noun}, which Day0 does not read: only documents are read.`;
 }
 
 /**

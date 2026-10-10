@@ -24,6 +24,17 @@ export const BROWSER_HOSTS: Readonly<Record<FeishuRegion, string>> = {
   lark: 'larksuite.com',
 };
 
+/** What each region is called in a sentence. */
+export const FEISHU_REGION_NAMES: Readonly<Record<FeishuRegion, string>> = {
+  feishu: 'Feishu',
+  lark: 'Lark',
+};
+
+/** The region a source is not in: where its app may have been made instead (W14-R38). */
+export function otherFeishuRegion(region: FeishuRegion): FeishuRegion {
+  return region === 'feishu' ? 'lark' : 'feishu';
+}
+
 /** A wiki space, by its numeric ID. */
 export interface FeishuWikiScope {
   readonly kind: 'wiki';
