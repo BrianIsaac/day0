@@ -200,7 +200,8 @@ export function providerFake(
       fixture.assertion.path === route.path &&
       !assertionHolds(fixture.assertion, request, options.publicKey)
     ) {
-      return answer(fixture.unauthorised.status, fixture.unauthorised.body);
+      const refusal = fixture.refusedForm ?? fixture.unauthorised;
+      return answer(refusal.status, refusal.body);
     }
     const needed = route.authorization ?? fixture.authorization;
     const authorised =

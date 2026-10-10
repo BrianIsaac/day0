@@ -10,9 +10,10 @@ import {
   parseConfluenceCloudLocator,
   parseConfluenceDataCenterLocator,
 } from './confluence-source';
+import { parseDriveLocator, parseDriveSecret } from './drive-source';
 import { parseFeishuLocator, parseFeishuSecret } from './feishu-source';
 import { parseSharePointLocator, parseSharePointSecret } from './sharepoint-source';
-import { isPendingReaderKind, notReadYet, type DocSourceKind } from './types';
+import type { DocSourceKind } from './types';
 import { checkYuqueToken, parseYuqueLocator } from './yuque-source';
 
 /** The link form's values for one documentation source, as `docSources.link` takes them. */
@@ -33,11 +34,9 @@ export interface LinkInput {
  *   Trimmed values safe to persist.
  *
  * Raises:
- *   Error: If the source kind and locator fields are inconsistent, or the kind's reader has not
- *   landed.
+ *   Error: If the source kind and locator fields are inconsistent.
  */
 export function validateLinkInput(input: LinkInput): LinkInput {
-  if (isPendingReaderKind(input.kind)) throw new Error(notReadYet(input.kind));
   const label = input.label.trim();
   const locator = input.locator.trim();
   if (!label) throw new Error('Documentation label is required.');
@@ -86,6 +85,9 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   } else if (input.kind === 'yuque') {
     // One repository on Yuque's site or a space's own subdomain of it.
     parseYuqueLocator(locator);
+  } else if (input.kind === 'drive') {
+    // One folder, by the address the browser shows for it.
+    parseDriveLocator(locator);
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
@@ -118,11 +120,12 @@ const SECRET_REQUIRED: Partial<Record<LinkInput['kind'], string>> = {
   sharepoint:
     "A SharePoint source needs its app registration's tenant ID, client ID and client secret.",
   yuque: 'A Yuque source needs a token.',
+  drive: "A Google Drive source needs its service account's JSON key.",
 };
 
 /**
  * The source kinds that read with a secret of their own: required for MCP, Feishu, both
- * Confluence kinds, SharePoint and Yuque, optional for git and URLs.
+ * Confluence kinds, SharePoint, Yuque and Google Drive, optional for git and URLs.
  */
 const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'mcp',
@@ -133,6 +136,7 @@ const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'confluence-dc',
   'sharepoint',
   'yuque',
+  'drive',
 ]);
 
 /**
@@ -177,6 +181,7 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
   if (input.kind === 'feishu') parseFeishuSecret(secret);
   if (input.kind === 'sharepoint') parseSharePointSecret(secret);
   if (input.kind === 'yuque') checkYuqueToken(secret);
+  if (input.kind === 'drive') parseDriveSecret(secret);
   if (input.kind === 'confluence-v2' || input.kind === 'confluence-dc') {
     checkConfluenceToken(secret);
   }
@@ -212,11 +217,11 @@ export function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
       return `${source.label} app registration`;
     case 'yuque':
       return `${source.label} token`;
+    case 'drive':
+      return `${source.label} service account key`;
     case 'folder':
     case 'git':
     case 'urls':
-    // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
-    case 'drive':
       return `${source.label} reader secret`;
   }
 }

@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
-import {
-  isPendingReaderKind,
-  mirroredDocSlug,
-  type DocPage,
-  notReadYet,
-  PENDING_READER_NAMES,
-} from '../../../src/docs/types';
+import * as types from '../../../src/docs/types';
+import { mirroredDocSlug, type DocPage } from '../../../src/docs/types';
 
 describe('documentation types', (): void => {
   it('names mirrored pages by source and stable reference', (): void => {
@@ -25,15 +20,9 @@ describe('documentation types', (): void => {
     expect(mirroredDocSlug(sourceId, '运维/刷新看板.md')).toBe(refresh);
   });
 
-  // Re-pinned as each of 15-X's readers lands: a kind leaves the list with its reader.
-  it('names the kinds whose readers have not landed, and no kind a reader reads (15-K)', (): void => {
-    expect(Object.keys(PENDING_READER_NAMES)).toEqual(['drive']);
-    expect(
-      (['mcp', 'folder', 'git', 'urls', 'feishu', 'confluence-v2', 'drive'] as const).filter(
-        isPendingReaderKind,
-      ),
-    ).toEqual(['drive']);
-    expect(notReadYet('drive')).toBe('Day0 does not read Google Drive sources yet.');
+  it('declares no kind without a reader: every kind the schema names is read (15-X)', (): void => {
+    expect(Object.keys(types)).not.toContain('PENDING_READER_NAMES');
+    expect(Object.keys(types)).not.toContain('notReadYet');
   });
 
   it("lets a reader report a page's own status and its revision beside it, both optional (15-K)", (): void => {

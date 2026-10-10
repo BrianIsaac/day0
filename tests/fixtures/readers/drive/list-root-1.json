@@ -1,0 +1,44 @@
+{
+  "kind": "drive#fileList",
+  "incompleteSearch": false,
+  "nextPageToken": "fixture-page-2",
+  "files": [
+    {
+      "id": "1DocCloseTheQuarter00000000000000001",
+      "name": "Close the quarter",
+      "mimeType": "application/vnd.google-apps.document",
+      "trashed": false,
+      "version": "41",
+      "modifiedTime": "2026-10-01T09:30:00.000Z",
+      "webViewLink": "https://docs.google.com/document/d/1DocCloseTheQuarter00000000000000001/edit?usp=drivesdk"
+    },
+    {
+      "id": "1ArchiveFolder0000000000000000001",
+      "name": "Archive",
+      "mimeType": "application/vnd.google-apps.folder",
+      "trashed": false,
+      "version": "3",
+      "modifiedTime": "2026-06-02T08:00:00.000Z",
+      "webViewLink": "https://drive.google.com/file/d/1ArchiveFolder0000000000000000001/view?usp=drivesdk"
+    },
+    {
+      "id": "1WordEscalationPaths0000000000000001",
+      "name": "Escalation paths.docx",
+      "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "trashed": false,
+      "version": "5",
+      "modifiedTime": "2026-09-12T10:00:00.000Z",
+      "webViewLink": "https://drive.google.com/file/d/1WordEscalationPaths0000000000000001/view?usp=drivesdk",
+      "size": "2567"
+    },
+    {
+      "id": "1SlidesBoardDeck00000000000000000001",
+      "name": "Q3 board deck",
+      "mimeType": "application/vnd.google-apps.presentation",
+      "trashed": false,
+      "version": "9",
+      "modifiedTime": "2026-09-30T10:00:00.000Z",
+      "webViewLink": "https://drive.google.com/file/d/1SlidesBoardDeck00000000000000000001/view?usp=drivesdk"
+    }
+  ]
+}

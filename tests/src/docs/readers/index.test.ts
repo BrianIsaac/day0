@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ConfluenceDataCenterReader } from '../../../../src/docs/readers/confluence-dc';
 import { ConfluenceCloudReader } from '../../../../src/docs/readers/confluence-v2';
+import { GoogleDriveReader } from '../../../../src/docs/readers/drive';
 import { FeishuReader } from '../../../../src/docs/readers/feishu';
 import { FolderReader } from '../../../../src/docs/readers/folder';
 import { GitReader } from '../../../../src/docs/readers/git';
@@ -41,7 +42,7 @@ describe('documentation reader registry', (): void => {
     expect(readerFor('yuque')).toBeInstanceOf(YuqueReader);
   });
 
-  it('names each kind whose reader has not landed as not read yet, rather than reading it as another', (): void => {
-    expect(() => readerFor('drive')).toThrow('Day0 does not read Google Drive sources yet.');
+  it('resolves the Google Drive reader, which reads as a service account (15-X)', (): void => {
+    expect(readerFor('drive')).toBeInstanceOf(GoogleDriveReader);
   });
 });

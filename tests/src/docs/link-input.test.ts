@@ -238,6 +238,38 @@ describe('the secret a source reads with', (): void => {
     expect(readsWithOwnSecret('yuque')).toBe(true);
   });
 
+  it("takes a Google Drive folder's address with its service account key, and no other host (15-X)", (): void => {
+    const locator = 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
+    const folder = validateLinkInput({ label: 'Runbooks folder', kind: 'drive', locator });
+    expect(folder.locator).toBe(locator);
+    expect(() => validateReaderSecret(folder, undefined)).toThrow(
+      "A Google Drive source needs its service account's JSON key.",
+    );
+    expect(() => validateReaderSecret(folder, '{"client_email":"x"}')).toThrow(
+      "A Google Drive secret is the service account's JSON key file",
+    );
+    expect(() =>
+      validateReaderSecret(
+        folder,
+        JSON.stringify({
+          client_email: 'day0-reader@acme-docs.iam.gserviceaccount.com',
+          private_key: '-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----\n',
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateLinkInput({
+        label: 'Runbooks folder',
+        kind: 'drive',
+        locator: 'https://docs.google.com/document/d/1DocCloseTheQuarter00000000000000001/edit',
+      }),
+    ).toThrow("A Google Drive location is a folder's address");
+    expect(secretLabel({ label: 'Runbooks folder', kind: 'drive' })).toBe(
+      'Runbooks folder service account key',
+    );
+    expect(readsWithOwnSecret('drive')).toBe(true);
+  });
+
   it('names the secret by what it is for, and lets every kind but a folder rotate one (14-F)', (): void => {
     expect(secretLabel({ label: 'Runbooks', kind: 'git' })).toBe('Runbooks reader secret');
     expect(secretLabel({ label: 'Notion', kind: 'mcp' })).toBe('Notion connection secret');
@@ -247,15 +279,5 @@ describe('the secret a source reads with', (): void => {
     expect(
       (['mcp', 'folder', 'git', 'urls', 'feishu'] as const).filter(readsWithOwnSecret),
     ).toEqual(['mcp', 'git', 'urls', 'feishu']);
-  });
-
-  it('refuses to link a kind whose reader has not landed, before anything is stored (15-K)', (): void => {
-    expect(() =>
-      validateLinkInput({
-        label: 'Shared drive',
-        kind: 'drive',
-        locator: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
-      }),
-    ).toThrow('Day0 does not read Google Drive sources yet.');
   });
 });

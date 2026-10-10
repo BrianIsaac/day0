@@ -1,7 +1,8 @@
-import { notReadYet, type DocSourceKind } from '../types';
+import type { DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
 import { ConfluenceDataCenterReader } from './confluence-dc';
 import { ConfluenceCloudReader } from './confluence-v2';
+import { GoogleDriveReader } from './drive';
 import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
@@ -18,9 +19,6 @@ import { YuqueReader } from './yuque';
  *
  * Returns:
  *   Reader implementation for the source, whose batches name the pages they could not read.
- *
- * Raises:
- *   Error: For a kind whose reader has not landed (`PENDING_READER_NAMES`).
  */
 export function readerFor(kind: DocSourceKind): DocumentationReader {
   switch (kind) {
@@ -43,7 +41,6 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
     case 'yuque':
       return new YuqueReader();
     case 'drive':
-      // Declared by the schema before its reader lands (K-3); the link refuses such a source.
-      throw new Error(notReadYet(kind));
+      return new GoogleDriveReader();
   }
 }
