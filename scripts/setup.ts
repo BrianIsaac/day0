@@ -1438,13 +1438,16 @@ export function setupEnvUpdates(input: EnvPlanInput): Record<string, string> {
  *
  * @param mode - The mode being set up.
  * @param existing - The env file as it stands.
+ * @param updates - What this run writes to it: the list is read as the file will hold it, so a
+ *   run that adds the tile (`--add-private-host`) does not say it is missing.
  * @returns The line, or undefined when there is nothing to say.
  */
 export function demoTileNote(
   mode: SetupMode,
   existing: Readonly<Record<string, string>>,
+  updates: Readonly<Record<string, string>> = {},
 ): string | undefined {
-  const listed = existing.DAY0_PRIVATE_HOSTS ?? '';
+  const listed = updates.DAY0_PRIVATE_HOSTS ?? existing.DAY0_PRIVATE_HOSTS ?? '';
   if (mode !== 'real' || listed.trim() === '' || listsDemoTile(listed)) return undefined;
   return `DAY0_PRIVATE_HOSTS does not list ${DEMO_TILE_HOST}, the demo tile real mode starts, so Day0 refuses its web UI over plain http. Run this command again with \`--add-private-host ${DEMO_TILE_HOST}\` to add it to the list, or add it to the list yourself.`;
 }
@@ -3393,7 +3396,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
       io.log('');
       io.log(`${ENV_FILE} already says all of this; nothing was changed in it.`);
     }
-    const tileNote = demoTileNote(real ? 'real' : 'mock', existing);
+    const tileNote = demoTileNote(real ? 'real' : 'mock', existing, updates);
     if (tileNote !== undefined) io.log(tileNote);
     if (keptByResume.length > 0) {
       io.log(

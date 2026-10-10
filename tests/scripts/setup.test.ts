@@ -1060,6 +1060,15 @@ describe('the values written into .env.local', (): void => {
       undefined,
     );
     expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: '' })).toBe(undefined);
+    // Found on the bed (15-FX): the run that adds the tile read the list as it stood before its
+    // own write, and told the operator to add what it had just added.
+    expect(
+      demoTileNote(
+        'real',
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app' },
+        { DAY0_PRIVATE_HOSTS: 'mcp.linear.app,looker-tile' },
+      ),
+    ).toBe(undefined);
     expect(demoTileNote('mock', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(undefined);
   });
 
