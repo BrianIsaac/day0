@@ -739,7 +739,7 @@ export function normalisePlanStepOutcomes(
  * The quote is checked against the charter and kept with the outcome.
  */
 const CHARTER_CLAUSE_RULE =
-  "When a charter clause decides a step's outcome (a willNotDo clause or an escalation trigger that blocks or withholds it, or the willDo clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
+  "When a charter clause decides a step's outcome (a will-not-do clause or an escalation trigger that blocks or withholds it, or the will-do clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
 
 /**
  * A closing outcome as it is kept: the basis only when it is not the ledger,
@@ -931,6 +931,8 @@ function clauseList(values: readonly string[]): string {
  * escalation triggers, the adjacent roles, the named systems and
  * collaborators, who approves, and the questions the manager has answered,
  * so both phases see the whole contract they are told to stay inside (P8-9).
+ * Each line is labelled in the planner's words ("Will do:", "Escalates when:"), never a field's
+ * name: a run's notes or its one line of why can quote a label to a visitor (W14-R50).
  * The constraints are not repeated: their wording lives in the clauses. The
  * People block (13-J) follows the charter's lines under its own heading, and
  * takes the place of the charter's named collaborators once it names anyone
@@ -952,16 +954,16 @@ export function executorCharterLines(
   const lines = [
     `Role: ${charter.proposedFunction}`,
     '',
-    `Charter willDo: ${boundaries.willDo.join(' | ')}`,
-    `Charter willNotDo: ${boundaries.willNotDo.join(' | ')}`,
+    `Will do: ${boundaries.willDo.join(' | ')}`,
+    `Will not do: ${boundaries.willNotDo.join(' | ')}`,
   ];
   if (mode !== 'real') return lines;
   const people = peopleBlockLines(reader.people);
   return [
     ...lines,
-    `Charter escalationTriggers: ${clauseList(boundaries.escalationTriggers)}`,
-    `Charter adjacentRoles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
-    `Charter namedSystems: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
+    `Escalates when: ${clauseList(boundaries.escalationTriggers)}`,
+    `Neighbouring roles: ${clauseList((charter.adjacentRoles ?? []).map((role) => `${role.who}: ${role.staysOutOfTheirLaneBy}`))}`,
+    `Systems the charter names: ${clauseList((charter.namedSystems ?? []).map((system) => system.name))}`,
     // Left out only when the block prints every collaborator it names (W13-R22): one the manager
     // never confirmed would otherwise leave the prompt with its topic.
     ...(namesEveryCollaborator(
@@ -970,9 +972,9 @@ export function executorCharterLines(
     )
       ? []
       : [
-          `Charter namedCollaborators: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
+          `People the charter names: ${clauseList((charter.namedCollaborators ?? []).map((person) => `${person.name} (${person.topic})`))}`,
         ]),
-    `Charter approvalChain: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
+    `Approved by: ${reader.currentManager ?? CURRENT_MANAGER_UNNAMED}`,
     ...answeredQuestionLines(charter),
     ...(people.length > 0 ? ['', PEOPLE_HEADING, ...people] : []),
   ];
