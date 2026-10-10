@@ -842,4 +842,14 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
       'working agreement for every employee now in effect for this employee: checked against its charter',
     );
   });
+
+  it('says an answer on a relation’s card was taken back, apart from one that was given (15-A)', (): void => {
+    const label = (decision: string): string =>
+      eventLabel({
+        type: 'documentation.relation-decided',
+        payload: { relationId: 'r1', kind: 'possible_successor', decision },
+      });
+    expect(label('supersedes')).toBe('documentation: a newer version of a page decided');
+    expect(label('undo')).toBe('documentation: the answer on a newer version of a page taken back');
+  });
 });

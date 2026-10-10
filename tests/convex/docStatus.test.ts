@@ -762,6 +762,101 @@ describe('the manager’s own status for a page', (): void => {
     expect((await pageOf(harness, native)).statusSource).toBe('source-native');
   });
 
+  it('says a page is current over a confirmed relation, a judged marker and its source’s own word, until Clear', async (): Promise<void> => {
+    // The second pass's major 1: each of these three was a state the manager could not leave.
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const successor = { sourceId: source.sourceId, ref: 'runbooks/pipeline-runbook-v2.md' };
+    await storedPage(harness, source, { ref: successor.ref });
+    const byRelation = await storedPage(harness, source, {
+      ref: 'runbooks/pipeline-runbook.md',
+      status: 'superseded',
+      statusSource: 'relation',
+      supersededBy: successor,
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: successor,
+        to: { sourceId: source.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+        kind: 'possible_successor',
+        evidence: [{ measure: 'title-version', value: 1 }],
+        status: 'confirmed',
+        createdAt: 4,
+      });
+    });
+    const chinese = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。';
+    const byMarker = await storedPage(harness, source, {
+      ref: 'finance/close.md',
+      title: '月结流程',
+      markdown: chinese,
+      status: 'superseded',
+      statusSource: 'marker',
+      marker: {
+        status: 'superseded',
+        quote: markerCandidate('月结流程', chinese)!.quote,
+        judgedAt: 3,
+      },
+    });
+    const bySource = await storedPage(harness, source, {
+      ref: 'archive/old.md',
+      status: 'archived',
+      statusSource: 'source-native',
+      nativeStatus: 'archived',
+    });
+    const agentId = await employee(harness, 'Priya');
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    for (const pageId of [byRelation, byMarker, bySource]) {
+      await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'active' });
+      const row = await pageOf(harness, pageId);
+      expect([
+        row.status,
+        row.statusSource,
+        row.decidedBy,
+        row.decidedAt,
+        row.supersededBy,
+      ]).toEqual([
+        'active',
+        'manager',
+        MANAGER_ADDRESS,
+        Date.parse('2026-10-10T09:00:00.000Z'),
+        undefined,
+      ]);
+      expect(new Set(await blockStatuses(harness, source.sourceId, row.ref))).toEqual(
+        new Set(['active']),
+      );
+    }
+    expect(
+      (await eventsOf(harness, agentId, 'documentation.page-status-changed')).map((event) => [
+        event.ref,
+        event.from,
+        event.to,
+        event.decidedBy,
+      ]),
+    ).toEqual([
+      ['runbooks/pipeline-runbook.md', 'superseded', 'active', 'manager'],
+      ['finance/close.md', 'superseded', 'active', 'manager'],
+      ['archive/old.md', 'archived', 'active', 'manager'],
+    ]);
+    // Clear takes the manager's word off again: each page is back to what decided it before.
+    for (const pageId of [byRelation, byMarker, bySource]) {
+      await asManager(harness).mutation(api.docStatus.clearPageStatus, { pageId });
+    }
+    expect(await pageOf(harness, byRelation)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'relation',
+      supersededBy: successor,
+    });
+    expect(await pageOf(harness, byMarker)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+    });
+    expect(await pageOf(harness, bySource)).toMatchObject({
+      status: 'archived',
+      statusSource: 'source-native',
+    });
+  });
+
   it('is the owner’s alone: another signed-in manager is refused, and an anonymous caller before any read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);

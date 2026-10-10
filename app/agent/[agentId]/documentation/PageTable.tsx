@@ -97,7 +97,9 @@ export function decidedByWords(page: PageRow, zone: string | undefined): string 
 /**
  * One page's own controls (the wave file's section 8): "Mark superseded by ..." with the page
  * that takes its place, "Mark archived", "This is a draft", and "Clear", back to what the page
- * and its source say, for a status the manager gave by hand.
+ * and its source say, for a status the manager gave by hand. A page that is not current, whatever
+ * decided it (a marker, a relation, its source, the manager), also offers "This is current": the
+ * manager's word that it stands, so no status is one the manager cannot leave.
  *
  * @param page - The page.
  * @param others - The other pages listed, any of which may be named as its successor.
@@ -183,6 +185,21 @@ function PageControls({
       >
         This is a draft
       </Button>
+      {page.status !== 'active' ? (
+        <Button
+          size="small"
+          disabled={change.busy}
+          aria-label={`This is current: ${page.title}`}
+          onClick={() =>
+            change.run(() => setStatus({ pageId: page._id, status: 'active' }), {
+              done: `“${page.title}” is current, on your word. Clear takes that back.`,
+              refused: 'The page was not marked current.',
+            })
+          }
+        >
+          This is current
+        </Button>
+      ) : null}
       {page.statusSource === 'manager' ? (
         <Button
           size="small"

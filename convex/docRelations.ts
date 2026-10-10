@@ -539,6 +539,8 @@ export const RELATION_DECISIONS = [
   'to-is-right',
   /** "Both hold": each page is right where it applies; keep both, no tag. */
   'both-hold',
+  /** "Undo": the answer is taken back, with what it set off, and the card asks again. */
+  'undo',
 ] as const;
 
 /** One answer to a relation's card. */
@@ -547,7 +549,12 @@ export type RelationDecision = (typeof RELATION_DECISIONS)[number];
 /** Why a decision was refused: the card it answers is no longer the relation's. */
 export const DECISION_NOT_OFFERED = 'That card has changed: this answer is no longer offered.';
 
-/** The answers a relation's card offers as it stands. */
+/**
+ * The answers a relation offers as it stands. An answered relation offers "Undo", so no answer
+ * is one the manager cannot take back; all but a confirmed conflict, which keeps its own three
+ * answers while it stands, and whose "{A} is right" is taken back on the superseded page's own
+ * row ("This is current" or "Clear"), after which the conflict stands again.
+ */
 export function decisionsOffered(
   relation: Pick<Doc<'docRelations'>, 'kind' | 'status'>,
 ): readonly RelationDecision[] {
@@ -555,9 +562,11 @@ export function decisionsOffered(
     if (relation.status === 'proposed') {
       return ['disagree', 'from-is-right', 'to-is-right', 'both-hold'];
     }
-    return relation.status === 'confirmed' ? ['from-is-right', 'to-is-right', 'both-hold'] : [];
+    return relation.status === 'confirmed'
+      ? ['from-is-right', 'to-is-right', 'both-hold']
+      : ['undo'];
   }
-  return relation.status === 'proposed' ? ['supersedes', 'keep-both', 'not-the-same'] : [];
+  return relation.status === 'proposed' ? ['supersedes', 'keep-both', 'not-the-same'] : ['undo'];
 }
 
 /** What a decision makes of the relation's row. */
@@ -576,6 +585,8 @@ function decided(
     case 'not-the-same':
     case 'both-hold':
       return { status: 'dismissed' };
+    case 'undo':
+      return { status: 'proposed' };
     default: {
       const unknown: never = decision;
       throw new Error(`unhandled decision ${String(unknown)}`);
@@ -591,7 +602,8 @@ function decided(
  * a confirmed successor supersedes (its blocks, its readers' parked work and the skills that
  * read it follow, `docStatus.restatePage`); "{A} is right" marks the other page superseded by it
  * in the manager's name; "They disagree" leaves both pages current and lets the conflict stand
- * (`standingConflictOf`); the rest change no page.
+ * (`standingConflictOf`); "Undo" makes the relation a proposal again, with nobody's name on it,
+ * and restates the page a confirmed successor had superseded; the rest change no page.
  *
  * @throws ConvexError when the relation is gone or its card no longer offers the answer.
  */
@@ -610,11 +622,16 @@ export const decide = mutation({
     }
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
-    await ctx.db.patch(relation._id, {
-      ...decided(args.decision),
-      ...(decidedBy !== undefined ? { decidedBy } : {}),
-      decidedAt: now,
-    });
+    await ctx.db.patch(
+      relation._id,
+      args.decision === 'undo'
+        ? { ...decided(args.decision), decidedBy: undefined, decidedAt: undefined }
+        : {
+            ...decided(args.decision),
+            ...(decidedBy !== undefined ? { decidedBy } : {}),
+            decidedAt: now,
+          },
+    );
     const [from, to, fromSource, toSource] = await Promise.all([
       pageAt(ctx, relation.from),
       pageAt(ctx, relation.to),
@@ -622,7 +639,11 @@ export const decide = mutation({
       ctx.db.get(relation.to.sourceId),
     ]);
     if (from === null || to === null || fromSource === null || toSource === null) return null;
-    if (args.decision === 'supersedes') {
+    // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
+    if (
+      args.decision === 'supersedes' ||
+      (args.decision === 'undo' && relation.kind === 'possible_successor')
+    ) {
       const change = await restatePage(ctx, { source: toSource, page: to, now });
       await stampStatusChanges(ctx, toSource, [change], now);
     } else if (args.decision === 'from-is-right' || args.decision === 'to-is-right') {

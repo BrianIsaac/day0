@@ -574,7 +574,8 @@ export interface DocumentationRelationDecidedPayload {
     | 'disagree'
     | 'from-is-right'
     | 'to-is-right'
-    | 'both-hold';
+    | 'both-hold'
+    | 'undo';
   readonly from: RelatedPageNamed;
   readonly to: RelatedPageNamed;
 }

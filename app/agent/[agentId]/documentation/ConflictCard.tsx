@@ -7,6 +7,7 @@ import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useChange } from '../../../components/use-change';
+import type { AnsweredRelation } from './RelationAnswered';
 import type { RelationAnswer, RelationCardRow } from './RelationCard';
 
 /**
@@ -18,8 +19,18 @@ import type { RelationAnswer, RelationCardRow } from './RelationCard';
  *
  * @param relation - The conflict, with the heading and the figures each page gives.
  * @param name - The employee's name, when the card is on an employee's tab.
+ * @param onAnswered - Told an answer that takes the card off the tab, once it is recorded, so
+ *   the tab says the outcome and the way back; "They disagree" keeps the card, which says it.
  */
-export function ConflictCard({ relation, name }: { relation: RelationCardRow; name?: string }) {
+export function ConflictCard({
+  relation,
+  name,
+  onAnswered,
+}: {
+  relation: RelationCardRow;
+  name?: string;
+  onAnswered?: (answered: AnsweredRelation) => void;
+}) {
   const decide = useMutation(api.docRelations.decide);
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
@@ -29,6 +40,16 @@ export function ConflictCard({ relation, name }: { relation: RelationCardRow; na
     change.run(() => decide({ relationId: relation._id, decision }), {
       done,
       refused: 'The answer was not recorded.',
+      after: () => {
+        if (decision === 'disagree') return;
+        // "Both hold" is taken back from the tab; "{A} is right" on the superseded page's row.
+        const undo = decision === 'both-hold';
+        onAnswered?.({
+          relationId: relation._id,
+          text: undo ? done : `${done} “This is current” on its row takes that back.`,
+          undo,
+        });
+      },
     });
   const under = disagreement ? ` under “${disagreement.heading}”` : '';
   const figures = disagreement

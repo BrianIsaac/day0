@@ -325,6 +325,58 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('keeps what the manager answered once its card has gone, and takes it back with Undo', async () => {
+    // The second pass's major 1: a wrong "supersedes" left no control to undo it, and the card
+    // took its own "done" line away with it.
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    // The answered relation leaves the cards the backend lists.
+    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    await press(
+      view.container,
+      '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    await settle();
+    expect(view.container.textContent).not.toContain(
+      'These two look like versions of the same runbook',
+    );
+    expect(said(view.container)).toContain(
+      '“Escalation paths, draft v2” now supersedes “Escalation paths”.',
+    );
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    await press(view.container, 'Undo');
+    await settle();
+    expect(backend.calls).toEqual([
+      { name: 'docRelations:decide', args: { relationId: 'relation-1', decision: 'supersedes' } },
+      { name: 'docRelations:decide', args: { relationId: 'relation-1', decision: 'undo' } },
+    ]);
+    expect(said(view.container)).toContain('Taken back. The card asks again.');
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Undo',
+    );
+    expect(view.container.textContent).toContain(
+      'These two look like versions of the same runbook',
+    );
+    view.unmount();
+  });
+
+  it('offers no Undo for "{A} is right", which the superseded page’s own row takes back', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    backend.queries['docRelations:listOpen'] = [RELATIONS[0]];
+    await press(view.container, '“Finance escalation” (How-to guides) is right');
+    await settle();
+    expect(said(view.container)).toContain(
+      '“Finance escalation” stands; “Close checklist” is superseded. “This is current” on its row takes that back.',
+    );
+    expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
+      'Undo',
+    );
+    view.unmount();
+  });
+
   it('draws a proposed conflict as one that may disagree and holds nothing, with the answer that confirms it', () => {
     populated();
     backend.queries['docRelations:listOpen'] = [

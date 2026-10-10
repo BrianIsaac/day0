@@ -463,7 +463,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       text(payload.from?.title) ? `, "${payload.from?.title}"` : ''
     }`,
   'documentation.relation-decided': (payload) =>
-    `documentation: ${relationLabel(payload.kind)} decided`,
+    payload.decision === 'undo'
+      ? `documentation: the answer on ${relationLabel(payload.kind)} taken back`
+      : `documentation: ${relationLabel(payload.kind)} decided`,
   'evaluation.transport-ready': 'evaluation transport ready',
   'voice.started': (payload) =>
     payload.mode === 'chat' ? 'Day-1 1:1 started (chat)' : 'Day-1 1:1 started (voice)',

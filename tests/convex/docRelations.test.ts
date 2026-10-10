@@ -573,6 +573,78 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await standingOf(harness, relation._id)).toBeNull();
   });
 
+  it('takes a confirmed successor back: the older page is current again and the card asks again', async (): Promise<void> => {
+    // The second pass's major 1: a wrong "supersedes" could not be undone.
+    const harness = convexTest(schema, allConvexModules());
+    const { official, v1 } = await twoVersions(harness);
+    const agentId = await employee(harness, 'Priya');
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [relation] = await relations(harness);
+    const decide = async (decision: 'supersedes' | 'undo'): Promise<null> =>
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision,
+      });
+    // A card not yet answered has nothing to take back.
+    await expect(decide('undo')).rejects.toThrow(DECISION_NOT_OFFERED);
+    await decide('supersedes');
+    expect((await pageOf(harness, v1)).status).toBe('superseded');
+    await decide('undo');
+    const [undone] = await relations(harness);
+    expect([undone.kind, undone.status, undone.decidedBy, undone.decidedAt]).toEqual([
+      'possible_successor',
+      'proposed',
+      undefined,
+      undefined,
+    ]);
+    const older = await pageOf(harness, v1);
+    expect([older.status, older.statusSource, older.supersededBy]).toEqual([
+      'active',
+      'default',
+      undefined,
+    ]);
+    expect(
+      (await eventsOf(harness, agentId, 'documentation.relation-decided')).map(
+        (event) => event.decision,
+      ),
+    ).toEqual(['supersedes', 'undo']);
+    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
+      {
+        _id: relation._id,
+        status: 'proposed',
+        offered: ['supersedes', 'keep-both', 'not-the-same'],
+      },
+    ]);
+  });
+
+  it('takes "Keep both", "Not the same" and "Both hold" back to the card, and offers no undo on a conflict that stands', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { official } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [versions] = await relations(harness);
+    const decide = async (
+      relationId: Id<'docRelations'>,
+      decision: 'keep-both' | 'not-the-same' | 'disagree' | 'both-hold' | 'undo',
+    ): Promise<null> =>
+      await asManager(harness).mutation(api.docRelations.decide, { relationId, decision });
+    for (const decision of ['keep-both', 'not-the-same'] as const) {
+      await decide(versions._id, decision);
+      await decide(versions._id, 'undo');
+      expect((await relations(harness))[0].status).toBe('proposed');
+    }
+    const { finance } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const conflict = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
+    await decide(conflict._id, 'disagree');
+    // A confirmed conflict stands with its own three answers; "Both hold" is how it is let go.
+    await expect(decide(conflict._id, 'undo')).rejects.toThrow(DECISION_NOT_OFFERED);
+    await decide(conflict._id, 'both-hold');
+    await decide(conflict._id, 'undo');
+    const again = (await relations(harness)).find((row) => row._id === conflict._id)!;
+    expect([again.kind, again.status]).toEqual(['possible_conflict', 'proposed']);
+    expect(await standingOf(harness, conflict._id)).toBeNull();
+  });
+
   it('is the owner’s alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { official } = await twoVersions(harness);

@@ -197,6 +197,7 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
       'Mark Pipeline runbook superseded by the chosen page',
       'Mark Pipeline runbook archived',
       'Pipeline runbook is a draft',
+      'This is current: Pipeline runbook',
       'Clear your status for Pipeline runbook',
       'Mark Pipeline runbook, version 2 superseded by the chosen page',
       'Mark Pipeline runbook, version 2 archived',
@@ -222,6 +223,32 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
     ]);
     expect(view.container.querySelector('[role="status"]')?.textContent).toBe(
       '“Pipeline runbook” is back to what the page and its source say.',
+    );
+    view.unmount();
+  });
+
+  it('offers "This is current" on a page that is not current, whatever decided it, and on no current page', async (): Promise<void> => {
+    // The second pass's major 1: a page a marker, a relation or its source took out of the
+    // employee's reading had no control that put it back.
+    backend.pages = [
+      { ...listed[0], statusSource: 'relation', decidedByYou: undefined, decidedAt: undefined },
+      listed[1],
+    ];
+    backend.readState = null;
+    const view = mount(<PageTable source={SOURCE} zone="UTC" />);
+    const current = [...view.container.querySelectorAll('button')].filter(
+      (button) => button.textContent === 'This is current',
+    );
+    expect(current.map((button) => button.getAttribute('aria-label'))).toEqual([
+      'This is current: Pipeline runbook',
+    ]);
+    await press(view.container, 'This is current: Pipeline runbook');
+    await settle();
+    expect(backend.calls).toEqual([
+      { name: 'docStatus:setPageStatus', args: { pageId: 'p1', status: 'active' } },
+    ]);
+    expect(view.container.querySelector('[role="status"]')?.textContent).toBe(
+      '“Pipeline runbook” is current, on your word. Clear takes that back.',
     );
     view.unmount();
   });

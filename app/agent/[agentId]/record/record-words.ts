@@ -533,6 +533,8 @@ function relationDecidedWords(
       return `${who} said "${to}" is right where it disagrees with "${from}"`;
     case 'both-hold':
       return `${who} said "${to}" and "${from}" both hold`;
+    case 'undo':
+      return `${who} took back the answer on "${to}" and "${from}"; the card asks again`;
     default:
       return `${who} decided how two documentation pages relate`;
   }

@@ -482,8 +482,12 @@ export const recordMarker = internalMutation({
   },
 });
 
-/** The statuses the manager may give a page by hand; `active` is what Clear falls back to. */
-const MANAGER_STATUSES = ['superseded', 'archived', 'draft'] as const;
+/**
+ * The statuses the manager may give a page by hand. `active` is "This is current": the manager's
+ * word that the page stands, over a marker judged wrongly, a relation confirmed by mistake or an
+ * archive at its source, each of which Clear would only fall back to.
+ */
+const MANAGER_STATUSES = ['active', 'superseded', 'archived', 'draft'] as const;
 
 /**
  * Write a status the manager decided by hand on a page, with who decided and when, and set off
@@ -539,10 +543,11 @@ async function ownedPage(
 }
 
 /**
- * Give a page the manager's own status: superseded by another page, archived, or a draft (the
- * Documentation tab's "Mark superseded by ...", "Mark archived" and "This is a draft"). Public;
- * the caller must own the page's source, and the successor's. The manager's word stands over
- * everything the page and its source say until `clearPageStatus`. Writes the page's status with
+ * Give a page the manager's own status: current, superseded by another page, archived, or a
+ * draft (the Documentation tab's "This is current", "Mark superseded by ...", "Mark archived" and
+ * "This is a draft"). Public; the caller must own the page's source, and the successor's. The
+ * manager's word stands over everything the page and its source say, a confirmed relation among
+ * it, until `clearPageStatus`. Writes the page's status with
  * the caller's verified address and the time, its blocks' status, and, on a change, the record
  * and parked work of every employee that reads the source.
  *

@@ -15,6 +15,7 @@ import { employeeTabHref } from '../employee-tabs';
 import { useAgentZone } from '../../../components/time';
 import { ConflictCard } from './ConflictCard';
 import { PageTable } from './PageTable';
+import { RelationAnswered, type AnsweredRelation } from './RelationAnswered';
 import { RelationCard } from './RelationCard';
 
 /**
@@ -24,8 +25,9 @@ import { RelationCard } from './RelationCard';
  * pages of the source picked, with whether its newest sync read them; and the link form in the
  * real kinds. Since wave 15 (A5) it also draws how far each source is trusted, each page's
  * status with who or what decided it, and a card for every relation the manager has still to
- * answer: two pages that read as versions of one runbook, or two that disagree. The hosted
- * office links nothing and says where its pages are.
+ * answer: two pages that read as versions of one runbook, or two that disagree. An answered
+ * card leaves the tab, so the tab keeps the last answer where the cards are, with "Undo". The
+ * hosted office links nothing and says where its pages are.
  */
 export function DocumentationView() {
   const { agent, surfaceMode, arriving } = useEmployee();
@@ -33,6 +35,7 @@ export function DocumentationView() {
   const sources = useQuery(api.docSources.listMine, surfaceMode === 'real' ? {} : 'skip');
   const relations = useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip');
   const [picked, setPicked] = useState<Id<'docSources'> | undefined>(undefined);
+  const [answered, setAnswered] = useState<AnsweredRelation | null>(null);
   const excluded = useMemo(
     (): ReadonlySet<string> => new Set(agent.excludedDocSourceIds ?? []),
     [agent.excludedDocSourceIds],
@@ -99,11 +102,29 @@ export function DocumentationView() {
           />
         )}
       </Card>
+      {answered !== null ? (
+        <RelationAnswered
+          answered={answered}
+          cardGone={!(relations ?? []).some((relation) => relation._id === answered.relationId)}
+          onUndone={(text) => setAnswered({ relationId: answered.relationId, text, undo: false })}
+        />
+      ) : null}
       {(relations ?? []).map((relation) =>
         relation.kind === 'possible_conflict' ? (
-          <ConflictCard key={relation._id} relation={relation} name={agent.name} />
+          <ConflictCard
+            key={relation._id}
+            relation={relation}
+            name={agent.name}
+            onAnswered={setAnswered}
+          />
         ) : (
-          <RelationCard key={relation._id} relation={relation} name={agent.name} zone={zone} />
+          <RelationCard
+            key={relation._id}
+            relation={relation}
+            name={agent.name}
+            zone={zone}
+            onAnswered={setAnswered}
+          />
         ),
       )}
       {shown ? <PageTable key={shown._id} source={shown} zone={zone} /> : null}

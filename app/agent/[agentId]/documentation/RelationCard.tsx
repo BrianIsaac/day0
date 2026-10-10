@@ -10,6 +10,7 @@ import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
+import type { AnsweredRelation } from './RelationAnswered';
 
 /** One relation the manager has still to answer, as `docRelations.listOpen` draws it. */
 export type RelationCardRow = FunctionReturnType<typeof api.docRelations.listOpen>[number];
@@ -31,15 +32,19 @@ export function pageWords(page: RelationCardRow['from'], zone: string | undefine
  * @param relation - The proposed relation; `from` is the page proposed as the later version.
  * @param name - The employee's name, when the card is on an employee's tab.
  * @param zone - The zone times are said in.
+ * @param onAnswered - Told what the manager answered once it is recorded: the card leaves the
+ *   tab with its answer, so the tab says the outcome and offers the way back.
  */
 export function RelationCard({
   relation,
   name,
   zone,
+  onAnswered,
 }: {
   relation: RelationCardRow;
   name?: string;
   zone?: string;
+  onAnswered?: (answered: AnsweredRelation) => void;
 }) {
   const decide = useMutation(api.docRelations.decide);
   const card = useRef<HTMLElement>(null);
@@ -49,6 +54,7 @@ export function RelationCard({
     change.run(() => decide({ relationId: relation._id, decision }), {
       done,
       refused: 'The answer was not recorded.',
+      after: () => onAnswered?.({ relationId: relation._id, text: done, undo: true }),
     });
   return (
     <Card title="These two look like versions of the same runbook" tone="warn" focusRef={card}>
