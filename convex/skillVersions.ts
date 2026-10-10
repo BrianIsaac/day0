@@ -202,23 +202,38 @@ export async function holdersOf(
  * (`skills.completeRegistration`), and only of a stamp made before the check began. A row
  * already due keeps its first reason, so the earliest cause stays on the card, and its first
  * stamp unless a check is running, whose pass must not clear a change it never saw; every
- * trigger still lands on the record as a `skill.recheck-due` event. A row that is not registered runs nothing and is left alone.
+ * trigger still lands on the record as a `skill.recheck-due` event. The one reason a later
+ * stamp takes the place of is the one it names as `saysBetter`: the same cause, said less
+ * exactly by a trigger that landed first. A row that is not registered runs nothing and is
+ * left alone.
  *
  * @param ctx - The trigger's mutation context.
- * @param stamp - The holder row, why it is due in the card's words, and the trigger's time.
+ * @param stamp - The holder row, why it is due in the card's words, the trigger's time, and
+ *   the reason this one says better, when there is one.
  * @returns Whether the row was stamped by this call.
  */
 export async function stampRecheckDue(
   ctx: MutationCtx,
-  stamp: { readonly skillId: Id<'skills'>; readonly reason: string; readonly now: number },
+  stamp: {
+    readonly skillId: Id<'skills'>;
+    readonly reason: string;
+    readonly now: number;
+    readonly saysBetter?: string;
+  },
 ): Promise<boolean> {
   const { skillId, reason, now } = stamp;
   const row = await ctx.db.get(skillId);
   if (row?.state !== 'registered') return false;
   const fresh = row.recheckDueAt === undefined;
+  const checking = row.authoringRunId !== undefined;
   if (fresh) {
     await ctx.db.patch(skillId, { recheckDueAt: now, recheckReason: reason });
-  } else if (row.authoringRunId !== undefined) {
+  } else if (stamp.saysBetter !== undefined && row.recheckReason === stamp.saysBetter) {
+    await ctx.db.patch(skillId, {
+      recheckReason: reason,
+      ...(checking ? { recheckDueAt: now } : {}),
+    });
+  } else if (checking) {
     // A check is running and did not see this change: the stamp moves to now, so its pass
     // leaves the chip; the first reason stays the card's.
     await ctx.db.patch(skillId, { recheckDueAt: now });
@@ -352,7 +367,11 @@ export function runbookReason(
  * Stamp, over one bounded page of an owner's library, every holder of a version whose authoring
  * run read one of the given runbooks. The holders keep running the version they verified until
  * a re-check passes (`stampRecheckDue` changes no state). A withdrawn version runs nowhere and
- * is passed over; a version that read several of the runbooks is stamped for the first.
+ * is passed over; a version that read several of the runbooks is stamped for the first. What
+ * became of a runbook (superseded, archived, a draft, removed) stands over the change of that
+ * runbook's text on the same day, whichever scan landed first: a file deleted at its source is
+ * stored as one sentence and marked archived by one sync (15-X's X-8), from two transactions
+ * whose scans nothing orders, and the card says the one that tells the manager more.
  *
  * @returns How many rows it stamped, and where the library's read goes on (null: it is read).
  */
@@ -381,8 +400,13 @@ async function stampReaders(
     for (const holder of await holdersOf(ctx.db, version._id)) {
       const agent = await ctx.db.get(holder.agentId);
       const day = dayLabelAt(scan.changedAt, agentZone(agent ?? {}));
-      const reason = runbookReason(read, day);
-      if (await stampRecheckDue(ctx, { skillId: holder._id, reason, now: scan.changedAt })) {
+      const stamp = {
+        skillId: holder._id,
+        reason: runbookReason(read, day),
+        now: scan.changedAt,
+        ...(read.change === 'changed' ? {} : { saysBetter: changedRunbookReason(read.title, day) }),
+      };
+      if (await stampRecheckDue(ctx, stamp)) {
         stamped += 1;
       }
     }

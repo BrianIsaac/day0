@@ -1174,6 +1174,126 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     vi.useRealTimers();
   });
 
+  it('lets what became of a runbook stand over the change of its text, whichever scan lands first (15-J; 15-X X-8)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { sourceId, holders } = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Europe/London' });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks site',
+        kind: 'sharepoint',
+        locator: 'https://acme.sharepoint.com/sites/runbooks',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const holderOf = async (name: string, refs: readonly string[], due?: string) => {
+        const versionId = await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name,
+          description: name,
+          surfaceClass: 'kanban',
+          operation: 'comment',
+          version: 1,
+          body: '# Body',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: refs.map((ref) => ({ sourceId, ref, title: ref })),
+          verifiedAt: 1,
+          createdAt: 1,
+        });
+        return await ctx.db.insert('skills', {
+          agentId,
+          name,
+          description: name,
+          body: '# Body',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+          ...(due === undefined ? {} : { recheckDueAt: 5, recheckReason: due }),
+        });
+      };
+      return {
+        sourceId,
+        holders: {
+          textFirst: await holderOf('text-first', ['deleted.md']),
+          statusFirst: await holderOf('status-first', ['binned.md']),
+          otherCause: await holderOf('other-cause', ['deleted.md'], 'its Linear tools changed'),
+          otherRunbook: await holderOf('other-runbook', ['edited.md', 'deleted.md']),
+        },
+      };
+    });
+    const at = Date.UTC(2026, 9, 7, 23, 30);
+    const textChanged = async (ref: string, title: string, changedAt: number): Promise<void> => {
+      await harness.mutation(internal.skillVersions.stampChangedPage, {
+        userId: 'owner',
+        sourceId,
+        ref,
+        title,
+        changedAt,
+        cursor: null,
+      });
+    };
+    const archived = async (ref: string, title: string, changedAt: number): Promise<void> => {
+      await harness.mutation(internal.skillVersions.stampChangedPages, {
+        userId: 'owner',
+        pages: [{ sourceId, ref, title, change: 'archived' }],
+        changedAt,
+        cursor: null,
+      });
+    };
+    // Another runbook of the last holder changed first: an earlier cause of its own.
+    await textChanged('edited.md', 'Edited page', at - 60_000);
+    // A file deleted in SharePoint, as one sync stores it: its page's text becomes one sentence
+    // (the store's scan, scheduled first) and its source marks it archived (the status scan).
+    await textChanged('deleted.md', 'Close checklist', at);
+    await archived('deleted.md', 'Close checklist', at + 40);
+    // The same pair landing the other way round.
+    await archived('binned.md', 'Bin page', at);
+    await textChanged('binned.md', 'Bin page', at + 40);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const textFirst = await skill(harness, holders.textFirst);
+    expect(textFirst.recheckReason).toBe(
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    );
+    // Still due since the first of the two stamps: one cause, said better.
+    expect(textFirst.recheckDueAt).toBe(at);
+    expect((await skill(harness, holders.statusFirst)).recheckReason).toBe(
+      'its runbook "Bin page" was archived on 8 October 2026',
+    );
+    // A cause that is not this runbook's text stays the card's, as for every trigger (A13).
+    expect((await skill(harness, holders.otherCause)).recheckReason).toBe(
+      'its Linear tools changed',
+    );
+    expect((await skill(harness, holders.otherRunbook)).recheckReason).toBe(
+      'its runbook "Edited page" changed on 8 October 2026',
+    );
+    // Both triggers are still on the record, in the order they landed.
+    const said = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((event) => event.type === 'skill.recheck-due')
+        .filter((event) => (event.payload as { skillId: string }).skillId === holders.textFirst)
+        .map((event) => (event.payload as { reason: string }).reason),
+    );
+    expect(said).toEqual([
+      'its runbook "Close checklist" changed on 8 October 2026',
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    ]);
+    vi.useRealTimers();
+  });
+
   it('refuses more pages than one scan stamps for', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.run(
