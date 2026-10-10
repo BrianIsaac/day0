@@ -3392,6 +3392,55 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
   });
 
+  it('stamps the skills that read a page once the second walk removes it, naming its source (W14-R22)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const skillId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.query('agents').first();
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'source test',
+        readRefs: [{ sourceId, ref: 'missed.md', title: 'missed.md' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId: agent!._id,
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+    const reason = async (): Promise<string | undefined> => {
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      return (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.recheckReason;
+    };
+    // Missed once, the page is kept and its readers are left alone.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBeUndefined();
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBe(
+      'its runbook "missed.md" was removed from Drive on 10 October 2026',
+    );
+  });
+
   it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

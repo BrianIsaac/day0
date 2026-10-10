@@ -23,6 +23,7 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
+import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
   unreadPagesLine,
@@ -1086,7 +1087,7 @@ export const prunePages = internalMutation({
       .query('docPageListings')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', below))
       .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
-    let removed = 0;
+    const gone: Array<{ ref: string; title: string }> = [];
     for (const row of page.page) {
       const stored = await ctx.db
         .query('docPages')
@@ -1101,13 +1102,15 @@ export const prunePages = internalMutation({
           sourceId: args.sourceId,
           pageRef: row.ref,
         });
-        removed += 1;
+        gone.push({ ref: stored.ref, title: stored.title });
       }
       await ctx.db.delete(row._id);
     }
+    // A removed or moved runbook re-checks the skills that read it (W14-R22).
+    await stampRemovedPages(ctx, finishing.source, gone, Date.now());
     return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'credentials', {
       ...page,
-      removed,
+      removed: gone.length,
     });
   },
 });

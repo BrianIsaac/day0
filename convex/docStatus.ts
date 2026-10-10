@@ -1,10 +1,12 @@
 import { ConvexError, v } from 'convex/values';
 import { internalMutation, mutation, type MutationCtx, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
+import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
+import { RUNBOOKS_A_SCAN, type ChangedRunbook } from './skillVersions';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
   PAGE_STATUSES,
@@ -29,7 +31,9 @@ import { finishingCursor, finishingStep } from '../src/docs/finishing';
  * (a page whose text is unchanged is never upserted, so an archive at the source with no edit
  * would otherwise never be marked); the rules' outcome on the row (`decidePageStatus`); and what
  * a change of status sets off: the page's blocks take the status, each reading employee's parked
- * work is evaluated again, and the record says so. And the finish's status phase
+ * work is evaluated again, the record says so, and the skills whose verified version read the
+ * page are due a re-check (`stampStatusChanges`; a page a finish removed stamps them too,
+ * `stampRemovedPages`, W14-R22). And the finish's status phase
  * (`restatePages`): every page the generation keeps is restated a bounded page at a time, and the
  * pages whose marker lines no judgement stands for are handed to the sync, which asks the model
  * between pages and writes each answer back (`recordMarker`; N20).
@@ -220,6 +224,82 @@ async function writeStatus(
 }
 
 /**
+ * Schedule the library scans that stamp "Re-check due" on the skills that read the given pages:
+ * one scan for them all (14-I's m5), a part of `RUNBOOKS_A_SCAN` pages a scan.
+ */
+async function scheduleRunbookStamps(
+  ctx: MutationCtx,
+  userId: string,
+  pages: readonly ChangedRunbook[],
+  now: number,
+): Promise<void> {
+  for (let start = 0; start < pages.length; start += RUNBOOKS_A_SCAN) {
+    await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPages, {
+      userId,
+      pages: pages.slice(start, start + RUNBOOKS_A_SCAN),
+      changedAt: now,
+      cursor: null,
+    });
+  }
+}
+
+/**
+ * Stamp "Re-check due" on the skills whose verified version read a page that is no longer
+ * current: superseded, archived or marked a draft (the wave file's section 6.2). A page that
+ * came back to active stamps nothing: a skill is checked against a runbook that stopped
+ * standing, never for one that stands again. Every registered function that restates a page
+ * calls it once with all its changes, so one transaction schedules one scan.
+ *
+ * @param ctx - The writing mutation's context.
+ * @param source - The pages' source, for its owner's library.
+ * @param changes - What `restatePage` answered, a null for each page whose status stands.
+ * @param now - The time of the change.
+ */
+export async function stampStatusChanges(
+  ctx: MutationCtx,
+  source: Pick<Doc<'docSources'>, 'userId'>,
+  changes: ReadonlyArray<StatusChange | null>,
+  now: number,
+): Promise<void> {
+  const pages = changes.flatMap((change): ChangedRunbook[] =>
+    change === null || change.to === 'active'
+      ? []
+      : [{ sourceId: change.sourceId, ref: change.ref, title: change.title, change: change.to }],
+  );
+  await scheduleRunbookStamps(ctx, source.userId, pages, now);
+}
+
+/**
+ * Stamp "Re-check due" on the skills whose verified version read a page a finishing sync removed
+ * (W14-R22): the page is gone from its source, or moved within it, after two complete walks
+ * missed it. `docSources.prunePages` calls it once a page of its walk.
+ *
+ * @param ctx - The pruning mutation's context.
+ * @param source - The source the pages left.
+ * @param pages - The removed pages' refs and their last stored titles.
+ * @param now - The time of the prune.
+ */
+export async function stampRemovedPages(
+  ctx: MutationCtx,
+  source: Pick<Doc<'docSources'>, '_id' | 'userId' | 'label'>,
+  pages: ReadonlyArray<{ readonly ref: string; readonly title: string }>,
+  now: number,
+): Promise<void> {
+  await scheduleRunbookStamps(
+    ctx,
+    source.userId,
+    pages.map((page) => ({
+      sourceId: source._id,
+      ref: page.ref,
+      title: page.title,
+      change: 'removed' as const,
+      source: source.label,
+    })),
+    now,
+  );
+}
+
+/**
  * Record what a page's source says of it, as the sync read it: its native status (a provider's
  * archive, trash or draft flag, front matter, a path; normalised by its reader, K-10) and its
  * revision as the source numbers it. Internal; the sync calls it beside the page's hash, for a
@@ -253,11 +333,9 @@ export const recordRead = internalMutation({
     ) {
       await ctx.db.patch(page._id, inputs);
     }
-    const change = await restatePage(ctx, {
-      source,
-      page: { ...page, ...inputs },
-      now: Date.now(),
-    });
+    const now = Date.now();
+    const change = await restatePage(ctx, { source, page: { ...page, ...inputs }, now });
+    await stampStatusChanges(ctx, source, [change], now);
     return change !== null;
   },
 });
@@ -331,7 +409,7 @@ export const restatePages = internalMutation({
       .paginate({ ...STATUS_PAGE_READ, cursor: args.from });
     const now = Date.now();
     const toJudge: MarkerToJudge[] = [];
-    let changed = 0;
+    const changes: Array<StatusChange | null> = [];
     for (const stored of walked.page) {
       const candidate = markerCandidate(stored.title, stored.markdown);
       let page = stored;
@@ -342,8 +420,9 @@ export const restatePages = internalMutation({
         }
         if (candidate !== undefined) toJudge.push({ ref: stored.ref, ...candidate });
       }
-      if ((await restatePage(ctx, { source, page, now })) !== null) changed += 1;
+      changes.push(await restatePage(ctx, { source, page, now }));
     }
+    await stampStatusChanges(ctx, source, changes, now);
     const position = finishingCursor(
       walked.isDone
         ? { phase: 'scopes', cursor: null }
@@ -352,7 +431,7 @@ export const restatePages = internalMutation({
     const recorded = walked.isDone || args.record;
     if (recorded) await ctx.db.patch(run._id, { cursor: position });
     return {
-      changed,
+      changed: changes.filter((change) => change !== null).length,
       toJudge,
       done: walked.isDone,
       from: walked.continueCursor,
@@ -391,7 +470,8 @@ export const recordMarker = internalMutation({
     const now = Date.now();
     const marker = { status: args.status, quote: args.quote, judgedAt: now };
     await ctx.db.patch(page._id, { marker });
-    await restatePage(ctx, { source, page: { ...page, marker }, now });
+    const change = await restatePage(ctx, { source, page: { ...page, marker }, now });
+    await stampStatusChanges(ctx, source, [change], now);
     return true;
   },
 });
@@ -448,7 +528,7 @@ export const setPageStatus = mutation({
       supersededBy = { sourceId: successor.page.sourceId, ref: successor.page.ref };
     }
     const now = Date.now();
-    await writeStatus(ctx, {
+    const change = await writeStatus(ctx, {
       source,
       page,
       decided: { status: args.status, statusSource: 'manager' },
@@ -456,6 +536,7 @@ export const setPageStatus = mutation({
       manager: { decidedBy: verifiedAddressOf(caller), decidedAt: now },
       now,
     });
+    await stampStatusChanges(ctx, source, [change], now);
     return null;
   },
 });
@@ -480,7 +561,9 @@ export const clearPageStatus = mutation({
       supersededBy: undefined,
     };
     await ctx.db.patch(page._id, undecided);
-    await restatePage(ctx, { source, page: { ...page, ...undecided }, now: Date.now() });
+    const now = Date.now();
+    const change = await restatePage(ctx, { source, page: { ...page, ...undecided }, now });
+    await stampStatusChanges(ctx, source, [change], now);
     return null;
   },
 });

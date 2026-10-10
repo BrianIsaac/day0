@@ -107,6 +107,43 @@ async function storedPage(
   });
 }
 
+/** A registered skill of the employee's whose verified version read the given pages. */
+async function skillThatRead(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  readRefs: Array<{ sourceId: Id<'docSources'>; ref: string; title: string }>,
+): Promise<Id<'skills'>> {
+  return await harness.run(async (ctx) => {
+    const versionId = await ctx.db.insert('skillVersions', {
+      userId: 'owner',
+      name: 'refresh-the-tile',
+      description: 'Refresh the tile',
+      surfaceClass: 'dashboard',
+      operation: 'refresh',
+      version: 1,
+      body: '# Body',
+      bodyHash: 'b'.repeat(64),
+      requiredScopes: [],
+      harnessTools: [],
+      authorName: 'Priya',
+      readRefs,
+      verifiedAt: 1,
+      createdAt: 1,
+    });
+    return await ctx.db.insert('skills', {
+      agentId,
+      name: 'refresh-the-tile',
+      description: 'Refresh the tile',
+      body: '# Body',
+      sourceType: 'agent-authored',
+      state: 'registered',
+      versionId,
+      ownerKey: 'owner',
+      createdAt: 1,
+    });
+  });
+}
+
 /** A page's row. */
 async function pageOf(harness: Harness, pageId: Id<'docPages'>): Promise<Doc<'docPages'>> {
   return await harness.run(async (ctx) => (await ctx.db.get(pageId))!);
@@ -761,5 +798,74 @@ describe('the trust the manager gives a source', (): void => {
       authority: 'official',
     });
     expect(await read()).toBe('official');
+  });
+});
+
+describe('the skills that read a page whose status changed', (): void => {
+  /** The skill's Re-check due reason, once the scheduled library scan has run. */
+  async function reasonOf(harness: Harness, skillId: Id<'skills'>): Promise<string | undefined> {
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    return (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.recheckReason;
+  }
+
+  it('are due a re-check when the page is superseded, in the card’s words, and keep running meanwhile', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const successor = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook-v2.md' });
+    const agentId = await employee(harness, 'Priya');
+    const skillId = await skillThatRead(harness, agentId, [
+      {
+        sourceId: source.sourceId,
+        ref: 'runbooks/pipeline-runbook.md',
+        title: 'Refreshing the tile',
+      },
+    ]);
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    await harness.withIdentity(managerIdentity()).mutation(api.docStatus.setPageStatus, {
+      pageId,
+      status: 'superseded',
+      supersededBy: successor,
+    });
+    expect(await reasonOf(harness, skillId)).toBe(
+      'its runbook "Refreshing the tile" was superseded on 10 October 2026',
+    );
+    expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
+  });
+
+  it('are due one when its source archives it with no edit, and none when a page comes back', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const back = await storedPage(harness, source, {
+      ref: 'runbooks/back.md',
+      status: 'archived',
+      statusSource: 'source-native',
+      nativeStatus: 'archived',
+    });
+    const agentId = await employee(harness, 'Priya');
+    const archived = await skillThatRead(harness, agentId, [
+      { sourceId: source.sourceId, ref: 'runbooks/refresh.md', title: 'Refreshing the tile' },
+    ]);
+    const returning = await skillThatRead(harness, agentId, [
+      { sourceId: source.sourceId, ref: 'runbooks/back.md', title: 'Refreshing the tile' },
+    ]);
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    for (const [ref, nativeStatus] of [
+      ['runbooks/refresh.md', 'archived'],
+      ['runbooks/back.md', undefined],
+    ] as const) {
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref,
+        ...(nativeStatus !== undefined ? { nativeStatus } : {}),
+      });
+    }
+    expect(await reasonOf(harness, archived)).toBe(
+      'its runbook "Refreshing the tile" was archived on 10 October 2026',
+    );
+    expect((await pageOf(harness, back)).status).toBe('active');
+    expect(await reasonOf(harness, returning)).toBeUndefined();
   });
 });
