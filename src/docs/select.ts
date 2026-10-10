@@ -10,6 +10,7 @@ import {
   type ShapeSurface,
 } from '../work/skill-shape';
 import type {
+  CiteConflict,
   CitedBlock,
   DocumentationCitation,
   DocumentationSelectionRecord,
@@ -222,7 +223,19 @@ export interface SelectionInput {
    * to read their stored blocks, so each page is parsed for them once a selection (W14-R4).
    */
   readonly always?: readonly string[];
+  /**
+   * The stored blocks a confirmed conflict stands on, by block hash, with what each is disputed
+   * by (`docRelations.standingConflictsOn`): the cite line of such a block is printed
+   * `[conflict]`.
+   */
+  readonly conflicts?: ConflictsByHash;
 }
+
+/** What each disputed block is disputed by, by the block's hash. */
+export type ConflictsByHash = ReadonlyMap<string, CiteConflict>;
+
+/** What a disputed cite line ends with, after its closing bracket. */
+export const CONFLICT_TAG = '[conflict]';
 
 /** A cite line as the selection prints it, alone on its line. */
 const CITE_LINE = /^\[cite: [^\n]*\]$/m;
@@ -510,36 +523,45 @@ function citeLabel(page: SelectablePage, headingPath: readonly string[]): string
   return `${page.citeSource}/${page.citePage}${heading === '' ? '' : `#${heading}`}`;
 }
 
-/** One page's blocks in document order, grouped under cite lines. */
+/**
+ * One page's blocks in document order, grouped under cite lines. A group one of whose blocks a
+ * confirmed conflict stands on has its line printed with `CONFLICT_TAG` after the bracket, and
+ * its citation says what disputes it.
+ */
 function assemblePage(
   page: SelectablePage,
   blocks: readonly SelectableBlock[],
+  conflicts?: ConflictsByHash,
 ): { body: string; citations: Citation[] } {
   const ordered = [...blocks].sort((left, right) => left.index - right.index);
   const of = page.sourceId === undefined ? {} : { sourceId: page.sourceId, pageRef: page.citePage };
-  const citations: Array<{
-    label: string;
-    sourceId?: string;
-    pageRef?: string;
-    blocks: CitedBlock[];
-  }> = [];
-  const parts: string[] = [];
-  let previous: string | undefined;
+  const groups: Array<{ label: string; blocks: SelectableBlock[] }> = [];
   for (const block of ordered) {
     const label = citeLabel(page, block.headingPath);
-    if (label !== previous) {
-      parts.push(`${parts.length > 0 ? '\n' : ''}[cite: ${label}]\n${block.text}`);
-      citations.push({ label, ...of, blocks: [] });
-      previous = label;
-    } else {
-      parts.push(`\n${block.text}`);
-    }
-    if (block.id !== undefined) {
-      citations[citations.length - 1].blocks.push({
-        id: block.id,
-        ...(block.hash !== undefined ? { hash: block.hash } : {}),
-      });
-    }
+    const last = groups.at(-1);
+    if (last !== undefined && last.label === label) last.blocks.push(block);
+    else groups.push({ label, blocks: [block] });
+  }
+  const parts: string[] = [];
+  const citations: Citation[] = [];
+  for (const group of groups) {
+    const conflict = group.blocks
+      .map((block) => (block.hash === undefined ? undefined : conflicts?.get(block.hash)))
+      .find((entry) => entry !== undefined);
+    const line = `[cite: ${group.label}]${conflict !== undefined ? ` ${CONFLICT_TAG}` : ''}`;
+    parts.push(
+      `${parts.length > 0 ? '\n' : ''}${line}\n${group.blocks.map((block) => block.text).join('\n\n')}`,
+    );
+    citations.push({
+      label: group.label,
+      ...of,
+      blocks: group.blocks.flatMap((block): CitedBlock[] =>
+        block.id === undefined
+          ? []
+          : [{ id: block.id, ...(block.hash !== undefined ? { hash: block.hash } : {}) }],
+      ),
+      ...(conflict !== undefined ? { conflict } : {}),
+    });
   }
   return { body: parts.join('\n'), citations };
 }
@@ -602,7 +624,11 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   // longer cuts the next page's contract (W14-R3). Then the pages always included, up to the
   // budget less the pick's floor; then the ranked pick; then what is left goes back to the pages
   // always included, in the order above (D-3).
-  const chosen: ChosenDocumentation = { blocks: new Map(), entries: new Map() };
+  const chosen: ChosenDocumentation = {
+    blocks: new Map(),
+    entries: new Map(),
+    conflicts: input.conflicts,
+  };
   for (const candidate of candidates) {
     const contractNeeds = needed.get(candidate.page.key);
     if (contractNeeds === undefined) continue;
@@ -631,7 +657,7 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   for (const candidate of candidates) {
     const blocks = chosen.blocks.get(candidate.page.key);
     if (blocks === undefined || blocks.length === 0) continue;
-    const assembled = assemblePage(candidate.page, blocks);
+    const assembled = assemblePage(candidate.page, blocks, input.conflicts);
     const entry = { slug: candidate.page.slug, title: candidate.page.title, body: assembled.body };
     (candidate.page.category === 'how-to-guide' ? howToGuides : teamDocs).push(entry);
     citations.push(...assembled.citations);
@@ -705,6 +731,8 @@ function pagesInPickOrder(picked: readonly SelectableBlock[]): string[] {
 interface ChosenDocumentation {
   readonly blocks: Map<string, SelectableBlock[]>;
   readonly entries: Map<string, { slug: string; title: string; body: string }>;
+  /** The disputed blocks, whose tagged cite lines count toward the budget as they are printed. */
+  readonly conflicts?: ConflictsByHash;
 }
 
 /**
@@ -733,7 +761,7 @@ function fitBlocks(
   const entryOf = (own: readonly SelectableBlock[]) => ({
     slug: candidate.page.slug,
     title: candidate.page.title,
-    body: assemblePage(candidate.page, own).body,
+    body: assemblePage(candidate.page, own, chosen.conflicts).body,
   });
   const fits = (count: number): boolean => {
     const trial = entryOf(trialBlocks(count));

@@ -492,6 +492,16 @@ function revokedAtSourceWords(
   }
 }
 
+/** The two pages of a held plan's conflict, by title, or "two pages" when the row names none. */
+function conflictPages(pages: unknown): string {
+  const titles = Array.isArray(pages)
+    ? pages.flatMap((page: { title?: unknown }) =>
+        text(page?.title) ? [`"${page.title as string}"`] : [],
+      )
+    : [];
+  return titles.length === 2 ? `${titles[0]} and ${titles[1]}` : 'two pages';
+}
+
 /** ` ("A" and "B")` for a relation's two pages, when the row names them. */
 function relatedPages(p: {
   readonly from?: { readonly title?: string };
@@ -593,6 +603,8 @@ const PLAN_HELD_BECAUSE: {
     earlierAddress(subject) === undefined
       ? 'your predecessor approved it, so approve it again'
       : 'their predecessor approved it, so it was to be approved again',
+  'documentation-conflict': () =>
+    'two pages disagree on a point it follows, to be decided on the Documentation tab',
 };
 
 /**
@@ -1196,11 +1208,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-      typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-        ? PLAN_HELD_BECAUSE[p.reason](subject)
-        : `it waits for ${their(subject)} decision`
-    }`,
+    p.reason === 'documentation-conflict' && text(p.heading)
+      ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+      : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+          typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+            ? PLAN_HELD_BECAUSE[p.reason](subject)
+            : `it waits for ${their(subject)} decision`
+        }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;

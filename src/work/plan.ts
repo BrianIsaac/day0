@@ -75,13 +75,21 @@ const SELECTION_RULE =
   'The loaded documentation is the part selected for this item, not everything the team has written: a procedure that is not shown here is not thereby absent, so say what you did not find rather than plan as if it did not exist.';
 
 /**
+ * What the real planner is told of a cite line the selection printed `[conflict]` (15-A): a
+ * confirmed conflict between two pages of equal trust. The plan that cites one is held for the
+ * manager whatever it says (`work.decidePlan`); this keeps the draft from resting on the point.
+ */
+const CONFLICT_RULE =
+  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.';
+
+/**
  * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
  * candidate and the surfaces after it (wave 14, 14-R), and is a selection (`SELECTION_RULE`); the
  * mock line is the hosted demo's, pinned byte for byte, where both follow the candidate and the
  * documentation is the whole mirror.
  */
 const EVIDENCE_LINE: Readonly<Record<SurfaceMode, string>> = {
-  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE} ${SELECTION_RULE}`,
+  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE} ${SELECTION_RULE} ${CONFLICT_RULE}`,
   mock: `  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. ${EVIDENCE_RULE}`,
 };
 

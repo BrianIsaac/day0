@@ -316,6 +316,14 @@ describe('plan drafter grounding', (): void => {
     expect(planSystemPrompt(false, 'mock')).not.toContain('part selected for this item');
   });
 
+  it('tells the real planner what a [conflict] cite is, so it plans no step on the disputed point (15-A)', (): void => {
+    const real = planSystemPrompt(false, 'real');
+    expect(real).toContain(
+      'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.',
+    );
+    expect(planSystemPrompt(false, 'mock')).not.toContain('[conflict]');
+  });
+
   it('names the owner the provider returned beside the requester, and nothing when it returned none', (): void => {
     const withOwner = planUserPrompt({
       candidate: { ...candidate, owner: 'Ana', requester: 'Manager' },

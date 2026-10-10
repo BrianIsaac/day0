@@ -3,6 +3,7 @@ import { internalQuery, type DatabaseReader, type QueryCtx } from './_generated/
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { SEARCH_BLOCKS_LIMIT, SEARCH_SOURCES_LIMIT, type FoundBlock } from './docBlocks';
+import { citeConflictOf, standingConflictsOn } from './docRelations';
 import { eventsOfType } from './eventLog';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';
@@ -13,6 +14,7 @@ import {
   type PageStatus,
 } from '../src/docs/authority';
 import { isEventOf } from '../src/events/contract';
+import type { CiteConflict } from '../src/work/types';
 import {
   DOCUMENTATION_SITES,
   alwaysIncludedPages,
@@ -326,7 +328,22 @@ export async function selectedDocumentation(
       : await scoutedBlocks(ctx, { userId, sources, queries: scoutQueries(request, pages) });
   const always = alwaysIncludedPages(pages, request);
   const pageBlocks = await storedPageBlocks(ctx, docs, new Set(always));
-  return selectDocumentation({ request, pages, scouted, pageBlocks, always });
+  // The confirmed conflicts that stand on a block this selection may carry: their cite lines are
+  // printed `[conflict]` (15-A). A selection that meets none reads no page for it.
+  const hashes = new Set(
+    [...scouted, ...[...pageBlocks.values()].flat()].flatMap((block) =>
+      block.hash === undefined ? [] : [block.hash],
+    ),
+  );
+  const standing =
+    userId === undefined ? new Map() : await standingConflictsOn(ctx, userId, hashes);
+  const conflicts = new Map(
+    [...standing].map(([hash, conflict]): [string, CiteConflict] => [
+      hash,
+      citeConflictOf(conflict),
+    ]),
+  );
+  return selectDocumentation({ request, pages, scouted, pageBlocks, always, conflicts });
 }
 
 /** A cited block that no longer stands, and what is known of why. */

@@ -161,6 +161,43 @@ describe('resolvedPlanCites and the source of a cite (W14-R27)', (): void => {
   });
 });
 
+describe('resolvedPlanCites and a cite two pages disagree on (15-A)', (): void => {
+  const conflict = {
+    relationId: 'relation-1',
+    heading: 'Thresholds',
+    pages: [
+      { title: 'Finance escalation', source: 'Finance wiki' },
+      { title: 'Pipeline runbook', source: 'Handbook' },
+    ],
+  } as const;
+  const selection = {
+    citations: [
+      {
+        label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+        blocks: [{ id: 'b1', hash: 'h1' }],
+        conflict,
+      },
+    ],
+  };
+
+  it('reads a cite the planner copied with its [conflict] tag as the cite it is, and keeps what it disputes', (): void => {
+    for (const written of [
+      '[cite: Handbook/runbooks/pipeline-runbook.md#Thresholds] [conflict]',
+      'Handbook/runbooks/pipeline-runbook.md#Thresholds [conflict]',
+      'cite: Handbook/runbooks/pipeline-runbook.md#Thresholds',
+    ]) {
+      expect(resolvedPlanCites([[written]], 1, selection)).toEqual([
+        {
+          step: 1,
+          label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+          blocks: [{ id: 'b1', hash: 'h1' }],
+          conflict,
+        },
+      ]);
+    }
+  });
+});
+
 describe('isGoneCitesReason', (): void => {
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
     expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);

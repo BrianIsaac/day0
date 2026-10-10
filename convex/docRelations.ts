@@ -24,6 +24,7 @@ import {
 } from '../src/docs/authority';
 import { MAX_BLOCKS_PER_PAGE, blockSearchQuery } from '../src/docs/blocks';
 import { frontMatterStatus } from '../src/docs/status';
+import type { CiteConflict, PlanCite } from '../src/work/types';
 import {
   RELATION_CANDIDATES_PER_PAGE,
   headingFigures,
@@ -480,6 +481,47 @@ export async function standingConflictsOn(
     for (const hash of standing.blocks) byHash.set(hash, standing);
   }
   return byHash;
+}
+
+/** A standing conflict as a cite carries it: the relation, the heading and the two pages. */
+export function citeConflictOf(conflict: StandingConflict): CiteConflict {
+  return {
+    relationId: conflict.relationId,
+    heading: conflict.heading,
+    pages: [
+      { title: conflict.from.title, source: conflict.from.source },
+      { title: conflict.to.title, source: conflict.to.source },
+    ],
+  };
+}
+
+/**
+ * The conflict a drafted plan rests on, if one still stands: the first of its cites that was
+ * disputed when the plan was drafted (`PlanCite.conflict`) and whose relation is still a
+ * confirmed conflict between two active pages of equal trust. Read at the plan's decision, and
+ * again at each later look, so a conflict the manager settled since holds nothing.
+ *
+ * @param ctx - The deciding mutation's context.
+ * @param plan - The work item's plan, as stored.
+ */
+export async function citedConflictOf(
+  ctx: QueryCtx,
+  plan: unknown,
+): Promise<CiteConflict | undefined> {
+  const cites =
+    typeof plan === 'object' && plan !== null && 'cites' in plan && Array.isArray(plan.cites)
+      ? (plan.cites as ReadonlyArray<Pick<PlanCite, 'conflict'>>)
+      : [];
+  const relationIds = [
+    ...new Set(cites.flatMap((cite) => (cite.conflict ? [cite.conflict.relationId] : []))),
+  ];
+  for (const id of relationIds) {
+    const relationId = ctx.db.normalizeId('docRelations', id);
+    const standing =
+      relationId === null ? undefined : await standingConflictOf(ctx, await ctx.db.get(relationId));
+    if (standing !== undefined) return citeConflictOf(standing);
+  }
+  return undefined;
 }
 
 /** What the manager may answer a relation's card. */

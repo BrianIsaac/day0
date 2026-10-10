@@ -1523,13 +1523,28 @@ export interface PlanHeldApprovedByPredecessor extends WorkItemNamed {
   readonly reason: 'approved-by-predecessor';
 }
 
+/**
+ * `work.plan-held` for a plan that cites a passage two equally trusted pages disagree on, the
+ * sixth reason (wave 15, 15-A; A-3): the manager confirmed the conflict and has not yet said
+ * which page is right, so the switch does not run the plan. Wave 16 makes it a question.
+ */
+export interface PlanHeldForConflict extends WorkItemNamed {
+  readonly reason: 'documentation-conflict';
+  readonly relationId: Id<'docRelations'>;
+  /** The heading the two pages disagree under. */
+  readonly heading: string;
+  /** The two pages, each by its title and its source's label. */
+  readonly pages: ReadonlyArray<{ readonly title: string; readonly source: string }>;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
   | PlanHeldObligationsFailedOpen
   | PlanHeldDraftedWithout
-  | PlanHeldApprovedByPredecessor;
+  | PlanHeldApprovedByPredecessor
+  | PlanHeldForConflict;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {

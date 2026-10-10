@@ -6,9 +6,15 @@ import type { CitedBlock, DocumentationSelectionRecord, PlanCite } from './types
  * from the cite lines its selection printed, and checked by the closing phase before it runs.
  */
 
-/** A cite as the planner may write it: the words alone, `cite: ` before them, or the whole line. */
+/**
+ * A cite as the planner may write it: the words alone, `cite: ` before them, or the whole line,
+ * with or without the `[conflict]` tag a disputed line ends with.
+ */
 function citeWords(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = value
+    .trim()
+    .replace(/\s*\[conflict\]$/i, '')
+    .trim();
   const written = /^\[?cite:\s*(.*?)\s*\]?$/i.exec(trimmed);
   return written ? written[1] : trimmed;
 }
@@ -43,6 +49,7 @@ export function resolvedPlanCites(
       ...(citation.sourceId !== undefined ? { sourceId: citation.sourceId } : {}),
       ...(citation.pageRef !== undefined ? { pageRef: citation.pageRef } : {}),
       blocks: [...citation.blocks],
+      ...(citation.conflict !== undefined ? { conflict: citation.conflict } : {}),
     });
   }
   return stepCites.slice(0, steps).flatMap((labels, index) =>

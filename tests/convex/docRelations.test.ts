@@ -6,6 +6,8 @@ import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
 import type { SourceAuthority } from '../../src/docs/authority';
+import type { SelectionRequest } from '../../src/docs/select';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 
@@ -677,4 +679,215 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     expect(next[0].from.title).not.toBe('Long 3 b');
     expect(next.length).toBeGreaterThan(0);
   }, 30_000);
+});
+
+describe('a confirmed conflict in a selection and at a plan’s decision (the sixth hold reason; A-3)', (): void => {
+  const request: SelectionRequest = {
+    site: 'plan',
+    title: 'Escalate the variance',
+    summary: 'A variance above the threshold needs the finance lead.',
+    roleFunction: 'Revenue operations coordination',
+    writtenBrowserSurfaces: [],
+  };
+
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** Two pages that disagree, mirrored for an employee with autonomous actions on, and the relation. */
+  async function disagreement(harness: Harness) {
+    const pages = await twoThatDisagree(harness);
+    const agentId = await harness.run(async (ctx) => {
+      const agentId = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+        autonomousActions: true,
+      });
+      for (const page of await ctx.db.query('docPages').collect()) {
+        await ctx.db.insert('mockDocs', {
+          agentId,
+          slug: `source-${page.ref.replace(/[^a-z0-9]+/gi, '-')}`,
+          title: page.title,
+          body: page.markdown,
+          category: 'team-doc',
+          sourceId: page.sourceId,
+          sourceRef: page.ref,
+          updatedAt: 3,
+        });
+      }
+      // A third page, so the item's words tell pages apart.
+      await ctx.db.insert('mockDocs', {
+        agentId,
+        slug: 'office-holidays',
+        title: 'Office holidays',
+        body: '# Office holidays\n\nClosed in August.',
+        category: 'team-doc',
+        updatedAt: 3,
+      });
+      return agentId;
+    });
+    await measure(harness, pages.finance, 'escalation.md');
+    const [relation] = await relations(harness);
+    return { ...pages, agentId, relationId: relation._id };
+  }
+
+  /** The cite lines a plan-site selection prints for the employee. */
+  async function selection(harness: Harness, agentId: Id<'agents'>) {
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    return {
+      lines: snapshot.teamDocs.flatMap((doc) =>
+        doc.body.split('\n').filter((line) => line.startsWith('[cite: ')),
+      ),
+      citations: snapshot.documentation?.citations ?? [],
+    };
+  }
+
+  it('tags both pages’ cites [conflict] once the manager confirms it, and no cite before or after it is settled', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    // Proposed only: a measure tags nothing.
+    expect((await selection(harness, agentId)).lines.join('\n')).not.toContain('[conflict]');
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const tagged = await selection(harness, agentId);
+    expect(tagged.lines).toEqual(
+      expect.arrayContaining([
+        '[cite: Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Thresholds] [conflict]',
+        '[cite: Finance wiki/escalation.md#Finance escalation > Thresholds] [conflict]',
+      ]),
+    );
+    // Only the passages that disagree are tagged, and each carries what it disagrees with.
+    expect(tagged.lines.filter((line) => line.endsWith('[conflict]'))).toHaveLength(2);
+    const conflicts = tagged.citations.flatMap((citation) =>
+      citation.conflict ? [citation.conflict] : [],
+    );
+    expect(conflicts).toHaveLength(2);
+    expect(conflicts[0]).toEqual({
+      relationId,
+      heading: 'Thresholds',
+      pages: [
+        { title: 'Finance escalation', source: 'Finance wiki' },
+        { title: 'Pipeline runbook', source: 'Handbook' },
+      ],
+    });
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'both-hold',
+    });
+    expect((await selection(harness, agentId)).lines.join('\n')).not.toContain('[conflict]');
+  });
+
+  it('holds a plan that cites the disputed passage for the manager, naming the two pages and the heading, and lets it go once both hold', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-12',
+          title: 'Escalate the variance',
+          contentSummary: 'A variance above the threshold needs the finance lead.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'plan-pending',
+          plan: {
+            summary: 'Escalate the variance to the finance lead.',
+            steps: ['Message the finance lead when the variance passes the threshold'],
+            expectedOutputType: 'slack-reply',
+            riskNotes: '',
+            reversibility: 'A message.',
+            estimatedMinutes: 5,
+            cites: [{ step: 1, ...disputed }],
+          },
+        }),
+    );
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await eventsOf(harness, agentId, 'work.plan-held')).toEqual([
+      {
+        workItemId,
+        reason: 'documentation-conflict',
+        relationId,
+        heading: 'Thresholds',
+        pages: [
+          { title: 'Finance escalation', source: 'Finance wiki' },
+          { title: 'Pipeline runbook', source: 'Handbook' },
+        ],
+      },
+    ]);
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+      'plan-pending',
+    );
+    // "Both hold": nothing disputes the passage any more, and the sweep's next look approves it.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'both-hold',
+    });
+    expect(
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
+    ).toEqual({ approved: true });
+  });
+
+  it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-13',
+          title: 'Refresh the tile',
+          contentSummary: 'The tile is stale.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'plan-pending',
+          plan: {
+            summary: 'Refresh the tile.',
+            steps: ['Press Refresh'],
+            expectedOutputType: 'ticket-update',
+            riskNotes: '',
+            reversibility: 'Nothing is written.',
+            estimatedMinutes: 5,
+            cites: [
+              {
+                step: 1,
+                label: 'Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Refresh',
+                blocks: [],
+              },
+            ],
+          },
+        }),
+    );
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+  });
 });

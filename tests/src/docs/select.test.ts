@@ -570,6 +570,43 @@ describe('selectDocumentation', (): void => {
   });
 });
 
+describe('selectDocumentation and a passage two pages disagree on (15-A)', (): void => {
+  it('tags the cite line of a disputed block [conflict], and no other, with what it disputes on its citation', (): void => {
+    const blocks = everyBlock([tileRunbook, holidays]).map((block) => ({
+      ...block,
+      hash: `hash-${block.id}`,
+    }));
+    const disputed = blocks.find((block) => block.text.includes('Press Refresh'))!;
+    const conflict = {
+      relationId: 'relation-1',
+      heading: 'Refresh',
+      pages: [
+        { title: 'How to refresh the pipeline tile', source: 'Handbook' },
+        { title: 'Tile notes', source: 'Team wiki' },
+      ],
+    } as const;
+    const selection = selectDocumentation({
+      request,
+      pages: [tileRunbook, holidays],
+      scouted: blocks,
+      pageBlocks: new Map([[tileRunbook.key, blocks.filter((b) => b.pageKey === tileRunbook.key)]]),
+      conflicts: new Map([[disputed.hash, conflict]]),
+    });
+    const lines = selection.howToGuides[0].body
+      .split('\n')
+      .filter((line) => line.startsWith('[cite: '));
+    expect(lines).toEqual([
+      '[cite: Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Sign in]',
+      '[cite: Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Refresh] [conflict]',
+    ]);
+    expect(selection.citations.map((citation) => citation.conflict)).toEqual([undefined, conflict]);
+    // A tagged line is still a cite line: found as one, and never part of what a message quotes.
+    expect(carriesCiteLines(selection.howToGuides[0].body)).toBe(true);
+    expect(withoutCiteLines(selection.howToGuides[0].body)).not.toContain('[conflict]');
+    expect(selection.chars).toBe(documentationChars(selection));
+  });
+});
+
 describe('pageBlocksOf', (): void => {
   it('splits a page as the store splits it', (): void => {
     expect(pageBlocksOf(tileRunbook).map((block) => block.text)).toEqual(

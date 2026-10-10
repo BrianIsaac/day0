@@ -158,6 +158,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
   'approved-by-predecessor': 'approved by your predecessor; approve it again',
+  'documentation-conflict': 'two pages disagree; decide on the Documentation tab',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */
@@ -730,7 +731,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
     `execution restarted after it failed outside the item${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}${typeof payload.reason === 'string' && payload.reason !== '' ? `: ${payload.reason}` : ''}`,
-  'work.plan-held': (payload) => `plan held for you: ${planHeldWords(payload.reason)}`,
+  'work.plan-held': (payload) =>
+    payload.reason === 'documentation-conflict' && text(payload.heading)
+      ? `plan held for you: two pages disagree about "${payload.heading}"; decide on the Documentation tab`
+      : `plan held for you: ${planHeldWords(payload.reason)}`,
   'work.plan-approved': (payload) =>
     payload.by === 'autonomous'
       ? 'plan approved under autonomous actions'
