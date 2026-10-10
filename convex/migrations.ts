@@ -52,6 +52,7 @@ import { replacePageBlocks } from './docBlocks';
 import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
+import { pageStatusOf } from '../src/docs/authority';
 import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
@@ -1028,7 +1029,9 @@ async function blockOwnerOf(
 /**
  * One page of the block backfill (14-I): split each stored page's Markdown, as stored, into its
  * blocks. The Markdown was redacted when the sync stored it, so nothing is redacted again; a page
- * whose blocks already match changes nothing, so a second run changes nothing.
+ * whose blocks already match changes nothing, so a second run changes nothing. Each block is
+ * written under its page's status, so a run over a page that is no longer current leaves it out
+ * of the search as it was.
  */
 async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
   const page = await ctx.db.query('docPages').paginate({ ...BLOCK_BACKFILL_READ, cursor });
@@ -1045,6 +1048,8 @@ async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<
       sourceId: stored.sourceId,
       pageRef: stored.ref,
       markdown: stored.markdown,
+      // The page's own status: the writer patches a kept block that says otherwise (15-A).
+      status: pageStatusOf(stored),
     });
     if (written > 0) changed += 1;
   }

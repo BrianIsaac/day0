@@ -5,6 +5,7 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
+import { replacePageBlocks } from '../../convex/docBlocks';
 import { MIGRATION_NAMES, MIGRATIONS, passedOverNote } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
@@ -2995,6 +2996,55 @@ describe('the block backfill (14-I)', (): void => {
     expect(MIGRATION_NAMES.indexOf('docs-backfill-blocks')).toBeGreaterThan(
       MIGRATION_NAMES.indexOf('work-decision-closed'),
     );
+  });
+
+  it('leaves a page that is not current with its status on every block (15-A)', async (): Promise<void> => {
+    // The second pass's minor 7: the block writer patches a kept block whose status differs from
+    // the page's, and the backfill passed no status, so a run over a superseded page made its
+    // blocks active again and the search found them.
+    const harness = limitedHarness();
+    const sourceId = await source(harness, 'owner');
+    await harness.run(async (ctx) => {
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
+      const markdown =
+        '# Old runbook\n\nPress Refresh once.\n\n## Thresholds\n\nEscalate above 5,000.';
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'old.md',
+        title: 'Old runbook',
+        markdown,
+        updatedAt: 3,
+        status: 'superseded',
+        statusSource: 'manager',
+      });
+      await replacePageBlocks(ctx, {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'old.md',
+        generation: runId,
+        markdown,
+        status: 'superseded',
+      });
+    });
+    for (;;) {
+      const progress = await harness.mutation(internal.migrations.runMigrationPage, {
+        name: 'docs-backfill-blocks',
+      });
+      if (progress.completedAt !== undefined) break;
+    }
+    const statuses = await harness.run(async (ctx) =>
+      (await ctx.db.query('docBlocks').collect()).map((block) => block.status),
+    );
+    expect(statuses).toEqual(['superseded', 'superseded']);
   });
 
   it('splits every stored page as stored, redacting nothing and asking no component, and is safe to run twice', async (): Promise<void> => {
