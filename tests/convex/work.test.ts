@@ -23,6 +23,7 @@ import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
 import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { openQuestionStopReason } from '../../src/work/obligations';
+import { PIP_ANSWER, PIP_DECLINED_OUTPUT } from '../fixtures/work/pip-declined-2026-10-10';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
@@ -3416,6 +3417,35 @@ describe('the exact-action gate', (): void => {
     expect(row.state).toBe('completed');
     expect(row.pendingRunId).toBeUndefined();
     expect(row.approvedIndexes).toBeUndefined();
+  });
+
+  it('completes Pip’s declined set with the answer its ledger gives, on the row and in the record (W15-R4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId, agentId } = await seed(harness, 'executing');
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId,
+      runId,
+      output: PIP_DECLINED_OUTPUT,
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    const held = {
+      workDone: 'not-done',
+      workDoneWhy:
+        'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+      workDoneSaid: PIP_ANSWER,
+    };
+    expect(row.output).toMatchObject(held);
+    const completed = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (index) =>
+            index.eq('agentId', agentId).eq('type', 'work.completed'),
+          )
+          .unique(),
+    );
+    expect((completed?.payload as { output: unknown }).output).toMatchObject(held);
   });
 
   it('still refuses to complete a run with a failed unheld action', async (): Promise<void> => {

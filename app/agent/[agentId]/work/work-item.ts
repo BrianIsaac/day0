@@ -29,7 +29,13 @@ import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
-import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
+import {
+  doneAgainstLedger,
+  landedClosings,
+  workDoneFactOf,
+  workDoneFromLedger,
+  type LandedClosing,
+} from '@/work/work-done';
 import type { FinishedAs } from '@/work/state-labels';
 
 /** One row of the applied ledger as the card reads it. */
@@ -665,9 +671,14 @@ export function finishedAs(output: unknown): FinishedAs {
   return notDone.answer === 'partial' ? 'partly done' : 'not done';
 }
 
-/** What a finished run's card says was not done: the run's answer, and the words it says it in. */
+/** What a finished run's card says was not done: the answer, whose it is, and the words it is said in. */
 export interface NotDoneOnCard {
   readonly answer: 'partial' | 'not-done';
+  /**
+   * Whose answer it is: the run's own, quoted as the employee's words, or the ledger's reading of
+   * a run that answered done over writes that were not sent (W15-R4), which is Day0's sentence.
+   */
+  readonly from: 'run' | 'ledger';
   readonly statements: readonly string[];
   /**
    * The tickets the run closed all the same (a closing round's first set, 12-D's Minor 5), so a
@@ -679,8 +690,10 @@ export interface NotDoneOnCard {
 /**
  * What a finished run's card says was not done (12-D, decision D-1 (b)). It follows the run's own
  * answer: `partial` or `not-done` with its one line of why, and nothing for a run that answered
- * `done`, whatever its words read as. A row recorded before v0.16.0 carries no answer and reads as
- * it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
+ * `done`, whatever its words read as, unless writes it set out to make were not sent: then the
+ * ledger's reading stands in its place (W15-R4), stored by the completing write from v0.19.0 and
+ * read here for a row completed before. A row recorded before v0.16.0 carries no answer and reads
+ * as it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
  *
  * @param output - The finished run's output.
  * @returns The answer and its words, or undefined for a run that reads as finished.
@@ -690,10 +703,21 @@ export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | un
   const fact = workDoneFactOf(output);
   const closed = landedClosings(output);
   if (fact !== undefined) {
+    const held = doneAgainstLedger(output);
+    if (held !== undefined && held.workDone !== 'done') {
+      return { answer: held.workDone, from: 'ledger', statements: [held.workDoneWhy], closed };
+    }
     return fact.workDone === 'done'
       ? undefined
-      : { answer: fact.workDone, statements: [fact.workDoneWhy], closed };
+      : {
+          answer: fact.workDone,
+          from: workDoneFromLedger(output) ? 'ledger' : 'run',
+          statements: [fact.workDoneWhy],
+          closed,
+        };
   }
   const statements = unfinishedInOwnWords(output);
-  return statements.length > 0 ? { answer: 'not-done', statements, closed } : undefined;
+  return statements.length > 0
+    ? { answer: 'not-done', from: 'run', statements, closed }
+    : undefined;
 }

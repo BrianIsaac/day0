@@ -405,9 +405,14 @@ export function WorkItemCard({
             <span className="font-semibold">
               {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}
             </span>
-            , in {employeeName}’s own words:
+            {notDone.from === 'ledger'
+              ? ', by what was sent:'
+              : `, in ${employeeName}’s own words:`}
           </Lead>
-          {notDone.statements.length === 1 ? (
+          {notDone.from === 'ledger' ? (
+            // Day0's reading of the ledger, not the employee's words: said plainly, never quoted.
+            <p className="mt-1.5 text-[15px]">{notDone.statements[0]}</p>
+          ) : notDone.statements.length === 1 ? (
             <p className="mt-1.5 text-[15px]">
               <Quote>{notDone.statements[0]}</Quote>
             </p>

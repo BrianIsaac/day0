@@ -78,7 +78,7 @@ import {
 import { landedNoteText } from '../src/work/manager-notes';
 import type { WithheldRow, WorkActionsAutoApplyingPayload } from '../src/events/contract';
 import { reportedRow, withReportedOutcome } from '../src/work/apply-progress';
-import { closeAgainstWordsOf } from '../src/work/work-done';
+import { closeAgainstWordsOf, withAnswerHeldToLedger } from '../src/work/work-done';
 import { leftForCardOf, withoutLeftForCard } from '../src/work/held-close';
 
 /**
@@ -586,9 +586,12 @@ export const setCompleted = internalMutation({
       );
     }
     await settleWriteTargetClaims(ctx, args.workItemId, Date.now());
+    // The run answered before its set was decided: a `done` over writes that were then not sent
+    // is stored as the ledger reads it, here, where every finished run is written (W15-R4).
+    const output: unknown = withAnswerHeldToLedger(args.output);
     await ctx.db.patch(args.workItemId, {
       state: 'completed',
-      output: args.output,
+      output,
       pendingRunId: undefined,
       approvedIndexes: undefined,
       actionVerdicts: undefined,
@@ -606,7 +609,7 @@ export const setCompleted = internalMutation({
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.completed',
-      payload: { workItemId: args.workItemId, output: args.output },
+      payload: { workItemId: args.workItemId, output },
       createdAt: Date.now(),
     });
     // What the run held and never sent is a line of its own under "Refused and withheld" (D4).
