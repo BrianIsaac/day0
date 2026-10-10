@@ -107,8 +107,46 @@ function namesContentType(headers: Readonly<Record<string, string>>): boolean {
 /** The content type of a form body. */
 const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
 
-/** A body written as a form: `key=value` pairs joined by `&`, no space unencoded. */
-const FORM_BODY = /^[^=&\s]+=[^&\s]*(?:&[^=&\s]+=[^&\s]*)*$/;
+/**
+ * One pair of a form body: a parameter name (letters, digits and the marks a name is written
+ * with), `=`, and a value that neither opens on `=` nor holds `&`. The value may hold a space: a
+ * form is read by its shape, and what a value leaves unencoded is encoded on the way out
+ * (W14-R55).
+ */
+const FORM_PAIR = /^[\w.[\]%-]+=(?!=)[^&]*$/;
+
+/** The characters a form value carries as written: unreserved ones, `+` and `%`. */
+const FORM_SAFE = /^[A-Za-z0-9\-._~!*'()%+]*$/;
+
+/** In a form value: a `%` that opens no escape, or a character a form does not carry raw. */
+const FORM_UNSAFE = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!*'()%+]/gu;
+
+/**
+ * The pairs of a body written as a form, or nothing for a body that is not one: every piece
+ * between `&` is a pair, and a lone pair has a value, so base64 padding (`dGVzdA==`, `dGVzdGE=`)
+ * and prose that holds an equals sign are not forms.
+ */
+function formPairs(text: string): string[] | undefined {
+  const pairs = text.split('&');
+  if (!pairs.every((pair) => FORM_PAIR.test(pair))) return undefined;
+  return pairs.length === 1 && pairs[0]?.endsWith('=') === true ? undefined : pairs;
+}
+
+/**
+ * A form body as it goes out: each value with what it left unencoded escaped (a space, a lone
+ * `%`, punctuation), its `+` signs and its own escapes kept, so a body already encoded is sent
+ * byte for byte.
+ */
+function encodedForm(pairs: readonly string[]): string {
+  return pairs
+    .map((pair) => {
+      const at = pair.indexOf('=');
+      const value = pair.slice(at + 1);
+      if (FORM_SAFE.test(value) && !/%(?![0-9A-Fa-f]{2})/.test(value)) return pair;
+      return `${pair.slice(0, at + 1)}${value.replace(FORM_UNSAFE, (raw) => encodeURIComponent(raw))}`;
+    })
+    .join('&');
+}
 
 /** Whether a body is JSON: an object, an array or a scalar ("text", 42, true, null). */
 function isJsonText(text: string): boolean {
@@ -121,17 +159,27 @@ function isJsonText(text: string): boolean {
   }
 }
 
+/** A body as it is sent, with the content type it goes with when its action names none. */
+interface LabelledBody {
+  readonly body: string;
+  readonly contentType?: string;
+}
+
 /**
- * The content type a body the action sends goes with when its action names none. Without one
- * `fetch` sends a string body as `text/plain`, which Slack refuses with `invalid_arguments` (the
- * first walk's row 19): a JSON body, object, array or scalar, is labelled JSON, and a form body a
- * form (W13-R18); any other text goes as the action wrote it.
+ * The content type a body the action sends goes with when its action names none, and the body as
+ * that type carries it. Without a type `fetch` sends a string body as `text/plain`, which Slack
+ * refuses with `invalid_arguments` (the first walk's row 19): a JSON body, object, array or
+ * scalar, is labelled JSON, and a form body a form (W13-R18), its values encoded where the action
+ * left them raw (W14-R55); any other text goes as the action wrote it.
  */
-function defaultContentType(body: string): string | undefined {
+function labelledBody(body: string): LabelledBody {
   const text = body.trim();
-  if (text === '') return undefined;
-  if (isJsonText(text)) return JSON_CONTENT_TYPE;
-  return FORM_BODY.test(text) ? FORM_CONTENT_TYPE : undefined;
+  if (text === '') return { body };
+  if (isJsonText(text)) return { body, contentType: JSON_CONTENT_TYPE };
+  const pairs = formPairs(text);
+  return pairs === undefined
+    ? { body }
+    : { body: encodedForm(pairs), contentType: FORM_CONTENT_TYPE };
 }
 
 /**
@@ -689,15 +737,18 @@ export class HttpAdapter implements SurfaceAdapter {
       }
       // The placement rule kept `{{secret}}` out of the body, so this only
       // refuses a placeholder the skill left unfilled.
-      const body =
+      const written =
         bodyMoved ||
         request.body === undefined ||
         request.method === 'GET' ||
         request.method === 'HEAD'
           ? undefined
           : injectSecret(request.body, secret, surface.slug);
-      const labelled = body === undefined ? undefined : defaultContentType(body);
-      if (labelled !== undefined && !namesContentType(headers)) headers[CONTENT_TYPE] = labelled;
+      // A body whose type the action names goes as the action wrote it.
+      const labelled =
+        written === undefined || namesContentType(headers) ? undefined : labelledBody(written);
+      if (labelled?.contentType !== undefined) headers[CONTENT_TYPE] = labelled.contentType;
+      const body = labelled?.body ?? written;
       const authorityRefusal = transportAuthority
         ? await this.deps.beforeTransport?.(action, surface, { authority: transportAuthority })
         : await this.deps.beforeTransport?.(action, surface);
