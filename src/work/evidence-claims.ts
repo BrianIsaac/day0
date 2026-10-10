@@ -55,6 +55,12 @@ export interface ClaimEvidence {
   managerFeedback: string[];
   /** The work item's title, body and grounding reads, from `itemEvidence`; absent, the item supports nothing. */
   item?: string[];
+  /**
+   * The writes an earlier phase of this run emitted and landed (W15-R3): a closing message may
+   * report them as it may report the writes before it in its own set. They are evidence only:
+   * nothing is bound to them, since they have landed, and no `reports` index names them.
+   */
+  prior?: readonly MockAction[];
 }
 
 /** A read made for a work item before its plan was drafted, as its event stored it: the action and its redacted row. */
@@ -172,6 +178,7 @@ interface PreparedEvidence {
   itemRuns: Set<string>;
   itemTokens: Set<string>;
   quotable: string[];
+  prior: readonly MockAction[];
 }
 
 function prepare(evidence: ClaimEvidence): PreparedEvidence {
@@ -184,6 +191,7 @@ function prepare(evidence: ClaimEvidence): PreparedEvidence {
     itemRuns: new Set(item.flatMap(sentencesOf).filter(reports).flatMap(runsOf)),
     itemTokens: new Set(item.flatMap(distinctiveTokens)),
     quotable: [own, ...evidence.documentation].map(normalised),
+    prior: evidence.prior ?? [],
   };
 }
 
@@ -592,6 +600,37 @@ function declaredWritesReported(
   });
 }
 
+/** The plural a report names more than one message by, and the words that count them. */
+const MESSAGES_PLURAL = 'notes|posts|messages|comments|replies|dms|announcements';
+const COUNT_WORDS: Readonly<Record<string, number>> = {
+  both: 2,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+};
+const COUNTED_MESSAGES = new RegExp(
+  `\\b(${Object.keys(COUNT_WORDS).join('|')}|\\d{1,2})\\s+(?:[\\w-]+\\s+){0,3}?(?:${MESSAGES_PLURAL})\\b`,
+  'i',
+);
+const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
+
+/**
+ * How many messages a report sentence says were made: the count it gives ("both stop-drill
+ * notes", "all three posts"), two or more for a plural with none, and one otherwise. So "Posted
+ * the second note." asks one write of its declaration and "Posted both notes." two (W15-R2).
+ */
+function messagesNamed(said: string): number {
+  const counted = COUNTED_MESSAGES.exec(said)?.[1]?.toLowerCase();
+  if (counted !== undefined) return COUNT_WORDS[counted] ?? Number(counted);
+  return SEVERAL_MESSAGES.test(said) ? 2 : 1;
+}
+
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
 const ISSUE_KEY = /^[a-z]+-\d+$/;
 
@@ -600,7 +639,8 @@ const ISSUE_KEY = /^[a-z]+-\d+$/;
  * them, the ledger or the item: the set lands together, and the apply holds the message back
  * unless those writes landed (W12X-2, 5 October: "Posted both stop-drill notes in #revops."
  * beside the two posts it reports was withheld, while the same set answered that the work was
- * done).
+ * done). The writes an earlier phase landed are read the same way (W15-R3): the same sentence
+ * in a closing set, after phase one landed the posts, reports them just as truly.
  */
 function reportsOwnWrites(
   sentence: string,
@@ -609,10 +649,17 @@ function reportsOwnWrites(
   earlier: readonly MockAction[],
   bound: readonly number[],
 ): boolean {
-  const reported = [
+  const own = [
     ...reportedWrites(sentence, earlier),
     ...declaredWritesReported(sentence, earlier, bound),
   ];
+  // An earlier phase's writes are taken only when, with this set's, they number what the sentence
+  // says: one landed DM that shares a word with "both notes" is not the two notes.
+  const before = reportedWrites(sentence, prepared.prior);
+  const reported =
+    before.length + own.length >= messagesNamed(withoutIntentions(sentence))
+      ? [...before, ...own]
+      : own;
   if (reported.length === 0) return false;
   const carried = new Set(
     reported.flatMap((action) => distinctiveTokens(writeOf(action)?.text ?? '')),
@@ -734,15 +781,47 @@ export function boundEarlierWrites(action: MockAction, earlier: readonly MockAct
 }
 
 /**
+ * The tripwire on a message that reports a write after it in its set (W15-R1): the set is sent in
+ * its order, so the message would land before the write it reports, and while that write waits
+ * for the manager. Read where the sentence reports no write before the message, by its words or
+ * by its declaration: a report of an earlier write that a later one happens to share words with
+ * (the post, then the DM, then the ticket comment) is the earlier write's.
+ */
+function reportsAhead(action: MockAction, index: number, actions: readonly MockAction[]): string[] {
+  const earlier = actions.slice(0, index);
+  const later = actions.slice(index + 1);
+  const declared = declaredReports(action, earlier);
+  return messageTexts(action).flatMap((text) =>
+    sentencesOf(text).flatMap((sentence): string[] => {
+      if (negatesReport(sentence)) return [];
+      const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
+      if (
+        reportedWriteIndexes(clause, earlier).length > 0 ||
+        declaredWritesReported(clause, earlier, declared).length > 0
+      ) {
+        return [];
+      }
+      const ahead = reportedWriteIndexes(clause, later, false).map((at) => at + index + 1);
+      if (ahead.length === 0) return [];
+      return [
+        `action ${index} (${describeAction(action)}) reports a write that comes after it in this set: it says "${sentence}", which reports [${ahead.join(', ')}], and Day0 sends a set in its order; put the message after every write it reports and list them in \`reports\`, or word it as what is still to come`,
+      ];
+    }),
+  );
+}
+
+/**
  * Where a message's declared `reports` and its words disagree (the tripwire over D-5 (b)): a
- * sentence whose words report an earlier write the declaration leaves out, or a declared place
- * that is not a write before the message. An empty or undeclared `reports` declares nothing, so
- * it disagrees with nothing: the words alone bind it.
+ * sentence whose words report an earlier write the declaration leaves out, a declared place
+ * that is not a write before the message, a sentence that names more messages by their kind than
+ * the declaration holds of that kind (W15-R2), or a report of a write that comes after the
+ * message (W15-R1). An empty `reports` is still bound by the words that name a write; a reply
+ * recorded before the field has none and is read by its words alone, as it was.
  *
  * Args:
  *   action: The message as the executor emitted it.
  *   index: Its place in the set.
- *   earlier: The actions before it in the same set.
+ *   actions: The whole set.
  *
  * Returns:
  *   One issue per disagreement, naming the action and, for words, the sentence.
@@ -750,12 +829,13 @@ export function boundEarlierWrites(action: MockAction, earlier: readonly MockAct
 function reportsDisagreements(
   action: MockAction,
   index: number,
-  earlier: readonly MockAction[],
+  actions: readonly MockAction[],
 ): string[] {
-  if (action.reports === null) return undeclaredReports(action, index, earlier);
   if (action.reports === undefined) return [];
+  const earlier = actions.slice(0, index);
+  const ahead = reportsAhead(action, index, actions);
+  if (action.reports === null) return [...undeclaredReports(action, index, earlier), ...ahead];
   const declared = action.reports;
-  if (declared.length === 0) return [];
   const named = new Set(declaredReports(action, earlier));
   const issues: string[] = [];
   const stray = [...new Set(declared)].filter((at) => !named.has(at)).sort((a, b) => a - b);
@@ -768,14 +848,27 @@ function reportsDisagreements(
   for (const text of messageTexts(action)) {
     for (const sentence of sentencesOf(text)) {
       if (negatesReport(sentence)) continue;
-      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier, false);
-      if (said.every((at) => named.has(at))) continue;
+      const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
+      const said = reportedWriteIndexes(clause, earlier, false);
+      if (said.length > 0) {
+        // The words name their writes: an empty declaration is bound by them, as before the field.
+        if (declared.length === 0 || said.every((at) => named.has(at))) continue;
+        issues.push(
+          `action ${index} (${describeAction(action)}) reports a write its \`reports\` does not name: it says "${sentence}" and \`reports\` names ${declaredList}, while its words report [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
+        );
+        continue;
+      }
+      // The words name only a kind of message ("both notes"), which binds nothing beside a
+      // declaration: the declaration must then hold as many of that kind as the sentence says.
+      const ofKind = reportedWriteIndexes(clause, earlier);
+      const wanted = Math.min(messagesNamed(withoutIntentions(clause)), ofKind.length);
+      if (ofKind.filter((at) => named.has(at)).length >= wanted) continue;
       issues.push(
-        `action ${index} (${describeAction(action)}) reports a write its \`reports\` does not name: it says "${sentence}" and \`reports\` names ${declaredList}, while its words report [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
+        `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );
     }
   }
-  return issues;
+  return [...issues, ...ahead];
 }
 
 /**
@@ -1199,6 +1292,25 @@ export interface ClaimFinding {
 }
 
 /**
+ * The tripwire over what each message of a set declares it reports, alone: where a message's
+ * `reports` and its words disagree, in action order. The claim floor's findings include these;
+ * mock mode, which has no claim floor (every mock message is authored in one phase from the
+ * item), runs this reading by itself, so a message there is bound to the writes it reports too
+ * (W15-R2).
+ *
+ * Args:
+ *   actions: The actions as the executor emitted them.
+ *
+ * Returns:
+ *   One finding per disagreement; empty when every declaration agrees with its message.
+ */
+export function reportsFindings(actions: readonly MockAction[]): ClaimFinding[] {
+  return actions.flatMap((action, index): ClaimFinding[] =>
+    reportsDisagreements(action, index, actions).map((issue) => ({ index, issue })),
+  );
+}
+
+/**
  * The same check as `unsupportedClaimIssues`, keyed by action, so a caller
  * that fails soft can withhold exactly the messages it names.
  *
@@ -1221,7 +1333,7 @@ export function unsupportedClaimFindings(
   actions.forEach((action, index): void => {
     // The tripwire over a declared `reports` reads every message, a ticket comment phase one's
     // claim check leaves to the closing phase included: the apply binds them all.
-    const disagreements = reportsDisagreements(action, index, actions.slice(0, index));
+    const disagreements = reportsDisagreements(action, index, actions);
     if (only && !only(action, index)) {
       for (const issue of disagreements) findings.push({ index, issue });
       return;
