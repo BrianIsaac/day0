@@ -60,6 +60,12 @@ describe('the hosted-demo notice (N6)', () => {
     }
   });
 
+  it('says once that the hosted office is the mock office, the name the README\u2019s sentence uses (W14-R58)', () => {
+    expect(HOSTED_DEMO_NOTICE.paragraphs[0]).toBe(
+      'The hosted office is a seeded mock office: nothing your employee does reaches a real system.',
+    );
+  });
+
   it('says the voice provider receives the email address, as the README does', () => {
     expect(readmeHostedSentence()).toContain("ElevenLabs with the manager's email address");
     expect(notice).toContain('ElevenLabs with your email address');
