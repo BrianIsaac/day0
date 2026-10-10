@@ -49,7 +49,13 @@ describe('plan drafter action mode', (): void => {
   it("states that every mock comparison action waits at the exact-action gate, in the manager's words (walk m6)", (): void => {
     const instruction = actionModeInstruction(true, 'mock');
     expect(instruction).not.toMatch(/comparison mode/i);
-    expect(instruction).toContain('waits for your approval');
+    // Re-pinned (W14-R48): the line told a step to say "waits for your approval", and a run that
+    // read such a step posted a holding message in its place (14-FW's bed); it now says when the
+    // approval is asked and to plan each write as the step that makes it.
+    expect(instruction).toContain(
+      'which is asked once, for the whole set, after the run has written it',
+    );
+    expect(instruction).not.toContain('waits for your approval');
     expect(instruction).toContain('Every emitted action is held');
     expect(instruction).not.toContain('lands as emitted');
     expect(planSystemPrompt(false, 'mock')).toContain(instruction);
@@ -374,6 +380,8 @@ describe('frozen planner text', (): void => {
   // alone; both halves of that prompt are byte-for-byte what the recorded
   // beds saw, but for the copy rules the v0.15.0 walk's finding 4 added to
   // the system prompt on 4 October.
+  // Re-pinned (W14-R48, v0.19.0): the action-mode line no longer tells a step to say "waits for
+  // your approval"; it says when the approval is asked and to plan each write as its own step.
   it('keeps the mock planner system prompt byte-identical', (): void => {
     expect(planSystemPrompt(false, 'mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
@@ -388,7 +396,7 @@ describe('frozen planner text', (): void => {
         - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
 
-      Every emitted action is held for the manager's literal approval and only applied after that decision. Where a step says so, word it as the manager reads it ("waits for your approval"), never by the name of a mode."
+      Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval. Name the approval as the manager reads it, never by the name of a mode."
     `);
   });
 

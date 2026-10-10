@@ -8,7 +8,6 @@ import {
   itemEvidence,
   messageTexts,
   reportedEarlierWrites,
-  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   unsupportedClaims,
@@ -715,14 +714,14 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
   });
 
   it('names the earlier writes a message reports, and none for a message that reports nothing', (): void => {
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toBe(true);
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [])).toBe(false);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [])).toEqual([]);
     expect(
-      reportsEarlierWrite(
+      reportedEarlierWrites(
         commentOn('REVOPS-6', 'Could not find the stop-drill page; who owns it?'),
         [NOTE_1, NOTE_2],
       ),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 
@@ -840,22 +839,24 @@ describe('which sentences bind a message to the writes before it', (): void => {
 
   it('binds a plain report the check does not read as a claim', (): void => {
     const earlier = comment('Stop drill: both notes are going out in #revops today.');
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [earlier])).toBe(true);
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [NOTE_1])).toBe(false);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [earlier])).toEqual([
+      0,
+    ]);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [NOTE_1])).toEqual([]);
     expect(
-      reportsEarlierWrite(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
-    ).toBe(true);
+      reportedEarlierWrites(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
+    ).toEqual([0, 1]);
   });
 
   it('binds no hedge and no condition: they report nothing made', (): void => {
-    expect(reportsEarlierWrite(comment('The stop-drill notes were not posted.'), [NOTE_1])).toBe(
-      false,
-    );
     expect(
-      reportsEarlierWrite(comment('Once the stop-drill notes are posted, the drill begins.'), [
+      reportedEarlierWrites(comment('The stop-drill notes were not posted.'), [NOTE_1]),
+    ).toEqual([]);
+    expect(
+      reportedEarlierWrites(comment('Once the stop-drill notes are posted, the drill begins.'), [
         NOTE_1,
       ]),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 
@@ -1172,5 +1173,77 @@ describe("the item's own figures beside a report of the set's writes (W13-R44)",
     const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 74%.');
     const claim = commentOn('REVOPS-6', 'Posted the REVOPS-6 coverage of 74% in #revops.');
     expect(unsupportedClaimFindings([coverage, claim], asked)).toEqual([]);
+  });
+});
+
+describe('a mock office message beside the writes its words report (W14-R44)', (): void => {
+  // Pip's set on 14-FW's bed (`wave14-fw-2026-10-08-bed/mock-landed.txt`), the post's body as far
+  // as the bed's log kept it: the comment reports the post and declared `reports: []`.
+  const PIP_POST: MockAction = {
+    tool: 'slack.postMessage',
+    args: {
+      channelSlug: 'office-asks',
+      threadKey: 'thread-double-charge',
+      body: 'Hi Hana, here is the first reply for Northwind on invoice INV-2207, per the billing replies doc, for you to send: "Hi Northwind, thank you for letting us know, and sorry for the trouble with invoice INV-2207. Billing reviews duplicate charges within two business days and will write back to you with the outcome."',
+    },
+    reports: [],
+  };
+  const PIP_COMMENT: MockAction = {
+    tool: 'ticket.update',
+    args: {
+      slug: 'REVOPS-204',
+      status: 'done',
+      comment:
+        "First reply to Northwind's double-charge ask on invoice INV-2207 was drafted per the billing replies doc and posted in Hana's thread (channel://office-asks#thread-double-charge) for her to send. No refund was promised; the review outcome is billing's decision.",
+    },
+    reports: [],
+  };
+
+  it('binds the comment to the post it reports, though it declared none', (): void => {
+    expect(boundEarlierWrites(PIP_COMMENT, [PIP_POST])).toEqual([0]);
+  });
+
+  it('reads each mock verb as the write it is: a post, a comment, a state change, a row', (): void => {
+    const dm = (body: string): MockAction => ({
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'dm-manager', body },
+      reports: null,
+    });
+    const update: MockAction = {
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-204', status: 'done' },
+    };
+    const row: MockAction = {
+      tool: 'spreadsheet.appendRow',
+      args: {
+        sheetSlug: 'q4-tracker',
+        tabName: 'Pipeline',
+        cells: [{ header: 'Deal', value: 'Initech' }],
+      },
+    };
+    const tweet: MockAction = {
+      tool: 'twitter.reply',
+      args: { tweetSlug: 't1', body: 'Thanks, Northwind.' },
+    };
+    // A comment report names the comment; a move names the state change; a post names both posts.
+    expect(boundEarlierWrites(dm('Commented on the ticket.'), [PIP_POST, PIP_COMMENT])).toEqual([
+      1,
+    ]);
+    expect(boundEarlierWrites(dm('Moved REVOPS-204 to done.'), [PIP_POST, update])).toEqual([1]);
+    expect(boundEarlierWrites(dm('Posted both replies.'), [PIP_POST, tweet, update])).toEqual([
+      0, 1,
+    ]);
+    expect(
+      boundEarlierWrites(dm('Added the Initech row to the tracker.'), [PIP_POST, row]),
+    ).toEqual([1]);
+  });
+
+  it('binds nothing where the words report no write of the set', (): void => {
+    const question: MockAction = {
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-204', comment: 'Which billing doc holds the duplicate charge reply?' },
+      reports: [],
+    };
+    expect(boundEarlierWrites(question, [PIP_POST])).toEqual([]);
   });
 });

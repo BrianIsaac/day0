@@ -31,7 +31,25 @@ export interface OfficeAsk {
    * shown the ask. "support" is a customer support role's word and an IT support role's too.
    */
   readonly notWith?: readonly string[];
+  /**
+   * How the role's own sentence names a role no word of four letters can (W14-R49): "IT support"
+   * and "IT/Systems administrator" carry no role word of the lock-out and read "support", a
+   * customer role's word. A charter whose role matches is shown the ask.
+   */
+  readonly roleNamed?: RegExp;
+  /** A role so named is another role's however its words read, and is not shown the ask. */
+  readonly notRoleNamed?: RegExp;
 }
+
+/** An IT role by its name: the capitals, so the pronoun in "close it out" names none. */
+const IT_ROLE = /\bIT\b/;
+
+/**
+ * What the generator is shown in the asks' channel when every ask in it is another role's
+ * (W14-R49): where asks arrive, so a role with none of its own is not told the channel is empty.
+ */
+export const NO_OPEN_ASK_FOR_ROLE =
+  '(no ask for this role is open here; company-wide asks arrive in this channel)';
 
 /** The channel the office's company-wide asks arrive in. */
 export const OFFICE_ASKS_CHANNEL = 'office-asks';
@@ -45,6 +63,7 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
     body: 'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
     // Not "access": a customer support role grants access to articles and help centres.
     roleWords: ['helpdesk', 'password', 'passwords'],
+    roleNamed: IT_ROLE,
   },
   {
     channelSlug: OFFICE_ASKS_CHANNEL,
@@ -60,6 +79,7 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
     body: 'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
     roleWords: ['support', 'customer', 'customers', 'billing', 'invoice', 'invoices'],
     notWith: ['helpdesk', 'password', 'passwords'],
+    notRoleNamed: IT_ROLE,
   },
 ];
 
@@ -67,18 +87,25 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
  * The threads of the office's company-wide asks that are another role's work for a charter, as
  * `<channel>#<thread>`: those whose role words the charter's words (its role and will-do clauses,
  * as `charterWords` reads them) carry none of, or that carry a word marking another role. The
- * words are passed in so the seed, which reads this list, imports nothing of the scope rule.
+ * words are passed in so the seed, which reads this list, imports nothing of the scope rule. The
+ * role's own sentence is read beside them for a role its words cannot name ("IT support").
  *
  * @param charterWords - The charter's words the generator drafts for.
+ * @param role - The charter's role as written (`proposedFunction`); none reads by the words alone.
  * @returns The threads to leave out of what the generator is shown.
  */
-export function otherRolesAskThreads(charterWords: Iterable<string>): ReadonlySet<string> {
+export function otherRolesAskThreads(
+  charterWords: Iterable<string>,
+  role = '',
+): ReadonlySet<string> {
   const words = new Set(charterWords);
+  const ownRole = (ask: OfficeAsk): boolean =>
+    ask.roleWords.some((word) => words.has(word)) || ask.roleNamed?.test(role) === true;
+  const anotherRole = (ask: OfficeAsk): boolean =>
+    (ask.notWith ?? []).some((word) => words.has(word)) || ask.notRoleNamed?.test(role) === true;
   return new Set(
-    OFFICE_ASKS.filter(
-      (ask) =>
-        !ask.roleWords.some((word) => words.has(word)) ||
-        (ask.notWith ?? []).some((word) => words.has(word)),
-    ).map((ask) => `${ask.channelSlug}#${ask.threadKey}`),
+    OFFICE_ASKS.filter((ask) => !ownRole(ask) || anotherRole(ask)).map(
+      (ask) => `${ask.channelSlug}#${ask.threadKey}`,
+    ),
   );
 }

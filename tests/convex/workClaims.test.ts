@@ -206,6 +206,16 @@ describe('claimRefusedVerdict', (): void => {
       reason: `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}Aiko holds it (Audit note)`,
       claimedBy: holder,
     });
+    // D-1 (a): refused for naming a ticket the colleague settled, the skip says which and when.
+    const settled = {
+      ...holder,
+      settled: { ticket: 'REVOPS-1', commentedAt: 5, commentedOn: '9 October 2026' },
+    };
+    expect(claimRefusedVerdict(await row(harness, ben.workItemId), settled, 'completed')).toEqual({
+      decision: 'skip',
+      reason: `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}Aiko settled REVOPS-1 with a comment on 9 October 2026 (Audit note)`,
+      claimedBy: settled,
+    });
   });
 });
 

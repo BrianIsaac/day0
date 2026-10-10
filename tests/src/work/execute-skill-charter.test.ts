@@ -138,6 +138,8 @@ function closingReply(charterClause: string | null): unknown {
   };
 }
 
+// The labels below were re-pinned at W14-R50 (v0.19.0): the executor's charter lines carry the
+// planner's words ("Will do:", "Approved by:") where they printed the charter's field names.
 describe('the charter in the executor prompts', (): void => {
   beforeEach((): void => {
     recorded.users.length = 0;
@@ -151,22 +153,22 @@ describe('the charter in the executor prompts', (): void => {
 
     const user = recorded.users[0]!;
     expect(user).toContain('Role: Logistics desk: handle shipment exception tickets.');
-    expect(user).toContain('Charter willDo: Handle shipment exception tickets.');
+    expect(user).toContain('Will do: Handle shipment exception tickets.');
     expect(user).toContain(
-      'Charter willNotDo: Never send a customer notice without the desk lead approving the template.',
+      'Will not do: Never send a customer notice without the desk lead approving the template.',
     );
-    expect(user).toContain('Charter escalationTriggers: A carrier gives no revised ETA.');
+    expect(user).toContain('Escalates when: A carrier gives no revised ETA.');
     expect(user).toContain(
-      'Charter adjacentRoles: Customer success: never writing to the customer directly',
+      'Neighbouring roles: Customer success: never writing to the customer directly',
     );
     expect(user).toContain(
       'Which notice template applies when the ETA is unconfirmed? Delay notice B.',
     );
     // The approval chain names the manager the employee reports to now, never the charter's
     // draft-time label, which a handover leaves naming the old manager (wave 9 review, section 3).
-    expect(user).toContain(`Charter approvalChain: ${CURRENT_MANAGER_UNNAMED}`);
-    expect(user).not.toContain('Charter approvalChain: Manager');
-    expect(user).toContain('Charter namedSystems: (none)');
+    expect(user).toContain(`Approved by: ${CURRENT_MANAGER_UNNAMED}`);
+    expect(user).not.toContain('Approved by: Manager');
+    expect(user).toContain('Systems the charter names: (none)');
   });
 
   it('gives real phase one the escalation triggers and answers, and leaves the mock prompt as it was', async (): Promise<void> => {
@@ -181,9 +183,7 @@ describe('the charter in the executor prompts', (): void => {
     };
     recorded.outputs.push(phaseOne);
     await runSkill({ skill, plan, candidate, charter, mockEnv, mode: 'real', surfaces: [] });
-    expect(recorded.users[0]).toContain(
-      'Charter escalationTriggers: A carrier gives no revised ETA.',
-    );
+    expect(recorded.users[0]).toContain('Escalates when: A carrier gives no revised ETA.');
     expect(recorded.users[0]).toContain('Delay notice B.');
 
     recorded.outputs.push({ ...phaseOne, actions: [] });
@@ -191,7 +191,7 @@ describe('the charter in the executor prompts', (): void => {
       // The mock contract refuses an empty set after its repair; only the prompt matters here.
       (): undefined => undefined,
     );
-    expect(recorded.users[1]).toContain('Charter willNotDo:');
+    expect(recorded.users[1]).toContain('Will not do:');
     expect(recorded.users[1]).not.toContain('escalationTriggers');
     expect(recorded.users[1]).not.toContain('Delay notice B.');
   });
@@ -255,13 +255,35 @@ describe('executorCharterLines: who approves, after a handover', (): void => {
     const lines = executorCharterLines(handedOver, 'real');
 
     expect(lines.join('\n')).not.toContain('sam@old.example');
-    expect(lines).toContain(`Charter approvalChain: ${CURRENT_MANAGER_UNNAMED}`);
+    expect(lines).toContain(`Approved by: ${CURRENT_MANAGER_UNNAMED}`);
   });
 
   it('names the current manager when the run is given one', (): void => {
     const lines = executorCharterLines(handedOver, 'real', { currentManager: 'priya@new.example' });
 
-    expect(lines).toContain('Charter approvalChain: priya@new.example');
+    expect(lines).toContain('Approved by: priya@new.example');
     expect(lines.join('\n')).not.toContain('sam@old.example');
+  });
+});
+
+describe("the executor's charter lines, in the planner's words (W14-R50)", (): void => {
+  it('labels no line with a field name a run could quote to a visitor', (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const lines = executorCharterLines(charter, mode).join('\n');
+      expect(lines).not.toMatch(
+        /willDo|willNotDo|escalationTriggers|adjacentRoles|namedSystems|namedCollaborators|approvalChain/,
+      );
+      expect(lines).toContain('Will do: ');
+      expect(lines).toContain('Will not do: ');
+    }
+    const real = executorCharterLines(charter, 'real').join('\n');
+    for (const label of [
+      'Escalates when: ',
+      'Neighbouring roles: ',
+      'Systems the charter names: ',
+      'Approved by: ',
+    ]) {
+      expect(real).toContain(label);
+    }
   });
 });

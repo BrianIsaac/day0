@@ -49,6 +49,21 @@ describe('the preload in a Node process', (): void => {
     await new Promise<void>((done) => server.close(() => done()));
   });
 
+  it('leaves a mark naming the fake it sends to, which the access check reads (W14-R51)', async (): Promise<void> => {
+    const script = "console.log(String(globalThis[Symbol.for('day0.fake-linear.host-preload')]));";
+    const child = await new Promise<{ status: number | null; stdout: string }>((resolve) => {
+      const run = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, NODE_OPTIONS: `--import ${PRELOAD}`, FAKE_LINEAR_HOST_URL: base },
+      });
+      let stdout = '';
+      run.stdout.on('data', (chunk: Buffer): void => {
+        stdout += chunk.toString();
+      });
+      run.on('close', (status): void => resolve({ status, stdout }));
+    });
+    expect(child).toEqual({ status: 0, stdout: `${base}\n` });
+  });
+
   it("routes the process's fetch to api.linear.app to the fake, body and all", async (): Promise<void> => {
     const script =
       "const r = await fetch('https://api.linear.app/oauth/revoke', { method: 'POST', body: 'token=x' });" +

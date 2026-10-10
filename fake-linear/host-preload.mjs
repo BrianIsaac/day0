@@ -22,6 +22,9 @@ if (!fake) {
     'FAKE_LINEAR_HOST_URL is unset: name the fake Linear this machine reaches (https://127.0.0.1:<port>), or do not load the preload.',
   );
 }
+// The mark the access check reads to know this preload is loaded, and where it sends to: a name
+// in NODE_OPTIONS says only that the file was mentioned (`scripts/check-access.ts`, W14-R51).
+globalThis[Symbol.for('day0.fake-linear.host-preload')] = fake;
 const real = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = new URL(input instanceof Request ? input.url : String(input));

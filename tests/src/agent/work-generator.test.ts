@@ -633,4 +633,23 @@ describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 
       expect(prompt).toContain(MANAGER_ASK);
     },
   );
+
+  it('tells a role with no ask of its own where asks arrive, never that the channel is empty (W14-R49)', async (): Promise<void> => {
+    const told =
+      '      (no ask for this role is open here; company-wide asks arrive in this channel)';
+    await generateWorkItemsFromCharter(MOSS, OFFICE_ASKS as never);
+    const moss = prompts.at(-1) ?? '';
+    expect(moss).toContain(
+      `  - slug "office-asks" (channel, displayed as "#office-asks")\n${told}`,
+    );
+    // A role with an ask of its own is shown the ask and no such line.
+    await generateWorkItemsFromCharter(NELL, OFFICE_ASKS as never);
+    expect(prompts.at(-1) ?? '').not.toContain('company-wide asks arrive in this channel');
+    // A channel that holds nothing still reads as empty.
+    await generateWorkItemsFromCharter(MOSS, {
+      ...OFFICE_ASKS,
+      slackChannels: [{ ...OFFICE_ASKS.slackChannels[0], recentMessages: [] }],
+    } as never);
+    expect(prompts.at(-1) ?? '').toContain('      (no messages)');
+  });
 });

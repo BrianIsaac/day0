@@ -128,12 +128,22 @@ export async function rememberReplacedRequest(
 }
 
 /**
+ * How long the park's edit of a decided request waits when the decision's own edit is in flight
+ * (claimed, no result yet): past the transport's 20 s timeout and its retries, so the two
+ * `chat.update` calls on the one message never run beside each other (W14-R51).
+ */
+export const CLOSE_EDIT_IN_FLIGHT_MS = 2 * 60 * 1000;
+
+/**
  * Remember a decided request whose message the decision's own edit has not marked yet, before a
  * park clears it (W13-R50): the apply of an approval that left a close for its card parks the
  * close and asks about it again, and the edit the approval scheduled (`closeDecisionRequest`)
  * finds its request gone if it runs after the park, so the request's message would read as still
  * open. Kept with its outcome, the message is edited once by the replaced edit to say how it was
  * decided and that the close is asked about again; its code is answered as decided and replaced.
+ * When the decision's own edit is in flight at the park, this edit is made after it rather than
+ * beside it: both would be a `chat.update` of the one message, and whichever landed last decided
+ * what the manager reads. Made after, this one's words always stand.
  *
  * @param ctx - The park's transaction.
  * @param row - The work item as it stands, its `decision` the one going.
@@ -179,7 +189,8 @@ export async function rememberDecidedUnmarked(
     decidedAt: decision.decidedAt,
     ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
   });
-  await ctx.scheduler.runAfter(0, internal.managerChannelActions.markRequestReplaced, {
+  const wait = decision.closeClaimedAt === undefined ? 0 : CLOSE_EDIT_IN_FLIGHT_MS;
+  await ctx.scheduler.runAfter(wait, internal.managerChannelActions.markRequestReplaced, {
     replacedId,
   });
 }
