@@ -8,9 +8,10 @@
  * delta link is not kept: a sync lists every page each time, since a page two walks miss is
  * pruned, and the store has no place for a reader's link. A link Graph no longer honours is
  * answered `410 Gone`, and the sync then reads the library again from its start. A Markdown file
- * is read as it is through the pre-authenticated address Graph redirects to, which gets no token
- * and is held to the page rules (`page-address.ts`); its `cTag` is its revision, and a file with
- * the `deleted` facet is archived. Then the site's pages (`sitePage`) are listed and each read
+ * is read as it is, and a Word document converted where the reader runs (`word.ts`, RM9 (b1)),
+ * each through the pre-authenticated address Graph redirects to, which gets no token and is held
+ * to the page rules (`page-address.ts`); its `cTag` is its revision, and a file with the
+ * `deleted` facet is archived. Then the site's pages (`sitePage`) are listed and each read
  * with its `canvasLayout`: the text web parts' HTML, converted; a page checked out or never
  * published is a draft.
  *
@@ -39,7 +40,6 @@ import { markdownPageTitle } from './folder';
 import { documentHtmlToMarkdown, underTitle } from './html-markdown';
 import { checkPageAddress, PageAddressRefusal, pinnedPageFetch } from './page-address';
 import {
-  answerText,
   field,
   listField,
   ProviderHttp,
@@ -49,6 +49,7 @@ import {
   type ProviderFetch,
   type ProviderHttpOptions,
 } from './provider-http';
+import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** What the reader is given instead of the network, the clock and the timer, for tests. */
 export interface SharePointReaderOptions extends ProviderHttpOptions {
@@ -64,7 +65,13 @@ const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
 
 /** A download from the address Graph named, checked first and dialled as checked. */
 const checkedDownload: ProviderFetch = async (input: URL, init: RequestInit): Promise<Response> =>
-  await pinnedPageFetch(await checkPageAddress(input), MAX_MARKDOWN_BYTES)(input, init);
+  await pinnedPageFetch(await checkPageAddress(input), MAX_WORD_BYTES)(input, init);
+
+/** The files the reader reads, by extension, and the most it reads of one. */
+const READ_KINDS: Readonly<Record<string, { readonly maxBytes: number; readonly noun: string }>> = {
+  md: { maxBytes: MAX_MARKDOWN_BYTES, noun: 'file' },
+  docx: { maxBytes: MAX_WORD_BYTES, noun: 'Word document' },
+};
 
 /** The two walks of a site, in order: its library's files, then its pages. */
 type Phase = 'files' | 'pages';
@@ -393,9 +400,10 @@ export class SharePointReader implements DocumentationReader {
     }
     const ref = `file-${id}`;
     const { stem, extension } = splitName(name);
+    const kind = READ_KINDS[extension];
     if (field(item, 'deleted') !== undefined) {
       // Deleted at its source: archived, and nothing of its text is kept (decision X-8).
-      return extension !== 'md'
+      return kind === undefined
         ? undefined
         : {
             sourceId: source._id,
@@ -406,53 +414,51 @@ export class SharePointReader implements DocumentationReader {
             nativeStatus: 'archived',
           };
     }
-    if (extension === 'docx') {
-      return {
-        ref,
-        reason: `"${name}" is a Word document: Day0 does not read Word documents yet.`,
-      };
-    }
     if (UNREAD_KINDS[extension] !== undefined) {
       return {
         ref,
-        reason: `"${name}" is a ${UNREAD_KINDS[extension]}, which Day0 does not read: from a SharePoint library it reads Markdown files and the site's own pages.`,
+        reason: `"${name}" is a ${UNREAD_KINDS[extension]}, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`,
       };
     }
-    if (extension !== 'md') return undefined;
+    if (kind === undefined) return undefined;
     const size = field(item, 'size');
-    if (typeof size === 'number' && size > MAX_MARKDOWN_BYTES) {
+    if (typeof size === 'number' && size > kind.maxBytes) {
       return {
         ref,
-        reason: `"${name}" is ${mebibytes(size)}, larger than the ${mebibytes(MAX_MARKDOWN_BYTES)} Day0 reads of one file.`,
+        reason: `"${name}" is ${mebibytes(size)}, larger than the ${mebibytes(kind.maxBytes)} Day0 reads of one ${kind.noun}.`,
       };
     }
-    const content = await this.content(session, item, id, name);
-    if (typeof content !== 'string') return { ref, reason: content.reason };
+    const bytes = await this.content(session, item, { id, name, maxBytes: kind.maxBytes });
+    if (!(bytes instanceof Uint8Array)) return { ref, reason: bytes.reason };
+    const markdown =
+      extension === 'md' ? new TextDecoder().decode(bytes) : await wordMarkdown(name, bytes);
+    if (typeof markdown !== 'string') return { ref, reason: markdown.reason };
     const edited = Date.parse(textField(item, 'lastModifiedDateTime') ?? '');
     const url = textField(item, 'webUrl');
     const revision = textField(item, 'cTag');
     return {
       sourceId: source._id,
       ref,
-      title: markdownPageTitle(content, stem),
+      // A Markdown file names itself by its first heading; a Word document by its file's name.
+      title: extension === 'md' ? markdownPageTitle(markdown, stem) : stem,
       ...(url?.startsWith('https://') ? { url } : {}),
-      markdown: content,
+      markdown: extension === 'md' ? markdown : underTitle(stem, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };
   }
 
   /**
-   * A file's text, through the pre-authenticated address Graph redirects to.
+   * A file's bytes, through the pre-authenticated address Graph redirects to.
    *
-   * @returns The text, or why the file is not read when the failure is the file's own.
+   * @returns The bytes, or why the file is not read when the failure is the file's own.
    */
   private async content(
     session: Session,
     item: unknown,
-    id: string,
-    name: string,
-  ): Promise<string | { readonly reason: string }> {
+    file: { readonly id: string; readonly name: string; readonly maxBytes: number },
+  ): Promise<Uint8Array | { readonly reason: string }> {
+    const { id, name } = file;
     const driveId = textField(field(item, 'parentReference'), 'driveId');
     if (driveId === undefined) {
       return { reason: `Microsoft Graph listed "${name}" without the library it is in.` };
@@ -478,7 +484,7 @@ export class SharePointReader implements DocumentationReader {
     try {
       answer = await download.send(address, {
         headers: { accept: '*/*' },
-        maxBytes: MAX_MARKDOWN_BYTES,
+        maxBytes: file.maxBytes,
       });
     } catch (error) {
       // An address Day0 does not read from is this file's refusal; the rest of the library is read.
@@ -490,7 +496,7 @@ export class SharePointReader implements DocumentationReader {
         reason: `${address.host} answered HTTP ${answer.status} for "${name}"; re-sync to try again.`,
       };
     }
-    return answerText(answer);
+    return answer.bytes;
   }
 
   /** One listed page of the site, read with its content. */
@@ -538,6 +544,27 @@ export class SharePointReader implements DocumentationReader {
       maxBytes: 16 * 1024 * 1024,
     });
   }
+}
+
+/**
+ * A Word document's Markdown, or why it is not read.
+ *
+ * @param name - The file's name, for the reason.
+ */
+async function wordMarkdown(
+  name: string,
+  bytes: Uint8Array,
+): Promise<string | { readonly reason: string }> {
+  let markdown: string;
+  try {
+    markdown = await wordToMarkdown(bytes);
+  } catch (error) {
+    if (!(error instanceof WordDocumentError)) throw error;
+    return { reason: `"${name}" is not read: ${error.message}.` };
+  }
+  return markdown.trim() === ''
+    ? { reason: `"${name}" has no text Day0 can read: it may hold only pictures.` }
+    : markdown;
 }
 
 /** What one batch took of a listing page. */

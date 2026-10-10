@@ -74,6 +74,7 @@
     "@t3-oss/env-nextjs": "^0.13.11",
     "ai": "^6.0.176",
     "convex": "^1.37.0",
+    "mammoth": "1.12.3",
     "next": "^16.2.6",
     "openai": "^6.37.0",
     "openid-client": "^6.8.8",

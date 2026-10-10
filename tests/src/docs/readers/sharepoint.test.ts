@@ -4,7 +4,12 @@ import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/re
 import { SharePointReader } from '../../../../src/docs/readers/sharepoint';
 import { sharePointReaderSecret } from '../../../../src/docs/sharepoint-source';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureBytes,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -94,18 +99,14 @@ describe('the SharePoint documentation reader', (): void => {
     const { pages, unread } = await wholeSite(reader);
     expect(pages.map((page) => page.ref)).toEqual([
       'file-01CLOSE',
+      'file-01ESCAL',
       'file-01OPSZH',
       'file-01OLD',
       'page-0a1b2c3d-0000-4000-8000-000000000001',
       'page-0a1b2c3d-0000-4000-8000-000000000002',
       'page-0a1b2c3d-0000-4000-8000-000000000003',
     ]);
-    expect(unread.map((page) => page.ref)).toEqual([
-      'file-01ESCAL',
-      'file-01DECK',
-      'file-01HUGE',
-      'file-01SCAN',
-    ]);
+    expect(unread.map((page) => page.ref)).toEqual(['file-01DECK', 'file-01HUGE', 'file-01SCAN']);
     // The second delta page holds more than one batch takes, so it is asked for again and the
     // entries already taken are passed over; the delta link ends the files and is not followed.
     expect(walked(requests)).toEqual([
@@ -147,6 +148,7 @@ describe('the SharePoint documentation reader', (): void => {
     const { pages } = await wholeSite(reader);
     expect(pages.map((page) => page.sourceRevision)).toEqual([
       '"c:{11111111-1111-4111-8111-111111111111},7"',
+      '"c:{22222222-2222-4222-8222-222222222222},3"',
       '"c:{44444444-4444-4444-8444-444444444444},2"',
       undefined,
       '3.0',
@@ -197,19 +199,82 @@ describe('the SharePoint documentation reader', (): void => {
     expect(new Set(chinese.map((page) => mirroredDocSlug(site._id, page.ref))).size).toBe(2);
   });
 
+  it("converts a Word document where it runs, under the file's name, with its tables kept (RM9 (b1))", async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    const word = (await reader.listPageBatch(site, SECRET, undefined, 3)).pages[1];
+    expect(word).toEqual({
+      sourceId: site._id,
+      ref: 'file-01ESCAL',
+      title: 'Escalation paths',
+      url: 'https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/Escalation paths.docx',
+      markdown: [
+        '# Escalation paths',
+        'Call the **duty manager** first.',
+        '1.  Page the on-call engineer.\n2.  Post in #incidents.',
+        '| Severity | Who |\n| --- | --- |\n| SEV1 | Duty manager |\n| SEV2 | Team lead |',
+        '## Out of hours',
+        '夜间请致电值班经理。',
+      ].join('\n\n'),
+      updatedAt: Date.UTC(2026, 8, 12, 10, 0, 0),
+      sourceRevision: '"c:{22222222-2222-4222-8222-222222222222},3"',
+    });
+  });
+
+  it('names a Word document it cannot convert unread, with why: no package, no text, or too large', async (): Promise<void> => {
+    const answers: Record<string, Uint8Array<ArrayBuffer>> = {
+      protected: new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]),
+      pictures: fixtureBytes('word', 'pictures-only.docx'),
+    };
+    for (const [which, reason] of [
+      [
+        'protected',
+        '"Escalation paths.docx" is not read: it is not a .docx file Day0 can open: it may be protected with a password, or be an older .doc saved under the newer name.',
+      ],
+      ['pictures', '"Escalation paths.docx" has no text Day0 can read: it may hold only pictures.'],
+    ] as const) {
+      const { reader } = readerOnTenant((request) =>
+        request.url.host === 'acme.sharepoint.com' &&
+        request.url.searchParams.get('UniqueId') === '01ESCAL'
+          ? new Response(answers[which], { status: 200 })
+          : undefined,
+      );
+      const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
+      expect(batch.unread[0], which).toEqual({ ref: 'file-01ESCAL', reason });
+    }
+    const large = readerOnTenant((request) =>
+      request.url.pathname.endsWith('/drive/root/delta')
+        ? json(200, {
+            value: [
+              {
+                id: '01BIG',
+                name: 'Policy binder.docx',
+                size: 40 * 1024 * 1024,
+                file: {},
+                parentReference: { driveId: 'drive' },
+              },
+            ],
+          })
+        : undefined,
+    );
+    const batch = await large.reader.listPageBatch(site, SECRET, undefined, 3);
+    expect(batch.unread).toEqual([
+      {
+        ref: 'file-01BIG',
+        reason:
+          '"Policy binder.docx" is 40 MiB, larger than the 16 MiB Day0 reads of one Word document.',
+      },
+    ]);
+    expect(large.requests.some((request) => request.url.pathname.includes('/items/'))).toBe(false);
+  });
+
   it('names what it does not read unread with the reason, and passes over a file that is no document', async (): Promise<void> => {
     const { reader, requests } = readerOnTenant();
     const { unread } = await wholeSite(reader);
     expect(unread).toEqual([
       {
-        ref: 'file-01ESCAL',
-        reason:
-          '"Escalation paths.docx" is a Word document: Day0 does not read Word documents yet.',
-      },
-      {
         ref: 'file-01DECK',
         reason:
-          '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files and the site\'s own pages.',
+          '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
       },
       {
         ref: 'file-01HUGE',
@@ -218,11 +283,11 @@ describe('the SharePoint documentation reader', (): void => {
       {
         ref: 'file-01SCAN',
         reason:
-          '"Signed policy.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files and the site\'s own pages.',
+          '"Signed policy.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
       },
     ]);
     // Nothing is downloaded of a file the reader does not read, and a spreadsheet is no page.
-    for (const id of ['01ESCAL', '01DECK', '01HUGE', '01SCAN', '01BUDGET']) {
+    for (const id of ['01DECK', '01HUGE', '01SCAN', '01BUDGET']) {
       expect(requests.some((request) => request.url.pathname.includes(`/items/${id}/`))).toBe(
         false,
       );
@@ -285,7 +350,7 @@ describe('the SharePoint documentation reader', (): void => {
     });
     const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
     expect(sleeps).toEqual([10_000]);
-    expect(batch.pages).toHaveLength(1);
+    expect(batch.pages).toHaveLength(2);
   });
 
   it('says what IT does when Microsoft refuses the app registration, and never repeats its secret', async (): Promise<void> => {

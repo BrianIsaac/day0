@@ -219,6 +219,37 @@
       ],
       "status": 200,
       "body": "page-zh.json"
+    },
+    {
+      "method": "GET",
+      "host": "graph.microsoft.com",
+      "path": "/v1.0/drives/b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5/items/01ESCAL/content",
+      "status": 302,
+      "headers": {
+        "location": "https://acme.sharepoint.com/sites/Runbooks/_layouts/15/download.aspx?UniqueId=01ESCAL&tempauth=fixture-preauthenticated"
+      }
+    },
+    {
+      "method": "GET",
+      "host": "acme.sharepoint.com",
+      "path": "/sites/Runbooks/_layouts/15/download.aspx",
+      "query": [
+        [
+          "UniqueId",
+          "01ESCAL"
+        ],
+        [
+          "tempauth",
+          "fixture-preauthenticated"
+        ]
+      ],
+      "open": true,
+      "status": 200,
+      "headers": {
+        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      },
+      "body": "../word/escalation-paths.docx"
     }
-  ]
+  ],
+  "word": "The .docx files under ../word were written by hand as WordprocessingML and zipped with Python's zipfile on 2026-10-10 (no Word was used): `unzip -p <file> word/document.xml` shows each body."
 }

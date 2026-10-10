@@ -114,6 +114,7 @@ are not covered by this repository's Apache-2.0 licence.
 - @t3-oss/env-nextjs 0.13.11: MIT, Julius Marminge (no licence file in the package; from its manifest)
 - ai 6.0.177: Apache-2.0, Copyright 2023 Vercel, Inc.
 - convex 1.38.0: Apache-2.0, Copyright 2026 Convex, Inc.
+- mammoth 1.12.3: BSD-2-Clause, Copyright (c) 2013, Michael Williamson
 - next 16.2.6: MIT, Copyright (c) 2025 Vercel, Inc.
 - openai 6.37.0: Apache-2.0, Copyright 2026 OpenAI
 - openid-client 6.8.8: MIT, Copyright (c) 2016 Filip Skokan
@@ -239,7 +240,10 @@ Its NOTICE, reproduced as the licence requires:
 
 Other licences (where a package offers a choice, Day0 takes BSD-3-Clause):
 
+- duck 0.1.12: BSD, Copyright (c) 2013, Michael Williamson
 - json-schema 0.4.0: (AFL-2.1 OR BSD-3-Clause), Copyright (c) 2005-2015, The Dojo Foundation
+- jszip 3.10.2: (MIT OR GPL-3.0-or-later), Copyright (c) 2009-2016 Stuart Knightley, David Duponchel, Franz Buchinger, António Afonso
+- pako 1.0.11: (MIT AND Zlib), Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn
 
 sharp's prebuilt libvips, for every platform pnpm-lock.yaml resolves:
 
