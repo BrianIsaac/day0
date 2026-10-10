@@ -118,8 +118,10 @@ describe('a closing set whose comment reports its own posts (W12X-2, wave 13 ite
   it('tells a supervised set to word a report of its own writes as the set will stand once it lands (W12X-1)', async (): Promise<void> => {
     await closingSet(OWN_WRITES_CLOSING);
     const told = recorded.instructions.at(-1) ?? '';
+    // Re-pinned (W14-R48): the rule said "every write before it", while the apply binds a message
+    // to the writes it reports.
     expect(told).toContain(
-      'A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write before it has landed, and holds it back with them otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.',
+      'A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write it reports has landed, and holds it back otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.',
     );
   });
 });

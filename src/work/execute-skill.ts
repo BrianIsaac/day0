@@ -136,7 +136,7 @@ function skillInputLines(skillBody: string, candidate: WorkCandidate, mode: Surf
 const PREAMBLE_HEAD = [
   'You are an autonomous workplace agent named Day0.',
   'A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.',
-  'Apply the skill to the candidate. Produce three things:',
+  'Apply the skill to the candidate. Produce every numbered item below:',
   '  1. A draft (human-readable): the deliverable the manager reads and decides whether to ratify.',
   '  2. Notes: short assumptions or open questions (single sentence).',
 ];
@@ -214,10 +214,12 @@ const DEPENDENT_PHASE_MOCK =
  * that read it wrote "it waits for manager approval before it lands here" into posts that landed,
  * and on the 14-FW bed one followed such a step literally, posting "Will post the answer here once
  * approved." and the answer as a draft in the DM. So the run is told, as real mode's held-set rule
- * says, that the approval is what sends each write.
+ * says, that the approval is what sends each write. A visitor may untick a row, so the line says
+ * the approval may be of part of the set and that a message waits on the writes it reports
+ * (W14-R48, with W14-R44's binding of the mock verbs).
  */
 const MOCK_ACTION_MODE =
-  "Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
+  "Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
 
 const MOCK_PREAMBLE = [
   ...PREAMBLE_HEAD,
@@ -228,7 +230,7 @@ const MOCK_PREAMBLE = [
   ...DRAFT_DISCIPLINE,
   DEPENDENT_PHASE_MOCK,
   '',
-  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
+  'Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }, with `reports` beside them on a verb that can carry a message (item 6). The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:',
   '  - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }',
   '  - slack.postMessage:    { channelSlug, threadKey: string or null, body }',
   '  - twitter.reply:        { tweetSlug, body }',
@@ -288,7 +290,7 @@ const REAL_PREAMBLE = [
   RESUMED_READS_REAL,
   REAL_PROCEDURE_TRAIL_INDEX,
   '',
-  'Action format: each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
+  'Action format: each action is { tool: string, args: object }, with `reports` beside them (item 7). The args object contains exactly the fields for its selected tool and no fields from another tool. The only verbs that reach a surface are `mcp.call` and `http.request`, described with the connected surfaces below when any surface is connected.',
   `  - The mock verbs (${MOCK_VERBS}) do not exist on this deployment: they are refused if emitted and fail the run. Never use them.`,
   '  - If no surface is connected, emit no actions: the draft is the deliverable, and `notes` says which system is not yet connected.',
   '',
@@ -2853,7 +2855,7 @@ const RESUMED_FAILURE_IS_EARLIER =
  * approval" landed beside them, untrue.
  */
 export const HELD_SET_REAL =
-  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write before it has landed, and holds it back with them otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
+  'Held writes are approved together: the writes this response emits wait as one set, and the manager\'s approval of that set sends them all. Write each write the work needs, the ticket\'s state change included when the work is done once they land: a plan step that waits for the manager\'s approval, or for another write of this set to land, is fulfilled by emitting it in this set, since the approval is what lands it. Set the ticket\'s state and answer `workDone` as the work will stand once this set lands: a write emitted here counts as done, and only a read or a prerequisite that failed, or a write the ledger shows was not sent, counts against it. `workDone` still answers for the work the item asks for, never for the plan: a set that records why the work could not be done, or asks the manager for what it needs, answers "partial" or "not-done" however it lands. A comment, a post or a DM that reports a write of this set comes after that write in the set: Day0 sends it only once every write it reports has landed, and holds it back otherwise. So word it as the set will stand once it lands, never saying a write of this set is held or awaits approval.';
 
 /** The audit record of a message Day0 took its own thread's raw channel id and timestamp out of. */
 export const OWN_THREAD_REFERENCE_REMOVED = 'own-thread reference removed from the visible text';
