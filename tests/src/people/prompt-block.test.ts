@@ -371,6 +371,34 @@ describe('the People block after the wave 13 review (14-FX, W13-R19 to W13-R21)'
     }
   });
 
+  it('takes out a Slack id with a letter run between its digits, hosts on a private top-level domain and eight-digit local numbers (W14-R54)', (): void => {
+    for (const leak of [
+      'U1ABCDE2F',
+      'wiki.acme.corp',
+      'files.acme.lan',
+      'hr.acme.intranet',
+      '6123 4567',
+      '6123-4567',
+      '90123456',
+    ]) {
+      expect(withoutIdentities(`Owner ${leak} here`), leak).toBe('Owner here');
+    }
+  });
+  it('keeps years, hours, a date, an amount and upper-case words beside those shapes (W14-R54)', (): void => {
+    for (const words of [
+      'Invoices 2024 2025 close',
+      'FY 2024-2025 plan',
+      'desk hours 0900-1730',
+      'batch 20261008 close',
+      'spend over 10000000',
+      'spend over 25000000',
+      'TREASURER and ENGINEERING lead',
+      // An all-letter token cannot be told from an upper-case word, so it stays (15-FX's decision).
+      'UABCDEFGH',
+    ]) {
+      expect(withoutIdentities(words), words).toBe(words);
+    }
+  });
   it('prints a requester label with no identity in it, and unknown when nothing is left (W13-R19)', (): void => {
     expect(fromLine('U0ANA12345', undefined)).toBe('From: (unknown)');
     expect(fromLine('ana@acme.test', undefined)).toBe('From: (unknown)');
