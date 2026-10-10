@@ -13,6 +13,8 @@ const backend = vi.hoisted(() => ({
   paged: [] as string[],
   /** Every mutation called, by function name. */
   calls: [] as Array<{ name: string; args: unknown }>,
+  /** What a mutation answers, by function name; nothing otherwise. */
+  results: {} as Record<string, unknown>,
 }));
 
 vi.mock('convex/react', () => ({
@@ -29,8 +31,10 @@ vi.mock('convex/react', () => ({
   },
   useMutation:
     (reference: unknown) =>
-    async (args: unknown): Promise<void> => {
-      backend.calls.push({ name: getFunctionName(reference as never), args });
+    async (args: unknown): Promise<unknown> => {
+      const name = getFunctionName(reference as never);
+      backend.calls.push({ name, args });
+      return backend.results[name];
     },
   useAction: () => async (): Promise<void> => undefined,
 }));
@@ -180,6 +184,7 @@ afterEach((): void => {
   backend.pages = {};
   backend.paged = [];
   backend.calls = [];
+  backend.results = {};
   document.body.replaceChildren();
 });
 
@@ -380,6 +385,24 @@ describe('DocumentationView', () => {
     );
     expect(view.container.textContent).toContain(
       'These two look like versions of the same runbook',
+    );
+    view.unmount();
+  });
+
+  it('says the older page stays as it was when its source’s word, or the manager’s, stands over the relation', async () => {
+    // The second pass's minor 13: "now supersedes" was said whatever became of the older page.
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.results['docRelations:decide'] = { older: 'active', by: 'source-native' };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    await press(
+      view.container,
+      '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    await settle();
+    expect(said(view.container)).toContain(
+      'Recorded, but “Escalation paths” stays current: its source says so, and that stands over a relation. “Mark superseded” on its row overrules the source.',
     );
     view.unmount();
   });

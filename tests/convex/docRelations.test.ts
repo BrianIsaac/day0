@@ -606,6 +606,38 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     ]);
   });
 
+  it('answers what became of the older page, which a source’s own word or the manager’s keeps as it was', async (): Promise<void> => {
+    // The second pass's minor 13: the card said "now supersedes" whatever the rules made of it,
+    // and a page its source calls current, or the manager decided by hand, is not superseded by
+    // a relation.
+    const harness = convexTest(schema, allConvexModules());
+    const { official, v1 } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [relation] = await relations(harness);
+    const supersede = async () =>
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision: 'supersedes',
+      });
+    const undo = async () =>
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision: 'undo',
+      });
+    expect(await supersede()).toEqual({ older: 'superseded', by: 'relation' });
+    expect(await undo()).toBeNull();
+    // The older page's front matter says it is current: the source's word stands over a relation.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(v1, {
+        nativeStatus: 'active',
+        status: 'active',
+        statusSource: 'source-native',
+      });
+    });
+    expect(await supersede()).toEqual({ older: 'active', by: 'source-native' });
+    expect((await pageOf(harness, v1)).status).toBe('active');
+  });
+
   it('changes no page for "Keep both" or "Not the same", and offers the card no second answer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { official, v1, v2 } = await twoVersions(harness);
@@ -725,7 +757,7 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     const agentId = await employee(harness, 'Priya');
     await measure(harness, official, 'pipeline-runbook-v2.md');
     const [relation] = await relations(harness);
-    const decide = async (decision: 'supersedes' | 'undo'): Promise<null> =>
+    const decide = async (decision: 'supersedes' | 'undo'): Promise<unknown> =>
       await asManager(harness).mutation(api.docRelations.decide, {
         relationId: relation._id,
         decision,
@@ -770,7 +802,7 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     const decide = async (
       relationId: Id<'docRelations'>,
       decision: 'keep-both' | 'not-the-same' | 'disagree' | 'both-hold' | 'undo',
-    ): Promise<null> =>
+    ): Promise<unknown> =>
       await asManager(harness).mutation(api.docRelations.decide, { relationId, decision });
     for (const decision of ['keep-both', 'not-the-same'] as const) {
       await decide(versions._id, decision);

@@ -18,6 +18,34 @@ export type RelationCardRow = FunctionReturnType<typeof api.docRelations.listOpe
 /** The answers a relation's card may offer. */
 export type RelationAnswer = RelationCardRow['offered'][number];
 
+/** What `docRelations.decide` answers. */
+type DecideOutcome = FunctionReturnType<typeof api.docRelations.decide>;
+
+/** A status inside a sentence: a page "stays current", "stays a draft". */
+const STAYS: Readonly<Record<NonNullable<DecideOutcome>['older'], string>> = {
+  active: 'current',
+  draft: 'a draft',
+  archived: 'archived',
+  superseded: 'superseded',
+};
+
+/**
+ * What to say when "{B} supersedes {A}" was recorded and the older page is not superseded by it,
+ * because something the rules put above a relation decides that page: the manager's own status,
+ * or its source's word. Undefined when the answer did what the button says.
+ *
+ * @param outcome - What became of the older page, as the backend answered.
+ * @param older - The older page's title.
+ */
+export function supersedeWords(outcome: DecideOutcome, older: string): string | undefined {
+  if (outcome === null || outcome === undefined || outcome.by === 'relation') return undefined;
+  const why =
+    outcome.by === 'manager'
+      ? 'you set its status by hand, and that stands over a relation. Clear on its row lets this answer decide.'
+      : 'its source says so, and that stands over a relation. “Mark superseded” on its row overrules the source.';
+  return `Recorded, but “${older}” stays ${STAYS[outcome.older]}: ${why}`;
+}
+
 /** A page as a card names it: its title, its source and when its source last had it. */
 export function pageWords(page: RelationCardRow['from'], zone: string | undefined): string {
   return `“${page.title}” (${page.source}, edited ${clockTime(page.updatedAt, zone)})`;
@@ -52,9 +80,14 @@ export function RelationCard({
   const { from, to } = relation;
   const answer = (decision: RelationAnswer, done: string): void =>
     change.run(() => decide({ relationId: relation._id, decision }), {
-      done,
+      done: (outcome) => supersedeWords(outcome, to.title) ?? done,
       refused: 'The answer was not recorded.',
-      after: () => onAnswered?.({ relationId: relation._id, text: done, undo: true }),
+      after: (outcome) =>
+        onAnswered?.({
+          relationId: relation._id,
+          text: supersedeWords(outcome, to.title) ?? done,
+          undo: true,
+        }),
     });
   return (
     <Card title="These two look like versions of the same runbook" tone="warn" focusRef={card}>

@@ -17,6 +17,7 @@ import {
   readersOf,
   restatePage,
   stampStatusChanges,
+  statusSourceOf,
 } from './docStatus';
 import {
   pageStatusOf,
@@ -24,6 +25,7 @@ import {
   type PageStatus,
   type RelationKind,
   type SourceAuthority,
+  type StatusSource,
 } from '../src/docs/authority';
 import { MAX_BLOCKS_PER_PAGE, blockSearchQuery } from '../src/docs/blocks';
 import { frontMatterStatus } from '../src/docs/status';
@@ -714,6 +716,16 @@ function decided(
 }
 
 /**
+ * What became of the older page once "{B} supersedes {A}" was recorded: its status and what
+ * decided it. A confirmed relation is the rules' fourth word, so a page its source calls current,
+ * or the manager decided by hand, is not superseded by it, and the card says so.
+ */
+export interface SupersedeOutcome {
+  readonly older: PageStatus;
+  readonly by: StatusSource;
+}
+
+/**
  * Answer a relation's card (the Documentation tab's relation and conflict cards). Public; the
  * caller must own the relation. Writes the relation's standing with the caller's verified
  * address and the time, `documentation.relation-decided` on the record of each employee that
@@ -724,6 +736,7 @@ function decided(
  * (`standingConflictOf`); "Undo" makes the relation a proposal again, with nobody's name on it,
  * and restates the page a confirmed successor had superseded; the rest change no page.
  *
+ * @returns For "supersedes", what became of the older page; null for every other answer.
  * @throws ConvexError when the relation is gone or its card no longer offers the answer.
  */
 export const decide = mutation({
@@ -731,7 +744,7 @@ export const decide = mutation({
     relationId: v.id('docRelations'),
     decision: v.union(...RELATION_DECISIONS.map((decision) => v.literal(decision))),
   },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, args): Promise<SupersedeOutcome | null> => {
     const caller = await getCallerOrThrow(ctx);
     const relation = await ctx.db.get(args.relationId);
     if (relation === null) throw new ConvexError('That relation is no longer stored.');
@@ -797,7 +810,9 @@ export const decide = mutation({
         createdAt: now,
       });
     }
-    return null;
+    if (args.decision !== 'supersedes') return null;
+    const older = (await ctx.db.get(to._id)) ?? to;
+    return { older: pageStatusOf(older), by: statusSourceOf(older) };
   },
 });
 
