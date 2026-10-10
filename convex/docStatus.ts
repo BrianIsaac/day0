@@ -20,7 +20,8 @@ import {
   decidePageStatus,
   markerCandidate,
   markerInForce,
-  markerStands,
+  markerKey,
+  markerToJudge,
   type DecidedStatus,
   type MarkerCandidate,
 } from '../src/docs/status';
@@ -376,10 +377,11 @@ export interface StatusPhasePage {
  * with it once the pages two walks missed are gone, fenced on the run's cursor as the prunes are,
  * so a newer sync stops it and a finish cut off resumes where it stood.
  *
- * Each page's status is made the rules' outcome (`restatePage`). A judgement of a page that holds
- * no marker line any more is removed, and a page whose marker lines have no judgement of their
- * own, never judged or edited since, is answered in `toJudge`, an edited one keeping its last
- * judgement until the answer: the mutation asks no model.
+ * Each page's status is made the rules' outcome (`restatePage`). A page whose marker lines have
+ * no judgement of their own, never judged or edited since, is answered in `toJudge`; so is the
+ * top of a page last judged not current whose marker lines are gone (`markerToJudge`), which
+ * keeps that judgement until the answer (D-1 (c)). A judgement that a page's lines are no marker
+ * is removed once the page holds none. The mutation asks no model.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  * @throws Error when the checkpoint is not in the status phase.
@@ -417,17 +419,19 @@ export const restatePages = internalMutation({
     const toJudge: MarkerToJudge[] = [];
     const changes: Array<StatusChange | null> = [];
     for (const stored of walked.page) {
-      const candidate = markerCandidate(stored.title, stored.markdown);
       let page = stored;
-      if (!markerStands(stored.marker, candidate)) {
-        // A page with no marker line left drops its judgement; one whose lines were edited keeps
-        // it in force (`markerInForce`) and is judged again.
-        if (stored.marker !== undefined && candidate === undefined) {
-          await ctx.db.patch(stored._id, { marker: undefined });
-          page = { ...stored, marker: undefined };
-        }
-        if (candidate !== undefined) toJudge.push({ ref: stored.ref, ...candidate });
+      // A judgement that the page's lines are no marker has nothing left to be of once the page
+      // holds none. One that said the page is not current is kept: it holds until the model
+      // answers again (D-1 (c)).
+      if (
+        stored.marker?.status === 'active' &&
+        markerCandidate(stored.title, stored.markdown) === undefined
+      ) {
+        await ctx.db.patch(stored._id, { marker: undefined });
+        page = { ...stored, marker: undefined };
       }
+      const ask = markerToJudge(page.marker, stored.title, stored.markdown);
+      if (ask !== undefined) toJudge.push({ ref: stored.ref, ...ask });
       changes.push(await restatePage(ctx, { source, page, now }));
     }
     await stampStatusChanges(ctx, source, changes, now);
@@ -451,8 +455,9 @@ export const restatePages = internalMutation({
 /**
  * Store the model's judgement of a page's marker lines, and restate the page. Internal; the
  * finishing sync calls it for each page `restatePages` handed it, once the model has answered.
- * Fenced on the source's running generation; a page whose marker lines are no longer the ones
- * judged (it was stored again meanwhile) takes nothing, and is judged at the next sync.
+ * Fenced on the source's running generation; a page whose marker lines, or whose top when it
+ * holds none, are no longer what was judged (it was stored again meanwhile) takes nothing, and
+ * is judged at the next sync.
  *
  * @returns Whether the judgement was stored.
  */
@@ -474,9 +479,14 @@ export const recordMarker = internalMutation({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null) return false;
-    if (markerCandidate(page.title, page.markdown)?.quote !== args.quote) return false;
+    if (markerKey(page.title, page.markdown).quote !== args.quote) return false;
     const now = Date.now();
-    const marker = { status: args.status, quote: args.quote, judgedAt: now };
+    // A page with no marker line that the model reads as current keeps no judgement: nothing on
+    // it is left to be judged by.
+    const marker =
+      args.status === 'active' && markerCandidate(page.title, page.markdown) === undefined
+        ? undefined
+        : { status: args.status, quote: args.quote, judgedAt: now };
     await ctx.db.patch(page._id, { marker });
     const change = await restatePage(ctx, { source, page: { ...page, marker }, now });
     await stampStatusChanges(ctx, source, [change], now);

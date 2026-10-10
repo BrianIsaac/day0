@@ -7,7 +7,7 @@ import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import { MAX_SYNC_BATCHES } from '../../src/docs/listing-bounds';
 import type { DocumentationReader } from '../../src/docs/readers/batch';
 import { ConfluenceDataCenterReader } from '../../src/docs/readers/confluence-dc';
@@ -24,6 +24,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { managerIdentity } from './fakes/manager-identity';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
   LISTING_RESTARTS_REASON,
@@ -682,6 +683,108 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
       'superseded',
     ]);
   }, 30_000);
+
+  it('keeps a deprecated page out when its notice is reworded with no vocabulary word, asks the model of its top, and lets it back only on the answer (D-1 (c); W15-R27)', async (): Promise<void> => {
+    const DEPRECATED =
+      '# Pipeline runbook\n\nDEPRECATED: use the v2 runbook instead.\n\n## Steps\n\nRefresh.\n';
+    const { harness, sourceId, root } = await folderOf({ 'pipeline.md': DEPRECATED });
+    markerModel.reply = (prompt: string): unknown =>
+      prompt.includes('DEPRECATED')
+        ? { status: 'superseded', quote: 'DEPRECATED: use the v2 runbook instead.' }
+        : prompt.includes('replaced with the v2 runbook')
+          ? { status: 'superseded', quote: 'replaced with the v2 runbook' }
+          : { status: 'active', quote: '' };
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    // The notice is reworded: no line of the top holds a vocabulary word any more.
+    const reworded = DEPRECATED.replace(
+      'DEPRECATED: use the v2 runbook instead.',
+      'This runbook has been replaced with the v2 runbook.',
+    );
+    await writeFile(join(root, 'docs', 'pipeline.md'), reworded, 'utf8');
+    const asked = markerModel.prompts.length;
+    await sync(harness, sourceId);
+    // On the base the page was current here and the model was never asked.
+    expect(markerModel.prompts).toHaveLength(asked + 1);
+    expect(markerModel.prompts.at(-1)).toContain(
+      'This runbook has been replaced with the v2 runbook.',
+    );
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    // Judged of that top, it is asked nothing more while the top stands.
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(asked + 1);
+    // The notice is lifted in earnest, with the model down: the page stays out until it answers.
+    await writeFile(
+      join(root, 'docs', 'pipeline.md'),
+      reworded.replace(
+        'This runbook has been replaced with the v2 runbook.',
+        'How the tile is refreshed.',
+      ),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    markerModel.reply = (): unknown => ({ status: 'active', quote: '' });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual(['active', 'default', null]);
+  }, 60_000);
+
+  it('holds a page judged current out once its top gains a marker line, until the model answers, and "This is current" overrules at once (D-1 (c); W15-R27)', async (): Promise<void> => {
+    const { harness, sourceId, root } = await folderOf({ 'howto/archive-a-ticket.md': ARCHIVING });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([null, null, 'active']);
+    // The page itself is archived at its source, by a line at its top; the model cannot be asked.
+    await writeFile(
+      join(root, 'docs', 'howto/archive-a-ticket.md'),
+      ARCHIVING.replace('\n\n', '\n\nARCHIVED: kept for the record only.\n\n'),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    await sync(harness, sourceId);
+    // On the base the stale judgement kept the page current until a later sync could ask.
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([
+      'archived',
+      'marker',
+      'active',
+    ]);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(new Set(blocks.map((block) => block.status))).toEqual(new Set(['archived']));
+    const [page] = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.docStatus.setPageStatus, { pageId: page._id, status: 'active' });
+    expect((await statuses(harness))['howto/archive-a-ticket.md']?.slice(0, 2)).toEqual([
+      'active',
+      'manager',
+    ]);
+    // Cleared, it falls back to being held out; the model's answer then decides.
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.docStatus.clearPageStatus, { pageId: page._id });
+    markerModel.reply = (): unknown => ({
+      status: 'archived',
+      quote: 'ARCHIVED: kept for the record only.',
+    });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([
+      'archived',
+      'marker',
+      'archived',
+    ]);
+  }, 60_000);
 
   it('stops asking once a finish has spent its time on judgements, and asks the rest at the next sync', async (): Promise<void> => {
     // The second pass's minor 10: twenty judgements at thirty seconds each, one after another,
