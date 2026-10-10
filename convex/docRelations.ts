@@ -366,24 +366,97 @@ const GENERATIONS_MEASURED = 6;
  * back to (and with) the complete walk before it, newest first. A resumed sync stored its first
  * pages under the run it took over, and a page whose split landed after its sync's measure is
  * reached by the next sync's: both are covered this way, and a pair measured twice is proposed
- * once. Internal; reads a few run rows.
+ * once. Reads a few run rows.
  */
+async function generationsOf(
+  ctx: QueryCtx,
+  sourceId: Id<'docSources'>,
+  runId: Id<'docSyncRuns'>,
+): Promise<Id<'docSyncRuns'>[]> {
+  const runs = await ctx.db
+    .query('docSyncRuns')
+    .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+    .order('desc')
+    .take(2 * GENERATIONS_MEASURED);
+  const from = runs.findIndex((run) => run._id === runId);
+  if (from < 0) return [];
+  const earlier = runs.slice(from + 1);
+  const walkBefore = earlier.findIndex((run) => run.state === 'completed');
+  return [
+    runId,
+    ...(walkBefore < 0 ? earlier : earlier.slice(0, walkBefore + 1)).map((run) => run._id),
+  ].slice(0, GENERATIONS_MEASURED);
+}
+
+/** The runs whose pages a completed sync measures ({@link generationsOf}). Internal. */
 export const generationsToMeasure = internalQuery({
   args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
-  handler: async (ctx, args): Promise<Id<'docSyncRuns'>[]> => {
-    const runs = await ctx.db
-      .query('docSyncRuns')
-      .withIndex('by_source', (q) => q.eq('sourceId', args.sourceId))
-      .order('desc')
-      .take(2 * GENERATIONS_MEASURED);
-    const from = runs.findIndex((run) => run._id === args.runId);
-    if (from < 0) return [];
-    const earlier = runs.slice(from + 1);
-    const walkBefore = earlier.findIndex((run) => run.state === 'completed');
-    return [
-      args.runId,
-      ...(walkBefore < 0 ? earlier : earlier.slice(0, walkBefore + 1)).map((run) => run._id),
-    ].slice(0, GENERATIONS_MEASURED);
+  handler: async (ctx, args): Promise<Id<'docSyncRuns'>[]> =>
+    await generationsOf(ctx, args.sourceId, args.runId),
+});
+
+/** What is left to measure: the runs whose pages are, in order, and the place in the first's. */
+export interface MeasuringPlan {
+  readonly generations: Id<'docSyncRuns'>[];
+  readonly cursor: string | null;
+}
+
+const measuringPlanValidator = v.object({
+  generations: v.array(v.id('docSyncRuns')),
+  cursor: v.union(v.string(), v.null()),
+});
+
+/**
+ * What a completed sync's measuring has to measure (W15-R5): first what an earlier sync's was
+ * stopped short of by its cap on new proposals (`docSources.relationsOwed`), from the place it
+ * stopped, then the runs of its own look-back that are not among those. Internal; reads the
+ * source and a few run rows.
+ *
+ * @returns The plan, or null when the run is no longer the source's running or last completed
+ *   one: a newer sync measures instead, and reads what is owed itself.
+ */
+export const measuringPlan = internalQuery({
+  args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
+  handler: async (ctx, args): Promise<MeasuringPlan | null> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null) return null;
+    if (source.activeSyncId !== args.runId && source.lastCompletedSyncId !== args.runId) {
+      return null;
+    }
+    const own = await generationsOf(ctx, args.sourceId, args.runId);
+    const owed = source.relationsOwed;
+    if (owed === undefined || owed.generations.length === 0) {
+      return { generations: own, cursor: null };
+    }
+    return {
+      generations: [...owed.generations, ...own.filter((id) => !owed.generations.includes(id))],
+      cursor: owed.cursor,
+    };
+  },
+});
+
+/**
+ * Record what a sync's measuring left unmeasured, or that it left nothing (W15-R5). Internal;
+ * called by `docSyncActions.proposeRelations` when its cap on new proposals stops it, and when it
+ * reaches the end. Writes `docSources.relationsOwed` only for the source's running or last
+ * completed run, so a measuring a newer sync has overtaken changes nothing.
+ */
+export const settleRelationsOwed = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    /** What is left; null when every page was measured. */
+    owed: v.union(measuringPlanValidator, v.null()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null) return null;
+    if (source.activeSyncId !== args.runId && source.lastCompletedSyncId !== args.runId) {
+      return null;
+    }
+    if (args.owed === null && source.relationsOwed === undefined) return null;
+    await ctx.db.patch(source._id, { relationsOwed: args.owed ?? undefined });
+    return null;
   },
 });
 

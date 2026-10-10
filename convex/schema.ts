@@ -449,6 +449,19 @@ export default defineSchema({
     activeSyncId: v.optional(v.id('docSyncRuns')),
     /** The completed generation whose pages are currently authoritative. */
     lastCompletedSyncId: v.optional(v.id('docSyncRuns')),
+    /**
+     * What a finishing sync's measuring of relations left unmeasured when its cap on new
+     * proposals stopped it (W15-R5): the runs whose pages are left, in the order they are read,
+     * and the place in the first's (`docRelations.pagesWrittenBy`'s cursor; null from its start).
+     * The next sync's measuring starts there, ahead of its own pages, and clears it once it
+     * reaches the end. Absent when nothing is owed. Written by `docRelations.settleRelationsOwed`.
+     */
+    relationsOwed: v.optional(
+      v.object({
+        generations: v.array(v.id('docSyncRuns')),
+        cursor: v.union(v.string(), v.null()),
+      }),
+    ),
     /** The completed generation whose system candidates were reconciled. */
     lastDiscoverySyncId: v.optional(v.id('docSyncRuns')),
     discoveryFingerprint: v.optional(v.string()),

@@ -40,8 +40,9 @@ import {
 import { listingOverrun } from '../src/docs/listing-bounds';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
-import { RELATION_PAGES_PER_SYNC, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
+import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
+import type { MeasuringPlan } from './docRelations';
 import type { StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -902,52 +903,99 @@ async function walkStatusPhase(
 /**
  * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
  * (and the runs it took over from, back to the complete walk before it) is measured against the
- * owner's other active pages (`docRelations.measurePage`), at most `RELATION_PAGES_PER_SYNC`
- * pages and `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
+ * owner's other active pages (`docRelations.measurePage`), `RELATION_PAGES_PER_STEP` pages a step
+ * and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
  * finish once the generation has completed, as discovery is, so the splits its pages scheduled
  * have landed and the measures cost the finish none of its time. A proposal changes no page and
  * holds nothing; the manager answers its card. A page that cannot be measured is logged and
  * passed over.
  *
- * @returns How many pages it measured and how many relations it proposed.
+ * A step that has measured its share schedules the next with what is left (`rest`), so a library
+ * of any size is measured to its end (W15-R5: the first hundred pages were measured and nothing
+ * recorded how far it got). The cap on new proposals ends the measuring where it is reached, and
+ * what is left is then kept on the source for the next sync's measuring, which starts there
+ * (`docRelations.measuringPlan`).
+ *
+ * @returns How many pages this step measured and how many relations the sync has proposed so far.
  */
 export const proposeRelations = internalAction({
-  args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    /** What an earlier step of this measuring left; absent on the first. */
+    rest: v.optional(
+      v.object({
+        generations: v.array(v.id('docSyncRuns')),
+        cursor: v.union(v.string(), v.null()),
+      }),
+    ),
+    /** The new proposals the earlier steps wrote; absent on the first. */
+    proposed: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<{ measured: number; proposed: number }> => {
-    const refs = new Set<string>();
-    const generations = await ctx.runQuery(internal.docRelations.generationsToMeasure, args);
-    for (const generation of generations) {
-      let cursor: string | null = null;
-      while (refs.size < RELATION_PAGES_PER_SYNC) {
-        const written: { refs: string[]; next: string | null } = await ctx.runQuery(
-          internal.docRelations.pagesWrittenBy,
-          { sourceId: args.sourceId, generation, cursor },
-        );
-        for (const ref of written.refs) refs.add(ref);
-        if (written.next === null) break;
+    const { sourceId, runId } = args;
+    const plan: MeasuringPlan | null =
+      args.rest ?? (await ctx.runQuery(internal.docRelations.measuringPlan, { sourceId, runId }));
+    let measured = 0;
+    let proposed = args.proposed ?? 0;
+    if (plan === null) return { measured, proposed };
+    const generations = [...plan.generations];
+    let cursor = plan.cursor;
+    const seen = new Set<string>();
+    while (generations.length > 0) {
+      if (measured >= RELATION_PAGES_PER_STEP) {
+        await ctx.scheduler.runAfter(0, internal.docSyncActions.proposeRelations, {
+          sourceId,
+          runId,
+          rest: { generations, cursor },
+          proposed,
+        });
+        return { measured, proposed };
+      }
+      const written: { refs: string[]; next: string | null } = await ctx.runQuery(
+        internal.docRelations.pagesWrittenBy,
+        { sourceId, generation: generations[0], cursor },
+      );
+      for (const ref of written.refs) {
+        if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
+          // The cap: this read's pages are owed from its start, since some of them are unmeasured.
+          await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
+            sourceId,
+            runId,
+            owed: { generations, cursor },
+          });
+          return { measured, proposed };
+        }
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        measured += 1;
+        try {
+          proposed += await ctx.runMutation(internal.docRelations.measurePage, {
+            sourceId,
+            syncRunId: runId,
+            ref,
+            room: RELATION_PROPOSALS_PER_SYNC - proposed,
+          });
+        } catch (error) {
+          log.warn('documentation page not measured for relations', {
+            sourceId,
+            ref,
+            reason: safeSyncError(error),
+          });
+        }
+      }
+      if (written.next === null) {
+        generations.shift();
+        cursor = null;
+      } else {
         cursor = written.next;
       }
     }
-    let measured = 0;
-    let proposed = 0;
-    for (const ref of [...refs].slice(0, RELATION_PAGES_PER_SYNC)) {
-      if (proposed >= RELATION_PROPOSALS_PER_SYNC) break;
-      measured += 1;
-      try {
-        proposed += await ctx.runMutation(internal.docRelations.measurePage, {
-          sourceId: args.sourceId,
-          syncRunId: args.runId,
-          ref,
-          room: RELATION_PROPOSALS_PER_SYNC - proposed,
-        });
-      } catch (error) {
-        log.warn('documentation page not measured for relations', {
-          sourceId: args.sourceId,
-          ref,
-          reason: safeSyncError(error),
-        });
-      }
-    }
+    await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
+      sourceId,
+      runId,
+      owed: null,
+    });
     return { measured, proposed };
   },
 });

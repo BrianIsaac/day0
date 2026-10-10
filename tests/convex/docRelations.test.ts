@@ -550,6 +550,150 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
   });
 });
 
+describe('measuring a library of more pages than one step takes (W15-R5)', (): void => {
+  /** A completed walk of a source: the run a finished sync measures. */
+  async function completedWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
+    return await harness.run(async (ctx) => {
+      const runs = await ctx.db
+        .query('docSyncRuns')
+        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+        .collect();
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: runs.length + 1,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: runs.length + 2,
+        completedAt: runs.length + 2,
+      });
+      for (const run of runs) {
+        if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
+      }
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
+      return { sourceId, runId };
+    });
+  }
+
+  /** Measure a completed walk's pages as its finish schedules it, every step of it. */
+  async function measureWalk(harness: Harness, walk: Source): Promise<void> {
+    await harness.action(internal.docSyncActions.proposeRelations, walk);
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  }
+
+  it('measures the pages past the first hundred: a later version stored 120th is proposed', async (): Promise<void> => {
+    // Reader 2's vt/c.test.ts R2-H: 130 stored pages, only the 121st and 122nd related. Each
+    // page holds four sections, so the walk's blocks are more than one read of them.
+    const harness = convexTest(schema, allConvexModules());
+    const library = await syncingSource(harness, 'Library');
+    for (let index = 0; index < 130; index += 1) {
+      const related = index === 120 || index === 121;
+      const title = related
+        ? index === 120
+          ? 'Zebra quartz runbook'
+          : 'Zebra quartz runbook v2'
+        : `Unrelated topic number ${index} qx${index}`;
+      await storedPage(harness, library, {
+        ref: related ? `zebra-${index}.md` : `p${index}.md`,
+        title,
+        markdown: [
+          ...(index === 121 ? ['---', 'supersedes: zebra-120', '---'] : []),
+          `# ${title}`,
+          '',
+          `Content unique to page ${index} word${index} alpha${index}.`,
+          ...['One', 'Two', 'Three'].flatMap((section) => [
+            '',
+            `## ${section} of ${index}`,
+            '',
+            `Section ${section.toLowerCase()} of page ${index}: beta${index} gamma${index}.`,
+          ]),
+        ].join('\n'),
+        updatedAt: 1 + index,
+      });
+    }
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(library.sourceId, {
+          lastCompletedSyncId: library.runId,
+          activeSyncId: undefined,
+        }),
+    );
+    await measureWalk(harness, library);
+    expect(await relations(harness)).toMatchObject([
+      {
+        kind: 'possible_successor',
+        status: 'proposed',
+        from: { ref: 'zebra-121.md' },
+        to: { ref: 'zebra-120.md' },
+      },
+    ]);
+    // Nothing is owed once every page was measured, and a walk that changes nothing adds nothing.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(library.sourceId)))?.relationsOwed,
+    ).toBeUndefined();
+    await measureWalk(harness, await completedWalk(harness, library.sourceId));
+    expect(await relations(harness)).toHaveLength(1);
+  }, 120_000);
+
+  it('goes on at the next sync from where the cap on new proposals stopped it, and owes nothing once it reaches the end', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // Seventeen runbooks of three later versions each hold fifty-one relations; two more pages
+    // stored after them hold a fifty-second.
+    const first = await syncingSource(harness, 'Runbooks');
+    const later = [
+      await syncingSource(harness, 'Second editions'),
+      await syncingSource(harness, 'Third editions'),
+      await syncingSource(harness, 'Fourth editions'),
+    ];
+    const words =
+      'Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November Oscar Papa Quebec';
+    for (const word of words.split(' ')) {
+      const markdown = `# ${word}\n\n${word} procedure, in full.`;
+      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
+      for (const [index, source] of later.entries()) {
+        await storedPage(harness, source, {
+          ref: `${word}-v${index + 2}.md`,
+          title: `${word} v${index + 2}`,
+          markdown,
+          updatedAt: index + 2,
+        });
+      }
+    }
+    await storedPage(harness, first, {
+      ref: 'Zulu.md',
+      title: 'Zulu',
+      markdown: '# Zulu\n\nZulu procedure, in full.',
+    });
+    await storedPage(harness, later[0], {
+      ref: 'Zulu-v2.md',
+      title: 'Zulu v2',
+      markdown: '# Zulu\n\nZulu procedure, in full.',
+      updatedAt: 2,
+    });
+    const owed = async () =>
+      (await harness.run(async (ctx) => await ctx.db.get(first.sourceId)))?.relationsOwed;
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(first.sourceId, {
+          lastCompletedSyncId: first.runId,
+          activeSyncId: undefined,
+        }),
+    );
+    await measureWalk(harness, first);
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
+    // The cap ended the measuring inside the walk's pages: what is left is kept on the source.
+    expect(await owed()).toEqual({ generations: [first.runId], cursor: null });
+    // The next sync changes no page, so its own walk wrote nothing: it measures what is owed.
+    await measureWalk(harness, await completedWalk(harness, first.sourceId));
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
+    expect(await owed()).toBeUndefined();
+    // And two syncs on, the first walk's pages are out of the look-back and still nothing is lost.
+    await measureWalk(harness, await completedWalk(harness, first.sourceId));
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
+  }, 120_000);
+});
+
 describe('decide: the manager’s answer on a relation’s card', (): void => {
   it('supersedes the older page when the successor is confirmed, and sends parked work back', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
