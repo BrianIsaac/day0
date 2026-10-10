@@ -184,6 +184,11 @@ async function mirrorPages(
  * redaction and no split (P8-10; 14-I): its stored credentials stay stated, and it is mirrored
  * as before. Without a credential key no hash is taken and every page is redacted, as before.
  *
+ * What a page's source says of it (its native status and revision) is no part of that hash and
+ * never reaches `upsertPage`: it is recorded beside the hash (`docStatus.recordRead`) for every
+ * page stored again, and for a page kept as stored whose source now says otherwise, so a page
+ * archived at its source with no edit is archived here (15-A; A-2).
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -293,9 +298,19 @@ async function persistPage(
   }
   const contentHash =
     redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  const said = {
+    sourceId: source._id,
+    syncRunId,
+    ref: page.ref,
+    ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+    ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+  };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
-    if (kept !== undefined) return kept;
+    if (kept !== undefined) {
+      if (kept.saidOtherwise) await ctx.runMutation(internal.docStatus.recordRead, said);
+      return kept;
+    }
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
   const result = await redactCredentials(
@@ -331,10 +346,16 @@ async function persistPage(
     markdown: result.markdown,
   };
   await ctx.runMutation(internal.docSources.upsertPage, {
-    ...safePage,
+    sourceId: safePage.sourceId,
+    ref: safePage.ref,
+    title: safePage.title,
+    ...(safePage.url !== undefined ? { url: safePage.url } : {}),
+    markdown: safePage.markdown,
+    updatedAt: safePage.updatedAt,
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
   });
+  await ctx.runMutation(internal.docStatus.recordRead, said);
   return { page: safePage, credentialRefs };
 }
 
@@ -343,7 +364,8 @@ async function persistPage(
  * address and body, and the refs of the credentials the page states, which are its stored rows
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
- * redaction removes.
+ * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
+ * revision) is no longer the one the row holds.
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
@@ -351,7 +373,7 @@ async function keptUnchangedPage(
   page: DocPage,
   contentHash: string,
   known: readonly string[],
-): Promise<{ page: DocPage; credentialRefs: string[] } | undefined> {
+): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
   const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
     sourceId: source._id,
     ref: page.ref,
@@ -376,6 +398,8 @@ async function keptUnchangedPage(
   return {
     page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
     credentialRefs,
+    saidOtherwise:
+      stored.nativeStatus !== page.nativeStatus || stored.sourceRevision !== page.sourceRevision,
   };
 }
 

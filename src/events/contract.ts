@@ -17,6 +17,7 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
+import type { PageStatus, StatusSource } from '../docs/authority';
 import type {
   AccessRequestReason,
   OrganisationConnectionKind,
@@ -513,6 +514,25 @@ export interface DocumentationSystemsDiscoveredPayload {
   readonly updated: number;
   readonly retired: number;
   readonly scheduled: number;
+}
+
+/**
+ * The payload of `documentation.page-status-changed` (wave 15, 15-A): a stored page's status
+ * changed, with what decided it. Written on the record of every employee that reads the page's
+ * source; the page's blocks took the status and the employee's parked work was evaluated again
+ * in the same transaction (`docStatus.restatePage`).
+ */
+export interface DocumentationPageStatusChangedPayload {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+  /** The page's stored title. */
+  readonly title: string;
+  readonly from: PageStatus;
+  readonly to: PageStatus;
+  /** What decided the new status: the manager, the source, a marker, a relation or the default. */
+  readonly decidedBy: StatusSource;
+  /** The page a superseded page gave way to, when one is named. */
+  readonly supersededBy?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
 }
 
 /** The payload of `evaluation.transport-ready`. */
@@ -1820,6 +1840,7 @@ export interface EventPayloads {
   'relationship.changed': RelationshipChangedPayload;
   'coworker.replied': CoworkerRepliedPayload;
   'documentation.systems-discovered': DocumentationSystemsDiscoveredPayload;
+  'documentation.page-status-changed': DocumentationPageStatusChangedPayload;
   'evaluation.transport-ready': EvaluationTransportReadyPayload;
   'voice.started': VoiceStartedPayload;
   'voice.answer-recorded': VoiceAnswerRecordedPayload;
@@ -2024,6 +2045,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'relationship.changed',
   'coworker.replied',
   'documentation.systems-discovered',
+  'documentation.page-status-changed',
   'evaluation.transport-ready',
   'voice.started',
   'voice.answer-recorded',

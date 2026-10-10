@@ -492,6 +492,34 @@ function revokedAtSourceWords(
   }
 }
 
+/**
+ * A documentation page's change of status, with what decided it: the manager by hand, the page's
+ * own source, a marker in the page, a relation the manager confirmed, or nothing but the
+ * source's default.
+ */
+function pageStatusChangedWords(
+  p: Read<'documentation.page-status-changed'>,
+  subject: RecordSubject,
+): string {
+  const page = `the documentation page${text(p.title) ? ` "${p.title}"` : ''}`;
+  const state =
+    p.to === 'active'
+      ? 'current again'
+      : p.to === 'draft'
+        ? 'a draft'
+        : (text(p.to) ?? 'in another status');
+  if (p.decidedBy === 'manager') return `${decider(subject)} marked ${page} as ${state}`;
+  const why =
+    p.decidedBy === 'source-native'
+      ? ': its source says so'
+      : p.decidedBy === 'marker'
+        ? ': a marker in the page says so'
+        : p.decidedBy === 'relation'
+          ? ': a confirmed relation names its successor'
+          : '';
+  return `${capitalised(page)} is ${p.to === 'active' ? '' : 'now '}${state}${why}`;
+}
+
 /** What a decision request asks about. */
 function decisionNoun(kind: unknown): string {
   return kind === 'actions' ? 'held actions' : 'plan';
@@ -752,6 +780,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${name} read the documentation and found ${counted(p.systems, 'system') ?? 'its systems'}${
       typeof p.created === 'number' && p.created > 0 ? `, ${p.created} new` : ''
     }${typeof p.retired === 'number' && p.retired > 0 ? `, ${p.retired} gone` : ''}`,
+  'documentation.page-status-changed': pageStatusChangedWords,
   'evaluation.transport-ready': (_, subject) =>
     `The evaluation harness is ready to run${forItem(subject)}`,
   'voice.started': (p) => `Day-1 one-to-one opened in ${p.mode === 'chat' ? 'chat' : 'voice'}`,

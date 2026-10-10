@@ -167,6 +167,15 @@ function planHeldWords(reason: unknown): string {
     : 'it waits for your decision';
 }
 
+/** A documentation page's new status as the feed says it: "is now superseded", "is current again". */
+function pageStatusLabel(status: unknown): string {
+  if (status === 'active') return 'is current again';
+  if (status === 'draft') return 'is now a draft';
+  return status === 'superseded' || status === 'archived'
+    ? `is now ${status}`
+    : 'changed its status';
+}
+
 /**
  * What a correction of an organisation connection changed: its redirect, its scopes, an MCP
  * connection's missing issuer (the round review's m13), or more than one.
@@ -439,6 +448,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `documentation read: ${counted(payload.systems, 'system') ?? 'systems'} found${
       typeof payload.created === 'number' && payload.created > 0 ? `, ${payload.created} new` : ''
     }${typeof payload.retired === 'number' && payload.retired > 0 ? `, ${payload.retired} gone` : ''}`,
+  'documentation.page-status-changed': (payload) =>
+    `documentation page ${text(payload.title) ? `"${payload.title}" ` : ''}${pageStatusLabel(payload.to)}`,
   'evaluation.transport-ready': 'evaluation transport ready',
   'voice.started': (payload) =>
     payload.mode === 'chat' ? 'Day-1 1:1 started (chat)' : 'Day-1 1:1 started (voice)',

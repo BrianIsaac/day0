@@ -486,6 +486,40 @@ describe('unchangedPage', (): void => {
   });
 });
 
+describe('unchangedPage and what the source said of the page (15-A)', (): void => {
+  it("answers the status and the revision the page's source gave it, so the sync can tell a change with no edit", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+        status: 'archived',
+        statusSource: 'source-native',
+        nativeStatus: 'archived',
+        sourceRevision: '12',
+      });
+    });
+    await split(harness, { sourceId, runId, status: 'archived' }, RUNBOOK);
+    expect(
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        contentHash: 'a'.repeat(32),
+      }),
+    ).toEqual({
+      title: 'Refresh',
+      markdown: RUNBOOK,
+      nativeStatus: 'archived',
+      sourceRevision: '12',
+    });
+  });
+});
+
 describe('unchangedPage and a split that never landed (second pass)', (): void => {
   it('answers no page whose text holds blocks it has none of, so the sync stores and splits it again', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

@@ -395,6 +395,129 @@ describe('the unchanged-page skip at the persistence boundary (P8-10, 14-I)', ()
   });
 });
 
+describe('the status a source gives a page, beside its hash (15-A; A-2)', (): void => {
+  /** A fixed 32-byte credential key in standard base64. */
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A fake action context: the stored page the skip reads, and each write the batch asks for. */
+  function contextWith(
+    stored: {
+      title: string;
+      markdown: string;
+      nativeStatus?: string;
+      sourceRevision?: string;
+    } | null,
+  ): { ctx: ActionCtx; writes: Array<{ name: string; args: Record<string, unknown> }> } {
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const ctx = {
+      runQuery: async (reference: unknown): Promise<unknown> =>
+        getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
+          ? stored
+          : [],
+      runAction: async (): Promise<string> => 'f'.repeat(32),
+      runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        writes.push({ name: getFunctionName(reference as never), args });
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    return { ctx, writes };
+  }
+
+  const page: DocPage = {
+    sourceId: 'source-contract' as Id<'docSources'>,
+    ref: 'runbook.md',
+    title: 'Runbook',
+    markdown: '# Runbook\n\nPress refresh.',
+    updatedAt: 1,
+  };
+  const UPSERT = getFunctionName(internal.docSources.upsertPage);
+  const RECORD = getFunctionName(internal.docStatus.recordRead);
+
+  it('records that a page kept as stored is now archived at its source, with nothing redacted or upserted', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith({ title: 'Runbook', markdown: '# Runbook\n\nStored.' });
+    await persistPageBatch(
+      ctx,
+      source(),
+      [{ ...page, nativeStatus: 'archived', sourceRevision: '12' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(writes).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'runbook.md',
+          nativeStatus: 'archived',
+          sourceRevision: '12',
+        },
+      },
+    ]);
+  });
+
+  it('records that a kept page is archived no longer, and writes nothing while its source says what the row holds', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const archived = contextWith({
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      nativeStatus: 'archived',
+      sourceRevision: '12',
+    });
+    await persistPageBatch(archived.ctx, source(), [page], [], undefined, []);
+    expect(archived.writes).toEqual([
+      {
+        name: RECORD,
+        args: { sourceId: 'source-contract', syncRunId: 'run-contract', ref: 'runbook.md' },
+      },
+    ]);
+    const same = contextWith({
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      nativeStatus: 'archived',
+      sourceRevision: '12',
+    });
+    await persistPageBatch(
+      same.ctx,
+      source(),
+      [{ ...page, nativeStatus: 'archived', sourceRevision: '12' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(same.writes).toEqual([]);
+  });
+
+  it('stores a page it reads again without the status in the upsert, then records the status beside it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith(null);
+    await persistPageBatch(
+      ctx,
+      source(),
+      [{ ...page, nativeStatus: 'draft', sourceRevision: '3' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(writes.map((write) => write.name)).toEqual([UPSERT, RECORD]);
+    expect(writes[0].args).not.toHaveProperty('nativeStatus');
+    expect(writes[0].args).not.toHaveProperty('sourceRevision');
+    expect(writes[1].args).toEqual({
+      sourceId: 'source-contract',
+      syncRunId: 'run-contract',
+      ref: 'runbook.md',
+      nativeStatus: 'draft',
+      sourceRevision: '3',
+    });
+  });
+});
+
 describe('documentation sync batching', (): void => {
   /**
    * Lay out a 60-page folder with one token-bearing page under a fresh root.

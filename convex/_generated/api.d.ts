@@ -27,6 +27,7 @@ import type * as docBlocks from '../docBlocks.js';
 import type * as docPages from '../docPages.js';
 import type * as docSelection from '../docSelection.js';
 import type * as docSources from '../docSources.js';
+import type * as docStatus from '../docStatus.js';
 import type * as docSyncActions from '../docSyncActions.js';
 import type * as documentationDiscovery from '../documentationDiscovery.js';
 import type * as documentationDiscoveryActions from '../documentationDiscoveryActions.js';
@@ -156,6 +157,7 @@ declare const fullApi: ApiFromModules<{
   docPages: typeof docPages;
   docSelection: typeof docSelection;
   docSources: typeof docSources;
+  docStatus: typeof docStatus;
   docSyncActions: typeof docSyncActions;
   documentationDiscovery: typeof documentationDiscovery;
   documentationDiscoveryActions: typeof documentationDiscoveryActions;

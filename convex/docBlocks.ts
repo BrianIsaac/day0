@@ -309,6 +309,15 @@ export const splitStoredPage = internalMutation({
   },
 });
 
+/** A page kept as stored: what the sync mirrors of it, and what its source last said of it. */
+export interface UnchangedPage {
+  readonly title: string;
+  readonly url?: string;
+  readonly markdown: string;
+  readonly nativeStatus?: PageStatus;
+  readonly sourceRevision?: string;
+}
+
 /**
  * Whether a page's stored blocks are the blocks of its stored text, each under the page's status:
  * as many, in document order, hash for hash. A page whose split never landed holds none, and one
@@ -335,14 +344,15 @@ async function blocksAreThePages(
  * The stored page under a ref whose hash is the one given: the sync keeps it as stored, with no
  * redaction and no split (P8-10). Internal; reads one page and its blocks, writes nothing.
  *
- * @returns The stored title, address and (redacted) Markdown, or null when the page is not
- *   stored, was stored without a hash, has changed, or its stored blocks are not the blocks of
- *   its text under its status (its split failed, or never landed), so the sync stores it again
- *   and its split is scheduled again.
+ * @returns The stored title, address and (redacted) Markdown, with what the page's source said
+ *   of it when it was last read (its native status and revision, which ride beside the hash:
+ *   15-A), or null when the page is not stored, was stored without a hash, has changed, or its
+ *   stored blocks are not the blocks of its text under its status (its split failed, or never
+ *   landed), so the sync stores it again and its split is scheduled again.
  */
 export const unchangedPage = internalQuery({
   args: { sourceId: v.id('docSources'), ref: v.string(), contentHash: v.string() },
-  handler: async (ctx, args): Promise<{ title: string; url?: string; markdown: string } | null> => {
+  handler: async (ctx, args): Promise<UnchangedPage | null> => {
     const page = await ctx.db
       .query('docPages')
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
@@ -354,6 +364,8 @@ export const unchangedPage = internalQuery({
       title: page.title,
       ...(page.url !== undefined ? { url: page.url } : {}),
       markdown: page.markdown,
+      ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+      ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
     };
   },
 });
