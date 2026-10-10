@@ -354,7 +354,7 @@ describe('restatePage: the rules over a stored page', (): void => {
       ref,
     });
 
-  it('reads a judged marker only while it is of the lines the page holds now', async (): Promise<void> => {
+  it('reads a judged marker while the page holds marker lines: an edited line keeps the last judgement, a removed one ends it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
     const markdown = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。\n\n## 步骤\n\n关账。';
@@ -370,11 +370,22 @@ describe('restatePage: the rules over a stored page', (): void => {
       status: 'superseded',
       statusSource: 'marker',
     });
-    // The page's top is edited: the judgement was of other lines, and decides nothing.
+    // Re-pinned by the second pass's minor 10. The marker line is edited: the judgement was of
+    // other lines, and it used to decide nothing from then on, so the page was current again
+    // until the model answered. It now holds until the next judgement replaces it.
     await harness.run(async (ctx) => {
       await ctx.db.patch(pageId, {
         markdown: markdown.replace('2026版', '2027版'),
       });
+    });
+    expect(await restate(harness, source, 'finance/close.md')).toBe(false);
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+    });
+    // The marker line is taken out: nothing on the page says it is void, and no judgement decides.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(pageId, { markdown: '# 月结流程\n\n## 步骤\n\n关账。' });
     });
     expect(await restate(harness, source, 'finance/close.md')).toBe(true);
     expect(await pageOf(harness, pageId)).toMatchObject({
@@ -557,6 +568,43 @@ describe('restatePages: the status phase of a finishing sync', (): void => {
     expect((await harness.run(async (ctx) => await ctx.db.get(source.runId)))?.cursor).toBe(
       finishingCursor({ phase: 'scopes', cursor: null }),
     );
+  });
+
+  it('hands back a page whose marker lines were edited, and keeps its last judgement until the answer', async (): Promise<void> => {
+    // The second pass's minor 10.
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const edited = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2027版)》。';
+    const pageId = await storedPage(harness, source, {
+      ref: 'finance/close.md',
+      title: '月结流程',
+      markdown: edited,
+      status: 'superseded',
+      statusSource: 'marker',
+      marker: {
+        status: 'superseded',
+        quote: markerCandidate('月结流程', CHINESE)!.quote,
+        judgedAt: 3,
+      },
+    });
+    await standAt(harness, source, STATUS);
+    const page = await harness.mutation(internal.docStatus.restatePages, {
+      sourceId: source.sourceId,
+      runId: source.runId,
+      checkpoint: STATUS,
+      from: null,
+      record: false,
+    });
+    expect(page).toMatchObject({ changed: 0, done: true });
+    expect(page?.toJudge).toEqual([
+      { ref: 'finance/close.md', ...markerCandidate('月结流程', edited)! },
+    ]);
+    const kept = await pageOf(harness, pageId);
+    expect([kept.status, kept.statusSource, kept.marker?.status]).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
   });
 
   it('runs in its own phase only, and stops for a run a newer sync moved on', async (): Promise<void> => {

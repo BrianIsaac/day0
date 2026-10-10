@@ -38,7 +38,7 @@ import {
   type FinishingStep,
 } from '../src/docs/finishing';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
-import { MARKER_JUDGEMENTS_PER_SYNC } from '../src/docs/status';
+import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
 import { RELATION_PAGES_PER_SYNC, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { StatusPhasePage } from './docStatus';
@@ -822,9 +822,10 @@ async function walkFinishingPhase(
  * Walk the status phase to its end: every page the generation keeps is restated a bounded page
  * per transaction (`docStatus.restatePages`), and between pages the model is asked about each
  * page whose marker lines no stored judgement stands for, one call a page, at most
- * `MARKER_JUDGEMENTS_PER_SYNC` a finish (N20; the rest are asked at the next sync). A judgement
- * the model could not give leaves the page as it was and is logged: a marker is never why a sync
- * fails, and a vocabulary hit alone decides nothing.
+ * `MARKER_JUDGEMENTS_PER_SYNC` a finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20;
+ * the rest are asked at the next sync). A judgement the model could not give leaves the page as
+ * it was and is logged: a marker is never why a sync fails, and a vocabulary hit alone decides
+ * nothing.
  *
  * @returns The run's cursor after the phase (the scopes phase's start), or null when the run
  *   moved on from under the finish.
@@ -841,6 +842,7 @@ async function walkStatusPhase(
   let checkpoint = start.checkpoint;
   let from = start.from;
   let judged = 0;
+  let judging = 0;
   for (let walked = 1; ; walked += 1) {
     const page: StatusPhasePage | null = await ctx.runMutation(internal.docStatus.restatePages, {
       sourceId: start.sourceId,
@@ -852,8 +854,9 @@ async function walkStatusPhase(
     if (page === null) return null;
     checkpoint = page.checkpoint;
     for (const marker of page.toJudge) {
-      if (judged >= MARKER_JUDGEMENTS_PER_SYNC) break;
+      if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
       judged += 1;
+      const asked = Date.now();
       try {
         const status = await judgeMarker(marker);
         await ctx.runMutation(internal.docStatus.recordMarker, {
@@ -870,6 +873,7 @@ async function walkStatusPhase(
           reason: safeSyncError(error),
         });
       }
+      judging += Date.now() - asked;
     }
     if (page.done) return { checkpoint };
     from = page.from;

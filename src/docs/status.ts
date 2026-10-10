@@ -288,6 +288,14 @@ const MARKER_QUOTE_LIMIT = 400;
  */
 export const MARKER_JUDGEMENTS_PER_SYNC = 20;
 
+/**
+ * The most time one finishing sync spends asking the model about markers, one page after another:
+ * past it no further page is asked and the rest wait for the next sync, as the pages past
+ * `MARKER_JUDGEMENTS_PER_SYNC` do. Twenty judgements at their full timeout are the whole of an
+ * action's ten minutes; this leaves a finish its time whatever the model's pace.
+ */
+export const MARKER_JUDGING_BUDGET_MS = 180_000;
+
 /** The top of a page a marker may sit in, and the lines of it the pre-filter hit. */
 export interface MarkerCandidate {
   /** The page's title and the first `MARKER_EXCERPT_CHARS` characters of its body. */
@@ -400,6 +408,23 @@ export function markerStands(
   candidate: MarkerCandidate | undefined,
 ): marker is StoredMarker {
   return marker !== undefined && candidate !== undefined && marker.quote === candidate.quote;
+}
+
+/**
+ * The stored judgement that decides a page's status now: the page's last one, while the page
+ * holds any marker line. A judgement of lines since edited still holds until the next judgement
+ * replaces it (`markerStands` says the page is to be judged again), so a page judged not current
+ * is not put back among the current ones by an edit to its notice, nor left there while the model
+ * cannot be asked. A page that holds no marker line any more has nothing to be judged by.
+ *
+ * @param marker - The stored judgement, when the page has one.
+ * @param candidate - What the pre-filter finds on the page now.
+ */
+export function markerInForce<Marker extends StoredMarker>(
+  marker: Marker | undefined,
+  candidate: MarkerCandidate | undefined,
+): Marker | undefined {
+  return candidate === undefined ? undefined : marker;
 }
 
 /** What the rules read of one page. */

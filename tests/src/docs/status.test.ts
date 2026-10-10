@@ -9,6 +9,7 @@ import {
   markerCandidate,
   markerJudgementPrompt,
   markerJudgementSchema,
+  markerInForce,
   markerStands,
   nativeStatusOfWord,
   notCurrentWord,
@@ -223,6 +224,20 @@ describe('the marker judgement', (): void => {
     expect(markerStands(marker, edited)).toBe(false);
     expect(markerStands(marker, undefined)).toBe(false);
     expect(markerStands(undefined, candidate)).toBe(false);
+  });
+
+  it('keeps the last judgement in force while the page holds any marker line, and none once it holds none', (): void => {
+    // The second pass's minor 10: an edit to a marker line dropped the judgement at once, so the
+    // page was current again until the model answered, and for good while it could not.
+    const marker = { status: 'superseded' as const, quote: candidate.quote };
+    const edited = markerCandidate(
+      '月结流程',
+      '# 月结流程\n\n本文件已废止,请参阅《月结流程(2027版)》。',
+    );
+    expect(markerInForce(marker, candidate)).toBe(marker);
+    expect(markerInForce(marker, edited)).toBe(marker);
+    expect(markerInForce(marker, undefined)).toBeUndefined();
+    expect(markerInForce(undefined, candidate)).toBeUndefined();
   });
 });
 

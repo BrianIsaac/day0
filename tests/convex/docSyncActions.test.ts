@@ -25,7 +25,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
-import { MARKER_JUDGEMENTS_PER_SYNC } from '../../src/docs/status';
+import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../../src/docs/status';
 import { FINISHING_CURSOR } from '../../convex/docSources';
 import {
   credentialValueFingerprint,
@@ -649,6 +649,54 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
       'finance/close.md': [null, null, null],
     });
   }, 30_000);
+
+  it('keeps a page as last judged when its marker line is edited and the model cannot answer', async (): Promise<void> => {
+    // The second pass's minor 10: the edit dropped the judgement, so with the model down the
+    // deprecated page was current, and citable, until a later sync could ask.
+    const { harness, sourceId, root } = await folderOf({ 'finance/close.md': CLOSE });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['finance/close.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    await writeFile(
+      join(root, 'docs', 'finance/close.md'),
+      CLOSE.replace('2026版', '2027版'),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(markerModel.prompts).toHaveLength(2);
+    expect((await statuses(harness))['finance/close.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+  }, 30_000);
+
+  it('stops asking once a finish has spent its time on judgements, and asks the rest at the next sync', async (): Promise<void> => {
+    // The second pass's minor 10: twenty judgements at thirty seconds each, one after another,
+    // is the whole of an action's ten minutes, and nothing stopped the asking.
+    expect(MARKER_JUDGING_BUDGET_MS).toBe(180_000);
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 6 }, (_unused, index) => [
+          `notes/idea-${index}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    // A slow model: each answer takes a minute.
+    markerModel.reply = (): unknown => {
+      vi.setSystemTime(Date.now() + 60_000);
+      return { status: 'draft', quote: 'DRAFT' };
+    };
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 6 });
+    expect(markerModel.prompts).toHaveLength(3);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(6);
+  }, 60_000);
 
   it('asks about at most twenty pages a sync, and the rest at the next', async (): Promise<void> => {
     expect(MARKER_JUDGEMENTS_PER_SYNC).toBe(20);

@@ -19,6 +19,7 @@ import {
 import {
   decidePageStatus,
   markerCandidate,
+  markerInForce,
   markerStands,
   type DecidedStatus,
   type MarkerCandidate,
@@ -124,9 +125,7 @@ export async function restatePage(
 ): Promise<StatusChange | null> {
   const { source, page, now } = args;
   const manager = page.statusSource === 'manager' ? pageStatusOf(page) : undefined;
-  const marker = markerStands(page.marker, markerCandidate(page.title, page.markdown))
-    ? page.marker
-    : undefined;
+  const marker = markerInForce(page.marker, markerCandidate(page.title, page.markdown));
   const successor = await confirmedSuccessor(ctx, page);
   const decided = decidePageStatus({
     ...(manager !== undefined ? { manager } : {}),
@@ -377,9 +376,10 @@ export interface StatusPhasePage {
  * with it once the pages two walks missed are gone, fenced on the run's cursor as the prunes are,
  * so a newer sync stops it and a finish cut off resumes where it stood.
  *
- * Each page's status is made the rules' outcome (`restatePage`). A judgement that is of other
- * lines than the page's top holds now is removed, and a page whose marker lines have no
- * judgement is answered in `toJudge`: the mutation asks no model.
+ * Each page's status is made the rules' outcome (`restatePage`). A judgement of a page that holds
+ * no marker line any more is removed, and a page whose marker lines have no judgement of their
+ * own, never judged or edited since, is answered in `toJudge`, an edited one keeping its last
+ * judgement until the answer: the mutation asks no model.
  *
  * @returns Where the finish stands, or null when the run is no longer at that checkpoint.
  * @throws Error when the checkpoint is not in the status phase.
@@ -420,7 +420,9 @@ export const restatePages = internalMutation({
       const candidate = markerCandidate(stored.title, stored.markdown);
       let page = stored;
       if (!markerStands(stored.marker, candidate)) {
-        if (stored.marker !== undefined) {
+        // A page with no marker line left drops its judgement; one whose lines were edited keeps
+        // it in force (`markerInForce`) and is judged again.
+        if (stored.marker !== undefined && candidate === undefined) {
           await ctx.db.patch(stored._id, { marker: undefined });
           page = { ...stored, marker: undefined };
         }
