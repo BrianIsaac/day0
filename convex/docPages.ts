@@ -23,6 +23,14 @@ export const PAGE_TABLE_BYTES = 2 * 1024 * 1024;
 /** The most rows one read of the table returns, whatever the caller asks for. */
 export const PAGE_TABLE_ROWS = 50;
 
+/**
+ * The most page bytes one read of the table takes for the pages that superseded its rows, counted
+ * at three bytes a character (the most UTF-8 takes): a successor in another source, or on another
+ * page of the table, is a whole page row of its own, read for its title alone. Past it a
+ * successor is named by its ref, which the superseded row holds.
+ */
+export const SUCCESSOR_BYTES = PAGE_TABLE_BYTES;
+
 /** One stored page as the page table lists it: never its body. */
 export interface DocPageRow {
   readonly _id: Id<'docPages'>;
@@ -43,7 +51,10 @@ export interface DocPageRow {
   readonly decidedByYou?: boolean;
   /** The address of the manager who decided it, when that is not the caller. */
   readonly decidedBy?: string;
-  /** The title of the page that superseded it, when one is named and stored. */
+  /**
+   * The page that superseded it, when one is named: by its title when it is stored, and by its
+   * ref when its row was outside what one read of the table takes (`SUCCESSOR_BYTES`).
+   */
   readonly supersededBy?: string;
   /** Set when a relation still to answer proposes another page as its later version or its twin. */
   readonly possiblySuperseded?: true;
@@ -74,15 +85,44 @@ async function proposedAgainst(ctx: QueryCtx, page: Doc<'docPages'>): Promise<bo
   );
 }
 
-/** The title of the page that superseded a page, when it names one that is stored. */
-async function successorTitle(ctx: QueryCtx, page: Doc<'docPages'>): Promise<string | undefined> {
-  const named = page.supersededBy;
-  if (named === undefined) return undefined;
-  const successor = await ctx.db
-    .query('docPages')
-    .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
-    .unique();
-  return successor?.title;
+/** A page's key among the rows of one read: its source and ref. */
+function pageKey(page: { readonly sourceId: Id<'docSources'>; readonly ref: string }): string {
+  return `${page.sourceId}:${page.ref}`;
+}
+
+/**
+ * What superseded each of the given pages, by the superseded page's id: the successor's title
+ * when it is among the pages given (no read) or is read inside `SUCCESSOR_BYTES`, each successor
+ * once however many rows name it; its ref past that bound; nothing for a successor that is not
+ * stored. Read one after another, in the rows' order, so the bound is kept.
+ */
+async function successorNames(
+  ctx: QueryCtx,
+  pages: readonly Doc<'docPages'>[],
+): Promise<Map<Id<'docPages'>, string>> {
+  const titles = new Map<string, string | null>(pages.map((page) => [pageKey(page), page.title]));
+  const names = new Map<Id<'docPages'>, string>();
+  let bytes = 0;
+  for (const page of pages) {
+    const named = page.supersededBy;
+    if (named === undefined) continue;
+    const key = pageKey(named);
+    if (!titles.has(key)) {
+      if (bytes >= SUCCESSOR_BYTES) {
+        names.set(page._id, named.ref);
+        continue;
+      }
+      const successor = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
+        .unique();
+      bytes += successor === null ? 0 : 3 * (successor.markdown.length + successor.title.length);
+      titles.set(key, successor?.title ?? null);
+    }
+    const title = titles.get(key);
+    if (title !== undefined && title !== null) names.set(page._id, title);
+  }
+  return names;
 }
 
 /**
@@ -124,8 +164,8 @@ async function unreadPages(
  * whether its newest completed sync read each, its status with what decided it, and whether a
  * relation still to answer proposes another page in its place. Public; the caller must own the
  * source, and a source that is gone lists nothing. Reads by the source's index, at most
- * `PAGE_TABLE_ROWS` rows and `PAGE_TABLE_BYTES` a call, with the relations to each row and the
- * page that superseded it; writes nothing.
+ * `PAGE_TABLE_ROWS` rows and `PAGE_TABLE_BYTES` a call, with the relations to each row and, inside
+ * `SUCCESSOR_BYTES`, the pages that superseded its rows; writes nothing.
  */
 export const listForSource = query({
   args: { sourceId: v.id('docSources'), paginationOpts: paginationOptsValidator },
@@ -145,14 +185,13 @@ export const listForSource = query({
           maximumBytesRead: PAGE_TABLE_BYTES,
         }),
     ]);
+    const successors = await successorNames(ctx, result.page);
     const rows = await Promise.all(
       result.page.map(async (page): Promise<DocPageRow> => {
         const reason = unread.get(page.ref);
         const status = pageStatusOf(page);
-        const [proposed, supersededBy] = await Promise.all([
-          status === 'active' ? proposedAgainst(ctx, page) : false,
-          successorTitle(ctx, page),
-        ]);
+        const proposed = status === 'active' ? await proposedAgainst(ctx, page) : false;
+        const supersededBy = successors.get(page._id);
         return {
           _id: page._id,
           ref: page.ref,

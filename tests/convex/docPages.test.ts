@@ -174,6 +174,65 @@ describe('docPages.listForSource', (): void => {
     });
   });
 
+  it('names what superseded each page inside a bound on the page bytes it reads for it', async (): Promise<void> => {
+    // The second pass's minor 5: each row's successor was read as a whole page row, up to 50 of
+    // them at up to 768 KiB each, outside the read's byte bound.
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seed(harness);
+    await harness.run(async (ctx) => {
+      const guides = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'How-to guides',
+        kind: 'folder',
+        locator: 'guides',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      // Three successors in another source, each near the largest a stored page may be.
+      for (const name of ['one', 'two', 'three']) {
+        await ctx.db.insert('docPages', {
+          sourceId: guides,
+          ref: `long-${name}.md`,
+          title: `Long ${name}`,
+          markdown: `# Long ${name}\n\n${'x'.repeat(700 * 1024)}`,
+          updatedAt: 1,
+        });
+      }
+      const superseded = async (ref: string, by: { sourceId: Id<'docSources'>; ref: string }) => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown: `# ${ref}`,
+          updatedAt: 1,
+          status: 'superseded',
+          statusSource: 'manager',
+          supersededBy: by,
+        });
+      };
+      // A successor listed in the same table costs no read of its own.
+      await superseded('old-overview.md', { sourceId, ref: 'overview.md' });
+      await superseded('old-a.md', { sourceId: guides, ref: 'long-one.md' });
+      // The same successor again is read once.
+      await superseded('old-b.md', { sourceId: guides, ref: 'long-one.md' });
+      await superseded('old-c.md', { sourceId: guides, ref: 'long-two.md' });
+      await superseded('old-d.md', { sourceId: guides, ref: 'long-three.md' });
+    });
+    const result = await harness
+      .withIdentity(managerIdentity())
+      .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE });
+    const named = Object.fromEntries(result.page.map((row) => [row.ref, row.supersededBy]));
+    expect(named).toMatchObject({
+      'old-overview.md': 'Team overview',
+      'old-a.md': 'Long one',
+      'old-b.md': 'Long one',
+      // Past the bound a successor is named by its ref, which the row holds, with no read.
+      'old-c.md': 'long-two.md',
+      'old-d.md': 'long-three.md',
+    });
+  });
+
   it('returns at most its row bound however many are asked for', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seed(harness);
