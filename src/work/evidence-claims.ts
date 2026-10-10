@@ -10,7 +10,7 @@ import {
 } from '../surfaces/policy';
 import { redactTokenShapes } from '../surfaces/redact';
 import type { AppliedAction } from '../surfaces/types';
-import type { MockAction, WorkCandidate } from './types';
+import type { MockAction, MockActionTool, WorkCandidate } from './types';
 
 /**
  * The evidence invariant for what the executor says to people.
@@ -381,14 +381,20 @@ function negatesReport(sentence: string): boolean {
  * A sentence with its plans and promises left out (W13-R2): nothing of one opening "Plan:", and of
  * any other each clause carrying "will", so "I posted both notes and will comment once they
  * land." still reports the posts and "The ticket is closed and the owner will be notified."
- * still claims the close.
+ * still claims the close. A clause that is kept keeps the word that joined it, so the second verb
+ * of "was drafted per the doc and posted in the thread" still reads as a report (W14-R44: Pip's
+ * comment on 14-FW's bed, which a comma in the joiner's place hid from every report form).
  */
 function withoutIntentions(sentence: string): string {
   if (/^\s*plan\s*:/i.test(sentence)) return '';
-  return sentence
-    .split(/,\s*|\s+(?:and|then|but)\s+/i)
-    .filter((clause: string): boolean => !/\bwill\b/i.test(clause))
-    .join(', ');
+  const parts = sentence.split(/(,\s*|\s+(?:and|then|but)\s+)/i);
+  let kept = '';
+  for (let at = 0; at < parts.length; at += 2) {
+    const clause = parts[at] ?? '';
+    if (/\bwill\b/i.test(clause)) continue;
+    kept += kept === '' ? clause : `${parts[at - 1] ?? ', '}${clause}`;
+  }
+  return kept;
 }
 
 /**
@@ -434,9 +440,49 @@ function namingStems(text: string): Set<string> {
   return new Set([...stemsOf(text)].filter((word) => !REPORT_WORDS.has(word)));
 }
 
+/** A write as a report names it: its kind and its own words. */
+interface NamedWrite {
+  readonly kind: WriteKind;
+  readonly text: string;
+}
+
+/**
+ * A mock office verb as a report names it (W14-R44): each of the four writes to the mock office,
+ * so a message beside one is bound to it by its words as on a connected surface, and the
+ * declaration is not the only reader. A ticket update that carries a comment is the comment; one
+ * that only moves the ticket is the state change.
+ */
+function mockWriteOf(tool: MockActionTool, args: MockAction['args']): NamedWrite | undefined {
+  switch (tool) {
+    case 'slack.postMessage':
+    case 'twitter.reply':
+      return { kind: 'chat', text: args.body ?? '' };
+    case 'ticket.update':
+      return {
+        kind: args.comment?.trim() ? 'comment' : args.status ? 'state' : 'other',
+        text: [args.slug, args.comment, args.status]
+          .filter((value) => value !== undefined)
+          .join('\n'),
+      };
+    case 'spreadsheet.appendRow':
+      return {
+        kind: 'other',
+        text: [args.tabName, ...(args.cells ?? []).map((cell) => cell.value)]
+          .filter((value) => value !== undefined)
+          .join('\n'),
+      };
+    default: {
+      // A persisted action may carry a tool no release emits; it is no write a report names.
+      const unhandled: never = tool;
+      void unhandled;
+      return undefined;
+    }
+  }
+}
+
 /** A write's kind and its own words (the values of its arguments, not their keys); undefined for anything else. */
-function writeOf(action: MockAction): { kind: WriteKind; text: string } | undefined {
-  if (!isSurfaceTool(action.tool)) return undefined;
+function writeOf(action: MockAction): NamedWrite | undefined {
+  if (!isSurfaceTool(action.tool)) return mockWriteOf(action.tool, action.args ?? {});
   const parsed = parseSurfaceAction(action);
   if (!parsed.ok || actionIntent(parsed.action) !== 'write') return undefined;
   const args =
