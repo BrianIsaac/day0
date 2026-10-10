@@ -3243,6 +3243,26 @@ describe('the block status pass (15-K; K-1)', (): void => {
     }
   };
 
+  /**
+   * Split the stored pages as 0.18.0 left their blocks: by the block backfill, run to its end,
+   * then with the status taken off each block again. Re-pinned by 15-A: the block writer now
+   * carries its page's status (`replacePageBlocks`), so the tip's own split cannot store a block
+   * the way 0.18.0 did, and the pass's input has to be made by hand.
+   */
+  const splitAsBefore019 = async (harness: Harness): Promise<void> => {
+    for (;;) {
+      const progress = await harness.mutation(internal.migrations.runMigrationPage, {
+        name: 'docs-backfill-blocks',
+      });
+      if (progress.completedAt !== undefined) break;
+    }
+    await harness.run(async (ctx) => {
+      for (const block of await ctx.db.query('docBlocks').collect()) {
+        await ctx.db.patch(block._id, { status: undefined });
+      }
+    });
+  };
+
   it('is registered at 0.19.0 after the block backfill, the newest release any migration names', (): void => {
     expect(MIGRATIONS['docs-blocks-status'].release).toBe('0.19.0');
     expect(NEWEST_MIGRATION_RELEASE).toBe('0.19.0');
@@ -3261,6 +3281,7 @@ describe('the block status pass (15-K; K-1)', (): void => {
       markdown: '# A\n\nAlpha.\n\n## B\n\nBeta.',
     });
     await storedPage(harness, { sourceId, ref: 'c.md', markdown: '# C\n\nGamma.' });
+    await splitAsBefore019(harness);
     // A block a split wrote with its page's status after the push and before the pass ran.
     await harness.run(async (ctx) => {
       await ctx.db.insert('docBlocks', {
@@ -3331,7 +3352,7 @@ describe('the block status pass (15-K; K-1)', (): void => {
             .take(12)
         ).map((block) => block.pageRef),
       );
-    await harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-backfill-blocks' });
+    await splitAsBefore019(harness);
     expect(await found()).toEqual([]);
     await runAll(harness);
     expect(await found()).toEqual(['refresh.md']);

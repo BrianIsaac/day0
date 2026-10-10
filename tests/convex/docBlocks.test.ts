@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { replacePageBlocks } from '../../convex/docBlocks';
+import { copyPageStatusToBlocks, replacePageBlocks } from '../../convex/docBlocks';
+import type { PageStatus } from '../../src/docs/authority';
 import { allConvexModules } from './all-modules';
 
 afterEach((): void => {
@@ -56,7 +57,13 @@ async function sourceOf(
 /** Split `markdown` into the page's stored blocks, as an upsert does. */
 async function split(
   harness: TestConvex<typeof schema>,
-  page: { sourceId: Id<'docSources'>; runId: Id<'docSyncRuns'>; userId?: string; pageRef?: string },
+  page: {
+    sourceId: Id<'docSources'>;
+    runId: Id<'docSyncRuns'>;
+    userId?: string;
+    pageRef?: string;
+    status?: PageStatus;
+  },
   markdown: string,
 ): Promise<number> {
   return await harness.run(
@@ -67,6 +74,7 @@ async function split(
         pageRef: page.pageRef ?? 'runbooks/refresh.md',
         generation: page.runId,
         markdown,
+        ...(page.status !== undefined ? { status: page.status } : {}),
       }),
   );
 }
@@ -176,6 +184,107 @@ describe('splitStoredPage', (): void => {
     expect(await split('runbooks/refresh.md')).toBe(0);
     expect(await split('gone.md')).toBe(0);
     expect(await blocksOf(harness, sourceId)).toHaveLength(3);
+  });
+});
+
+describe("a page's status on its blocks (15-A, the item 15-K carried)", (): void => {
+  it('stores every block under the status of its page, and as active for a page nothing has decided', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    await split(harness, { sourceId, runId, pageRef: 'old.md', status: 'superseded' }, RUNBOOK);
+    expect((await blocksOf(harness, sourceId)).map((block) => block.status)).toEqual([
+      'active',
+      'active',
+      'active',
+    ]);
+    expect((await blocksOf(harness, sourceId, 'old.md')).map((block) => block.status)).toEqual([
+      'superseded',
+      'superseded',
+      'superseded',
+    ]);
+  });
+
+  it('patches a kept block whose status differs from its page, so its row and a citation of it stay', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    const before = await blocksOf(harness, sourceId);
+    expect(await split(harness, { sourceId, runId, status: 'archived' }, RUNBOOK)).toBe(3);
+    const after = await blocksOf(harness, sourceId);
+    expect(after.map((block) => block._id)).toEqual(before.map((block) => block._id));
+    expect(after.map((block) => block.status)).toEqual(['archived', 'archived', 'archived']);
+    expect(await split(harness, { sourceId, runId, status: 'archived' }, RUNBOOK)).toBe(0);
+  });
+
+  it('keeps the status on a block it rewrites in place, which the 0.19.0 pass wrote', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    // The rows as the `docs-blocks-status` pass leaves a block stored before 0.19.0.
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db.query('docBlocks').collect()) {
+        await ctx.db.patch(row._id, { status: 'active' });
+      }
+    });
+    const edited = RUNBOOK.replace('Press refresh twice.', 'Press refresh three times.');
+    await split(harness, { sourceId, runId }, edited);
+    const after = await blocksOf(harness, sourceId);
+    expect(after.map((block) => [block.text, block.status])).toEqual([
+      ['Open the pipeline dashboard.', 'active'],
+      ['Press refresh three times.', 'active'],
+      ['Post in the revops channel.', 'active'],
+    ]);
+  });
+
+  it("splits a stored page under the status its row holds, so a draft's blocks are drafts", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        status: 'draft',
+        statusSource: 'manager',
+      });
+    });
+    await harness.mutation(internal.docBlocks.splitStoredPage, {
+      sourceId,
+      ref: 'runbooks/refresh.md',
+      generation: runId,
+    });
+    expect((await blocksOf(harness, sourceId)).map((block) => block.status)).toEqual([
+      'draft',
+      'draft',
+      'draft',
+    ]);
+  });
+
+  it("copies a page's new status onto its blocks with no re-split, writing only the rows that differ", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    await split(harness, { sourceId, runId, pageRef: 'other.md' }, RUNBOOK);
+    const before = await blocksOf(harness, sourceId);
+    const copy = async (status: PageStatus): Promise<number> =>
+      await harness.run(
+        async (ctx) =>
+          await copyPageStatusToBlocks(ctx, { sourceId, pageRef: 'runbooks/refresh.md', status }),
+      );
+    expect(await copy('superseded')).toBe(3);
+    const after = await blocksOf(harness, sourceId);
+    expect(after.map((block) => [block._id, block.hash, block.status])).toEqual(
+      before.map((block) => [block._id, block.hash, 'superseded']),
+    );
+    expect(await copy('superseded')).toBe(0);
+    expect((await blocksOf(harness, sourceId, 'other.md')).map((block) => block.status)).toEqual([
+      'active',
+      'active',
+      'active',
+    ]);
   });
 });
 

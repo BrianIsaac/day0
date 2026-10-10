@@ -9,6 +9,7 @@ import {
   splitPage,
   type DocBlock,
 } from '../src/docs/blocks';
+import { pageStatusOf, type PageStatus } from '../src/docs/authority';
 
 /*
  * The block store behind the documentation search (wave 14, 14-I; the wave file's section 6.1).
@@ -18,7 +19,8 @@ import {
  * Writers: `replacePageBlocks`, through `splitStoredPage`, which `docSources.upsertPage`
  * schedules for each page it writes (it splits the page as stored when it runs, so it converges
  * on the newest write), and directly in the `docs-backfill-blocks` pass;
- * `prunePageBlocks`, scheduled by `docSources.prunePages` for a page a finish removed; and
+ * `copyPageStatusToBlocks`, for a page whose status changed and whose text did not (wave 15,
+ * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`, scheduled by `docSources.prunePages` for a page a finish removed; and
  * `docSources.deleteSourceRows` for a removed source. Readers: `searchBlocks` (14-R's selection
  * calls it from `docSelection`) and `unchangedPage` (the sync's skip of an unchanged page).
  * Nothing here is public, so no caller reaches it without a guarded public function first.
@@ -49,6 +51,8 @@ export interface PageToSplit {
   readonly generation: Id<'docSyncRuns'>;
   /** The page as stored: already redacted. */
   readonly markdown: string;
+  /** The page's status (`pageStatusOf`), which every block of it carries; absent reads as active. */
+  readonly status?: PageStatus;
 }
 
 /** A block as `searchBlocks` answers it: enough to cite and to re-score, not the index's text. */
@@ -67,7 +71,10 @@ export interface FoundBlock {
   readonly rank: number;
 }
 
-/** Whether a stored block row already holds a split block, field for field. */
+/**
+ * Whether a stored block row already holds a split block, field for field. Its status is not part
+ * of the block: a kept row whose status differs from its page's is patched, never rewritten.
+ */
 function sameBlock(row: Doc<'docBlocks'>, block: DocBlock, userId: string): boolean {
   return (
     row.userId === userId &&
@@ -94,6 +101,7 @@ function blockRow(
     kind: block.kind,
     hash: block.hash,
     chars: block.chars,
+    status: pageStatusOf(page),
   };
 }
 
@@ -104,11 +112,13 @@ function blockRow(
  * id, so a citation of it, and the run that wrote it stay; only its place is moved), so an edit
  * above a cited section leaves the cite standing (W14-R2). A block no row holds takes the row
  * left at its place, or any row left over, or a new one; the rows left after that are deleted.
- * So running it twice over the same Markdown changes nothing, which the backfill relies on.
+ * Every row carries the page's status (wave 15): a kept row whose status differs is patched.
+ * So running it twice over the same Markdown and status changes nothing, which the backfill
+ * relies on.
  *
  * @param ctx - The writing mutation's context.
- * @param page - The page and the run writing it.
- * @returns How many block rows it inserted, rewrote, moved or deleted.
+ * @param page - The page, its status and the run writing it.
+ * @returns How many block rows it inserted, rewrote, moved, restated or deleted.
  */
 export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Promise<number> {
   const blocks = splitPage(page.markdown);
@@ -117,10 +127,11 @@ export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Pr
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef))
     .take(MAX_BLOCKS_PER_PAGE);
   const { kept, rewritten, left } = matchStoredBlocks(stored, blocks, page.userId);
+  const status = pageStatusOf(page);
   let changed = 0;
   for (const [index, row] of kept) {
-    if (row.index === index) continue;
-    await ctx.db.patch(row._id, { index });
+    if (row.index === index && row.status === status) continue;
+    await ctx.db.patch(row._id, { index, status });
     changed += 1;
   }
   for (const { block, row } of rewritten) {
@@ -183,6 +194,37 @@ function matchStoredBlocks(
   return { kept, rewritten, left: [...free.values()] };
 }
 
+/**
+ * Copy a page's status onto its stored blocks with no re-split, in the caller's transaction: the
+ * write for a page whose status changed and whose text did not (a status rides beside the page's
+ * hash, so an unchanged page is never split again). Only a row whose status differs is written;
+ * at most `MAX_BLOCKS_PER_PAGE` rows, a page's bound.
+ *
+ * @param ctx - The writing mutation's context.
+ * @param page - The page and the status it now has.
+ * @returns How many block rows it patched.
+ */
+export async function copyPageStatusToBlocks(
+  ctx: MutationCtx,
+  page: {
+    readonly sourceId: Id<'docSources'>;
+    readonly pageRef: string;
+    readonly status: PageStatus;
+  },
+): Promise<number> {
+  const stored = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef))
+    .take(MAX_BLOCKS_PER_PAGE);
+  let patched = 0;
+  for (const row of stored) {
+    if (row.status === page.status) continue;
+    await ctx.db.patch(row._id, { status: page.status });
+    patched += 1;
+  }
+  return patched;
+}
+
 /** Delete a page's blocks from `index` on, in rounds a page never outgrows. */
 async function deleteBlocksFrom(
   ctx: MutationCtx,
@@ -235,9 +277,10 @@ export const prunePageBlocks = internalMutation({
 /**
  * Split a stored page into its blocks, as it is stored when this runs. Internal; scheduled by
  * `docSources.upsertPage` for each page it writes, so the page's own transaction stays one
- * page's size. A page gone by then leaves its blocks to `prunePageBlocks`.
+ * page's size. A page gone by then leaves its blocks to `prunePageBlocks`. Every block takes the
+ * status the page's row holds then.
  *
- * @returns How many block rows it inserted, rewrote or deleted.
+ * @returns How many block rows it inserted, rewrote, restated or deleted.
  */
 export const splitStoredPage = internalMutation({
   args: { sourceId: v.id('docSources'), ref: v.string(), generation: v.id('docSyncRuns') },
@@ -256,6 +299,7 @@ export const splitStoredPage = internalMutation({
       pageRef: args.ref,
       generation: args.generation,
       markdown: page.markdown,
+      status: pageStatusOf(page),
     });
   },
 });
