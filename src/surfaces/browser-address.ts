@@ -23,7 +23,11 @@ import {
 
 /** Whether a host is this machine's own name or an address literal Day0 never dials. */
 function isNeverOpenedHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  // Without the root's trailing dot: `localhost.` is `localhost`.
+  const host = hostname
+    .replace(/^\[|\]$/g, '')
+    .replace(/\.$/, '')
+    .toLowerCase();
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   return isIP(host) !== 0 && !isDiallablePrivateAddress(host);
 }

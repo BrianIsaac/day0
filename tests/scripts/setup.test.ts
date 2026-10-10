@@ -1046,6 +1046,11 @@ describe('the values written into .env.local', (): void => {
         '.corp.internal',
       ]).addPrivateHosts,
     ).toEqual(['looker-tile', '.corp.internal']);
+    // A list in one argument is its entries, each added once (the second pass).
+    expect(
+      parseSetupArguments(['--add-private-host', 'looker-tile, wiki.corp.internal'])
+        .addPrivateHosts,
+    ).toEqual(['looker-tile', 'wiki.corp.internal']);
     expect(() => parseSetupArguments(['--add-private-host', 'localhost'])).toThrow(
       /--add-private-host: .*localhost/,
     );

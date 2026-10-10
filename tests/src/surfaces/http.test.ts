@@ -613,7 +613,16 @@ describe('a form body by its shape (W14-R55)', (): void => {
   });
 
   it('does not read base64 padding or prose with an equals sign as a form', async (): Promise<void> => {
-    for (const body of ['dGVzdA==', 'dGVzdGE=', 'Result: x=1 and y=2', 'see a=b for details']) {
+    for (const body of [
+      'dGVzdA==',
+      'dGVzdGE=',
+      'Result: x=1 and y=2',
+      'see a=b for details',
+      // Lines of settings are text, not one form (the second pass).
+      'env=prod\nregion=eu',
+      // A value Day0 cannot encode goes as it was written, never as a thrown error.
+      'text=broken \ud800 half',
+    ]) {
       expect(await sent(body), body).toEqual({ type: undefined, body });
     }
   });

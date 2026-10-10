@@ -109,11 +109,11 @@ const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';
 
 /**
  * One pair of a form body: a parameter name (letters, digits and the marks a name is written
- * with), `=`, and a value that neither opens on `=` nor holds `&`. The value may hold a space: a
- * form is read by its shape, and what a value leaves unencoded is encoded on the way out
- * (W14-R55).
+ * with), `=`, and a value that neither opens on `=` nor holds `&` or a line break (lines of
+ * settings are text, not a form). The value may hold a space: a form is read by its shape, and
+ * what a value leaves unencoded is encoded on the way out (W14-R55).
  */
-const FORM_PAIR = /^[\w.[\]%-]+=(?!=)[^&]*$/;
+const FORM_PAIR = /^[\w.[\]%-]+=(?!=)[^&\r\n]*$/;
 
 /** The characters a form value carries as written: unreserved ones, `+` and `%`. */
 const FORM_SAFE = /^[A-Za-z0-9\-._~!*'()%+]*$/;
@@ -135,17 +135,23 @@ function formPairs(text: string): string[] | undefined {
 /**
  * A form body as it goes out: each value with what it left unencoded escaped (a space, a lone
  * `%`, punctuation), its `+` signs and its own escapes kept, so a body already encoded is sent
- * byte for byte.
+ * byte for byte. Nothing for a value that cannot be encoded (half of a surrogate pair): the body
+ * then goes as the action wrote it.
  */
-function encodedForm(pairs: readonly string[]): string {
-  return pairs
-    .map((pair) => {
-      const at = pair.indexOf('=');
-      const value = pair.slice(at + 1);
-      if (FORM_SAFE.test(value) && !/%(?![0-9A-Fa-f]{2})/.test(value)) return pair;
-      return `${pair.slice(0, at + 1)}${value.replace(FORM_UNSAFE, (raw) => encodeURIComponent(raw))}`;
-    })
-    .join('&');
+function encodedForm(pairs: readonly string[]): string | undefined {
+  try {
+    return pairs
+      .map((pair) => {
+        const at = pair.indexOf('=');
+        const value = pair.slice(at + 1);
+        if (FORM_SAFE.test(value) && !/%(?![0-9A-Fa-f]{2})/.test(value)) return pair;
+        return `${pair.slice(0, at + 1)}${value.replace(FORM_UNSAFE, (raw) => encodeURIComponent(raw))}`;
+      })
+      .join('&');
+  } catch {
+    // `encodeURIComponent` refuses a lone surrogate: not a form Day0 can send as one.
+    return undefined;
+  }
 }
 
 /** Whether a body is JSON: an object, an array or a scalar ("text", 42, true, null). */
@@ -177,9 +183,8 @@ function labelledBody(body: string): LabelledBody {
   if (text === '') return { body };
   if (isJsonText(text)) return { body, contentType: JSON_CONTENT_TYPE };
   const pairs = formPairs(text);
-  return pairs === undefined
-    ? { body }
-    : { body: encodedForm(pairs), contentType: FORM_CONTENT_TYPE };
+  const form = pairs === undefined ? undefined : encodedForm(pairs);
+  return form === undefined ? { body } : { body: form, contentType: FORM_CONTENT_TYPE };
 }
 
 /**

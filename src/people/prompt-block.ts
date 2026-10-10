@@ -130,9 +130,9 @@ function isSlackId(token: string): boolean {
 
 /**
  * A run that may be a phone number: digits with the spaces, dots, dashes and brackets they use,
- * never one that follows a currency sign.
+ * never one that follows a currency sign or a lettered prefix ("INV-45678901" is a reference).
  */
-const PHONE_SHAPE = /(?<![\w+$\u20ac\u00a3\u00a5])\+?\(?\d[\d\s().-]{6,}\d(?![\w])/g;
+const PHONE_SHAPE = /(?<![\w+$\u20ac\u00a3\u00a5])(?<![A-Za-z]-)\+?\(?\d[\d\s().-]{6,}\d(?![\w])/g;
 
 /** Four digits that read as a year of this century or the last. */
 const YEAR_SHAPE = /^(?:19|20)\d\d$/;
@@ -145,12 +145,13 @@ const DATE_SHAPE = /^(?:19|20)\d\d(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$/;
 
 /**
  * Whether a run of eight digits is a local phone number (W14-R54): two groups of four joined by a
- * space or a dash ("6123 4567") unless both read as years or as times of day ("2024 2025",
- * "0900-1730"); or eight digits together ("90123456") that open with 2 to 9 and are neither a date
- * ("20261008") nor a round amount ("25000000").
+ * space ("6123 4567") unless both read as years or as times of day ("2024 2025"); or eight digits
+ * together ("90123456") that open with 2 to 9 and are neither a date ("20261008") nor a round
+ * amount ("25000000"). Two groups joined by a dash are a range ("1000-5000", "0900-1730"), never a
+ * number.
  */
 function isLocalNumber(run: string): boolean {
-  const pair = /^(\d{4})[ -](\d{4})$/.exec(run);
+  const pair = /^(\d{4}) (\d{4})$/.exec(run);
   if (pair !== null) {
     const groups = [pair[1] ?? '', pair[2] ?? ''];
     return (

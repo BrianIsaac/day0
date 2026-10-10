@@ -158,6 +158,15 @@ async function heldForEmployee(
   );
 }
 
+/** The agreements for every employee held for an employee, none for one no owner holds. */
+async function heldFor(
+  ctx: Pick<QueryCtx, 'db'>,
+  agent: Doc<'agents'>,
+): Promise<Set<Id<'workingAgreements'>>> {
+  const scope = employeeOwnerScope(agent);
+  return scope === undefined ? new Set() : await heldForEmployee(ctx, scope, agent._id);
+}
+
 /** Whether an agreement binds an employee: its own, or every employee's of the same owner. */
 function binds(row: Doc<'workingAgreements'>, agent: Doc<'agents'>): boolean {
   const scope = employeeOwnerScope(agent);
@@ -434,12 +443,15 @@ export async function markAgreementsAppliedInTransaction(
 ): Promise<Id<'workingAgreements'>[]> {
   const agent = await ctx.db.get(row.agentId);
   if (!agent) return [];
+  const held = await heldFor(ctx, agent);
   const kept: Id<'workingAgreements'>[] = [];
   for (const raw of ids) {
     const id = typeof raw === 'string' ? ctx.db.normalizeId('workingAgreements', raw) : null;
     if (!id || kept.includes(id)) continue;
     const agreement = await ctx.db.get(id);
     if (!agreement || agreement.status !== 'active' || !binds(agreement, agent)) continue;
+    // Held for this employee since the plan was drafted: its charter was never checked against it.
+    if (held.has(id)) continue;
     if (!agreement.appliedTo.includes(row._id)) {
       await ctx.db.patch(id, {
         appliedTo: [...agreement.appliedTo, row._id].slice(-AGREEMENT_APPLIED_KEPT),
@@ -467,11 +479,15 @@ export async function planAgreementsAtApproval(
   const ids = plan?.appliedAgreements;
   if (plan === undefined || ids === undefined) return undefined;
   const agent = await ctx.db.get(row.agentId);
+  const held = agent ? await heldFor(ctx, agent) : new Set<Id<'workingAgreements'>>();
   const inForce: string[] = [];
   for (const raw of ids) {
     const id = ctx.db.normalizeId('workingAgreements', raw);
     const agreement = id ? await ctx.db.get(id) : null;
-    if (agent && agreement?.status === 'active' && binds(agreement, agent)) inForce.push(raw);
+    // One held for this employee since the draft is not in force for it (the second pass).
+    if (agent && id && agreement?.status === 'active' && binds(agreement, agent) && !held.has(id)) {
+      inForce.push(raw);
+    }
   }
   if (inForce.length === ids.length) return undefined;
   const settled: ExecutionPlan = { ...plan };
@@ -575,7 +591,10 @@ async function scheduleHoldChecks(ctx: MutationCtx, agentId: Id<'agents'>): Prom
 /**
  * Schedule one check of the agreements an employee's holds name, unless the owner is past the
  * employees the check reads, and stamp each hold as tried now (`refusal.judgedAt`), which is what
- * {@link scheduleDueHoldChecks} reads.
+ * {@link scheduleDueHoldChecks} reads. A hold whose agreement is in effect for nobody any more
+ * (retired, refused by another charter, replaced by an edit) is set aside here, with no check: it
+ * holds nothing, and left standing it would be scheduled for ever and count against the holds
+ * read (the second pass).
  *
  * @returns Whether a check was scheduled.
  */
@@ -585,15 +604,18 @@ async function scheduleCheckOfHolds(
   holds: readonly Doc<'workingAgreements'>[],
   now: number,
 ): Promise<boolean> {
-  const first = holds[0];
+  const moot = await mootHolds(ctx, holds);
+  for (const holdId of moot) await ctx.db.patch(holdId, { status: 'dismissed' });
+  const live = holds.filter((hold) => !moot.has(hold._id));
+  const first = live[0];
   if (first === undefined || (await pastTheCheck(ctx, first.userId))) return false;
-  for (const hold of holds) {
+  for (const hold of live) {
     if (hold.refusal) await ctx.db.patch(hold._id, { refusal: { ...hold.refusal, judgedAt: now } });
   }
   await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
     agentId,
     attempt: 0,
-    agreementIds: holds.flatMap((hold) => (hold.supersedes ? [hold.supersedes] : [])),
+    agreementIds: live.flatMap((hold) => (hold.supersedes ? [hold.supersedes] : [])),
   });
   return true;
 }
@@ -1334,7 +1356,9 @@ async function mootHolds(
     holds.map(async (hold) => (hold.supersedes ? await ctx.db.get(hold.supersedes) : null)),
   );
   return new Set(
-    holds.filter((_, index) => held[index]?.status !== 'active').map((hold) => hold._id),
+    holds
+      .filter((_, index) => held[index]?.status !== 'active' || held[index]?.agentId !== undefined)
+      .map((hold) => hold._id),
   );
 }
 

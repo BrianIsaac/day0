@@ -584,6 +584,25 @@ verbs, which need no Docker: ./setup.sh cloud --help, and README.md, "Your own
 hosted copy".`;
 
 /**
+ * The hosts given to one `--add-private-host`, each held to what `DAY0_PRIVATE_HOSTS` takes before
+ * anything is written: the list's own parser refuses this machine's names and the addresses Day0
+ * never dials, and a list that cannot be parsed refuses every private host afterwards. One
+ * argument may carry several, separated as the list separates them.
+ *
+ * @throws Error naming the flag and the parser's reason.
+ */
+function privateHostArguments(value: string): string[] {
+  try {
+    privateHostAllowlist(value);
+  } catch (error) {
+    throw new Error(
+      `--add-private-host: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return value.split(/[\s,]+/).filter(Boolean);
+}
+
+/**
  * Read the command line.
  *
  * Args:
@@ -595,24 +614,6 @@ hosted copy".`;
  * Raises:
  *   Error: If a flag is unknown, or its value is not one this helper has.
  */
-/**
- * A host given to `--add-private-host`, held to what `DAY0_PRIVATE_HOSTS` takes before anything
- * is written: the list's own parser refuses this machine's names and the addresses Day0 never
- * dials, and a list that cannot be parsed refuses every private host afterwards.
- *
- * @throws Error naming the flag and the parser's reason.
- */
-function privateHostArgument(host: string): string {
-  try {
-    privateHostAllowlist(host);
-  } catch (error) {
-    throw new Error(
-      `--add-private-host: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  return host;
-}
-
 export function parseSetupArguments(argv: readonly string[]): SetupOptions {
   const options: SetupOptions = {
     mode: 'mock',
@@ -717,7 +718,10 @@ export function parseSetupArguments(argv: readonly string[]): SetupOptions {
     } else if (argument === '--boss-email') {
       options.bossEmail = take();
     } else if (argument === '--add-private-host') {
-      options.addPrivateHosts = [...(options.addPrivateHosts ?? []), privateHostArgument(take())];
+      options.addPrivateHosts = [
+        ...(options.addPrivateHosts ?? []),
+        ...privateHostArguments(take()),
+      ];
     } else if (argument === '--provider') {
       options.signIn = {
         ...options.signIn,

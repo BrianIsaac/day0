@@ -378,7 +378,6 @@ describe('the People block after the wave 13 review (14-FX, W13-R19 to W13-R21)'
       'files.acme.lan',
       'hr.acme.intranet',
       '6123 4567',
-      '6123-4567',
       '90123456',
     ]) {
       expect(withoutIdentities(`Owner ${leak} here`), leak).toBe('Owner here');
@@ -392,6 +391,11 @@ describe('the People block after the wave 13 review (14-FX, W13-R19 to W13-R21)'
       'batch 20261008 close',
       'spend over 10000000',
       'spend over 25000000',
+      // Two groups joined by a dash are a range, and a number after a lettered prefix is a
+      // reference, not a phone number (the second pass).
+      'orders of 1000-5000 units',
+      'lines 6123-4567',
+      'invoice INV-45678901',
       'TREASURER and ENGINEERING lead',
       // An all-letter token cannot be told from an upper-case word, so it stays (15-FX's decision).
       'UABCDEFGH',

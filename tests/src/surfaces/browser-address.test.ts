@@ -30,6 +30,8 @@ describe('webUiAddressRefusal', (): void => {
       'http://app.localhost/login',
       'http://127.0.0.1:8080/',
       'https://localhost:3000/',
+      // A fully qualified spelling of the same name (the second pass).
+      'https://localhost./',
       'https://169.254.169.254/',
       'https://[::1]/',
       'http://0.0.0.0/',

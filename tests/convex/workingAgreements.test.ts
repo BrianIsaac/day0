@@ -1695,6 +1695,76 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(await plannerReads(harness, hired, 'LOG-10')).toEqual([agreementId]);
   });
 
+  it('leaves a held agreement out of a plan stored or approved after the hold, though the plan was drafted with it (second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { first, hired, agreementId } = await heldOffice(harness);
+    // Stored after the hold: the plan says it applied the agreement, and it may not for Ines.
+    const stored = await seedItem(harness, hired, 'LOG-5', 'claimed');
+    await harness.mutation(internal.planApproval.setPlan, {
+      workItemId: stored,
+      plan: { ...plan, appliedAgreements: [agreementId] },
+    });
+    // Drafted before the hold and approved after it: the approval drops it too.
+    const drafted = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: hired,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'LOG-6',
+          title: 'Exception: LOG-6',
+          contentSummary: 'Notify the customer.',
+          contentRefs: [],
+          state: 'plan-pending',
+          verdict: { decision: 'claim', value: 60, risk: 20, requiredPermissions: [] },
+          plan: { ...plan, appliedAgreements: [agreementId] },
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: drafted });
+    const plans = await harness.run(async (ctx) => [
+      (await ctx.db.get(stored))?.plan as ExecutionPlan | undefined,
+      (await ctx.db.get(drafted))?.plan as ExecutionPlan | undefined,
+    ]);
+    expect(plans.map((kept) => kept?.appliedAgreements)).toEqual([undefined, undefined]);
+    // An employee it is in effect for keeps it on its plan.
+    const others = await seedItem(harness, first, 'LOG-7', 'claimed');
+    await harness.mutation(internal.planApproval.setPlan, {
+      workItemId: others,
+      plan: { ...plan, appliedAgreements: [agreementId] },
+    });
+    expect(
+      ((await harness.run(async (ctx) => (await ctx.db.get(others))?.plan)) as ExecutionPlan)
+        .appliedAgreements,
+    ).toEqual([agreementId]);
+  }, 60_000);
+
+  it('sets aside a hold whose agreement is in effect for nobody any more, and schedules no check for it (second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { first, last, agreementId, holdId } = await heldOffice(harness);
+    await letGo(harness, last);
+    // The manager retires the agreement on another employee's card: Ines's hold holds nothing.
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.retire, { agreementId, agentId: first });
+    vi.setSystemTime(Date.now() + CHECK_STALE_MS + 1);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect((await agreementsOf(harness)).find((row) => row._id === holdId)?.status).toBe(
+      'dismissed',
+    );
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      scheduled.filter((job) => job.name === 'workingAgreementActions:checkForCharter'),
+    ).toEqual([]);
+    await drain(harness);
+    expect(recorded.model).toEqual([]);
+  }, 60_000);
+
   it('checks an amended charter against the agreements for every employee, as an approved one is', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness, { version: '1.0' });
