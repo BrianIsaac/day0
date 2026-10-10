@@ -113,7 +113,14 @@ async function startBackend(fake: FakeSlack, appLevelToken: string): Promise<Bac
         return reply(200, { status: 'decided' });
       }
       return reply(404, {});
-    })();
+    })().catch((): void => {
+      // The stand-in's own call failed: its Slack is gone, as at a teardown that meets a retry
+      // in flight. Answered as a backend answers for a Slack it cannot reach, where the bridge
+      // is still there to hear it; a rejection nobody handles fails a run whose tests all pass.
+      if (response.headersSent || response.destroyed) return;
+      response.writeHead(502, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'slack could not be reached' }));
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
@@ -583,6 +590,32 @@ describe('the Socket Mode bridge’s heartbeat (wave 13, 13-FS; D-6 (b))', (): v
     expect(lastReport()).toMatchObject({
       live: false,
       failure: 'the connection URL was refused: refused by the test',
+    });
+  });
+
+  it('is answered by a backend whose own call to Slack failed, which leaves no rejection behind (15-J)', async (): Promise<void> => {
+    // The shape a teardown leaves when a retry is in flight (the test above ends with one, and
+    // the flake of 10 October was its stand-in's call to a fake already stopped: "fetch failed",
+    // "other side closed", unhandled, in a run whose every test passed): the stand-in's Slack
+    // is gone while the bridge still asks for a connection URL.
+    fake.stop();
+    await until(
+      async () =>
+        await fetch(`${fake.base}/proof`).then(
+          () => false,
+          () => true,
+        ),
+      'the fake gone',
+    );
+    const running = start({ syncIntervalMs: 50 });
+    await running.start();
+    await until(
+      () => logged.some((line) => line.message === 'no connection URL'),
+      'the refusal logged',
+    );
+    expect(logged.find((line) => line.message === 'no connection URL')).toMatchObject({
+      appId: 'A_DAY0_FAKE',
+      reason: 'slack could not be reached',
     });
   });
 

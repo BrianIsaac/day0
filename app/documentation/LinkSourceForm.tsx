@@ -136,7 +136,7 @@ export function ReaderSecretField(props: { kind: SourceKind }): React.ReactNode 
 /**
  * A Feishu source's region and the app it reads as: the app's ID, and its
  * secret, entered here and encrypted when submitted. Uncontrolled, so the
- * form's reset clears the secret the moment it is submitted.
+ * form's reset clears the secret once the source is linked, and a refused link keeps it.
  *
  * @returns The region choice and the two app fields.
  */
@@ -202,8 +202,8 @@ export function FeishuAppFields(): React.ReactNode {
 /**
  * Say what this source kind will actually reach, and what has to be running.
  *
- * Four of the five kinds are read by the backend itself and depend on nothing
- * else; the fifth reaches an MCP server, and only one of those servers is one
+ * Every kind but one is read by the backend itself and depends on nothing
+ * else; the MCP kind reaches an MCP server, and only one of those servers is one
  * day0 bundles a component for. Saying so in the form is what keeps a reader
  * from assuming every documentation source needs a container started. A
  * Feishu source also says where IT's guide to its app is.

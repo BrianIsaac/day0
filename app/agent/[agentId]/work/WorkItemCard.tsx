@@ -120,10 +120,10 @@ export function retryModeOf(
     case 'skipped':
       // An ask naming a ticket a colleague settled is the manager's to give all the same: it may
       // ask for more than the comment gave (D-1 (a)).
+      if (colleagueHolding(item)?.settled) return { kind: 'take', waived: 'settled' };
       // Refused at the claim: the colleague who holds the item works it, and
       // the row comes back by itself if they let it go, so the control is the
       // colleague's card, where the manager can let it go.
-      if (colleagueHolding(item)?.settled) return { kind: 'take', waived: 'settled' };
       if (colleagueHolding(item)) return undefined;
       // The scope and quality-fit judgements are the employee's; Retry is the
       // manager saying the work is theirs to give, with that rule waived.
