@@ -1521,4 +1521,42 @@ describe('the people graph past its read bound (14-FX, W13-R23)', (): void => {
       .query(api.people.escalationContactFor, { agentId });
     expect(answer).toMatchObject({ kind: 'person', personId: mei });
   });
+
+  it("answers an employee's newest collaborator past its own oldest edges (W14-R57)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const lee = await seedPerson(harness, 'Lee Tan');
+    const mei = await seedPerson(harness, 'Mei Ling');
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        await ctx.db.insert('relationships', {
+          userId: 'owner',
+          fromAgentId: agentId,
+          toPersonId: lee,
+          type: 'collaborator',
+          effectiveFrom: 1,
+          effectiveUntil: 2,
+          status: 'superseded',
+          source: 'manager',
+          createdAt: 1,
+        });
+      }
+      await ctx.db.insert('relationships', {
+        userId: 'owner',
+        fromAgentId: agentId,
+        toPersonId: mei,
+        type: 'collaborator',
+        scope: 'the month-end close',
+        effectiveFrom: 3,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 3,
+        createdAt: 3,
+      });
+    });
+    const answer = await harness
+      .withIdentity(managerIdentity())
+      .query(api.people.collaboratorsOf, { agentId });
+    expect(answer).toMatchObject([{ displayName: 'Mei Ling', scope: 'the month-end close' }]);
+  });
 });
