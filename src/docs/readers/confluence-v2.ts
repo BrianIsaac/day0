@@ -91,6 +91,56 @@ function accountRefused(answer: ProviderAnswer): Error {
   );
 }
 
+/** One page as either Confluence lists it: what both readers read of it. */
+export interface ListedConfluencePage {
+  readonly id: string;
+  readonly title: string | undefined;
+  /** Confluence's word for the page's status. */
+  readonly status: string | undefined;
+  /** The body in the storage format, when the listing gave one. */
+  readonly storage: string | undefined;
+  readonly versionNumber: unknown;
+  /** When the current version was made, as an ISO time. */
+  readonly editedAt: string | undefined;
+  /** Where the page opens in a browser. */
+  readonly url: string | undefined;
+}
+
+/**
+ * One listed Confluence page as Markdown under its title, or why it is not read.
+ *
+ * Shared by the Cloud and the Data Center readers, which list the same page in two shapes.
+ *
+ * @param now - The clock a page with no version time is stamped with.
+ */
+export function confluencePage(
+  source: DocSourceRecord,
+  listed: ListedConfluencePage,
+  now: () => number,
+): DocPage | UnreadPage {
+  const title = listed.title?.trim() || 'Untitled';
+  if (listed.storage === undefined) {
+    return {
+      ref: listed.id,
+      reason: `Confluence gave no body in its storage format for "${title}", so Day0 does not read it.`,
+    };
+  }
+  const edited = Date.parse(listed.editedAt ?? '');
+  const nativeStatus = confluenceNativeStatus(listed.status);
+  return {
+    sourceId: source._id,
+    ref: listed.id,
+    title,
+    ...(listed.url === undefined ? {} : { url: listed.url }),
+    markdown: underTitle(title, confluenceStorageToMarkdown(listed.storage)),
+    updatedAt: Number.isFinite(edited) ? edited : now(),
+    ...(nativeStatus === undefined ? {} : { nativeStatus }),
+    ...(typeof listed.versionNumber === 'number'
+      ? { sourceRevision: String(listed.versionNumber) }
+      : {}),
+  };
+}
+
 /** One page of the listing, as the batch needs it. */
 interface ListedPages {
   readonly results: readonly unknown[];
@@ -233,29 +283,21 @@ export class ConfluenceCloudReader implements DocumentationReader {
   ): DocPage | UnreadPage {
     const id = textField(result, 'id');
     if (id === undefined) throw new Error('Confluence listed a page with no id.');
-    const title = textField(result, 'title')?.trim() || 'Untitled';
-    const storage = textField(field(field(result, 'body'), 'storage'), 'value');
-    if (storage === undefined) {
-      return {
-        ref: id,
-        reason: `Confluence gave no body in its storage format for "${title}", so Day0 does not read it.`,
-      };
-    }
     const version = field(result, 'version');
-    const number = field(version, 'number');
-    const edited = Date.parse(textField(version, 'createdAt') ?? '');
     const webui = textField(field(result, '_links'), 'webui');
-    const nativeStatus = confluenceNativeStatus(textField(result, 'status'));
-    return {
-      sourceId: source._id,
-      ref: id,
-      title,
-      ...(base?.startsWith('https://') && webui !== undefined ? { url: `${base}${webui}` } : {}),
-      markdown: underTitle(title, confluenceStorageToMarkdown(storage)),
-      updatedAt: Number.isFinite(edited) ? edited : (this.options.now ?? Date.now)(),
-      ...(nativeStatus === undefined ? {} : { nativeStatus }),
-      ...(typeof number === 'number' ? { sourceRevision: String(number) } : {}),
-    };
+    return confluencePage(
+      source,
+      {
+        id,
+        title: textField(result, 'title'),
+        status: textField(result, 'status'),
+        storage: textField(field(field(result, 'body'), 'storage'), 'value'),
+        versionNumber: field(version, 'number'),
+        editedAt: textField(version, 'createdAt'),
+        url: base?.startsWith('https://') && webui !== undefined ? `${base}${webui}` : undefined,
+      },
+      this.options.now ?? Date.now,
+    );
   }
 
   /** An address under the gateway for this site. */

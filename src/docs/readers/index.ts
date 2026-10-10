@@ -1,5 +1,6 @@
 import { notReadYet, type DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
+import { ConfluenceDataCenterReader } from './confluence-dc';
 import { ConfluenceCloudReader } from './confluence-v2';
 import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
@@ -33,8 +34,9 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
       return new FeishuReader();
     case 'confluence-v2':
       return new ConfluenceCloudReader();
-    case 'sharepoint':
     case 'confluence-dc':
+      return new ConfluenceDataCenterReader();
+    case 'sharepoint':
     case 'yuque':
     case 'drive':
       // Declared by the schema before its reader lands (K-3); the link refuses such a source.

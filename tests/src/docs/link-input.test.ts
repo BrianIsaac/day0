@@ -164,6 +164,30 @@ describe('the secret a source reads with', (): void => {
     expect(readsWithOwnSecret('confluence-v2')).toBe(true);
   });
 
+  it("takes a Confluence Data Center space at the customer's server over https, with its token (15-X)", (): void => {
+    const locator = 'https://wiki.acme.corp/confluence/display/OPS';
+    const space = validateLinkInput({ label: 'Ops wiki', kind: 'confluence-dc', locator });
+    expect(space.locator).toBe(locator);
+    expect(() => validateReaderSecret(space, undefined)).toThrow(
+      'A Confluence Data Center source needs a personal access token.',
+    );
+    expect(() => validateReaderSecret(space, 'fixture-confluence-pat')).not.toThrow();
+    for (const refused of [
+      'http://wiki.acme.corp/display/OPS',
+      'https://wiki.acme.corp/pages/viewpage.action?pageId=4587521',
+      'https://mira:secret@wiki.acme.corp/display/OPS',
+    ]) {
+      expect(
+        () => validateLinkInput({ label: 'Ops wiki', kind: 'confluence-dc', locator: refused }),
+        refused,
+      ).toThrow("A Confluence Data Center location is a space's address");
+    }
+    expect(secretLabel({ label: 'Ops wiki', kind: 'confluence-dc' })).toBe(
+      'Ops wiki personal access token',
+    );
+    expect(readsWithOwnSecret('confluence-dc')).toBe(true);
+  });
+
   it('names the secret by what it is for, and lets every kind but a folder rotate one (14-F)', (): void => {
     expect(secretLabel({ label: 'Runbooks', kind: 'git' })).toBe('Runbooks reader secret');
     expect(secretLabel({ label: 'Notion', kind: 'mcp' })).toBe('Notion connection secret');

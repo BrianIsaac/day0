@@ -5,7 +5,11 @@
  * each source kind.
  */
 import { isBundledNotionLocator } from './components';
-import { checkConfluenceToken, parseConfluenceCloudLocator } from './confluence-source';
+import {
+  checkConfluenceToken,
+  parseConfluenceCloudLocator,
+  parseConfluenceDataCenterLocator,
+} from './confluence-source';
 import { parseFeishuLocator, parseFeishuSecret } from './feishu-source';
 import { isPendingReaderKind, notReadYet, type DocSourceKind } from './types';
 
@@ -71,6 +75,9 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   } else if (input.kind === 'confluence-v2') {
     // Atlassian's gateway, the site's cloud ID and one space's key; nothing else is stored.
     parseConfluenceCloudLocator(locator);
+  } else if (input.kind === 'confluence-dc') {
+    // The customer's own server over https, and one space's key.
+    parseConfluenceDataCenterLocator(locator);
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
@@ -99,11 +106,12 @@ const SECRET_REQUIRED: Partial<Record<LinkInput['kind'], string>> = {
   mcp: 'Connection secret is required for an MCP source.',
   feishu: 'A Feishu source needs its app ID and secret.',
   'confluence-v2': "A Confluence Cloud source needs its service account's API token.",
+  'confluence-dc': 'A Confluence Data Center source needs a personal access token.',
 };
 
 /**
- * The source kinds that read with a secret of their own: required for MCP, Feishu and Confluence
- * Cloud, optional for git and URLs.
+ * The source kinds that read with a secret of their own: required for MCP, Feishu and both
+ * Confluence kinds, optional for git and URLs.
  */
 const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'mcp',
@@ -111,6 +119,7 @@ const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'urls',
   'feishu',
   'confluence-v2',
+  'confluence-dc',
 ]);
 
 /**
@@ -131,8 +140,9 @@ export function readsWithOwnSecret(kind: LinkInput['kind']): boolean {
  * read with a secret must list pages of one https site, since the secret is
  * that site's and is sent to no other. A Feishu source needs its app's ID
  * and secret, joined by a colon, which it exchanges for the tenant's token. A
- * Confluence Cloud source needs its service account's API token. A folder is
- * read from the mounted directory and takes none.
+ * Confluence Cloud source needs its service account's API token, and a Data
+ * Center one a personal access token. A folder is read from the mounted
+ * directory and takes none.
  *
  * @param input - The validated link values.
  * @param secret - The secret the owner entered, if any.
@@ -152,7 +162,9 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
     throw new Error('A secret cannot contain a line break or a control character.');
   }
   if (input.kind === 'feishu') parseFeishuSecret(secret);
-  if (input.kind === 'confluence-v2') checkConfluenceToken(secret);
+  if (input.kind === 'confluence-v2' || input.kind === 'confluence-dc') {
+    checkConfluenceToken(secret);
+  }
   if (input.kind === 'urls') {
     const origins = new Set(
       input.locator
@@ -179,12 +191,13 @@ export function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
       return `${source.label} app ID and secret`;
     case 'confluence-v2':
       return `${source.label} API token`;
+    case 'confluence-dc':
+      return `${source.label} personal access token`;
     case 'folder':
     case 'git':
     case 'urls':
     // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
     case 'sharepoint':
-    case 'confluence-dc':
     case 'yuque':
     case 'drive':
       return `${source.label} reader secret`;

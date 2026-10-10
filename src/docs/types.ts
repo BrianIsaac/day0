@@ -25,7 +25,6 @@ export type DocSourceKind =
  */
 export const PENDING_READER_NAMES = {
   sharepoint: 'SharePoint',
-  'confluence-dc': 'Confluence Data Center',
   yuque: 'Yuque',
   drive: 'Google Drive',
 } as const satisfies Partial<Record<DocSourceKind, string>>;

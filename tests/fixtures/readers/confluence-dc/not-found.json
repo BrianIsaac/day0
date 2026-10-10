@@ -1,0 +1,10 @@
+{
+  "statusCode": 404,
+  "data": {
+    "authorized": false,
+    "valid": true,
+    "errors": [],
+    "successful": false
+  },
+  "message": "No space with key : NONE"
+}
