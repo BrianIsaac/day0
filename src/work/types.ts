@@ -204,6 +204,10 @@ export interface PlanCite {
   readonly step: number;
   /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
   readonly label: string;
+  /** The source the cited page is of (`docSources` id), since two sources may share a label (W14-R27). */
+  readonly sourceId?: string;
+  /** The cited page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
 }
 
@@ -616,6 +620,10 @@ export interface CitedBlock {
 export interface DocumentationCitation {
   /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
   readonly label: string;
+  /** The source the page is of (`docSources` id); absent for an office page with no source. */
+  readonly sourceId?: string;
+  /** The page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
 }
 

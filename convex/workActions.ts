@@ -135,7 +135,8 @@ import {
   selectionSwitchedOff,
   type SelectionRequest,
 } from '../src/docs/select';
-import { goneCitesReason } from '../src/work/plan-cites';
+import { goneCitesReason, type GoneCite } from '../src/work/plan-cites';
+import type { GoneBlock } from './docSelection';
 import {
   sameSkillShape,
   skillOperationLabel,
@@ -1277,7 +1278,7 @@ async function holdDay0Actions(
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
-    await refuseGoneCites(ctx, args.plan);
+    await refuseGoneCites(ctx, args.plan, { agentId: args.agentId, workItemId: args.workItemId });
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
     const mockEnv = await siteSnapshot(ctx, {
       agentId: args.agentId,
@@ -2695,7 +2696,7 @@ export const authorDependentActions = internalAction({
       if (!skill) throw new Error('dependent phase skill is no longer registered');
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
-      await refuseGoneCites(ctx, plan);
+      await refuseGoneCites(ctx, plan, { agentId: item.agentId, workItemId: item._id });
       const mockEnv = await siteSnapshot(ctx, {
         agentId: item.agentId,
         workItemId: args.workItemId,
@@ -4130,26 +4131,40 @@ async function planGrounding(
 }
 
 /**
- * Refuse to run a plan whose cited documentation is gone or changed (wave 14, 14-R): a block a
- * step was drawn from was deleted, rewritten, or its page removed, after the plan was approved,
- * so the step no longer rests on what the team has written down. Checked before the first phase
- * writes and again before the closing phase authors. Real mode only; a plan with no cites passes.
+ * Refuse to run a plan whose cited documentation no longer stands (wave 14, 14-R; 15-A): a block
+ * a step was drawn from was deleted, rewritten, or its page removed, superseded, archived or
+ * marked a draft, or its source is one the employee no longer reads, after the plan was
+ * approved, so the step no longer rests on what the team has written down. Checked before the
+ * first phase writes and again before the closing phase authors. Real mode only. A plan whose
+ * planner cited nothing is checked against the blocks it was drafted from, as its selection
+ * recorded them, so the check is never vacuous (W14-R25); one with neither passes.
  *
- * @throws Error naming the cites whose blocks are gone or changed.
+ * @param item - The employee running the plan and the item it is for.
+ * @throws Error naming the cites that no longer stand, and what superseded the first.
  */
-async function refuseGoneCites(ctx: ActionCtx, plan: Pick<ExecutionPlan, 'cites'>): Promise<void> {
-  if (SURFACE_MODE !== 'real' || plan.cites === undefined || plan.cites.length === 0) return;
-  const blocks = plan.cites.flatMap((cite) => cite.blocks);
+async function refuseGoneCites(
+  ctx: ActionCtx,
+  plan: Pick<ExecutionPlan, 'cites'>,
+  item: { readonly agentId: Id<'agents'>; readonly workItemId: Id<'workItems'> },
+): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const cites = plan.cites ?? [];
+  const blocks: Array<{ id: string; hash?: string }> =
+    cites.length > 0
+      ? cites.flatMap((cite) => cite.blocks)
+      : (await ctx.runQuery(internal.docSelection.plannedFromBlocks, item)).map((id) => ({ id }));
+  if (blocks.length === 0) return;
   const parts: Array<typeof blocks> = [];
   for (let start = 0; start < blocks.length; start += CITE_CHECK_BATCH) {
     parts.push(blocks.slice(start, start + CITE_CHECK_BATCH));
   }
-  const changed = new Set(
+  const changed = new Map(
     (
       await Promise.all(
         parts.map(
           async (part) =>
             await ctx.runQuery(internal.docSelection.changedCitedBlocks, {
+              agentId: item.agentId,
               blocks: part.map((block) => ({
                 id: block.id,
                 ...(block.hash !== undefined ? { hash: block.hash } : {}),
@@ -4157,17 +4172,33 @@ async function refuseGoneCites(ctx: ActionCtx, plan: Pick<ExecutionPlan, 'cites'
             }),
         ),
       )
-    ).flat(),
+    )
+      .flat()
+      .map((gone) => [gone.id, gone] as const),
   );
-  const gone = [
-    ...new Set(
-      plan.cites
-        .filter((cite) => cite.blocks.some((block) => changed.has(block.id)))
-        .map((cite) => cite.label),
-    ),
-  ];
-  if (gone.length > 0) throw new GoneCitesError(goneCitesReason(gone));
+  if (changed.size === 0) return;
+  // Each cite once, by its own words; a passage the planner did not cite, by its page.
+  const gone = new Map<string, GoneCite>();
+  const add = (label: string, block: GoneBlock): void => {
+    if (gone.has(label)) return;
+    gone.set(label, {
+      label,
+      ...(block.status !== undefined ? { status: block.status } : {}),
+      ...(block.supersededBy !== undefined ? { supersededBy: block.supersededBy } : {}),
+    });
+  };
+  for (const cite of cites) {
+    const block = cite.blocks.map((entry) => changed.get(entry.id)).find((entry) => entry);
+    if (block !== undefined) add(cite.label, block);
+  }
+  if (cites.length === 0) {
+    for (const block of changed.values()) add(block.page ?? UNCITED_PASSAGE, block);
+  }
+  throw new GoneCitesError(goneCitesReason([...gone.values()]));
 }
+
+/** How a gone passage is named when the planner cited nothing and its row no longer says its page. */
+const UNCITED_PASSAGE = 'a passage the plan was drafted from';
 
 /** A plan whose cited documentation is gone or changed: a failure of the item, not a retryable one. */
 class GoneCitesError extends Error {}

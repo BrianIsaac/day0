@@ -134,10 +134,15 @@ export interface SelectablePage {
   readonly category: 'how-to-guide' | 'team-doc';
   /** The page as mirrored (redacted). */
   readonly body: string;
-  /** The source's label in a cite line; `office` for a page with no source. */
+  /**
+   * The source's label in a cite line, told apart from another source of the same label
+   * (W14-R27); `office` for a page with no source.
+   */
   readonly citeSource: string;
   /** The page's ref within its source in a cite line. */
   readonly citePage: string;
+  /** The page's source (`docSources` id); absent for an office page with no source. */
+  readonly sourceId?: string;
 }
 
 /** A block of a page, stored (with its row id) or split here. */
@@ -477,14 +482,20 @@ function assemblePage(
   blocks: readonly SelectableBlock[],
 ): { body: string; citations: Citation[] } {
   const ordered = [...blocks].sort((left, right) => left.index - right.index);
-  const citations: Array<{ label: string; blocks: CitedBlock[] }> = [];
+  const of = page.sourceId === undefined ? {} : { sourceId: page.sourceId, pageRef: page.citePage };
+  const citations: Array<{
+    label: string;
+    sourceId?: string;
+    pageRef?: string;
+    blocks: CitedBlock[];
+  }> = [];
   const parts: string[] = [];
   let previous: string | undefined;
   for (const block of ordered) {
     const label = citeLabel(page, block.headingPath);
     if (label !== previous) {
       parts.push(`${parts.length > 0 ? '\n' : ''}[cite: ${label}]\n${block.text}`);
-      citations.push({ label, blocks: [] });
+      citations.push({ label, ...of, blocks: [] });
       previous = label;
     } else {
       parts.push(`\n${block.text}`);

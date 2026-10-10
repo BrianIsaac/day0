@@ -90,6 +90,77 @@ describe('goneCitesReason', (): void => {
   });
 });
 
+describe('goneCitesReason and a page that is no longer current (15-A)', (): void => {
+  it('says a superseded page’s cite was superseded, by what, in the card’s words', (): void => {
+    expect(
+      goneCitesReason([
+        {
+          label: 'Handbook/runbooks/pipeline-runbook.md#Refresh',
+          status: 'superseded',
+          supersededBy: 'Pipeline runbook, version 2',
+        },
+      ]),
+    ).toBe(
+      'Documentation the plan followed has since been superseded ("Handbook/runbooks/pipeline-runbook.md#Refresh" by "Pipeline runbook, version 2"), so Day0 did not run the plan on it. The item needs a new plan.',
+    );
+  });
+
+  it('says archived and marked a draft as plainly, and counts the other cites', (): void => {
+    expect(
+      goneCitesReason([{ label: 'Handbook/a.md#A', status: 'archived' }, 'Handbook/b.md#B']),
+    ).toBe(
+      'Documentation the plan followed has since been archived ("Handbook/a.md#A" and 1 more), so Day0 did not run the plan on it. The item needs a new plan.',
+    );
+    expect(goneCitesReason([{ label: 'Handbook/a.md#A', status: 'draft' }])).toContain(
+      'has since been marked a draft ("Handbook/a.md#A")',
+    );
+    // A superseded page that names no successor says only that.
+    expect(goneCitesReason([{ label: 'Handbook/a.md#A', status: 'superseded' }])).toContain(
+      'has since been superseded ("Handbook/a.md#A")',
+    );
+  });
+
+  it('stays under 300 characters, and is a gone cite’s failure to a Retry', (): void => {
+    const reason = goneCitesReason([
+      {
+        label: `Handbook/${'deep/'.repeat(40)}page.md#Heading`,
+        status: 'superseded',
+        supersededBy: 'A very long title of the page that took its place '.repeat(6),
+      },
+    ]);
+    expect(reason.length).toBeLessThanOrEqual(300);
+    expect(isGoneCitesReason(reason)).toBe(true);
+    expect(
+      isGoneCitesReason(goneCitesReason([{ label: 'Handbook/a.md#A', status: 'draft' }])),
+    ).toBe(true);
+  });
+});
+
+describe('resolvedPlanCites and the source of a cite (W14-R27)', (): void => {
+  it('carries the source and the page a cite is of onto the plan', (): void => {
+    expect(
+      resolvedPlanCites([['Handbook/runbooks/refresh-tile.md#Refresh']], 1, {
+        citations: [
+          {
+            label: 'Handbook/runbooks/refresh-tile.md#Refresh',
+            sourceId: 'source-1',
+            pageRef: 'runbooks/refresh-tile.md',
+            blocks: [{ id: 'b1', hash: 'h1' }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        step: 1,
+        label: 'Handbook/runbooks/refresh-tile.md#Refresh',
+        sourceId: 'source-1',
+        pageRef: 'runbooks/refresh-tile.md',
+        blocks: [{ id: 'b1', hash: 'h1' }],
+      },
+    ]);
+  });
+});
+
 describe('isGoneCitesReason', (): void => {
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
     expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);

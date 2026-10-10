@@ -13,7 +13,7 @@ import type { MockSurfaceSnapshot, MockWriteResult } from '../src/work/types';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { groundTicketWork, type TicketGroundingItem } from '../src/work/office-tickets';
-import { selectedDocumentation, selectionRequestValidator } from './docSelection';
+import { currentDocs, selectedDocumentation, selectionRequestValidator } from './docSelection';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 
 /**
@@ -103,7 +103,7 @@ async function snapshotDocs(db: DatabaseReader, agentId: Id<'agents'>): Promise<
 
 /**
  * Internal snapshot used only by an already-authorised scheduler continuation. Its documents are
- * the ones the employee reads ({@link readableDocs}): with no `selection`, every one whole, read
+ * the current ones the employee reads ({@link readableDocs}, then `docSelection.currentDocs`): with no `selection`, every one whole, read
  * by {@link snapshotDocs} (a mock office at most {@link MOCK_OFFICE_DOCS_READ}); with `selection`
  * (real mode only, wave 14's 14-R) the pages and blocks one item needs from the whole mirror,
  * cited, within 24,000 characters (`docSelection.selectedDocumentation`). Mock mode and the frozen
@@ -145,7 +145,9 @@ export const snapshotInternal = internalQuery({
         .collect(),
     ]);
     const agent = await ctx.db.get(args.agentId);
-    const docs = await readableDocs(ctx.db, agent, stored);
+    // Only current pages reach a run (15-A): a superseded, archived or draft page stays in the
+    // mirror for the Docs tab and is left out here, with a selection or whole.
+    const docs = await currentDocs(ctx.db, await readableDocs(ctx.db, agent, stored));
     const { selection } = args;
     const selected =
       selection === undefined

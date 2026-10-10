@@ -404,6 +404,29 @@ describe('searchBlocks', (): void => {
     ]);
   });
 
+  it("answers only the blocks of pages in the status asked for, by the index's own filter (15-A; K-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await split(harness, { sourceId, runId, pageRef: 'current.md' }, RUNBOOK);
+    await split(harness, { sourceId, runId, pageRef: 'old.md', status: 'superseded' }, RUNBOOK);
+    const found = async (status?: PageStatus): Promise<string[]> =>
+      [
+        ...new Set(
+          (
+            await harness.query(internal.docBlocks.searchBlocks, {
+              userId: 'owner',
+              sourceIds: [sourceId],
+              query: 'refresh',
+              ...(status !== undefined ? { status } : {}),
+            })
+          ).map((block) => block.pageRef),
+        ),
+      ].sort();
+    expect(await found('active')).toEqual(['current.md']);
+    expect(await found('superseded')).toEqual(['old.md']);
+    expect(await found()).toEqual(['current.md', 'old.md']);
+  });
+
   it('refuses a search whose sources and blocks a source together pass what one read may hold (second pass)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sources: Id<'docSources'>[] = [];

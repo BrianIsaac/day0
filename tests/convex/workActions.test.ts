@@ -10422,8 +10422,13 @@ describe('the People block in both executor phases (13-J)', (): void => {
   });
 });
 
-/** The queries one transaction may make in the fallback test: past the selection over 33 sources, inside every other read. */
-const SELECTION_QUERY_LIMIT = 120;
+/**
+ * The queries one transaction may make in the fallback test: past the selection over 33 sources,
+ * inside every other read. Re-pinned from 120 by 15-A: every snapshot now asks each mirrored
+ * page's status (one small row a page, `docSelection.currentDocs`), 33 more queries in the
+ * whole-mirror read the fallback makes, and as many more in the selection it falls back from.
+ */
+const SELECTION_QUERY_LIMIT = 160;
 
 describe('the documentation selection at the work loop’s sites (14-R)', (): void => {
   afterEach((): void => {
@@ -10576,6 +10581,66 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
       'execute',
       'closing',
     ]);
+  });
+
+  it('fails the closing check when the page a plan cited was superseded since, naming what superseded it, though no text changed (15-A)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId, blockIds } = await closingItem(harness);
+    await cite(harness, workItemId, [
+      { label: 'Handbook/runbook.md#Runbook', blockId: blockIds.standing, index: 0 },
+    ]);
+    // The page is superseded by its second version: every cited hash still stands on it.
+    await harness.run(async (ctx) => {
+      const page = await ctx.db.query('docPages').first();
+      await ctx.db.insert('docPages', {
+        sourceId: page!.sourceId,
+        ref: 'runbook-v2.md',
+        title: 'Runbook, version 2',
+        markdown: '# Runbook, version 2\n\nRead the ticket twice.',
+        updatedAt: 4,
+      });
+      await ctx.db.patch(page!._id, {
+        status: 'superseded',
+        statusSource: 'relation',
+        supersededBy: { sourceId: page!.sourceId, ref: 'runbook-v2.md' },
+      });
+    });
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(
+      'Documentation the plan followed has since been superseded ("Handbook/runbook.md#Runbook" by "Runbook, version 2"), so Day0 did not run the plan on it.',
+    );
+    expect(recorded.dependentRuns).toBe(0);
+  });
+
+  it('checks a plan that cites nothing against the blocks it was drafted from, so the closing check is never vacuous (W14-R25)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId, runId, blockIds } = await closingItem(harness);
+    // The planner named no cite; its selection recorded the two blocks it was drafted from.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: {
+          workItemId,
+          site: 'plan',
+          blockIds: [blockIds.standing, blockIds.gone],
+          chars: 36,
+        },
+        createdAt: 1,
+      });
+      await ctx.db.delete(blockIds.gone);
+    });
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(
+      'Documentation the plan followed has since been changed or removed ("a passage the plan was drafted from")',
+    );
+    expect(recorded.dependentRuns).toBe(0);
   });
 
   it('refuses the first phase before any write when a cited block was rewritten after approval', async (): Promise<void> => {

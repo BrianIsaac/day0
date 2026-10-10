@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { replacePageBlocks } from '../../convex/docBlocks';
+import { copyPageStatusToBlocks, replacePageBlocks } from '../../convex/docBlocks';
+import type { PageStatus } from '../../src/docs/authority';
 import type { SelectionRequest } from '../../src/docs/select';
 import { renderHowTos, renderTeamDocs } from '../../src/work/documents';
 import { allConvexModules } from './all-modules';
@@ -479,17 +480,20 @@ describe('docSelection.changedCitedBlocks', (): void => {
     );
     const [standing, deleted] = blocks.map((block) => ({ id: block._id, hash: block.hash }));
     await harness.run(async (ctx) => await ctx.db.delete(deleted.id));
+    // Re-pinned by 15-A: the check answers each gone block with what is known of why (its page,
+    // and its status when that is why), where it answered the ids alone.
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, {
         blocks: [standing, deleted, { id: 'not-a-block' }],
       }),
-    ).resolves.toEqual([deleted.id, 'not-a-block']);
+    ).resolves.toEqual([{ id: deleted.id }, { id: 'not-a-block' }]);
     // A sync that rewrites a block in place keeps its id; the cite was of the old text.
+    const page = 'Handbook/runbooks/refresh-tile.md';
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, {
         blocks: [{ id: standing.id, hash: 'the-hash-it-was-cited-under' }],
       }),
-    ).resolves.toEqual([standing.id]);
+    ).resolves.toEqual([{ id: standing.id, page }]);
     await harness.run(async (ctx) => {
       const page = await ctx.db
         .query('docPages')
@@ -499,7 +503,7 @@ describe('docSelection.changedCitedBlocks', (): void => {
     });
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, { blocks: [standing] }),
-    ).resolves.toEqual([standing.id]);
+    ).resolves.toEqual([{ id: standing.id, page }]);
   });
 
   it('answers nothing for a cited section when a section is inserted above it (W14-R2)', async (): Promise<void> => {
@@ -565,11 +569,12 @@ describe('docSelection.changedCitedBlocks', (): void => {
           .take(2),
     );
     await harness.run(async (ctx) => await ctx.db.patch(first._id, { hash: second.hash }));
+    // Re-pinned by 15-A: the gone block is answered with its page, not its id alone.
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, {
         blocks: [{ id: first._id, hash: first.hash }],
       }),
-    ).resolves.toEqual([first._id]);
+    ).resolves.toEqual([{ id: first._id, page: `Handbook/${ref}` }]);
   });
 
   it('reads a cite by its hash on its page, the id only a hint, so a row that now holds another block still stands (W14-R2)', async (): Promise<void> => {
@@ -606,10 +611,282 @@ describe('docSelection.changedCitedBlocks', (): void => {
         ],
       }),
     ).resolves.toEqual([]);
+    // Re-pinned by 15-A, as above.
     await expect(
       harness.query(internal.docSelection.changedCitedBlocks, {
         blocks: [{ id: first._id, hash: 'a-hash-no-block-on-the-page-holds' }],
       }),
-    ).resolves.toEqual([first._id]);
+    ).resolves.toMatchObject([{ id: first._id }]);
+  });
+});
+
+/** Give a stored page a status the way `docStatus` leaves it: on its row and on its blocks. */
+async function mark(
+  harness: Harness,
+  page: { sourceId: Id<'docSources'>; ref: string },
+  status: PageStatus,
+  supersededBy?: { sourceId: Id<'docSources'>; ref: string },
+): Promise<void> {
+  await harness.run(async (ctx) => {
+    const row = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', page.sourceId).eq('ref', page.ref))
+      .unique();
+    await ctx.db.patch(row!._id, {
+      status,
+      statusSource: 'manager',
+      ...(supersededBy !== undefined ? { supersededBy } : {}),
+    });
+    await copyPageStatusToBlocks(ctx, { sourceId: page.sourceId, pageRef: page.ref, status });
+  });
+}
+
+describe('docSelection and a page that is not current (15-A; A20, A-1)', (): void => {
+  /** A scouted how-to guide and a procedure contract, which is always included. */
+  async function library(harness: Harness) {
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'runbooks/refresh-tile.md',
+      title: 'How to refresh the pipeline tile',
+      markdown: TILE_RUNBOOK,
+      category: 'how-to-guide',
+    });
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'runbooks/update-ticket.md',
+      title: 'How to update a ticket',
+      markdown: TICKET_RUNBOOK,
+      category: 'how-to-guide',
+    });
+    return { agentId, handbook };
+  }
+
+  it('leaves a superseded page out of the scout, the always-included set and the whole-mirror read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook } = await library(harness);
+    const titles = async (selection?: SelectionRequest): Promise<string[]> =>
+      (
+        await harness.query(internal.mock.snapshotInternal, {
+          agentId,
+          ...(selection !== undefined ? { selection } : {}),
+        })
+      ).howToGuides.map((guide) => guide.title);
+    expect(await titles(request)).toEqual([
+      'How to update a ticket',
+      'How to refresh the pipeline tile',
+    ]);
+    expect(await titles()).toHaveLength(2);
+    // The scouted guide is superseded: only the contract page is carried.
+    await mark(harness, { ...handbook, ref: 'runbooks/refresh-tile.md' }, 'superseded');
+    expect(await titles(request)).toEqual(['How to update a ticket']);
+    // The contract page is archived: the always-included set drops it too.
+    await mark(harness, { ...handbook, ref: 'runbooks/update-ticket.md' }, 'archived');
+    const selected = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    expect(selected.howToGuides).toEqual([]);
+    expect(selected.documentation?.blockIds).toEqual([]);
+    // And the whole mirror, which the fallback reads, carries neither.
+    expect(await titles()).toEqual([]);
+    // The employee's Docs tab keeps both pages: nothing was taken out of the mirror.
+    expect(
+      await harness.run(async (ctx) => (await ctx.db.query('mockDocs').collect()).length),
+    ).toBe(2);
+  });
+
+  it('leaves a draft out of a default selection, and carries it again once it is current (A20)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook } = await library(harness);
+    const tile = { ...handbook, ref: 'runbooks/refresh-tile.md' };
+    const carried = async (): Promise<string[]> =>
+      (
+        await harness.query(internal.mock.snapshotInternal, { agentId, selection: request })
+      ).howToGuides.map((guide) => guide.title);
+    await mark(harness, tile, 'draft');
+    expect(await carried()).toEqual(['How to update a ticket']);
+    await mark(harness, tile, 'active');
+    expect(await carried()).toContain('How to refresh the pipeline tile');
+  });
+});
+
+describe('docSelection and the sources it searches (W14-R27, W14-R28)', (): void => {
+  it('tells two sources with one label apart in their cite lines, so their cites never merge (W14-R27)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const first = await source(harness, 'Handbook');
+    const second = await source(harness, 'Handbook');
+    for (const entry of [first, second]) {
+      await storePage(harness, {
+        agentId,
+        ...entry,
+        ref: 'runbooks/refresh-tile.md',
+        title: 'How to refresh the pipeline tile',
+        markdown: TILE_RUNBOOK,
+        category: 'how-to-guide',
+      });
+    }
+    // The second source's mirror takes its own slug, as two sources' mirrors do.
+    await harness.run(async (ctx) => {
+      const mirrors = await ctx.db.query('mockDocs').collect();
+      await ctx.db.patch(mirrors[1]._id, { slug: `${mirrors[1].slug}-2` });
+    });
+    // A third page, so the item's words tell pages apart (a word on every page ranks none).
+    await storePage(harness, {
+      agentId,
+      ...first,
+      ref: 'team/holidays.md',
+      title: 'Office holidays',
+      markdown: HOLIDAYS,
+    });
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: request,
+    });
+    const labels = snapshot.documentation!.citations.map((citation) => citation.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.filter((label) => label.startsWith('Handbook (1)/'))).not.toEqual([]);
+    expect(labels.filter((label) => label.startsWith('Handbook (2)/'))).not.toEqual([]);
+    // Each cite carries the source it is of.
+    expect(new Set(snapshot.documentation!.citations.map((citation) => citation.sourceId))).toEqual(
+      new Set([first.sourceId, second.sourceId]),
+    );
+  });
+
+  it('asks the search for at most 512 blocks a selection however many sources, the most trusted first (W14-R28)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    // Five searches a selection (the item, its target, its shape, the role, the requester): past
+    // 102 sources the old limit clamped to one block a source and asked for more than 512.
+    const everyField: SelectionRequest = {
+      ...request,
+      target: { slug: 'looker-tile', displayName: 'Looker pipeline tile' },
+      shape: { surfaceClass: 'dashboard', operation: 'refresh' },
+      requester: 'Priya Raman',
+    };
+    const sources: Id<'docSources'>[] = [];
+    for (let index = 0; index < 104; index += 1) {
+      const entry = await source(harness, `Source ${index}`);
+      sources.push(entry.sourceId);
+      await storePage(harness, {
+        agentId,
+        ...entry,
+        ref: `page-${index}.md`,
+        title: `Page ${index}`,
+        markdown:
+          index === 98 || index === 99
+            ? `# Tile runbook ${index}\n\nRefresh the pipeline tile coverage figure from the standup.`
+            : `# Notes ${index}\n\nThe canteen opens at nine on weekday ${index}.`,
+      });
+    }
+    // The mirror lists pages by slug, so `page-98` and `page-99` come last of the 104. The first
+    // is the official source's; the second is as trusted as every other.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sources[98], { authority: 'official' });
+    });
+    const snapshot = await harness.query(internal.mock.snapshotInternal, {
+      agentId,
+      selection: everyField,
+    });
+    // 102 sources are searched, one block each a search: the official one and the first 101 of
+    // the rest, so the last team source's page, as good a match, is not scouted.
+    expect(snapshot.teamDocs.map((doc) => doc.title)).toEqual(['Page 98']);
+  }, 60_000);
+});
+
+describe('docSelection.changedCitedBlocks and a page’s status (15-A; W14-R25, W14-R28)', (): void => {
+  /** Two stored pages of one source, and the first block of each as a plan cites it. */
+  async function cited(harness: Harness) {
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'runbooks/pipeline-runbook.md',
+      title: 'Pipeline runbook',
+      markdown: TILE_RUNBOOK,
+    });
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'runbooks/pipeline-runbook-v2.md',
+      title: 'Pipeline runbook, version 2',
+      markdown: `${TILE_RUNBOOK}\n\nThen post the figure.`,
+    });
+    const [v1] = await pageBlocks(harness, handbook.sourceId, 'runbooks/pipeline-runbook.md');
+    return { agentId, handbook, cite: { id: v1._id as string, hash: v1.hash } };
+  }
+
+  it('answers the cite of a superseded page as gone, naming what superseded it, though its text is unchanged', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook, cite } = await cited(harness);
+    const check = async () =>
+      await harness.query(internal.docSelection.changedCitedBlocks, { agentId, blocks: [cite] });
+    expect(await check()).toEqual([]);
+    await mark(harness, { ...handbook, ref: 'runbooks/pipeline-runbook.md' }, 'superseded', {
+      sourceId: handbook.sourceId,
+      ref: 'runbooks/pipeline-runbook-v2.md',
+    });
+    expect(await check()).toEqual([
+      {
+        id: cite.id,
+        page: 'Handbook/runbooks/pipeline-runbook.md',
+        status: 'superseded',
+        supersededBy: 'Pipeline runbook, version 2',
+      },
+    ]);
+    await mark(harness, { ...handbook, ref: 'runbooks/pipeline-runbook.md' }, 'archived');
+    expect(await check()).toEqual([
+      { id: cite.id, page: 'Handbook/runbooks/pipeline-runbook.md', status: 'archived' },
+    ]);
+  });
+
+  it('answers the cite of a page the employee no longer reads as gone (W14-R25)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook, cite } = await cited(harness);
+    // Another owner's employee, and one of the owner's deployed without the source.
+    const strangers = await harness.run(async (ctx) => ({
+      other: await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Elsewhere',
+        userId: 'another-owner',
+        state: 'deployed',
+        createdAt: 1,
+      }),
+      without: await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Without',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+        excludedDocSourceIds: [handbook.sourceId],
+      }),
+    }));
+    const check = async (reader: Id<'agents'>) =>
+      await harness.query(internal.docSelection.changedCitedBlocks, {
+        agentId: reader,
+        blocks: [cite],
+      });
+    expect(await check(agentId)).toEqual([]);
+    const unread = [{ id: cite.id, page: 'Handbook/runbooks/pipeline-runbook.md' }];
+    expect(await check(strangers.other)).toEqual(unread);
+    expect(await check(strangers.without)).toEqual(unread);
+  });
+
+  it('reads each cited page once however many of its blocks a plan cites (W14-R28)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook } = await cited(harness);
+    const blocks = await pageBlocks(harness, handbook.sourceId, 'runbooks/pipeline-runbook.md');
+    expect(blocks.length).toBeGreaterThan(1);
+    await mark(harness, { ...handbook, ref: 'runbooks/pipeline-runbook.md' }, 'archived');
+    const gone = await harness.query(internal.docSelection.changedCitedBlocks, {
+      agentId,
+      blocks: blocks.map((block) => ({ id: block._id as string, hash: block.hash })),
+    });
+    expect(gone.map((entry) => entry.status)).toEqual(blocks.map(() => 'archived'));
   });
 });

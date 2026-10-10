@@ -14,7 +14,7 @@ import {
   splitPage,
   type DocBlock,
 } from '../src/docs/blocks';
-import { pageStatusOf, type PageStatus } from '../src/docs/authority';
+import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/authority';
 
 /*
  * The block store behind the documentation search (wave 14, 14-I; the wave file's section 6.1).
@@ -378,7 +378,9 @@ export const unchangedPage = internalQuery({
  * ones without a word), so a caller orders its terms first. Each source is its own query,
  * filtered by owner and that source: two filter expressions, inside the backend's eight, since
  * two equalities on `sourceId` would be an AND. Each answers at most `limit` blocks in the
- * backend's relevance order, within its 1,024-result scan.
+ * backend's relevance order, within its 1,024-result scan. With `status`, only the blocks of
+ * pages in that status are answered, by the index's own filter (a third expression; K-1): the
+ * selection asks for `active`, so a superseded page's blocks never take a place in an answer.
  *
  * @returns Every source's blocks, source by source in the order given, each with its rank.
  * @throws Error past `SEARCH_SOURCES_LIMIT` sources, `SEARCH_LIMIT_PER_SOURCE` blocks a source or
@@ -390,6 +392,7 @@ export const searchBlocks = internalQuery({
     sourceIds: v.array(v.id('docSources')),
     query: v.string(),
     limit: v.optional(v.number()),
+    status: v.optional(v.union(...PAGE_STATUSES.map((status) => v.literal(status)))),
   },
   handler: async (ctx, args): Promise<FoundBlock[]> => {
     const limit = args.limit ?? 12;
@@ -416,9 +419,13 @@ export const searchBlocks = internalQuery({
         async (sourceId) =>
           await ctx.db
             .query('docBlocks')
-            .withSearchIndex('by_text', (q) =>
-              q.search('searchText', query).eq('userId', args.userId).eq('sourceId', sourceId),
-            )
+            .withSearchIndex('by_text', (q) => {
+              const owned = q
+                .search('searchText', query)
+                .eq('userId', args.userId)
+                .eq('sourceId', sourceId);
+              return args.status === undefined ? owned : owned.eq('status', args.status);
+            })
             .take(limit),
       ),
     );
