@@ -39,9 +39,14 @@ export function changesTo(
   return strikes.changes.filter((change) => change.field === field);
 }
 
-/** Words a goal uses when the manager gave it nothing: the goal is a gap, not a goal. */
+/**
+ * Words a goal uses when the manager gave it nothing: the goal is a gap, not a goal. The "no ...
+ * given" words must open the goal, alone or after "There was": a goal that only remarks on a
+ * missing number further on ("Get the backlog below 20, no target number given for the 60-day
+ * mark") is a goal (W14-R57).
+ */
 const NO_MILESTONE =
-  /^\s*$|^\s*(?:none|n\/a|not stated|tbd)\.?\s*$|\bno\b[^.]*\b(?:milestone|goal|target|checkpoint)\b[^.]*\b(?:stated|given|named|set|mentioned)\b/i;
+  /^\s*$|^\s*(?:none|n\/a|not stated|tbd)\.?\s*$|^\s*(?:there\s+(?:was|is|were)\s+)?no\b[^.]*\b(?:milestone|goal|target|checkpoint)\b[^.]*\b(?:stated|given|named|set|mentioned)\b/i;
 
 /**
  * Whether a 30, 60 or 90-day goal records that the manager named none, which the document draws
