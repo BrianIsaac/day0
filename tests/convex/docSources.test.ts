@@ -3474,6 +3474,49 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     expect(await status()).toBe('superseded');
   });
 
+  it('counts a page it keeps after one miss among the pages the source holds, and its values among those stated (W14-R24)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const ref = credentialSourceRef('missed.md', 'a'.repeat(32));
+    const superseded = credentialSourceRef('missed.md', 'b'.repeat(32));
+    await harness.run(async (ctx): Promise<void> => {
+      const value = { userId: 'owner', kind: 'value' as const, ciphertext: 'encrypted', iv: 'iv' };
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref },
+        createdAt: 1,
+      });
+      // A value an earlier sync superseded on the same page is stated by nobody.
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref: superseded },
+        status: 'superseded',
+        supersededAt: 1,
+        createdAt: 1,
+      });
+      const source = await ctx.db.get(sourceId);
+      await ctx.db.patch(source!.lastCompletedSyncId!, { credentialRefs: [ref] });
+    });
+
+    const once = await walk(harness, sourceId, ['kept.md']);
+    // The source still holds both pages: the one this walk listed and the one it missed once.
+    expect(once).toMatchObject({ pagesListed: 1 });
+    expect(once?.summary).toMatchObject({ pagesKept: 2, pagesRemoved: 0 });
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ pageCount: 2 });
+    // And the kept page still states its value, so the next walk reads it as stated before (N23).
+    expect(once?.credentialRefs).toEqual([ref]);
+
+    const twice = await walk(harness, sourceId, ['kept.md']);
+    expect(twice?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
+    expect(twice?.credentialRefs).toEqual([]);
+  });
+
   it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();

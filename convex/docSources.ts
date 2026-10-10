@@ -1432,6 +1432,9 @@ export const applyRestatedScope = internalMutation({
   },
 });
 
+/** The most pages kept after one miss that a finish counts; past it the count is a floor. */
+const MISSED_ONCE_COUNTED = 4_096;
+
 /**
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
@@ -1441,7 +1444,8 @@ export const applyRestatedScope = internalMutation({
  * steps removed as `pruned`; a resumed finish counts its own part only. A
  * caller that finishes a run from its last read batch passes that batch
  * instead, whose refs are stamped with the run's listing. `pagesKept` is the
- * pages the generation lists. A page the generation could not read is
+ * pages the source holds after it: those the generation lists and those it missed once and keeps
+ * (W14-R24), whose values stay among the run's stated ones. A page the generation could not read is
  * stamped too, so it keeps its last stored version, mirror and credentials;
  * the run's unread record names it and the source's line says so until a
  * sync reads it (P5-11).
@@ -1501,18 +1505,35 @@ export const finishSync = internalMutation({
     let credentialsSuperseded = 0;
     const below = await pruneBelow(ctx, source);
     const listing = runListing(run);
+    const unstated: Doc<'credentials'>[] = [];
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
-      // A page this walk missed but the finish keeps (two-walk prune) still states its values.
-      const pageRef = credentialPageRef(credential.source.ref);
-      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) continue;
       // An earlier sync already superseded it and unbound its surfaces; doing
       // it again would rewrite nothing but the count.
       if (credential.status === 'superseded') continue;
+      // A page this walk missed but the finish keeps (two-walk prune) still states its values:
+      // they stay among the run's stated refs, which the next walk reads as stated before (W14-R24).
+      const pageRef = credentialPageRef(credential.source.ref);
+      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) {
+        currentCredentialRefs.add(credential.source.ref);
+      } else {
+        unstated.push(credential);
+      }
+    }
+    for (const credential of unstated) {
       await supersedeCredential(ctx, credential, swap);
       credentialsSuperseded += 1;
     }
+    // The pages kept after one miss: listing rows stamped from the last complete walk's listing
+    // up to this walk's, read by the listing's own index (small rows, never a page body).
+    const missedOnce = await ctx.db
+      .query('docPageListings')
+      .withIndex('by_source', (index) =>
+        index.eq('sourceId', source._id).gte('seenBy', below).lt('seenBy', listing),
+      )
+      .take(MISSED_ONCE_COUNTED);
+    const pagesKept = pagesListed + missedOnce.length;
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
     const unreadRecord = withUnreadPages(unreadRecordIn(run), args.unread ?? []);
@@ -1534,7 +1555,7 @@ export const finishSync = internalMutation({
       completedAt: now,
       reason: undefined,
       unread: unreadRecord,
-      summary: { pagesKept: pagesListed, ...pruned, credentialsSuperseded },
+      summary: { pagesKept, ...pruned, credentialsSuperseded },
     });
     // A generation that holds no page and read none is not read (W14-R11): "Read" with a page
     // count would be untrue of it.
