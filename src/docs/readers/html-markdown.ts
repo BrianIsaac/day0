@@ -116,6 +116,25 @@ export function documentHtmlToMarkdown(html: string): string {
   return documentService().turndown(html);
 }
 
+/**
+ * A page's Markdown under its own title.
+ *
+ * A wiki keeps a page's title apart from its body, and the store names a page by its first
+ * level-one heading (`markdownPageTitle`), so a body that opens on a section heading would be
+ * stored under that section's name. The title goes first unless the body already opens with it.
+ *
+ * @param title - The page's title in its source.
+ * @param markdown - The page's body as Markdown.
+ */
+export function underTitle(title: string, markdown: string): string {
+  const heading = title.replace(/\s+/g, ' ').trim();
+  const body = markdown.trim();
+  if (heading === '') return body;
+  const first = /^#\s+(.+?)\s*$/.exec(body.split('\n', 1)[0] ?? '')?.[1];
+  if (first === heading) return body;
+  return body === '' ? `# ${heading}` : `# ${heading}\n\n${body}`;
+}
+
 /** Text as HTML text. */
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

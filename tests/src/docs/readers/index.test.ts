@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConfluenceCloudReader } from '../../../../src/docs/readers/confluence-v2';
 import { FeishuReader } from '../../../../src/docs/readers/feishu';
 import { FolderReader } from '../../../../src/docs/readers/folder';
 import { GitReader } from '../../../../src/docs/readers/git';
@@ -21,11 +22,12 @@ describe('documentation reader registry', (): void => {
     expect(readerFor('feishu')).toBeInstanceOf(FeishuReader);
   });
 
+  it('resolves the Confluence Cloud reader, which reads as a service account (15-X)', (): void => {
+    expect(readerFor('confluence-v2')).toBeInstanceOf(ConfluenceCloudReader);
+  });
+
   it('names each kind whose reader has not landed as not read yet, rather than reading it as another', (): void => {
     expect(() => readerFor('sharepoint')).toThrow('Day0 does not read SharePoint sources yet.');
-    expect(() => readerFor('confluence-v2')).toThrow(
-      'Day0 does not read Confluence Cloud sources yet.',
-    );
     expect(() => readerFor('confluence-dc')).toThrow(
       'Day0 does not read Confluence Data Center sources yet.',
     );

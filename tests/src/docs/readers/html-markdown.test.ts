@@ -3,6 +3,7 @@ import {
   confluenceStorageToMarkdown,
   documentHtmlToMarkdown,
   htmlToMarkdown,
+  underTitle,
 } from '../../../../src/docs/readers/html-markdown';
 
 describe('htmlToMarkdown', (): void => {
@@ -137,5 +138,20 @@ describe('confluenceStorageToMarkdown', (): void => {
     const markdown = confluenceStorageToMarkdown(storage);
     expect(markdown).toBe('Kept text.\n\nEnd.');
     expect(markdown).not.toMatch(/ac:|ri:|at:|CDATA/);
+  });
+});
+
+describe('underTitle', (): void => {
+  it("puts a page's own title first, so a section heading never names the page", (): void => {
+    expect(underTitle('Close the quarter', '# Overview\n\nLock the books.')).toBe(
+      '# Close the quarter\n\n# Overview\n\nLock the books.',
+    );
+  });
+
+  it('leaves a body that already opens with its title, and titles an empty page', (): void => {
+    expect(underTitle('Close the quarter', '# Close the quarter\n\nLock the books.')).toBe(
+      '# Close the quarter\n\nLock the books.',
+    );
+    expect(underTitle('  Runbook\n index ', '')).toBe('# Runbook index');
   });
 });

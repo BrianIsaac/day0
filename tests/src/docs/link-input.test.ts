@@ -138,6 +138,32 @@ describe('the secret a source reads with', (): void => {
     ).toThrow('Only MCP sources may name a server kind.');
   });
 
+  it('takes a Confluence Cloud space at the gateway with its API token, and nothing else (15-X)', (): void => {
+    const locator =
+      'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS';
+    const space = validateLinkInput({ label: ' Ops wiki ', kind: 'confluence-v2', locator });
+    expect(space).toEqual({ label: 'Ops wiki', kind: 'confluence-v2', locator });
+    expect(() => validateReaderSecret(space, undefined)).toThrow(
+      "A Confluence Cloud source needs its service account's API token.",
+    );
+    expect(() => validateReaderSecret(space, 'two words')).toThrow(
+      'A Confluence token is one line with no spaces',
+    );
+    expect(() => validateReaderSecret(space, 'fixture-confluence-token')).not.toThrow();
+    for (const refused of [
+      'https://acme.atlassian.net/wiki/spaces/OPS',
+      'https://api.atlassian.com/ex/jira/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+      'OPS',
+    ]) {
+      expect(
+        () => validateLinkInput({ label: 'Ops wiki', kind: 'confluence-v2', locator: refused }),
+        refused,
+      ).toThrow("A Confluence Cloud location is the site's cloud ID and a space");
+    }
+    expect(secretLabel({ label: 'Ops wiki', kind: 'confluence-v2' })).toBe('Ops wiki API token');
+    expect(readsWithOwnSecret('confluence-v2')).toBe(true);
+  });
+
   it('names the secret by what it is for, and lets every kind but a folder rotate one (14-F)', (): void => {
     expect(secretLabel({ label: 'Runbooks', kind: 'git' })).toBe('Runbooks reader secret');
     expect(secretLabel({ label: 'Notion', kind: 'mcp' })).toBe('Notion connection secret');

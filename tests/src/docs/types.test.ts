@@ -25,16 +25,18 @@ describe('documentation types', (): void => {
     expect(mirroredDocSlug(sourceId, '运维/刷新看板.md')).toBe(refresh);
   });
 
-  it('names the five kinds whose readers have not landed, and no kind a reader reads (15-K)', (): void => {
+  // Re-pinned as each of 15-X's readers lands: a kind leaves the list with its reader.
+  it('names the kinds whose readers have not landed, and no kind a reader reads (15-K)', (): void => {
     expect(Object.keys(PENDING_READER_NAMES)).toEqual([
       'sharepoint',
-      'confluence-v2',
       'confluence-dc',
       'yuque',
       'drive',
     ]);
     expect(
-      (['mcp', 'folder', 'git', 'urls', 'feishu', 'drive'] as const).filter(isPendingReaderKind),
+      (['mcp', 'folder', 'git', 'urls', 'feishu', 'confluence-v2', 'drive'] as const).filter(
+        isPendingReaderKind,
+      ),
     ).toEqual(['drive']);
     expect(notReadYet('confluence-dc')).toBe(
       'Day0 does not read Confluence Data Center sources yet.',

@@ -1,5 +1,6 @@
 import { notReadYet, type DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
+import { ConfluenceCloudReader } from './confluence-v2';
 import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
@@ -30,8 +31,9 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
       return new McpReader();
     case 'feishu':
       return new FeishuReader();
-    case 'sharepoint':
     case 'confluence-v2':
+      return new ConfluenceCloudReader();
+    case 'sharepoint':
     case 'confluence-dc':
     case 'yuque':
     case 'drive':
