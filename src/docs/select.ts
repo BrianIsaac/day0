@@ -1,4 +1,5 @@
 import { blockSearchQuery, searchTerms, splitPage } from './blocks';
+import { sourceAuthorityOf, type SourceAuthority } from './authority';
 import { renderHowTos, renderTeamDocs } from '../work/documents';
 import { parseProcedureContract } from '../work/procedure-contract';
 import { documentedBrowserFields, writtenBrowserSurfaces } from '../work/claim-key';
@@ -27,9 +28,11 @@ import type {
  * for the target surface that names the shape's operation, and every page documenting the form
  * of a browser-driven surface the plan writes, each whole. Scout with one search per field of
  * the item, each cut to the sixteen terms the backend reads, rarest first. Re-score what the
- * scout found with the index's own tokeniser and keep the best 12 blocks over at most 6 pages,
- * at most 4 a page. Assemble each page's blocks in document order under a cite line, guides
- * first, within 24,000 characters.
+ * scout found with the index's own tokeniser, weighed by how far each page's source is trusted
+ * (official over team over personal; recency only between equals: wave 15, A5), and keep the
+ * best 12 blocks over at most 6 pages, at most 4 a page. Assemble each page's blocks in document
+ * order under a cite line, guides first, within 24,000 characters, of which the ranked pick
+ * keeps a floor.
  */
 
 /** The most documentation characters one prompt carries (R4). */
@@ -43,6 +46,26 @@ export const SELECTED_BLOCK_LIMIT = 12;
 
 /** The most blocks the ranked pick takes from one page. */
 export const BLOCKS_PER_PAGE_LIMIT = 4;
+
+/**
+ * The characters of the budget kept for the ranked pick (the review's D-3): the pages always
+ * included are spent up to the budget less this, so a long guide for the target surface cannot
+ * crowd out the blocks that answer the item. Every procedure contract's needed blocks are still
+ * spent before anything (W14-R3); what the pick leaves of its floor goes back to those pages.
+ */
+export const PICK_FLOOR_CHARS = 6_000;
+
+/**
+ * How much a block's score counts by the trust of its page's source: official over team over
+ * personal (A5). A weight, not a sort: a team page that answers the item still ranks above an
+ * official page that barely mentions it, and between two pages that answer alike the more
+ * trusted is first.
+ */
+export const AUTHORITY_WEIGHT: Readonly<Record<SourceAuthority, number>> = {
+  official: 1,
+  team: 0.85,
+  personal: 0.7,
+};
 
 /**
  * The model call sites a selection is made for: the planner (whose selection the obligations
@@ -143,6 +166,10 @@ export interface SelectablePage {
   readonly citePage: string;
   /** The page's source (`docSources` id); absent for an office page with no source. */
   readonly sourceId?: string;
+  /** How far the page's source is trusted; absent reads as `team` (`sourceAuthorityOf`). */
+  readonly authority?: SourceAuthority;
+  /** When the page was last stored: read only to order two pages of equal trust that answer alike. */
+  readonly updatedAt?: number;
 }
 
 /** A block of a page, stored (with its row id) or split here. */
@@ -392,8 +419,10 @@ const BM25_B = 0.75;
 /**
  * The scouted blocks of readable pages, scored against the request with the index's tokeniser
  * (BM25 over the block's heading path and text, each term's rarity counted over the pages and
- * weighted by the field that asked for it), best first; a block that shares no term with the
- * request but terms on every page is dropped.
+ * weighted by the field that asked for it, then by the trust of the page's source), best first;
+ * a block that shares no term with the request but terms on every page is dropped. Between
+ * equal scores the page stored later is first, then the mirror's order: recency breaks a tie
+ * and nothing else (A5).
  */
 function rankBlocks(
   request: SelectionRequest,
@@ -425,6 +454,10 @@ function rankBlocks(
   const averageLength =
     blocks.reduce((total, entry) => total + entry.terms.length, 0) / Math.max(1, blocks.length);
   const order = new Map(pages.map((page, index) => [page.key, index]));
+  const byKey = new Map(pages.map((page) => [page.key, page]));
+  const trust = (block: SelectableBlock): number =>
+    AUTHORITY_WEIGHT[sourceAuthorityOf(byKey.get(block.pageKey) ?? {})];
+  const storedAt = (block: SelectableBlock): number => byKey.get(block.pageKey)?.updatedAt ?? 0;
   const scored = blocks
     .map(({ block, terms }) => {
       const counts = new Map<string, number>();
@@ -437,7 +470,7 @@ function rankBlocks(
         if (count === 0 || (pages.length > 1 && frequency.get(term) === pages.length)) continue;
         score += (weight * idf(term) * count * (BM25_K1 + 1)) / (count + BM25_K1 * norm);
       }
-      return { block, score };
+      return { block, score: score * trust(block) };
     })
     .filter((entry) => entry.score > 0);
   const best = scored.reduce((top, entry) => Math.max(top, entry.score), 0);
@@ -446,6 +479,7 @@ function rankBlocks(
     .sort(
       (left, right) =>
         right.score - left.score ||
+        storedAt(right.block) - storedAt(left.block) ||
         (order.get(left.block.pageKey) ?? 0) - (order.get(right.block.pageKey) ?? 0) ||
         left.block.index - right.block.index,
     );
@@ -564,8 +598,10 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
     return (block) => rankOf.get(blockKey(block)) ?? Number.POSITIVE_INFINITY;
   };
 
-  // Every contract's needed blocks are spent first, page by page, then each page's rest in the
-  // order above: one long contract page no longer cuts the next page's contract (W14-R3).
+  // Every contract's needed blocks are spent first, page by page: one long contract page no
+  // longer cuts the next page's contract (W14-R3). Then the pages always included, up to the
+  // budget less the pick's floor; then the ranked pick; then what is left goes back to the pages
+  // always included, in the order above (D-3).
   const chosen: ChosenDocumentation = { blocks: new Map(), entries: new Map() };
   for (const candidate of candidates) {
     const contractNeeds = needed.get(candidate.page.key);
@@ -573,10 +609,20 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
     const blocks = candidate.blocks.filter((block) => contractNeeds.has(blockKey(block)));
     fitBlocks(candidate, blocks, chosen, candidates);
   }
-  for (const candidate of candidates) {
+  const spend = (candidate: Assembled, limit: number): void => {
     const rank = priority(candidate);
     const ordered = [...candidate.blocks].sort((left, right) => rank(left) - rank(right));
-    fitBlocks(candidate, ordered, chosen, candidates);
+    fitBlocks(candidate, ordered, chosen, candidates, limit);
+  };
+  const included = candidates.filter((candidate) => alwaysSet.has(candidate.page.key));
+  const beforeThePick =
+    pickedPages.length > 0 ? DOCUMENTATION_CHAR_LIMIT - PICK_FLOOR_CHARS : DOCUMENTATION_CHAR_LIMIT;
+  for (const candidate of included) spend(candidate, beforeThePick);
+  for (const candidate of candidates) {
+    if (!alwaysSet.has(candidate.page.key)) spend(candidate, DOCUMENTATION_CHAR_LIMIT);
+  }
+  if (pickedPages.length > 0) {
+    for (const candidate of included) spend(candidate, DOCUMENTATION_CHAR_LIMIT);
   }
 
   const howToGuides: Array<MockSurfaceSnapshot['howToGuides'][number]> = [];
@@ -669,12 +715,14 @@ interface ChosenDocumentation {
  *
  * @param chosen - Each page's chosen blocks and assembled body, updated in place.
  * @param candidates - Every page in the order the prompt carries them, for the budget's sum.
+ * @param limit - The budget this spend may reach; the whole budget unless a floor is kept back.
  */
 function fitBlocks(
   candidate: Assembled,
   blocks: readonly SelectableBlock[],
   chosen: ChosenDocumentation,
   candidates: readonly Assembled[],
+  limit: number = DOCUMENTATION_CHAR_LIMIT,
 ): void {
   const key = candidate.page.key;
   const base = chosen.blocks.get(key) ?? [];
@@ -700,7 +748,7 @@ function fitBlocks(
         entry,
       );
     }
-    return documentationChars(documents) <= DOCUMENTATION_CHAR_LIMIT;
+    return documentationChars(documents) <= limit;
   };
   let low = 0;
   let high = extra.length;

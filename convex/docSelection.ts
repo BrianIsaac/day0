@@ -146,9 +146,11 @@ function selectablePages(
   sources: readonly Doc<'docSources'>[],
 ): SelectablePage[] {
   const names = citeNames(sources);
+  const byId = new Map(sources.map((source) => [source._id, source]));
   return docs.map((doc): SelectablePage => {
     const ref =
       doc.sourceId !== undefined && doc.sourceRef !== undefined ? doc.sourceRef : doc.slug;
+    const source = doc.sourceId === undefined ? undefined : byId.get(doc.sourceId);
     return {
       key: pageKeyOf(doc.sourceId, ref),
       slug: doc.slug,
@@ -158,6 +160,8 @@ function selectablePages(
       citeSource: doc.sourceId === undefined ? 'office' : (names.get(doc.sourceId) ?? 'source'),
       citePage: ref,
       ...(doc.sourceId !== undefined ? { sourceId: doc.sourceId } : {}),
+      ...(source !== undefined ? { authority: sourceAuthorityOf(source) } : {}),
+      updatedAt: doc.updatedAt,
     };
   });
 }

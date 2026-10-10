@@ -307,6 +307,15 @@ describe('plan drafter grounding', (): void => {
     );
   });
 
+  it('tells the real planner its documentation is a selection, so a procedure not shown is not read as absent (W14-R29)', (): void => {
+    const sentence =
+      'The loaded documentation is the part selected for this item, not everything the team has written: a procedure that is not shown here is not thereby absent, so say what you did not find rather than plan as if it did not exist.';
+    expect(planSystemPrompt(false, 'real')).toContain(sentence);
+    expect(planSystemPrompt(true, 'real')).toContain(sentence);
+    // The mock head is the hosted demo's and reads the whole mirror: it is told no such thing.
+    expect(planSystemPrompt(false, 'mock')).not.toContain('part selected for this item');
+  });
+
   it('names the owner the provider returned beside the requester, and nothing when it returned none', (): void => {
     const withOwner = planUserPrompt({
       candidate: { ...candidate, owner: 'Ana', requester: 'Manager' },

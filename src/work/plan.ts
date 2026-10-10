@@ -67,12 +67,21 @@ const EVIDENCE_RULE =
   'Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.';
 
 /**
+ * What the real planner is told of the documentation it is shown (W14-R29): it is a selection
+ * made for the item (wave 14, 14-R), and `EVIDENCE_RULE` alone reads a procedure the selection
+ * did not carry as one the team never wrote.
+ */
+const SELECTION_RULE =
+  'The loaded documentation is the part selected for this item, not everything the team has written: a procedure that is not shown here is not thereby absent, so say what you did not find rather than plan as if it did not exist.';
+
+/**
  * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
- * candidate and the surfaces after it (wave 14, 14-R); the mock line is the hosted demo's, pinned
- * byte for byte, where both follow the candidate.
+ * candidate and the surfaces after it (wave 14, 14-R), and is a selection (`SELECTION_RULE`); the
+ * mock line is the hosted demo's, pinned byte for byte, where both follow the candidate and the
+ * documentation is the whole mirror.
  */
 const EVIDENCE_LINE: Readonly<Record<SurfaceMode, string>> = {
-  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE}`,
+  real: `  - Two kinds of evidence inform the plan: the loaded documentation carries the team's procedures, runbooks and facts, and the surfaces section, after the candidate, says which systems are connected and by what path. ${EVIDENCE_RULE} ${SELECTION_RULE}`,
   mock: `  - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. ${EVIDENCE_RULE}`,
 };
 
