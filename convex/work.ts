@@ -311,16 +311,33 @@ export async function assertSameAgent(
   return { item, skill };
 }
 
-/** Public, owner-guarded: every work item of one employee. */
+/**
+ * The work items one read of an employee's list holds (W14-R51): the list was every row the
+ * employee ever had, each a whole row with its run's output and up to ten name lookups, in one
+ * query. An employee past this many keeps its newest on the Work tab.
+ */
+export const WORK_LIST_LIMIT = 300;
+
+/**
+ * Public, owner-guarded: one employee's work items, the newest {@link WORK_LIST_LIMIT}, in the
+ * order the page has always been given: by state, last first, and the newest first within one.
+ */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ListedWorkItem[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const items = await ctx.db
+    const newest = await ctx.db
       .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId))
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
-      .collect();
+      .take(WORK_LIST_LIMIT);
+    const items = [...newest].sort((left, right) =>
+      left.state === right.state
+        ? right._creationTime - left._creationTime
+        : left.state < right.state
+          ? 1
+          : -1,
+    );
     return await withRequesterNames(ctx, agent, items);
   },
 });
