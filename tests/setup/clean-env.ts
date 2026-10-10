@@ -28,3 +28,13 @@ export function inheritedProductVariables(
 }
 
 for (const name of inheritedProductVariables(process.env)) delete process.env[name];
+
+/**
+ * The private hosts of the deployment every fixture stands for: the demo tile's, which a real-mode
+ * setup writes into `DAY0_PRIVATE_HOSTS` and the browser fixtures drive over plain http. The
+ * executor holds a browser card to that list at every action (W14-R31), as the probe does, so the
+ * suite's deployment lists it; a test of another list stubs the variable and restores it.
+ */
+export const SUITE_PRIVATE_HOSTS = 'looker-tile';
+
+process.env.DAY0_PRIVATE_HOSTS = SUITE_PRIVATE_HOSTS;

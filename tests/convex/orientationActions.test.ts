@@ -2398,7 +2398,8 @@ describe('the browser floor in orientation', (): void => {
     expect(reports).toMatchObject({ verdict: 'proposed', path: 'escalate' });
     expect(reports.endpoint).toBeUndefined();
     expect(reports.request?.openQuestions).toContain(
-      'The web UI http://reports.example.test/forecast is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it: a sign-in there would cross the network unencrypted. Document its https address, or list the host in DAY0_PRIVATE_HOSTS if it is inside this network.',
+      // Re-taken (W14-R32): what to do comes first, since the card's reason is cut at 300.
+      'Document the https address of the web UI http://reports.example.test/forecast, or list its host in DAY0_PRIVATE_HOSTS if it is inside this network: it is plain http on a host DAY0_PRIVATE_HOSTS does not list, so Day0 does not open it (a sign-in there would cross the network unencrypted).',
     );
   });
 
