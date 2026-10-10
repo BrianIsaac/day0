@@ -65,6 +65,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'coworker.replied': READS,
   'documentation.systems-discovered': READS,
   'documentation.page-status-changed': READS,
+  'documentation.relation-proposed': READS,
+  'documentation.relation-decided': DECISIONS,
   'evaluation.transport-ready': NONE,
   'voice.started': CHARTER,
   'voice.answer-recorded': CHARTER,

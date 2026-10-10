@@ -39,6 +39,7 @@ import {
 } from '../src/docs/finishing';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 import { MARKER_JUDGEMENTS_PER_SYNC } from '../src/docs/status';
+import { RELATION_PAGES_PER_SYNC, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { StatusPhasePage } from './docStatus';
 
@@ -670,8 +671,9 @@ export const syncBatch = internalAction({
  * the synced state. Each step is fenced on the run's cursor, so a newer sync
  * stops it, and the cursor records where the finish stands, so a finish cut
  * off part-way resumes there (`src/docs/finishing.ts`). A completed
- * generation schedules discovery and the re-orientation of the absent
- * systems its pages may now document.
+ * generation schedules discovery, the re-orientation of the absent
+ * systems its pages may now document, and the measures that propose relations
+ * between its pages and the owner's others (`proposeRelations`).
  */
 async function finishGeneration(
   ctx: ActionCtx,
@@ -760,6 +762,12 @@ async function finishGeneration(
     await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
       sourceId: source._id,
       pagesRemoved,
+    });
+    // The pages this generation stored or changed, measured against the owner's other pages:
+    // proposals for the manager's cards, never a change by themselves (15-A).
+    await ctx.scheduler.runAfter(0, internal.docSyncActions.proposeRelations, {
+      sourceId: source._id,
+      runId,
     });
   }
   return {
@@ -865,6 +873,58 @@ async function walkStatusPhase(
     from = page.from;
   }
 }
+
+/**
+ * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
+ * (and the runs it took over from, back to the complete walk before it) is measured against the
+ * owner's other active pages (`docRelations.measurePage`), at most `RELATION_PAGES_PER_SYNC`
+ * pages and `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
+ * finish once the generation has completed, as discovery is, so the splits its pages scheduled
+ * have landed and the measures cost the finish none of its time. A proposal changes no page and
+ * holds nothing; the manager answers its card. A page that cannot be measured is logged and
+ * passed over.
+ *
+ * @returns How many pages it measured and how many relations it proposed.
+ */
+export const proposeRelations = internalAction({
+  args: { sourceId: v.id('docSources'), runId: v.id('docSyncRuns') },
+  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> => {
+    const refs = new Set<string>();
+    const generations = await ctx.runQuery(internal.docRelations.generationsToMeasure, args);
+    for (const generation of generations) {
+      let cursor: string | null = null;
+      while (refs.size < RELATION_PAGES_PER_SYNC) {
+        const written: { refs: string[]; next: string | null } = await ctx.runQuery(
+          internal.docRelations.pagesWrittenBy,
+          { sourceId: args.sourceId, generation, cursor },
+        );
+        for (const ref of written.refs) refs.add(ref);
+        if (written.next === null) break;
+        cursor = written.next;
+      }
+    }
+    let measured = 0;
+    let proposed = 0;
+    for (const ref of [...refs].slice(0, RELATION_PAGES_PER_SYNC)) {
+      if (proposed >= RELATION_PROPOSALS_PER_SYNC) break;
+      measured += 1;
+      try {
+        proposed += await ctx.runMutation(internal.docRelations.measurePage, {
+          sourceId: args.sourceId,
+          syncRunId: args.runId,
+          ref,
+        });
+      } catch (error) {
+        log.warn('documentation page not measured for relations', {
+          sourceId: args.sourceId,
+          ref,
+          reason: safeSyncError(error),
+        });
+      }
+    }
+    return { measured, proposed };
+  },
+});
 
 /**
  * Re-read every approved intake scope quoting this source against its pages as they now stand.

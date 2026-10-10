@@ -50,8 +50,11 @@ export function statusSourceOf(page: Pick<Doc<'docPages'>, 'statusSource'>): Sta
   return page.statusSource ?? 'default';
 }
 
-/** The most relations read to or from one page: eight of the ceiling a document may reach. */
-export const RELATIONS_OF_A_PAGE = 8;
+/**
+ * The most relations read to or from one page. A relation row is small (its evidence is capped
+ * where it is written), and a pair holds at most a few.
+ */
+export const RELATIONS_OF_A_PAGE = 32;
 
 /** A page's change of status, as `restatePage` reports it. */
 export interface StatusChange {
@@ -87,7 +90,10 @@ function samePage(left: PageName | undefined, right: PageName | undefined): bool
  * The owner's employees that read a source: whose parked work a page's status may return, and on
  * whose record its change is written.
  */
-async function readersOf(ctx: QueryCtx, source: Doc<'docSources'>): Promise<Doc<'agents'>[]> {
+export async function readersOf(
+  ctx: QueryCtx,
+  source: Doc<'docSources'>,
+): Promise<Doc<'agents'>[]> {
   const agents = await ctx.db
     .query('agents')
     .withIndex('by_userId', (q) => q.eq('userId', source.userId))
@@ -479,6 +485,38 @@ export const recordMarker = internalMutation({
 /** The statuses the manager may give a page by hand; `active` is what Clear falls back to. */
 const MANAGER_STATUSES = ['superseded', 'archived', 'draft'] as const;
 
+/**
+ * Write a status the manager decided by hand on a page, with who decided and when, and set off
+ * what a change sets off (the blocks, the readers' records and parked work, the skills' stamp).
+ * The caller has established that the manager owns the page: `setPageStatus`, and a conflict's
+ * card when the manager says which page is right (`docRelations.decide`).
+ *
+ * @param ctx - The deciding mutation's context.
+ * @param args - The page with its source, the status, its successor when superseded, and the
+ *   manager's verified address when the token gives one.
+ */
+export async function decideByHand(
+  ctx: MutationCtx,
+  args: {
+    readonly source: Doc<'docSources'>;
+    readonly page: Doc<'docPages'>;
+    readonly status: (typeof MANAGER_STATUSES)[number];
+    readonly supersededBy: PageName | undefined;
+    readonly decidedBy: string | undefined;
+    readonly now: number;
+  },
+): Promise<void> {
+  const change = await writeStatus(ctx, {
+    source: args.source,
+    page: args.page,
+    decided: { status: args.status, statusSource: 'manager' },
+    supersededBy: args.supersededBy,
+    manager: { decidedBy: args.decidedBy, decidedAt: args.now },
+    now: args.now,
+  });
+  await stampStatusChanges(ctx, args.source, [change], args.now);
+}
+
 /** Why a page marked superseded was refused: it names no successor, or names itself. */
 export const NAME_THE_SUCCESSOR = 'Name the page that supersedes it.';
 export const NOT_ITS_OWN_SUCCESSOR = 'A page cannot supersede itself.';
@@ -527,16 +565,14 @@ export const setPageStatus = mutation({
       const successor = await ownedPage(ctx, caller.ownerKey, args.supersededBy);
       supersededBy = { sourceId: successor.page.sourceId, ref: successor.page.ref };
     }
-    const now = Date.now();
-    const change = await writeStatus(ctx, {
+    await decideByHand(ctx, {
       source,
       page,
-      decided: { status: args.status, statusSource: 'manager' },
+      status: args.status,
       supersededBy,
-      manager: { decidedBy: verifiedAddressOf(caller), decidedAt: now },
-      now,
+      decidedBy: verifiedAddressOf(caller),
+      now: Date.now(),
     });
-    await stampStatusChanges(ctx, source, [change], now);
     return null;
   },
 });

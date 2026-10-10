@@ -17,7 +17,7 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
-import type { PageStatus, StatusSource } from '../docs/authority';
+import type { PageStatus, RelationKind, StatusSource } from '../docs/authority';
 import type {
   AccessRequestReason,
   OrganisationConnectionKind,
@@ -533,6 +533,50 @@ export interface DocumentationPageStatusChangedPayload {
   readonly decidedBy: StatusSource;
   /** The page a superseded page gave way to, when one is named. */
   readonly supersededBy?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
+}
+
+/** A stored page as a relation's event names it. */
+export interface RelatedPageNamed {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+  /** The page's stored title. */
+  readonly title: string;
+  /** Its source's label. */
+  readonly source: string;
+}
+
+/**
+ * The payload of `documentation.relation-proposed` (wave 15, 15-A): a finishing sync's measures
+ * relate two of the owner's pages. A proposal changes no page; the manager answers its card.
+ * For a successor `from` is the later version of `to`.
+ */
+export interface DocumentationRelationProposedPayload {
+  readonly relationId: Id<'docRelations'>;
+  readonly kind: RelationKind;
+  readonly from: RelatedPageNamed;
+  readonly to: RelatedPageNamed;
+  /** The measures that proposed it (`RELATION_MEASURES`), each with its value. */
+  readonly evidence: Array<{ measure: string; value: number }>;
+}
+
+/**
+ * The payload of `documentation.relation-decided` (wave 15, 15-A): the manager's answer on a
+ * relation's card, and the kind the relation has with it.
+ */
+export interface DocumentationRelationDecidedPayload {
+  readonly relationId: Id<'docRelations'>;
+  readonly kind: RelationKind;
+  /** The card's answer (`RELATION_DECISIONS`, `convex/docRelations.ts`). */
+  readonly decision:
+    | 'supersedes'
+    | 'keep-both'
+    | 'not-the-same'
+    | 'disagree'
+    | 'from-is-right'
+    | 'to-is-right'
+    | 'both-hold';
+  readonly from: RelatedPageNamed;
+  readonly to: RelatedPageNamed;
 }
 
 /** The payload of `evaluation.transport-ready`. */
@@ -1841,6 +1885,8 @@ export interface EventPayloads {
   'coworker.replied': CoworkerRepliedPayload;
   'documentation.systems-discovered': DocumentationSystemsDiscoveredPayload;
   'documentation.page-status-changed': DocumentationPageStatusChangedPayload;
+  'documentation.relation-proposed': DocumentationRelationProposedPayload;
+  'documentation.relation-decided': DocumentationRelationDecidedPayload;
   'evaluation.transport-ready': EvaluationTransportReadyPayload;
   'voice.started': VoiceStartedPayload;
   'voice.answer-recorded': VoiceAnswerRecordedPayload;
@@ -2046,6 +2092,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'coworker.replied',
   'documentation.systems-discovered',
   'documentation.page-status-changed',
+  'documentation.relation-proposed',
+  'documentation.relation-decided',
   'evaluation.transport-ready',
   'voice.started',
   'voice.answer-recorded',

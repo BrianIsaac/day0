@@ -492,6 +492,42 @@ function revokedAtSourceWords(
   }
 }
 
+/** ` ("A" and "B")` for a relation's two pages, when the row names them. */
+function relatedPages(p: {
+  readonly from?: { readonly title?: string };
+  readonly to?: { readonly title?: string };
+}): string {
+  const [from, to] = [text(p.from?.title), text(p.to?.title)];
+  return from && to ? ` ("${to}" and "${from}")` : '';
+}
+
+/** The manager's answer on a relation's card, as the record says it. */
+function relationDecidedWords(
+  p: Read<'documentation.relation-decided'>,
+  subject: RecordSubject,
+): string {
+  const [from, to] = [text(p.from?.title) ?? 'one page', text(p.to?.title) ?? 'the other'];
+  const who = decider(subject);
+  switch (p.decision) {
+    case 'supersedes':
+      return `${who} confirmed that "${from}" supersedes "${to}"`;
+    case 'keep-both':
+      return `${who} kept both "${to}" and "${from}" as current`;
+    case 'not-the-same':
+      return `${who} said "${to}" and "${from}" are not versions of one page`;
+    case 'disagree':
+      return `${who} confirmed that "${to}" and "${from}" disagree; ${subject.name} holds any step that relies on it`;
+    case 'from-is-right':
+      return `${who} said "${from}" is right where it disagrees with "${to}"`;
+    case 'to-is-right':
+      return `${who} said "${to}" is right where it disagrees with "${from}"`;
+    case 'both-hold':
+      return `${who} said "${to}" and "${from}" both hold`;
+    default:
+      return `${who} decided how two documentation pages relate`;
+  }
+}
+
 /**
  * A documentation page's change of status, with what decided it: the manager by hand, the page's
  * own source, a marker in the page, a relation the manager confirmed, or nothing but the
@@ -781,6 +817,15 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.created === 'number' && p.created > 0 ? `, ${p.created} new` : ''
     }${typeof p.retired === 'number' && p.retired > 0 ? `, ${p.retired} gone` : ''}`,
   'documentation.page-status-changed': pageStatusChangedWords,
+  'documentation.relation-proposed': (p) =>
+    `Two documentation pages${relatedPages(p)} look ${
+      p.kind === 'possible_conflict'
+        ? 'as if they disagree'
+        : p.kind === 'possible_successor'
+          ? 'like an older and a newer version of one page'
+          : 'like versions of one page'
+    }; the Documentation tab asks which stands`,
+  'documentation.relation-decided': relationDecidedWords,
   'evaluation.transport-ready': (_, subject) =>
     `The evaluation harness is ready to run${forItem(subject)}`,
   'voice.started': (p) => `Day-1 one-to-one opened in ${p.mode === 'chat' ? 'chat' : 'voice'}`,

@@ -25,6 +25,7 @@ import type * as decisionRequests from '../decisionRequests.js';
 import type * as devAuth from '../devAuth.js';
 import type * as docBlocks from '../docBlocks.js';
 import type * as docPages from '../docPages.js';
+import type * as docRelations from '../docRelations.js';
 import type * as docSelection from '../docSelection.js';
 import type * as docSources from '../docSources.js';
 import type * as docStatus from '../docStatus.js';
@@ -155,6 +156,7 @@ declare const fullApi: ApiFromModules<{
   devAuth: typeof devAuth;
   docBlocks: typeof docBlocks;
   docPages: typeof docPages;
+  docRelations: typeof docRelations;
   docSelection: typeof docSelection;
   docSources: typeof docSources;
   docStatus: typeof docStatus;

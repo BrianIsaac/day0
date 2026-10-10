@@ -167,6 +167,13 @@ function planHeldWords(reason: unknown): string {
     : 'it waits for your decision';
 }
 
+/** A relation between two documentation pages, as the feed names it. */
+function relationLabel(kind: unknown): string {
+  if (kind === 'possible_successor') return 'a newer version of a page';
+  if (kind === 'possible_conflict') return 'two pages that disagree';
+  return 'two versions of one page';
+}
+
 /** A documentation page's new status as the feed says it: "is now superseded", "is current again". */
 function pageStatusLabel(status: unknown): string {
   if (status === 'active') return 'is current again';
@@ -450,6 +457,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }${typeof payload.retired === 'number' && payload.retired > 0 ? `, ${payload.retired} gone` : ''}`,
   'documentation.page-status-changed': (payload) =>
     `documentation page ${text(payload.title) ? `"${payload.title}" ` : ''}${pageStatusLabel(payload.to)}`,
+  'documentation.relation-proposed': (payload) =>
+    `documentation: ${relationLabel(payload.kind)} to decide${
+      text(payload.from?.title) ? `, "${payload.from?.title}"` : ''
+    }`,
+  'documentation.relation-decided': (payload) =>
+    `documentation: ${relationLabel(payload.kind)} decided`,
   'evaluation.transport-ready': 'evaluation transport ready',
   'voice.started': (payload) =>
     payload.mode === 'chat' ? 'Day-1 1:1 started (chat)' : 'Day-1 1:1 started (voice)',

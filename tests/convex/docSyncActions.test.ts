@@ -670,6 +670,72 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
   }, 60_000);
 });
 
+describe('the relations a finishing sync proposes (15-A)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  /** Run one whole sync of a source. */
+  async function sync(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    return await harness.query(internal.docSources.syncReport, { sourceId });
+  }
+
+  it('proposes a later version stored by this sync as the successor of the page it names, once, and supersedes nothing by itself', async (): Promise<void> => {
+    const root = temporary('day0-sync-relations-');
+    await mkdir(join(root, 'wiki', 'runbooks'), { recursive: true });
+    await mkdir(join(root, 'official'));
+    await writeFile(
+      join(root, 'wiki', 'runbooks', 'pipeline-runbook.md'),
+      '# Pipeline runbook\n\n## Refresh\n\nPress Refresh once.\n',
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'official', 'pipeline-runbook-v2.md'),
+      '---\nsupersedes: pipeline-runbook\n---\n# Pipeline runbook\n\n## Refresh\n\nPress Refresh twice.\n',
+      'utf8',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const link = async (label: string, locator: string) =>
+      await harness.mutation(internal.docSources.createSource, {
+        userId: 'owner',
+        label,
+        kind: 'folder',
+        locator,
+      });
+    const wiki = await link('Team wiki', 'wiki');
+    const official = await link('Official runbooks', 'official');
+    expect(await sync(harness, wiki)).toMatchObject({ status: 'synced', pageCount: 1 });
+    const relations = async () =>
+      await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
+    // The wiki's own page relates to nothing yet.
+    expect(await relations()).toEqual([]);
+    expect(await sync(harness, official)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(await relations()).toMatchObject([
+      {
+        kind: 'possible_successor',
+        status: 'proposed',
+        from: { sourceId: official, ref: 'pipeline-runbook-v2.md' },
+        to: { sourceId: wiki, ref: 'runbooks/pipeline-runbook.md' },
+      },
+    ]);
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.map((page) => page.status ?? 'none')).toEqual(['none', 'none']);
+    // Neither source changed: the next syncs measure the same pages and propose nothing more.
+    await sync(harness, official);
+    await sync(harness, wiki);
+    expect(await relations()).toHaveLength(1);
+  }, 30_000);
+});
+
 describe('documentation sync batching', (): void => {
   /**
    * Lay out a 60-page folder with one token-bearing page under a fresh root.
