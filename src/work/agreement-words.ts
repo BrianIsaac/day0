@@ -108,8 +108,21 @@ export const AGREEMENTS_IN_MOCK =
 /** The Agreements card while its query has not answered. */
 export const AGREEMENTS_LOADING = 'Reading the working agreements.';
 
-/** The kicker of a refused row. */
+/** The kicker of a refused row that never took effect. */
 export const NOT_KEPT = 'Not kept';
+
+/**
+ * The kicker of a refused row, by what happened to it (14-FX's M2; wording draft): "Held" for an
+ * agreement for every employee held for this one, which is in effect for the others; "Ended" for
+ * one that was in effect until a later charter's check refused it; "Not kept" for one that never
+ * took effect.
+ *
+ * @param row - The refused agreement.
+ */
+export function refusedKicker(row: Pick<AgreementView, 'effectiveFrom' | 'refusal'>): string {
+  if (row.refusal?.reason === 'unchecked-for-employee') return 'Held';
+  return row.effectiveFrom === undefined ? NOT_KEPT : 'Ended';
+}
 
 /**
  * Why an agreement kept for every employee was not kept (W13-R28, moved from

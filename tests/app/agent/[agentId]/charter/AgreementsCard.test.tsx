@@ -203,6 +203,9 @@ describe('the Agreements card', (): void => {
     const text = view.container.textContent ?? '';
     expect(text).toContain('“Name the vessel in every customer comment.”');
     expect(text).toContain('It stays in effect for your other employees.');
+    // A hold is in effect for the others: its row is headed Held, not Not kept (14-FX's M2).
+    expect(text).toContain('Held');
+    expect(text).not.toContain('Not kept');
     expect(view.container.querySelector('[aria-label^="Dismiss"]')).toBeNull();
     // Past the bound nothing can check it, so the row offers no control (15-FX).
     expect(view.container.querySelector('button')).toBeNull();

@@ -17,10 +17,10 @@ import {
   CHECKING_AGAIN,
   keepForOneLabel,
   keptForOneLine,
-  NOT_KEPT,
   quotedSentence,
   REFUSED_WITHOUT_REASON,
   refusalSentence,
+  refusedKicker,
   sourceWords,
   WITHDRAWN,
   type AgreementView,
@@ -311,7 +311,7 @@ export function AgreementsCard({
               className="p-3 rounded-md border border-[var(--color-warn-line)] text-sm"
             >
               <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
-                {NOT_KEPT}
+                {refusedKicker(row)}
               </p>
               <p className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words">
                 “{row.statement}”

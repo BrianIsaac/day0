@@ -9,6 +9,7 @@ import {
   keepNoteHint,
   proposalQuestion,
   refusalOffersAmendment,
+  refusedKicker,
   refusalSentence,
   sourceWords,
   checkStale,
@@ -86,6 +87,16 @@ describe('what the cards say of a working agreement', (): void => {
       "Not in effect for Ines yet: Day0 has not checked it against Ines's charter. It checks when Ines next drafts a plan, or now with Check now. It stays in effect for your other employees.",
     );
     expect(refusalOffersAmendment(held)).toBe(false);
+  });
+
+  it('heads a refused row by what happened to it: never kept, ended after it was in effect, or held (14-FX\u2019s M2)', (): void => {
+    expect(refusedKicker({ refusal: { reason: 'widens-scope' } })).toBe('Not kept');
+    expect(refusedKicker({})).toBe('Not kept');
+    // In effect until a new charter's check refused it: it ended, it was not "not kept".
+    expect(
+      refusedKicker({ effectiveFrom: 5, refusal: { reason: 'contradicts-will-not-do' } }),
+    ).toBe('Ended');
+    expect(refusedKicker({ refusal: { reason: 'unchecked-for-employee' } })).toBe('Held');
   });
 
   it('reads a kept agreement as stale once its check has waited past its tries, and says so (W13-R30)', (): void => {

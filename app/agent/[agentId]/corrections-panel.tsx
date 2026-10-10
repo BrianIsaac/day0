@@ -13,7 +13,6 @@ import {
   checkUnavailableLine,
   CHECKING_AGAIN,
   keepForOneLabel,
-  NOT_KEPT,
   PROPOSALS_DONE,
   PROPOSALS_TITLE,
   proposalQuestion,
@@ -21,6 +20,7 @@ import {
   WITHDRAWN,
   refusalOffersAmendment,
   refusalSentence,
+  refusedKicker,
   type AgreementView,
 } from '../../../src/work/agreement-words';
 import { Button, ButtonLink } from '../../components/Button';
@@ -305,7 +305,7 @@ export function AgreementProposals({
                 {row.status === 'refused' ? (
                   <>
                     <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
-                      {NOT_KEPT}
+                      {refusedKicker(row)}
                     </p>
                     <p
                       id={about}
