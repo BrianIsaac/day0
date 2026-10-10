@@ -30,6 +30,7 @@ import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
 import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
+import type { FinishedAs } from '@/work/state-labels';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -646,8 +647,7 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
   ).slice(0, UNFINISHED_SHOWN);
 }
 
-/** A finished run's end as the record says it: the word its card leads with (13-FD). */
-export type FinishedAs = 'done' | 'partly done' | 'not done';
+export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event
