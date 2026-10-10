@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
-import { PAGE_REDACTION_REVISION, pageContentHash } from '../../../src/docs/content-hash';
+import {
+  PAGE_REDACTION_REVISION,
+  REDACTOR_MODELS_DIGEST,
+  pageContentHash,
+} from '../../../src/docs/content-hash';
 import { sha256OfText } from '../../../src/lib/sha256';
 import { credentialValueFingerprint } from '../../../src/lib/credential-crypto';
 
@@ -50,24 +54,55 @@ describe('pageContentHash', (): void => {
     );
   });
 
-  it('pins the redaction pipeline its revision names: a change to that code bumps PAGE_REDACTION_REVISION', (): void => {
+  it('changes with the redactor’s models, so a redactor model change re-redacts every page once, by itself (W14-R16)', (): void => {
+    const hash = pageContentHash(PAGE, KEY_A, 'owner-a');
+    expect(
+      pageContentHash(PAGE, KEY_A, 'owner-a', PAGE_REDACTION_REVISION, 'a'.repeat(64)),
+    ).not.toBe(hash);
+    expect(
+      pageContentHash(PAGE, KEY_A, 'owner-a', PAGE_REDACTION_REVISION, REDACTOR_MODELS_DIGEST),
+    ).toBe(hash);
+  });
+
+  it('holds the digest of the models the redactor loads: a model change moves it, and with it every page’s hash (W14-R16)', (): void => {
+    // `redactor/models.sha256` names every file the component loads with its digest, and the
+    // component refuses to start on any other. Re-pin this constant with the model change: no
+    // revision bump is owed for it, since the hash's input moves by itself.
+    const models = readFileSync(
+      new URL('../../../redactor/models.sha256', import.meta.url),
+      'utf8',
+    );
+    expect(REDACTOR_MODELS_DIGEST).toBe(sha256OfText(models));
+  });
+
+  it('pins everything that decides a page’s redaction: a change to that code bumps PAGE_REDACTION_REVISION (W14-R16)', (): void => {
     // A page whose hash is unchanged is never redacted again, so a redaction that would now find
     // more must bump the revision, which re-redacts every page once. Re-pin the digest with the
     // bump; re-pin it alone only for a change that cannot alter what a page is redacted to.
-    const root = new URL('../../../src/', import.meta.url);
+    // Since 15-A the digest also covers the exact-value matcher the redaction calls
+    // (`src/surfaces/secrets.ts`, through `src/redaction/known-values.ts`) and the component that
+    // serves the span model, with its threshold and chunking (`redactor/server.py`): the review
+    // found a change to either left this test green and every unchanged page with its old
+    // redaction for good.
+    const src = new URL('../../../src/', import.meta.url);
     const files = [
       'docs/redaction.ts',
-      ...readdirSync(new URL('redaction/', root))
+      ...readdirSync(new URL('redaction/', src))
         .filter((name) => name.endsWith('.ts'))
         .sort()
         .map((name) => `redaction/${name}`),
+      'surfaces/secrets.ts',
     ];
+    const component = new URL('../../../redactor/server.py', import.meta.url);
     const digest = sha256OfText(
-      files.map((file) => `${file}\n${readFileSync(new URL(file, root), 'utf8')}`).join('\n'),
+      [
+        ...files.map((file) => `${file}\n${readFileSync(new URL(file, src), 'utf8')}`),
+        `redactor/server.py\n${readFileSync(component, 'utf8')}`,
+      ].join('\n'),
     );
     expect({ revision: PAGE_REDACTION_REVISION, digest }).toEqual({
-      revision: 1,
-      digest: '23e401ee2c5167bc0eef362411190d0c63a0220241fef83f35add571f1bffc5f',
+      revision: 2,
+      digest: 'ddab3d14f4e0ba9aebd50114ae63f4ed00f8128b5d57be4d09f131cb67527b62',
     });
   });
 });
