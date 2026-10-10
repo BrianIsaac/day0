@@ -1736,6 +1736,25 @@ describe('documentation sync batching', (): void => {
       ['98314', '刷新看板'],
       ['98316', 'Runbook index'],
     ]);
+    // The join with 15-A, which 15-X's handover asked for: what each page's source says of it
+    // is on its row beside the hash (`docStatus.recordRead`). Every page carries the revision
+    // Confluence numbers it by, and the one archived there is archived by its source's own word;
+    // an ordinary page carries no status, so the later rules still reach it.
+    expect(
+      stored.pages.map((page) => [
+        page.ref,
+        page.sourceRevision,
+        page.nativeStatus,
+        page.status,
+        page.statusSource,
+      ]),
+    ).toEqual([
+      ['98311', '7', undefined, undefined, undefined],
+      ['98312', '3', 'archived', 'archived', 'source-native'],
+      ['98313', '2', undefined, undefined, undefined],
+      ['98314', '1', undefined, undefined, undefined],
+      ['98316', '12', undefined, undefined, undefined],
+    ]);
     expect(stored.source).toMatchObject({ status: 'synced' });
     expect(JSON.stringify(stored)).not.toContain(token);
   });
