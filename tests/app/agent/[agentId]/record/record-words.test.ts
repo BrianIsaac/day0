@@ -1460,4 +1460,27 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
       ),
     ).toBe('A working agreement was refused: it contradicts “email customers directly”.');
   });
+
+  it('says an answer on a relation’s card was taken back, and that the card asks again (15-A)', (): void => {
+    const pages = {
+      relationId: 'r1',
+      kind: 'possible_successor',
+      from: { title: 'Escalation paths, draft v2' },
+      to: { title: 'Escalation paths' },
+    };
+    expect(
+      recordWords(
+        { type: 'documentation.relation-decided', payload: { ...pages, decision: 'supersedes' } },
+        subject,
+      ),
+    ).toBe('You confirmed that "Escalation paths, draft v2" supersedes "Escalation paths".');
+    expect(
+      recordWords(
+        { type: 'documentation.relation-decided', payload: { ...pages, decision: 'undo' } },
+        subject,
+      ),
+    ).toBe(
+      'You took back the answer on "Escalation paths" and "Escalation paths, draft v2"; the card asks again.',
+    );
+  });
 });

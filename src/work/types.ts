@@ -198,13 +198,39 @@ export interface ExecutionPlan {
   cites?: PlanCite[];
 }
 
+/**
+ * What a cite is disputed by (wave 15, 15-A): a conflict the manager confirmed between the cited
+ * page and another of equal trust, under one heading. The selection tags such a cite line
+ * `[conflict]`, and a plan that cites one waits for the manager.
+ */
+export interface CiteConflict {
+  /** The relation (`docRelations` id) the manager confirmed. */
+  readonly relationId: string;
+  /** The heading the two pages disagree under. */
+  readonly heading: string;
+  /** The two pages, each by its title and its source's label. */
+  readonly pages: readonly [CiteConflictPage, CiteConflictPage];
+}
+
+/** One page of a disputed cite. */
+export interface CiteConflictPage {
+  readonly title: string;
+  readonly source: string;
+}
+
 /** One cite of a plan step: the cite line's words and the stored blocks under it. */
 export interface PlanCite {
   /** The one-based step that follows the cited documentation. */
   readonly step: number;
   /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
   readonly label: string;
+  /** The source the cited page is of (`docSources` id), since two sources may share a label (W14-R27). */
+  readonly sourceId?: string;
+  /** The cited page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
+  /** Set when the cited passage was disputed as the plan was drafted (`CiteConflict`). */
+  readonly conflict?: CiteConflict;
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -616,7 +642,13 @@ export interface CitedBlock {
 export interface DocumentationCitation {
   /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
   readonly label: string;
+  /** The source the page is of (`docSources` id); absent for an office page with no source. */
+  readonly sourceId?: string;
+  /** The page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
+  /** Set when the cite line was printed `[conflict]`: what the passage is disputed by. */
+  readonly conflict?: CiteConflict;
 }
 
 /** What one documentation selection put in a prompt, for the record and the plan's cites. */

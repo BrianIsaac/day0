@@ -25,6 +25,7 @@ import {
   safeSyncError,
 } from '../../convex/docSyncActions';
 import type { DocPage } from '../../src/docs/types';
+import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../../src/docs/status';
 import { FINISHING_CURSOR } from '../../convex/docSources';
 import {
   credentialValueFingerprint,
@@ -66,9 +67,23 @@ vi.mock('../../src/lib/credential-crypto', async (importOriginal) => {
 
 const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mastra'));
 
+/**
+ * The marker judgement's scripted model (15-A): each call's prompt, and the reply a test gives
+ * for it. With no script the judgement fails, as a model that cannot be reached does.
+ */
+const markerModel = vi.hoisted(() => ({
+  prompts: [] as string[],
+  reply: undefined as ((prompt: string) => unknown) | undefined,
+}));
+
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: schemaChecked(() => ({ systems: [] })),
+  agentJson: schemaChecked((call) => {
+    if (call.agent.name !== 'day0-doc-marker') return { systems: [] };
+    markerModel.prompts.push(call.user);
+    if (markerModel.reply === undefined) throw new Error('the marker model is not scripted');
+    return markerModel.reply(call.user);
+  }),
 }));
 
 /**
@@ -394,6 +409,380 @@ describe('the unchanged-page skip at the persistence boundary (P8-10, 14-I)', ()
     expect(upserts).toHaveLength(1);
     expect(upserts[0]).not.toHaveProperty('contentHash');
   });
+});
+
+describe('the status a source gives a page, beside its hash (15-A; A-2)', (): void => {
+  /** A fixed 32-byte credential key in standard base64. */
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A fake action context: the stored page the skip reads, and each write the batch asks for. */
+  function contextWith(
+    stored: {
+      title: string;
+      markdown: string;
+      nativeStatus?: string;
+      sourceRevision?: string;
+    } | null,
+  ): { ctx: ActionCtx; writes: Array<{ name: string; args: Record<string, unknown> }> } {
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const ctx = {
+      runQuery: async (reference: unknown): Promise<unknown> =>
+        getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
+          ? stored
+          : [],
+      runAction: async (): Promise<string> => 'f'.repeat(32),
+      runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        writes.push({ name: getFunctionName(reference as never), args });
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    return { ctx, writes };
+  }
+
+  const page: DocPage = {
+    sourceId: 'source-contract' as Id<'docSources'>,
+    ref: 'runbook.md',
+    title: 'Runbook',
+    markdown: '# Runbook\n\nPress refresh.',
+    updatedAt: 1,
+  };
+  const UPSERT = getFunctionName(internal.docSources.upsertPage);
+  const RECORD = getFunctionName(internal.docStatus.recordRead);
+
+  it('records that a page kept as stored is now archived at its source, with nothing redacted or upserted', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith({ title: 'Runbook', markdown: '# Runbook\n\nStored.' });
+    await persistPageBatch(
+      ctx,
+      source(),
+      [{ ...page, nativeStatus: 'archived', sourceRevision: '12' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(writes).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'runbook.md',
+          nativeStatus: 'archived',
+          sourceRevision: '12',
+        },
+      },
+    ]);
+  });
+
+  it('records that a kept page is archived no longer, and writes nothing while its source says what the row holds', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const archived = contextWith({
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      nativeStatus: 'archived',
+      sourceRevision: '12',
+    });
+    await persistPageBatch(archived.ctx, source(), [page], [], undefined, []);
+    expect(archived.writes).toEqual([
+      {
+        name: RECORD,
+        args: { sourceId: 'source-contract', syncRunId: 'run-contract', ref: 'runbook.md' },
+      },
+    ]);
+    const same = contextWith({
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      nativeStatus: 'archived',
+      sourceRevision: '12',
+    });
+    await persistPageBatch(
+      same.ctx,
+      source(),
+      [{ ...page, nativeStatus: 'archived', sourceRevision: '12' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(same.writes).toEqual([]);
+  });
+
+  it('stores a page it reads again without the status in the upsert, then records the status beside it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith(null);
+    await persistPageBatch(
+      ctx,
+      source(),
+      [{ ...page, nativeStatus: 'draft', sourceRevision: '3' }],
+      [],
+      undefined,
+      [],
+    );
+    expect(writes.map((write) => write.name)).toEqual([UPSERT, RECORD]);
+    expect(writes[0].args).not.toHaveProperty('nativeStatus');
+    expect(writes[0].args).not.toHaveProperty('sourceRevision');
+    expect(writes[1].args).toEqual({
+      sourceId: 'source-contract',
+      syncRunId: 'run-contract',
+      ref: 'runbook.md',
+      nativeStatus: 'draft',
+      sourceRevision: '3',
+    });
+  });
+});
+
+describe('the status phase of a finishing sync (15-A; N20)', (): void => {
+  const CLOSE = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。\n\n## 步骤\n\n关账。\n';
+  const ARCHIVING = '# How to archive a ticket\n\nAn archived ticket leaves the board.\n';
+
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+    markerModel.prompts.length = 0;
+    // The model as a careful reader: only a page that says of itself that it is void is superseded.
+    markerModel.reply = (prompt: string): unknown =>
+      prompt.includes('本文件已废止')
+        ? { status: 'superseded', quote: '本文件已废止' }
+        : prompt.includes('DRAFT')
+          ? { status: 'draft', quote: 'DRAFT' }
+          : { status: 'active', quote: '' };
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    markerModel.reply = undefined;
+  });
+
+  /** A folder source over `files`, linked for the owner. */
+  async function folderOf(
+    files: Readonly<Record<string, string>>,
+  ): Promise<{ harness: TestConvex<typeof schema>; sourceId: Id<'docSources'>; root: string }> {
+    const root = temporary('day0-sync-status-');
+    for (const [name, body] of Object.entries(files)) {
+      await mkdir(join(root, 'docs', name, '..'), { recursive: true });
+      await writeFile(join(root, 'docs', name), body, 'utf8');
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Handbook',
+      kind: 'folder',
+      locator: 'docs',
+    });
+    return { harness, sourceId, root };
+  }
+
+  /** Run one whole sync of the source. */
+  async function sync(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    return await harness.query(internal.docSources.syncReport, { sourceId });
+  }
+
+  /** Each stored page's status, what decided it and its marker's status (null: none), by ref. */
+  async function statuses(harness: TestConvex<typeof schema>) {
+    return await harness.run(async (ctx) =>
+      Object.fromEntries(
+        (await ctx.db.query('docPages').collect()).map((page) => [
+          page.ref,
+          [page.status ?? null, page.statusSource ?? null, page.marker?.status ?? null],
+        ]),
+      ),
+    );
+  }
+
+  it('judges a Chinese marker and supersedes its page with its blocks, and decides nothing on a hit the model reads as the page’s subject', async (): Promise<void> => {
+    const { harness, sourceId } = await folderOf({
+      'finance/close.md': CLOSE,
+      'howto/archive-a-ticket.md': ARCHIVING,
+      'plain.md': '# Holidays\n\nThe office closes in August.\n',
+    });
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 3 });
+    expect(await statuses(harness)).toEqual({
+      'finance/close.md': ['superseded', 'marker', 'superseded'],
+      // The pre-filter hit on "archived"; the judgement said the page is about archiving.
+      'howto/archive-a-ticket.md': [null, null, 'active'],
+      'plain.md': [null, null, null],
+    });
+    expect(markerModel.prompts).toHaveLength(2);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(
+      blocks.filter((block) => block.pageRef === 'finance/close.md').map((block) => block.status),
+    ).toEqual(['superseded', 'superseded']);
+    expect(
+      blocks.filter((block) => block.pageRef !== 'finance/close.md').map((block) => block.status),
+    ).toEqual(['active', 'active']);
+  }, 30_000);
+
+  it('asks the model once a page and text: a second sync asks nothing, and a page whose top changed is asked again', async (): Promise<void> => {
+    const { harness, sourceId, root } = await folderOf({
+      'finance/close.md': CLOSE,
+      'howto/archive-a-ticket.md': ARCHIVING,
+    });
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(2);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(2);
+    // The page is reinstated at its source: its top no longer says it is void.
+    await writeFile(
+      join(root, 'docs', 'finance/close.md'),
+      CLOSE.replace('本文件已废止,请参阅《月结流程(2026版)》。', '本文件替代已废止的旧版。'),
+      'utf8',
+    );
+    markerModel.reply = (): unknown => ({ status: 'active', quote: '' });
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(3);
+    expect((await statuses(harness))['finance/close.md']).toEqual(['active', 'default', 'active']);
+  }, 30_000);
+
+  it('leaves a page as it was when the model cannot answer, and the sync still completes: a hit alone decides nothing', async (): Promise<void> => {
+    const { harness, sourceId } = await folderOf({ 'finance/close.md': CLOSE });
+    markerModel.reply = undefined;
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(markerModel.prompts).toHaveLength(1);
+    expect(await statuses(harness)).toEqual({
+      'finance/close.md': [null, null, null],
+    });
+  }, 30_000);
+
+  it('keeps a page as last judged when its marker line is edited and the model cannot answer', async (): Promise<void> => {
+    // The second pass's minor 10: the edit dropped the judgement, so with the model down the
+    // deprecated page was current, and citable, until a later sync could ask.
+    const { harness, sourceId, root } = await folderOf({ 'finance/close.md': CLOSE });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['finance/close.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    await writeFile(
+      join(root, 'docs', 'finance/close.md'),
+      CLOSE.replace('2026版', '2027版'),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(markerModel.prompts).toHaveLength(2);
+    expect((await statuses(harness))['finance/close.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+  }, 30_000);
+
+  it('stops asking once a finish has spent its time on judgements, and asks the rest at the next sync', async (): Promise<void> => {
+    // The second pass's minor 10: twenty judgements at thirty seconds each, one after another,
+    // is the whole of an action's ten minutes, and nothing stopped the asking.
+    expect(MARKER_JUDGING_BUDGET_MS).toBe(180_000);
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 6 }, (_unused, index) => [
+          `notes/idea-${index}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    // A slow model: each answer takes a minute.
+    markerModel.reply = (): unknown => {
+      vi.setSystemTime(Date.now() + 60_000);
+      return { status: 'draft', quote: 'DRAFT' };
+    };
+    expect(await sync(harness, sourceId)).toMatchObject({ status: 'synced', pageCount: 6 });
+    expect(markerModel.prompts).toHaveLength(3);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(6);
+  }, 60_000);
+
+  it('asks about at most twenty pages a sync, and the rest at the next', async (): Promise<void> => {
+    expect(MARKER_JUDGEMENTS_PER_SYNC).toBe(20);
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 23 }, (_unused, index) => [
+          `notes/idea-${String(index).padStart(2, '0')}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(20);
+    const drafts = async (): Promise<number> =>
+      Object.values(await statuses(harness)).filter(([status]) => status === 'draft').length;
+    expect(await drafts()).toBe(20);
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(23);
+    expect(await drafts()).toBe(23);
+  }, 60_000);
+});
+
+describe('the relations a finishing sync proposes (15-A)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  /** Run one whole sync of a source. */
+  async function sync(harness: TestConvex<typeof schema>, sourceId: Id<'docSources'>) {
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    return await harness.query(internal.docSources.syncReport, { sourceId });
+  }
+
+  it('proposes a later version stored by this sync as the successor of the page it names, once, and supersedes nothing by itself', async (): Promise<void> => {
+    const root = temporary('day0-sync-relations-');
+    await mkdir(join(root, 'wiki', 'runbooks'), { recursive: true });
+    await mkdir(join(root, 'official'));
+    await writeFile(
+      join(root, 'wiki', 'runbooks', 'pipeline-runbook.md'),
+      '# Pipeline runbook\n\n## Refresh\n\nPress Refresh once.\n',
+      'utf8',
+    );
+    await writeFile(
+      join(root, 'official', 'pipeline-runbook-v2.md'),
+      '---\nsupersedes: pipeline-runbook\n---\n# Pipeline runbook\n\n## Refresh\n\nPress Refresh twice.\n',
+      'utf8',
+    );
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const link = async (label: string, locator: string) =>
+      await harness.mutation(internal.docSources.createSource, {
+        userId: 'owner',
+        label,
+        kind: 'folder',
+        locator,
+      });
+    const wiki = await link('Team wiki', 'wiki');
+    const official = await link('Official runbooks', 'official');
+    expect(await sync(harness, wiki)).toMatchObject({ status: 'synced', pageCount: 1 });
+    const relations = async () =>
+      await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
+    // The wiki's own page relates to nothing yet.
+    expect(await relations()).toEqual([]);
+    expect(await sync(harness, official)).toMatchObject({ status: 'synced', pageCount: 1 });
+    expect(await relations()).toMatchObject([
+      {
+        kind: 'possible_successor',
+        status: 'proposed',
+        from: { sourceId: official, ref: 'pipeline-runbook-v2.md' },
+        to: { sourceId: wiki, ref: 'runbooks/pipeline-runbook.md' },
+      },
+    ]);
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.map((page) => page.status ?? 'none')).toEqual(['none', 'none']);
+    // Neither source changed: the next syncs measure the same pages and propose nothing more.
+    await sync(harness, official);
+    await sync(harness, wiki);
+    expect(await relations()).toHaveLength(1);
+  }, 30_000);
 });
 
 describe('documentation sync batching', (): void => {
@@ -1077,6 +1466,75 @@ describe('documentation sync batching', (): void => {
     expect(await scheduled(harness)).toEqual([]);
   });
 
+  it('gives each scheduled sync after the cap one fresh start of its own, not three more, until a walk completes (W14-R33)', async (): Promise<void> => {
+    const root = temporary('day0-sync-changing-again-');
+    await mkdir(join(root, 'changing'));
+    for (let index = 1; index <= 30; index += 1) {
+      await writeFile(
+        join(root, 'changing', `page-${String(index).padStart(2, '0')}.md`),
+        `# Page ${index}\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Changing',
+      kind: 'folder',
+      locator: 'changing',
+    });
+    // The review's input: a listing that changes inside every walk, sync after sync.
+    const read = FolderReader.prototype.listPageBatch;
+    let renames = 0;
+    let changing = true;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      if (changing && args[2] !== undefined) {
+        const from = renames === 0 ? 'page-01.md' : `renamed-${renames}.md`;
+        renames += 1;
+        await rename(join(root, 'changing', from), join(root, 'changing', `renamed-${renames}.md`));
+      }
+      return await read.apply(this, args);
+    });
+    const sync = async (fresh?: true): Promise<Array<[string, number | undefined]>> => {
+      const before = await harness.run(
+        async (ctx) => (await ctx.db.query('docSyncRuns').collect()).length,
+      );
+      await harness.action(internal.docSyncActions.syncSource, {
+        sourceId,
+        ...(fresh ? { fresh } : {}),
+      });
+      await harness.finishAllScheduledFunctions(drainScheduled);
+      const runs = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
+      return runs.slice(before).map((run) => [run.state, run.restarts]);
+    };
+    expect(await sync()).toEqual([
+      ['superseded', undefined],
+      ['superseded', 1],
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    // The next scheduled syncs carry the count, less one: two runs each, where there were four.
+    expect(await sync()).toEqual([
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    expect(await sync()).toEqual([
+      ['superseded', 2],
+      ['error', 3],
+    ]);
+    // A re-read by hand starts over, as a person asked for it.
+    expect((await sync(true)).map(([, restarts]) => restarts)).toEqual([undefined, 1, 2, 3]);
+    // The source goes quiet: the walk completes, and the sync after it owes nothing.
+    changing = false;
+    const quiet = await sync();
+    expect(quiet.at(-1)?.[0]).toBe('completed');
+    expect(await sync()).toEqual([['completed', undefined]]);
+  }, 30_000);
+
   it('stops a source whose reader secret was revoked as a credential to land, and reads nothing (E-74)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.run(async (ctx) => {
@@ -1277,6 +1735,25 @@ describe('documentation sync batching', (): void => {
       ['98313', '运维手册'],
       ['98314', '刷新看板'],
       ['98316', 'Runbook index'],
+    ]);
+    // The join with 15-A, which 15-X's handover asked for: what each page's source says of it
+    // is on its row beside the hash (`docStatus.recordRead`). Every page carries the revision
+    // Confluence numbers it by, and the one archived there is archived by its source's own word;
+    // an ordinary page carries no status, so the later rules still reach it.
+    expect(
+      stored.pages.map((page) => [
+        page.ref,
+        page.sourceRevision,
+        page.nativeStatus,
+        page.status,
+        page.statusSource,
+      ]),
+    ).toEqual([
+      ['98311', '7', undefined, undefined, undefined],
+      ['98312', '3', 'archived', 'archived', 'source-native'],
+      ['98313', '2', undefined, undefined, undefined],
+      ['98314', '1', undefined, undefined, undefined],
+      ['98316', '12', undefined, undefined, undefined],
     ]);
     expect(stored.source).toMatchObject({ status: 'synced' });
     expect(JSON.stringify(stored)).not.toContain(token);

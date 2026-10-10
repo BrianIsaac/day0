@@ -492,6 +492,82 @@ function revokedAtSourceWords(
   }
 }
 
+/** The two pages of a held plan's conflict, by title, or "two pages" when the row names none. */
+function conflictPages(pages: unknown): string {
+  const titles = Array.isArray(pages)
+    ? pages.flatMap((page: { title?: unknown }) =>
+        text(page?.title) ? [`"${page.title as string}"`] : [],
+      )
+    : [];
+  return titles.length === 2 ? `${titles[0]} and ${titles[1]}` : 'two pages';
+}
+
+/** ` ("A" and "B")` for a relation's two pages, when the row names them. */
+function relatedPages(p: {
+  readonly from?: { readonly title?: string };
+  readonly to?: { readonly title?: string };
+}): string {
+  const [from, to] = [text(p.from?.title), text(p.to?.title)];
+  return from && to ? ` ("${to}" and "${from}")` : '';
+}
+
+/** The manager's answer on a relation's card, as the record says it. */
+function relationDecidedWords(
+  p: Read<'documentation.relation-decided'>,
+  subject: RecordSubject,
+): string {
+  const [from, to] = [text(p.from?.title) ?? 'one page', text(p.to?.title) ?? 'the other'];
+  const who = decider(subject);
+  switch (p.decision) {
+    case 'supersedes':
+      return `${who} confirmed that "${from}" supersedes "${to}"`;
+    case 'keep-both':
+      return `${who} kept both "${to}" and "${from}" as current`;
+    case 'not-the-same':
+      return `${who} said "${to}" and "${from}" are not versions of one page`;
+    case 'disagree':
+      return `${who} confirmed that "${to}" and "${from}" disagree; ${subject.name} holds any step that relies on it`;
+    case 'from-is-right':
+      return `${who} said "${from}" is right where it disagrees with "${to}"`;
+    case 'to-is-right':
+      return `${who} said "${to}" is right where it disagrees with "${from}"`;
+    case 'both-hold':
+      return `${who} said "${to}" and "${from}" both hold`;
+    case 'undo':
+      return `${who} took back the answer on "${to}" and "${from}"; the card asks again`;
+    default:
+      return `${who} decided how two documentation pages relate`;
+  }
+}
+
+/**
+ * A documentation page's change of status, with what decided it: the manager by hand, the page's
+ * own source, a marker in the page, a relation the manager confirmed, or nothing but the
+ * source's default.
+ */
+function pageStatusChangedWords(
+  p: Read<'documentation.page-status-changed'>,
+  subject: RecordSubject,
+): string {
+  const page = `the documentation page${text(p.title) ? ` "${p.title}"` : ''}`;
+  const state =
+    p.to === 'active'
+      ? 'current again'
+      : p.to === 'draft'
+        ? 'a draft'
+        : (text(p.to) ?? 'in another status');
+  if (p.decidedBy === 'manager') return `${decider(subject)} marked ${page} as ${state}`;
+  const why =
+    p.decidedBy === 'source-native'
+      ? ': its source says so'
+      : p.decidedBy === 'marker'
+        ? ': a marker in the page says so'
+        : p.decidedBy === 'relation'
+          ? ': a confirmed relation names its successor'
+          : '';
+  return `${capitalised(page)} is ${p.to === 'active' ? '' : 'now '}${state}${why}`;
+}
+
 /** What a decision request asks about. */
 function decisionNoun(kind: unknown): string {
   return kind === 'actions' ? 'held actions' : 'plan';
@@ -529,6 +605,8 @@ const PLAN_HELD_BECAUSE: {
     earlierAddress(subject) === undefined
       ? 'your predecessor approved it, so approve it again'
       : 'their predecessor approved it, so it was to be approved again',
+  'documentation-conflict': () =>
+    'two pages disagree on a point it follows, to be decided on the Documentation tab',
 };
 
 /**
@@ -752,6 +830,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${name} read the documentation and found ${counted(p.systems, 'system') ?? 'its systems'}${
       typeof p.created === 'number' && p.created > 0 ? `, ${p.created} new` : ''
     }${typeof p.retired === 'number' && p.retired > 0 ? `, ${p.retired} gone` : ''}`,
+  'documentation.page-status-changed': pageStatusChangedWords,
+  'documentation.relation-proposed': (p) =>
+    `Two documentation pages${relatedPages(p)} look ${
+      p.kind === 'possible_conflict'
+        ? 'as if they disagree'
+        : p.kind === 'possible_successor'
+          ? 'like an older and a newer version of one page'
+          : 'like versions of one page'
+    }; the Documentation tab asks which stands`,
+  'documentation.relation-decided': relationDecidedWords,
   'evaluation.transport-ready': (_, subject) =>
     `The evaluation harness is ready to run${forItem(subject)}`,
   'voice.started': (p) => `Day-1 one-to-one opened in ${p.mode === 'chat' ? 'chat' : 'voice'}`,
@@ -1129,11 +1217,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-      typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-        ? PLAN_HELD_BECAUSE[p.reason](subject)
-        : `it waits for ${their(subject)} decision`
-    }`,
+    p.reason === 'documentation-conflict' && text(p.heading)
+      ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+      : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+          typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+            ? PLAN_HELD_BECAUSE[p.reason](subject)
+            : `it waits for ${their(subject)} decision`
+        }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;
@@ -1277,6 +1367,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     return `${what} ${p.chars.toLocaleString('en-GB')} characters of documentation${
       sections ? ` from ${sections}` : ''
     }`;
+  },
+  'work.documentation-selection-failed': (p, subject) => {
+    const site = text(p.site);
+    return `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(
+      subject,
+    )} read every documentation page, since the pages it needed could not be selected${because(p.reason)}`;
   },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(

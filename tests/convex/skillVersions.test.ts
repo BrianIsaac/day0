@@ -6,12 +6,15 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  changedRunbookReason,
   copyVersionsForMove,
   deleteOwnerLibrary,
   holdersOf,
   LIBRARY_LOOKUP_LIMIT,
   ownerVersions,
   releaseAuthor,
+  RUNBOOKS_A_SCAN,
+  runbookReason,
   sharedSkillsOn,
   stampRecheckDue,
   stampRecheckDueOnSurfaces,
@@ -1059,5 +1062,144 @@ describe('stampChangedPage (14-I)', (): void => {
     );
     expect((await skill(harness, holders.withdrawn)).recheckDueAt).toBeUndefined();
     vi.useRealTimers();
+  });
+});
+
+describe('stampChangedPages: the runbooks no longer current, in one read of the library (15-A; W14-R22; 14-I m5)', (): void => {
+  it('words each change as the card says it', (): void => {
+    const page = { title: 'Refresh the tile' };
+    const day = '8 October 2026';
+    expect(runbookReason({ ...page, change: 'changed' }, day)).toBe(
+      changedRunbookReason('Refresh the tile', day),
+    );
+    expect(runbookReason({ ...page, change: 'superseded' }, day)).toBe(
+      'its runbook "Refresh the tile" was superseded on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'archived' }, day)).toBe(
+      'its runbook "Refresh the tile" was archived on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'draft' }, day)).toBe(
+      'its runbook "Refresh the tile" was marked a draft on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'removed', source: 'Handbook' }, day)).toBe(
+      'its runbook "Refresh the tile" was removed from Handbook on 8 October 2026',
+    );
+  });
+
+  it('stamps the holders of every version that read any of the pages, each with its page’s reason, and schedules one scan for them all', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { sourceId, holders } = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Europe/London' });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const holderOf = async (name: string, ref: string | undefined) => {
+        const versionId = await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name,
+          description: name,
+          surfaceClass: 'kanban',
+          operation: 'comment',
+          version: 1,
+          body: '# Body',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: ref === undefined ? [] : [{ sourceId, ref, title: ref }],
+          verifiedAt: 1,
+          createdAt: 1,
+        });
+        return await ctx.db.insert('skills', {
+          agentId,
+          name,
+          description: name,
+          body: '# Body',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+        });
+      };
+      // Past one page of the library (100 versions), so the scan goes on by schedule.
+      for (let index = 0; index < 100; index += 1) {
+        await holderOf(`a-${String(index).padStart(3, '0')}`, undefined);
+      }
+      return {
+        sourceId,
+        holders: {
+          superseded: await holderOf('z-superseded', 'v1.md'),
+          removed: await holderOf('z-removed', 'gone.md'),
+          untouched: await holderOf('z-untouched', 'other.md'),
+        },
+      };
+    });
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [
+        { sourceId, ref: 'v1.md', title: 'Pipeline runbook', change: 'superseded' },
+        {
+          sourceId,
+          ref: 'gone.md',
+          title: 'Old escalation',
+          change: 'removed',
+          source: 'Handbook',
+        },
+      ],
+      changedAt: Date.UTC(2026, 9, 7, 23, 30),
+      cursor: null,
+    });
+    // One continuation carries both pages: the library is read once for them all.
+    const pending = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).map((job) => job.name),
+    );
+    expect(pending).toEqual(['skillVersions:stampChangedPages']);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await skill(harness, holders.superseded)).recheckReason).toBe(
+      'its runbook "Pipeline runbook" was superseded on 8 October 2026',
+    );
+    expect((await skill(harness, holders.removed)).recheckReason).toBe(
+      'its runbook "Old escalation" was removed from Handbook on 8 October 2026',
+    );
+    expect((await skill(harness, holders.untouched)).recheckDueAt).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('refuses more pages than one scan stamps for', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.skillVersions.stampChangedPages, {
+        userId: 'owner',
+        pages: Array.from({ length: RUNBOOKS_A_SCAN + 1 }, (_unused, index) => ({
+          sourceId,
+          ref: `page-${index}.md`,
+          title: `Page ${index}`,
+          change: 'archived' as const,
+        })),
+        changedAt: 1,
+        cursor: null,
+      }),
+    ).rejects.toThrow(`at most ${RUNBOOKS_A_SCAN} pages`);
   });
 });

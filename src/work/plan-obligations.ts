@@ -113,6 +113,20 @@ export function connectedSurfaces(
 }
 
 /**
+ * What the judgement is told when the documentation it reads carries a cite line marked
+ * `[conflict]`: the step that rests on the disputed passage is held for the manager.
+ */
+export const CONFLICT_NOTE =
+  "Some documentation above is marked [conflict]: two pages the manager trusts equally disagree on that point, and the manager has been asked which is right. A step that acts on a [conflict] passage is `conditional-write` when it writes, and the plan's `transition` is `conditional-on-manager` when the ticket's state depends on that step.";
+
+/** Whether any loaded page carries a cite line the selection printed `[conflict]`. */
+function carriesConflict(documents: ObligationDocuments): boolean {
+  return [...documents.howToGuides, ...documents.teamDocs].some((page) =>
+    /^\[cite: [^\n]*\] \[conflict\]$/m.test(page.body),
+  );
+}
+
+/**
  * Render the plan, the surfaces, the documentation and the charter for the
  * judgement. The plan prose is model-authored and may quote what it saw, so
  * it takes the same structural pass as every other prompt line.
@@ -165,6 +179,9 @@ export function planObligationsPrompt(args: PlanObligationsArgs): string {
       '--- Team docs (read-only context) ---',
       renderTeamDocs(args.documents.teamDocs),
     );
+    // Said only when the documentation carries a disputed passage, so every other prompt is as
+    // it was (15-A): a step that rests on one is the manager's to release.
+    if (carriesConflict(args.documents)) lines.push('', CONFLICT_NOTE);
   }
   lines.push(
     '',

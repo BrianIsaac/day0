@@ -11,6 +11,6 @@ export const RETRIEVAL_RECALL: RetrievalRecall = {
   blocks: 0.9333333333333333,
   cases: 30,
   corpusPages: 17,
-  gradedAt: '2026-10-07T20:11:36.367Z',
-  commit: 'b86760654f0a6aae45193178420d4ff8b24f1ead',
+  gradedAt: '2026-10-10T13:09:08.333Z',
+  commit: '7926f30a3180b41b77ae8698536862f3dbf99efb',
 };

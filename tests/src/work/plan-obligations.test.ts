@@ -32,6 +32,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 
 import { draftExecutionPlan } from '../../../src/work/plan';
 import {
+  CONFLICT_NOTE,
   planObligationsPrompt,
   plannerObligationsOf,
   settlePlanObligations,
@@ -221,6 +222,32 @@ describe('the plan obligations prompt', (): void => {
       plan: { ...run4RefreshPlan, steps: [`Post with ${token}.`] },
     });
     expect(prompt).not.toContain(token);
+  });
+});
+
+describe('the judgement and a passage two pages disagree on (15-A)', (): void => {
+  const guide = (body: string) => ({
+    ...args,
+    documents: { howToGuides: [{ slug: 'close', title: 'Close checklist', body }], teamDocs: [] },
+  });
+
+  it('is told to leave a step that rests on a [conflict] passage to the manager, only when one is loaded', (): void => {
+    const disputed = planObligationsPrompt(
+      guide('[cite: Handbook/close.md#Thresholds] [conflict]\nEscalate above 5,000 USD.'),
+    );
+    expect(disputed).toContain(CONFLICT_NOTE);
+    expect(CONFLICT_NOTE).toContain('`conditional-write`');
+    expect(CONFLICT_NOTE).toContain('`conditional-on-manager`');
+    // Every other prompt is as it was: no disputed passage, no note.
+    const settled = planObligationsPrompt(
+      guide('[cite: Handbook/close.md#Thresholds]\nEscalate above 5,000 USD.'),
+    );
+    expect(settled).not.toContain('[conflict]');
+    expect(planObligationsPrompt(args)).not.toContain('[conflict]');
+    // A page that merely writes the word is not a tagged cite line.
+    expect(
+      planObligationsPrompt(guide('[cite: Handbook/close.md#Notes]\nMark it [conflict] by hand.')),
+    ).not.toContain(CONFLICT_NOTE);
   });
 });
 

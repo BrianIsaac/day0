@@ -1,5 +1,11 @@
 import { v } from 'convex/values';
-import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type DatabaseReader,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -9,6 +15,7 @@ import {
   splitPage,
   type DocBlock,
 } from '../src/docs/blocks';
+import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/authority';
 
 /*
  * The block store behind the documentation search (wave 14, 14-I; the wave file's section 6.1).
@@ -18,7 +25,9 @@ import {
  * Writers: `replacePageBlocks`, through `splitStoredPage`, which `docSources.upsertPage`
  * schedules for each page it writes (it splits the page as stored when it runs, so it converges
  * on the newest write), and directly in the `docs-backfill-blocks` pass;
- * `prunePageBlocks`, scheduled by `docSources.prunePages` for a page a finish removed; and
+ * `copyPageStatusToBlocks`, for a page whose status changed and whose text did not (wave 15,
+ * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`,
+ * scheduled by `docSources.prunePages` for a page a finish removed; and
  * `docSources.deleteSourceRows` for a removed source. Readers: `searchBlocks` (14-R's selection
  * calls it from `docSelection`) and `unchangedPage` (the sync's skip of an unchanged page).
  * Nothing here is public, so no caller reaches it without a guarded public function first.
@@ -39,6 +48,51 @@ export const SEARCH_BLOCKS_LIMIT = 512;
 /** One bounded page of a pruned page's blocks: under a mutation's read and write limits. */
 const PRUNE_READ = { numItems: 200, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
+/**
+ * A stored page's status as its first block says it, which a split and every change of status
+ * keep the page's own (`docBlocks.status`): one small row. Undefined for a page with no block (a
+ * page of headings alone, one whose split is still due, or one that is not stored).
+ *
+ * @param db - Any database reader.
+ * @param sourceId - The page's source.
+ * @param pageRef - The page's ref within it.
+ */
+export async function firstBlockStatus(
+  db: DatabaseReader,
+  sourceId: Id<'docSources'>,
+  pageRef: string,
+): Promise<PageStatus | undefined> {
+  const block = await db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', sourceId).eq('pageRef', pageRef))
+    .first();
+  return block === null ? undefined : pageStatusOf(block);
+}
+
+/**
+ * A stored page's status as a read of one small row finds it: its first block's
+ * (`firstBlockStatus`), or the page row's for a page with no block. Reading the page row for
+ * every mirrored page would read every body a second time. A page that is not stored reads as
+ * active: there is nothing to say otherwise.
+ *
+ * @param db - Any database reader.
+ * @param sourceId - The page's source.
+ * @param pageRef - The page's ref within it.
+ */
+export async function storedPageStatus(
+  db: DatabaseReader,
+  sourceId: Id<'docSources'>,
+  pageRef: string,
+): Promise<PageStatus> {
+  const byBlock = await firstBlockStatus(db, sourceId, pageRef);
+  if (byBlock !== undefined) return byBlock;
+  const page = await db
+    .query('docPages')
+    .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', pageRef))
+    .unique();
+  return page === null ? 'active' : pageStatusOf(page);
+}
+
 /** A stored page's identity and Markdown, as the replace reads it. */
 export interface PageToSplit {
   /** The source owner's key (`docSources.userId`). */
@@ -49,6 +103,8 @@ export interface PageToSplit {
   readonly generation: Id<'docSyncRuns'>;
   /** The page as stored: already redacted. */
   readonly markdown: string;
+  /** The page's status (`pageStatusOf`), which every block of it carries; absent reads as active. */
+  readonly status?: PageStatus;
 }
 
 /** A block as `searchBlocks` answers it: enough to cite and to re-score, not the index's text. */
@@ -67,7 +123,10 @@ export interface FoundBlock {
   readonly rank: number;
 }
 
-/** Whether a stored block row already holds a split block, field for field. */
+/**
+ * Whether a stored block row already holds a split block, field for field. Its status is not part
+ * of the block: a kept row whose status differs from its page's is patched, never rewritten.
+ */
 function sameBlock(row: Doc<'docBlocks'>, block: DocBlock, userId: string): boolean {
   return (
     row.userId === userId &&
@@ -94,6 +153,7 @@ function blockRow(
     kind: block.kind,
     hash: block.hash,
     chars: block.chars,
+    status: pageStatusOf(page),
   };
 }
 
@@ -104,11 +164,13 @@ function blockRow(
  * id, so a citation of it, and the run that wrote it stay; only its place is moved), so an edit
  * above a cited section leaves the cite standing (W14-R2). A block no row holds takes the row
  * left at its place, or any row left over, or a new one; the rows left after that are deleted.
- * So running it twice over the same Markdown changes nothing, which the backfill relies on.
+ * Every row carries the page's status (wave 15): a kept row whose status differs is patched.
+ * So running it twice over the same Markdown and status changes nothing, which the backfill
+ * relies on.
  *
  * @param ctx - The writing mutation's context.
- * @param page - The page and the run writing it.
- * @returns How many block rows it inserted, rewrote, moved or deleted.
+ * @param page - The page, its status and the run writing it.
+ * @returns How many block rows it inserted, rewrote, moved, restated or deleted.
  */
 export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Promise<number> {
   const blocks = splitPage(page.markdown);
@@ -117,10 +179,11 @@ export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Pr
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef))
     .take(MAX_BLOCKS_PER_PAGE);
   const { kept, rewritten, left } = matchStoredBlocks(stored, blocks, page.userId);
+  const status = pageStatusOf(page);
   let changed = 0;
   for (const [index, row] of kept) {
-    if (row.index === index) continue;
-    await ctx.db.patch(row._id, { index });
+    if (row.index === index && row.status === status) continue;
+    await ctx.db.patch(row._id, { index, status });
     changed += 1;
   }
   for (const { block, row } of rewritten) {
@@ -183,6 +246,37 @@ function matchStoredBlocks(
   return { kept, rewritten, left: [...free.values()] };
 }
 
+/**
+ * Copy a page's status onto its stored blocks with no re-split, in the caller's transaction: the
+ * write for a page whose status changed and whose text did not (a status rides beside the page's
+ * hash, so an unchanged page is never split again). Only a row whose status differs is written;
+ * at most `MAX_BLOCKS_PER_PAGE` rows, a page's bound.
+ *
+ * @param ctx - The writing mutation's context.
+ * @param page - The page and the status it now has.
+ * @returns How many block rows it patched.
+ */
+export async function copyPageStatusToBlocks(
+  ctx: MutationCtx,
+  page: {
+    readonly sourceId: Id<'docSources'>;
+    readonly pageRef: string;
+    readonly status: PageStatus;
+  },
+): Promise<number> {
+  const stored = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.pageRef))
+    .take(MAX_BLOCKS_PER_PAGE);
+  let patched = 0;
+  for (const row of stored) {
+    if (row.status === page.status) continue;
+    await ctx.db.patch(row._id, { status: page.status });
+    patched += 1;
+  }
+  return patched;
+}
+
 /** Delete a page's blocks from `index` on, in rounds a page never outgrows. */
 async function deleteBlocksFrom(
   ctx: MutationCtx,
@@ -235,9 +329,10 @@ export const prunePageBlocks = internalMutation({
 /**
  * Split a stored page into its blocks, as it is stored when this runs. Internal; scheduled by
  * `docSources.upsertPage` for each page it writes, so the page's own transaction stays one
- * page's size. A page gone by then leaves its blocks to `prunePageBlocks`.
+ * page's size. A page gone by then leaves its blocks to `prunePageBlocks`. Every block takes the
+ * status the page's row holds then.
  *
- * @returns How many block rows it inserted, rewrote or deleted.
+ * @returns How many block rows it inserted, rewrote, restated or deleted.
  */
 export const splitStoredPage = internalMutation({
   args: { sourceId: v.id('docSources'), ref: v.string(), generation: v.id('docSyncRuns') },
@@ -256,36 +351,68 @@ export const splitStoredPage = internalMutation({
       pageRef: args.ref,
       generation: args.generation,
       markdown: page.markdown,
+      status: pageStatusOf(page),
     });
   },
 });
 
+/** A page kept as stored: what the sync mirrors of it, and what its source last said of it. */
+export interface UnchangedPage {
+  readonly title: string;
+  readonly url?: string;
+  readonly markdown: string;
+  readonly nativeStatus?: PageStatus;
+  readonly sourceRevision?: string;
+}
+
+/**
+ * Whether a page's stored blocks are the blocks of its stored text, each under the page's status:
+ * as many, in document order, hash for hash. A page whose split never landed holds none, and one
+ * whose re-split failed still holds the blocks of its older text (W14-R23), which would stay
+ * current and citable.
+ */
+async function blocksAreThePages(
+  ctx: QueryCtx,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'markdown' | 'status'>,
+): Promise<boolean> {
+  const blocks = splitPage(page.markdown);
+  const stored = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
+    .take(MAX_BLOCKS_PER_PAGE + 1);
+  if (stored.length !== blocks.length) return false;
+  const status = pageStatusOf(page);
+  return blocks.every(
+    (block, index) => stored[index].hash === block.hash && stored[index].status === status,
+  );
+}
+
 /**
  * The stored page under a ref whose hash is the one given: the sync keeps it as stored, with no
- * redaction and no split (P8-10). Internal; reads one page, writes nothing.
+ * redaction and no split (P8-10). Internal; reads one page and its blocks, writes nothing.
  *
- * @returns The stored title, address and (redacted) Markdown, or null when the page is not
- *   stored, was stored without a hash, has changed, or holds text but no block (its split
- *   failed), so the sync stores it again and its split is scheduled again.
+ * @returns The stored title, address and (redacted) Markdown, with what the page's source said
+ *   of it when it was last read (its native status and revision, which ride beside the hash:
+ *   15-A), or null when the page is not stored, was stored without a hash, has changed, or its
+ *   stored blocks are not the blocks of its text under its status (its split failed, or never
+ *   landed), so the sync stores it again and its split is scheduled again.
  */
 export const unchangedPage = internalQuery({
   args: { sourceId: v.id('docSources'), ref: v.string(), contentHash: v.string() },
-  handler: async (ctx, args): Promise<{ title: string; url?: string; markdown: string } | null> => {
+  handler: async (ctx, args): Promise<UnchangedPage | null> => {
     const page = await ctx.db
       .query('docPages')
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null || page.contentHash !== args.contentHash) return null;
-    // A page whose split never landed is not kept: its next store schedules the split again.
-    const block = await ctx.db
-      .query('docBlocks')
-      .withIndex('by_source_page', (q) => q.eq('sourceId', args.sourceId).eq('pageRef', args.ref))
-      .first();
-    if (block === null && splitPage(page.markdown).length > 0) return null;
+    // A page whose split did not land is not kept: its next store schedules the split again.
+    if (!(await blocksAreThePages(ctx, page))) return null;
     return {
       title: page.title,
       ...(page.url !== undefined ? { url: page.url } : {}),
       markdown: page.markdown,
+      ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+      ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
     };
   },
 });
@@ -298,7 +425,9 @@ export const unchangedPage = internalQuery({
  * ones without a word), so a caller orders its terms first. Each source is its own query,
  * filtered by owner and that source: two filter expressions, inside the backend's eight, since
  * two equalities on `sourceId` would be an AND. Each answers at most `limit` blocks in the
- * backend's relevance order, within its 1,024-result scan.
+ * backend's relevance order, within its 1,024-result scan. With `status`, only the blocks of
+ * pages in that status are answered, by the index's own filter (a third expression; K-1): the
+ * selection asks for `active`, so a superseded page's blocks never take a place in an answer.
  *
  * @returns Every source's blocks, source by source in the order given, each with its rank.
  * @throws Error past `SEARCH_SOURCES_LIMIT` sources, `SEARCH_LIMIT_PER_SOURCE` blocks a source or
@@ -310,6 +439,7 @@ export const searchBlocks = internalQuery({
     sourceIds: v.array(v.id('docSources')),
     query: v.string(),
     limit: v.optional(v.number()),
+    status: v.optional(v.union(...PAGE_STATUSES.map((status) => v.literal(status)))),
   },
   handler: async (ctx, args): Promise<FoundBlock[]> => {
     const limit = args.limit ?? 12;
@@ -336,9 +466,13 @@ export const searchBlocks = internalQuery({
         async (sourceId) =>
           await ctx.db
             .query('docBlocks')
-            .withSearchIndex('by_text', (q) =>
-              q.search('searchText', query).eq('userId', args.userId).eq('sourceId', sourceId),
-            )
+            .withSearchIndex('by_text', (q) => {
+              const owned = q
+                .search('searchText', query)
+                .eq('userId', args.userId)
+                .eq('sourceId', sourceId);
+              return args.status === undefined ? owned : owned.eq('status', args.status);
+            })
             .take(limit),
       ),
     );

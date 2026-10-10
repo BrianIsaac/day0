@@ -137,7 +137,12 @@ export function unreadPagesLine(
   const named = (pages: readonly UnreadPage[], more: number): string =>
     // Each reason is a sentence of its own; joined, only the line's last full stop is kept.
     [
-      ...pages.map((page): string => `${page.ref}: ${page.reason.replace(/\.$/, '')}`),
+      // A reason that names its page (a URL reader's does, since a redirect may end elsewhere)
+      // is not prefixed with it again.
+      ...pages.map((page): string => {
+        const reason = page.reason.replace(/\.$/, '');
+        return reason.includes(page.ref) ? reason : `${page.ref}: ${reason}`;
+      }),
       ...(more > 0 ? [`and ${more} more`] : []),
     ].join('; ');
   const kindLine =

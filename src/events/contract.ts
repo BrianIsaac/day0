@@ -17,6 +17,7 @@
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { CharterChange, FieldDiff } from '../agent/charter-amendment';
 import type { TransferCancelReason } from '../agent/manager-transfer';
+import type { PageStatus, RelationKind, StatusSource } from '../docs/authority';
 import type {
   AccessRequestReason,
   OrganisationConnectionKind,
@@ -513,6 +514,70 @@ export interface DocumentationSystemsDiscoveredPayload {
   readonly updated: number;
   readonly retired: number;
   readonly scheduled: number;
+}
+
+/**
+ * The payload of `documentation.page-status-changed` (wave 15, 15-A): a stored page's status
+ * changed, with what decided it. Written on the record of every employee that reads the page's
+ * source; the page's blocks took the status and the employee's parked work was evaluated again
+ * in the same transaction (`docStatus.restatePage`).
+ */
+export interface DocumentationPageStatusChangedPayload {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+  /** The page's stored title. */
+  readonly title: string;
+  readonly from: PageStatus;
+  readonly to: PageStatus;
+  /** What decided the new status: the manager, the source, a marker, a relation or the default. */
+  readonly decidedBy: StatusSource;
+  /** The page a superseded page gave way to, when one is named. */
+  readonly supersededBy?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
+}
+
+/** A stored page as a relation's event names it. */
+export interface RelatedPageNamed {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+  /** The page's stored title. */
+  readonly title: string;
+  /** Its source's label. */
+  readonly source: string;
+}
+
+/**
+ * The payload of `documentation.relation-proposed` (wave 15, 15-A): a finishing sync's measures
+ * relate two of the owner's pages. A proposal changes no page; the manager answers its card.
+ * For a successor `from` is the later version of `to`.
+ */
+export interface DocumentationRelationProposedPayload {
+  readonly relationId: Id<'docRelations'>;
+  readonly kind: RelationKind;
+  readonly from: RelatedPageNamed;
+  readonly to: RelatedPageNamed;
+  /** The measures that proposed it (`RELATION_MEASURES`), each with its value. */
+  readonly evidence: Array<{ measure: string; value: number }>;
+}
+
+/**
+ * The payload of `documentation.relation-decided` (wave 15, 15-A): the manager's answer on a
+ * relation's card, and the kind the relation has with it.
+ */
+export interface DocumentationRelationDecidedPayload {
+  readonly relationId: Id<'docRelations'>;
+  readonly kind: RelationKind;
+  /** The card's answer (`RELATION_DECISIONS`, `convex/docRelations.ts`). */
+  readonly decision:
+    | 'supersedes'
+    | 'keep-both'
+    | 'not-the-same'
+    | 'disagree'
+    | 'from-is-right'
+    | 'to-is-right'
+    | 'both-hold'
+    | 'undo';
+  readonly from: RelatedPageNamed;
+  readonly to: RelatedPageNamed;
 }
 
 /** The payload of `evaluation.transport-ready`. */
@@ -1464,13 +1529,28 @@ export interface PlanHeldApprovedByPredecessor extends WorkItemNamed {
   readonly reason: 'approved-by-predecessor';
 }
 
+/**
+ * `work.plan-held` for a plan that cites a passage two equally trusted pages disagree on, the
+ * sixth reason (wave 15, 15-A; A-3): the manager confirmed the conflict and has not yet said
+ * which page is right, so the switch does not run the plan. Wave 16 makes it a question.
+ */
+export interface PlanHeldForConflict extends WorkItemNamed {
+  readonly reason: 'documentation-conflict';
+  readonly relationId: Id<'docRelations'>;
+  /** The heading the two pages disagree under. */
+  readonly heading: string;
+  /** The two pages, each by its title and its source's label. */
+  readonly pages: ReadonlyArray<{ readonly title: string; readonly source: string }>;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
   | PlanHeldForRejection
   | PlanHeldObligationsFailedOpen
   | PlanHeldDraftedWithout
-  | PlanHeldApprovedByPredecessor;
+  | PlanHeldApprovedByPredecessor
+  | PlanHeldForConflict;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1749,6 +1829,18 @@ export interface WorkDocumentationSelectedPayload {
   readonly chars: number;
 }
 
+/**
+ * The payload of `work.documentation-selection-failed` (wave 15, 15-A; the wave 14 pre-tag's
+ * item): a real-mode site's selection could not be made, so the run read the whole mirror
+ * instead, as mock mode does. The run goes on; the record says the prompt carried everything.
+ */
+export interface WorkDocumentationSelectionFailedPayload {
+  readonly workItemId: WorkItemId;
+  readonly site: DocumentationSelectionRecord['site'];
+  /** Why the selection could not be made, bounded and with nothing token-shaped. */
+  readonly reason: string;
+}
+
 /** The payload of `work.model-call`. */
 export interface WorkModelCallPayload extends ModelCallReport {
   readonly workItemId?: WorkItemId;
@@ -1825,6 +1917,9 @@ export interface EventPayloads {
   'relationship.changed': RelationshipChangedPayload;
   'coworker.replied': CoworkerRepliedPayload;
   'documentation.systems-discovered': DocumentationSystemsDiscoveredPayload;
+  'documentation.page-status-changed': DocumentationPageStatusChangedPayload;
+  'documentation.relation-proposed': DocumentationRelationProposedPayload;
+  'documentation.relation-decided': DocumentationRelationDecidedPayload;
   'evaluation.transport-ready': EvaluationTransportReadyPayload;
   'voice.started': VoiceStartedPayload;
   'voice.answer-recorded': VoiceAnswerRecordedPayload;
@@ -1972,6 +2067,7 @@ export interface EventPayloads {
   'work.closing-reauthored': WorkClosingReauthoredPayload;
   'work.model-call': WorkModelCallPayload;
   'work.documentation-selected': WorkDocumentationSelectedPayload;
+  'work.documentation-selection-failed': WorkDocumentationSelectionFailedPayload;
   'work.manager-note-sending': WorkManagerNoteSendingPayload;
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
@@ -2029,6 +2125,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'relationship.changed',
   'coworker.replied',
   'documentation.systems-discovered',
+  'documentation.page-status-changed',
+  'documentation.relation-proposed',
+  'documentation.relation-decided',
   'evaluation.transport-ready',
   'voice.started',
   'voice.answer-recorded',
@@ -2176,6 +2275,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.closing-reauthored',
   'work.model-call',
   'work.documentation-selected',
+  'work.documentation-selection-failed',
   'work.manager-note-sending',
   'work.manager-note-failed',
   'work.manager-digest-sending',

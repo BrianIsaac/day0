@@ -286,10 +286,113 @@ export function changedRunbookReason(title: string, day: string): string {
 }
 
 /**
+ * What became of a runbook a skill read: its text changed, it is no longer current (superseded,
+ * archived, marked a draft), or its source no longer holds it (removed or moved; W14-R22).
+ */
+export const RUNBOOK_CHANGES = ['changed', 'superseded', 'archived', 'draft', 'removed'] as const;
+
+/** One thing that became of a runbook. */
+export type RunbookChange = (typeof RUNBOOK_CHANGES)[number];
+
+/** A runbook that changed, as one library scan reads it. */
+export interface ChangedRunbook {
+  readonly sourceId: Id<'docSources'>;
+  readonly ref: string;
+  /** The page's title as stored now, or as it was last stored for a page that is gone. */
+  readonly title: string;
+  readonly change: RunbookChange;
+  /** The source's label, which a removed page's reason names. */
+  readonly source?: string;
+}
+
+/** The validator of a `ChangedRunbook`. */
+const changedRunbookValidator = v.object({
+  sourceId: v.id('docSources'),
+  ref: v.string(),
+  title: v.string(),
+  change: v.union(...RUNBOOK_CHANGES.map((change) => v.literal(change))),
+  source: v.optional(v.string()),
+});
+
+/** The most runbooks one library scan stamps for; a caller with more schedules a scan a part. */
+export const RUNBOOKS_A_SCAN = 64;
+
+/**
+ * The re-check reason of a skill whose runbook changed or is no longer current, after the card's
+ * "Re-check due: " (the wave file's section 8): "its runbook "Refresh the tile" was superseded
+ * on 8 October 2026", "was archived on", "was marked a draft on", "was removed from Handbook
+ * on", beside "changed on".
+ *
+ * @param page - The runbook and what became of it.
+ * @param day - The day of the change in the holder's zone, as the pages print a day.
+ */
+export function runbookReason(
+  page: Pick<ChangedRunbook, 'title' | 'change' | 'source'>,
+  day: string,
+): string {
+  switch (page.change) {
+    case 'changed':
+      return changedRunbookReason(page.title, day);
+    case 'superseded':
+      return `its runbook "${page.title}" was superseded on ${day}`;
+    case 'archived':
+      return `its runbook "${page.title}" was archived on ${day}`;
+    case 'draft':
+      return `its runbook "${page.title}" was marked a draft on ${day}`;
+    case 'removed':
+      return `its runbook "${page.title}" was removed from ${page.source ?? 'its source'} on ${day}`;
+    default: {
+      const unknown: never = page.change;
+      throw new Error(`unhandled runbook change ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * Stamp, over one bounded page of an owner's library, every holder of a version whose authoring
+ * run read one of the given runbooks. The holders keep running the version they verified until
+ * a re-check passes (`stampRecheckDue` changes no state). A withdrawn version runs nowhere and
+ * is passed over; a version that read several of the runbooks is stamped for the first.
+ *
+ * @returns How many rows it stamped, and where the library's read goes on (null: it is read).
+ */
+async function stampReaders(
+  ctx: MutationCtx,
+  scan: {
+    readonly userId: string;
+    readonly pages: readonly ChangedRunbook[];
+    readonly changedAt: number;
+    readonly cursor: string | null;
+  },
+): Promise<{ stamped: number; next: string | null }> {
+  const page = await ctx.db
+    .query('skillVersions')
+    .withIndex('by_owner_name_version', (q) => q.eq('userId', scan.userId))
+    .paginate({ ...CHANGED_PAGE_SCAN, cursor: scan.cursor });
+  let stamped = 0;
+  for (const version of page.page) {
+    if (version.revokedAt !== undefined) continue;
+    const read = scan.pages.find((changed) =>
+      version.readRefs.some(
+        (readRef) => readRef.sourceId === changed.sourceId && readRef.ref === changed.ref,
+      ),
+    );
+    if (read === undefined) continue;
+    for (const holder of await holdersOf(ctx.db, version._id)) {
+      const agent = await ctx.db.get(holder.agentId);
+      const day = dayLabelAt(scan.changedAt, agentZone(agent ?? {}));
+      const reason = runbookReason(read, day);
+      if (await stampRecheckDue(ctx, { skillId: holder._id, reason, now: scan.changedAt })) {
+        stamped += 1;
+      }
+    }
+  }
+  return { stamped, next: page.isDone ? null : page.continueCursor };
+}
+
+/**
  * Stamp "Re-check due" on every holder of a version whose authoring run read a page whose body
- * changed (wave 14, 14-I; the enhancements plan's section 4.1 trigger). The holders keep running
- * the version they verified until a re-check passes (`stampRecheckDue` changes no state). A
- * withdrawn version runs nowhere and is passed over. Internal; scheduled by
+ * changed (wave 14, 14-I; the enhancements plan's section 4.1 trigger). Internal; scheduled by
  * `docSources.upsertPage`, one bounded page of the owner's library at a time, the next page
  * scheduled until the library is read.
  *
@@ -305,30 +408,48 @@ export const stampChangedPage = internalMutation({
     cursor: v.union(v.string(), v.null()),
   },
   handler: async (ctx, args): Promise<number> => {
-    const page = await ctx.db
-      .query('skillVersions')
-      .withIndex('by_owner_name_version', (q) => q.eq('userId', args.userId))
-      .paginate({ ...CHANGED_PAGE_SCAN, cursor: args.cursor });
-    let stamped = 0;
-    for (const version of page.page) {
-      if (version.revokedAt !== undefined) continue;
-      const read = version.readRefs.some(
-        (readRef) => readRef.sourceId === args.sourceId && readRef.ref === args.ref,
-      );
-      if (!read) continue;
-      for (const holder of await holdersOf(ctx.db, version._id)) {
-        const agent = await ctx.db.get(holder.agentId);
-        const day = dayLabelAt(args.changedAt, agentZone(agent ?? {}));
-        const reason = changedRunbookReason(args.title, day);
-        if (await stampRecheckDue(ctx, { skillId: holder._id, reason, now: args.changedAt })) {
-          stamped += 1;
-        }
-      }
-    }
-    if (!page.isDone) {
+    const { stamped, next } = await stampReaders(ctx, {
+      userId: args.userId,
+      pages: [{ sourceId: args.sourceId, ref: args.ref, title: args.title, change: 'changed' }],
+      changedAt: args.changedAt,
+      cursor: args.cursor,
+    });
+    if (next !== null) {
       await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPage, {
         ...args,
-        cursor: page.continueCursor,
+        cursor: next,
+      });
+    }
+    return stamped;
+  },
+});
+
+/**
+ * Stamp "Re-check due" on every holder of a version whose authoring run read any of several
+ * pages that are no longer current or are gone (wave 15, 15-A; W14-R22), in one read of the
+ * owner's library however many pages changed (14-I's m5: a status phase that marked forty pages
+ * would otherwise schedule forty scans). Internal; scheduled by `docStatus` once a transaction
+ * that changed a page's status or removed pages, a bounded page of the library at a time.
+ *
+ * @returns How many rows this page stamped.
+ * @throws Error past `RUNBOOKS_A_SCAN` pages; the caller schedules a scan a part.
+ */
+export const stampChangedPages = internalMutation({
+  args: {
+    userId: v.string(),
+    pages: v.array(changedRunbookValidator),
+    changedAt: v.number(),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<number> => {
+    if (args.pages.length > RUNBOOKS_A_SCAN) {
+      throw new Error(`One library scan stamps for at most ${RUNBOOKS_A_SCAN} pages.`);
+    }
+    const { stamped, next } = await stampReaders(ctx, args);
+    if (next !== null) {
+      await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPages, {
+        ...args,
+        cursor: next,
       });
     }
     return stamped;

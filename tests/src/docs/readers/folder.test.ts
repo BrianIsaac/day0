@@ -55,6 +55,41 @@ describe('folder documentation reader', (): void => {
     ]);
   });
 
+  it('reads what a file says of itself: its front matter’s status, then the directory it is filed under (15-A)', async (): Promise<void> => {
+    const root = await createFixture();
+    await mkdir(join(root, 'team', 'archive'), { recursive: true });
+    await mkdir(join(root, 'team', 'drafts'), { recursive: true });
+    await writeFile(join(root, 'team', 'archive', 'old-close.md'), '# Old close\n');
+    await writeFile(join(root, 'team', 'drafts', 'new-close.md'), '# New close\n');
+    await writeFile(
+      join(root, 'team', 'drafts', 'approved.md'),
+      '---\nstatus: active\n---\n# Approved\n',
+    );
+    await writeFile(
+      join(root, 'team', 'deprecated.md'),
+      '---\nstatus: deprecated\nsuperseded_by: onboarding\n---\n# Deprecated\n',
+    );
+    const source: DocSourceRecord = {
+      _id: 'source-folder' as Id<'docSources'>,
+      label: 'Team folder',
+      kind: 'folder',
+      locator: 'team',
+    };
+    const { pages } = await new FolderReader(root).listPageBatch(source, undefined, undefined, 25);
+    expect(
+      Object.fromEntries(pages.map((page) => [page.ref, page.nativeStatus ?? 'none'])),
+    ).toEqual({
+      'archive/old-close.md': 'archived',
+      'deprecated.md': 'superseded',
+      'drafts/approved.md': 'active',
+      'drafts/new-close.md': 'draft',
+      'onboarding.md': 'none',
+      'runbooks/ticket.md': 'none',
+    });
+    // An ordinary file says nothing: the field is absent, not `active`.
+    expect(pages.find((page) => page.ref === 'onboarding.md')).not.toHaveProperty('nativeStatus');
+  });
+
   it('reads deterministic bounded batches without loading later pages', async (): Promise<void> => {
     const root = await createFixture();
     const source: DocSourceRecord = {

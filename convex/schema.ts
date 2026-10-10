@@ -641,6 +641,12 @@ export default defineSchema({
   })
     /** The owner's relations in one standing: the cards still to decide, the confirmed ones. */
     .index('by_user_status', ['userId', 'status'])
+    /**
+     * The owner's relations of one kind in one standing: the conflicts the manager confirmed,
+     * which the selection and the cards read apart from every kept version and confirmed
+     * successor, however many of those there are (15-A).
+     */
+    .index('by_user_kind_status', ['userId', 'kind', 'status'])
     /** The relations from one page, or every page of one source: its status and its unlink. */
     .index('by_from', ['from.sourceId', 'from.ref'])
     /** The relations to one page, or every page of one source. */
@@ -665,8 +671,9 @@ export default defineSchema({
     /**
      * The sync run that scheduled the split that wrote the block (the backfill's: the source's last
      * completed run), not the last writer: a re-split keeps an unchanged block's row, and its
-     * generation with it (`replacePageBlocks`). No reader (W14-R21: documented rather than dropped,
-     * since dropping a field is a narrowing that costs a release for nothing).
+     * generation with it (`replacePageBlocks`). Read through `by_source_generation` since wave 15
+     * (15-A): the pages a run stored or changed are the pages whose blocks carry it
+     * (`docRelations.pagesWrittenBy`), which is what a finishing sync measures for relations.
      */
     generation: v.id('docSyncRuns'),
     /** The block's place in its page, from 0. */
@@ -697,9 +704,9 @@ export default defineSchema({
     .index('by_source_page_hash', ['sourceId', 'pageRef', 'hash'])
     /**
      * A source's blocks by the run that scheduled their split, not their last writer (see
-     * `generation`). No reader: a source's removal pages through `by_source_page`, which also
-     * leads with the source (W14-R21: documented rather than dropped, as dropping an index is a
-     * narrowing that costs a release for nothing).
+     * `generation`): the pages one run wrote, read by `docRelations.pagesWrittenBy` (15-A; the
+     * index had no reader until then, W14-R21). A source's removal pages through
+     * `by_source_page`, which also leads with the source.
      */
     .index('by_source_generation', ['sourceId', 'generation'])
     /**

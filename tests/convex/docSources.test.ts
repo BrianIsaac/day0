@@ -3392,6 +3392,99 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
   });
 
+  it('stamps the skills that read a page once the second walk removes it, naming its source (W14-R22)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const skillId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.query('agents').first();
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'source test',
+        readRefs: [{ sourceId, ref: 'missed.md', title: 'missed.md' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId: agent!._id,
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+    const reason = async (): Promise<string | undefined> => {
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      return (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.recheckReason;
+    };
+    // Missed once, the page is kept and its readers are left alone.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBeUndefined();
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBe(
+      'its runbook "missed.md" was removed from Drive on 10 October 2026',
+    );
+  });
+
+  it('removes the proposals of a page it removes, which nobody could answer, and keeps what the manager decided (15-A)', async (): Promise<void> => {
+    // The second pass's minor 4: a removed page's proposals stayed, drawn on no card, in the
+    // read of the cards still to answer.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    await harness.run(async (ctx) => {
+      const relation = {
+        userId: 'owner',
+        kind: 'possible_duplicate' as const,
+        evidence: [{ measure: 'shared-text', value: 80 }],
+        createdAt: 1,
+      };
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'missed.md' },
+        to: { sourceId, ref: 'kept.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'confirmed',
+      });
+    });
+    const standings = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (await ctx.db.query('docRelations').collect()).map((row) => row.status),
+      );
+    // Missed once, the page is kept, and so is everything that names it.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['proposed', 'proposed', 'confirmed']);
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['confirmed']);
+  });
+
   it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -3423,6 +3516,49 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
 
     await walk(harness, sourceId, ['kept.md']);
     expect(await status()).toBe('superseded');
+  });
+
+  it('counts a page it keeps after one miss among the pages the source holds, and its values among those stated (W14-R24)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const ref = credentialSourceRef('missed.md', 'a'.repeat(32));
+    const superseded = credentialSourceRef('missed.md', 'b'.repeat(32));
+    await harness.run(async (ctx): Promise<void> => {
+      const value = { userId: 'owner', kind: 'value' as const, ciphertext: 'encrypted', iv: 'iv' };
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref },
+        createdAt: 1,
+      });
+      // A value an earlier sync superseded on the same page is stated by nobody.
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref: superseded },
+        status: 'superseded',
+        supersededAt: 1,
+        createdAt: 1,
+      });
+      const source = await ctx.db.get(sourceId);
+      await ctx.db.patch(source!.lastCompletedSyncId!, { credentialRefs: [ref] });
+    });
+
+    const once = await walk(harness, sourceId, ['kept.md']);
+    // The source still holds both pages: the one this walk listed and the one it missed once.
+    expect(once).toMatchObject({ pagesListed: 1 });
+    expect(once?.summary).toMatchObject({ pagesKept: 2, pagesRemoved: 0 });
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ pageCount: 2 });
+    // And the kept page still states its value, so the next walk reads it as stated before (N23).
+    expect(once?.credentialRefs).toEqual([ref]);
+
+    const twice = await walk(harness, sourceId, ['kept.md']);
+    expect(twice?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
+    expect(twice?.credentialRefs).toEqual([]);
   });
 
   it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {

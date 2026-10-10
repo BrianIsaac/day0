@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DocPage, DocSourceRecord } from '../types';
+import { fileNativeStatus } from '../status';
 import {
   listingCursor,
   offsetInListing,
@@ -117,12 +118,15 @@ export async function readMarkdownDirectoryBatch(
       try {
         const [markdown, details] = await Promise.all([readFile(path, 'utf8'), stat(path)]);
         const fallback = basename(path, '.md').replaceAll('-', ' ');
+        // What the file says of itself: its front matter's status, else its directory (15-A).
+        const nativeStatus = fileNativeStatus(ref, markdown);
         return {
           sourceId: source._id,
           ref,
           title: markdownPageTitle(markdown, fallback),
           markdown,
           updatedAt: details.mtimeMs,
+          ...(nativeStatus !== undefined ? { nativeStatus } : {}),
         } satisfies DocPage;
       } catch (error) {
         // Every failure here is this one file's: the listing already succeeded.

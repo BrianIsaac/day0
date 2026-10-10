@@ -1,4 +1,5 @@
 import { blockSearchQuery, searchTerms, splitPage } from './blocks';
+import { sourceAuthorityOf, type SourceAuthority } from './authority';
 import { renderHowTos, renderTeamDocs } from '../work/documents';
 import { parseProcedureContract } from '../work/procedure-contract';
 import { documentedBrowserFields, writtenBrowserSurfaces } from '../work/claim-key';
@@ -9,6 +10,7 @@ import {
   type ShapeSurface,
 } from '../work/skill-shape';
 import type {
+  CiteConflict,
   CitedBlock,
   DocumentationCitation,
   DocumentationSelectionRecord,
@@ -27,9 +29,11 @@ import type {
  * for the target surface that names the shape's operation, and every page documenting the form
  * of a browser-driven surface the plan writes, each whole. Scout with one search per field of
  * the item, each cut to the sixteen terms the backend reads, rarest first. Re-score what the
- * scout found with the index's own tokeniser and keep the best 12 blocks over at most 6 pages,
- * at most 4 a page. Assemble each page's blocks in document order under a cite line, guides
- * first, within 24,000 characters.
+ * scout found with the index's own tokeniser, weighed by how far each page's source is trusted
+ * (official over team over personal; recency only between equals: wave 15, A5), and keep the
+ * best 12 blocks over at most 6 pages, at most 4 a page. Assemble each page's blocks in document
+ * order under a cite line, guides first, within 24,000 characters, of which the ranked pick
+ * keeps a floor.
  */
 
 /** The most documentation characters one prompt carries (R4). */
@@ -43,6 +47,26 @@ export const SELECTED_BLOCK_LIMIT = 12;
 
 /** The most blocks the ranked pick takes from one page. */
 export const BLOCKS_PER_PAGE_LIMIT = 4;
+
+/**
+ * The characters of the budget kept for the ranked pick (the review's D-3): the pages always
+ * included are spent up to the budget less this, so a long guide for the target surface cannot
+ * crowd out the blocks that answer the item. Every procedure contract's needed blocks are still
+ * spent before anything (W14-R3); what the pick leaves of its floor goes back to those pages.
+ */
+export const PICK_FLOOR_CHARS = 6_000;
+
+/**
+ * How much a block's score counts by the trust of its page's source: official over team over
+ * personal (A5). A weight, not a sort: a team page that answers the item still ranks above an
+ * official page that barely mentions it, and between two pages that answer alike the more
+ * trusted is first.
+ */
+export const AUTHORITY_WEIGHT: Readonly<Record<SourceAuthority, number>> = {
+  official: 1,
+  team: 0.85,
+  personal: 0.7,
+};
 
 /**
  * The model call sites a selection is made for: the planner (whose selection the obligations
@@ -134,10 +158,19 @@ export interface SelectablePage {
   readonly category: 'how-to-guide' | 'team-doc';
   /** The page as mirrored (redacted). */
   readonly body: string;
-  /** The source's label in a cite line; `office` for a page with no source. */
+  /**
+   * The source's label in a cite line, told apart from another source of the same label
+   * (W14-R27); `office` for a page with no source.
+   */
   readonly citeSource: string;
   /** The page's ref within its source in a cite line. */
   readonly citePage: string;
+  /** The page's source (`docSources` id); absent for an office page with no source. */
+  readonly sourceId?: string;
+  /** How far the page's source is trusted; absent reads as `team` (`sourceAuthorityOf`). */
+  readonly authority?: SourceAuthority;
+  /** When the page was last stored: read only to order two pages of equal trust that answer alike. */
+  readonly updatedAt?: number;
 }
 
 /** A block of a page, stored (with its row id) or split here. */
@@ -190,7 +223,19 @@ export interface SelectionInput {
    * to read their stored blocks, so each page is parsed for them once a selection (W14-R4).
    */
   readonly always?: readonly string[];
+  /**
+   * The stored blocks a confirmed conflict stands on, by block hash, with what each is disputed
+   * by (`docRelations.standingConflictsOn`): the cite line of such a block is printed
+   * `[conflict]`.
+   */
+  readonly conflicts?: ConflictsByHash;
 }
+
+/** What each disputed block is disputed by, by the block's hash. */
+export type ConflictsByHash = ReadonlyMap<string, CiteConflict>;
+
+/** What a disputed cite line ends with, after its closing bracket. */
+export const CONFLICT_TAG = '[conflict]';
 
 /** A cite line as the selection prints it, alone on its line. */
 const CITE_LINE = /^\[cite: [^\n]*\]$/m;
@@ -387,8 +432,10 @@ const BM25_B = 0.75;
 /**
  * The scouted blocks of readable pages, scored against the request with the index's tokeniser
  * (BM25 over the block's heading path and text, each term's rarity counted over the pages and
- * weighted by the field that asked for it), best first; a block that shares no term with the
- * request but terms on every page is dropped.
+ * weighted by the field that asked for it, then by the trust of the page's source), best first;
+ * a block that shares no term with the request but terms on every page is dropped. Between
+ * equal scores the page stored later is first, then the mirror's order: recency breaks a tie
+ * and nothing else (A5).
  */
 function rankBlocks(
   request: SelectionRequest,
@@ -420,6 +467,10 @@ function rankBlocks(
   const averageLength =
     blocks.reduce((total, entry) => total + entry.terms.length, 0) / Math.max(1, blocks.length);
   const order = new Map(pages.map((page, index) => [page.key, index]));
+  const byKey = new Map(pages.map((page) => [page.key, page]));
+  const trust = (block: SelectableBlock): number =>
+    AUTHORITY_WEIGHT[sourceAuthorityOf(byKey.get(block.pageKey) ?? {})];
+  const storedAt = (block: SelectableBlock): number => byKey.get(block.pageKey)?.updatedAt ?? 0;
   const scored = blocks
     .map(({ block, terms }) => {
       const counts = new Map<string, number>();
@@ -432,7 +483,7 @@ function rankBlocks(
         if (count === 0 || (pages.length > 1 && frequency.get(term) === pages.length)) continue;
         score += (weight * idf(term) * count * (BM25_K1 + 1)) / (count + BM25_K1 * norm);
       }
-      return { block, score };
+      return { block, score: score * trust(block) };
     })
     .filter((entry) => entry.score > 0);
   const best = scored.reduce((top, entry) => Math.max(top, entry.score), 0);
@@ -441,6 +492,7 @@ function rankBlocks(
     .sort(
       (left, right) =>
         right.score - left.score ||
+        storedAt(right.block) - storedAt(left.block) ||
         (order.get(left.block.pageKey) ?? 0) - (order.get(right.block.pageKey) ?? 0) ||
         left.block.index - right.block.index,
     );
@@ -471,30 +523,45 @@ function citeLabel(page: SelectablePage, headingPath: readonly string[]): string
   return `${page.citeSource}/${page.citePage}${heading === '' ? '' : `#${heading}`}`;
 }
 
-/** One page's blocks in document order, grouped under cite lines. */
+/**
+ * One page's blocks in document order, grouped under cite lines. A group one of whose blocks a
+ * confirmed conflict stands on has its line printed with `CONFLICT_TAG` after the bracket, and
+ * its citation says what disputes it.
+ */
 function assemblePage(
   page: SelectablePage,
   blocks: readonly SelectableBlock[],
+  conflicts?: ConflictsByHash,
 ): { body: string; citations: Citation[] } {
   const ordered = [...blocks].sort((left, right) => left.index - right.index);
-  const citations: Array<{ label: string; blocks: CitedBlock[] }> = [];
-  const parts: string[] = [];
-  let previous: string | undefined;
+  const of = page.sourceId === undefined ? {} : { sourceId: page.sourceId, pageRef: page.citePage };
+  const groups: Array<{ label: string; blocks: SelectableBlock[] }> = [];
   for (const block of ordered) {
     const label = citeLabel(page, block.headingPath);
-    if (label !== previous) {
-      parts.push(`${parts.length > 0 ? '\n' : ''}[cite: ${label}]\n${block.text}`);
-      citations.push({ label, blocks: [] });
-      previous = label;
-    } else {
-      parts.push(`\n${block.text}`);
-    }
-    if (block.id !== undefined) {
-      citations[citations.length - 1].blocks.push({
-        id: block.id,
-        ...(block.hash !== undefined ? { hash: block.hash } : {}),
-      });
-    }
+    const last = groups.at(-1);
+    if (last !== undefined && last.label === label) last.blocks.push(block);
+    else groups.push({ label, blocks: [block] });
+  }
+  const parts: string[] = [];
+  const citations: Citation[] = [];
+  for (const group of groups) {
+    const conflict = group.blocks
+      .map((block) => (block.hash === undefined ? undefined : conflicts?.get(block.hash)))
+      .find((entry) => entry !== undefined);
+    const line = `[cite: ${group.label}]${conflict !== undefined ? ` ${CONFLICT_TAG}` : ''}`;
+    parts.push(
+      `${parts.length > 0 ? '\n' : ''}${line}\n${group.blocks.map((block) => block.text).join('\n\n')}`,
+    );
+    citations.push({
+      label: group.label,
+      ...of,
+      blocks: group.blocks.flatMap((block): CitedBlock[] =>
+        block.id === undefined
+          ? []
+          : [{ id: block.id, ...(block.hash !== undefined ? { hash: block.hash } : {}) }],
+      ),
+      ...(conflict !== undefined ? { conflict } : {}),
+    });
   }
   return { body: parts.join('\n'), citations };
 }
@@ -553,19 +620,35 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
     return (block) => rankOf.get(blockKey(block)) ?? Number.POSITIVE_INFINITY;
   };
 
-  // Every contract's needed blocks are spent first, page by page, then each page's rest in the
-  // order above: one long contract page no longer cuts the next page's contract (W14-R3).
-  const chosen: ChosenDocumentation = { blocks: new Map(), entries: new Map() };
+  // Every contract's needed blocks are spent first, page by page: one long contract page no
+  // longer cuts the next page's contract (W14-R3). Then the pages always included, up to the
+  // budget less the pick's floor; then the ranked pick; then what is left goes back to the pages
+  // always included, in the order above (D-3).
+  const chosen: ChosenDocumentation = {
+    blocks: new Map(),
+    entries: new Map(),
+    conflicts: input.conflicts,
+  };
   for (const candidate of candidates) {
     const contractNeeds = needed.get(candidate.page.key);
     if (contractNeeds === undefined) continue;
     const blocks = candidate.blocks.filter((block) => contractNeeds.has(blockKey(block)));
     fitBlocks(candidate, blocks, chosen, candidates);
   }
-  for (const candidate of candidates) {
+  const spend = (candidate: Assembled, limit: number): void => {
     const rank = priority(candidate);
     const ordered = [...candidate.blocks].sort((left, right) => rank(left) - rank(right));
-    fitBlocks(candidate, ordered, chosen, candidates);
+    fitBlocks(candidate, ordered, chosen, candidates, limit);
+  };
+  const included = candidates.filter((candidate) => alwaysSet.has(candidate.page.key));
+  const beforeThePick =
+    pickedPages.length > 0 ? DOCUMENTATION_CHAR_LIMIT - PICK_FLOOR_CHARS : DOCUMENTATION_CHAR_LIMIT;
+  for (const candidate of included) spend(candidate, beforeThePick);
+  for (const candidate of candidates) {
+    if (!alwaysSet.has(candidate.page.key)) spend(candidate, DOCUMENTATION_CHAR_LIMIT);
+  }
+  if (pickedPages.length > 0) {
+    for (const candidate of included) spend(candidate, DOCUMENTATION_CHAR_LIMIT);
   }
 
   const howToGuides: Array<MockSurfaceSnapshot['howToGuides'][number]> = [];
@@ -574,7 +657,7 @@ export function selectDocumentation(input: SelectionInput): SelectedDocumentatio
   for (const candidate of candidates) {
     const blocks = chosen.blocks.get(candidate.page.key);
     if (blocks === undefined || blocks.length === 0) continue;
-    const assembled = assemblePage(candidate.page, blocks);
+    const assembled = assemblePage(candidate.page, blocks, input.conflicts);
     const entry = { slug: candidate.page.slug, title: candidate.page.title, body: assembled.body };
     (candidate.page.category === 'how-to-guide' ? howToGuides : teamDocs).push(entry);
     citations.push(...assembled.citations);
@@ -648,6 +731,8 @@ function pagesInPickOrder(picked: readonly SelectableBlock[]): string[] {
 interface ChosenDocumentation {
   readonly blocks: Map<string, SelectableBlock[]>;
   readonly entries: Map<string, { slug: string; title: string; body: string }>;
+  /** The disputed blocks, whose tagged cite lines count toward the budget as they are printed. */
+  readonly conflicts?: ConflictsByHash;
 }
 
 /**
@@ -658,12 +743,14 @@ interface ChosenDocumentation {
  *
  * @param chosen - Each page's chosen blocks and assembled body, updated in place.
  * @param candidates - Every page in the order the prompt carries them, for the budget's sum.
+ * @param limit - The budget this spend may reach; the whole budget unless a floor is kept back.
  */
 function fitBlocks(
   candidate: Assembled,
   blocks: readonly SelectableBlock[],
   chosen: ChosenDocumentation,
   candidates: readonly Assembled[],
+  limit: number = DOCUMENTATION_CHAR_LIMIT,
 ): void {
   const key = candidate.page.key;
   const base = chosen.blocks.get(key) ?? [];
@@ -674,7 +761,7 @@ function fitBlocks(
   const entryOf = (own: readonly SelectableBlock[]) => ({
     slug: candidate.page.slug,
     title: candidate.page.title,
-    body: assemblePage(candidate.page, own).body,
+    body: assemblePage(candidate.page, own, chosen.conflicts).body,
   });
   const fits = (count: number): boolean => {
     const trial = entryOf(trialBlocks(count));
@@ -689,7 +776,7 @@ function fitBlocks(
         entry,
       );
     }
-    return documentationChars(documents) <= DOCUMENTATION_CHAR_LIMIT;
+    return documentationChars(documents) <= limit;
   };
   let low = 0;
   let high = extra.length;

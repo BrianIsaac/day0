@@ -158,6 +158,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'obligations-failed-open': 'its reads and writes could not be checked',
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
   'approved-by-predecessor': 'approved by your predecessor; approve it again',
+  'documentation-conflict': 'two pages disagree; decide on the Documentation tab',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */
@@ -165,6 +166,22 @@ function planHeldWords(reason: unknown): string {
   return typeof reason === 'string' && Object.hasOwn(PLAN_HELD_WORDS, reason)
     ? PLAN_HELD_WORDS[reason as WorkPlanHeldPayload['reason']]
     : 'it waits for your decision';
+}
+
+/** A relation between two documentation pages, as the feed names it. */
+function relationLabel(kind: unknown): string {
+  if (kind === 'possible_successor') return 'a newer version of a page';
+  if (kind === 'possible_conflict') return 'two pages that disagree';
+  return 'two versions of one page';
+}
+
+/** A documentation page's new status as the feed says it: "is now superseded", "is current again". */
+function pageStatusLabel(status: unknown): string {
+  if (status === 'active') return 'is current again';
+  if (status === 'draft') return 'is now a draft';
+  return status === 'superseded' || status === 'archived'
+    ? `is now ${status}`
+    : 'changed its status';
 }
 
 /**
@@ -439,6 +456,16 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `documentation read: ${counted(payload.systems, 'system') ?? 'systems'} found${
       typeof payload.created === 'number' && payload.created > 0 ? `, ${payload.created} new` : ''
     }${typeof payload.retired === 'number' && payload.retired > 0 ? `, ${payload.retired} gone` : ''}`,
+  'documentation.page-status-changed': (payload) =>
+    `documentation page ${text(payload.title) ? `"${payload.title}" ` : ''}${pageStatusLabel(payload.to)}`,
+  'documentation.relation-proposed': (payload) =>
+    `documentation: ${relationLabel(payload.kind)} to decide${
+      text(payload.from?.title) ? `, "${payload.from?.title}"` : ''
+    }`,
+  'documentation.relation-decided': (payload) =>
+    payload.decision === 'undo'
+      ? `documentation: the answer on ${relationLabel(payload.kind)} taken back`
+      : `documentation: ${relationLabel(payload.kind)} decided`,
   'evaluation.transport-ready': 'evaluation transport ready',
   'voice.started': (payload) =>
     payload.mode === 'chat' ? 'Day-1 1:1 started (chat)' : 'Day-1 1:1 started (voice)',
@@ -708,7 +735,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
     `execution restarted after it failed outside the item${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}${typeof payload.reason === 'string' && payload.reason !== '' ? `: ${payload.reason}` : ''}`,
-  'work.plan-held': (payload) => `plan held for you: ${planHeldWords(payload.reason)}`,
+  'work.plan-held': (payload) =>
+    payload.reason === 'documentation-conflict' && text(payload.heading)
+      ? `plan held for you: two pages disagree about "${payload.heading}"; decide on the Documentation tab`
+      : `plan held for you: ${planHeldWords(payload.reason)}`,
   'work.plan-approved': (payload) =>
     payload.by === 'autonomous'
       ? 'plan approved under autonomous actions'
@@ -782,6 +812,12 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'work.model-call': modelCallLabel,
   'work.documentation-selected': documentationSelectedLabel,
+  'work.documentation-selection-failed': (payload) =>
+    `documentation not selected${
+      text(payload.site)
+        ? ` · ${DOCUMENTATION_SITE_WORDS[payload.site as string] ?? payload.site}`
+        : ''
+    } · every page was read instead`,
   'work.manager-note-sending': (payload) =>
     `sending the manager a ${payload.kind === 'stopped' ? 'stop' : 'landed-work'} note`,
   'work.manager-note-failed': (payload) => `manager note not delivered${because(payload.reason)}`,

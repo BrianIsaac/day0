@@ -26,6 +26,7 @@ import { incomingTransfersOf } from './managerTransfers';
 import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
+import { citedConflictOf } from './docRelations';
 import {
   APPLY_RECOVERY_MS,
   claimLoopStepInTransaction,
@@ -1530,6 +1531,9 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * stand unchecked, and the gates the switch trusts read exactly those
  * (E-70 D4). So does a plan drafted without its ticket or thread
  * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
+ * So does a plan that cites a passage a confirmed conflict stands on
+ * (`reason: 'documentation-conflict'`, wave 15): two equally trusted pages
+ * disagree there and the manager has not said which is right.
  * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
@@ -1596,6 +1600,29 @@ export const decidePlan = internalMutation({
             reason: 'drafted-without-record',
             surfaceSlug: without.surfaceSlug,
             cause: without.cause,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
+    // A plan that follows a passage two equally trusted pages disagree on waits for the manager,
+    // who confirmed the conflict and has not yet said which page is right (15-A, the sixth
+    // reason). Read again at every look, so a conflict settled since holds nothing.
+    const conflict = await citedConflictOf(ctx, row.plan);
+    if (conflict !== undefined) {
+      const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
+      if (!args.recovery && relationId !== null) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'documentation-conflict',
+            relationId,
+            heading: conflict.heading,
+            pages: [...conflict.pages],
           },
           createdAt: Date.now(),
         });

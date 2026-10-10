@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useAction } from 'convex/react';
+import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { feishuLocator, feishuReaderSecret, type FeishuRegion } from '@/docs/feishu-source';
 import { REPOSITORY_URL } from '@/setup/quickstart';
@@ -18,6 +19,7 @@ import {
   readerLinkValues,
   type ReaderKind,
 } from './reader-link';
+import { TRUST_HELP, TRUST_NAMES } from './SourceTable';
 
 /** The kinds of location the backend reads, as `docSources.link` takes them. */
 export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu' | ReaderKind;
@@ -246,6 +248,8 @@ export function SourceKindHelp(props: {
  */
 export function LinkSourceForm(): React.ReactNode {
   const link = useAction(api.docSources.link);
+  const setAuthority = useMutation(api.docStatus.setSourceAuthority);
+  const [authority, setAuthorityChoice] = useState<SourceAuthority>('team');
   const [kind, setKind] = useState<SourceKind>('folder');
   const [label, setLabel] = useState(FOLDER_LABEL);
   const [locator, setLocator] = useState('.');
@@ -270,18 +274,33 @@ export function LinkSourceForm(): React.ReactNode {
     setBusy(true);
     setError(null);
     try {
-      await link({
+      const sourceId = await link({
         label,
         kind,
         locator: kind === 'feishu' ? feishuLocator(region, locator) : (reader?.locator ?? locator),
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: credentialForLink(kind, credential),
       });
-      // Only now: a refused link keeps its fields, the secret among them, to be corrected.
+      // Only now: a refused link keeps its fields, the secret among them, to be corrected. The
+      // source is linked from here on, whatever becomes of its trust, so the form is cleared
+      // first and a second press cannot link the same location again.
       form.reset();
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
       setLocator(cleared.locator);
+      setAuthorityChoice('team');
+      // A new source is a team source (A19); another trust is set on it once it is linked.
+      if (authority !== 'team') {
+        try {
+          await setAuthority({ sourceId, authority });
+        } catch {
+          // The failure is the trust's alone, and the table's Trust select is where it is put
+          // right: said as that, never as a link that did not happen.
+          setError(
+            `The location was linked, as a team source: its trust could not be set to ${TRUST_NAMES[authority].toLowerCase()}. Set it in the Trust column of the table.`,
+          );
+        }
+      }
     } catch (failure) {
       setError(refusalText(failure, 'The location was not linked.'));
     } finally {
@@ -396,6 +415,27 @@ export function LinkSourceForm(): React.ReactNode {
         {isReaderKind(kind) ? <ReaderCredentialFields key={kind} kind={kind} /> : null}
         <ReaderSecretField kind={kind} />
         <SourceKindHelp kind={kind} serverKind={serverKind} />
+        <div className="grid gap-1.5">
+          <label htmlFor="source-trust" className={LABEL}>
+            Trust
+          </label>
+          <select
+            id="source-trust"
+            value={authority}
+            onChange={(event) => setAuthorityChoice(event.target.value as SourceAuthority)}
+            aria-describedby="source-trust-help"
+            className={`${INPUT_CLASS} w-full`}
+          >
+            {SOURCE_AUTHORITIES.map((value) => (
+              <option key={value} value={value}>
+                {TRUST_NAMES[value]}
+              </option>
+            ))}
+          </select>
+          <p id="source-trust-help" className={HELP}>
+            {TRUST_HELP}
+          </p>
+        </div>
         <p role="alert" className="text-[13px] text-[var(--color-danger)]">
           {error ?? ''}
         </p>

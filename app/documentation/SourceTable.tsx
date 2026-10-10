@@ -11,6 +11,21 @@ import { INPUT_CLASS } from '../components/Field';
 import { StatusRegion } from '../components/StatusRegion';
 import { useChange } from '../components/use-change';
 import { sourceStatus } from './source-status';
+import { SOURCE_AUTHORITIES, sourceAuthorityOf, type SourceAuthority } from '@/docs/authority';
+
+/** How each trust is named in the Trust select (the wave file's section 8). */
+export const TRUST_NAMES: Readonly<Record<SourceAuthority, string>> = {
+  official: 'Official',
+  team: 'Team',
+  personal: 'Personal',
+};
+
+/**
+ * What the Trust select means, under it where there is room to say so. Trust weighs the ranking
+ * (`AUTHORITY_WEIGHT`); it is no rule that one source's page always wins.
+ */
+export const TRUST_HELP =
+  'Official is weighed above team, and team above personal, when pages answer alike. Within a source, a page’s own status decides; recency only breaks ties.';
 
 /** One linked source as `docSources.listMine` lists it, with its stored page count. */
 export type LinkedSource = FunctionReturnType<typeof api.docSources.listMine>[number];
@@ -156,6 +171,7 @@ export function SourceTable({
   const revokeCredential = useMutation(api.credentials.revoke);
   const unlink = useMutation(api.docSources.unlink);
   const resync = useMutation(api.docSources.resync);
+  const setAuthority = useMutation(api.docStatus.setSourceAuthority);
   const [rotatingSourceId, setRotatingSourceId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{
     sourceId: Id<'docSources'>;
@@ -209,7 +225,13 @@ export function SourceTable({
     );
   }
 
-  const columns = ['Source', 'Pages', 'Status', ...(reader ? [`Read by ${reader.name}`] : [])];
+  const columns = [
+    'Source',
+    'Trust',
+    'Pages',
+    'Status',
+    ...(reader ? [`Read by ${reader.name}`] : []),
+  ];
   return (
     <section ref={list} tabIndex={-1} aria-label="Linked documentation" className="grid gap-3">
       <StatusRegion outcome={change.outcome} />
@@ -286,6 +308,28 @@ export function SourceTable({
                       </>
                     )}
                   </th>
+                  <Cell label="Trust">
+                    {/* How far the source is trusted (A5): absent reads as team (A19). */}
+                    <select
+                      aria-label={`Trust for ${source.label}`}
+                      value={sourceAuthorityOf(source)}
+                      disabled={change.busy}
+                      onChange={(event) => {
+                        const authority = event.target.value as SourceAuthority;
+                        onSourceChange(() => setAuthority({ sourceId: source._id, authority }), {
+                          done: `${source.label} is now trusted as ${TRUST_NAMES[authority].toLowerCase()}.`,
+                          refused: 'The trust was not changed.',
+                        });
+                      }}
+                      className={`${INPUT_CLASS} min-w-[120px]`}
+                    >
+                      {SOURCE_AUTHORITIES.map((authority) => (
+                        <option key={authority} value={authority}>
+                          {TRUST_NAMES[authority]}
+                        </option>
+                      ))}
+                    </select>
+                  </Cell>
                   <Cell label="Pages">
                     <span className="tabular-nums">{source.pageCount}</span>
                   </Cell>
