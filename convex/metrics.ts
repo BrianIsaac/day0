@@ -358,6 +358,13 @@ function decisionTotals(
       if (workItemId && asIndexes(payload?.heldIndexes).length > 0) {
         waitingSince.set(`${workItemId}:actions`, event.createdAt);
       }
+      // A set another run holds ends the wait for a close an earlier run left for its card: that
+      // close was never decided, and the card's next decision is on this run's set, a decision of
+      // its own (W14-R46: a later run's rejection was folded into the earlier run's approval).
+      const left = workItemId ? leftForCard.get(workItemId) : undefined;
+      if (workItemId && left !== undefined && left.runId !== asString(payload?.runId)) {
+        leftForCard.delete(workItemId);
+      }
       continue;
     }
     if (isEventOf(event, 'work.plan-redrafting')) {

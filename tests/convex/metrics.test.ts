@@ -2008,6 +2008,52 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     });
   });
 
+  it("counts a later run's rejection as a rejection when an earlier run's left close was never decided (W14-R46)", (): void => {
+    const requested = (decisionId: string, at: number): Doc<'events'> =>
+      event('work.decision-requesting', { workItemId: 'wi', decisionId, kind: 'actions' }, at);
+    const parked = (runId: string, heldIndexes: number[], at: number, extra = {}): Doc<'events'> =>
+      event(
+        'work.actions-pending',
+        { workItemId: 'wi', runId, heldIndexes, refusedIndexes: [], ...extra },
+        at,
+      );
+    const events = [
+      requested('a1', 1_000),
+      parked('run-1', [0, 1, 2], 1_001),
+      // Run 1: approved by the typed code, its close left for the card and never decided there.
+      event(
+        'work.actions-approved',
+        {
+          workItemId: 'wi',
+          runId: 'run-1',
+          approvedIndexes: [0, 1],
+          rejectedIndexes: [],
+          refusedIndexes: [],
+          autoIndexes: [],
+          leftForCard: [2],
+          decidedVia: 'channel',
+        },
+        2_000,
+      ),
+      parked('run-1', [2], 3_000, { leftForCard: true }),
+      requested('a2', 3_001),
+      // Run 2 holds a set of its own, which the manager rejects whole on the card.
+      parked('run-2', [0, 1], 20_000),
+      requested('a3', 20_001),
+      event(
+        'work.actions-rejected',
+        { workItemId: 'wi', reason: 'Not these.', decidedVia: 'dashboard' },
+        30_000,
+      ),
+    ];
+    expect(computeAgentMetrics(events, [], []).decisions).toMatchObject({
+      requested: 3,
+      approved: 1,
+      rejected: 1,
+      partiallyApproved: 0,
+    });
+  });
+
   it('dates Working from a write the employee applied on its own when it came first, never a message to the manager (walk m12)', (): void => {
     const completed = (channel: string, at: number): Doc<'events'> =>
       event(
