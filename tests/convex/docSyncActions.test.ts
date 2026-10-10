@@ -1271,6 +1271,7 @@ describe('documentation sync batching', (): void => {
     });
     expect(after.runs[0]).toMatchObject({ state: 'completed' });
     expect(after.runs[0].reason).toBeUndefined();
+    // Re-pinned for D-7: the record says the entry is a failure and counts no page of a kind.
     expect(after.runs[0].unread).toEqual({
       count: 1,
       pages: [
@@ -1279,8 +1280,10 @@ describe('documentation sync batching', (): void => {
           reason: expect.stringMatching(
             /^The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
           ),
+          kind: 'failed',
         },
       ],
+      notRead: 0,
     });
     expect(after.source).toMatchObject({ status: 'synced' });
     expect(after.source?.lastError).toMatch(
@@ -1922,6 +1925,59 @@ describe('documentation sync batching', (): void => {
     expect(pages).toHaveLength(3);
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);
+  });
+
+  it('records which unread pages are of a kind Day0 does not read as their reader said it, and counts them apart (D-7)', async (): Promise<void> => {
+    const root = temporary('day0-sync-kinds-');
+    await mkdir(join(root, 'kinds'));
+    await writeFile(join(root, 'kinds', 'a.md'), '# A\n\nAlpha.\n', 'utf8');
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Kinds',
+      kind: 'folder',
+      locator: 'kinds',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      const batch = await read.apply(this, args);
+      return {
+        ...batch,
+        unread: [
+          // A failed read whose title holds the clause a kind was once read by.
+          {
+            ref: 'guide',
+            reason: 'Could not read "The kinds of file which Day0 does not read" (HTTP 403).',
+          },
+          {
+            ref: 'file-01DECK',
+            reason: '"Q3 board deck" is a slide deck, which Day0 does not read.',
+            kind: 'not-read' as const,
+          },
+        ],
+      };
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      run: (await ctx.db.query('docSyncRuns').collect())[0],
+    }));
+    expect(state.run?.unread).toMatchObject({
+      count: 2,
+      notRead: 1,
+      pages: [
+        { ref: 'guide', kind: 'failed' },
+        { ref: 'file-01DECK', kind: 'not-read' },
+      ],
+    });
+    expect(state.source?.lastError).toBe(
+      '1 page could not be read this sync and keeps its last stored version: guide: Could not read "The kinds of file which Day0 does not read" (HTTP 403). The next sync reads them again. 1 more listed page is of a kind Day0 does not read: file-01DECK: "Q3 board deck" is a slide deck, which Day0 does not read.',
+    );
   });
 
   /** A provider answer of reader 3's loops.mts. */

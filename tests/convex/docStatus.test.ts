@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { replacePageBlocks } from '../../convex/docBlocks';
+import { notCurrentRefs, replacePageBlocks } from '../../convex/docBlocks';
 import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import { markerCandidate, unmarkedTop } from '../../src/docs/status';
 import { finishingCursor } from '../../src/docs/finishing';
@@ -804,6 +804,37 @@ describe('the manager’s own status for a page', (): void => {
       ['draft', 'archived', 'manager'],
       ['archived', 'superseded', 'manager'],
     ]);
+  });
+
+  it('says on the page’s slim listing row that it is not current, and takes that back when it is current again (W15-R7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const listed = async () =>
+      await harness.run(
+        async (ctx) =>
+          (
+            await ctx.db
+              .query('docPageListings')
+              .withIndex('by_source_ref', (q) =>
+                q.eq('sourceId', source.sourceId).eq('ref', 'runbooks/pipeline-runbook.md'),
+              )
+              .unique()
+          )?.notCurrent ?? null,
+      );
+    const notCurrent = async () =>
+      await harness.run(async (ctx) => [
+        ...((await notCurrentRefs(ctx.db, source.sourceId)) ?? []),
+      ]);
+    expect(await notCurrent()).toEqual([]);
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'draft' });
+    expect(await listed()).toBe('draft');
+    expect(await notCurrent()).toEqual(['runbooks/pipeline-runbook.md']);
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    expect(await listed()).toBe('archived');
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'active' });
+    expect(await listed()).toBeNull();
+    expect(await notCurrent()).toEqual([]);
   });
 
   it('refuses a superseded page with no successor, itself as its successor, or a successor that is not the manager’s', async (): Promise<void> => {

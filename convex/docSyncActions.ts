@@ -600,6 +600,7 @@ export const syncBatch = internalAction({
           (page): UnreadPage => ({
             ref: page.ref,
             reason: safeSyncError(page.reason, secret, known),
+            kind: page.kind ?? 'failed',
           }),
         ),
         ...persisted.unread,

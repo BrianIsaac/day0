@@ -553,7 +553,20 @@ export default defineSchema({
     unread: v.optional(
       v.object({
         count: v.number(),
-        pages: v.array(v.object({ ref: v.string(), reason: v.string() })),
+        /**
+         * Each named page with why, and from 0.19.0 which of the two it is (D-7): a read that
+         * `failed`, which the next sync tries again, or a page of a kind Day0 does `not-read`,
+         * which no sync will read. Absent on an entry written before, which reads as a failure.
+         */
+        pages: v.array(
+          v.object({
+            ref: v.string(),
+            reason: v.string(),
+            kind: v.optional(v.union(v.literal('failed'), v.literal('not-read'))),
+          }),
+        ),
+        /** How many of `count` are of a kind Day0 does not read; absent on a record written before 0.19.0. */
+        notRead: v.optional(v.number()),
       }),
     ),
     /** What a completed run changed, as the final batch counted it. */
@@ -759,10 +772,23 @@ export default defineSchema({
     ref: v.string(),
     /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
     seenBy: v.number(),
+    /**
+     * The page's status while it is not current: superseded, archived or a draft, as its row and
+     * its blocks carry it (W15-R7). Absent for a current page. On this slim row so the selection
+     * reads which of a source's pages to leave out in one range of small rows, where it asked a
+     * query a mirrored page; a page row holds its whole text, so the same read over `docPages`
+     * would read every such page's body. Written with the blocks' status
+     * (`docBlocks.copyPageStatusToBlocks`), from 0.19.0.
+     */
+    notCurrent: v.optional(
+      v.union(v.literal('superseded'), v.literal('archived'), v.literal('draft')),
+    ),
   })
     /** By source, then listing: the finish's walk of the pages two complete walks did not name. */
     .index('by_source', ['sourceId', 'seenBy'])
-    .index('by_source_ref', ['sourceId', 'ref']),
+    .index('by_source_ref', ['sourceId', 'ref'])
+    /** One source's pages that are not current, read whole by the selection (W15-R7). */
+    .index('by_source_not_current', ['sourceId', 'notCurrent']),
 
   docSystemDiscoveries: defineTable({
     sourceId: v.id('docSources'),
@@ -2210,6 +2236,13 @@ export default defineSchema({
      * standing: selection reads the candidate's and the every-employee rows, owner first.
      */
     .index('by_user_agent_status', ['userId', 'agentId', 'status'])
+    /**
+     * One employee's refused rows of one reason (W15-R33; D-6): the holds of an agreement for
+     * every employee (`unchecked-for-employee`) are read by it, however many other refusals the
+     * employee holds. An index of its own: as a trailing key of `by_user_agent_status` the
+     * reason would order that index's readers of refused rows by reason before time.
+     */
+    .index('by_user_agent_status_reason', ['userId', 'agentId', 'status', 'refusal.reason'])
     /**
      * One owner's agreements about one person, in one standing (wave 14, 14-I for 14-FX; W13-R33):
      * the merge of two people repoints a person-scoped agreement from the one merged away, read

@@ -14,9 +14,12 @@
  * version and is read again; and a page of a kind Day0 does not read (a
  * sheet, a slide deck, a PDF), which no sync will read. The failures are
  * named first, so a wiki's sheets never hide its one forbidden document behind
- * "and N more", and only a failure is said to be read again. The record's
- * shape holds no kind, so a reason says which it is: a reader words a kind it
- * does not read with `which Day0 does not read` (`isKindNotRead`).
+ * "and N more", and only a failure is said to be read again. Each entry says
+ * which it is (`kind`, D-7), as its reader said it, and the record counts the
+ * pages of a kind apart (`notRead`), so neither is read back out of a reason's
+ * words: a failed page whose own title held "which Day0 does not read" was
+ * classed a kind and its failure hidden (W15-R29). An entry written before
+ * 0.19.0 holds no kind and reads as a failure.
  *
  * Releases before 0.6.0 wrote the record as text below the reason; the
  * `sync-runs-unread` migration moved each onto the field at 0.6.0, and from
@@ -38,6 +41,8 @@ const MAX_RECORD_LINE = 240;
 export interface UnreadRecord {
   readonly count: number;
   readonly pages: UnreadPage[];
+  /** How many of `count` are of a kind Day0 does not read; absent on a record written before 0.19.0. */
+  readonly notRead?: number;
 }
 
 /** The record fields of a run, as a run row carries them. */
@@ -47,27 +52,13 @@ export interface RunRecordFields {
 }
 
 /**
- * Whether a page's reason says the page is of a kind Day0 does not read, rather than that a read
- * of it failed. Every reader words such a page with the clause this looks for.
+ * Whether an unread page is of a kind Day0 does not read, rather than a read that failed: as its
+ * reader said it. An entry with no kind, written before 0.19.0, is a failure.
  *
- * @param reason - A page's reason, as its reader wrote it.
+ * @param page - A page of the record, or of a batch.
  */
-export function isKindNotRead(reason: string): boolean {
-  return /\bwhich day0 does not read\b/i.test(reason);
-}
-
-/**
- * A page's reason on one bounded line that still says which kind of reason it is: a long name
- * in front of "which Day0 does not read" is cut, never the clause, since the record reads the
- * clause back to tell a kind from a failure.
- */
-function reasonLine(reason: string): string {
-  const line = recordLine(reason);
-  if (!isKindNotRead(reason) || isKindNotRead(line)) return line;
-  const whole = reason.replace(/\s+/g, ' ').trim();
-  const clause = whole.slice(whole.search(/\bwhich day0 does not read\b/i));
-  const kept = clause.length > 120 ? `${clause.slice(0, 117)}...` : clause;
-  return `${whole.slice(0, MAX_RECORD_LINE - kept.length - 4)}... ${kept}`;
+export function isKindNotRead(page: Pick<UnreadPage, 'kind'>): boolean {
+  return page.kind === 'not-read';
 }
 
 /**
@@ -105,14 +96,26 @@ export function withUnreadPages(
   const seen = [
     ...(record?.pages ?? []),
     ...unread.map(
-      (page): UnreadPage => ({ ref: recordLine(page.ref), reason: reasonLine(page.reason) }),
+      (page): UnreadPage => ({
+        ref: recordLine(page.ref),
+        reason: recordLine(page.reason),
+        kind: page.kind ?? 'failed',
+      }),
     ),
   ];
   const pages = [
-    ...seen.filter((page): boolean => !isKindNotRead(page.reason)),
-    ...seen.filter((page): boolean => isKindNotRead(page.reason)),
+    ...seen.filter((page): boolean => !isKindNotRead(page)),
+    ...seen.filter((page): boolean => isKindNotRead(page)),
   ].slice(0, MAX_UNREAD_LISTED);
-  return { count: (record?.count ?? 0) + unread.length, pages };
+  // A record carried from before the count was kept gains none: its unnamed pages cannot be told.
+  const countsKinds = record === undefined || record.notRead !== undefined;
+  return {
+    count: (record?.count ?? 0) + unread.length,
+    pages,
+    ...(countsKinds
+      ? { notRead: (record?.notRead ?? 0) + unread.filter((page) => isKindNotRead(page)).length }
+      : {}),
+  };
 }
 
 /**
@@ -128,15 +131,19 @@ export function unreadPagesLine(
   nothingStored = false,
 ): string | undefined {
   if (record === undefined || record.count === 0) return undefined;
-  const failed = record.pages.filter((page): boolean => !isKindNotRead(page.reason));
-  const kinds = record.pages.filter((page): boolean => isKindNotRead(page.reason));
-  // Failures take the named places first, so while a page of a kind is still named every
-  // failure is: the failures are then counted exactly, and the rest of the count is kinds.
-  // Once ten failures fill the list no kind is named and the record holds no count of them, so
-  // the pages it does not name are counted with the failures, as every page was before.
-  const failures = kinds.length > 0 ? failed.length : record.count;
+  const failed = record.pages.filter((page): boolean => !isKindNotRead(page));
+  const kinds = record.pages.filter((page): boolean => isKindNotRead(page));
+  // The record counts its pages of a kind (`notRead`), so both counts are exact. A record written
+  // before it kept that count names failures first: while a page of a kind is still named every
+  // failure is, and once ten failures fill the list the pages it does not name are counted with
+  // the failures, as every page was before.
+  const failures =
+    record.notRead !== undefined
+      ? record.count - record.notRead
+      : kinds.length > 0
+        ? failed.length
+        : record.count;
   const kindCount = record.count - failures;
-  const unnamed = record.count - record.pages.length;
   const named = (pages: readonly UnreadPage[], more: number): string =>
     // Each reason is a sentence of its own; joined, only the line's last full stop is kept.
     [
@@ -148,13 +155,15 @@ export function unreadPagesLine(
       }),
       ...(more > 0 ? [`and ${more} more`] : []),
     ].join('; ');
+  // Ten failures can fill the list, so that no page of a kind is named: they are then counted.
+  const kindNames = kinds.length === 0 ? '' : `: ${named(kinds, kindCount - kinds.length)}`;
   const kindLine =
     kindCount === 0
       ? undefined
       : `${kindCount}${failures > 0 ? ' more' : ''} listed ${kindCount === 1 ? 'page is' : 'pages are'} ` +
-        `of a kind Day0 does not read: ${named(kinds, kindCount - kinds.length)}.`;
+        `of a kind Day0 does not read${kindNames}.`;
   if (failures === 0) return kindLine;
-  const failedNames = named(failed, kinds.length > 0 ? 0 : unnamed);
+  const failedNames = named(failed, failures - failed.length);
   let failureLine: string;
   if (nothingStored) {
     const pages = failures === 1 ? '1 page' : `${failures} pages`;

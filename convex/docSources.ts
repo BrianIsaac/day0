@@ -71,7 +71,16 @@ const serverKind = v.union(
 );
 
 /** The listed pages a batch could not read, each kept at its last stored version (P5-11). */
-const unreadPages = v.optional(v.array(v.object({ ref: v.string(), reason: v.string() })));
+const unreadPages = v.optional(
+  v.array(
+    v.object({
+      ref: v.string(),
+      reason: v.string(),
+      /** A read that failed, or a page of a kind Day0 does not read (D-7); absent reads as failed. */
+      kind: v.optional(v.union(v.literal('failed'), v.literal('not-read'))),
+    }),
+  ),
+);
 
 export { FINISHING_CURSOR };
 

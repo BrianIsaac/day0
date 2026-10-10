@@ -297,10 +297,13 @@ describe('the SharePoint documentation reader', (): void => {
     const { reader, requests } = readerOnTenant();
     const { unread } = await wholeSite(reader);
     expect(unread).toEqual([
+      // Re-pinned for D-7: the deck and the PDF say they are of a kind Day0 does not read in
+      // their entries' own field; the file too large to read carries none and is a failure.
       {
         ref: 'file-01DECK',
         reason:
           '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
+        kind: 'not-read',
       },
       {
         ref: 'file-01HUGE',
@@ -310,6 +313,7 @@ describe('the SharePoint documentation reader', (): void => {
         ref: 'file-01SCAN',
         reason:
           '"Signed policy.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
+        kind: 'not-read',
       },
     ]);
     // Nothing is downloaded of a file the reader does not read, and a spreadsheet is no page.

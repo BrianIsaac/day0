@@ -191,10 +191,13 @@ describe('the Google Drive documentation reader', (): void => {
     const { reader } = readerOnDrive();
     const { unread } = await wholeFolder(reader);
     expect(unread).toEqual([
+      // Re-pinned for D-7: a page of a kind Day0 does not read says so in its entry's own field;
+      // a read that failed, the entry after it, carries none and is recorded as failed.
       {
         ref: '1SlidesBoardDeck00000000000000000001',
         reason:
           '"Q3 board deck" is a slide deck, which Day0 does not read: from a Google Drive folder it reads Google Docs and Word documents (.docx).',
+        kind: 'not-read',
       },
       {
         ref: '1DocFullCrmExport000000000000000001',

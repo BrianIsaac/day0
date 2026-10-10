@@ -16,12 +16,15 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
       { ref: 'a.md', reason: 'HTTP 404' },
       { ref: 'b.md', reason: 'truncated' },
     ]);
+    // Re-pinned for D-7: each entry says which it is, a failure here, and the record counts its
+    // pages of a kind apart, none here.
     expect(record).toEqual({
       count: 2,
       pages: [
-        { ref: 'a.md', reason: 'HTTP 404' },
-        { ref: 'b.md', reason: 'truncated' },
+        { ref: 'a.md', reason: 'HTTP 404', kind: 'failed' },
+        { ref: 'b.md', reason: 'truncated', kind: 'failed' },
       ],
+      notRead: 0,
     });
     expect(withUnreadPages(record, [])).toBe(record);
     expect(withUnreadPages(undefined, [])).toBeUndefined();
@@ -40,10 +43,11 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     expect(unreadPagesLine(record)).toMatch(/page-9\.md: HTTP 500; and 2 more\. The next sync/);
   });
 
-  /** A sheet the Feishu reader lists and does not read, in its own words. */
-  const sheet = (index: number): { ref: string; reason: string } => ({
+  /** A sheet the Feishu reader lists and does not read, as it names it (D-7: the kind is said). */
+  const sheet = (index: number): { ref: string; reason: string; kind: 'not-read' } => ({
     ref: `wikcnSheet${index}`,
     reason: `"Sheet ${index}" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.`,
+    kind: 'not-read',
   });
   const forbidden = {
     ref: 'wikcnPayroll',
@@ -57,7 +61,7 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     const record = withUnreadPages(withUnreadPages(undefined, tenSheets), [forbidden, sheet(10)]);
     expect(record?.count).toBe(12);
     expect(record?.pages).toHaveLength(MAX_UNREAD_LISTED);
-    expect(record?.pages[0]).toEqual(forbidden);
+    expect(record?.pages[0]).toEqual({ ...forbidden, kind: 'failed' });
     expect(record?.pages.slice(1).map((page) => page.ref)).toEqual(
       tenSheets.slice(0, 9).map((page) => page.ref),
     );
@@ -75,42 +79,78 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     );
   });
 
-  it('counts the pages it names no kind for with the rest, once ten failures fill the list', (): void => {
+  it('counts the failures and the pages of a kind apart, once ten failures fill the list (W15-R29)', (): void => {
     const failures = Array.from({ length: 11 }, (_value, index) => ({
       ref: `page-${index}.md`,
       reason: 'HTTP 500',
     }));
     const record = withUnreadPages(withUnreadPages(undefined, [sheet(1)]), failures);
     expect(record?.pages.every((page) => page.reason === 'HTTP 500')).toBe(true);
+    // Re-pinned for D-7: this read "12 pages could not be read ... and 2 more", the sheet counted
+    // as a failure and promised a read at the next sync; the record now counts it apart.
     expect(unreadPagesLine(record)).toMatch(
-      /^12 pages could not be read this sync and keep their last stored version: page-0\.md: HTTP 500; .*; and 2 more\. The next sync reads them again\.$/,
+      /^11 pages could not be read this sync and keep their last stored version: page-0\.md: HTTP 500; .*; and 1 more\. The next sync reads them again\. 1 more listed page is of a kind Day0 does not read\.$/,
     );
+  });
+
+  it('reads the review’s two mixed records true: sheets are never counted as failures, nor promised a read (W15-R29)', (): void => {
+    // Reader 3's unread.mts: ten sheets then eleven failures, and ten failures then ten sheets.
+    const failures = (count: number) =>
+      Array.from({ length: count }, (_value, index) => ({
+        ref: `page-${index}.md`,
+        reason: 'HTTP 500',
+      }));
+    const sheets = Array.from({ length: 10 }, (_value, index) => sheet(index));
+    const sheetsFirst = unreadPagesLine(
+      withUnreadPages(withUnreadPages(undefined, sheets), failures(11)),
+    );
+    expect(sheetsFirst).toMatch(
+      /^11 pages could not be read this sync .*; and 1 more\. The next sync reads them again\. 10 more listed pages are of a kind Day0 does not read\.$/,
+    );
+    const failuresFirst = unreadPagesLine(
+      withUnreadPages(withUnreadPages(undefined, failures(10)), sheets),
+    );
+    expect(failuresFirst).toMatch(
+      /^10 pages could not be read this sync .*page-9\.md: HTTP 500\. The next sync reads them again\. 10 more listed pages are of a kind Day0 does not read\.$/,
+    );
+  });
+
+  it('takes the kind from the entry, never from its words: a failed page titled with the clause is a failure (W15-R29)', (): void => {
+    const titled = {
+      ref: 'wikcnGuide',
+      reason:
+        'The Feishu app cannot read "The kinds of file which Day0 does not read" (Feishu code 2889902): add the app to the document.',
+    };
+    const record = withUnreadPages(undefined, [titled]);
+    expect(record).toMatchObject({ count: 1, notRead: 0, pages: [{ kind: 'failed' }] });
+    expect(unreadPagesLine(record)).toMatch(
+      /^1 page could not be read this sync and keeps its last stored version: wikcnGuide: /,
+    );
+  });
+
+  it('reads an entry written before the kind was kept as a failure, and a record without the count as it was read (D-7: no backfill)', (): void => {
+    const before = {
+      count: 12,
+      pages: [{ ref: 'wikcnSheet1', reason: sheet(1).reason }],
+    };
+    expect(isKindNotRead(before.pages[0] as { kind?: 'failed' | 'not-read' })).toBe(false);
+    expect(unreadPagesLine(before)).toMatch(
+      /^12 pages could not be read this sync .*; and 11 more\. The next sync reads them again\.$/,
+    );
+    // A run resumed across the upgrade carries such a record on and gains no count for it.
+    expect(withUnreadPages(before, [sheet(2)])).toMatchObject({ count: 13 });
+    expect(withUnreadPages(before, [sheet(2)])?.notRead).toBeUndefined();
   });
 
   it('still knows a kind when a long name pushes its reason past the line bound (second pass)', (): void => {
     const long = `"${'Quarterly board pack '.repeat(14)}.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`;
-    const record = withUnreadPages(undefined, [{ ref: 'file-01LONG', reason: long }]);
+    const record = withUnreadPages(undefined, [
+      { ref: 'file-01LONG', reason: long, kind: 'not-read' },
+    ]);
     expect(record?.pages[0].reason.length).toBeLessThanOrEqual(240);
-    expect(isKindNotRead(record?.pages[0].reason ?? '')).toBe(true);
+    // Re-pinned for D-7: the kind is the entry's own, so the cut of a long reason cannot lose it.
+    expect(isKindNotRead(record!.pages[0])).toBe(true);
     expect(unreadPagesLine(record)).toMatch(/^1 listed page is of a kind Day0 does not read: /);
-  });
-
-  it('knows a reason that names a kind from one that names a failure', (): void => {
-    for (const reason of [
-      sheet(1).reason,
-      '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
-      '"Q3 numbers" is a Yuque sheet, which Day0 does not read: only documents are read.',
-      '"Handbook (shortcut)" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
-    ]) {
-      expect(isKindNotRead(reason), reason).toBe(true);
-    }
-    for (const reason of [
-      forbidden.reason,
-      'HTTP 404',
-      '"x.docx" is not read: it is not a .docx file Day0 can open.',
-    ]) {
-      expect(isKindNotRead(reason), reason).toBe(false);
-    }
   });
 
   it('joins the named pages without a full stop before each semicolon', (): void => {

@@ -305,6 +305,7 @@ export class GoogleDriveReader implements DocumentationReader {
       return {
         ref: id,
         reason: `"${name}" is a ${unreadKind}, which Day0 does not read: from a Google Drive folder it reads Google Docs and Word documents (.docx).`,
+        kind: 'not-read',
       };
     }
     const isWord = mimeType === MIME.word;

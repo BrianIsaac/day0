@@ -427,6 +427,7 @@ export class SharePointReader implements DocumentationReader {
       return {
         ref,
         reason: `"${name}" is a ${unreadKind}, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`,
+        kind: 'not-read',
       };
     }
     if (kind === undefined) return undefined;

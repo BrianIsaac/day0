@@ -1461,6 +1461,47 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await harness.run(async (ctx) => await ctx.db.delete(agentId));
   }
 
+  it('reads an employee’s holds among hundreds of its other refusals, inside a tight read limit (W15-R33; D-6)', async (): Promise<void> => {
+    // The stalled-step sweep reads fifty employees' holds a transaction: filtered after the
+    // read, 330 refused rows an employee pass the documents a transaction may read on the real
+    // backend. convex-test does not count a row a filter passes over, so this read passed here
+    // before the index too: the index itself is pinned in `schema.test.ts`, and the push proves it.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 120 },
+    });
+    await seedEmployee(harness);
+    const agreementId = await everyEmployeeAgreement(harness);
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    await harness.mutation(internal.workingAgreements.holdForEmployee, {
+      agreementId,
+      agentId: hired,
+    });
+    for (let start = 0; start < 300; start += 100) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < start + 100; index += 1) {
+          await ctx.db.insert('workingAgreements', {
+            userId: 'owner',
+            agentId: hired,
+            kind: 'preference',
+            statement: `Refused proposal ${index}.`,
+            scope: 'global',
+            sourceType: 'correction-promotion',
+            status: 'refused',
+            refusal: { reason: 'widens-scope', judgedAt: 2 },
+            createdAt: 2,
+            appliedTo: [],
+          });
+        }
+      });
+    }
+    const inputs = await harness.query(internal.workingAgreements.charterCheckInputs, {
+      agentId: hired,
+    });
+    expect(inputs?.held).toEqual([agreementId]);
+  });
+
   it('reads the hold by its reason, whatever the count of the employee’s newer refused rows', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { hired, agreementId } = await heldOffice(harness);

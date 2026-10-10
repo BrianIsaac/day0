@@ -198,14 +198,17 @@ describe('the Yuque documentation reader', (): void => {
     const { reader, requests } = readerOnSpace();
     const { unread } = await wholeRepository(reader);
     expect(unread).toEqual([
+      // Re-pinned for D-7: each says it is of a kind Day0 does not read in its entry's own field.
       {
         ref: '210000003',
         reason: '"Q3 numbers" is a Yuque sheet, which Day0 does not read: only documents are read.',
+        kind: 'not-read',
       },
       {
         ref: '210000006',
         reason:
           '"Pipeline map" is a Yuque board, which Day0 does not read: only documents are read.',
+        kind: 'not-read',
       },
     ]);
     for (const id of ['210000003', '210000006', '210000009']) {
@@ -226,6 +229,8 @@ describe('the Yuque documentation reader', (): void => {
       ref: '210000001',
       reason:
         '"Close the quarter" is a Yuque sheet, which Day0 does not read: only documents are read.',
+      // Re-pinned for D-7: the kind is the entry's own field.
+      kind: 'not-read',
     });
   });
 

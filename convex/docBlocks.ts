@@ -246,11 +246,68 @@ function matchStoredBlocks(
   return { kept, rewritten, left: [...free.values()] };
 }
 
+/** The most not-current pages of one source one read takes: small rows, a few hundred bytes each. */
+export const NOT_CURRENT_READ = 4_000;
+
+/**
+ * The refs of one source's pages that are not current (superseded, archived or a draft), read in
+ * one index range of the source's slim listing rows (W15-R7): what the selection leaves out of a
+ * mirror, whatever the source holds.
+ *
+ * @param db - Any database reader.
+ * @param sourceId - The source.
+ * @returns The refs, or undefined for a source that holds more such pages than one read takes,
+ *   which a caller then reads a page at a time.
+ */
+export async function notCurrentRefs(
+  db: DatabaseReader,
+  sourceId: Id<'docSources'>,
+): Promise<ReadonlySet<string> | undefined> {
+  const rows = await db
+    .query('docPageListings')
+    // The three not-current statuses are every value the field takes, 'archived' the least.
+    .withIndex('by_source_not_current', (q) =>
+      q.eq('sourceId', sourceId).gte('notCurrent', 'archived'),
+    )
+    .take(NOT_CURRENT_READ + 1);
+  return rows.length > NOT_CURRENT_READ ? undefined : new Set(rows.map((row) => row.ref));
+}
+
+/**
+ * Record on a page's listing row whether the page is current (W15-R7): the row every stored page
+ * has, which `notCurrentRefs` reads. A page with no row yet is given one under the source's
+ * current listing, as a page stored now would be.
+ */
+async function recordNotCurrent(
+  ctx: MutationCtx,
+  page: { readonly sourceId: Id<'docSources'>; readonly pageRef: string },
+  status: PageStatus,
+): Promise<void> {
+  const notCurrent = status === 'active' ? undefined : status;
+  const row = await ctx.db
+    .query('docPageListings')
+    .withIndex('by_source_ref', (q) => q.eq('sourceId', page.sourceId).eq('ref', page.pageRef))
+    .unique();
+  if (row !== null) {
+    if (row.notCurrent !== notCurrent) await ctx.db.patch(row._id, { notCurrent });
+    return;
+  }
+  if (notCurrent === undefined) return;
+  const source = await ctx.db.get(page.sourceId);
+  await ctx.db.insert('docPageListings', {
+    sourceId: page.sourceId,
+    ref: page.pageRef,
+    seenBy: source?.listings ?? 0,
+    notCurrent,
+  });
+}
+
 /**
  * Copy a page's status onto its stored blocks with no re-split, in the caller's transaction: the
  * write for a page whose status changed and whose text did not (a status rides beside the page's
  * hash, so an unchanged page is never split again). Only a row whose status differs is written;
- * at most `MAX_BLOCKS_PER_PAGE` rows, a page's bound.
+ * at most `MAX_BLOCKS_PER_PAGE` rows, a page's bound. The page's listing row takes the same word
+ * (`recordNotCurrent`), so the three copies of a status change in one place.
  *
  * @param ctx - The writing mutation's context.
  * @param page - The page and the status it now has.
@@ -274,6 +331,7 @@ export async function copyPageStatusToBlocks(
     await ctx.db.patch(row._id, { status: page.status });
     patched += 1;
   }
+  await recordNotCurrent(ctx, page, page.status);
   return patched;
 }
 

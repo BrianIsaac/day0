@@ -224,7 +224,7 @@ export class YuqueReader implements DocumentationReader {
     const ref = String(id);
     const title = textField(entry, 'title')?.trim() || 'Untitled';
     const noun = notDocumentNoun(textField(entry, 'type'));
-    if (noun !== undefined) return { ref, reason: notDocument(title, noun) };
+    if (noun !== undefined) return { ref, reason: notDocument(title, noun), kind: 'not-read' };
     let answer: ProviderAnswer;
     try {
       answer = await this.send(session, this.address(session, `/${encodeURIComponent(ref)}`));
@@ -242,7 +242,9 @@ export class YuqueReader implements DocumentationReader {
     }
     const detail = field(accepted(answer, body), 'data');
     const format = textField(detail, 'format');
-    if (format === 'lakesheet') return { ref, reason: notDocument(title, 'sheet') };
+    if (format === 'lakesheet') {
+      return { ref, reason: notDocument(title, 'sheet'), kind: 'not-read' };
+    }
     const html = textField(detail, 'body_html');
     let markdown: string | undefined;
     try {

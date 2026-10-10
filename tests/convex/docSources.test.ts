@@ -935,7 +935,12 @@ describe('documentation sources in real mode', (): void => {
     expect(failed?.reason).toBe(
       'The documentation read was interrupted (timeout). at read (urls.ts:1) A newer sync of the source took over from its cursor after 0 pages.',
     );
-    expect(failed?.unread).toEqual({ count: 1, pages: [{ ref: 'page.md', reason: 'HTTP 404' }] });
+    // Re-pinned for D-7: the record says each entry is a failure and counts no page of a kind.
+    expect(failed?.unread).toEqual({
+      count: 1,
+      pages: [{ ref: 'page.md', reason: 'HTTP 404', kind: 'failed' }],
+      notRead: 0,
+    });
     expect(completed).toMatchObject({
       state: 'completed',
       unread: {

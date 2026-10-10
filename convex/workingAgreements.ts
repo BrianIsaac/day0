@@ -125,11 +125,11 @@ async function bindingAgreements(
 
 /**
  * One employee's holds (W14-R15): its own refused rows that each name an agreement for every
- * employee never checked against its charter. Read by their reason inside the index's range of the
- * employee's refused rows, so however many other refusals it holds, none hides a hold (the read
- * was the newest `AGREEMENTS_READ` refused rows, past which a hold stopped holding). At most one
- * hold stands for an agreement, and at most `AGREEMENTS_READ` agreements for every employee are
- * read as binding.
+ * employee never checked against its charter. Read by their reason through an index that ends on
+ * it (`by_user_agent_status_reason`; W15-R33, D-6), so the read is the holds alone: filtered
+ * after the read, every refused row of the employee was scanned on each read, and the stalled-step
+ * sweep reads fifty employees a transaction. At most one hold stands for an agreement, and at
+ * most `AGREEMENTS_READ` agreements for every employee are read as binding.
  */
 async function holdsOf(
   ctx: Pick<QueryCtx, 'db'>,
@@ -138,10 +138,13 @@ async function holdsOf(
 ): Promise<Doc<'workingAgreements'>[]> {
   return await ctx.db
     .query('workingAgreements')
-    .withIndex('by_user_agent_status', (q) =>
-      q.eq('userId', userId).eq('agentId', agentId).eq('status', 'refused'),
+    .withIndex('by_user_agent_status_reason', (q) =>
+      q
+        .eq('userId', userId)
+        .eq('agentId', agentId)
+        .eq('status', 'refused')
+        .eq('refusal.reason', 'unchecked-for-employee'),
     )
-    .filter((q) => q.eq(q.field('refusal.reason'), 'unchecked-for-employee'))
     .take(AGREEMENTS_READ);
 }
 
