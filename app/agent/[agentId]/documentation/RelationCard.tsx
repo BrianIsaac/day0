@@ -90,7 +90,17 @@ export function RelationCard({
         }),
     });
   return (
-    <Card title="These two look like versions of the same runbook" tone="warn" focusRef={card}>
+    <Card
+      title={
+        <>
+          These two look like versions of the same runbook
+          {/* Said, not shown: two such cards are two regions, each named by its older page. */}
+          <span className="sr-only">: “{to.title}”</span>
+        </>
+      }
+      tone="warn"
+      focusRef={card}
+    >
       <div className="grid gap-3">
         <p className="text-sm text-[var(--color-fg-2)]">
           {pageWords(to, zone)} and {pageWords(from, zone)} {relationWords(relation.evidence)}.{' '}

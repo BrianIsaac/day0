@@ -77,7 +77,15 @@ export function ConflictCard({
     : '';
   return (
     <Card
-      title={confirmed ? 'Two pages disagree' : 'These two pages may disagree'}
+      title={
+        <>
+          {confirmed ? 'Two pages disagree' : 'These two pages may disagree'}
+          {/* Said, not shown: two such cards are two regions, each named by its pages. */}
+          <span className="sr-only">
+            : “{from.title}” and “{to.title}”
+          </span>
+        </>
+      }
       tone={confirmed ? 'danger' : 'warn'}
       focusRef={card}
     >

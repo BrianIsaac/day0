@@ -353,6 +353,41 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('names each card’s region apart from the next, so two cards of one kind are two landmarks', () => {
+    // Found on the bed by axe (landmark-unique): two pairs of versions drew two regions with one
+    // name, "These two look like versions of the same runbook", which a landmark list cannot
+    // tell apart.
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      RELATIONS[0],
+      {
+        ...RELATIONS[0],
+        _id: 'relation-3',
+        from: { ...RELATIONS[0].from, title: 'Close checklist v2' },
+        to: { ...RELATIONS[0].to, title: 'Close checklist' },
+      },
+      RELATIONS[1],
+      {
+        ...RELATIONS[1],
+        _id: 'relation-4',
+        from: { ...RELATIONS[1].from, title: 'Refund policy' },
+        to: { ...RELATIONS[1].to, title: 'Refund runbook' },
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const names = [...view.container.querySelectorAll('section[aria-labelledby]')]
+      .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
+      .map((heading) => heading?.textContent ?? '')
+      .filter((name) => /versions of the same runbook|disagree/.test(name));
+    expect(names).toEqual([
+      'These two look like versions of the same runbook: “Escalation paths”',
+      'These two look like versions of the same runbook: “Close checklist”',
+      'Two pages disagree: “Finance escalation” and “Close checklist”',
+      'Two pages disagree: “Refund policy” and “Refund runbook”',
+    ]);
+    view.unmount();
+  });
+
   it('keeps what the manager answered once its card has gone, and takes it back with Undo', async () => {
     // The second pass's major 1: a wrong "supersedes" left no control to undo it, and the card
     // took its own "done" line away with it.
