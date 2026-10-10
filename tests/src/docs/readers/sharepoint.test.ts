@@ -311,9 +311,36 @@ describe('the SharePoint documentation reader', (): void => {
     expect(batch.unread[0]).toEqual({
       ref: 'file-01CLOSE',
       reason:
-        '"close-the-quarter.md" could not be downloaded: https://10.20.0.9/download?tempauth=fixture names a host inside a private network that DAY0_PRIVATE_HOSTS does not list, so Day0 does not read it.',
+        '"close-the-quarter.md" could not be downloaded: https://10.20.0.9 names a host inside a private network that DAY0_PRIVATE_HOSTS does not list, so Day0 does not read it.',
     });
+    // The download address carries its own authorisation, which no reason repeats.
+    expect(JSON.stringify(batch.unread)).not.toContain('tempauth');
     expect(tenant.requests.some((request) => request.url.host === '10.20.0.9')).toBe(false);
+  });
+
+  it('names a file that grew past the bound after it was listed unread, and reads the rest (second pass)', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) =>
+      request.url.host === 'acme.sharepoint.com' &&
+      request.url.searchParams.get('UniqueId') === '01CLOSE'
+        ? new Response('x'.repeat(3 * 1024 * 1024), { status: 200 })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: 'file-01CLOSE',
+      reason: '"close-the-quarter.md" is larger than the 2 MiB Day0 reads of one file.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toEqual(['file-01ESCAL']);
+  });
+
+  it('follows a download address given relative to Graph, and reads a file Graph answers directly (second pass)', async (): Promise<void> => {
+    const direct = readerOnTenant((request) =>
+      request.url.pathname.endsWith('/items/01CLOSE/content')
+        ? new Response('# Direct\n\nSent with no redirect.\n', { status: 200 })
+        : undefined,
+    );
+    const [page] = (await direct.reader.listPageBatch(site, SECRET, undefined, 3)).pages;
+    expect([page.ref, page.title]).toEqual(['file-01CLOSE', 'Direct']);
   });
 
   it('starts the walk again when Graph answers 410 Gone to a link an earlier batch kept', async (): Promise<void> => {

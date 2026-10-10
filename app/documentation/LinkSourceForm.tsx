@@ -392,7 +392,8 @@ export function LinkSourceForm(): React.ReactNode {
           </div>
         ) : null}
         {kind === 'feishu' ? <FeishuAppFields /> : null}
-        {isReaderKind(kind) ? <ReaderCredentialFields kind={kind} /> : null}
+        {/* Keyed by the kind, so a secret typed for one kind is never left in another's field. */}
+        {isReaderKind(kind) ? <ReaderCredentialFields key={kind} kind={kind} /> : null}
         <ReaderSecretField kind={kind} />
         <SourceKindHelp kind={kind} serverKind={serverKind} />
         <p role="alert" className="text-[13px] text-[var(--color-danger)]">

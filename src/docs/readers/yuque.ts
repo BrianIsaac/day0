@@ -59,6 +59,11 @@ const NOT_DOCUMENTS: Readonly<Record<string, string>> = {
   Thread: 'thread',
 };
 
+/** What an entry's type is called when it is not a document, or undefined for a document. */
+function notDocumentNoun(type: string | undefined): string | undefined {
+  return type !== undefined && Object.hasOwn(NOT_DOCUMENTS, type) ? NOT_DOCUMENTS[type] : undefined;
+}
+
 /** Why an entry that is not a document is not read. */
 function notDocument(title: string, noun: string): string {
   return `"${title}" is a Yuque ${noun}, which Day0 does not read: only documents are read.`;
@@ -137,7 +142,7 @@ export class YuqueReader implements DocumentationReader {
       pages,
       unread,
       nextCursor: listed.more
-        ? `yq|${phase}|${offset + listed.entries.length}`
+        ? `yq|${phase}|${offset + listed.count}`
         : next === undefined
           ? undefined
           : `yq|${next}|0`,
@@ -150,41 +155,58 @@ export class YuqueReader implements DocumentationReader {
     phase: Phase,
     offset: number,
     limit: number,
-  ): Promise<{ readonly entries: readonly unknown[]; readonly more: boolean }> {
+  ): Promise<{
+    /** The entries the walk keeps. */
+    readonly entries: readonly unknown[];
+    /** How many entries Yuque listed, whatever of them the walk keeps. */
+    readonly count: number;
+    readonly more: boolean;
+  }> {
     const { host, group, book } = session.locator;
     const url = this.address(session, '');
     url.searchParams.set('offset', String(offset));
     url.searchParams.set('limit', String(limit));
     url.searchParams.set('deleted', String(phase === 'deleted'));
     const answer = await this.send(session, url);
-    const body = this.ownBody(answer, session.locator);
-    // A token that may not see the deleted view is refused it; the live documents stand.
+    // A token that may not see the deleted view is refused it: read before any refusal is
+    // worded, since the live documents are stored and stand.
     if (phase === 'deleted' && answer.status >= 400 && answer.status < 500) {
       log.info('yuque does not list deleted documents for this token', {
         host,
         status: answer.status,
       });
-      return { entries: [], more: false };
+      return { entries: [], count: 0, more: false };
     }
+    const body = this.ownBody(answer, session.locator);
     if (answer.status === 404) {
       throw new Error(
         `Yuque found no repository at ${host}/${group}/${book} that the token's owner may read ` +
           '(HTTP 404): check the address. To change it, unlink the source and link it again.',
       );
     }
-    const entries = field(accepted(answer, body), 'data');
-    if (!Array.isArray(entries)) {
+    const listed = field(accepted(answer, body), 'data');
+    if (!Array.isArray(listed)) {
       throw new Error('Yuque listed documents in a shape Day0 does not read.');
     }
-    if (entries.length > limit) {
-      throw new Error(`Yuque listed ${entries.length} documents where Day0 asked for ${limit}.`);
+    if (listed.length > limit) {
+      throw new Error(`Yuque listed ${listed.length} documents where Day0 asked for ${limit}.`);
+    }
+    // A space that ignores the deleted view answers its live documents again: only an entry
+    // that says when it was deleted is one, and a page of the walk with none ends it.
+    const entries =
+      phase === 'deleted'
+        ? listed.filter((entry: unknown): boolean => textField(entry, 'deleted_at') !== undefined)
+        : listed;
+    if (phase === 'deleted' && entries.length === 0) {
+      if (listed.length > 0) log.info('yuque ignores the deleted view', { host });
+      return { entries: [], count: 0, more: false };
     }
     const total = field(field(body, 'meta'), 'total');
-    const end = offset + entries.length;
+    const end = offset + listed.length;
     // The listing's own total says whether more follows, where it gives one: a space may answer
     // fewer than were asked for. An empty page ends the walk whatever the total says.
-    const more = typeof total === 'number' ? end < total : entries.length === limit;
-    return { entries, more: entries.length > 0 && more };
+    const more = typeof total === 'number' ? end < total : listed.length === limit;
+    return { entries, count: listed.length, more: listed.length > 0 && more };
   }
 
   /** One listed entry: a document read, or anything else named unread. */
@@ -197,7 +219,7 @@ export class YuqueReader implements DocumentationReader {
     if (typeof id !== 'number' && typeof id !== 'string') return undefined;
     const ref = String(id);
     const title = textField(entry, 'title')?.trim() || 'Untitled';
-    const noun = NOT_DOCUMENTS[textField(entry, 'type') ?? 'Doc'];
+    const noun = notDocumentNoun(textField(entry, 'type'));
     if (noun !== undefined) return { ref, reason: notDocument(title, noun) };
     const answer = await this.send(session, this.address(session, `/${encodeURIComponent(ref)}`));
     const body = this.ownBody(answer, session.locator);
@@ -240,7 +262,7 @@ export class YuqueReader implements DocumentationReader {
   private deleted(source: DocSourceRecord, entry: unknown): DocPage | undefined {
     const id = field(entry, 'id');
     if (typeof id !== 'number' && typeof id !== 'string') return undefined;
-    if (NOT_DOCUMENTS[textField(entry, 'type') ?? 'Doc'] !== undefined) return undefined;
+    if (notDocumentNoun(textField(entry, 'type')) !== undefined) return undefined;
     const title = textField(entry, 'title')?.trim() || 'Untitled';
     const deletedAt = Date.parse(textField(entry, 'deleted_at') ?? '');
     return {

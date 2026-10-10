@@ -207,6 +207,15 @@ describe('LinkSourceForm', (): void => {
     },
   );
 
+  it('never carries a secret typed for one kind into another kind’s field (second pass)', (): void => {
+    const view = mount(<LinkSourceForm />);
+    choose(view.container, 'source-kind', 'confluence-dc');
+    field<HTMLInputElement>(view.container, 'reader-token').value = 'fixture-confluence-pat';
+    choose(view.container, 'source-kind', 'yuque');
+    expect(field<HTMLInputElement>(view.container, 'reader-token').value).toBe('');
+    view.unmount();
+  });
+
   it('keeps what was typed, the region and the secret with it, when the link is refused, so it can be corrected (W14-R38)', async (): Promise<void> => {
     backend.refusal = 'Uncaught Error: Feishu refused the app ID and secret this source uses.';
     const view = mount(<LinkSourceForm />);

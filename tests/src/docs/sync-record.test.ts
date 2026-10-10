@@ -87,6 +87,14 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     );
   });
 
+  it('still knows a kind when a long name pushes its reason past the line bound (second pass)', (): void => {
+    const long = `"${'Quarterly board pack '.repeat(14)}.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`;
+    const record = withUnreadPages(undefined, [{ ref: 'file-01LONG', reason: long }]);
+    expect(record?.pages[0].reason.length).toBeLessThanOrEqual(240);
+    expect(isKindNotRead(record?.pages[0].reason ?? '')).toBe(true);
+    expect(unreadPagesLine(record)).toMatch(/^1 listed page is of a kind Day0 does not read: /);
+  });
+
   it('knows a reason that names a kind from one that names a failure', (): void => {
     for (const reason of [
       sheet(1).reason,

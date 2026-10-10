@@ -28,8 +28,11 @@ export interface ConfluenceDataCenterLocator {
 
 const CLOUD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A space key: letters and digits, or a personal space's `~` and its user's name or id. */
-const SPACE_KEY = /^~?[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/;
+/**
+ * A space key: letters and digits alone, or a personal space's `~` and its user's name or id.
+ * No dot in a plain key, so a page action (`viewspace.action`) is never read as one.
+ */
+const SPACE_KEY = /^(?:[A-Za-z0-9]{1,255}|~[A-Za-z0-9][A-Za-z0-9._:@-]{0,253})$/;
 
 const CLOUD_LOCATOR_REFUSAL =
   "A Confluence Cloud location is the site's cloud ID and a space: the space's key, or its " +

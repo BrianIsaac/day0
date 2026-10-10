@@ -156,6 +156,20 @@ describe('the Google Drive documentation reader', (): void => {
     );
   });
 
+  it('names a Word document that grew past the bound after it was listed unread, and reads the rest (second pass)', async (): Promise<void> => {
+    const { reader } = readerOnDrive((request) =>
+      request.url.searchParams.get('alt') === 'media'
+        ? new Response(new Uint8Array(17 * 1024 * 1024), { status: 200 })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(folder, SECRET, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: '1WordEscalationPaths0000000000000001',
+      reason: '"Escalation paths.docx" is larger than the 16 MiB Day0 reads of one Word document.',
+    });
+    expect(batch.pages.map((page) => page.title)).toEqual(['Close the quarter']);
+  });
+
   it('says a document in the bin is archived, keeping its text, and nothing of any other', async (): Promise<void> => {
     const { reader } = readerOnDrive();
     const { pages } = await wholeFolder(reader);

@@ -40,6 +40,7 @@ import { markdownPageTitle } from './folder';
 import { documentHtmlToMarkdown, underTitle } from './html-markdown';
 import { checkPageAddress, PageAddressRefusal, pinnedPageFetch } from './page-address';
 import {
+  AnswerTooLargeError,
   field,
   listField,
   ProviderHttp,
@@ -177,6 +178,8 @@ function graphBody(answer: ProviderAnswer, call: keyof typeof CALLS): unknown {
 /** One connection to Graph for a batch: where it is, and the token it reads with. */
 interface Session {
   readonly http: ProviderHttp;
+  /** The connection downloads go through: no token, and the batch's one budget. */
+  readonly download: ProviderHttp;
   readonly locator: SharePointLocator;
   /** Graph's origin in the site's cloud. */
   readonly graph: string;
@@ -224,6 +227,7 @@ export class SharePointReader implements DocumentationReader {
     const http = new ProviderHttp(PROVIDER, 0, this.options);
     const session: Session = {
       http,
+      download: new ProviderHttp(PROVIDER, 0, { ...this.options, fetch: this.download }),
       locator,
       graph: `https://${MICROSOFT_CLOUDS[locator.cloud].graph}`,
       token: await this.accessToken(http, locator, app),
@@ -400,7 +404,9 @@ export class SharePointReader implements DocumentationReader {
     }
     const ref = `file-${id}`;
     const { stem, extension } = splitName(name);
-    const kind = READ_KINDS[extension];
+    // By its own property only: an extension may be any word, `constructor` among it.
+    const kind = Object.hasOwn(READ_KINDS, extension) ? READ_KINDS[extension] : undefined;
+    const unreadKind = Object.hasOwn(UNREAD_KINDS, extension) ? UNREAD_KINDS[extension] : undefined;
     if (field(item, 'deleted') !== undefined) {
       // Deleted at its source: archived, and nothing of its text is kept (decision X-8).
       return kind === undefined
@@ -414,10 +420,10 @@ export class SharePointReader implements DocumentationReader {
             nativeStatus: 'archived',
           };
     }
-    if (UNREAD_KINDS[extension] !== undefined) {
+    if (unreadKind !== undefined) {
       return {
         ref,
-        reason: `"${name}" is a ${UNREAD_KINDS[extension]}, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`,
+        reason: `"${name}" is a ${unreadKind}, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`,
       };
     }
     if (kind === undefined) return undefined;
@@ -428,7 +434,7 @@ export class SharePointReader implements DocumentationReader {
         reason: `"${name}" is ${mebibytes(size)}, larger than the ${mebibytes(kind.maxBytes)} Day0 reads of one ${kind.noun}.`,
       };
     }
-    const bytes = await this.content(session, item, { id, name, maxBytes: kind.maxBytes });
+    const bytes = await this.content(session, item, { id, name, ...kind });
     if (!(bytes instanceof Uint8Array)) return { ref, reason: bytes.reason };
     const markdown =
       extension === 'md' ? new TextDecoder().decode(bytes) : await wordMarkdown(name, bytes);
@@ -456,47 +462,68 @@ export class SharePointReader implements DocumentationReader {
   private async content(
     session: Session,
     item: unknown,
-    file: { readonly id: string; readonly name: string; readonly maxBytes: number },
+    file: {
+      readonly id: string;
+      readonly name: string;
+      readonly maxBytes: number;
+      readonly noun: string;
+    },
   ): Promise<Uint8Array | { readonly reason: string }> {
     const { id, name } = file;
     const driveId = textField(field(item, 'parentReference'), 'driveId');
     if (driveId === undefined) {
       return { reason: `Microsoft Graph listed "${name}" without the library it is in.` };
     }
-    const redirect = await this.graph(
-      session,
-      new URL(
-        `${session.graph}/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(id)}/content`,
-      ),
-    );
-    if (redirect.status === 404) {
-      return { reason: `"${name}" was deleted or moved in SharePoint after it was listed.` };
-    }
-    const location = redirect.headers.get('location');
-    if (redirect.status !== 302 || location === null) {
-      graphBody(redirect, 'files');
-      return { reason: `Microsoft Graph gave no download address for "${name}".` };
-    }
-    const address = new URL(location);
-    // No token goes to the download address: it is pre-authenticated, and on another host.
-    const download = new ProviderHttp(PROVIDER, 0, { ...this.options, fetch: this.download });
-    let answer: ProviderAnswer;
+    // A file that grew after it was listed is that file's, as one listed too large is.
+    const tooLarge = {
+      reason: `"${name}" is larger than the ${mebibytes(file.maxBytes)} Day0 reads of one ${file.noun}.`,
+    };
+    let address: URL | undefined;
     try {
-      answer = await download.send(address, {
+      const answered = await session.http.send(
+        new URL(
+          `${session.graph}/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(id)}/content`,
+        ),
+        {
+          headers: { authorization: `Bearer ${session.token}` },
+          redirect: 'manual',
+          maxBytes: file.maxBytes,
+        },
+      );
+      if (answered.status === 404) {
+        return { reason: `"${name}" was deleted or moved in SharePoint after it was listed.` };
+      }
+      // Graph may send the file itself; the reference describes the redirect.
+      if (answered.status === 200) return answered.bytes;
+      const location = answered.headers.get('location');
+      if (answered.status !== 302 || location === null) {
+        graphBody(answered, 'files');
+        return { reason: `Microsoft Graph gave no download address for "${name}".` };
+      }
+      address = new URL(location, answered.url);
+      // No token goes to the download address: it is pre-authenticated, and on another host.
+      const answer = await session.download.send(address, {
         headers: { accept: '*/*' },
         maxBytes: file.maxBytes,
       });
+      if (answer.status !== 200) {
+        return {
+          reason: `${address.host} answered HTTP ${answer.status} for "${name}"; re-sync to try again.`,
+        };
+      }
+      return answer.bytes;
     } catch (error) {
+      if (error instanceof AnswerTooLargeError) return tooLarge;
+      if (address === undefined || !(error instanceof Error)) throw error;
+      // The download address carries its own authorisation, so no message repeats it whole.
+      const said = error.message.replaceAll(address.href, address.origin);
       // An address Day0 does not read from is this file's refusal; the rest of the library is read.
-      if (!(error instanceof PageAddressRefusal)) throw error;
-      return { reason: `"${name}" could not be downloaded: ${error.message}` };
+      if (error instanceof PageAddressRefusal) {
+        return { reason: `"${name}" could not be downloaded: ${said}` };
+      }
+      if (said !== error.message) throw new Error(said);
+      throw error;
     }
-    if (answer.status !== 200) {
-      return {
-        reason: `${address.host} answered HTTP ${answer.status} for "${name}"; re-sync to try again.`,
-      };
-    }
-    return answer.bytes;
   }
 
   /** One listed page of the site, read with its content. */

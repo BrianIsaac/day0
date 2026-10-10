@@ -300,7 +300,7 @@ export class GoogleDriveReader implements DocumentationReader {
   ): Promise<DocPage | UnreadPage> {
     const name = textField(file, 'name')?.trim() || 'Untitled';
     const mimeType = textField(file, 'mimeType') ?? '';
-    const unreadKind = UNREAD_KINDS[mimeType];
+    const unreadKind = Object.hasOwn(UNREAD_KINDS, mimeType) ? UNREAD_KINDS[mimeType] : undefined;
     if (unreadKind !== undefined) {
       return {
         ref: id,
@@ -370,7 +370,16 @@ export class GoogleDriveReader implements DocumentationReader {
     const url = new URL(`${DRIVE_API}/files/${encodeURIComponent(id)}`);
     url.searchParams.set('alt', 'media');
     url.searchParams.set('supportsAllDrives', 'true');
-    const answer = await this.drive(session, url, MAX_WORD_BYTES);
+    let answer: ProviderAnswer;
+    try {
+      answer = await this.drive(session, url, MAX_WORD_BYTES);
+    } catch (error) {
+      // A file that grew after it was listed is that file's, as one listed too large is.
+      if (!(error instanceof AnswerTooLargeError)) throw error;
+      return {
+        reason: `"${name}" is larger than the ${MAX_WORD_BYTES / (1024 * 1024)} MiB Day0 reads of one Word document.`,
+      };
+    }
     if (answer.status !== 200) {
       return fileRefusal(answer, name, reasonOf(providerBody(PROVIDER, answer)));
     }

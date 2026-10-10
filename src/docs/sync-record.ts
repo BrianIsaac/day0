@@ -54,6 +54,20 @@ export function isKindNotRead(reason: string): boolean {
 }
 
 /**
+ * A page's reason on one bounded line that still says which kind of reason it is: a long name
+ * in front of "which Day0 does not read" is cut, never the clause, since the record reads the
+ * clause back to tell a kind from a failure.
+ */
+function reasonLine(reason: string): string {
+  const line = recordLine(reason);
+  if (!isKindNotRead(reason) || isKindNotRead(line)) return line;
+  const whole = reason.replace(/\s+/g, ' ').trim();
+  const clause = whole.slice(whole.search(/\bwhich day0 does not read\b/i));
+  const kept = clause.length > 120 ? `${clause.slice(0, 117)}...` : clause;
+  return `${whole.slice(0, MAX_RECORD_LINE - kept.length - 4)}... ${kept}`;
+}
+
+/**
  * Text on one bounded line, so a failure's own line breaks never read as
  * more than one line of the record (review, adversarial pass). Callers
  * redact first: a secret cut across the bound would no longer match its
@@ -88,7 +102,7 @@ export function withUnreadPages(
   const seen = [
     ...(record?.pages ?? []),
     ...unread.map(
-      (page): UnreadPage => ({ ref: recordLine(page.ref), reason: recordLine(page.reason) }),
+      (page): UnreadPage => ({ ref: recordLine(page.ref), reason: reasonLine(page.reason) }),
     ),
   ];
   const pages = [
@@ -115,6 +129,8 @@ export function unreadPagesLine(
   const kinds = record.pages.filter((page): boolean => isKindNotRead(page.reason));
   // Failures take the named places first, so while a page of a kind is still named every
   // failure is: the failures are then counted exactly, and the rest of the count is kinds.
+  // Once ten failures fill the list no kind is named and the record holds no count of them, so
+  // the pages it does not name are counted with the failures, as every page was before.
   const failures = kinds.length > 0 ? failed.length : record.count;
   const kindCount = record.count - failures;
   const unnamed = record.count - record.pages.length;

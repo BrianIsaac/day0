@@ -195,8 +195,10 @@ function macroHtml(tag: string, inner: string): string {
     return title ? `<p><strong>${title}</strong></p>${code}` : code;
   }
   if (name === 'status') return title ?? '';
-  if (rich === undefined) return '';
-  const panel = PANEL_NAMES[name];
+  // An issue macro holds nothing but the issue it names.
+  if (rich === undefined) return name === 'jira' ? (parameters.get('key') ?? '') : '';
+  // By its own property only: a macro may be named anything, `constructor` among it.
+  const panel = Object.hasOwn(PANEL_NAMES, name) ? PANEL_NAMES[name] : undefined;
   if (panel !== undefined || name === 'panel') {
     const heading = [panel, title].filter(Boolean).join(': ');
     return `<blockquote>${heading ? `<p><strong>${heading}</strong></p>` : ''}${rich}</blockquote>`;
@@ -245,9 +247,20 @@ export function confluenceStorageToHtml(storage: string): string {
   let html = storage
     // A CDATA section is text as typed; Confluence splits one that holds `]]>` into two.
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_all, text: string): string => escapeHtml(text))
-    // XML closes an empty element in its own tag, which HTML reads as left open.
-    .replace(/<((?:ac|ri|at):[\w-]+|time)\b([^<>]*?)\s*\/>/g, '<$1$2></$1>')
-    .replace(/<ac:(emoticon|placeholder|task-id)\b[^>]*>[\s\S]*?<\/ac:\1>/g, '')
+    // XML closes an empty element in its own tag, which HTML reads as left open. One class and
+    // one lazy step: a second optional run of spaces here made a padded tag cost its square.
+    .replace(/<((?:ac|ri|at):[\w-]+|time)\b([^<>]*?)\/>/g, '<$1$2></$1>')
+    .replace(/<ac:(emoticon|placeholder|task-id|task-uuid)\b[^>]*>[\s\S]*?<\/ac:\1>/g, '')
+    // A new-editor node (a panel, a decision) carries its content, its attributes as text, and
+    // a rendering of the same content for older readers: the content alone is read, once.
+    .replace(/<ac:adf-attribute\b[^>]*>[\s\S]*?<\/ac:adf-attribute>/g, '')
+    .replace(
+      /<ac:adf-extension\b[^>]*>([\s\S]*?)<\/ac:adf-extension>/g,
+      (_all, inner: string): string =>
+        inner.includes('<ac:adf-content')
+          ? inner.replace(/<ac:adf-fallback\b[^>]*>[\s\S]*?<\/ac:adf-fallback>/g, '')
+          : inner,
+    )
     .replace(
       /<time\b([^>]*)>\s*<\/time>/g,
       (_all, tag: string): string => attribute(tag, 'datetime') ?? '',
@@ -289,3 +302,10 @@ export function confluenceStorageToHtml(storage: string): string {
 export function confluenceStorageToMarkdown(storage: string): string {
   return documentHtmlToMarkdown(confluenceStorageToHtml(storage));
 }
+
+/**
+ * The largest storage body the pre-pass rewrites. A page the store takes is under a mebibyte of
+ * Markdown, and the rewriting scans from each element it opens, so a body past this is named
+ * unread by its reader rather than converted.
+ */
+export const MAX_STORAGE_BYTES = 4 * 1024 * 1024;

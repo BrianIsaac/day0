@@ -139,6 +139,32 @@ describe('the Confluence Data Center documentation reader', (): void => {
     expect(listings(requests)).toEqual(['current@0', 'current@2', 'archived@0']);
   });
 
+  it('marks nothing archived where the server ignores the status and lists its current pages again (second pass)', async (): Promise<void> => {
+    // A server that does not know `status=archived` may answer its current pages, not a refusal.
+    const fake = providerFake('confluence-dc');
+    const reader = new ConfluenceDataCenterReader({
+      fetch: async (input, init) => {
+        const url = new URL(input);
+        if (url.searchParams.get('status') === 'archived')
+          url.searchParams.set('status', 'current');
+        return await fake.fetch(url, init);
+      },
+    });
+    const { pages } = await wholeSpace(reader);
+    expect(pages.map((page) => page.ref)).toEqual(['4587521', '4587522', '4587524']);
+    expect(pages.every((page) => page.nativeStatus === undefined)).toBe(true);
+  });
+
+  it('keeps the current pages where the token is refused the archived pages alone (second pass)', async (): Promise<void> => {
+    const { reader } = readerOnServer((request) =>
+      request.url.searchParams.get('status') === 'archived'
+        ? json(403, { statusCode: 403, message: 'Forbidden' })
+        : undefined,
+    );
+    const { pages } = await wholeSpace(reader);
+    expect(pages.map((page) => page.ref)).toEqual(['4587521', '4587522', '4587524']);
+  });
+
   it('names a page the server gives no storage body for unread, and keeps two Chinese titles apart', async (): Promise<void> => {
     const { reader } = readerOnServer();
     const { pages, unread } = await wholeSpace(reader);

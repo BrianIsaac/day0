@@ -61,6 +61,8 @@ const checkedFetch: ProviderFetch = async (input: URL, init: RequestInit): Promi
 
 /** One page of a walk. */
 interface ListedPages {
+  /** How many pages the server listed, whatever of them the walk keeps. */
+  readonly count: number;
   readonly results: readonly unknown[];
   readonly base: string | undefined;
   /** Whether the server says more of this walk follows. */
@@ -109,7 +111,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
     for (const result of listed.results) {
-      const read = this.page(source, result, listed.base, phase);
+      const read = this.page(source, result, listed.base);
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
@@ -153,30 +155,43 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     url.searchParams.set('start', String(at.start));
     url.searchParams.set('limit', String(at.limit));
     const answer = await http.send(url, { ...this.request(token), maxBytes: MAX_LISTING_BYTES });
-    const body = this.ownBody(answer, locator);
-    // A server that does not list archived pages refuses the status; its current pages stand.
+    const ended: ListedPages = { count: 0, results: [], base: undefined, more: false };
+    // A server that does not list archived pages refuses the status, or the token for it: read
+    // before any refusal is worded, since the current pages are stored and stand.
     if (at.phase === 'archived' && answer.status >= 400 && answer.status < 500) {
       log.info('confluence data center does not list archived pages', {
         host: url.host,
         status: answer.status,
       });
-      return { results: [], base: undefined, more: false };
+      return ended;
     }
-    const results = field(accepted(answer, body), 'results');
-    if (!Array.isArray(results)) {
+    const body = this.ownBody(answer, locator);
+    const listed = field(accepted(answer, body), 'results');
+    if (!Array.isArray(listed)) {
       throw new Error('Confluence listed pages in a shape Day0 does not read.');
     }
-    if (results.length > at.limit) {
-      throw new Error(
-        `Confluence listed ${results.length} pages where Day0 asked for ${at.limit}.`,
-      );
+    if (listed.length > at.limit) {
+      throw new Error(`Confluence listed ${listed.length} pages where Day0 asked for ${at.limit}.`);
+    }
+    // A server that ignores a status it does not know answers its current pages again: only a
+    // page that says it is archived is one, and a page of the walk with none ends it.
+    const results =
+      at.phase === 'archived'
+        ? listed.filter((result: unknown): boolean => textField(result, 'status') === 'archived')
+        : listed;
+    if (at.phase === 'archived' && results.length === 0) {
+      if (listed.length > 0) {
+        log.info('confluence data center ignores the archived status', { host: url.host });
+      }
+      return ended;
     }
     const links = field(body, '_links');
     return {
+      count: listed.length,
       results,
       base: textField(links, 'base'),
       // An empty page that says more follows would never end the walk.
-      more: textField(links, 'next') !== undefined && results.length > 0,
+      more: textField(links, 'next') !== undefined && listed.length > 0,
     };
   }
 
@@ -185,7 +200,6 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     source: DocSourceRecord,
     result: unknown,
     base: string | undefined,
-    phase: Phase,
   ): DocPage | UnreadPage {
     const id = textField(result, 'id');
     if (id === undefined) throw new Error('Confluence listed a page with no id.');
@@ -196,8 +210,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
       {
         id,
         title: textField(result, 'title'),
-        // A page the archived walk listed is archived, whatever word the server gives it.
-        status: phase === 'archived' ? 'archived' : textField(result, 'status'),
+        status: textField(result, 'status'),
         storage: textField(field(field(result, 'body'), 'storage'), 'value'),
         versionNumber: field(version, 'number'),
         editedAt: textField(version, 'when'),
@@ -265,7 +278,7 @@ function accepted(answer: ProviderAnswer, body: unknown): unknown {
 
 /** Where the walk goes after a page: on in its walk, on to the next walk, or nowhere. */
 function nextCursor(phase: Phase, start: number, listed: ListedPages): string | undefined {
-  if (listed.more) return `dc|${phase}|${start + listed.results.length}`;
+  if (listed.more) return `dc|${phase}|${start + listed.count}`;
   const next = PHASES[PHASES.indexOf(phase) + 1];
   return next === undefined ? undefined : `dc|${next}|0`;
 }

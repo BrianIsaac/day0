@@ -159,6 +159,41 @@ describe('the Yuque documentation reader', (): void => {
     }
   });
 
+  it('archives nothing where Yuque ignores the deleted view and lists the live documents again (second pass)', async (): Promise<void> => {
+    const fake = providerFake('yuque');
+    const reader = new YuqueReader({
+      fetch: async (input, init) => {
+        const url = new URL(input);
+        if (url.searchParams.get('deleted') === 'true') url.searchParams.set('deleted', 'false');
+        return await fake.fetch(url, init);
+      },
+      sleep: async (): Promise<void> => undefined,
+    });
+    const { pages } = await wholeRepository(reader);
+    expect(pages.map((page) => page.ref)).toEqual([
+      '210000001',
+      '210000002',
+      '210000004',
+      '210000005',
+    ]);
+    expect(pages.some((page) => page.nativeStatus === 'archived')).toBe(false);
+  });
+
+  it('keeps the live documents where the token is refused the deleted view alone (second pass)', async (): Promise<void> => {
+    const { reader } = readerOnSpace((request) =>
+      request.url.searchParams.get('deleted') === 'true'
+        ? json(403, { status: 403, message: 'Forbidden' })
+        : undefined,
+    );
+    const { pages } = await wholeRepository(reader);
+    expect(pages.map((page) => page.ref)).toEqual([
+      '210000001',
+      '210000002',
+      '210000004',
+      '210000005',
+    ]);
+  });
+
   it('names a sheet and a board unread with the reason, and asks nothing more of them', async (): Promise<void> => {
     const { reader, requests } = readerOnSpace();
     const { unread } = await wholeRepository(reader);

@@ -27,7 +27,7 @@ import {
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
-import { confluenceStorageToMarkdown, underTitle } from './html-markdown';
+import { confluenceStorageToMarkdown, MAX_STORAGE_BYTES, underTitle } from './html-markdown';
 import {
   field,
   listField,
@@ -123,6 +123,12 @@ export function confluencePage(
     return {
       ref: listed.id,
       reason: `Confluence gave no body in its storage format for "${title}", so Day0 does not read it.`,
+    };
+  }
+  if (listed.storage.length > MAX_STORAGE_BYTES) {
+    return {
+      ref: listed.id,
+      reason: `"${title}" is larger than the ${MAX_STORAGE_BYTES / (1024 * 1024)} MiB Day0 converts of one Confluence page.`,
     };
   }
   const edited = Date.parse(listed.editedAt ?? '');

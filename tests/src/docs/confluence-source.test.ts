@@ -73,6 +73,14 @@ describe('a Confluence Data Center location', (): void => {
     });
   });
 
+  it('never reads a page action as a space key (second pass)', (): void => {
+    const typed = 'https://wiki.acme.corp/spaces/viewspace.action?key=OPS';
+    expect(confluenceDataCenterLocator(typed)).toBe(typed);
+    expect(() =>
+      parseConfluenceDataCenterLocator('https://wiki.acme.corp/display/viewspace.action'),
+    ).toThrow("A Confluence Data Center location is a space's address");
+  });
+
   it('is refused over plain http, for a page by its ID, or with a user name in it', (): void => {
     expect(
       confluenceDataCenterLocator('https://wiki.acme.corp/pages/viewpage.action?pageId=1'),

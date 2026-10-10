@@ -130,6 +130,39 @@ describe('confluenceStorageToMarkdown', (): void => {
     );
   });
 
+  it("drops a task's uuid, and reads a new-editor panel once, by its content (second pass)", (): void => {
+    const task =
+      '<ac:task-list><ac:task><ac:task-id>1</ac:task-id>' +
+      '<ac:task-uuid>7d8e1c2a-0000-4000-8000-123456789abc</ac:task-uuid>' +
+      '<ac:task-status>incomplete</ac:task-status><ac:task-body>Do it</ac:task-body></ac:task></ac:task-list>';
+    expect(confluenceStorageToMarkdown(task)).toBe('*   [ ] Do it');
+    const panel =
+      '<ac:adf-extension><ac:adf-node type="panel"><ac:adf-attribute key="panel-type">note</ac:adf-attribute>' +
+      '<ac:adf-content><p>Escalate within 1 hour</p></ac:adf-content></ac:adf-node>' +
+      '<ac:adf-fallback><div class="panel"><p>Escalate within 1 hour</p></div></ac:adf-fallback></ac:adf-extension>';
+    expect(confluenceStorageToMarkdown(panel)).toBe('Escalate within 1 hour');
+  });
+
+  it('writes an issue macro as its key, and never reads a macro name as a property of the table it looks names up in (second pass)', (): void => {
+    expect(
+      confluenceStorageToMarkdown(
+        '<p>See <ac:structured-macro ac:name="jira"><ac:parameter ac:name="key">OPS-12</ac:parameter></ac:structured-macro> now</p>',
+      ),
+    ).toBe('See OPS-12 now');
+    expect(
+      confluenceStorageToMarkdown(
+        '<ac:structured-macro ac:name="constructor"><ac:rich-text-body><p>Body</p></ac:rich-text-body></ac:structured-macro>',
+      ),
+    ).toBe('Body');
+  });
+
+  it('rewrites a tag padded with a hundred thousand spaces in well under a second (second pass)', (): void => {
+    const padded = `<p>Before</p><ac:emoticon ac:name="tick"${' '.repeat(100_000)}x<p>After</p>`;
+    const started = performance.now();
+    expect(confluenceStorageToMarkdown(padded)).toContain('Before');
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it('leaves no storage tag in the Markdown, whatever macro it does not know', (): void => {
     const storage =
       '<ac:structured-macro ac:name="children" /><ac:structured-macro ac:name="made-up">' +
