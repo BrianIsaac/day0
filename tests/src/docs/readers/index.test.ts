@@ -5,6 +5,7 @@ import { FeishuReader } from '../../../../src/docs/readers/feishu';
 import { FolderReader } from '../../../../src/docs/readers/folder';
 import { GitReader } from '../../../../src/docs/readers/git';
 import { McpReader } from '../../../../src/docs/readers/mcp';
+import { SharePointReader } from '../../../../src/docs/readers/sharepoint';
 import { readerFor } from '../../../../src/docs/readers';
 import { UrlsReader } from '../../../../src/docs/readers/urls';
 
@@ -31,8 +32,11 @@ describe('documentation reader registry', (): void => {
     expect(readerFor('confluence-dc')).toBeInstanceOf(ConfluenceDataCenterReader);
   });
 
+  it('resolves the SharePoint reader, which reads as an app registration (15-X)', (): void => {
+    expect(readerFor('sharepoint')).toBeInstanceOf(SharePointReader);
+  });
+
   it('names each kind whose reader has not landed as not read yet, rather than reading it as another', (): void => {
-    expect(() => readerFor('sharepoint')).toThrow('Day0 does not read SharePoint sources yet.');
     expect(() => readerFor('yuque')).toThrow('Day0 does not read Yuque sources yet.');
     expect(() => readerFor('drive')).toThrow('Day0 does not read Google Drive sources yet.');
   });

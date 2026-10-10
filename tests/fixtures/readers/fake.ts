@@ -43,6 +43,8 @@ export interface ProviderFixture {
   readonly authorization: string;
   /** What a request without that header is answered. */
   readonly unauthorised: { readonly status: number; readonly body?: string };
+  /** What a token route answers a form it does not accept; `unauthorised` when absent. */
+  readonly refusedForm?: { readonly status: number; readonly body?: string };
   /** What a request no route answers is answered. */
   readonly notFound: { readonly status: number; readonly body?: string };
   /**
@@ -182,7 +184,10 @@ export function providerFake(
         (candidate) =>
           candidate.method === request.method && candidate.path === request.url.pathname,
       );
-      const refusal = known && request.method === 'POST' ? fixture.unauthorised : fixture.notFound;
+      const refusal =
+        known && request.method === 'POST'
+          ? (fixture.refusedForm ?? fixture.unauthorised)
+          : fixture.notFound;
       return answer(refusal.status, refusal.body);
     }
     if (

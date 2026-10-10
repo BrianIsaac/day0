@@ -188,6 +188,34 @@ describe('the secret a source reads with', (): void => {
     expect(readsWithOwnSecret('confluence-dc')).toBe(true);
   });
 
+  it("takes a SharePoint site's address with its app registration, and no other host (15-X)", (): void => {
+    const locator = 'https://acme.sharepoint.com/sites/Runbooks';
+    const site = validateLinkInput({ label: 'Runbooks site', kind: 'sharepoint', locator });
+    expect(site.locator).toBe(locator);
+    expect(() => validateReaderSecret(site, undefined)).toThrow(
+      "A SharePoint source needs its app registration's tenant ID, client ID and client secret.",
+    );
+    expect(() => validateReaderSecret(site, 'tenant-id:client-id')).toThrow(
+      'A SharePoint secret is the app registration',
+    );
+    expect(() =>
+      validateReaderSecret(site, 'tenant-id:client-id:fixture-client-secret'),
+    ).not.toThrow();
+    for (const refused of [
+      'https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents',
+      'https://sharepoint.example/sites/Runbooks',
+    ]) {
+      expect(
+        () => validateLinkInput({ label: 'Runbooks', kind: 'sharepoint', locator: refused }),
+        refused,
+      ).toThrow("A SharePoint location is a site's address");
+    }
+    expect(secretLabel({ label: 'Runbooks site', kind: 'sharepoint' })).toBe(
+      'Runbooks site app registration',
+    );
+    expect(readsWithOwnSecret('sharepoint')).toBe(true);
+  });
+
   it('names the secret by what it is for, and lets every kind but a folder rotate one (14-F)', (): void => {
     expect(secretLabel({ label: 'Runbooks', kind: 'git' })).toBe('Runbooks reader secret');
     expect(secretLabel({ label: 'Notion', kind: 'mcp' })).toBe('Notion connection secret');
@@ -202,11 +230,11 @@ describe('the secret a source reads with', (): void => {
   it('refuses to link a kind whose reader has not landed, before anything is stored (15-K)', (): void => {
     expect(() =>
       validateLinkInput({
-        label: 'Operations site',
-        kind: 'sharepoint',
-        locator: 'https://contoso.sharepoint.com/sites/ops',
+        label: 'Shared drive',
+        kind: 'drive',
+        locator: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
       }),
-    ).toThrow('Day0 does not read SharePoint sources yet.');
+    ).toThrow('Day0 does not read Google Drive sources yet.');
     expect(() =>
       validateLinkInput({ label: 'Team space', kind: 'yuque', locator: 'https://www.yuque.com/t' }),
     ).toThrow('Day0 does not read Yuque sources yet.');

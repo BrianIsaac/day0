@@ -1,0 +1,100 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+  "value": [
+    {
+      "id": "01OPSZH",
+      "name": "运维手册.md",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/运维手册.md",
+      "cTag": "\"c:{44444444-4444-4444-8444-444444444444},2\"",
+      "eTag": "\"{44444444-4444-4444-8444-444444444444},1\"",
+      "size": 96,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-20T02:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "text/markdown",
+        "hashes": {
+          "quickXorHash": "fixture"
+        }
+      }
+    },
+    {
+      "id": "01OLD",
+      "name": "old-process.md",
+      "deleted": {
+        "state": "deleted"
+      },
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT"
+      }
+    },
+    {
+      "id": "01BUDGET",
+      "name": "budget.xlsx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/budget.xlsx",
+      "cTag": "\"c:{55555555-5555-4555-8555-555555555555},9\"",
+      "eTag": "\"{55555555-5555-4555-8555-555555555555},1\"",
+      "size": 88000,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-01T10:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }
+    },
+    {
+      "id": "01HUGE",
+      "name": "full-crm-export.md",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/full-crm-export.md",
+      "cTag": "\"c:{66666666-6666-4666-8666-666666666666},1\"",
+      "eTag": "\"{66666666-6666-4666-8666-666666666666},1\"",
+      "size": 5242880,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-02T10:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "text/markdown",
+        "hashes": {
+          "quickXorHash": "fixture"
+        }
+      }
+    },
+    {
+      "id": "01SCAN",
+      "name": "Signed policy.pdf",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/Signed policy.pdf",
+      "cTag": "\"c:{77777777-7777-4777-8777-777777777777},1\"",
+      "eTag": "\"{77777777-7777-4777-8777-777777777777},1\"",
+      "size": 700000,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-03T10:00:00Z",
+      "parentReference": {
+        "driveId": "b!BCZxLHATNESh9UJlc_2nu8NEIi0aJepJk8g54cOgYP5",
+        "driveType": "documentLibrary",
+        "id": "01ROOT",
+        "path": "/drive/root:"
+      },
+      "file": {
+        "mimeType": "application/pdf"
+      }
+    }
+  ],
+  "@odata.deltaLink": "https://graph.microsoft.com/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/drive/root/delta?token=fixture-delta-link"
+}

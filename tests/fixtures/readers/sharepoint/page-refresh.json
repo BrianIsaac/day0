@@ -1,0 +1,79 @@
+{
+  "id": "0a1b2c3d-0000-4000-8000-000000000001",
+  "name": "How-to-refresh-the-tile.aspx",
+  "webUrl": "https://acme.sharepoint.com/sites/Runbooks/SitePages/How-to-refresh-the-tile.aspx",
+  "title": "How to refresh the pipeline tile",
+  "pageLayout": "article",
+  "promotionKind": "page",
+  "showComments": true,
+  "showRecommendedPages": false,
+  "createdDateTime": "2026-06-02T08:00:00Z",
+  "lastModifiedDateTime": "2026-09-28T07:00:00Z",
+  "eTag": "\"{0A1B2C3D-0000-4000-8000-000000000001},3\"",
+  "createdBy": {
+    "user": {
+      "displayName": "Mira Castillo"
+    }
+  },
+  "lastModifiedBy": {
+    "user": {
+      "displayName": "Mira Castillo"
+    }
+  },
+  "publishingState": {
+    "level": "published",
+    "versionId": "3.0"
+  },
+  "canvasLayout": {
+    "horizontalSections": [
+      {
+        "layout": "twoColumns",
+        "id": "1",
+        "emphasis": "none",
+        "columns": [
+          {
+            "id": "1",
+            "width": 6,
+            "webparts": [
+              {
+                "@odata.type": "#microsoft.graph.textWebPart",
+                "id": "wp",
+                "innerHtml": "<h2>Before you start</h2><p>Open <strong>Looker</strong> and sign in.</p>"
+              }
+            ]
+          },
+          {
+            "id": "2",
+            "width": 6,
+            "webparts": [
+              {
+                "@odata.type": "#microsoft.graph.standardWebPart",
+                "id": "img",
+                "webPartType": "d1d91016-032f-456d-98a4-721247c305e8",
+                "data": {
+                  "title": "Image"
+                }
+              },
+              {
+                "@odata.type": "#microsoft.graph.textWebPart",
+                "id": "wp",
+                "innerHtml": "<table><tbody><tr><th>Step</th><th>Owner</th></tr><tr><td>Refresh the pipeline tile</td><td>RevOps</td></tr></tbody></table>"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "verticalSection": {
+      "emphasis": "none",
+      "id": "v",
+      "webparts": [
+        {
+          "@odata.type": "#microsoft.graph.textWebPart",
+          "id": "wp",
+          "innerHtml": "<p>Ask in #revops when the tile stays grey.</p>"
+        }
+      ]
+    }
+  }
+}

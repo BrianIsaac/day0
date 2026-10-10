@@ -27,13 +27,13 @@ describe('documentation types', (): void => {
 
   // Re-pinned as each of 15-X's readers lands: a kind leaves the list with its reader.
   it('names the kinds whose readers have not landed, and no kind a reader reads (15-K)', (): void => {
-    expect(Object.keys(PENDING_READER_NAMES)).toEqual(['sharepoint', 'yuque', 'drive']);
+    expect(Object.keys(PENDING_READER_NAMES)).toEqual(['yuque', 'drive']);
     expect(
       (['mcp', 'folder', 'git', 'urls', 'feishu', 'confluence-v2', 'drive'] as const).filter(
         isPendingReaderKind,
       ),
     ).toEqual(['drive']);
-    expect(notReadYet('sharepoint')).toBe('Day0 does not read SharePoint sources yet.');
+    expect(notReadYet('yuque')).toBe('Day0 does not read Yuque sources yet.');
   });
 
   it("lets a reader report a page's own status and its revision beside it, both optional (15-K)", (): void => {

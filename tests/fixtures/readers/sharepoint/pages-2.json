@@ -1,0 +1,32 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites('acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe')/pages/microsoft.graph.sitePage",
+  "value": [
+    {
+      "id": "0a1b2c3d-0000-4000-8000-000000000003",
+      "name": "值班表.aspx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/SitePages/值班表.aspx",
+      "title": "值班表",
+      "pageLayout": "article",
+      "promotionKind": "page",
+      "showComments": true,
+      "showRecommendedPages": false,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-18T07:00:00Z",
+      "eTag": "\"{0A1B2C3D-0000-4000-8000-000000000003},1\"",
+      "createdBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "publishingState": {
+        "level": "published",
+        "versionId": "1.0"
+      }
+    }
+  ]
+}

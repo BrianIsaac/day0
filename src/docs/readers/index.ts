@@ -6,6 +6,7 @@ import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
 import { McpReader } from './mcp';
+import { SharePointReader } from './sharepoint';
 import { UrlsReader } from './urls';
 
 /**
@@ -37,6 +38,7 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
     case 'confluence-dc':
       return new ConfluenceDataCenterReader();
     case 'sharepoint':
+      return new SharePointReader();
     case 'yuque':
     case 'drive':
       // Declared by the schema before its reader lands (K-3); the link refuses such a source.

@@ -11,6 +11,7 @@ import {
   parseConfluenceDataCenterLocator,
 } from './confluence-source';
 import { parseFeishuLocator, parseFeishuSecret } from './feishu-source';
+import { parseSharePointLocator, parseSharePointSecret } from './sharepoint-source';
 import { isPendingReaderKind, notReadYet, type DocSourceKind } from './types';
 
 /** The link form's values for one documentation source, as `docSources.link` takes them. */
@@ -78,6 +79,9 @@ export function validateLinkInput(input: LinkInput): LinkInput {
   } else if (input.kind === 'confluence-dc') {
     // The customer's own server over https, and one space's key.
     parseConfluenceDataCenterLocator(locator);
+  } else if (input.kind === 'sharepoint') {
+    // One site's address on a SharePoint host, which names its Microsoft cloud.
+    parseSharePointLocator(locator);
   } else {
     const rawUrl = input.kind === 'git' ? locator.split('#')[0] : locator;
     const url = new URL(rawUrl);
@@ -107,11 +111,13 @@ const SECRET_REQUIRED: Partial<Record<LinkInput['kind'], string>> = {
   feishu: 'A Feishu source needs its app ID and secret.',
   'confluence-v2': "A Confluence Cloud source needs its service account's API token.",
   'confluence-dc': 'A Confluence Data Center source needs a personal access token.',
+  sharepoint:
+    "A SharePoint source needs its app registration's tenant ID, client ID and client secret.",
 };
 
 /**
- * The source kinds that read with a secret of their own: required for MCP, Feishu and both
- * Confluence kinds, optional for git and URLs.
+ * The source kinds that read with a secret of their own: required for MCP, Feishu, both
+ * Confluence kinds and SharePoint, optional for git and URLs.
  */
 const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'mcp',
@@ -120,6 +126,7 @@ const SECRET_KINDS: ReadonlySet<LinkInput['kind']> = new Set([
   'feishu',
   'confluence-v2',
   'confluence-dc',
+  'sharepoint',
 ]);
 
 /**
@@ -162,6 +169,7 @@ export function validateReaderSecret(input: LinkInput, secret: string | undefine
     throw new Error('A secret cannot contain a line break or a control character.');
   }
   if (input.kind === 'feishu') parseFeishuSecret(secret);
+  if (input.kind === 'sharepoint') parseSharePointSecret(secret);
   if (input.kind === 'confluence-v2' || input.kind === 'confluence-dc') {
     checkConfluenceToken(secret);
   }
@@ -193,11 +201,12 @@ export function secretLabel(source: Pick<LinkInput, 'label' | 'kind'>): string {
       return `${source.label} API token`;
     case 'confluence-dc':
       return `${source.label} personal access token`;
+    case 'sharepoint':
+      return `${source.label} app registration`;
     case 'folder':
     case 'git':
     case 'urls':
     // A kind whose reader has not landed is never linked; its reader names its secret (15-X).
-    case 'sharepoint':
     case 'yuque':
     case 'drive':
       return `${source.label} reader secret`;
