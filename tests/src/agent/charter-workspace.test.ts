@@ -18,6 +18,14 @@ describe('identityFromCharter', (): void => {
     );
   });
 
+  it('writes the identity file with no em dash, in its headings or its relationships (13.3)', (): void => {
+    const identity = identityFromCharter(charter, 'priya@day0.local');
+    expect(identity).not.toContain('\u2014');
+    expect(identity).toContain('## Boundaries: what I will do');
+    expect(identity).toContain('## Boundaries: what I will NOT do');
+    expect(identity).toContain('- Priya: pipeline (intro path: manager)');
+  });
+
   it('renders a draft with no manager section until approval names one', (): void => {
     expect(identityFromCharter(charter)).not.toContain('## Manager');
   });

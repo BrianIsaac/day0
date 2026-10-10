@@ -32,6 +32,7 @@ import {
   GLM_BINDS_PROMPT_2026_10_05,
 } from '../../fixtures/charter-paraphrase-2026-09-30';
 import { REDEPLOY_NELL_DRAFT_2026_10_07 } from '../../fixtures/charter-redeploy-nell-2026-10-07';
+import { runThroughBody } from '../../fixtures/run-through-charter-2026-09-14';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -233,6 +234,30 @@ describe('the evidence guard', (): void => {
       `  - ${SYNTHESIS_SELF_CHECK_NOTE_2026_09_16}`,
     );
     expect(renderCharter(charter)).not.toContain('SYNTHESIS NOTES');
+  });
+
+  it('renders the drafted charter with no em dash: its title, its questions and its people (13.3)', (): void => {
+    const rendered = renderCharter(
+      {
+        ...runThroughBody(),
+        version: '1.1',
+        adjacentRoles: [{ who: 'Finance ops', staysOutOfTheirLaneBy: 'never booking revenue' }],
+        answeredQuestions: [
+          {
+            question: 'Who owns the Looker tile?',
+            answer: 'Priya does.',
+            answeredAt: '2026-10-10T00:00:00.000Z',
+          },
+        ],
+      },
+      new Date('2026-10-10T00:00:00.000Z'),
+    );
+    expect(rendered).not.toContain('\u2014');
+    expect(rendered.split('\n')[0]).toBe('DRAFT CHARTER - Day0 v1.1 - 2026-10-10');
+    expect(rendered).toContain('OPEN QUESTIONS: to follow up');
+    expect(rendered).toContain('  - Who owns the Looker tile? Answer: Priya does.');
+    expect(rendered).toContain('  - Priya: pipeline; intro path: manager');
+    expect(rendered).toContain('  - Finance ops: never booking revenue');
   });
 });
 
