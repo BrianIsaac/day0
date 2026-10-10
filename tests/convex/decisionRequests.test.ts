@@ -10,6 +10,7 @@ import {
   nameReplacement,
   openRequestsOn,
   recentThreadsOn,
+  CLOSE_EDIT_IN_FLIGHT_MS,
   rememberDecidedUnmarked,
   rememberReplacedRequest,
   rememberRetriedRequest,
@@ -258,6 +259,47 @@ describe('rememberDecidedUnmarked', (): void => {
     expect(await replaced(harness)).toMatchObject([
       { decisionId: 'A1', outcome: 'approved', decidedAt: 5 },
     ]);
+  });
+
+  it("edits the message after the decision's own edit, never beside it, when that edit is in flight at the park (W14-R51)", async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const decided = {
+      ts: '1.1',
+      requestText: 'Approve?',
+      decidedAt: 5,
+      outcome: 'approved',
+    } as const;
+    const inFlight = await seedItem(harness, agentId, 'actions-pending', {
+      decision: request({ id: 'A1', kind: 'actions', ...decided, closeClaimedAt: Date.now() }),
+    });
+    const unclaimed = await seedItem(harness, agentId, 'actions-pending', {
+      decision: request({ id: 'A2', kind: 'actions', ...decided, ts: '1.2' }),
+    });
+    const now = Date.now();
+    await harness.run(async (ctx) => {
+      await rememberDecidedUnmarked(ctx, inFlight, now);
+      await rememberDecidedUnmarked(ctx, unclaimed, now);
+    });
+
+    const edits = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter((job) => job.name === 'managerChannelActions:markRequestReplaced');
+    const rows = await replaced(harness);
+    const waitOf = (decisionId: string): number => {
+      const row = rows.find((kept) => kept.decisionId === decisionId);
+      const job = edits.find(
+        (edit) => (edit.args[0] as { replacedId: string }).replacedId === row?._id,
+      );
+      return (job?.scheduledTime ?? Number.NaN) - now;
+    };
+    // The edit in flight sends its own chat.update: a second one beside it would race it on one
+    // message, so this one waits out the first's transport.
+    expect(waitOf('A1')).toBe(CLOSE_EDIT_IN_FLIGHT_MS);
+    // No edit was claimed for the other: its message is marked at once, as before.
+    expect(waitOf('A2')).toBe(0);
+    vi.useRealTimers();
   });
 });
 
