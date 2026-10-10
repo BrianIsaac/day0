@@ -6,7 +6,9 @@ import {
   formatAccessChecks,
   noConnectionLine,
   parseConnectionRows,
+  FAKE_LINEAR_PRELOADED,
   linearBedRefusal,
+  loadedFakeLinear,
   slackApiBaseForCheck,
   type AccessCheck,
   type ConnectionRow,
@@ -862,26 +864,26 @@ describe('check:access: whether the typed code reaches each employee app (W12V-7
 
 describe('the bed guard for Linear (W13-R48)', (): void => {
   const BED = { DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/' };
-  const PRELOAD = '--import /checkout/fake-linear/host-preload.mjs';
+  const FAKE = 'https://127.0.0.1:3694';
 
   it('refuses to reach Linear from a bed unless the fake Linear preload is loaded', (): void => {
-    expect(linearBedRefusal(BED, {})).toMatch(
-      /^DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself/,
+    expect(linearBedRefusal(BED, undefined)).toMatch(
+      /^DAY0_TEST_SLACK_API_URL names a fake Slack, so this is a bed, and a bed never calls Linear itself: run the check with the preload \(NODE_OPTIONS="--import <checkout>\/fake-linear\/host-preload\.mjs"\) and FAKE_LINEAR_HOST_URL/,
     );
-    expect(linearBedRefusal(BED, { FAKE_LINEAR_HOST_URL: 'https://127.0.0.1:3694' })).toMatch(
-      /host-preload\.mjs/,
-    );
-    expect(linearBedRefusal(BED, { NODE_OPTIONS: PRELOAD })).toMatch(/FAKE_LINEAR_HOST_URL/);
-    expect(
-      linearBedRefusal(BED, {
-        FAKE_LINEAR_HOST_URL: 'https://127.0.0.1:3694',
-        NODE_OPTIONS: PRELOAD,
-      }),
-    ).toBeUndefined();
+    expect(linearBedRefusal(BED, FAKE)).toBeUndefined();
+  });
+
+  it('reads the preload by what it left when it loaded, never by a name in NODE_OPTIONS (W14-R51)', (): void => {
+    // A process whose NODE_OPTIONS only mentions the file (a path in another option, a note) has
+    // no preload loaded and would reach Linear itself: the mark is absent, so it is refused.
+    expect(loadedFakeLinear({})).toBeUndefined();
+    expect(loadedFakeLinear({ [FAKE_LINEAR_PRELOADED]: FAKE })).toBe(FAKE);
+    expect(loadedFakeLinear({ [FAKE_LINEAR_PRELOADED]: '  ' })).toBeUndefined();
+    expect(linearBedRefusal(BED, loadedFakeLinear({}))).toMatch(/a bed never calls Linear itself/);
   });
 
   it('leaves a deployment that names no fake Slack to reach Linear itself', (): void => {
-    expect(linearBedRefusal({}, {})).toBeUndefined();
-    expect(linearBedRefusal({ DAY0_TEST_SLACK_API_URL: ' ' }, {})).toBeUndefined();
+    expect(linearBedRefusal({}, undefined)).toBeUndefined();
+    expect(linearBedRefusal({ DAY0_TEST_SLACK_API_URL: ' ' }, undefined)).toBeUndefined();
   });
 });
