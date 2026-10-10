@@ -830,24 +830,58 @@ async function resumeHeldApplies(ctx: MutationCtx, agentId: Id<'agents'>): Promi
 }
 
 /**
+ * The employees one transaction of the stalled-step sweep reads (W12-R33): each employee's pass
+ * reads up to a batch of rows in each of its ready states, so a deployment's every employee in
+ * one transaction grows past what a transaction may read as employees are added.
+ */
+export const STALLED_SWEEP_AGENTS = 50;
+
+/**
  * Reschedule every step the loop lost, for every employee: one pass of
- * {@link resumeAgentStepsInTransaction} each.
+ * {@link resumeAgentStepsInTransaction} each, a page of employees a transaction, oldest first.
+ * When employees are left after the page, the rest are handed to
+ * `workLoop:resumeStalledStepsAfter` in a transaction of its own, so the sweep's reads are
+ * bounded however many employees the deployment holds.
  *
  * @param ctx - Mutation context.
  * @param now - The instant to judge claims against.
- * @returns How many steps were scheduled.
+ * @param after - The creation time of the last employee an earlier page swept; none at the start.
+ * @returns How many steps this transaction scheduled.
  */
 export async function resumeStalledStepsInTransaction(
   ctx: MutationCtx,
   now: number,
+  after?: number,
 ): Promise<{ rescheduled: number }> {
   if (SURFACE_MODE !== 'real') return { rescheduled: 0 };
+  const page = await ctx.db
+    .query('agents')
+    .withIndex('by_creation_time', (q) => (after === undefined ? q : q.gt('_creationTime', after)))
+    .take(STALLED_SWEEP_AGENTS + 1);
+  const agents = page.slice(0, STALLED_SWEEP_AGENTS);
   let rescheduled = 0;
-  for (const agent of await ctx.db.query('agents').collect()) {
+  for (const agent of agents) {
     rescheduled += await resumeAgentStepsInTransaction(ctx, agent._id, now);
+  }
+  const last = agents.at(-1);
+  if (page.length > STALLED_SWEEP_AGENTS && last !== undefined) {
+    await ctx.scheduler.runAfter(0, internal.workLoop.resumeStalledStepsAfter, {
+      after: last._creationTime,
+    });
   }
   return { rescheduled };
 }
+
+/**
+ * The stalled-step sweep's next page of employees; see {@link resumeStalledStepsInTransaction}.
+ * Internal: scheduled by the page before it, never by a client. Writes what the sweep writes: a
+ * queued step on each row it reschedules.
+ */
+export const resumeStalledStepsAfter = internalMutation({
+  args: { after: v.number() },
+  handler: async (ctx, args): Promise<{ rescheduled: number }> =>
+    await resumeStalledStepsInTransaction(ctx, Date.now(), args.after),
+});
 
 /**
  * Reschedule every step the loop lost, or a pause held, for one employee.

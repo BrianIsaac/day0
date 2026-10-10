@@ -171,6 +171,53 @@ describe('the stalled-step sweep', (): void => {
     });
   });
 
+  it('sweeps the employees a page at a time, the rest in transactions of their own (W12-R33)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const { STALLED_SWEEP_AGENTS } = await import('../../convex/workLoop');
+    const harness = sweepHarness();
+    const now = Date.now();
+    // One employee more than a page holds, each with an approved plan nothing is running.
+    const items: Id<'workItems'>[] = [];
+    for (let employee = 0; employee <= STALLED_SWEEP_AGENTS; employee += 1) {
+      const agentId = await seedAgent(harness, true);
+      items.push(
+        await harness.run(
+          async (ctx) =>
+            await ctx.db.insert('workItems', {
+              ...row(agentId, `REVOPS-${employee}`, now),
+              state: 'plan-approved',
+              plan: PLAN,
+            }),
+        ),
+      );
+    }
+
+    // The cron's transaction reads one page of employees and hands the rest on.
+    await expect(harness.mutation(internal.work.resumeStalledSteps, {})).resolves.toEqual({
+      rescheduled: STALLED_SWEEP_AGENTS,
+    });
+    const handedOn = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter((job) => job.name === 'workLoop:resumeStalledStepsAfter');
+    expect(handedOn).toHaveLength(1);
+
+    // The next page, run as the scheduler would, reaches the last employee and hands nothing on.
+    await expect(
+      harness.mutation(
+        internal.workLoop.resumeStalledStepsAfter,
+        handedOn[0]!.args[0] as { after: number },
+      ),
+    ).resolves.toEqual({ rescheduled: 1 });
+    const queued = await harness.run(
+      async (ctx) =>
+        (await Promise.all(items.map(async (id) => await ctx.db.get(id)))).filter(
+          (item) => item?.stepJobId !== undefined,
+        ).length,
+    );
+    expect(queued).toBe(STALLED_SWEEP_AGENTS + 1);
+  });
+
   it('reschedules a lapsed step, leaves a live claim alone, and evaluates nothing while the cap is full', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
