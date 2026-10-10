@@ -141,10 +141,13 @@ async function heldSinceLastResume(
 
 /**
  * Start the authoring of every skill a pause held since the last resume, once each: a skill the
- * manager has since rejected, retired or given up, one a run holds now, and one claimed since its
- * hold (a stored version's check, a press after the pause) is left to the state it is in: its hold
- * is spent, and recorded as spent with why, so no later resume reads it again and one skill
- * started beside it cannot decide its fate instead (W13-R46). The claim decides the rest, as it
+ * manager has since rejected, retired or given up, and one claimed since its hold (a stored
+ * version's check, a press after the pause) is left to the state it is in: its hold is spent, and
+ * recorded as spent with why, so no later resume reads it again and one skill started beside it
+ * cannot decide its fate instead (W13-R46). A skill a run holds now is left to that run and its
+ * hold is kept, recorded again after everything this resume takes up: a run that dies with
+ * attempts left was restarted only by Retry while the hold was spent (W14-R51), and the next
+ * resume or sweep starts it once the run's claim has lapsed. The claim decides the rest, as it
  * does for a manager's press.
  *
  * @returns How many authorings were started.
@@ -152,6 +155,7 @@ async function heldSinceLastResume(
 async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Promise<number> {
   const now = Date.now();
   const seen = new Set<string>();
+  const stillHeld: Doc<'events'>[] = [];
   let started = 0;
   for (const event of await heldSinceLastResume(ctx, agentId, 'skill.authoring-held', [
     'skill.authoring-resumed',
@@ -168,6 +172,10 @@ async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Pro
           ((await claimedSince(ctx, agentId, skillId, event._creationTime))
             ? 'claimed'
             : undefined));
+    if (why === 'running') {
+      stillHeld.push(event);
+      continue;
+    }
     if (why !== undefined) {
       const named = (event.payload as { name?: unknown }).name;
       await appendEvent(ctx, {
@@ -193,6 +201,15 @@ async function resumeHeldAuthoring(ctx: MutationCtx, agentId: Id<'agents'>): Pro
       createdAt: now,
     });
     started += 1;
+  }
+  // Recorded after every start and spent hold of this pass, which bound what the next one reads.
+  for (const event of stillHeld) {
+    await appendEvent(ctx, {
+      agentId,
+      type: 'skill.authoring-held',
+      payload: event.payload,
+      createdAt: now,
+    });
   }
   return started;
 }
