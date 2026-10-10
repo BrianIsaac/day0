@@ -1816,6 +1816,8 @@ function outboundHost(url: string | undefined): string | undefined {
  * Args:
  *   values: Resolved values.
  *   connections: The organisation's connections, when the deployment was asked.
+ *   architecture: The machine the backend image is built on, which decides the Ubuntu
+ *     archive its build fetches git from; this machine's when not given.
  *
  * Returns:
  *   One row per host, first seen first.

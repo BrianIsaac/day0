@@ -31,7 +31,10 @@ export const MAX_UNREAD_LISTED = 10;
 /** The longest a page's reference or reason in a record may be. */
 const MAX_RECORD_LINE = 240;
 
-/** The pages a sync run could not read: how many, and the first of them by name. */
+/**
+ * The pages a sync run could not read: how many, and some of them by name, a failed read ahead
+ * of a kind Day0 does not read.
+ */
 export interface UnreadRecord {
   readonly count: number;
   readonly pages: UnreadPage[];

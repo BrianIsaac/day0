@@ -410,10 +410,9 @@ export default defineSchema({
        */
       v.literal('feishu'),
       /**
-       * The wave 15 readers' kinds (15-K for 15-X; K-3), each declared before its reader lands so
-       * one push proves them all: until it lands, `readerFor` names the kind as not read yet and
-       * the link refuses it. A SharePoint site's document library and pages, read through
-       * Microsoft Graph.
+       * The wave 15 readers' kinds (15-K for 15-X; K-3), declared in one step so one push proved
+       * them all; each has had its reader since 15-X. A SharePoint site's document library and
+       * pages, read through Microsoft Graph.
        */
       v.literal('sharepoint'),
       /** A Confluence Cloud space, read through its v2 REST API. */

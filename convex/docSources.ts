@@ -225,7 +225,7 @@ export { validateLinkInput, validateReaderSecret, type LinkInput };
 /**
  * Purge the credentials and discovered systems of one source being removed.
  *
- * Its pages, mirrors and runs are deleted in pages afterwards
+ * Its mirrors, blocks, relations, pages, listings and runs are deleted in pages afterwards
  * (`deleteSourceRows`), since a whole source's rows can outgrow one transaction.
  *
  * Args:
@@ -450,8 +450,8 @@ export const resync = mutation({
  * Unlink an owned source; real mode only.
  *
  * Public, for the source's owner. Deletes the source, purges its credentials
- * and discovered systems, and schedules its pages, mirrors and runs for
- * deletion in pages (`deleteSourceRows`), since a whole source's rows can
+ * and discovered systems, and schedules its mirrors, blocks, relations, pages, listings and
+ * runs for deletion in pages (`deleteSourceRows`), since a whole source's rows can
  * outgrow one transaction. No reader reaches a page of a deleted source: the
  * readers list pages by the employee's sources.
  */
@@ -1453,10 +1453,10 @@ const MISSED_ONCE_COUNTED = 4_096;
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
  * Internal. The sync action calls it last, once the generation has read every
- * page, removed the pages and mirrors two complete walks in a row did not list and re-read the intake
- * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
- * steps removed as `pruned`; a resumed finish counts its own part only. A
- * caller that finishes a run from its last read batch passes that batch
+ * page, removed the pages and mirrors two complete walks in a row did not list, restated the
+ * kept pages' statuses and re-read the intake scopes (its cursor is the finish's `scopes`
+ * checkpoint), passing what those steps removed as `pruned`; a resumed finish counts its own
+ * part only. A caller that finishes a run from its last read batch passes that batch
  * instead, whose refs are stamped with the run's listing. `pagesKept` is the
  * pages the source holds after it: those the generation lists and those it missed once and keeps
  * (W14-R24), whose values stay among the run's stated ones. A page the generation could not read is

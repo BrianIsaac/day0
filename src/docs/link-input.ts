@@ -158,8 +158,10 @@ export function readsWithOwnSecret(kind: LinkInput['kind']): boolean {
  * that site's and is sent to no other. A Feishu source needs its app's ID
  * and secret, joined by a colon, which it exchanges for the tenant's token. A
  * Confluence Cloud source needs its service account's API token, and a Data
- * Center one a personal access token. A folder is read from the mounted
- * directory and takes none.
+ * Center one a personal access token. A SharePoint source needs its app
+ * registration's tenant, client and secret, a Yuque source its token and a
+ * Google Drive source its service account's key, each checked by its own
+ * source module. A folder is read from the mounted directory and takes none.
  *
  * @param input - The validated link values.
  * @param secret - The secret the owner entered, if any.
