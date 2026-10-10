@@ -58,7 +58,9 @@ import {
 } from '../src/lib/customer-oidc';
 import { isManagerAddressShaped } from '../src/agent/manager-address';
 import { LOCAL_MANAGER_ADDRESS_VAR } from '../src/lib/dev-auth-token';
+import { ATLASSIAN_GATEWAY_HOST } from '../src/docs/confluence-source';
 import { FEISHU_REGIONS } from '../src/docs/feishu-source';
+import { MICROSOFT_CLOUDS } from '../src/docs/sharepoint-source';
 import {
   GIT_HOSTS_VAR,
   gitHostAllowlist,
@@ -1845,6 +1847,37 @@ export function egressHosts(
     add(
       FEISHU_REGIONS.lark,
       'a Feishu documentation source in the Lark region, when one is linked',
+    );
+    // Wave 15's readers (15-X): each reaches its vendor's own hosts, and no other. A Confluence
+    // Data Center source reaches the customer's own server, which no list here can name.
+    add(ATLASSIAN_GATEWAY_HOST, 'a Confluence Cloud documentation source, when one is linked');
+    add(
+      MICROSOFT_CLOUDS.global.login,
+      "a SharePoint documentation source: the app registration's sign-in, when one is linked",
+    );
+    add(
+      MICROSOFT_CLOUDS.global.graph,
+      'a SharePoint documentation source: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.com)',
+    );
+    add(
+      MICROSOFT_CLOUDS.china.login,
+      "a SharePoint documentation source on the cloud 21Vianet operates: the app registration's sign-in, when one is linked",
+    );
+    add(
+      MICROSOFT_CLOUDS.china.graph,
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+    );
+    add(
+      'www.yuque.com',
+      "a Yuque documentation source, when one is linked (a space's own <space>.yuque.com instead, where the repository is on one)",
+    );
+    add(
+      'oauth2.googleapis.com',
+      "a Google Drive documentation source: the service account's token, when one is linked",
+    );
+    add(
+      'www.googleapis.com',
+      'a Google Drive documentation source: the Drive API, when one is linked',
     );
     for (const host of listedGitHosts(values[GIT_HOSTS_VAR])) {
       add(host, `a git documentation source on a host ${GIT_HOSTS_VAR} lists`);

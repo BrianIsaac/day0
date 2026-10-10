@@ -349,6 +349,40 @@ describe('the support report', (): void => {
     );
   });
 
+  it('names the hosts each of wave 15’s readers reaches, in real mode only (15-X)', (): void => {
+    const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
+    const purposeOf = (host: string): string | undefined =>
+      rows.find((row) => row.host === host)?.purpose;
+    expect(purposeOf('api.atlassian.com')).toBe(
+      'a Confluence Cloud documentation source, when one is linked',
+    );
+    expect(purposeOf('login.microsoftonline.com')).toBe(
+      "a SharePoint documentation source: the app registration's sign-in, when one is linked",
+    );
+    expect(purposeOf('graph.microsoft.com')).toBe(
+      'a SharePoint documentation source: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.com)',
+    );
+    expect(purposeOf('login.chinacloudapi.cn')).toBe(
+      "a SharePoint documentation source on the cloud 21Vianet operates: the app registration's sign-in, when one is linked",
+    );
+    expect(purposeOf('microsoftgraph.chinacloudapi.cn')).toBe(
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+    );
+    expect(purposeOf('www.yuque.com')).toBe(
+      "a Yuque documentation source, when one is linked (a space's own <space>.yuque.com instead, where the repository is on one)",
+    );
+    expect(purposeOf('oauth2.googleapis.com')).toBe(
+      "a Google Drive documentation source: the service account's token, when one is linked",
+    );
+    expect(purposeOf('www.googleapis.com')).toBe(
+      'a Google Drive documentation source: the Drive API, when one is linked',
+    );
+    const mock = egressHosts({ OPENAI_API_KEY: 'k' }).map((row) => row.host);
+    for (const host of ['api.atlassian.com', 'graph.microsoft.com', 'www.googleapis.com']) {
+      expect(mock).not.toContain(host);
+    }
+  });
+
   it('names each git host DAY0_GIT_HOSTS lists, and none when the list is refused (14-F)', (): void => {
     const rows = egressHosts({
       DAY0_SURFACE_MODE: 'real',

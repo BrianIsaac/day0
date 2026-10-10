@@ -123,9 +123,21 @@ describe('the link form and the components a source needs', (): void => {
     expect(markup).toContain('No day0 component has to be running.');
   });
 
-  it('offers the five source kinds', (): void => {
+  // Re-pinned from five for 15-X: each of its readers' kinds is offered once the reader reads it.
+  it('offers the ten source kinds', (): void => {
     const markup = renderToStaticMarkup(<DocumentationPage />);
-    for (const kind of ['folder', 'git', 'urls', 'mcp', 'feishu']) {
+    for (const kind of [
+      'folder',
+      'git',
+      'urls',
+      'mcp',
+      'feishu',
+      'sharepoint',
+      'confluence-v2',
+      'confluence-dc',
+      'yuque',
+      'drive',
+    ]) {
       expect(markup).toContain(`value="${kind}"`);
     }
   });
@@ -217,7 +229,50 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
     view.unmount();
   });
 
-  it('names a source of each kind whose reader has not landed by its reader (15-K)', (): void => {
+  it('asks for each new kind’s own secret when it is rotated, in the shape its reader takes (15-X)', async (): Promise<void> => {
+    for (const [kind, words] of [
+      ['sharepoint', 'New app registration, as tenant ID:client ID:client secret'],
+      ['confluence-v2', 'New API token'],
+      ['confluence-dc', 'New personal access token'],
+      ['yuque', 'New token'],
+      ['drive', 'New service account key, the JSON file’s contents'],
+    ] as const) {
+      state.sources = [
+        {
+          _id: `source-${kind}`,
+          label: 'Runbooks',
+          kind,
+          locator: `https://${kind}.example.test/docs`,
+          status: 'synced',
+          pageCount: 1,
+          credentialId: 'credential-1',
+        },
+      ];
+      const view = mount(<DocumentationPage />);
+      await press(view.container, 'Rotate the secret for Runbooks');
+      expect(
+        view.container.querySelector(`label[for="rotate-source-${kind}"]`)?.textContent,
+        kind,
+      ).toBe(words);
+      view.unmount();
+    }
+  });
+
+  it('says each new kind needs nothing running, and links the guide IT follows (15-X)', (): void => {
+    for (const [kind, guide] of [
+      ['sharepoint', 'reader-sharepoint.md'],
+      ['confluence-v2', 'reader-confluence.md'],
+      ['confluence-dc', 'reader-confluence.md'],
+      ['yuque', 'reader-yuque.md'],
+      ['drive', 'reader-drive.md'],
+    ] as const) {
+      const markup = renderToStaticMarkup(<SourceKindHelp kind={kind} serverKind="notion" />);
+      expect(markup, kind).toContain('No day0 component has to be running.');
+      expect(markup, kind).toContain(`/docs/running/${guide}"`);
+    }
+  });
+
+  it('names a source of each of 15-X’s kinds by its reader (15-K)', (): void => {
     state.sources = (
       [
         ['sharepoint', 'SharePoint'],

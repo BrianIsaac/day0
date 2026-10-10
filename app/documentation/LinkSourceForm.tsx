@@ -9,9 +9,18 @@ import { REPOSITORY_URL } from '@/setup/quickstart';
 import { Button } from '../components/Button';
 import { INPUT_CLASS } from '../components/Field';
 import { refusalText } from '../components/use-change';
+import { HELP, LABEL } from './field-classes';
+import { ReaderCredentialFields, ReaderKindHelp } from './ReaderFields';
+import {
+  isReaderKind,
+  READER_KINDS,
+  READER_WHERE,
+  readerLinkValues,
+  type ReaderKind,
+} from './reader-link';
 
 /** The kinds of location the backend reads, as `docSources.link` takes them. */
-export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu';
+export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu' | ReaderKind;
 
 /** The MCP servers a documentation source can be read from. */
 export type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -23,6 +32,7 @@ const SOURCE_KINDS: ReadonlyArray<readonly [SourceKind, string]> = [
   ['urls', 'List of URLs'],
   ['mcp', 'MCP server'],
   ['feishu', 'Feishu or Lark wiki or folder'],
+  ...READER_KINDS,
 ];
 
 /** The regions a Feishu source can be in, with the name the manager reads. */
@@ -41,12 +51,6 @@ const SERVER_KINDS: ReadonlyArray<readonly [ServerKind, string]> = [
 
 /** The label the form starts with, for the documentation folder it starts on. */
 const FOLDER_LABEL = 'Team folder';
-
-/** A field's label above it. */
-const LABEL = 'text-[13px] font-medium text-[var(--color-fg-2)]';
-
-/** A field's help beneath it. */
-const HELP = 'text-[13px] text-[var(--color-muted)]';
 
 /**
  * The location a kind starts from: the documentation folder itself for a folder, nothing for the
@@ -80,8 +84,9 @@ export const FEISHU_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/reader
 /**
  * The secret a link sends for a source kind (E-74).
  *
- * An MCP server's connection secret is required, and so is a Feishu app's
- * ID and secret (joined by the form); a git repository or a list of wiki
+ * An MCP server's connection secret is required, and so are a Feishu app's
+ * ID and secret (joined by the form) and the secret of each of wave 15's
+ * reader kinds (`readerLinkValues`); a git repository or a list of wiki
  * pages may carry the reader's own secret, sent only when one was typed; a
  * folder takes none.
  *
@@ -89,7 +94,7 @@ export const FEISHU_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/reader
  * @param typed - What the secret field held, or the Feishu app's ID and secret joined.
  */
 export function credentialForLink(kind: SourceKind, typed: string): string | undefined {
-  if (kind === 'mcp' || kind === 'feishu') return typed;
+  if (kind === 'mcp' || kind === 'feishu' || isReaderKind(kind)) return typed;
   return (kind === 'git' || kind === 'urls') && typed !== '' ? typed : undefined;
 }
 
@@ -208,6 +213,7 @@ export function SourceKindHelp(props: {
   kind: SourceKind;
   serverKind: ServerKind;
 }): React.ReactNode {
+  if (isReaderKind(props.kind)) return <ReaderKindHelp kind={props.kind} />;
   if (props.kind === 'feishu') {
     return (
       <p className={HELP}>
@@ -232,9 +238,11 @@ export function SourceKindHelp(props: {
 /**
  * The form that links one documentation location for all the owner's employees, in the kinds
  * the backend reads (`docSources.link`): a folder of Markdown, a git repository, a list of URLs,
- * an MCP server (Notion, Confluence, Google Drive or generic resources), or a Feishu or Lark
- * wiki space or folder. A secret field is write-only: the form is reset the moment it is
- * submitted. A refusal is said under the form.
+ * an MCP server (Notion, Confluence, Google Drive or generic resources), a Feishu or Lark wiki
+ * space or folder, a SharePoint site, a Confluence space (Cloud or Data Center), a Yuque
+ * repository, or a Google Drive folder. A secret field is write-only: the form is reset once the
+ * source is linked, and never shows a stored secret. A refused link keeps what was typed, the
+ * secret with it, so it can be corrected (W14-R38); the refusal is said under the form.
  */
 export function LinkSourceForm(): React.ReactNode {
   const link = useAction(api.docSources.link);
@@ -251,24 +259,26 @@ export function LinkSourceForm(): React.ReactNode {
     const form = event.currentTarget;
     const values = new FormData(form);
     const region: FeishuRegion = values.get('region') === 'lark' ? 'lark' : 'feishu';
+    const reader = isReaderKind(kind) ? readerLinkValues(kind, locator, values) : undefined;
     const credential =
       kind === 'feishu'
         ? feishuReaderSecret(
             String(values.get('appId') ?? ''),
             String(values.get('appSecret') ?? ''),
           )
-        : String(values.get('credential') || '');
-    form.reset();
+        : (reader?.credential ?? String(values.get('credential') || ''));
     setBusy(true);
     setError(null);
     try {
       await link({
         label,
         kind,
-        locator: kind === 'feishu' ? feishuLocator(region, locator) : locator,
+        locator: kind === 'feishu' ? feishuLocator(region, locator) : (reader?.locator ?? locator),
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: credentialForLink(kind, credential),
       });
+      // Only now: a refused link keeps its fields, the secret among them, to be corrected.
+      form.reset();
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
       setLocator(cleared.locator);
@@ -340,7 +350,9 @@ export function LinkSourceForm(): React.ReactNode {
                   ? DOCS_NOTION_LOCATOR
                   : kind === 'feishu'
                     ? "Wiki space ID, or a Drive folder's address"
-                    : 'Location URL, or one URL per line'
+                    : isReaderKind(kind)
+                      ? READER_WHERE[kind]
+                      : 'Location URL, or one URL per line'
             }
             className={`${INPUT_CLASS} min-h-20 w-full`}
           />
@@ -380,6 +392,7 @@ export function LinkSourceForm(): React.ReactNode {
           </div>
         ) : null}
         {kind === 'feishu' ? <FeishuAppFields /> : null}
+        {isReaderKind(kind) ? <ReaderCredentialFields kind={kind} /> : null}
         <ReaderSecretField kind={kind} />
         <SourceKindHelp kind={kind} serverKind={serverKind} />
         <p role="alert" className="text-[13px] text-[var(--color-danger)]">
