@@ -8,7 +8,6 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { MIGRATION_NAMES, MIGRATIONS, passedOverNote } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
-import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { isOfferable } from '../../src/work/skill-library';
 import { USE_COUNT_SCAN_LIMIT } from '../../convex/skillVersions';
 import { avatarById } from '../../src/agent/avatar-pets';
