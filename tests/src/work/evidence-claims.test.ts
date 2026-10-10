@@ -8,7 +8,6 @@ import {
   itemEvidence,
   messageTexts,
   reportedEarlierWrites,
-  reportsEarlierWrite,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   unsupportedClaims,
@@ -715,14 +714,14 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
   });
 
   it('names the earlier writes a message reports, and none for a message that reports nothing', (): void => {
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toBe(true);
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [])).toBe(false);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [])).toEqual([]);
     expect(
-      reportsEarlierWrite(
+      reportedEarlierWrites(
         commentOn('REVOPS-6', 'Could not find the stop-drill page; who owns it?'),
         [NOTE_1, NOTE_2],
       ),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 
@@ -840,22 +839,24 @@ describe('which sentences bind a message to the writes before it', (): void => {
 
   it('binds a plain report the check does not read as a claim', (): void => {
     const earlier = comment('Stop drill: both notes are going out in #revops today.');
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [earlier])).toBe(true);
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [NOTE_1])).toBe(false);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [earlier])).toEqual([
+      0,
+    ]);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [NOTE_1])).toEqual([]);
     expect(
-      reportsEarlierWrite(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
-    ).toBe(true);
+      reportedEarlierWrites(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
+    ).toEqual([0, 1]);
   });
 
   it('binds no hedge and no condition: they report nothing made', (): void => {
-    expect(reportsEarlierWrite(comment('The stop-drill notes were not posted.'), [NOTE_1])).toBe(
-      false,
-    );
     expect(
-      reportsEarlierWrite(comment('Once the stop-drill notes are posted, the drill begins.'), [
+      reportedEarlierWrites(comment('The stop-drill notes were not posted.'), [NOTE_1]),
+    ).toEqual([]);
+    expect(
+      reportedEarlierWrites(comment('Once the stop-drill notes are posted, the drill begins.'), [
         NOTE_1,
       ]),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 

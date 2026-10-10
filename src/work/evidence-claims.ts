@@ -659,24 +659,10 @@ export function heldWithReportedWrites(
 }
 
 /**
- * Whether a message reports a write its own set made before it, which binds the two at the
- * apply: the message is sent only once every write before it in the set has landed, and is held
+ * The places in `earlier` of the writes a message's words report as made, each once, in order:
+ * with the writes its `reports` declares, the writes it is bound to at the apply and in the hold
+ * review ({@link boundEarlierWrites}). The message is sent only once each has landed, and is held
  * back with them when one was not approved, failed or was stopped.
- *
- * Args:
- *   action: The message as the executor emitted it.
- *   earlier: The actions before it in the same set.
- *
- * Returns:
- *   True when one of its sentences reports such a write.
- */
-export function reportsEarlierWrite(action: MockAction, earlier: readonly MockAction[]): boolean {
-  return reportedEarlierWrites(action, earlier).length > 0;
-}
-
-/**
- * The places in `earlier` of the writes a message reports as made, each once, in order: the
- * writes it is bound to at the apply and in the hold review.
  *
  * Args:
  *   action: The message as the executor emitted it.
