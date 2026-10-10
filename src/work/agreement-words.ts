@@ -30,6 +30,11 @@ export interface AgreementView {
   readonly refusal?: {
     readonly reason: AgreementRowRefusalReason;
     readonly clause?: string;
+    /**
+     * On a hold (`unchecked-for-employee`): the owner has no more employees than the check reads,
+     * so the agreement can be checked against this employee's charter now (W14-R15's lift).
+     */
+    readonly checkable?: boolean;
   };
 }
 
@@ -53,6 +58,27 @@ export const KEEP_NOTE_LABEL = 'Keep this note for later work of this kind';
  */
 export function keepNoteHint(name: string): string {
   return `Your answer above becomes a working agreement for ${name} once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.`;
+}
+
+/**
+ * The plan approval's second tick (15-FX, the person scope; wording draft): the note kept for
+ * later asks from the item's requester, offered where the requester is a person the manager
+ * confirmed.
+ *
+ * @param requester - The requester's name.
+ */
+export function keepNoteForRequesterLabel(requester: string): string {
+  return `Keep this note for later asks from ${requester}`;
+}
+
+/**
+ * What the second tick does, under it (wording draft).
+ *
+ * @param name - The employee's name.
+ * @param requester - The requester's name.
+ */
+export function keepNoteForRequesterHint(name: string, requester: string): string {
+  return `Your answer above becomes a working agreement for ${name} on asks from ${requester} once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.`;
 }
 
 /**
@@ -95,15 +121,54 @@ export const NOT_KEPT = 'Not kept';
 export const EVERY_EMPLOYEE_TOO_MANY = `Not in effect for every employee: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer, and you have more. You can keep it for a single employee instead.`;
 
 /**
- * Why an agreement for every employee does not bind one employee (W14-R15; wording draft): its
- * charter was approved while the owner had more employees than the check reads, so the agreement was
- * never checked against it. It stays in effect for the others, which the row says.
+ * The label of the control behind {@link EVERY_EMPLOYEE_TOO_MANY}'s last sentence (W14-R15; wording
+ * draft): the refused agreement kept for the card's employee alone.
+ *
+ * @param name - The employee whose card it is.
+ */
+export function keepForOneLabel(name: string): string {
+  return `Keep for ${name}`;
+}
+
+/**
+ * The live region once {@link keepForOneLabel} is pressed (wording draft).
+ *
+ * @param name - The employee whose card it is.
+ */
+export function keptForOneLine(name: string): string {
+  return `Kept for ${name} once Day0 checks it against ${name}'s charter.`;
+}
+
+/**
+ * Why an agreement for every employee does not bind one employee (W14-R15; wording draft): nothing
+ * checked it against the employee's charter, which was approved while the owner had more employees
+ * than the check reads, or at a time the check could not be had. It stays in effect for the
+ * others, which the row says. While the owner is past the bound the row says the bound; once the
+ * check can be had it says when Day0 checks it, and the row offers {@link CHECK_HOLD_NOW}.
+ *
+ * @param name - The employee's name.
+ * @param checkable - Whether the owner has no more employees than the check reads.
+ */
+export function uncheckedForEmployee(name: string, checkable: boolean): string {
+  return checkable
+    ? `Not in effect for ${name} yet: Day0 has not checked it against ${name}'s charter. It checks when ${name} next drafts a plan, or now with Check now. It stays in effect for your other employees.`
+    : `Not in effect for ${name}: Day0 has not checked it against ${name}'s charter, and it checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer. It stays in effect for your other employees.`;
+}
+
+/** The control on a hold that can be checked now (W14-R15's lift; wording draft). */
+export const CHECK_HOLD_NOW = 'Check now';
+
+/**
+ * The live region once {@link CHECK_HOLD_NOW} is pressed (wording draft).
  *
  * @param name - The employee's name.
  */
-export function uncheckedForEmployee(name: string): string {
-  return `Not in effect for ${name}: ${name}'s charter was approved while you had more than ${EMPLOYEES_CHECKED} employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.`;
+export function checkingHoldLine(name: string): string {
+  return `Day0 is checking it against ${name}'s charter.`;
 }
+
+/** The refusal of a hold's check while the owner has more employees than the check reads. */
+export const HOLD_PAST_THE_CHECK = `Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer.`;
 
 /** A refused row whose refusal carries no reason (none is written so; the field is optional). */
 export const REFUSED_WITHOUT_REASON = 'This would go beyond the charter. It was not kept.';
@@ -219,7 +284,7 @@ export function refusalSentence(
     case 'every-employee-too-many':
       return EVERY_EMPLOYEE_TOO_MANY;
     case 'unchecked-for-employee':
-      return uncheckedForEmployee(name);
+      return uncheckedForEmployee(name, refusal.checkable === true);
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);

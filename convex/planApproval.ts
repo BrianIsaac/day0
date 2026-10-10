@@ -225,7 +225,8 @@ const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): approves an item's plan, answering any charter
  * question the card asked, and schedules the run; with `keepNote`, also keeps the note as a working
- * agreement and schedules its check, in the same transaction.
+ * agreement and schedules its check, in the same transaction: for later work on the item's
+ * surface, or, with `keepNoteFor: 'requester'`, for later asks from the item's requester.
  */
 export const approvePlan = mutation({
   args: {
@@ -243,6 +244,13 @@ export const approvePlan = mutation({
      * for this employee in the same click, active once its check against the charter answers.
      */
     keepNote: v.optional(v.boolean()),
+    /**
+     * What a kept note is kept for (15-FX, the person scope's first writer): later work of this
+     * kind (the default, and what a page from before this argument means), or later asks from the
+     * item's requester, a person the manager confirmed. Optional, so an older page's call
+     * validates.
+     */
+    keepNoteFor: v.optional(v.union(v.literal('kind'), v.literal('requester'))),
   },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
@@ -266,7 +274,7 @@ export const approvePlan = mutation({
     await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
     if (args.keepNote === true) {
       if (!args.note?.trim()) throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
-      await keepPlanNoteInTransaction(ctx, row, args.note);
+      await keepPlanNoteInTransaction(ctx, row, args.note, args.keepNoteFor ?? 'kind');
     }
     return { ok: true };
   },

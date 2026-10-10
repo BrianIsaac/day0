@@ -77,8 +77,13 @@ describe('what the cards say of a working agreement', (): void => {
 
   it('says an agreement for every employee held for one employee alone stays in effect for the others (W14-R15)', (): void => {
     const held = { reason: 'unchecked-for-employee' as const };
+    // Re-taken (15-FX): a hold is also written when the charter's check could not be had, and it
+    // lifts once the check can be, so the row says what is true of both and what happens next.
     expect(refusalSentence(held, 'Ines', 'charter')).toBe(
-      "Not in effect for Ines: Ines's charter was approved while you had more than 50 employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.",
+      "Not in effect for Ines: Day0 has not checked it against Ines's charter, and it checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect for your other employees.",
+    );
+    expect(refusalSentence({ ...held, checkable: true }, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines yet: Day0 has not checked it against Ines's charter. It checks when Ines next drafts a plan, or now with Check now. It stays in effect for your other employees.",
     );
     expect(refusalOffersAmendment(held)).toBe(false);
   });

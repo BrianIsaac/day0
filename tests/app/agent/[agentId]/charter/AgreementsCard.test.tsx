@@ -82,6 +82,9 @@ function card(rows: readonly AgreementView[], calls: string[] = []): ReturnType<
         onKeepForEveryEmployee={async (id) => {
           calls.push(`every ${id}`);
         }}
+        onKeepForOne={async (id) => {
+          calls.push(`one ${id}`);
+        }}
         onEdit={async (id, statement) => {
           calls.push(`edit ${id} ${statement}`);
         }}
@@ -201,7 +204,59 @@ describe('the Agreements card', (): void => {
     expect(text).toContain('“Name the vessel in every customer comment.”');
     expect(text).toContain('It stays in effect for your other employees.');
     expect(view.container.querySelector('[aria-label^="Dismiss"]')).toBeNull();
+    // Past the bound nothing can check it, so the row offers no control (15-FX).
+    expect(view.container.querySelector('button')).toBeNull();
     view.unmount();
+  });
+
+  it('offers Check now on a hold once the owner is back within the bound, and checks it (W14-R15, the lift)', async (): Promise<void> => {
+    const held: AgreementView = {
+      ...refused,
+      _id: 'wa6' as Id<'workingAgreements'>,
+      statement: 'Name the vessel in every customer comment.',
+      sourceType: 'correction-promotion',
+      refusal: { reason: 'unchecked-for-employee', checkable: true },
+    };
+    const calls: string[] = [];
+    const view = card([held], calls);
+    expect(view.container.textContent).toContain(
+      "Not in effect for Priya yet: Day0 has not checked it against Priya's charter. It checks when Priya next drafts a plan, or now with Check now. It stays in effect for your other employees.",
+    );
+    await press(
+      view.container,
+      "Check “Name the vessel in every customer comment.” against Priya's charter now",
+    );
+    expect(calls).toEqual(['recheck wa6']);
+    expect(view.container.textContent).toContain("Day0 is checking it against Priya's charter.");
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('puts a control behind “You can keep it for a single employee instead”, once (W14-R15)', async (): Promise<void> => {
+    const tooMany: AgreementView = {
+      ...refused,
+      _id: 'wa7' as Id<'workingAgreements'>,
+      agentId: undefined,
+      statement: 'Quote the carrier reference.',
+      refusal: { reason: 'every-employee-too-many' },
+    };
+    const calls: string[] = [];
+    const view = card([tooMany], calls);
+    expect(view.container.textContent).toContain('You can keep it for a single employee instead.');
+    await press(view.container, 'Keep for Priya: “Quote the carrier reference.”');
+    expect(calls).toEqual(['one wa7']);
+    expect(view.container.textContent).toContain(
+      "Kept for Priya once Day0 checks it against Priya's charter.",
+    );
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+    // Kept for this employee already (in force or waiting on its check): no second keep is offered.
+    const kept = card([tooMany, { ...checking, statement: 'Quote the carrier reference.' }]);
+    expect(kept.container.querySelector('[aria-label^="Keep for Priya"]')).toBeNull();
+    expect(kept.container.querySelector('[aria-label^="Dismiss the refused"]')).not.toBeNull();
+    kept.unmount();
   });
 
   it('says a check that could not be had once it is stale, and offers Try again (W13-R30)', async (): Promise<void> => {

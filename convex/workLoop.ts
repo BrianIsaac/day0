@@ -32,6 +32,7 @@ import { isPaused, stepHoldReason } from '../src/work/pause';
 import { runHoldOf, type RunHold } from '../src/work/item-display';
 import { pausedCheckRefusal } from '../src/work/held-starts';
 import { resumeHeldStartsInTransaction } from './heldStarts';
+import { scheduleDueHoldChecks } from './workingAgreements';
 
 /**
  * The server-driven work loop, real mode only.
@@ -933,6 +934,8 @@ export async function resumeAgentStepsInTransaction(
   if (resumes) rescheduled += await resumeHeldApplies(ctx, agentId);
   // A skill's authoring and a system's orientation a pause held go on with the steps (D-8 (b)).
   if (resumes) rescheduled += await resumeHeldStartsInTransaction(ctx, agentId);
+  // A charter check a pause held left its agreements held for the employee: checked now (15-FX).
+  if (resumes) rescheduled += await scheduleDueHoldChecks(ctx, agentId, now);
   for (const row of await ready('executing', async (row) => {
     if (
       !row.executionRunId ||
