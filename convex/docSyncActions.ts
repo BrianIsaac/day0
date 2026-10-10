@@ -915,6 +915,7 @@ export const proposeRelations = internalAction({
           sourceId: args.sourceId,
           syncRunId: args.runId,
           ref,
+          room: RELATION_PROPOSALS_PER_SYNC - proposed,
         });
       } catch (error) {
         log.warn('documentation page not measured for relations', {

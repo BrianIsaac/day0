@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
 import type { SourceAuthority } from '../../src/docs/authority';
+import { RELATION_PROPOSALS_PER_SYNC } from '../../src/docs/relations';
 import type { SelectionRequest } from '../../src/docs/select';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
@@ -469,6 +470,82 @@ describe('the pages a finishing sync measures', (): void => {
       });
     expect(await written(running)).toEqual({ refs: ['runbooks/pipeline-runbook.md'], next: null });
     expect(await written(completed)).toEqual({ refs: ['last-walk.md'], next: null });
+  });
+});
+
+describe('the cap on new proposals a sync (the second pass, minor 8)', (): void => {
+  const WORDS = [
+    'Alpha',
+    'Bravo',
+    'Charlie',
+    'Delta',
+    'Echo',
+    'Foxtrot',
+    'Golf',
+    'Hotel',
+    'India',
+    'Juliet',
+    'Kilo',
+    'Lima',
+    'Mike',
+    'November',
+    'Oscar',
+    'Papa',
+    'Quebec',
+  ];
+
+  /**
+   * Seventeen runbooks in one source, each with three later versions, one in each of three other
+   * sources: measuring a runbook proposes three relations, so seventeen propose fifty-one.
+   */
+  async function versionedLibrary(harness: Harness): Promise<Source> {
+    const first = await syncingSource(harness, 'Runbooks');
+    const later = [
+      await syncingSource(harness, 'Second editions'),
+      await syncingSource(harness, 'Third editions'),
+      await syncingSource(harness, 'Fourth editions'),
+    ];
+    for (const word of WORDS) {
+      const markdown = `# ${word}\n\n${word} procedure, in full.`;
+      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
+      for (const [index, source] of later.entries()) {
+        await storedPage(harness, source, {
+          ref: `${word}-v${index + 2}.md`,
+          title: `${word} v${index + 2}`,
+          markdown,
+          updatedAt: index + 2,
+        });
+      }
+    }
+    return first;
+  }
+
+  it('stops a page’s measure at the room it is given', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const first = await versionedLibrary(harness);
+    expect(
+      await harness.mutation(internal.docRelations.measurePage, {
+        sourceId: first.sourceId,
+        syncRunId: first.runId,
+        ref: 'Alpha.md',
+        room: 1,
+      }),
+    ).toBe(1);
+    expect(await relations(harness)).toHaveLength(1);
+    // With no room given a page proposes every relation its three candidates hold.
+    expect(await measure(harness, first, 'Bravo.md')).toBe(3);
+  });
+
+  it('proposes exactly the cap for a sync whose pages hold more, where the last page measured went over it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const first = await versionedLibrary(harness);
+    expect(
+      await harness.action(internal.docSyncActions.proposeRelations, {
+        sourceId: first.sourceId,
+        runId: first.runId,
+      }),
+    ).toEqual({ measured: 17, proposed: RELATION_PROPOSALS_PER_SYNC });
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
   });
 });
 

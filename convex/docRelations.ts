@@ -279,11 +279,19 @@ async function readersOfEither(
  * Reads the page, its blocks and at most `RELATION_CANDIDATES_PER_PAGE`
  * other pages with theirs. Writes relation rows and `documentation.relation-proposed` on the
  * record of each employee that reads either page; no page's status, no plan and no cite changes.
+ * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
+ * most a sync proposes whatever its last page holds.
  *
  * @returns How many relations it proposed.
  */
 export const measurePage = internalMutation({
-  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  args: {
+    sourceId: v.id('docSources'),
+    syncRunId: v.id('docSyncRuns'),
+    ref: v.string(),
+    /** The new proposals this call may still write; absent, every one its candidates hold. */
+    room: v.optional(v.number()),
+  },
   handler: async (ctx, args): Promise<number> => {
     const source = await ctx.db.get(args.sourceId);
     if (source === null) return 0;
@@ -305,6 +313,7 @@ export const measurePage = internalMutation({
       page,
       self.blocks,
     )) {
+      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) break;
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
