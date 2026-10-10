@@ -1,14 +1,16 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useAction } from 'convex/react';
+import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { feishuLocator, feishuReaderSecret, type FeishuRegion } from '@/docs/feishu-source';
 import { REPOSITORY_URL } from '@/setup/quickstart';
 import { Button } from '../components/Button';
 import { INPUT_CLASS } from '../components/Field';
 import { refusalText } from '../components/use-change';
+import { TRUST_HELP, TRUST_NAMES } from './SourceTable';
 
 /** The kinds of location the backend reads, as `docSources.link` takes them. */
 export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu';
@@ -238,6 +240,8 @@ export function SourceKindHelp(props: {
  */
 export function LinkSourceForm(): React.ReactNode {
   const link = useAction(api.docSources.link);
+  const setAuthority = useMutation(api.docStatus.setSourceAuthority);
+  const [authority, setAuthorityChoice] = useState<SourceAuthority>('team');
   const [kind, setKind] = useState<SourceKind>('folder');
   const [label, setLabel] = useState(FOLDER_LABEL);
   const [locator, setLocator] = useState('.');
@@ -262,13 +266,16 @@ export function LinkSourceForm(): React.ReactNode {
     setBusy(true);
     setError(null);
     try {
-      await link({
+      const sourceId = await link({
         label,
         kind,
         locator: kind === 'feishu' ? feishuLocator(region, locator) : locator,
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: credentialForLink(kind, credential),
       });
+      // A new source is a team source (A19); another trust is set on it once it is linked.
+      if (authority !== 'team') await setAuthority({ sourceId, authority });
+      setAuthorityChoice('team');
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
       setLocator(cleared.locator);
@@ -380,6 +387,27 @@ export function LinkSourceForm(): React.ReactNode {
           </div>
         ) : null}
         {kind === 'feishu' ? <FeishuAppFields /> : null}
+        <div className="grid gap-1.5">
+          <label htmlFor="source-trust" className={LABEL}>
+            Trust
+          </label>
+          <select
+            id="source-trust"
+            value={authority}
+            onChange={(event) => setAuthorityChoice(event.target.value as SourceAuthority)}
+            aria-describedby="source-trust-help"
+            className={`${INPUT_CLASS} w-full`}
+          >
+            {SOURCE_AUTHORITIES.map((value) => (
+              <option key={value} value={value}>
+                {TRUST_NAMES[value]}
+              </option>
+            ))}
+          </select>
+          <p id="source-trust-help" className={HELP}>
+            {TRUST_HELP}
+          </p>
+        </div>
         <ReaderSecretField kind={kind} />
         <SourceKindHelp kind={kind} serverKind={serverKind} />
         <p role="alert" className="text-[13px] text-[var(--color-danger)]">

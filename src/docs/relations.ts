@@ -1,5 +1,13 @@
 import type { RelationKind } from './authority';
+import { SHARED_TEXT_DUPLICATE, type RelationMeasure } from './relation-words';
 import { frontMatterStatus } from './status';
+
+export {
+  RELATION_MEASURES,
+  SHARED_TEXT_DUPLICATE,
+  relationWords,
+  type RelationMeasure,
+} from './relation-words';
 
 /*
  * How two pages may relate (wave 15, 15-A; the wave file's section 6.2; K-9): the measures that
@@ -7,26 +15,6 @@ import { frontMatterStatus } from './status';
  * dismisses on a card. Nothing here decides anything: no relation is confirmed, and no page
  * merged, by code. Pure, over the pages' titles, front matter and stored blocks.
  */
-
-/**
- * The measures a proposal's evidence names (`docRelations.evidence.measure`), which the card
- * turns into words:
- *
- * - `shared-text`: the percent of the two pages' text they hold in common, block for block.
- * - `title-version`: the two titles are one title but for a version, a year or a draft word.
- * - `names-successor`: one page's front matter names the other (`supersedes:`,
- *   `superseded_by:`).
- * - `heading-figures`: under one heading the two pages say the same sentence with other figures.
- */
-export const RELATION_MEASURES = [
-  'shared-text',
-  'title-version',
-  'names-successor',
-  'heading-figures',
-] as const;
-
-/** One measure. */
-export type RelationMeasure = (typeof RELATION_MEASURES)[number];
 
 /** The most new proposals one source's finishing sync writes; the rest are proposed at the next. */
 export const RELATION_PROPOSALS_PER_SYNC = 50;
@@ -39,9 +27,6 @@ export const RELATION_CANDIDATES_PER_PAGE = 3;
 
 /** The most block hashes one measure of a proposal keeps, so a relation row stays small. */
 export const RELATION_EVIDENCE_BLOCKS = 8;
-
-/** The percent of shared text from which two pages are proposed as one document twice. */
-export const SHARED_TEXT_DUPLICATE = 60;
 
 /** A stored block as the measures read it. */
 export interface MeasuredBlock {
@@ -325,33 +310,4 @@ export function measureRelation(
     return { kind: 'possible_duplicate', ...ordered(newer), evidence };
   }
   return undefined;
-}
-
-/**
- * A proposal's strongest measure in the card's words (the wave file's section 8): "share 78
- * percent of their text", "have the same title but for a version", "say different figures
- * under "Thresholds"", "one names the other as the page it replaces".
- *
- * @param evidence - The relation's evidence, as stored.
- * @param heading - The heading a conflict sits under, when the caller read it.
- */
-export function relationWords(
-  evidence: ReadonlyArray<Pick<RelationEvidence, 'measure' | 'value'>>,
-  heading?: string,
-): string {
-  const has = (measure: RelationMeasure): number | undefined =>
-    evidence.find((entry) => entry.measure === measure)?.value;
-  if (has('names-successor') !== undefined) return 'one names the other as the page it replaces';
-  if (has('heading-figures') !== undefined) {
-    return heading === undefined || heading === ''
-      ? 'say different figures under the same heading'
-      : `say different figures under "${heading}"`;
-  }
-  const share = has('shared-text');
-  if (has('title-version') !== undefined) {
-    return share !== undefined && share >= SHARED_TEXT_DUPLICATE
-      ? `have the same title but for a version and share ${share} percent of their text`
-      : 'have the same title but for a version';
-  }
-  return `share ${share ?? 0} percent of their text`;
 }

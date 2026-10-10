@@ -1,0 +1,104 @@
+'use client';
+
+import { useRef } from 'react';
+import { useMutation } from 'convex/react';
+import { api } from '@convex/_generated/api';
+import { Button } from '../../../components/Button';
+import { Card } from '../../../components/Card';
+import { StatusRegion } from '../../../components/StatusRegion';
+import { useChange } from '../../../components/use-change';
+import type { RelationAnswer, RelationCardRow } from './RelationCard';
+
+/**
+ * The card for two pages that disagree (the wave file's section 8). A conflict the measures
+ * proposed says the two "may disagree" and holds nothing; the manager confirms it ("They
+ * disagree") or settles it at once. A confirmed conflict is the one the employee holds steps for:
+ * a plan that follows the disputed passage waits until the manager says which page is right or
+ * that both hold.
+ *
+ * @param relation - The conflict, with the heading and the figures each page gives.
+ * @param name - The employee's name, when the card is on an employee's tab.
+ */
+export function ConflictCard({ relation, name }: { relation: RelationCardRow; name?: string }) {
+  const decide = useMutation(api.docRelations.decide);
+  const card = useRef<HTMLElement>(null);
+  const change = useChange(card);
+  const { from, to, disagreement } = relation;
+  const confirmed = relation.status === 'confirmed';
+  const answer = (decision: RelationAnswer, done: string): void =>
+    change.run(() => decide({ relationId: relation._id, decision }), {
+      done,
+      refused: 'The answer was not recorded.',
+    });
+  const under = disagreement ? ` under “${disagreement.heading}”` : '';
+  const figures = disagreement
+    ? `: ${disagreement.figures.from} against ${disagreement.figures.to}`
+    : '';
+  return (
+    <Card
+      title={confirmed ? 'Two pages disagree' : 'These two pages may disagree'}
+      tone={confirmed ? 'danger' : 'warn'}
+      focusRef={card}
+    >
+      <div className="grid gap-3">
+        <p className="text-sm text-[var(--color-fg-2)]">
+          “{from.title}” ({from.source}) and “{to.title}” ({to.source}){' '}
+          {confirmed ? 'disagree' : 'may disagree'}
+          {under}
+          {figures}.{' '}
+          {confirmed
+            ? `${name ?? 'Each employee'} holds any step that relies on it and asks you.`
+            : 'Nothing is held until you say they disagree.'}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {relation.offered.includes('disagree') ? (
+            <Button
+              size="small"
+              disabled={change.busy}
+              onClick={() =>
+                answer('disagree', 'Confirmed: any step that relies on it is held for you.')
+              }
+            >
+              They disagree
+            </Button>
+          ) : null}
+          {relation.offered.includes('from-is-right') ? (
+            <Button
+              size="small"
+              className="!whitespace-normal text-left [overflow-wrap:anywhere]"
+              disabled={change.busy}
+              onClick={() =>
+                answer('from-is-right', `“${from.title}” stands; “${to.title}” is superseded.`)
+              }
+            >
+              “{from.title}” ({from.source}) is right
+            </Button>
+          ) : null}
+          {relation.offered.includes('to-is-right') ? (
+            <Button
+              size="small"
+              className="!whitespace-normal text-left [overflow-wrap:anywhere]"
+              disabled={change.busy}
+              onClick={() =>
+                answer('to-is-right', `“${to.title}” stands; “${from.title}” is superseded.`)
+              }
+            >
+              “{to.title}” ({to.source}) is right
+            </Button>
+          ) : null}
+          {relation.offered.includes('both-hold') ? (
+            <Button
+              size="small"
+              variant="quiet"
+              disabled={change.busy}
+              onClick={() => answer('both-hold', 'Both pages hold; nothing is held for it.')}
+            >
+              Both hold
+            </Button>
+          ) : null}
+        </div>
+        <StatusRegion outcome={change.outcome} />
+      </div>
+    </Card>
+  );
+}

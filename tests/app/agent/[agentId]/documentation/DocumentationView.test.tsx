@@ -11,6 +11,8 @@ const backend = vi.hoisted(() => ({
   pages: {} as Record<string, unknown[]>,
   /** Every paginated read asked for, by source id. */
   paged: [] as string[],
+  /** Every mutation called, by function name. */
+  calls: [] as Array<{ name: string; args: unknown }>,
 }));
 
 vi.mock('convex/react', () => ({
@@ -25,7 +27,11 @@ vi.mock('convex/react', () => ({
       loadMore: (): void => undefined,
     };
   },
-  useMutation: () => async (): Promise<void> => undefined,
+  useMutation:
+    (reference: unknown) =>
+    async (args: unknown): Promise<void> => {
+      backend.calls.push({ name: getFunctionName(reference as never), args });
+    },
   useAction: () => async (): Promise<void> => undefined,
 }));
 
@@ -33,7 +39,7 @@ import { DocumentationView } from '../../../../../app/agent/[agentId]/documentat
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
-import { mount, press } from '../../../../fixtures/dom/press';
+import { choose, mount, press, said, settle } from '../../../../fixtures/dom/press';
 
 /** Two linked sources, the second left out when the employee was deployed. */
 const SOURCES = [
@@ -67,7 +73,11 @@ const SOURCES = [
   },
 ];
 
-/** The wiki's two stored pages, one the last sync could not read. */
+/**
+ * The wiki's two stored pages, one the last sync could not read. Each row carries its status and
+ * what decided it since 15-A (A5): the first as the manager marked it, the second with a
+ * relation still to answer.
+ */
 const WIKI_PAGES = [
   {
     _id: 'page-1',
@@ -75,6 +85,8 @@ const WIKI_PAGES = [
     title: 'Team overview',
     url: 'https://wiki.example/overview',
     updatedAt: Date.UTC(2026, 8, 25, 9, 0),
+    status: 'active',
+    statusSource: 'default',
   },
   {
     _id: 'page-2',
@@ -82,6 +94,56 @@ const WIKI_PAGES = [
     title: 'Escalation paths',
     updatedAt: Date.UTC(2026, 8, 26, 9, 10),
     unreadReason: 'the page timed out',
+    status: 'active',
+    statusSource: 'default',
+    possiblySuperseded: true,
+  },
+];
+
+/** The two relations the manager has still to answer: a later version, and a confirmed conflict. */
+const RELATIONS = [
+  {
+    _id: 'relation-1',
+    kind: 'possible_successor',
+    status: 'proposed',
+    from: {
+      sourceId: 'source-guides',
+      ref: 'escalation-v2.md',
+      title: 'Escalation paths, draft v2',
+      source: 'How-to guides',
+      updatedAt: Date.UTC(2026, 8, 26, 9, 10),
+    },
+    to: {
+      sourceId: 'source-wiki',
+      ref: 'escalation.md',
+      title: 'Escalation paths',
+      source: 'RevOps team wiki',
+      updatedAt: Date.UTC(2026, 8, 25, 9, 0),
+    },
+    evidence: [{ measure: 'shared-text', value: 78 }],
+    offered: ['supersedes', 'keep-both', 'not-the-same'],
+  },
+  {
+    _id: 'relation-2',
+    kind: 'possible_conflict',
+    status: 'confirmed',
+    from: {
+      sourceId: 'source-guides',
+      ref: 'finance.md',
+      title: 'Finance escalation',
+      source: 'How-to guides',
+      updatedAt: 2,
+    },
+    to: {
+      sourceId: 'source-wiki',
+      ref: 'close.md',
+      title: 'Close checklist',
+      source: 'RevOps team wiki',
+      updatedAt: 1,
+    },
+    evidence: [{ measure: 'heading-figures', value: 1 }],
+    disagreement: { heading: 'Thresholds', figures: { from: '10,000', to: '5,000' } },
+    offered: ['from-is-right', 'to-is-right', 'both-hold'],
   },
 ];
 
@@ -101,7 +163,14 @@ function populated(): void {
   backend.pages = {
     'source-wiki': WIKI_PAGES,
     'source-guides': [
-      { _id: 'page-3', ref: 'sheets.md', title: 'Spreadsheet guide', updatedAt: 1 },
+      {
+        _id: 'page-3',
+        ref: 'sheets.md',
+        title: 'Spreadsheet guide',
+        updatedAt: 1,
+        status: 'active',
+        statusSource: 'default',
+      },
     ],
   };
 }
@@ -110,6 +179,7 @@ afterEach((): void => {
   backend.queries = {};
   backend.pages = {};
   backend.paged = [];
+  backend.calls = [];
   document.body.replaceChildren();
 });
 
@@ -172,18 +242,111 @@ describe('DocumentationView', () => {
   it('offers the link form in the kinds the backend reads', () => {
     populated();
     const html = renderToStaticMarkup(asEmployee(<DocumentationView />, { surfaceMode: 'real' }));
-    for (const kind of ['folder', 'git', 'urls', 'mcp']) expect(html).toContain(`value="${kind}"`);
+    // Re-pinned by 15-A: the form offers Feishu too since 14-F, which the list here had not named.
+    for (const kind of ['folder', 'git', 'urls', 'mcp', 'feishu']) {
+      expect(html).toContain(`value="${kind}"`);
+    }
     expect(html).toContain('Link a location');
   });
 
-  it('draws no trust, no decider and no relation card, which have no records behind them', () => {
+  // Re-pinned by 15-A: this test pinned the absence of trust, the decider and the relation card
+  // "which have no records behind them". The records exist since 0.19.0 (A5), so it now pins
+  // every state the prototype draws (`agent-documentation.html`).
+  it('draws trust for each source, each page’s status with who decided it, and a card for each relation still to answer', () => {
     populated();
-    const html = renderToStaticMarkup(asEmployee(<DocumentationView />, { surfaceMode: 'real' }));
-    expect(html).not.toMatch(/Trust|Decided by|versions of the same runbook/);
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const text = view.container.textContent ?? '';
+    // The Sources card says the order, and each source has its Trust select; absent reads as team.
+    expect(text).toContain(
+      'official over team over personal; within a source a page’s status decides; recency only breaks ties',
+    );
+    const trust = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Trust for RevOps team wiki"]',
+    );
+    expect(trust?.value).toBe('team');
+    expect([...(trust?.options ?? [])].map((option) => option.textContent)).toEqual([
+      'Official',
+      'Team',
+      'Personal',
+    ]);
+    // The relation card, in the prototype's words, with the measure and the three answers.
+    expect(text).toContain('These two look like versions of the same runbook');
+    expect(text).toContain(
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths, draft v2” (How-to guides, edited 26 Sep 2026, 09:10) share 78 percent of their text. Mira reads both until you say otherwise.',
+    );
+    expect(text).toContain('Keep both');
+    expect(text).toContain('Not the same');
+    // The conflict card for a confirmed conflict, in section 8's words.
+    expect(text).toContain(
+      '“Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki) disagree under “Thresholds”: 10,000 against 5,000. Mira holds any step that relies on it and asks you.',
+    );
+    expect(text).toContain('Both hold');
+    // The page table's Status and Decided by columns.
+    expect(text).toContain('Decided by');
+    expect(text).toContain('Possibly superseded');
+    expect(text).toContain('relation, above');
+    view.unmount();
   });
 
-  it('has no axe violation and gives every control a 44 px target with both tables populated', async () => {
+  it('changes a source’s trust from its row and says so', async () => {
     populated();
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const trust = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Trust for RevOps team wiki"]',
+    )!;
+    await choose(trust, 'official');
+    await settle();
+    expect(backend.calls).toEqual([
+      {
+        name: 'docStatus:setSourceAuthority',
+        args: { sourceId: 'source-wiki', authority: 'official' },
+      },
+    ]);
+    expect(said(view.container)).toContain('RevOps team wiki is now trusted as official.');
+    view.unmount();
+  });
+
+  it('records the manager’s answer on a relation’s card and on a conflict’s', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    await press(
+      view.container,
+      '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    await settle();
+    await press(view.container, 'Both hold');
+    await settle();
+    expect(backend.calls).toEqual([
+      { name: 'docRelations:decide', args: { relationId: 'relation-1', decision: 'supersedes' } },
+      { name: 'docRelations:decide', args: { relationId: 'relation-2', decision: 'both-hold' } },
+    ]);
+    view.unmount();
+  });
+
+  it('draws a proposed conflict as one that may disagree and holds nothing, with the answer that confirms it', () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...RELATIONS[1],
+        status: 'proposed',
+        offered: ['disagree', 'from-is-right', 'to-is-right', 'both-hold'],
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('These two pages may disagree');
+    expect(text).toContain(
+      'may disagree under “Thresholds”: 10,000 against 5,000. Nothing is held until you say they disagree.',
+    );
+    expect(text).toContain('They disagree');
+    view.unmount();
+  });
+
+  it('has no axe violation and gives every control a 44 px target with both tables and both cards populated', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     for (const control of view.container.querySelectorAll('button, input, select, textarea')) {

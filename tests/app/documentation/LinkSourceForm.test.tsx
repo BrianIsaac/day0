@@ -17,6 +17,13 @@ vi.mock('convex/react', () => ({
       if (backend.refusal !== undefined) throw new Error(backend.refusal);
       return 'source-1';
     },
+  // The form sets a new source's trust once it is linked (15-A).
+  useMutation:
+    (reference: unknown) =>
+    async (args: unknown): Promise<null> => {
+      backend.calls.push({ name: getFunctionName(reference as never), args });
+      return null;
+    },
 }));
 
 import { LinkSourceForm } from '../../../app/documentation/LinkSourceForm';
@@ -32,6 +39,52 @@ function field<Element extends HTMLElement>(scope: ParentNode, id: string): Elem
 afterEach((): void => {
   backend.calls = [];
   backend.refusal = undefined;
+});
+
+describe('LinkSourceForm and the trust of a new source (15-A; A19)', (): void => {
+  /** Choose an option of one of the form's selects. */
+  function choose(scope: ParentNode, id: string, value: string): void {
+    const select = field<HTMLSelectElement>(scope, id);
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    act((): void => {
+      setter?.call(select, value);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  it('offers Official, Team and Personal, with Team chosen and what the three mean under it', (): void => {
+    const view = mount(<LinkSourceForm />);
+    const trust = field<HTMLSelectElement>(view.container, 'source-trust');
+    expect([...trust.options].map((option) => [option.value, option.textContent])).toEqual([
+      ['official', 'Official'],
+      ['team', 'Team'],
+      ['personal', 'Personal'],
+    ]);
+    expect(trust.value).toBe('team');
+    expect(view.container.textContent).toContain(
+      'Official beats team beats personal. Within a source, a page’s own status decides; recency only breaks ties.',
+    );
+    view.unmount();
+  });
+
+  it('links a team source with no second call, and sets another trust on the source once it is linked', async (): Promise<void> => {
+    const view = mount(<LinkSourceForm />);
+    await press(view.container, 'Link location');
+    await settle();
+    expect(backend.calls.map((call) => call.name)).toEqual(['docSources:link']);
+    backend.calls = [];
+    choose(view.container, 'source-trust', 'official');
+    await press(view.container, 'Link location');
+    await settle();
+    expect(backend.calls.map((call) => call.name)).toEqual([
+      'docSources:link',
+      'docStatus:setSourceAuthority',
+    ]);
+    expect(backend.calls[1].args).toEqual({ sourceId: 'source-1', authority: 'official' });
+    // The next source starts as a team source again.
+    expect(field<HTMLSelectElement>(view.container, 'source-trust').value).toBe('team');
+    view.unmount();
+  });
 });
 
 describe('LinkSourceForm', (): void => {

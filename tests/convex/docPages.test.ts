@@ -64,6 +64,9 @@ describe('docPages.listForSource', (): void => {
       .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE });
 
     expect(result.isDone).toBe(true);
+    // Re-pinned by 15-A: every row says its status and what decided it (A5), where the table
+    // waited on the authority records.
+    const undecided = { status: 'active', statusSource: 'default' };
     expect(result.page.map((row) => ({ ...row, _id: undefined }))).toEqual([
       {
         _id: undefined,
@@ -71,6 +74,7 @@ describe('docPages.listForSource', (): void => {
         title: 'Team overview',
         url: 'https://wiki.example/overview',
         updatedAt: 4_000,
+        ...undecided,
       },
       {
         _id: undefined,
@@ -78,9 +82,96 @@ describe('docPages.listForSource', (): void => {
         title: 'Escalation paths',
         updatedAt: 4_000,
         unreadReason: 'the page timed out',
+        ...undecided,
       },
-      { _id: undefined, ref: 'on-call.md', title: 'On-call rotation', updatedAt: 4_000 },
+      {
+        _id: undefined,
+        ref: 'on-call.md',
+        title: 'On-call rotation',
+        updatedAt: 4_000,
+        ...undecided,
+      },
     ]);
+  });
+
+  it('says each page’s status, what decided it, who and when for the manager, and a relation still to answer (15-A)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await seed(harness);
+    await harness.run(async (ctx) => {
+      const pages = await ctx.db.query('docPages').collect();
+      const byRef = new Map(pages.map((page) => [page.ref, page]));
+      // The manager marked one a draft; another manager marked one before the handover.
+      await ctx.db.patch(byRef.get('overview.md')!._id, {
+        status: 'draft',
+        statusSource: 'manager',
+        decidedBy: 'boss@day0.local',
+        decidedAt: 6_000,
+      });
+      await ctx.db.patch(byRef.get('on-call.md')!._id, {
+        status: 'superseded',
+        statusSource: 'manager',
+        decidedBy: 'earlier@day0.local',
+        decidedAt: 5_000,
+        supersededBy: { sourceId, ref: 'overview.md' },
+      });
+      // A relation still to answer proposes a later version of the escalation page.
+      await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId, ref: 'overview.md' },
+        to: { sourceId, ref: 'escalation.md' },
+        kind: 'possible_successor',
+        evidence: [{ measure: 'title-version', value: 1 }],
+        status: 'proposed',
+        createdAt: 7_000,
+      });
+    });
+    const result = await harness
+      .withIdentity(managerIdentity())
+      .query(api.docPages.listForSource, { sourceId, paginationOpts: FIRST_PAGE });
+    const rows = Object.fromEntries(
+      result.page.map(
+        ({
+          ref,
+          status,
+          statusSource,
+          decidedAt,
+          decidedBy,
+          decidedByYou,
+          possiblySuperseded,
+          supersededBy,
+        }) => [
+          ref,
+          {
+            status,
+            statusSource,
+            decidedAt,
+            decidedBy,
+            decidedByYou,
+            possiblySuperseded,
+            supersededBy,
+          },
+        ],
+      ),
+    );
+    expect(rows['overview.md']).toEqual({
+      status: 'draft',
+      statusSource: 'manager',
+      decidedAt: 6_000,
+      decidedByYou: true,
+    });
+    expect(rows['on-call.md']).toEqual({
+      status: 'superseded',
+      statusSource: 'manager',
+      decidedAt: 5_000,
+      decidedBy: 'earlier@day0.local',
+      decidedByYou: false,
+      supersededBy: 'Team overview',
+    });
+    expect(rows['escalation.md']).toEqual({
+      status: 'active',
+      statusSource: 'default',
+      possiblySuperseded: true,
+    });
   });
 
   it('returns at most its row bound however many are asked for', async (): Promise<void> => {
