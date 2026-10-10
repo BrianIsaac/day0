@@ -101,6 +101,24 @@ export function VerdictSection({
     );
   }
   const holder = colleagueHolding(item);
+  if (holder?.settled) {
+    const { ticket, title, on } = holder.settled;
+    return (
+      <ItemSection>
+        <Note>
+          <Lead>Skipped.</Lead>{' '}
+          <Link
+            href={`/agent/${holder.agentId}`}
+            className="text-[var(--color-accent)] underline underline-offset-4"
+          >
+            {holder.name}
+          </Link>{' '}
+          settled {ticket} with a comment{on ? ` on ${on}` : ''}
+          {title ? ` (${title})` : ''}.
+        </Note>
+      </ItemSection>
+    );
+  }
   if (holder) {
     return (
       <ItemSection>

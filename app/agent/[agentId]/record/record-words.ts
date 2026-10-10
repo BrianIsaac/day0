@@ -1044,8 +1044,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${counted(p.readmitted, 'parked item') ?? 'Parked items'} sent back to be evaluated: ${
       REQUEUED_BECAUSE[text(p.trigger) ?? ''] ?? 'a policy changed'
     }`,
-  'work.claim-refused': (_, subject) =>
-    `${subject.name} did not take ${itemOf(subject)}: another employee holds the ticket`,
+  'work.claim-refused': (p, subject) => {
+    const { name, settled } = p.holder ?? {};
+    const on = text(settled?.commentedOn);
+    return settled === undefined
+      ? `${subject.name} did not take ${itemOf(subject)}: another employee holds the ticket`
+      : `${subject.name} did not take ${itemOf(subject)}: ${text(name) ?? 'another employee'} settled ${text(settled.ticket) ?? 'the ticket it names'} with a comment${on ? ` on ${on}` : ''}`;
+  },
   'work.evaluated': (p, subject) => {
     const decision = text(p.decision);
     if (decision === REEVALUATION) {

@@ -597,6 +597,25 @@ describe('recordWords', (): void => {
       'Mira ended \u201cReconcile vendor charges\u201d not done; its card says why.',
     );
   });
+  it('says a colleague settled the ticket an ask names, with the comment’s date, where one did (D-1 (a))', (): void => {
+    const holder = { name: 'Mateo', title: 'Post the September close status note' };
+    expect(recordWords({ type: 'work.claim-refused', payload: { holder } }, subject)).toBe(
+      'Mira did not take “Draft response for new tier-two RevOps ask”: another employee holds the ticket.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'work.claim-refused',
+          payload: {
+            holder: { ...holder, settled: { ticket: 'FIN-1', commentedOn: '19 September 2026' } },
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Mira did not take “Draft response for new tier-two RevOps ask”: Mateo settled FIN-1 with a comment on 19 September 2026.',
+    );
+  });
 });
 
 describe('the access request and the organisation connection ledger in the record (11-AO)', (): void => {

@@ -1041,3 +1041,141 @@ describe('what the executor is told other work items hold (finding D, the reply 
     expect(await t.query(internal.work.itemsHeldElsewhere, { workItemId: ask })).toEqual([]);
   });
 });
+
+describe("a Slack ask naming a ticket a colleague settled (the wave 14 review's D-1 (a))", (): void => {
+  const LANDED_AT = Date.UTC(2026, 8, 19, 3, 4, 10);
+  /** FIN-1's own row as the run left it, its note stamped with when it landed. */
+  const SETTLED_OUTPUT = {
+    ...TICKET_COMPLETED_OUTPUT,
+    applied: TICKET_COMPLETED_OUTPUT.applied.map((row) =>
+      row.providerId === FIRST_NOTE_ID ? { ...row, landedAt: LANDED_AT } : row,
+    ),
+  };
+  const NAMING_ASK = '@Day0 can you post the September close status note on FIN-1?';
+
+  beforeEach((): void => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    restoreSurfaceMode();
+  });
+
+  /** A colleague's `#finance-close` ask, discovered and not yet evaluated, in the words given. */
+  async function seedAsk(
+    t: Harness,
+    agentId: Id<'agents'>,
+    words: string,
+  ): Promise<Id<'workItems'>> {
+    const workItemId = await seedItem(t, agentId, {
+      source: 'ask',
+      state: 'discovered',
+      claims: false,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { contentSummary: words, verdict: undefined });
+    });
+    return workItemId;
+  }
+
+  it("is skipped at the claim, naming the colleague and the comment's date, with no model call", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    const ticket = await seedItem(t, mateo, {
+      source: 'ticket',
+      state: 'completed',
+      output: SETTLED_OUTPUT,
+    });
+    const ask = await seedAsk(t, aiko, NAMING_ASK);
+
+    const claim = await t.mutation(internal.work.claimLoopStep, {
+      workItemId: ask,
+      step: 'evaluation',
+    });
+
+    // Not claimed, so the evaluating action makes no model call (`work:claimLoopStep`'s contract).
+    expect(claim).toEqual({ claimed: false, reason: 'held-elsewhere' });
+    const row = (await t.run(async (ctx) => await ctx.db.get(ask)))!;
+    expect(row.state).toBe('skipped');
+    expect(row.skipReason).toBe(
+      `claimed-by-colleague: Mateo settled FIN-1 with a comment on 19 September 2026 (${TICKET_TITLE})`,
+    );
+    expect((row.verdict as { claimedBy?: unknown }).claimedBy).toMatchObject({
+      agentId: mateo,
+      workItemId: ticket,
+      name: 'Mateo',
+      title: TICKET_TITLE,
+      settled: { ticket: 'FIN-1', commentedAt: LANDED_AT, commentedOn: '19 September 2026' },
+    });
+    const refused = (await t.run(async (ctx) => await ctx.db.query('events').collect())).filter(
+      (event) => event.type === 'work.claim-refused',
+    );
+    expect(refused.map((event) => event.payload)).toMatchObject([
+      {
+        workItemId: ask,
+        key: 'linear:FIN-1',
+        holder: { name: 'Mateo', settled: { ticket: 'FIN-1' } },
+      },
+    ]);
+  });
+
+  it('is left for its evaluation while the colleague has landed no comment, so the apply still withholds (14-FW 7c)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'executing' });
+    const ask = await seedAsk(t, aiko, NAMING_ASK);
+
+    const claim = await t.mutation(internal.work.claimLoopStep, {
+      workItemId: ask,
+      step: 'evaluation',
+    });
+
+    expect(claim.claimed).toBe(true);
+    expect((await t.run(async (ctx) => await ctx.db.get(ask)))!.state).toBe('discovered');
+  });
+
+  it("is left for its evaluation when it names no ticket, the employee's own ticket, or another owner's", async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    const stranger = await seedEmployee(t, { name: 'Noor', userId: 'another-owner' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: SETTLED_OUTPUT });
+    const unnamed = await seedAsk(t, aiko, '@Day0 can you post where the September close stands?');
+    const own = await seedAsk(t, mateo, NAMING_ASK);
+    const elsewhere = await seedAsk(t, stranger, NAMING_ASK);
+
+    for (const workItemId of [unnamed, own, elsewhere]) {
+      const claim = await t.mutation(internal.work.claimLoopStep, {
+        workItemId,
+        step: 'evaluation',
+      });
+      expect(claim.claimed).toBe(true);
+    }
+  });
+
+  it('is evaluated once the manager takes it anyway with Retry', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: SETTLED_OUTPUT });
+    const ask = await seedAsk(t, aiko, NAMING_ASK);
+    await t.mutation(internal.work.claimLoopStep, { workItemId: ask, step: 'evaluation' });
+
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId: ask });
+    const again = await t.mutation(internal.work.claimLoopStep, {
+      workItemId: ask,
+      step: 'evaluation',
+    });
+
+    expect(again.claimed).toBe(true);
+    expect((await t.run(async (ctx) => await ctx.db.get(ask)))!.state).toBe('discovered');
+  });
+});

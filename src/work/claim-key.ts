@@ -13,7 +13,7 @@ import {
 } from '../surfaces/policy';
 import { messageTexts } from './evidence-claims';
 import { planObligations } from './obligations';
-import type { ExecutionPlan, MockAction } from './types';
+import { CLAIMED_BY_COLLEAGUE_SKIP_PREFIX, type ExecutionPlan, type MockAction } from './types';
 
 /** What a provider item's identity is read from on the surface that found it. */
 export interface ClaimKeySurface {
@@ -358,6 +358,19 @@ export function writeTargetIds(
   ].slice(0, WRITE_TARGET_LIMIT);
 }
 
+/**
+ * The ticket a holder settled with a landed comment, where a row was refused for naming it rather
+ * than for being discovered from it (the wave 14 review's D-1 (a)).
+ */
+export interface SettledTicket {
+  /** The ticket as the ask named it and the tracker prints it (`FIN-1`). */
+  readonly ticket: string;
+  /** When the comment landed; absent for one sent before landing times were kept. */
+  readonly commentedAt?: number;
+  /** That day in the refused employee's zone, as the pages print a day. */
+  readonly commentedOn?: string;
+}
+
 /** The employee and work item holding a provider item, as a refused row records it. */
 export interface ClaimHolder {
   readonly claimId: Id<'externalClaims'>;
@@ -365,6 +378,23 @@ export interface ClaimHolder {
   readonly workItemId: Id<'workItems'>;
   readonly name: string;
   readonly title: string;
+  /** Set when the row was refused for naming a ticket this holder had already settled. */
+  readonly settled?: SettledTicket;
+}
+
+/**
+ * The skip an ask becomes when a colleague settled the ticket it names: who, which ticket, the
+ * day the comment landed and the colleague's work item, after the colleague-skip prefix so every
+ * reader of a colleague's hold (the card's link, the release that sends the row back) reads it.
+ *
+ * @param holder - The colleague's work item and what it settled.
+ */
+export function settledByColleagueReason(
+  holder: Pick<ClaimHolder, 'name' | 'title'> & { readonly settled: SettledTicket },
+): string {
+  const { ticket, commentedOn } = holder.settled;
+  const when = commentedOn === undefined ? '' : ` on ${commentedOn}`;
+  return `${CLAIMED_BY_COLLEAGUE_SKIP_PREFIX}${holder.name} settled ${ticket} with a comment${when} (${holder.title})`;
 }
 
 /** The work item holding an external item a write addresses, as the ledger names it. */
@@ -524,6 +554,21 @@ export function heldElsewhereLines(items: readonly HeldExternalItem[] | undefine
 
 /** A ticket id as a plan step writes one: `FIN-1`, `REVOPS-27`. */
 const TICKET_ID = /(?<![A-Za-z0-9-])[A-Za-z][A-Za-z0-9]{1,9}-\d+(?![A-Za-z0-9])/g;
+
+/** The most tickets read off one ask at the claim step: each costs a claim read per tracker. */
+export const NAMED_TICKET_LIMIT = 4;
+
+/**
+ * The ticket ids a chat ask's words name, each once in the order named and in the capitals a
+ * tracker prints (`fin-1` is `FIN-1`), at most {@link NAMED_TICKET_LIMIT}. An id inside a longer
+ * word or a date is none.
+ *
+ * @param text - The ask as intake stored it: its title and its words.
+ */
+export function ticketIdsNamedIn(text: string): string[] {
+  const named = (text.match(TICKET_ID) ?? []).map((id) => id.toUpperCase());
+  return [...new Set(named)].slice(0, NAMED_TICKET_LIMIT);
+}
 
 function namesWhole(text: string, name: string): boolean {
   const lower = text.toLowerCase();

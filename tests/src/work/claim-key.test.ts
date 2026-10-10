@@ -13,6 +13,8 @@ import {
   plannedWriteTargets,
   writtenBrowserSurfaces,
   providerItemKey,
+  settledByColleagueReason,
+  ticketIdsNamedIn,
   withHeldItemsSaid,
   withheldByClaim,
   withheldByClaimReason,
@@ -501,5 +503,54 @@ describe('claimKeyItem (a kept claim named to the executor, M3)', () => {
       sourceSystem: 'tracker',
       externalId: 'T-2',
     });
+  });
+});
+
+describe('the tickets an ask names (D-1 (a))', (): void => {
+  it('reads each ticket id once, in the order named, as the tracker prints it', (): void => {
+    expect(
+      ticketIdsNamedIn(
+        '@Day0 can you post the September close status note on FIN-1? fin-1 is the one, not FIN-12.',
+      ),
+    ).toEqual(['FIN-1', 'FIN-12']);
+  });
+
+  it('reads no id out of a longer word or a date', (): void => {
+    expect(ticketIdsNamedIn('See pre-FIN-1x, the 2026-09-19 note; coverage is 3.1x.')).toEqual([]);
+  });
+
+  it('reads at most four, since each is a claim read at the claim step', (): void => {
+    expect(ticketIdsNamedIn('FIN-1 FIN-2 FIN-3 FIN-4 FIN-5 FIN-6')).toEqual([
+      'FIN-1',
+      'FIN-2',
+      'FIN-3',
+      'FIN-4',
+    ]);
+  });
+});
+
+describe('the skip a settled ticket gives an ask that names it (D-1 (a))', (): void => {
+  it("names the colleague, the ticket, the comment's date and the colleague's work item", (): void => {
+    expect(
+      settledByColleagueReason({
+        name: 'Mateo',
+        title: 'Post the September close status note',
+        settled: { ticket: 'FIN-1', commentedOn: '19 September 2026' },
+      }),
+    ).toBe(
+      'claimed-by-colleague: Mateo settled FIN-1 with a comment on 19 September 2026 (Post the September close status note)',
+    );
+  });
+
+  it('says so without a date for a comment landed before landing times were kept', (): void => {
+    expect(
+      settledByColleagueReason({
+        name: 'Mateo',
+        title: 'Post the September close status note',
+        settled: { ticket: 'FIN-1' },
+      }),
+    ).toBe(
+      'claimed-by-colleague: Mateo settled FIN-1 with a comment (Post the September close status note)',
+    );
   });
 });
