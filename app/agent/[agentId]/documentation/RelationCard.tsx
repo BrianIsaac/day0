@@ -48,7 +48,9 @@ export function supersedeWords(outcome: DecideOutcome, older: string): string | 
 
 /** A page as a card names it: its title, its source and when its source last had it. */
 export function pageWords(page: RelationCardRow['from'], zone: string | undefined): string {
-  return `“${page.title}” (${page.source}, edited ${clockTime(page.updatedAt, zone)})`;
+  // A reader that gives no edit time stamps a page with when it read it (W15-R45).
+  const when = page.edited === false ? 'last read' : 'edited';
+  return `“${page.title}” (${page.source}, ${when} ${clockTime(page.updatedAt, zone)})`;
 }
 
 /**
@@ -58,19 +60,16 @@ export function pageWords(page: RelationCardRow['from'], zone: string | undefine
  * pages stay current, and the employee reads both.
  *
  * @param relation - The proposed relation; `from` is the page proposed as the later version.
- * @param name - The employee's name, when the card is on an employee's tab.
  * @param zone - The zone times are said in.
  * @param onAnswered - Told what the manager answered once it is recorded: the card leaves the
  *   tab with its answer, so the tab says the outcome and offers the way back.
  */
 export function RelationCard({
   relation,
-  name,
   zone,
   onAnswered,
 }: {
   relation: RelationCardRow;
-  name?: string;
   zone?: string;
   onAnswered?: (answered: AnsweredRelation) => void;
 }) {
@@ -104,7 +103,8 @@ export function RelationCard({
       <div className="grid gap-3">
         <p className="text-sm text-[var(--color-fg-2)]">
           {pageWords(to, zone)} and {pageWords(from, zone)} {relationWords(relation.evidence)}.{' '}
-          {name ?? 'Each employee'} reads both until you say otherwise.
+          {/* The cards are the owner's, whoever's tab draws them (W15-R45). */}
+          Every employee that reads both sources reads both pages until you say otherwise.
         </p>
         <div className="flex flex-wrap gap-2">
           {relation.offered.includes('supersedes') ? (

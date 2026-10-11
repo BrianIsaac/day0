@@ -265,6 +265,16 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
     expect(markup).not.toMatch(/placeholder="[0-9a-f]{8}-/);
   });
 
+  it('names the product Day0 in the sentences that say whose a credential is (W15-R32)', (): void => {
+    // On the base two of the five read "the app registration IT made for day0" and "to sign
+    // day0's requests to Google".
+    const sharepoint = renderToStaticMarkup(<ReaderCredentialFields kind="sharepoint" />);
+    expect(sharepoint).toContain('The three values of the app registration IT made for Day0.');
+    const drive = renderToStaticMarkup(<ReaderCredentialFields kind="drive" />);
+    expect(drive).toContain('used only to sign Day0&#x27;s requests to Google');
+    for (const markup of [sharepoint, drive]) expect(markup).not.toMatch(/\bday0\b/);
+  });
+
   it('says each new kind needs nothing running, and links the guide IT follows (15-X)', (): void => {
     for (const [kind, guide] of [
       ['sharepoint', 'reader-sharepoint.md'],

@@ -587,6 +587,8 @@ async function standingWithPages(
       conflict: StandingConflict;
       from: Doc<'docPages'>;
       to: Doc<'docPages'>;
+      fromSource: Doc<'docSources'>;
+      toSource: Doc<'docSources'>;
       /** The trust the two pages share. */
       trust: SourceAuthority;
     }
@@ -618,6 +620,8 @@ async function standingWithPages(
     },
     from,
     to,
+    fromSource,
+    toSource,
   };
 }
 
@@ -912,13 +916,26 @@ export const decide = mutation({
 });
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
-type CardPage = NamedPage & { readonly updatedAt: number; readonly authority: SourceAuthority };
+type CardPage = NamedPage & {
+  readonly updatedAt: number;
+  /**
+   * Whether `updatedAt` is when the source says the page was edited. False for a kind whose
+   * reader is given no edit time and stamps the page with when it read it (a list of URLs, an
+   * MCP server), so a card says "last read", not "edited" (W15-R45).
+   */
+  readonly edited: boolean;
+  readonly authority: SourceAuthority;
+};
+
+/** The kinds of source whose reader gives no edit time: a page's time is when it was read. */
+const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set(['urls', 'mcp']);
 
 /** A stored page as a relation's card draws it. */
 function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
   return {
     ...named(page, source),
     updatedAt: page.updatedAt,
+    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
     authority: authorityOf(page, source),
   };
 }
@@ -1036,8 +1053,8 @@ export const listOpen = query({
         _id: relation._id,
         kind: relation.kind,
         status: 'confirmed',
-        from: { ...conflict.from, updatedAt: standing.from.updatedAt, authority: standing.trust },
-        to: { ...conflict.to, updatedAt: standing.to.updatedAt, authority: standing.trust },
+        from: cardPage(standing.from, standing.fromSource),
+        to: cardPage(standing.to, standing.toSource),
         evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
         disagreement: { heading: conflict.heading, figures: conflict.figures },
         offered: [...decisionsOffered(relation)],

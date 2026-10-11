@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { splitPage } from '../../../src/docs/blocks';
 import {
+  AUTHORITY_WEIGHT,
   BLOCKS_PER_PAGE_LIMIT,
   DOCUMENTATION_CHAR_LIMIT,
   PICK_FLOOR_CHARS,
@@ -428,6 +429,36 @@ describe('selectDocumentation', (): void => {
       `${team.key}#0`,
       `${personal.key}#0`,
     ]);
+  });
+
+  it('keeps a team runbook that answers the item above an official page that only names it (D-10; W15-R23)', (): void => {
+    // Reader 2's p3-rank.mts: at 1, 0.85 and 0.7 an official page of 25 characters that matched
+    // three of the item's seven terms outranked the team runbook that answers the item in full.
+    const item = {
+      ...request,
+      title: 'Escalate overdue invoice',
+      summary: 'invoice overdue escalate finance approval limit',
+      roleFunction: '',
+      shape: undefined,
+      target: undefined,
+    };
+    const official = {
+      ...page('policy.md', 'Finance policy', '# Finance policy\n\nOverdue invoice escalate.'),
+      authority: 'official' as const,
+    };
+    const runbook = {
+      ...page(
+        'runbook.md',
+        'Escalating overdue invoices',
+        '# Escalating overdue invoices\n\nWhen an invoice is overdue, escalate to finance and get approval within the limit.',
+      ),
+      authority: 'team' as const,
+    };
+    const pages = [official, runbook, holidays];
+    const selection = selectDocumentation({ request: item, pages, scouted: everyBlock(pages) });
+    expect(selection.ranked.slice(0, 2)).toEqual([`${runbook.key}#0`, `${official.key}#0`]);
+    // The weights themselves, one constant: near enough to 1 to order only pages that answer alike.
+    expect(AUTHORITY_WEIGHT).toEqual({ official: 1, team: 0.95, personal: 0.9 });
   });
 
   it('reads a page with no trust as a team page, between official and personal', (): void => {

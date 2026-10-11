@@ -27,17 +27,14 @@ const TRUST_SOURCE: Readonly<Record<SourceAuthority, string>> = {
  * ever held, so the card says how the two are weighed and offers only the answers that settle it.
  *
  * @param relation - The conflict, with the heading and the figures each page gives.
- * @param name - The employee's name, when the card is on an employee's tab.
  * @param onAnswered - Told an answer that takes the card off the tab, once it is recorded, so
  *   the tab says the outcome and the way back; "They disagree" keeps the card, which says it.
  */
 export function ConflictCard({
   relation,
-  name,
   onAnswered,
 }: {
   relation: RelationCardRow;
-  name?: string;
   onAnswered?: (answered: AnsweredRelation) => void;
 }) {
   const decide = useMutation(api.docRelations.decide);
@@ -65,12 +62,14 @@ export function ConflictCard({
     SOURCE_AUTHORITIES.indexOf(from.authority) <= SOURCE_AUTHORITIES.indexOf(to.authority)
       ? [from, to]
       : [to, from];
-  const reader = name ?? 'each employee';
+  // The cards are the owner's, and an employee may read only one of the two sources, so no
+  // sentence names the employee whose tab draws them; and a plan already drafted is not held by a
+  // conflict confirmed since (W15-R45, D-4 (a)).
   const held = confirmed
-    ? `${name ?? 'Each employee'} holds any step that relies on it and asks you.`
+    ? 'An employee that reads both pages holds any step that relies on it, from the next plan it drafts, and asks you.'
     : from.authority === to.authority
       ? 'Nothing is held until you say they disagree.'
-      : `Nothing is held for it: “${more.title}” is in ${TRUST_SOURCE[more.authority]} source and “${less.title}” in ${TRUST_SOURCE[less.authority]} one, so ${reader} weighs the first above the second. Say which is right to take the other out of what ${reader} reads.`;
+      : `Nothing is held for it: “${more.title}” is in ${TRUST_SOURCE[more.authority]} source and “${less.title}” in ${TRUST_SOURCE[less.authority]} one, so an employee that reads both weighs the first above the second. Say which is right to take the other out of what your employees read.`;
   const under = disagreement ? ` under “${disagreement.heading}”` : '';
   const figures = disagreement
     ? `: ${disagreement.figures.from} against ${disagreement.figures.to}`
@@ -102,7 +101,10 @@ export function ConflictCard({
               size="small"
               disabled={change.busy}
               onClick={() =>
-                answer('disagree', 'Confirmed: any step that relies on it is held for you.')
+                answer(
+                  'disagree',
+                  'Confirmed: a step that relies on it is held for you, from the next plan drafted.',
+                )
               }
             >
               They disagree

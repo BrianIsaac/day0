@@ -1123,6 +1123,44 @@ describe("a Slack ask naming a ticket a colleague settled (the wave 14 review's 
     ]);
   });
 
+  it('is left for its evaluation when the colleague’s run answered that its work was not all done: a comment that says so settles nothing (W15-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    for (const [workDone, workDoneWhy] of [
+      ['partial', 'Could not reach the sheet; the note is posted and the figure is left open.'],
+      ['not-done', 'Could not reach the sheet; left open.'],
+    ] as const) {
+      const t = convexTest(contractSchema(), allConvexModules());
+      const mateo = await seedEmployee(t, { name: 'Mateo' });
+      const aiko = await seedEmployee(t, { name: 'Aiko' });
+      await seedItem(t, mateo, {
+        source: 'ticket',
+        state: 'completed',
+        output: { ...SETTLED_OUTPUT, workDone, workDoneWhy },
+      });
+      const ask = await seedAsk(t, aiko, '@Day0 can you finish FIN-1?');
+      const claim = await t.mutation(internal.work.claimLoopStep, {
+        workItemId: ask,
+        step: 'evaluation',
+      });
+      // On the base this was skipped with "Mateo settled FIN-1 with a comment on ...".
+      expect(claim.claimed, workDone).toBe(true);
+      expect((await t.run(async (ctx) => await ctx.db.get(ask)))!.state).toBe('discovered');
+    }
+    // A run that answered done, and one recorded before runs answered at all, settle as before.
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, mateo, {
+      source: 'ticket',
+      state: 'completed',
+      output: { ...SETTLED_OUTPUT, workDone: 'done', workDoneWhy: 'The note is posted.' },
+    });
+    const ask = await seedAsk(t, aiko, NAMING_ASK);
+    expect(
+      await t.mutation(internal.work.claimLoopStep, { workItemId: ask, step: 'evaluation' }),
+    ).toEqual({ claimed: false, reason: 'held-elsewhere' });
+  });
+
   it('is left for its evaluation while the colleague has landed no comment, so the apply still withholds (14-FW 7c)', async (): Promise<void> => {
     useSurfaceMode('real');
     const t = convexTest(contractSchema(), allConvexModules());

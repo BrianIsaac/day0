@@ -1923,6 +1923,13 @@ export default defineSchema({
      * employee keeps running the verified body meanwhile. */
     recheckDueAt: v.optional(v.number()),
     recheckReason: v.optional(v.string()),
+    /**
+     * The documentation page `recheckReason` is about, when it is about one (W15-R40): a later
+     * stamp says the same cause better only for the same page, so what became of another page of
+     * the same title never takes a change's place on the card. Written with the reason by
+     * `stampRecheckDue` from 0.19.0, and cleared with it.
+     */
+    recheckPage: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
     /** Why and when the row left its employee's use (`retired`). */
     retiredAt: v.optional(v.number()),
     retiredReason: v.optional(v.string()),

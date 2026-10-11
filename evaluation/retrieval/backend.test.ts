@@ -119,9 +119,16 @@ describe('the labelled set graded with a bed’s own search as the scout', (): v
       return search(args);
     }, SOURCES);
     const found = scout(['签字', 'tile refresh'], pages);
+    // Re-pinned for W15-R43: the harness asks for current pages only, as the product's scout
+    // does (`status: 'active'`), so a grade sees a regression in the filter or in the status pass.
     expect(calls).toEqual([
-      { sourceIds: SOURCES.map((source) => source.id), query: '签字', limit: 12 },
-      { sourceIds: SOURCES.map((source) => source.id), query: 'tile refresh', limit: 12 },
+      { sourceIds: SOURCES.map((source) => source.id), query: '签字', limit: 12, status: 'active' },
+      {
+        sourceIds: SOURCES.map((source) => source.id),
+        query: 'tile refresh',
+        limit: 12,
+        status: 'active',
+      },
     ]);
     expect(searches()).toBe(2);
     expect(found.map((block) => block.pageKey)).toContain(

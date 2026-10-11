@@ -1097,6 +1097,19 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_successor', 'proposed', ['supersedes', 'keep-both', 'not-the-same']],
       ['possible_conflict', 'confirmed', ['from-is-right', 'to-is-right', 'both-hold']],
     ]);
+    // Whether a page's time is its edit time is its source's kind (W15-R45): a list of URLs is
+    // given none and stamps a page with when it read it, on a proposed card and a confirmed one.
+    expect(after.map((card) => [card.from.edited, card.to.edited])).toEqual([
+      [true, true],
+      [true, true],
+    ]);
+    await harness.run(async (ctx) => await ctx.db.patch(finance.sourceId, { kind: 'urls' }));
+    await harness.run(async (ctx) => await ctx.db.patch(official.sourceId, { kind: 'mcp' }));
+    const read = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(read.map((card) => [card.kind, card.from.edited, card.to.edited])).toEqual([
+      ['possible_successor', false, true],
+      ['possible_conflict', false, true],
+    ]);
     // Another manager sees none of them.
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),

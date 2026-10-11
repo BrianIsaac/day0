@@ -6,6 +6,7 @@ import {
   fromLine,
   namesEveryCollaborator,
   peopleBlockLines,
+  withoutKnownSlackIds,
   personNamed,
   withoutIdentities,
   type PromptPeople,
@@ -403,6 +404,34 @@ describe('the People block after the wave 13 review (14-FX, W13-R19 to W13-R21)'
       expect(withoutIdentities(words), words).toBe(words);
     }
   });
+  it('takes a Slack id the owner’s graph holds out of the block’s words, whatever its letters, and leaves the same token where the graph holds none (D-5)', (): void => {
+    const people = {
+      people: [
+        {
+          displayName: 'Lee Tan',
+          title: 'Close lead (UABCDEFGH)',
+          edges: [{ type: 'collaborator' as const, scope: 'The close; ping UABCDEFGH first' }],
+        },
+      ],
+      escalation: {
+        kind: 'person' as const,
+        displayName: 'TREASURER Sara',
+        scope: 'ask UABCDEFGH',
+      },
+    };
+    // By its shape alone the token is an upper-case word, and stays (15-FX's decision).
+    expect(peopleBlockLines(people).join('\n')).toContain('UABCDEFGH');
+    const cleaned = withoutKnownSlackIds(people, ['UABCDEFGH']);
+    expect(JSON.stringify(cleaned)).not.toContain('UABCDEFGH');
+    expect(cleaned.people[0]).toMatchObject({
+      title: 'Close lead',
+      edges: [{ type: 'collaborator', scope: 'The close; ping first' }],
+    });
+    // Another upper-case word of the same shape is not in the graph, so it stays.
+    expect(cleaned.escalation).toMatchObject({ displayName: 'TREASURER Sara', scope: 'ask' });
+    expect(withoutKnownSlackIds(people, [])).toBe(people);
+  });
+
   it('prints a requester label with no identity in it, and unknown when nothing is left (W13-R19)', (): void => {
     expect(fromLine('U0ANA12345', undefined)).toBe('From: (unknown)');
     expect(fromLine('ana@acme.test', undefined)).toBe('From: (unknown)');

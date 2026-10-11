@@ -40,7 +40,7 @@ const FIELDS: Readonly<Record<ReaderKind, readonly ReaderField[]>> = {
 /** What each kind's secret is, who made it, and where it is sent. */
 const SECRET_HELP: Readonly<Record<ReaderKind, string>> = {
   sharepoint:
-    'The three values of the app registration IT made for day0. The secret is encrypted when submitted, sent only to Microsoft, and never displayed again.',
+    'The three values of the app registration IT made for Day0. The secret is encrypted when submitted, sent only to Microsoft, and never displayed again.',
   'confluence-v2':
     "A service account's API token and the site's cloud ID, which IT reads from admin.atlassian.com. The token is encrypted when submitted, sent only to Atlassian, and never displayed again.",
   'confluence-dc':
@@ -48,7 +48,7 @@ const SECRET_HELP: Readonly<Record<ReaderKind, string>> = {
   yuque:
     'A Yuque token, which needs a paid plan. It is encrypted when submitted, sent only to Yuque, and never displayed again.',
   drive:
-    "The JSON key of a service account the folder is shared with. It is encrypted when submitted, used only to sign day0's requests to Google, and never displayed again.",
+    "The JSON key of a service account the folder is shared with. It is encrypted when submitted, used only to sign Day0's requests to Google, and never displayed again.",
 };
 
 /** What each kind reaches, in the words the kind help uses. */

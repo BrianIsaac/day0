@@ -204,12 +204,14 @@ export async function holdersOf(
  * stamp unless a check is running, whose pass must not clear a change it never saw; every
  * trigger still lands on the record as a `skill.recheck-due` event. The one reason a later
  * stamp takes the place of is the one it names as `saysBetter`: the same cause, said less
- * exactly by a trigger that landed first. A row that is not registered runs nothing and is
- * left alone.
+ * exactly by a trigger that landed first, **of the same page** (W15-R40: compared by its words
+ * alone, what became of another page of the same title took a change's place the same day). A
+ * row that is not registered runs nothing and is left alone.
  *
  * @param ctx - The trigger's mutation context.
- * @param stamp - The holder row, why it is due in the card's words, the trigger's time, and
- *   the reason this one says better, when there is one.
+ * @param stamp - The holder row, why it is due in the card's words, the trigger's time, the
+ *   page the reason is about when it is about one, and the reason this one says better, when
+ *   there is one.
  * @returns Whether the row was stamped by this call.
  */
 export async function stampRecheckDue(
@@ -218,6 +220,7 @@ export async function stampRecheckDue(
     readonly skillId: Id<'skills'>;
     readonly reason: string;
     readonly now: number;
+    readonly page?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
     readonly saysBetter?: string;
   },
 ): Promise<boolean> {
@@ -226,9 +229,17 @@ export async function stampRecheckDue(
   if (row?.state !== 'registered') return false;
   const fresh = row.recheckDueAt === undefined;
   const checking = row.authoringRunId !== undefined;
+  const samePage =
+    stamp.page !== undefined &&
+    row.recheckPage?.sourceId === stamp.page.sourceId &&
+    row.recheckPage.ref === stamp.page.ref;
   if (fresh) {
-    await ctx.db.patch(skillId, { recheckDueAt: now, recheckReason: reason });
-  } else if (stamp.saysBetter !== undefined && row.recheckReason === stamp.saysBetter) {
+    await ctx.db.patch(skillId, {
+      recheckDueAt: now,
+      recheckReason: reason,
+      recheckPage: stamp.page,
+    });
+  } else if (stamp.saysBetter !== undefined && row.recheckReason === stamp.saysBetter && samePage) {
     await ctx.db.patch(skillId, {
       recheckReason: reason,
       ...(checking ? { recheckDueAt: now } : {}),
@@ -404,6 +415,7 @@ async function stampReaders(
         skillId: holder._id,
         reason: runbookReason(read, day),
         now: scan.changedAt,
+        page: { sourceId: read.sourceId, ref: read.ref },
         ...(read.change === 'changed' ? {} : { saysBetter: changedRunbookReason(read.title, day) }),
       };
       if (await stampRecheckDue(ctx, stamp)) {

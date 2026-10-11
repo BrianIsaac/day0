@@ -60,12 +60,14 @@ export const PICK_FLOOR_CHARS = 6_000;
  * How much a block's score counts by the trust of its page's source: official over team over
  * personal (A5). A weight, not a sort: a team page that answers the item still ranks above an
  * official page that barely mentions it, and between two pages that answer alike the more
- * trusted is first.
+ * trusted is first. The weights sit near 1 (the wave 15 review's D-10): at 1, 0.85 and 0.7 an
+ * official page that matched three of an item's seven terms outranked the team runbook that
+ * answered it, a reordering inside a 15 per cent gap that no labelled item could see.
  */
 export const AUTHORITY_WEIGHT: Readonly<Record<SourceAuthority, number>> = {
   official: 1,
-  team: 0.85,
-  personal: 0.7,
+  team: 0.95,
+  personal: 0.9,
 };
 
 /**

@@ -77,7 +77,9 @@ export function statusChip(page: Pick<PageRow, 'status' | 'possiblySuperseded'>)
  * @param zone - The employee's zone.
  */
 export function decidedByWords(page: PageRow, zone: string | undefined): string {
-  if (page.possiblySuperseded === true) return 'relation, above';
+  // The manager's own word is named first: a page pinned current by hand is decided by "you",
+  // whatever a relation still to answer proposes (W15-R46).
+  if (page.possiblySuperseded === true && page.statusSource !== 'manager') return 'relation, above';
   switch (page.statusSource) {
     case 'manager': {
       const who = page.decidedByYou === false ? (page.decidedBy ?? 'an earlier manager') : 'you';

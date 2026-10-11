@@ -154,6 +154,16 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
     expect(words({ statusSource: 'marker' })).toBe('a marker in the page');
     expect(words({ statusSource: 'relation' })).toBe('a relation you confirmed');
     expect(words({ possiblySuperseded: true })).toBe('relation, above');
+    // The manager's own word is named first (W15-R46): a page pinned current by hand read
+    // "relation, above" while a relation still proposed another page as its later version.
+    expect(
+      words({
+        possiblySuperseded: true,
+        statusSource: 'manager',
+        decidedByYou: true,
+        decidedAt: at,
+      }),
+    ).toBe('you, 26 Sep 2026, 09:10');
   });
 
   const listed = [
