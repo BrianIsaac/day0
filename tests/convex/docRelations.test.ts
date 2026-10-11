@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
+import * as docRelationsModule from '../../convex/docRelations';
 import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
 import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import type { SourceAuthority } from '../../src/docs/authority';
@@ -1455,5 +1456,40 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
       approved: true,
     });
+  });
+});
+
+/** What Convex sets on a function a module exports. */
+interface RegisteredFunction {
+  readonly isQuery?: boolean;
+  readonly isMutation?: boolean;
+  readonly isAction?: boolean;
+  readonly isPublic?: boolean;
+  readonly exportArgs?: () => string;
+}
+
+describe('the functions convex/docRelations.ts registers', (): void => {
+  // The split of its helpers (wave 16, 16-s; decision S-1) moves no registered function: each
+  // `api.docRelations.*` and `internal.docRelations.*` path is a string the app, the sync's
+  // actions and the scheduler hold. The list as `v0.19.0` registered it.
+  it('are the ones it registered at v0.19.0, each of the same kind and visibility', (): void => {
+    const registered = Object.entries(
+      docRelationsModule as unknown as Record<string, RegisteredFunction | undefined>,
+    )
+      .filter(([, value]) => value?.exportArgs !== undefined)
+      .map(([name, value]) => {
+        const kind = value?.isQuery ? 'query' : value?.isMutation ? 'mutation' : 'action';
+        return `${name} ${value?.isPublic === true ? 'public' : 'internal'} ${kind}`;
+      })
+      .sort((left, right) => left.localeCompare(right));
+    expect(registered).toEqual([
+      'decide public mutation',
+      'generationsToMeasure internal query',
+      'listOpen public query',
+      'measurePage internal mutation',
+      'measuringPlan internal query',
+      'pagesWrittenBy internal query',
+      'settleRelationsOwed internal mutation',
+    ]);
   });
 });
