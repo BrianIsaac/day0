@@ -44,6 +44,18 @@ import {
   AGREEMENT_SOURCE_TYPES,
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
+import { CONSTRAINT_KINDS } from '../src/agent/charter-constraints';
+import { SYSTEM_CLASSES } from '../src/agent/system-classes';
+import {
+  AGREEMENT_PROPOSAL_ACTIONS,
+  PAGE_STATUS_PROPOSALS,
+  REORIENTATION_RISKS,
+  REORIENTATION_STATUSES,
+  REORIENTATION_TRIGGERS,
+  RELATIONSHIP_PROPOSAL_ACTIONS,
+  SCOPE_PROPOSAL_ACTIONS,
+  SKILL_PROPOSAL_ACTIONS,
+} from '../src/agent/reorientation-vocabulary';
 
 /** A documentation page's status (wave 15, 15-K): `PAGE_STATUSES`. */
 const pageStatus = v.union(...PAGE_STATUSES.map((status) => v.literal(status)));
@@ -205,6 +217,129 @@ export const pendingAuthorisationValidator = v.object({
     }),
   ),
 });
+
+/** A validator of one of a vocabulary's words. */
+const literals = <T extends string>(values: readonly T[]) =>
+  v.union(...(values.map((value) => v.literal(value)) as [ReturnType<typeof v.literal<T>>]));
+
+/** The charter's list clauses a change or a card can name. */
+const listClauseField = v.union(
+  v.literal('willDo'),
+  v.literal('willNotDo'),
+  v.literal('escalationTriggers'),
+);
+
+/**
+ * One typed change to an approved charter; see `src/agent/charter-amendment.ts`. Declared here
+ * since wave 16 (16-K), so a reorientation card's proposal stores the change Approve applies
+ * (`convex/charters.ts`'s `amend` takes the same validator).
+ */
+export const charterChangeValidator = v.union(
+  v.object({ kind: v.literal('edit-function'), text: v.string() }),
+  v.object({
+    kind: v.literal('edit-clause'),
+    field: listClauseField,
+    index: v.number(),
+    text: v.string(),
+  }),
+  v.object({ kind: v.literal('answer-question'), question: v.string(), answer: v.string() }),
+  v.object({
+    kind: v.literal('add-constraint'),
+    constraint: v.object({
+      kind: literals(CONSTRAINT_KINDS),
+      quote: v.string(),
+      clause: listClauseField,
+    }),
+  }),
+  v.object({ kind: v.literal('strike-constraint'), index: v.number() }),
+  v.object({
+    kind: v.literal('add-system'),
+    system: v.object({
+      name: v.string(),
+      class: literals(SYSTEM_CLASSES),
+      whereMentioned: v.string(),
+    }),
+  }),
+  v.object({ kind: v.literal('remove-system'), name: v.string() }),
+  v.object({
+    kind: v.literal('edit-adjacent-role'),
+    index: v.number(),
+    role: v.object({ who: v.string(), staysOutOfTheirLaneBy: v.string() }),
+  }),
+  v.object({
+    kind: v.literal('edit-collaborator'),
+    index: v.number(),
+    collaborator: v.object({
+      name: v.string(),
+      topic: v.string(),
+      introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
+    }),
+  }),
+);
+
+/** A documentation page by its source and its ref, as `docPages.supersededBy` names one. */
+const pageRefValidator = v.object({ sourceId: v.id('docSources'), ref: v.string() });
+
+/**
+ * What a reorientation card proposes (wave 16, 16-K for 16-O and 16-D; K-1, O-2), tagged by
+ * `kind`: still `pending` while the scheduled judgement works (with when and why it last failed,
+ * when it did), `none` when nothing needs to change, or a change Approve applies through the
+ * target's own transaction helper, never applied by the writer. Every proposal but a pending one
+ * says why in `rationale`, the card's "What {name} proposes"; a charter change also carries the
+ * clause before and after as the card shows them.
+ */
+export const reorientationProposalValidator = v.union(
+  v.object({
+    kind: v.literal('pending'),
+    failedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  }),
+  v.object({ kind: v.literal('none'), rationale: v.string() }),
+  v.object({
+    kind: v.literal('charter-change'),
+    changes: v.array(charterChangeValidator),
+    rationale: v.string(),
+    before: v.optional(v.string()),
+    after: v.optional(v.string()),
+  }),
+  v.object({
+    kind: v.literal('agreement'),
+    agreementId: v.id('workingAgreements'),
+    action: literals(AGREEMENT_PROPOSAL_ACTIONS),
+    /** The statement an `edit` writes. */
+    statement: v.optional(v.string()),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('relationship'),
+    relationshipId: v.id('relationships'),
+    action: literals(RELATIONSHIP_PROPOSAL_ACTIONS),
+    /** The edge's type and scope an `edit` writes. */
+    type: v.optional(literals(RELATIONSHIP_TYPES)),
+    scope: v.optional(v.string()),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('page-status'),
+    page: pageRefValidator,
+    status: literals(PAGE_STATUS_PROPOSALS),
+    /** The page that supersedes it, for `superseded`. */
+    supersededBy: v.optional(pageRefValidator),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('scope'),
+    scope: v.string(),
+    action: literals(SCOPE_PROPOSAL_ACTIONS),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('skill-action'),
+    skillId: v.id('skills'),
+    action: literals(SKILL_PROPOSAL_ACTIONS),
+    rationale: v.string(),
+  }),
+);
 
 /** Where a person, an identity or an edge of the owner's graph came from (13-K for 13-P). */
 const peopleSourceValidator = v.union(...PEOPLE_SOURCES.map((source) => v.literal(source)));
@@ -1640,6 +1775,77 @@ export default defineSchema({
     .index('by_agent', ['agentId'])
     .index('by_agent_key', ['agentId', 'key'])
     .index('by_work_item', ['workItemId']),
+
+  /**
+   * A reorientation card (wave 16, 16-K for 16-O; the wave file's sections 1 and 5.1): the
+   * organisation changed under an employee, and the card holds the evidence, what is affected and
+   * what the employee proposes. Opened by `openCard` inside the transaction of the trigger's own
+   * writer, at most one a day per trigger kind and employee, in the employee's zone (C6: a later
+   * trigger of the kind that day joins the open card's evidence); only Approve changes anything
+   * (A11). Agent-keyed: an employee's reset deletes its cards.
+   */
+  reorientations: defineTable({
+    agentId: v.id('agents'),
+    /** The owner's key (`agents.userId`): the owner's open cards across employees. */
+    userId: v.string(),
+    trigger: literals(REORIENTATION_TRIGGERS),
+    /**
+     * What makes a second write of the same trigger a no-op: the event's id, or the counted window
+     * for a repeated refusal, skip or rejection.
+     */
+    triggerKey: v.string(),
+    /** One line of what changed, in the card's words. */
+    triggerSummary: v.string(),
+    /** What the card rests on, every kind by id; a later trigger of the day adds to it. */
+    evidence: v.object({
+      eventIds: v.array(v.id('events')),
+      pageRefs: v.array(pageRefValidator),
+      relationIds: v.array(v.id('docRelations')),
+      correctionIds: v.array(v.id('corrections')),
+      relationshipIds: v.array(v.id('relationships')),
+      skillIds: v.array(v.id('skills')),
+      skillVersionIds: v.array(v.id('skillVersions')),
+    }),
+    /** What the change reaches, computed by index when the card opens. */
+    affected: v.object({
+      /** The charter's clauses, each by its list, its place in it and its text when read. */
+      charterClauses: v.array(
+        v.object({ field: listClauseField, index: v.number(), text: v.string() }),
+      ),
+      agreements: v.array(v.id('workingAgreements')),
+      relationships: v.array(v.id('relationships')),
+      skills: v.array(v.id('skills')),
+      surfaces: v.array(v.id('surfaces')),
+      workItems: v.array(v.id('workItems')),
+    }),
+    proposed: reorientationProposalValidator,
+    risk: literals(REORIENTATION_RISKS),
+    /**
+     * The work items the card holds at plan approval (the seventh hold reason,
+     * `reorientation-pending`), at most `REORIENTATION_BLOCKING_LIMIT`; empty on a low-risk card,
+     * which never holds work.
+     */
+    blockingWork: v.array(v.id('workItems')),
+    status: literals(REORIENTATION_STATUSES),
+    /** When a deferred card opens again (A21: a week, editable). */
+    revisitAt: v.optional(v.number()),
+    /** What the decision did, in the record's words, with the charter version an amendment wrote. */
+    outcome: v.optional(v.object({ summary: v.string(), charterId: v.optional(v.id('charters')) })),
+    /** The employee's day the card opened on (`dayKey(now, agentZone(agent))`, N12). */
+    day: v.string(),
+    createdAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    /** The manager's verified address, once they decided it. */
+    decidedBy: v.optional(v.string()),
+  })
+    /** An employee's cards in one standing: the inbox, the hold, the open card a trigger joins. */
+    .index('by_agent_status', ['agentId', 'status'])
+    /** The daily cap: an employee's card of one trigger kind on one day. */
+    .index('by_agent_day_trigger', ['agentId', 'day', 'trigger'])
+    /** The Defer sweep: deferred cards whose date has come. */
+    .index('by_status_revisit', ['status', 'revisitAt'])
+    /** The owner's cards in one standing, across employees. */
+    .index('by_user_status', ['userId', 'status']),
 
   /**
    * One code that decides every held action set open on the manager's
