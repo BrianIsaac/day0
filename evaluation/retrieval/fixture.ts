@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import type { SourceAuthority } from '../../src/docs/authority';
 import type { RequestSurface, SelectablePage } from '../../src/docs/select';
 
 /*
@@ -9,6 +10,14 @@ import type { RequestSurface, SelectablePage } from '../../src/docs/select';
  * app's own identity) and a Chinese runbook written for this set, which the bed walk adds to the
  * bed's folder. The rehearsal pages that repeat the bed's are left out: two copies of one page
  * would make "the page a person opens" two answers.
+ *
+ * On 11 October 2026 the set gained two items over four pages of mixed trust (the wave 15
+ * review's W15-R23: with no source of another trust, no grade could see the trust weights
+ * move): a team runbook that answers an item beside an official page that only names its terms,
+ * and one document held in an official source and copied into a team's. Each names the page that
+ * must rank first. A page or an item added after the set was first graded carries the day it
+ * joined, and a grade is taken over the set as it stood on the grade's own day, so every earlier
+ * grade is still reproduced.
  */
 
 /** A page of the corpus: where its Markdown is, its key and its category as the sync files it. */
@@ -18,6 +27,8 @@ interface CorpusPage {
   readonly key: string;
   readonly title: string;
   readonly category: SelectablePage['category'];
+  /** The day the page joined the corpus (`YYYY-MM-DD`), when that was after the first grade. */
+  readonly since?: string;
 }
 
 /** The sources the corpus pages come from, as an owner would label them. */
@@ -25,7 +36,22 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   company: 'Company handbook',
   notion: 'Notion',
   rehearsal: 'Rehearsal pages',
+  policy: 'Company policies',
 };
+
+/**
+ * The trust an owner has given a source. One the owner has said nothing of has none here and
+ * reads as a team's (`sourceAuthorityOf`), as every source of the first thirty items does.
+ */
+const SOURCE_AUTHORITY: Readonly<Record<string, SourceAuthority>> = { policy: 'official' };
+
+/** The day the pages and items of mixed trust joined the set. */
+const MIXED_TRUST_SINCE = '2026-10-11';
+
+/** Whether a page or an item had joined the set by the day of `asOf`, in UTC. */
+function joinedBy(entry: { readonly since?: string }, asOf: Date): boolean {
+  return entry.since === undefined || entry.since <= asOf.toISOString().slice(0, 10);
+}
 
 const CORPUS: readonly CorpusPage[] = [
   page('bed/company/folder/onboarding.md', 'company:onboarding.md', 'Kestrel Supply onboarding'),
@@ -105,6 +131,40 @@ const CORPUS: readonly CorpusPage[] = [
     'company:logistics/runbooks/warehouse-handover-zh.md',
     '仓库交接流程',
   ),
+  // Mixed trust. The team's page of each pair is listed first, so nothing but the trust of the
+  // official source can put the official page ahead of an equal score.
+  {
+    ...page(
+      'evaluation/retrieval/pages/overdue-invoice-escalation.md',
+      'notion:overdue-invoice-escalation.md',
+      'Escalating an overdue invoice',
+    ),
+    since: MIXED_TRUST_SINCE,
+  },
+  {
+    ...page(
+      'evaluation/retrieval/pages/credit-control-policy.md',
+      'policy:credit-control-policy.md',
+      'Credit control policy',
+    ),
+    since: MIXED_TRUST_SINCE,
+  },
+  {
+    ...page(
+      'evaluation/retrieval/pages/supplier-payment-runs.md',
+      'notion:supplier-payment-runs.md',
+      'Supplier payment runs',
+    ),
+    since: MIXED_TRUST_SINCE,
+  },
+  {
+    ...page(
+      'evaluation/retrieval/pages/supplier-payment-runs.md',
+      'policy:supplier-payment-runs.md',
+      'Supplier payment runs',
+    ),
+    since: MIXED_TRUST_SINCE,
+  },
 ];
 
 function page(file: string, key: string, title: string): CorpusPage {
@@ -120,11 +180,14 @@ const ROOT = new URL('../../', import.meta.url);
 
 /**
  * The corpus as the selector reads it: each page's Markdown from the tree, keyed and cited as
- * the bed's sources would be.
+ * the bed's sources would be, with its source's trust where the owner gave one.
+ *
+ * @param asOf - The day whose corpus is wanted; every page that had joined by then. Now by default.
  */
-export function retrievalPages(): SelectablePage[] {
-  return CORPUS.map((entry): SelectablePage => {
+export function retrievalPages(asOf: Date = new Date()): SelectablePage[] {
+  return CORPUS.filter((entry) => joinedBy(entry, asOf)).map((entry): SelectablePage => {
     const [source, ref] = entry.key.split(/:(.*)/s);
+    const authority = SOURCE_AUTHORITY[source];
     return {
       key: entry.key,
       slug: `source-${ref.replace(/[^a-z0-9]+/gi, '-')}`,
@@ -133,6 +196,7 @@ export function retrievalPages(): SelectablePage[] {
       body: readFileSync(new URL(entry.file, ROOT), 'utf8'),
       citeSource: SOURCE_LABELS[source],
       citePage: ref,
+      ...(authority !== undefined ? { authority } : {}),
     };
   });
 }
@@ -174,6 +238,13 @@ export interface RetrievalCase {
   readonly pages: readonly string[];
   /** The sections a person would read on them. */
   readonly sections: readonly LabelledSection[];
+  /**
+   * Two pages of sources of different trust, and which of them must rank first: the page a
+   * person would be given first. Only an item written to grade the trust carries it.
+   */
+  readonly order?: { readonly first: string; readonly then: string };
+  /** The day the item joined the set (`YYYY-MM-DD`), when that was after the first grade. */
+  readonly since?: string;
 }
 
 const FIN_HANDBOOK = 'company:finance/handbook.md';
@@ -193,8 +264,12 @@ const LINEAR = 'notion:linear-automation.md';
 const SLACK_POLICY = 'notion:slack-automation-policy.md';
 const SLACK_APP = 'rehearsal:slack-day0-app.md';
 const HANDOVER_ZH = 'company:logistics/runbooks/warehouse-handover-zh.md';
+const OVERDUE_RUNBOOK = 'notion:overdue-invoice-escalation.md';
+const CREDIT_POLICY = 'policy:credit-control-policy.md';
+const PAYMENT_RUNS_TEAM = 'notion:supplier-payment-runs.md';
+const PAYMENT_RUNS_OFFICIAL = 'policy:supplier-payment-runs.md';
 
-/** The thirty labelled items. */
+/** The labelled items: the first thirty, then the two of mixed trust. */
 export const RETRIEVAL_CASES: readonly RetrievalCase[] = [
   {
     id: 'fin-status-note',
@@ -531,4 +606,39 @@ export const RETRIEVAL_CASES: readonly RetrievalCase[] = [
     pages: [HANDOVER_ZH],
     sections: [{ page: HANDOVER_ZH, heading: '发布交接结果' }],
   },
+  {
+    // The answer is the team's runbook; the official policy names the item's terms and answers
+    // nothing. At the trust weights before v0.19.0 the policy ranked first.
+    id: 'fin-overdue-invoice',
+    role: 'finance',
+    sourceSystem: 'linear',
+    title: 'Escalate overdue invoice INV-2291',
+    summary:
+      'The customer invoice is 45 days overdue. Who is told, and when is a credit hold approved?',
+    pages: [OVERDUE_RUNBOOK],
+    sections: [{ page: OVERDUE_RUNBOOK, heading: 'Steps' }],
+    order: { first: OVERDUE_RUNBOOK, then: CREDIT_POLICY },
+    since: MIXED_TRUST_SINCE,
+  },
+  {
+    // One document in two sources: the official one is the page a person is given first.
+    id: 'fin-payment-run-cut-off',
+    role: 'finance',
+    sourceSystem: 'slack',
+    title: 'Will supplier invoice S-881 make this week’s payment run?',
+    summary: 'Asked in #finance-close: the supplier invoice was approved on Wednesday morning.',
+    pages: [PAYMENT_RUNS_OFFICIAL],
+    sections: [{ page: PAYMENT_RUNS_OFFICIAL, heading: 'Cut-off' }],
+    order: { first: PAYMENT_RUNS_OFFICIAL, then: PAYMENT_RUNS_TEAM },
+    since: MIXED_TRUST_SINCE,
+  },
 ];
+
+/**
+ * The labelled items as the set stood on a day: every item that had joined by then.
+ *
+ * @param asOf - The day whose set is wanted. Now by default.
+ */
+export function retrievalCases(asOf: Date = new Date()): RetrievalCase[] {
+  return RETRIEVAL_CASES.filter((entry) => joinedBy(entry, asOf));
+}

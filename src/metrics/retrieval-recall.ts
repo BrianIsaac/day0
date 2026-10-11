@@ -7,10 +7,10 @@ import type { RetrievalRecall } from './types';
  * a new grade is copied here in the commit that tracks it.
  */
 export const RETRIEVAL_RECALL: RetrievalRecall = {
-  pages: 0.95,
-  blocks: 0.9333333333333333,
-  cases: 30,
-  corpusPages: 17,
-  gradedAt: '2026-10-10T13:09:08.333Z',
-  commit: '7926f30a3180b41b77ae8698536862f3dbf99efb',
+  pages: 0.953125,
+  blocks: 0.9375,
+  cases: 32,
+  corpusPages: 21,
+  gradedAt: '2026-10-11T06:01:52.993Z',
+  commit: '39755260b01d42bc138fb8c0024ad2638f032ad0',
 };
