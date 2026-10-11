@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { api } from '../convex/_generated/api';
 import type { Doc, Id } from '../convex/_generated/dataModel';
 import {
+  failForHarnessTimeout,
   firstCorrectEffectAt,
   gradeEvaluationTask,
   loadEvaluationTasks,
@@ -27,6 +28,7 @@ import {
   type EvaluationRun,
   type EvaluationTaskResult,
 } from '../evaluation/report';
+import { rereadRetainedEvidence } from '../evaluation/retained-reading';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
@@ -70,6 +72,8 @@ export interface CliOptions {
   taskSelectors: string[];
   out: string;
   regrade?: string;
+  /** A stored run to read again from its retained grades, with no backend. */
+  reread?: string;
   approvalDelayMs: number;
   pollIntervalMs: number;
   help: boolean;
@@ -194,6 +198,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
       result.out = value;
     } else if (flag === '--regrade') {
       result.regrade = value;
+    } else if (flag === '--reread') {
+      result.reread = value;
     } else if (flag === '--approval-delay-ms') {
       result.approvalDelayMs = positiveInteger(flag, value);
     } else if (flag === '--poll-ms') {
@@ -201,6 +207,9 @@ export function parseCliOptions(argv: string[]): CliOptions {
     } else {
       throw new Error(`unknown option ${flag}`);
     }
+  }
+  if (result.regrade && result.reread) {
+    throw new Error('--reread and --regrade are two ways to grade again; pass one');
   }
   return result;
 }
@@ -237,6 +246,8 @@ function usage(): string {
   --out path.json          raw evidence path (default evaluation/results/<timestamp>/comparison.json);
                            pass an earlier path to resume that run
   --regrade path.json      re-score a retained run into a new output; makes no model calls
+  --reread path.json       read a stored run's out-of-scope rows again from its retained grades
+                           into a new output; needs no backend and makes no model calls
   --approval-delay-ms N    simulated human decision delay (default 750)
   --poll-ms N              state polling interval (default 500)
 `;
@@ -806,14 +817,7 @@ async function runTask(
   const correctEffectAt = firstCorrectEffectAt(task, snapshot);
   const deployedAt = run.deployedAt ? new Date(run.deployedAt).getTime() : finishedAt;
   const grade = gradeEvaluationTask(task, run.arm, snapshot);
-  if (timedOut) {
-    grade.checks.push({
-      check: 'harness-timeout',
-      passed: false,
-      detail: `exceeded the ${task.timeoutMs} ms task timeout`,
-    });
-    grade.passed = false;
-  }
+  if (timedOut) failForHarnessTimeout(grade, task);
   return {
     taskId: task.id,
     externalId: task.seed.externalId,
@@ -926,14 +930,7 @@ function regradeTask(
   }
   const snapshot = graderSnapshot(raw, item, startedAt, finishedAt);
   const grade = gradeEvaluationTask(task, arm, snapshot);
-  if (recorded.timedOut) {
-    grade.checks.push({
-      check: 'harness-timeout',
-      passed: false,
-      detail: `exceeded the ${task.timeoutMs} ms task timeout`,
-    });
-    grade.passed = false;
-  }
+  if (recorded.timedOut) failForHarnessTimeout(grade, task);
 
   let deployToFirstCorrectActionMs = recorded.deployToFirstCorrectActionMs;
   if (!recorded.grade.passed && grade.passed) {
@@ -979,15 +976,17 @@ export function recordedSourcePath(sourcePath: string): string {
   return basename(absolute);
 }
 
-/** Read a regrade source, refusing an output that exists or a task the task file lacks. */
+/** Read a source to grade again, refusing an output that exists or a file that is not evidence. */
 async function readRegradeSource(
   options: CliOptions,
+  flag: 'regrade' | 'reread' = 'regrade',
 ): Promise<{ sourcePath: string; outPath: string; source: EvidenceWithProgress }> {
-  if (!options.regrade) throw new Error('--regrade requires an existing evidence JSON path');
-  const sourcePath = resolve(options.regrade);
+  const given = options[flag];
+  if (!given) throw new Error(`--${flag} requires an existing evidence JSON path`);
+  const sourcePath = resolve(given);
   const outPath = resolve(options.out);
   if (sourcePath === outPath) {
-    throw new Error('--regrade output must differ from the original evidence path');
+    throw new Error(`--${flag} output must differ from the original evidence path`);
   }
   await requireAbsent(outPath, 're-grade JSON');
   await requireAbsent(reportPathFor(outPath), 're-grade report');
@@ -1103,6 +1102,29 @@ export async function runRegrade(
 }
 
 /**
+ * Read a stored run's out-of-scope rows again from its retained grades, for a
+ * run whose backend is gone, and write the result as new evidence with its
+ * report. No backend is opened and the source file is never touched.
+ *
+ * @throws when the output exists, or the source is not evidence, is itself a re-read or already
+ *   records the readings.
+ */
+export async function runRetainedReread(
+  options: CliOptions,
+  dependencies: Pick<RegradeDependencies, 'commit' | 'now'> = {},
+): Promise<EvaluationEvidence> {
+  const { sourcePath, outPath, source } = await readRegradeSource(options, 'reread');
+  const evidence = rereadRetainedEvidence(source, {
+    path: recordedSourcePath(sourcePath),
+    gradedAtCommit: dependencies.commit ?? currentCommit(),
+    now: dependencies.now ?? new Date(),
+  });
+  await atomicWrite(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
+  await atomicWrite(reportPathFor(outPath), renderEvaluationReport(evidence));
+  return evidence;
+}
+
+/**
  * Run or resume a comparison against the mock backend and write its evidence and report.
  *
  * @throws when the backend is not in mock mode, names another model or would select another sandbox.
@@ -1160,6 +1182,16 @@ async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
   if (options.help) {
     process.stdout.write(usage());
+    return;
+  }
+  if (options.reread) {
+    const evidence = await runRetainedReread(options);
+    const reread = evidence.runs
+      .flatMap((run) => run.tasks)
+      .filter((task) => task.grade.facts.outOfScope !== undefined).length;
+    console.log(`[eval] re-read: ${reread} out-of-scope rows from their retained grades`);
+    console.log(`[eval] JSON: ${resolve(options.out)}`);
+    console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
     return;
   }
   if (options.regrade) {

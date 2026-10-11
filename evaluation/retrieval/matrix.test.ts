@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { scoutQueries } from '../../src/docs/select';
-import { RETRIEVAL_CASES, retrievalPages } from './fixture';
+import type { SourceAuthority } from '../../src/docs/authority';
+import { AUTHORITY_WEIGHT, scoutQueries } from '../../src/docs/select';
+import { RETRIEVAL_CASES, retrievalCases, retrievalPages } from './fixture';
 import {
   RECALL_BAR,
   buildRetrievalGrade,
@@ -27,16 +28,109 @@ function trackedGrades(): { file: URL; grade: RetrievalGradeEvidence }[] {
 }
 
 describe('the retrieval labelled set', (): void => {
-  it('labels 30 items over the bed’s fifteen pages, the rehearsal’s own page and a Chinese runbook', (): void => {
+  // Re-pinned on 11 October 2026: the set gained two items over four pages of mixed trust
+  // (W15-R23), so it is 32 over 21 now and still the 30 over 17 as of any earlier day.
+  it('labels 32 items over the bed’s fifteen pages, the rehearsal’s own page, a Chinese runbook and four pages of mixed trust', (): void => {
     const pages = retrievalPages();
-    expect(RETRIEVAL_CASES).toHaveLength(30);
-    expect(pages).toHaveLength(17);
+    expect(RETRIEVAL_CASES).toHaveLength(32);
+    expect(pages).toHaveLength(21);
     const keys = new Set(pages.map((page) => page.key));
     for (const entry of RETRIEVAL_CASES) {
       for (const key of entry.pages) expect(keys, entry.id).toContain(key);
       for (const section of entry.sections) expect(entry.pages, entry.id).toContain(section.page);
+      if (entry.order) {
+        expect(keys, entry.id).toContain(entry.order.first);
+        expect(keys, entry.id).toContain(entry.order.then);
+      }
     }
-    expect(new Set(RETRIEVAL_CASES.map((entry) => entry.id)).size).toBe(30);
+    expect(new Set(RETRIEVAL_CASES.map((entry) => entry.id)).size).toBe(32);
+  });
+
+  it('is the set as it stood on the day a grade was taken: 30 items over 17 pages before 11 October 2026', (): void => {
+    const before = new Date('2026-10-10T23:59:59.999Z');
+    const since = new Date('2026-10-11T00:00:00.000Z');
+    expect(retrievalCases(before)).toEqual(RETRIEVAL_CASES.slice(0, 30));
+    expect(retrievalPages(before)).toEqual(retrievalPages().slice(0, 17));
+    expect(retrievalCases(since)).toEqual(RETRIEVAL_CASES);
+    expect(retrievalPages(since)).toHaveLength(21);
+    expect(retrievalPages(before).every((page) => page.authority === undefined)).toBe(true);
+    expect(
+      retrievalPages()
+        .filter((page) => page.authority !== undefined)
+        .map((page) => [page.key, page.authority]),
+    ).toEqual([
+      ['policy:credit-control-policy.md', 'official'],
+      ['policy:supplier-payment-runs.md', 'official'],
+    ]);
+  });
+
+  it('holds the order between two pages of different trust: the team runbook that answers before the official page that names it, and the official page before the team copy of it', (): void => {
+    const pages = retrievalPages();
+    const ordered = RETRIEVAL_CASES.filter((entry) => entry.order !== undefined);
+    expect(ordered.map((entry) => entry.id)).toEqual([
+      'fin-overdue-invoice',
+      'fin-payment-run-cut-off',
+    ]);
+    expect(ordered.map((entry) => gradeCase(entry, pages).order)).toEqual([
+      {
+        first: 'notion:overdue-invoice-escalation.md',
+        then: 'policy:credit-control-policy.md',
+        held: true,
+      },
+      {
+        first: 'policy:supplier-payment-runs.md',
+        then: 'notion:supplier-payment-runs.md',
+        held: true,
+      },
+    ]);
+    for (const entry of ordered) {
+      const row = gradeCase(entry, pages);
+      expect(row.pages.recall, entry.id).toBe(1);
+      expect(row.sections.recall, entry.id).toBe(1);
+    }
+    // An item that names no order records none, so an older grade's rows read as they did.
+    expect(gradeCase(RETRIEVAL_CASES[0], pages)).not.toHaveProperty('order');
+  });
+
+  it('puts the runbook item in the window the trust weights moved across: a team source weighed at 0.85 loses to the official page that only names the item', (): void => {
+    const runbook = RETRIEVAL_CASES.find((entry) => entry.id === 'fin-overdue-invoice')!;
+    const pages = retrievalPages();
+    expect(AUTHORITY_WEIGHT.team).toBe(0.95);
+    expect(gradeCase(runbook, pages).order?.held).toBe(true);
+    // The weight before v0.19.0, for the length of one grade: the constant is restored whatever
+    // the grade does, and no other test in this file runs between.
+    const weights = AUTHORITY_WEIGHT as Record<SourceAuthority, number>;
+    try {
+      weights.team = 0.85;
+      expect(gradeCase(runbook, pages).order?.held).toBe(false);
+    } finally {
+      weights.team = 0.95;
+    }
+    expect(gradeCase(runbook, pages).order?.held).toBe(true);
+  });
+
+  it('orders the same document in two sources by their trust and by nothing else', (): void => {
+    const copies = RETRIEVAL_CASES.find((entry) => entry.id === 'fin-payment-run-cut-off')!;
+    const pages = retrievalPages();
+    const [official, team] = [copies.order!.first, copies.order!.then].map(
+      (key) => pages.find((page) => page.key === key)!,
+    );
+    expect(official.body).toBe(team.body);
+    expect(official.title).toBe(team.title);
+    // The trust exchanged between the two sources: the copy that was the team's is first.
+    const exchanged = pages.map((page) =>
+      page.key === official.key
+        ? { ...page, authority: 'team' as const }
+        : page.key === team.key
+          ? { ...page, authority: 'official' as const }
+          : page,
+    );
+    expect(gradeCase(copies, exchanged).order?.held).toBe(false);
+    // No trust said for either: the tie goes to the corpus's order, where the team's copy is first.
+    const untold = pages.map((page) =>
+      page.key === official.key ? { ...page, authority: undefined } : page,
+    );
+    expect(gradeCase(copies, untold).order?.held).toBe(false);
   });
 
   it('recalls at or above R2’s bar, the prompt and the ranked pick alone: 0.9 at 6 pages and 0.8 at 12 blocks, without a model', (): void => {
@@ -53,6 +147,22 @@ describe('the retrieval labelled set', (): void => {
     expect(renderRetrievalGrade(evidence)).toContain('n=30');
   });
 
+  it('meets the bar on the set as it stands, and says how many ordered items held', (): void => {
+    const evidence = buildRetrievalGrade(COMMIT, new Date('2026-10-11T12:00:00.000Z'));
+    expect(evidence.cases).toBe(32);
+    expect(evidence.meetsBar).toBe(true);
+    expect(evidence.order).toEqual({ cases: 2, held: 2 });
+    const markdown = renderRetrievalGrade(evidence);
+    expect(markdown).toContain('n=32');
+    expect(markdown).toContain(
+      'Order between two pages of different trust (2 items, each naming the page that must rank first): held on 2.',
+    );
+    // A grade of the set before it had such items says nothing of order.
+    const earlier = buildRetrievalGrade(COMMIT, new Date('2026-10-08T00:00:00.000Z'));
+    expect(earlier.order).toBeUndefined();
+    expect(renderRetrievalGrade(earlier)).not.toContain('Order between');
+  });
+
   it('finds the Chinese runbook for a Chinese item through its bigrams alone', (): void => {
     const pages = retrievalPages();
     const zh = RETRIEVAL_CASES.find((entry) => entry.id === 'zh-handover-signature')!;
@@ -65,15 +175,25 @@ describe('the retrieval labelled set', (): void => {
     ]);
   });
 
+  // Since 11 October 2026 each tracked grade is reproduced over the set as it stood on the grade's
+  // own day: the set grew that day, and a grade of 30 items is still held to the selector.
   it('reproduces every tracked grade of the emulated scout from the current selector, so a published recall cannot drift', (): void => {
-    const current = buildRetrievalGrade(COMMIT);
     const emulated = trackedGrades().filter(({ grade }) => grade.scout !== 'backend');
     expect(emulated.length).toBeGreaterThanOrEqual(1);
     for (const { file, grade } of emulated) {
+      const current = buildRetrievalGrade(COMMIT, new Date(grade.generatedAt));
+      expect(current.cases, file.pathname).toBe(grade.cases);
       expect({ observations: current.observations, recall: current.recall }, file.pathname).toEqual(
         { observations: grade.observations, recall: grade.recall },
       );
+      expect(current.order, file.pathname).toEqual(grade.order);
     }
+    // The newest of them is of the set as it stands.
+    const newest = emulated
+      .map(({ grade }) => grade)
+      .sort((a, b) => a.generatedAt.localeCompare(b.generatedAt))
+      .at(-1)!;
+    expect(newest.cases).toBe(RETRIEVAL_CASES.length);
   });
 
   it('grades with the scout it is given, the emulation by default', (): void => {
@@ -99,8 +219,10 @@ describe('the retrieval labelled set', (): void => {
     const backend = trackedGrades().filter(({ grade }) => grade.scout === 'backend');
     expect(backend.length).toBeGreaterThanOrEqual(1);
     for (const { file, grade } of backend) {
-      expect(grade.cases, file.pathname).toBe(30);
-      expect(grade.backend?.pagesStored, file.pathname).toBe(17);
+      // The set as it stood on the grade's day: 30 items over 17 pages before 11 October 2026.
+      const gradedOn = new Date(grade.generatedAt);
+      expect(grade.cases, file.pathname).toBe(retrievalCases(gradedOn).length);
+      expect(grade.backend?.pagesStored, file.pathname).toBe(retrievalPages(gradedOn).length);
       expect(grade.backend?.image, file.pathname).toMatch(/^sha256:[0-9a-f]{64}$/);
       expect(grade.backend?.searches, file.pathname).toBeGreaterThan(0);
       const emulated = trackedGrades().find(

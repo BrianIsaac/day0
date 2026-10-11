@@ -75,7 +75,7 @@ export async function runBackendGrade(
   options: BackendRunOptions,
   now = new Date(),
 ): Promise<string> {
-  const pages = retrievalPages();
+  const pages = retrievalPages(now);
   const proof = ingestionProof(
     pages,
     options.sources,
