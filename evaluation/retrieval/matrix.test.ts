@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { scoutQueries } from '../../src/docs/select';
+import type { SourceAuthority } from '../../src/docs/authority';
+import { AUTHORITY_WEIGHT, scoutQueries } from '../../src/docs/select';
 import { RETRIEVAL_CASES, retrievalCases, retrievalPages } from './fixture';
 import {
   RECALL_BAR,
@@ -89,6 +90,23 @@ describe('the retrieval labelled set', (): void => {
     }
     // An item that names no order records none, so an older grade's rows read as they did.
     expect(gradeCase(RETRIEVAL_CASES[0], pages)).not.toHaveProperty('order');
+  });
+
+  it('puts the runbook item in the window the trust weights moved across: a team source weighed at 0.85 loses to the official page that only names the item', (): void => {
+    const runbook = RETRIEVAL_CASES.find((entry) => entry.id === 'fin-overdue-invoice')!;
+    const pages = retrievalPages();
+    expect(AUTHORITY_WEIGHT.team).toBe(0.95);
+    expect(gradeCase(runbook, pages).order?.held).toBe(true);
+    // The weight before v0.19.0, for the length of one grade: the constant is restored whatever
+    // the grade does, and no other test in this file runs between.
+    const weights = AUTHORITY_WEIGHT as Record<SourceAuthority, number>;
+    try {
+      weights.team = 0.85;
+      expect(gradeCase(runbook, pages).order?.held).toBe(false);
+    } finally {
+      weights.team = 0.95;
+    }
+    expect(gradeCase(runbook, pages).order?.held).toBe(true);
   });
 
   it('orders the same document in two sources by their trust and by nothing else', (): void => {

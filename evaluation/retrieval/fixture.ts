@@ -608,7 +608,7 @@ export const RETRIEVAL_CASES: readonly RetrievalCase[] = [
   },
   {
     // The answer is the team's runbook; the official policy names the item's terms and answers
-    // nothing. At the trust weights before v0.19.0 the policy ranked first.
+    // nothing. With a team source weighed at 0.85, as before v0.19.0, the policy ranks first.
     id: 'fin-overdue-invoice',
     role: 'finance',
     sourceSystem: 'linear',
