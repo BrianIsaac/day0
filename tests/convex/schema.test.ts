@@ -3243,6 +3243,99 @@ describe('the wave 16 schema step (16-K, N10: additive and optional)', (): void 
     });
   });
 
+  it('keeps a Discuss conversation in its own table, turn by turn with the draft, read by its card and by employee, and ends it in a proposal (RM10 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const reorientationId = await ctx.db.insert('reorientations', card(agentId));
+      const talkId = await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId,
+        state: 'active',
+        turns: [
+          { id: 't1', speaker: 'employee', text: 'Should Hana approve refunds now?', at: 1 },
+          { id: 't2', speaker: 'manager', text: 'Yes, from today.', at: 2 },
+        ],
+        replyDraft: 'And only over $500',
+        conversation: 1,
+        startedAt: 1,
+      });
+      const fresh = await ctx.db.get(talkId);
+      await ctx.db.patch(talkId, {
+        state: 'finished',
+        outcome: {
+          proposed: { kind: 'none', rationale: 'Hana approves the same refunds.' },
+          quotes: ['Yes, from today.'],
+        },
+        endedAt: 3,
+      });
+      return {
+        fresh,
+        finished: await ctx.db.get(talkId),
+        byCard: (
+          await ctx.db
+            .query('reorientationTalks')
+            .withIndex('by_reorientation', (q) => q.eq('reorientationId', reorientationId))
+            .collect()
+        ).map((row) => row._id),
+        byAgent: (
+          await ctx.db
+            .query('reorientationTalks')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect()
+        ).map((row) => row._id),
+        talkId,
+      };
+    });
+    expect(read.fresh).not.toHaveProperty('outcome');
+    expect(read.fresh).not.toHaveProperty('endedAt');
+    expect(read.finished).toMatchObject({
+      state: 'finished',
+      outcome: { proposed: { kind: 'none' }, quotes: ['Yes, from today.'] },
+    });
+    expect(read.byCard).toEqual([read.talkId]);
+    expect(read.byAgent).toEqual([read.talkId]);
+    expect(indexesOf('reorientationTalks')).toEqual({
+      by_reorientation: ['reorientationId'],
+      by_agent: ['agentId'],
+    });
+    // A talk is never a one-to-one session: the session keeps no kind (RM10 (a)).
+    expect(Object.keys(schema.tables.voiceSessions.validator.fields)).not.toContain('kind');
+  });
+
+  it('refuses a talk state the vocabulary does not have, and a talk outcome that is still pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertTalk = async (
+      fields: Partial<WithoutSystemFields<Doc<'reorientationTalks'>>>,
+    ): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const agentId = await insertAgent(ctx);
+        await ctx.db.insert('reorientationTalks', {
+          agentId,
+          reorientationId: await ctx.db.insert('reorientations', card(agentId)),
+          state: 'active',
+          turns: [],
+          conversation: 0,
+          startedAt: 1,
+          ...fields,
+        });
+      });
+    };
+    await insertTalk({});
+    await expect(
+      insertTalk({ state: 'synthesising' as Doc<'reorientationTalks'>['state'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertTalk({
+        state: 'finished',
+        outcome: {
+          proposed: { kind: 'pending' },
+          quotes: [],
+        } as unknown as Doc<'reorientationTalks'>['outcome'],
+      }),
+    ).rejects.toThrow();
+  });
+
   it('refuses a trigger, a risk, a standing, a proposal kind or an action the vocabulary does not have', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const insertCard = async (fields: Partial<WithoutSystemFields<Doc<'reorientations'>>>) =>

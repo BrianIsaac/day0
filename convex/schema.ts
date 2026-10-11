@@ -51,6 +51,7 @@ import {
   PAGE_STATUS_PROPOSALS,
   REORIENTATION_RISKS,
   REORIENTATION_STATUSES,
+  REORIENTATION_TALK_STATES,
   REORIENTATION_TRIGGERS,
   RELATIONSHIP_PROPOSAL_ACTIONS,
   SCOPE_PROPOSAL_ACTIONS,
@@ -281,19 +282,10 @@ export const charterChangeValidator = v.union(
 const pageRefValidator = v.object({ sourceId: v.id('docSources'), ref: v.string() });
 
 /**
- * What a reorientation card proposes (wave 16, 16-K for 16-O and 16-D; K-1, O-2), tagged by
- * `kind`: still `pending` while the scheduled judgement works (with when and why it last failed,
- * when it did), `none` when nothing needs to change, or a change Approve applies through the
- * target's own transaction helper, never applied by the writer. Every proposal but a pending one
- * says why in `rationale`, the card's "What {name} proposes"; a charter change also carries the
- * clause before and after as the card shows them.
+ * The changes a reorientation card can propose (wave 16, 16-K), each naming the target Approve
+ * applies it through, or none at all.
  */
-export const reorientationProposalValidator = v.union(
-  v.object({
-    kind: v.literal('pending'),
-    failedAt: v.optional(v.number()),
-    failure: v.optional(v.string()),
-  }),
+const proposedChanges = [
   v.object({ kind: v.literal('none'), rationale: v.string() }),
   v.object({
     kind: v.literal('charter-change'),
@@ -339,6 +331,29 @@ export const reorientationProposalValidator = v.union(
     action: literals(SKILL_PROPOSAL_ACTIONS),
     rationale: v.string(),
   }),
+] as const;
+
+/**
+ * What a Discuss conversation ends in (16-D): a proposal that is never `pending`, written onto its
+ * card in place of the card's own.
+ */
+export const reorientationTalkProposalValidator = v.union(...proposedChanges);
+
+/**
+ * What a reorientation card proposes (wave 16, 16-K for 16-O and 16-D; K-1, O-2), tagged by
+ * `kind`: still `pending` while the scheduled judgement works (with when and why it last failed,
+ * when it did), `none` when nothing needs to change, or a change Approve applies through the
+ * target's own transaction helper, never applied by the writer. Every proposal but a pending one
+ * says why in `rationale`, the card's "What {name} proposes"; a charter change also carries the
+ * clause before and after as the card shows them.
+ */
+export const reorientationProposalValidator = v.union(
+  v.object({
+    kind: v.literal('pending'),
+    failedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  }),
+  ...proposedChanges,
 );
 
 /** Where a person, an identity or an edge of the owner's graph came from (13-K for 13-P). */
@@ -1846,6 +1861,37 @@ export default defineSchema({
     .index('by_status_revisit', ['status', 'revisitAt'])
     /** The owner's cards in one standing, across employees. */
     .index('by_user_status', ['userId', 'status']),
+
+  /**
+   * A Discuss conversation about one reorientation card (wave 16, 16-K for 16-D; RM10 (a): its own
+   * table and route, never a one-to-one session, whose ten readers it leaves untouched). Kept turn
+   * by turn as the one-to-one keeps its own (`oneToOneTurnValidator`), with the reply being typed,
+   * so a room closed at any point reopens on the same conversation; ends in a proposal written
+   * onto the card, never an application. Chat only (N13). Agent-keyed.
+   */
+  reorientationTalks: defineTable({
+    agentId: v.id('agents'),
+    reorientationId: v.id('reorientations'),
+    state: literals(REORIENTATION_TALK_STATES),
+    turns: v.array(oneToOneTurnValidator),
+    /** The reply the manager was typing and had not sent. */
+    replyDraft: v.optional(v.string()),
+    /** Which conversation the row holds, moved on each time one is set aside (`conversationOf`). */
+    conversation: v.number(),
+    /**
+     * What the conversation ended in: the proposal that replaced the card's, and the manager's own
+     * words it rests on, after `withoutAgentQuotedEvidence` (the only evidence a talk gives).
+     */
+    outcome: v.optional(
+      v.object({ proposed: reorientationTalkProposalValidator, quotes: v.array(v.string()) }),
+    ),
+    startedAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    /** A card's conversations: the room opens the one still active. */
+    .index('by_reorientation', ['reorientationId'])
+    /** An employee's conversations, which its reset deletes (K-6). */
+    .index('by_agent', ['agentId']),
 
   /**
    * One code that decides every held action set open on the manager's

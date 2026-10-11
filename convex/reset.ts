@@ -70,6 +70,7 @@ export const AGENT_KEYED_TABLES = [
   'corrections',
   'workingAgreements',
   'reorientations',
+  'reorientationTalks',
   'decisionBatches',
   'skills',
   'permissionGrants',
@@ -355,6 +356,11 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   reorientations: (db, { agentId }, limit) =>
     upTo(
       db.query('reorientations').withIndex('by_agent_status', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  reorientationTalks: (db, { agentId }, limit) =>
+    upTo(
+      db.query('reorientationTalks').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   decisionBatches: (db, { agentId }, limit) =>
