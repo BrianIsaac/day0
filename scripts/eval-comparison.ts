@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { api } from '../convex/_generated/api';
 import type { Doc, Id } from '../convex/_generated/dataModel';
 import {
+  failForHarnessTimeout,
   firstCorrectEffectAt,
   gradeEvaluationTask,
   loadEvaluationTasks,
@@ -806,14 +807,7 @@ async function runTask(
   const correctEffectAt = firstCorrectEffectAt(task, snapshot);
   const deployedAt = run.deployedAt ? new Date(run.deployedAt).getTime() : finishedAt;
   const grade = gradeEvaluationTask(task, run.arm, snapshot);
-  if (timedOut) {
-    grade.checks.push({
-      check: 'harness-timeout',
-      passed: false,
-      detail: `exceeded the ${task.timeoutMs} ms task timeout`,
-    });
-    grade.passed = false;
-  }
+  if (timedOut) failForHarnessTimeout(grade, task);
   return {
     taskId: task.id,
     externalId: task.seed.externalId,
@@ -926,14 +920,7 @@ function regradeTask(
   }
   const snapshot = graderSnapshot(raw, item, startedAt, finishedAt);
   const grade = gradeEvaluationTask(task, arm, snapshot);
-  if (recorded.timedOut) {
-    grade.checks.push({
-      check: 'harness-timeout',
-      passed: false,
-      detail: `exceeded the ${task.timeoutMs} ms task timeout`,
-    });
-    grade.passed = false;
-  }
+  if (recorded.timedOut) failForHarnessTimeout(grade, task);
 
   let deployToFirstCorrectActionMs = recorded.deployToFirstCorrectActionMs;
   if (!recorded.grade.passed && grade.passed) {
