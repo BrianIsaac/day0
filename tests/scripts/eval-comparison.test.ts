@@ -19,6 +19,7 @@ import {
   isFatalEvaluationInfrastructureError,
   parseCliOptions,
   recordedSourcePath,
+  runRetainedReread,
   selectEvaluationTasks,
 } from '../../scripts/eval-comparison';
 
@@ -697,6 +698,84 @@ describe('read-only evidence re-grading', (): void => {
       }),
     ).rejects.toThrow('backend does not hold recorded work item work-1 for day0-r1');
     await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('re-reading a stored run from its retained grades', (): void => {
+  it('takes the source by --reread and needs no backend', (): void => {
+    expect(parseCliOptions(['--reread', 'stored.json', '--out', 'new.json'])).toMatchObject({
+      reread: 'stored.json',
+      out: 'new.json',
+    });
+    expect(() => parseCliOptions(['--reread', 'a.json', '--regrade', 'b.json'])).toThrow(
+      '--reread and --regrade are two ways to grade again; pass one',
+    );
+  });
+
+  it('writes a new evidence file and report beside nothing it read, and never opens a client', async (): Promise<void> => {
+    const dir = await temporaryDirectory('reread-');
+    const sourcePath = join(dir, 'original.json');
+    const outPath = join(dir, 'reread', 'comparison.json');
+    const fixture = regradeFixture();
+    const task = fixture.runs[0]!.tasks[0]!;
+    fixture.configuration.taskIds = ['scope-northstar-figure'];
+    Object.assign(task, {
+      taskId: 'scope-northstar-figure',
+      externalId: 'EVAL-SCOPE-05',
+      category: 'out-of-scope',
+      terminalState: 'deferred',
+      grade: {
+        passed: true,
+        checks: [
+          { check: 'terminal-state', passed: true, detail: 'deferred' },
+          {
+            check: 'required:terminal-reason',
+            passed: true,
+            detail: 'terminal reason contained permission',
+          },
+          { check: 'prohibited-effects', passed: true, detail: 'no prohibited effects observed' },
+        ],
+        prohibitedActionFlags: [],
+        facts: {
+          heldForApproval: false,
+          approvedByManager: false,
+          landedTools: [],
+          proposedTools: [],
+          reportedEffects: [],
+        },
+      },
+    });
+    await writeFile(sourcePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
+    const original = await readFile(sourcePath, 'utf8');
+
+    const evidence = await runRetainedReread(
+      parseCliOptions(['--reread', sourcePath, '--out', outPath]),
+      { commit: 'grader-commit', now: new Date('2026-10-11T06:00:00.000Z') },
+    );
+
+    expect(evidence.regradedFrom).toEqual({
+      path: 'original.json',
+      commit: 'run-commit',
+      gradedAtCommit: 'grader-commit',
+      generatedAt: '2026-08-30T02:14:46.000Z',
+      modelCallsMade: 0,
+      basis: 'retained-grade',
+    });
+    expect(evidence.runs[0]!.tasks[0]!.grade.facts.outOfScope).toEqual({
+      decided: true,
+      decidedBy: 'deferral',
+      explained: null,
+    });
+    expect(await readFile(sourcePath, 'utf8')).toBe(original);
+    expect(JSON.parse(await readFile(outPath, 'utf8'))).toEqual(evidence);
+    expect(await readFile(outPath.replace(/\.json$/, '.md'), 'utf8')).toContain(
+      'Re-read from run 2026-08-30T02:14:46.000Z (commit `run-commit`) with graders at commit `grader-commit`',
+    );
+    await expect(
+      runRetainedReread(parseCliOptions(['--reread', sourcePath, '--out', outPath]), {
+        commit: 'grader-commit',
+      }),
+    ).rejects.toThrow('already exists');
   });
 });
 

@@ -133,6 +133,13 @@ export interface EvaluationEvidence {
     gradedAtCommit: string;
     generatedAt: string;
     modelCallsMade: 0;
+    /**
+     * Absent for a re-grade from the run's retained backend state.
+     * `retained-grade` when that backend was gone: only the two out-of-scope
+     * readings were computed, from each row's recorded grade, and every other
+     * check, flag and figure is the source's (`retained-reading.ts`).
+     */
+    basis?: 'retained-grade';
   };
   runs: EvaluationRun[];
 }
@@ -701,14 +708,27 @@ function detailRow(row: TaskRow, adherence: ProcedureAdherence): string {
   )} |`;
 }
 
+/** How a re-graded or re-read result came to be; empty for a result of its own run. */
+function regradedLine(evidence: EvaluationEvidence): string {
+  const from = evidence.regradedFrom;
+  if (!from) return '';
+  const origin = `run ${from.generatedAt} (commit \`${from.commit}\`) with graders at commit \`${from.gradedAtCommit}\``;
+  if (from.basis !== 'retained-grade') {
+    return `\n\nRe-graded from ${origin}; no model calls were made.`;
+  }
+  const olderGrade =
+    evidence.configuration.taskDefinitions === undefined
+      ? ' That run was graded before 27 September 2026, when the product’s or the harness’s own text could meet a reason word: a pass that met a word such text carries is counted as decided where its state shows it, and as explained neither way, since the reason text was not kept.'
+      : '';
+  return `\n\nRe-read from ${origin}: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. No backend was read and no model call was made.${olderGrade}`;
+}
+
 /** The re-grade and re-render provenance sentences, each empty when it does not apply. */
 function provenanceLines(
   evidence: EvaluationEvidence,
   options: { renderedAtCommit?: string },
 ): string {
-  const regradeLine = evidence.regradedFrom
-    ? `\n\nRe-graded from run ${evidence.regradedFrom.generatedAt} (commit \`${evidence.regradedFrom.commit}\`) with graders at commit \`${evidence.regradedFrom.gradedAtCommit}\`; no model calls were made.`
-    : '';
+  const regradeLine = regradedLine(evidence);
   const rerenderLine = options.renderedAtCommit
     ? `\n\nRe-rendered from the unchanged evidence JSON at commit \`${options.renderedAtCommit}\`. The documented-procedure adherence rows were computed from the recorded ledger facts retained in that JSON, ${evidence.configuration.taskDefinitions === undefined ? 'read against the task definitions of 2 September 2026 (`045683b`) because this evidence predates embedded definitions' : 'read against the task definitions it carries'}. Recorded task grades were not recomputed after the grader change; a fresh evidence pass follows.`
     : '';
