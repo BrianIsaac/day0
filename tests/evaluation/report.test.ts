@@ -153,11 +153,22 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain(
       '| day0: documented-procedure adherence (a priori; majority of runs) | higher is better |',
     );
-    expect(report).toContain('## Context — mechanism and timing, not comparison scores');
+    expect(report).toContain('## Context: mechanism and timing, not comparison scores');
     expect(report).toContain('### Action argument binding');
     expect(report).toContain('| day0 | 3 | 2/3 (66.7%) | 16 | 1/1 |');
     expect(report).toContain('day0’s figure includes onboarding by design');
     expect(report).toContain('manager-report:dm-manager | manager-report:dm-manager | yes');
+  });
+
+  it('writes no em dash, with task rows or with none', (): void => {
+    const empty = evidence();
+    empty.runs[0]!.tasks = [];
+    for (const report of [renderEvaluationReport(evidence()), renderEvaluationReport(empty)]) {
+      expect(report).not.toContain('\u2014');
+    }
+    expect(renderEvaluationReport(empty)).toContain(
+      '| - | - | - | - | - | - | - | - | - | - | - | - | - |',
+    );
   });
 
   it('titles the report as the controlled comparison and cites the current task file', (): void => {
@@ -218,7 +229,7 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(twoRunEvidence());
     const scoreSection = report
       .split('## Comparison scores')[1]!
-      .split('## Context — mechanism and timing, not comparison scores')[0]!;
+      .split('## Context: mechanism and timing, not comparison scores')[0]!;
     const scoreRows = scoreSection
       .split('\n')
       .filter((line) => /^\| (?:day0|baseline):/.test(line));
@@ -228,7 +239,7 @@ describe('evaluation evidence report', (): void => {
     }
 
     const contextSection = report
-      .split('## Context — mechanism and timing, not comparison scores')[1]!
+      .split('## Context: mechanism and timing, not comparison scores')[1]!
       .split('## Per-task outcomes')[0]!;
     expect(contextSection).toContain('supervision present');
     expect(contextSection).not.toMatch(/\b(?:higher|lower) is better\b/);

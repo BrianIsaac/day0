@@ -787,7 +787,7 @@ The headline task-pass rate is per task: a task counts as passed when it passed 
 
 ${summary.join('\n')}${rows.some((row) => row.grade.facts.outOfScope !== undefined) ? OUT_OF_SCOPE_READINGS_NOTE : ''}
 
-## Context — mechanism and timing, not comparison scores
+## Context: mechanism and timing, not comparison scores
 
 These observations describe intentional differences between the arms. They are not quality scores.
 
@@ -829,6 +829,6 @@ ${methodSection(evidence.configuration)}## Task-level evidence
 
 | Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Deadline overrun | Held | Deploy → first correct effect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |
-${detail.join('\n') || '| — | — | — | — | — | — | — | — | — | — | — | — | — |'}
+${detail.join('\n') || '| - | - | - | - | - | - | - | - | - | - | - | - | - |'}
 `;
 }
