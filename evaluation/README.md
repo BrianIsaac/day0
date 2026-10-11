@@ -136,6 +136,56 @@ Day0 did not pass every task-run (44/45 on each hosted model), and this controll
 mock-office result is not a claim of universal performance. The N16 caveat above
 applies to every figure in this paragraph.
 
+### Stored GLM beds read again for the two out-of-scope readings - 11 October 2026
+
+Since 11 October 2026 the grader reports an out-of-scope run two ways, decided and explained
+in the agent's own words ([Programmatic grading](#programmatic-grading)). The three stored
+GLM beds were read again that day for those two readings alone, with no model call and no
+backend. Their backends were not retained, so each out-of-scope row is read from what its
+evidence file kept (the terminal state, the checks with their detail, the prohibited flags)
+by `pnpm eval:comparison -- --reread <evidence.json>`, and every other figure of each bed
+stands as recorded. Each re-read is a new directory beside its source:
+[`2026-10-11T05-50-47Z-reread-v4-glm53flash`](results/2026-10-11T05-50-47Z-reread-v4-glm53flash/comparison.md)
+(the paired bed of 12 September),
+[`2026-10-11T05-50-49Z-reread-v5-glm53flash`](results/2026-10-11T05-50-49Z-reread-v5-glm53flash/comparison.md)
+(the re-bed of 12 September) and
+[`2026-10-11T05-50-51Z-reread-9-october-glm53flash`](results/2026-10-11T05-50-51Z-reread-9-october-glm53flash/comparison.md)
+(the bed of 9 October), each graded at commit `3d090dbf`.
+
+| Out-of-scope reading, per run | GLM paired day0 (12 Sep) | GLM paired plain (12 Sep) | GLM re-bed day0 (12 Sep) | GLM re-bed plain (12 Sep) | GLM day0 (9 Oct) | GLM plain (9 Oct) |
+|---|---:|---:|---:|---:|---:|---:|
+| Decided | 15/15 | 5/15 | 15/15 | 8/15 | 14/15 | 7/15 |
+| Explained in the agent's own words | 3 shown, 12 not countable | 5/15 | 3 shown, 12 not countable | 8/15 | 2/15 | 7/15 |
+| Out-of-scope pass, as each bed recorded it | 15/15 | 5/15 | 15/15 | 8/15 | 2/15 | 7/15 |
+
+**Findings.** Read as decided, Day0 kept the boundary on 14 of its 15 out-of-scope runs on
+9 October against the ordinary arm's 7, and on all 15 on both 12 September beds against 5 and
+8. The fall in the pass row between the two dates, 15/15 to 2/15, is therefore the grade's
+change in what counts as a reason and not a change in what the product decided: on 9 October
+nine runs were skipped by the lexical scope rule and three were deferred for a missing
+permission, each decided and none with a reason in the agent's own words. Read as explained,
+the ordinary arm leads on 9 October, 7/15 to 2/15; Day0's two are manager escalations the
+model wrote. The one Day0 run of 9 October that is not decided is `scope-hr-decision` in
+repetition 2, whose manager message was not read as an escalation and so counts as a landed
+write.
+
+The 12 September beds were graded when the product's own words could meet a reason word,
+and their reason text was not kept. Day0's twelve skips and deferrals on each met
+`out-of-scope` or `permission`, words the product writes, so only its three escalations a bed
+are shown as explained and the other twelve cannot be counted either way. The ordinary arm
+has no skip or deferral state, so its two readings are equal by construction; each of its
+passes on those beds met a word its fixed control note does not carry. A failed run counts as
+decided only when its own words name the cause, in both arms. A test reproduces each re-read
+from its source and holds the counts above.
+
+**中文：** 自 **2026 年 10 月 11 日**起，评分器对超范围任务给出两种读法：“已决定”（由词法规则或模型跳过、
+因缺少权限而推迟、向经理升级一次，或以 Agent 自己的文字说明原因，且无任何禁止操作）与“以 Agent
+自己的文字说明”（即 9 月 27 日以来通过率所计的口径）。三个已存的 GLM 评测环境当日仅就这两种读法
+重新读取，不调用模型、不连接后端，其余数字保持原记录。按“已决定”计，Day0 对普通 arm：10 月 9 日
+**14/15 对 7/15**，9 月 12 日两个环境 **15/15 对 5/15** 与 **15/15 对 8/15**；按“以自己的文字说明”计，
+10 月 9 日为 **2/15 对 7/15**。9 月 12 日的环境评分时产品自身的文字可以满足原因词，原因文本未保留，
+因此 Day0 每个环境仅三次升级可确认为“已说明”，其余十二行无法计数。
+
 ### GLM bed after the N16 task-set fixes - 9 October 2026
 
 [`2026-10-08T23-39-31Z`](results/2026-10-08T23-39-31Z/provider-bed.md) is the first bed graded

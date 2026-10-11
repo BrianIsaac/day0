@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { loadEvaluationTasksSync, type EvaluationGrade } from '../../evaluation/graders';
 import {
@@ -228,5 +229,82 @@ describe('a stored result re-read from its retained grades', (): void => {
     expect(() => rereadRetainedEvidence(reread, PROVENANCE)).toThrow(
       'the source is itself a re-read of evaluation/results/2026-10-08T23-39-31Z/comparison.json; re-read that run',
     );
+  });
+});
+
+const ROOT = new URL('../../', import.meta.url);
+const RESULTS = new URL('evaluation/results/', ROOT);
+
+/** Every tracked result that is a re-read of another, by its directory. */
+function trackedRereads(): Map<string, EvaluationEvidence> {
+  const rereads = new Map<string, EvaluationEvidence>();
+  for (const entry of readdirSync(RESULTS, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    let text: string;
+    try {
+      text = readFileSync(new URL(`${entry.name}/comparison.json`, RESULTS), 'utf8');
+    } catch {
+      continue;
+    }
+    const evidence = JSON.parse(text) as EvaluationEvidence;
+    if (evidence.regradedFrom?.basis === 'retained-grade') rereads.set(entry.name, evidence);
+  }
+  return rereads;
+}
+
+/** One arm's two readings over a result's out-of-scope rows, as counts. */
+function readingCounts(evidence: EvaluationEvidence, arm: 'day0' | 'baseline') {
+  const readings = evidence.runs
+    .filter((run) => run.arm === arm)
+    .flatMap((run) => run.tasks)
+    .flatMap((task) => (task.grade.facts.outOfScope ? [task.grade.facts.outOfScope] : []));
+  return {
+    rows: readings.length,
+    decided: readings.filter((reading) => reading.decided === true).length,
+    explained: readings.filter((reading) => reading.explained === true).length,
+    notCountable: readings.filter((reading) => reading.explained === null).length,
+  };
+}
+
+describe('the tracked re-reads of the stored beds', (): void => {
+  it('reproduce from their sources with the grader as it stands, so a published reading cannot drift', (): void => {
+    const rereads = trackedRereads();
+    expect(rereads.size).toBeGreaterThanOrEqual(3);
+    for (const [directory, tracked] of rereads) {
+      const from = tracked.regradedFrom!;
+      const source = JSON.parse(
+        readFileSync(new URL(from.path, ROOT), 'utf8'),
+      ) as EvaluationEvidence;
+      expect(
+        rereadRetainedEvidence(source, {
+          path: from.path,
+          gradedAtCommit: from.gradedAtCommit,
+          now: new Date(tracked.generatedAt),
+        }),
+        directory,
+      ).toEqual(tracked);
+    }
+  });
+
+  it('hold the figures the README quotes for the three GLM beds', (): void => {
+    const bySource = new Map(
+      [...trackedRereads().values()].map((evidence) => [evidence.regradedFrom!.path, evidence]),
+    );
+    const counts = (source: string) => {
+      const evidence = bySource.get(`evaluation/results/${source}`)!;
+      return { day0: readingCounts(evidence, 'day0'), plain: readingCounts(evidence, 'baseline') };
+    };
+    expect(counts('2026-09-12T06-33-21Z-v4-glm53flash/semifinal.json')).toEqual({
+      day0: { rows: 15, decided: 15, explained: 3, notCountable: 12 },
+      plain: { rows: 15, decided: 5, explained: 5, notCountable: 0 },
+    });
+    expect(counts('2026-09-12T07-54-47Z-v5-glm53flash/semifinal.json')).toEqual({
+      day0: { rows: 15, decided: 15, explained: 3, notCountable: 12 },
+      plain: { rows: 15, decided: 8, explained: 8, notCountable: 0 },
+    });
+    expect(counts('2026-10-08T23-39-31Z/comparison.json')).toEqual({
+      day0: { rows: 15, decided: 14, explained: 2, notCountable: 0 },
+      plain: { rows: 15, decided: 7, explained: 7, notCountable: 0 },
+    });
   });
 });
