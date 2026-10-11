@@ -17,6 +17,7 @@ import {
   withBackoff,
   type BackoffPolicy,
 } from '../../lib/transport-error';
+import { PageTooLargeError } from './page-address';
 
 /** How one request is made: the platform's `fetch`, which a test answers in-process. */
 export type ProviderFetch = (input: URL, init: RequestInit) => Promise<Response>;
@@ -88,6 +89,23 @@ export class ProviderUnreachableError extends Error {
   }
 }
 
+/**
+ * The request itself was refused before any answer was read: a redirect Day0 does not follow, a
+ * certificate it cannot verify. The transport says "fetch failed" for each and keeps the cause
+ * below it, so the host and the cause are said here (W15-R30).
+ */
+export class ProviderRequestRefusedError extends Error {
+  constructor(host: string, cause: unknown) {
+    super(
+      `Day0's request to ${host} did not go through: ${innermostMessage(cause)}. Something between ` +
+        `Day0 and ${host} (a proxy that inspects HTTPS, or a sign-in page that redirects) may be ` +
+        `answering for it: ask IT whether the machine Day0's backend runs on reaches ${host} directly.`,
+      { cause },
+    );
+    this.name = 'ProviderRequestRefusedError';
+  }
+}
+
 /** An answer that is not the provider's own: a proxy's or a firewall's page. */
 export class ProviderGatewayError extends Error {
   constructor(provider: string, answer: ProviderAnswer) {
@@ -121,14 +139,27 @@ function innermostMessage(error: unknown): string {
   return current instanceof Error ? current.message : String(current);
 }
 
-/** A response's body, read whole or refused once it passes the bound. */
+/**
+ * A response's body, read whole or refused once it passes the bound.
+ *
+ * A fetch that bounds its own body (the checked page fetch a download goes through) errors its
+ * stream past that bound; that is the same refusal, said as this one, so it is never read as a
+ * transport failure by the words its address happens to hold.
+ */
 async function boundedBytes(response: Response, url: URL, maxBytes: number): Promise<Uint8Array> {
   if (response.body === null) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try {
+      read = await reader.read();
+    } catch (error) {
+      if (error instanceof PageTooLargeError) throw new AnswerTooLargeError(url, maxBytes);
+      throw error;
+    }
+    const { done, value } = read;
     if (done) break;
     received += value.byteLength;
     if (received > maxBytes) {
@@ -149,6 +180,38 @@ async function boundedBytes(response: Response, url: URL, maxBytes: number): Pro
 /** An answer's body as text. */
 export function answerText(answer: ProviderAnswer): string {
   return new TextDecoder().decode(answer.bytes);
+}
+
+/**
+ * Why a 200 answer to a download is not stored, when it is a web page and not the document: a
+ * captive portal or a proxy's sign-in page answers 200 with HTML, which was stored as the
+ * document it stood in for (W15-R30). Read by what the answer says it is and by how it opens,
+ * since such a page does not always say.
+ *
+ * @param provider - The provider's name, as a manager knows it.
+ * @param answer - The 200 answer to the download.
+ * @param name - The document's name.
+ * @returns The reason the document is unread, or undefined when the answer is no web page.
+ */
+export function webPageInPlaceOf(
+  provider: string,
+  answer: ProviderAnswer,
+  name: string,
+): { readonly reason: string } | undefined {
+  const type = (answer.headers.get('content-type') ?? '').trim().toLowerCase();
+  const opening = new TextDecoder().decode(answer.bytes.subarray(0, 256)).trimStart().toLowerCase();
+  const page =
+    /^(?:text\/html|application\/xhtml\+xml)\b/.test(type) ||
+    opening.startsWith('<!doctype html') ||
+    opening.startsWith('<html');
+  if (!page) return undefined;
+  const host = answer.url.host;
+  return {
+    reason:
+      `"${name}" came back from ${host} as a web page, not the document itself, so something ` +
+      `between Day0 and ${provider} (a proxy or a sign-in page) may have answered for it: ask IT ` +
+      `whether the machine Day0's backend runs on reaches ${host} directly.`,
+  };
 }
 
 /**
@@ -250,7 +313,13 @@ export class ProviderHttp {
       if (transportFailureKind(error) === 'refused') {
         throw new ProviderUnreachableError(url.host, error);
       }
-      throw interruptedReadError(error, `The read of ${url.host}`) ?? error;
+      const interrupted = interruptedReadError(error, `The read of ${url.host}`);
+      if (interrupted !== undefined) throw interrupted;
+      // What is left of the transport's own failures names nothing: neither the host nor why.
+      if (error instanceof TypeError && error.message === 'fetch failed') {
+        throw new ProviderRequestRefusedError(url.host, error);
+      }
+      throw error;
     }
   }
 

@@ -5,6 +5,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import {
   SEARCH_BLOCKS_LIMIT,
   SEARCH_SOURCES_LIMIT,
+  notCurrentRefs,
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
@@ -59,12 +60,23 @@ export async function currentDocs(
   db: DatabaseReader,
   docs: readonly Doc<'mockDocs'>[],
 ): Promise<Doc<'mockDocs'>[]> {
-  const current = await Promise.all(
-    docs.map(async (doc) =>
-      doc.sourceId === undefined || doc.sourceRef === undefined
-        ? true
-        : (await storedPageStatus(db, doc.sourceId, doc.sourceRef)) === 'active',
+  // One range of small rows a source says which of its pages are not current (W15-R7): a query
+  // a mirrored page passed Convex's 4,096 index ranges at about 4,090 pages.
+  const sourceIds = [...new Set(docs.flatMap((doc) => (doc.sourceId ? [doc.sourceId] : [])))];
+  const notCurrent = new Map(
+    await Promise.all(
+      sourceIds.map(async (sourceId) => [sourceId, await notCurrentRefs(db, sourceId)] as const),
     ),
+  );
+  const current = await Promise.all(
+    docs.map(async (doc) => {
+      if (doc.sourceId === undefined || doc.sourceRef === undefined) return true;
+      const left = notCurrent.get(doc.sourceId);
+      // A source with more not-current pages than one read takes is read a page at a time.
+      return left === undefined
+        ? (await storedPageStatus(db, doc.sourceId, doc.sourceRef)) === 'active'
+        : !left.has(doc.sourceRef);
+    }),
   );
   return docs.filter((_doc, index) => current[index]);
 }

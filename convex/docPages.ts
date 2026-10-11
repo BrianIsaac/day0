@@ -3,6 +3,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
+import { storedPageStatus } from './docBlocks';
 import { RELATIONS_OF_A_PAGE, statusSourceOf } from './docStatus';
 import { pageStatusOf, type PageStatus, type StatusSource } from '../src/docs/authority';
 
@@ -74,15 +75,24 @@ function decision(
   };
 }
 
-/** Whether a relation still to answer names the page as the older or the twin of another. */
+/**
+ * Whether a relation still to answer names the page as the older or the twin of another page
+ * that is current: the relation a card is drawn for. One whose other page is archived, a draft
+ * or superseded draws no card (`docRelations.listOpen`), so it flags nothing here either
+ * (W15-R46: the chip said "Possibly superseded" and "relation, above" with no card above it).
+ */
 async function proposedAgainst(ctx: QueryCtx, page: Doc<'docPages'>): Promise<boolean> {
   const relations = await ctx.db
     .query('docRelations')
     .withIndex('by_to', (q) => q.eq('to.sourceId', page.sourceId).eq('to.ref', page.ref))
     .take(RELATIONS_OF_A_PAGE);
-  return relations.some(
-    (relation) => relation.status === 'proposed' && relation.kind !== 'possible_conflict',
-  );
+  for (const relation of relations) {
+    if (relation.status !== 'proposed' || relation.kind === 'possible_conflict') continue;
+    // One small row: the other page's first block carries its status.
+    const other = await storedPageStatus(ctx.db, relation.from.sourceId, relation.from.ref);
+    if (other === 'active') return true;
+  }
+  return false;
 }
 
 /** A page's key among the rows of one read: its source and ref. */

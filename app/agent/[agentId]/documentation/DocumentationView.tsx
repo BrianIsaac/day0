@@ -8,7 +8,7 @@ import type { Id } from '@convex/_generated/dataModel';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { LinkSourceForm } from '../../../documentation/LinkSourceForm';
-import { SourceTable } from '../../../documentation/SourceTable';
+import { SourceTable, TRUST_HELP } from '../../../documentation/SourceTable';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
@@ -87,10 +87,8 @@ export function DocumentationView() {
 
   return (
     <Columns arriving={arriving} aside={aside}>
-      <Card
-        title="Sources"
-        meta="official over team over personal; within a source a page’s status decides; recency only breaks ties"
-      >
+      {/* The Trust select's own words: trust is a weight on the ranking, never a strict order. */}
+      <Card title="Sources" meta={TRUST_HELP}>
         {sources === undefined ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the linked locations</p>
         ) : (
@@ -111,17 +109,11 @@ export function DocumentationView() {
       ) : null}
       {(relations ?? []).map((relation) =>
         relation.kind === 'possible_conflict' ? (
-          <ConflictCard
-            key={relation._id}
-            relation={relation}
-            name={agent.name}
-            onAnswered={setAnswered}
-          />
+          <ConflictCard key={relation._id} relation={relation} onAnswered={setAnswered} />
         ) : (
           <RelationCard
             key={relation._id}
             relation={relation}
-            name={agent.name}
             zone={zone}
             onAnswered={setAnswered}
           />

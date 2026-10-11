@@ -27,8 +27,14 @@ import {
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
-import { confluenceStorageToMarkdown, MAX_STORAGE_BYTES, underTitle } from './html-markdown';
 import {
+  confluenceStorageToMarkdown,
+  DocumentConversionError,
+  MAX_STORAGE_BYTES,
+  underTitle,
+} from './html-markdown';
+import {
+  AnswerTooLargeError,
   field,
   listField,
   ProviderHttp,
@@ -99,6 +105,8 @@ export interface ListedConfluencePage {
   readonly status: string | undefined;
   /** The body in the storage format, when the listing gave one. */
   readonly storage: string | undefined;
+  /** Whether the page was listed without its body because its body is past what one answer holds. */
+  readonly oversize?: boolean;
   readonly versionNumber: unknown;
   /** When the current version was made, as an ISO time. */
   readonly editedAt: string | undefined;
@@ -119,17 +127,25 @@ export function confluencePage(
   now: () => number,
 ): DocPage | UnreadPage {
   const title = listed.title?.trim() || 'Untitled';
+  const tooLarge = {
+    ref: listed.id,
+    reason: `"${title}" is larger than the ${MAX_STORAGE_BYTES / (1024 * 1024)} MiB Day0 converts of one Confluence page.`,
+  };
+  if (listed.oversize === true) return tooLarge;
   if (listed.storage === undefined) {
     return {
       ref: listed.id,
       reason: `Confluence gave no body in its storage format for "${title}", so Day0 does not read it.`,
     };
   }
-  if (listed.storage.length > MAX_STORAGE_BYTES) {
-    return {
-      ref: listed.id,
-      reason: `"${title}" is larger than the ${MAX_STORAGE_BYTES / (1024 * 1024)} MiB Day0 converts of one Confluence page.`,
-    };
+  if (listed.storage.length > MAX_STORAGE_BYTES) return tooLarge;
+  let body: string;
+  try {
+    body = confluenceStorageToMarkdown(listed.storage);
+  } catch (error) {
+    // A page the converter cannot take is that page's: the rest of the window is read (W15-R9).
+    if (!(error instanceof DocumentConversionError)) throw error;
+    return { ref: listed.id, reason: `"${title}" is not read: ${error.message}.` };
   }
   const edited = Date.parse(listed.editedAt ?? '');
   const nativeStatus = confluenceNativeStatus(listed.status);
@@ -138,13 +154,39 @@ export function confluencePage(
     ref: listed.id,
     title,
     ...(listed.url === undefined ? {} : { url: listed.url }),
-    markdown: underTitle(title, confluenceStorageToMarkdown(listed.storage)),
+    markdown: underTitle(title, body),
     updatedAt: Number.isFinite(edited) ? edited : now(),
     ...(nativeStatus === undefined ? {} : { nativeStatus }),
     ...(typeof listed.versionNumber === 'number'
       ? { sourceRevision: String(listed.versionNumber) }
       : {}),
   };
+}
+
+/**
+ * A listing window whose answer fits what one answer may hold (W15-R11).
+ *
+ * A window of pages with their bodies can be past the bound though each page alone is not, and
+ * a sync that failed there would meet the same window every time. So a window too large is asked
+ * for again at half its pages, down to one; a single page still too large is listed without its
+ * body, to be named unread, and the walk goes on past it.
+ *
+ * @param limit - The most pages the batch takes.
+ * @param list - Asks for a window of at most this many pages, with or without their bodies.
+ * @returns The window, and whether it is one page listed without the body it was too large with.
+ */
+export async function listingThatFits<Listed>(
+  limit: number,
+  list: (pages: number, bodies: boolean) => Promise<Listed>,
+): Promise<{ readonly listed: Listed; readonly oversize: boolean }> {
+  for (let pages = limit; ; pages = Math.floor(pages / 2)) {
+    try {
+      return { listed: await list(pages, true), oversize: false };
+    } catch (error) {
+      if (!(error instanceof AnswerTooLargeError)) throw error;
+      if (pages <= 1) return { listed: await list(1, false), oversize: true };
+    }
+  }
 }
 
 /** One page of the listing, as the batch needs it. */
@@ -191,11 +233,15 @@ export class ConfluenceCloudReader implements DocumentationReader {
     const resumed = cursor === undefined ? undefined : CURSOR.exec(cursor);
     if (cursor !== undefined && resumed === null) throw new ListingChangedError();
     const spaceId = resumed?.[1] ?? (await this.spaceId(http, locator, secret));
-    const listed = await this.pages(http, locator, secret, spaceId, resumed?.[2], limit);
+    const { listed, oversize } = await listingThatFits(
+      limit,
+      async (count: number, bodies: boolean): Promise<ListedPages> =>
+        await this.pages(http, locator, secret, { spaceId, cursor: resumed?.[2], count, bodies }),
+    );
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
     for (const result of listed.results) {
-      const read = this.page(source, result, listed.base);
+      const read = this.page(source, result, listed.base, oversize);
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
@@ -238,20 +284,24 @@ export class ConfluenceCloudReader implements DocumentationReader {
     return id;
   }
 
-  /** One page of the space's listing, bodies included. */
+  /** One page of the space's listing, with the pages' bodies unless it is asked for without. */
   private async pages(
     http: ProviderHttp,
     locator: ConfluenceCloudLocator,
     token: string,
-    spaceId: string,
-    cursor: string | undefined,
-    limit: number,
+    at: {
+      readonly spaceId: string;
+      readonly cursor: string | undefined;
+      readonly count: number;
+      readonly bodies: boolean;
+    },
   ): Promise<ListedPages> {
+    const { spaceId, cursor, count: limit } = at;
     const url = this.address(locator, `/wiki/api/v2/spaces/${spaceId}/pages`);
     // Archived pages are asked for by name, so one is marked rather than dropped (V15-1).
     url.searchParams.append('status', 'current');
     url.searchParams.append('status', 'archived');
-    url.searchParams.set('body-format', 'storage');
+    if (at.bodies) url.searchParams.set('body-format', 'storage');
     // Oldest id first, which an edit never changes, so an edit mid-walk moves no page across it.
     url.searchParams.set('sort', 'id');
     url.searchParams.set('limit', String(Math.min(limit, MAX_PAGE_LIMIT)));
@@ -286,6 +336,7 @@ export class ConfluenceCloudReader implements DocumentationReader {
     source: DocSourceRecord,
     result: unknown,
     base: string | undefined,
+    oversize: boolean,
   ): DocPage | UnreadPage {
     const id = textField(result, 'id');
     if (id === undefined) throw new Error('Confluence listed a page with no id.');
@@ -298,6 +349,7 @@ export class ConfluenceCloudReader implements DocumentationReader {
         title: textField(result, 'title'),
         status: textField(result, 'status'),
         storage: textField(field(field(result, 'body'), 'storage'), 'value'),
+        oversize,
         versionNumber: field(version, 'number'),
         editedAt: textField(version, 'createdAt'),
         url: base?.startsWith('https://') && webui !== undefined ? `${base}${webui}` : undefined,

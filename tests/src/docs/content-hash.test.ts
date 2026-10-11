@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
+import { sep } from 'node:path';
 import {
   PAGE_REDACTION_REVISION,
   REDACTOR_MODELS_DIGEST,
@@ -84,25 +85,38 @@ describe('pageContentHash', (): void => {
     // serves the span model, with its threshold and chunking (`redactor/server.py`): the review
     // found a change to either left this test green and every unchanged page with its old
     // redaction for good.
+    // Since 15-T (W15-R41) it also covers the pins of the libraries that produce the spans
+    // (`redactor/requirements.txt` and `requirements-cuda.txt`: a `transformers==` bump left the
+    // test green) and every file under `src/redaction/`, however deep: the directory was read
+    // at its top level only.
     const src = new URL('../../../src/', import.meta.url);
+    const redactor = new URL('../../../redactor/', import.meta.url);
     const files = [
       'docs/redaction.ts',
-      ...readdirSync(new URL('redaction/', src))
+      ...readdirSync(new URL('redaction/', src), { recursive: true, encoding: 'utf8' })
+        .map((name) => name.split(sep).join('/'))
         .filter((name) => name.endsWith('.ts'))
         .sort()
         .map((name) => `redaction/${name}`),
       'surfaces/secrets.ts',
     ];
-    const component = new URL('../../../redactor/server.py', import.meta.url);
+    const component = readdirSync(redactor)
+      .filter((name) => name === 'server.py' || /^requirements.*\.txt$/.test(name))
+      .sort();
+    expect(component).toEqual(['requirements-cuda.txt', 'requirements.txt', 'server.py']);
     const digest = sha256OfText(
       [
         ...files.map((file) => `${file}\n${readFileSync(new URL(file, src), 'utf8')}`),
-        `redactor/server.py\n${readFileSync(component, 'utf8')}`,
+        ...component.map(
+          (file) => `redactor/${file}\n${readFileSync(new URL(file, redactor), 'utf8')}`,
+        ),
       ].join('\n'),
     );
     expect({ revision: PAGE_REDACTION_REVISION, digest }).toEqual({
       revision: 2,
-      digest: 'ddab3d14f4e0ba9aebd50114ae63f4ed00f8128b5d57be4d09f131cb67527b62',
+      // Re-pinned for W15-R41: the digest takes two more files in (the redactor's requirement
+      // pins); none of the code it covered before changed, so no bump is owed.
+      digest: '43a03656a250d01ea17b4206fea77e2b676269810398d92691c55bf6d84e5ad0',
     });
   });
 });

@@ -114,15 +114,34 @@ describe('docPages.listForSource', (): void => {
         decidedAt: 5_000,
         supersededBy: { sourceId, ref: 'overview.md' },
       });
-      // A relation still to answer proposes a later version of the escalation page.
+      // A relation still to answer proposes a later version of the escalation page: a current
+      // page, so its card is drawn. (The proposal named the draft overview page until W15-R46:
+      // a relation whose other page is not current draws no card, so it flags nothing now.)
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'escalation-v2.md',
+        title: 'Escalation paths, version 2',
+        markdown: '# Escalation paths, version 2',
+        updatedAt: 4_500,
+      });
       await ctx.db.insert('docRelations', {
         userId: 'owner',
-        from: { sourceId, ref: 'overview.md' },
+        from: { sourceId, ref: 'escalation-v2.md' },
         to: { sourceId, ref: 'escalation.md' },
         kind: 'possible_successor',
         evidence: [{ measure: 'title-version', value: 1 }],
         status: 'proposed',
         createdAt: 7_000,
+      });
+      // And one whose proposed later version is the draft: no card is drawn for it (W15-R46).
+      await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId, ref: 'overview.md' },
+        to: { sourceId, ref: 'escalation-v2.md' },
+        kind: 'possible_duplicate',
+        evidence: [{ measure: 'shared-text', value: 80 }],
+        status: 'proposed',
+        createdAt: 7_500,
       });
     });
     const result = await harness
@@ -172,6 +191,8 @@ describe('docPages.listForSource', (): void => {
       statusSource: 'default',
       possiblySuperseded: true,
     });
+    // The page a draft is proposed against carries no chip for a card nobody is shown.
+    expect(rows['escalation-v2.md']).toEqual({ status: 'active', statusSource: 'default' });
   });
 
   it('names what superseded each page inside a bound on the page bytes it reads for it', async (): Promise<void> => {

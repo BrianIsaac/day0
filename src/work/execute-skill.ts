@@ -58,6 +58,7 @@ import {
 import { bindSkillInputs, renderSkillInputs } from './skill-inputs';
 import {
   boundEarlierWrites,
+  reportsFindings,
   isChatMessage,
   itemEvidence,
   unsupportedClaimFindings,
@@ -3130,9 +3131,13 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     return await sayHeldItems(agreed, args, output.actions);
   }
 
+  // Mock mode has no claim floor (every message is authored in one phase from the item), but a
+  // message there is bound to the writes it reports as in real mode, so what it declares it
+  // reports is read against its words here too (W15-R2): the hosted visitor can decline a row.
   const issues = [
     ...mockActionContractIssues(output, candidate, plan, procedureContract),
     ...doneAgainstWordsIssues(output),
+    ...reportsFindings(output.actions).map((finding) => finding.issue),
   ];
   if (issues.length === 0) return output;
 
@@ -3169,7 +3174,10 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       `executor action contract remained invalid after one repair: ${remaining.join('; ')}`,
     );
   }
-  return await heldAgainstWords(repaired, args.onAuditCorrection);
+  // After the one repair a message whose declaration still disagrees with its words is withheld
+  // with the reason, as real mode withholds it, and the rest of the set goes on.
+  const agreed = await withholdUnsupported(repaired, reportsFindings, args.onAuditCorrection);
+  return await heldAgainstWords(agreed, args.onAuditCorrection);
 }
 
 /**
@@ -3837,9 +3845,14 @@ async function authorDependentSkillRun(
       ...(args.managerAnswers ?? []).map((answer) => `${answer.question} ${answer.answer}`),
     ],
     item: itemEvidence(candidate, args.groundingReads),
+    // What phase one emitted and landed is what a closing message may report (W15-R3).
+    prior: args.initialOutput.actions.filter((_action, index): boolean => {
+      const row = args.initialLedger[index];
+      return row !== undefined && row.ok && !row.held;
+    }),
   };
   const claimFindings = (actions: readonly MockAction[]): ClaimFinding[] =>
-    mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : [];
+    mode === 'real' ? unsupportedClaimFindings(actions, claimEvidence) : reportsFindings(actions);
   const gateIssues = (candidate: DependentExecutionOutput): string[] =>
     args.closingGate?.(candidate) ?? [];
 

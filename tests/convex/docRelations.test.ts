@@ -5,6 +5,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
+import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import type { SourceAuthority } from '../../src/docs/authority';
 import { RELATION_PROPOSALS_PER_SYNC } from '../../src/docs/relations';
 import type { SelectionRequest } from '../../src/docs/select';
@@ -549,6 +550,150 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
   });
 });
 
+describe('measuring a library of more pages than one step takes (W15-R5)', (): void => {
+  /** A completed walk of a source: the run a finished sync measures. */
+  async function completedWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
+    return await harness.run(async (ctx) => {
+      const runs = await ctx.db
+        .query('docSyncRuns')
+        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+        .collect();
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: runs.length + 1,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: runs.length + 2,
+        completedAt: runs.length + 2,
+      });
+      for (const run of runs) {
+        if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
+      }
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
+      return { sourceId, runId };
+    });
+  }
+
+  /** Measure a completed walk's pages as its finish schedules it, every step of it. */
+  async function measureWalk(harness: Harness, walk: Source): Promise<void> {
+    await harness.action(internal.docSyncActions.proposeRelations, walk);
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  }
+
+  it('measures the pages past the first hundred: a later version stored 120th is proposed', async (): Promise<void> => {
+    // Reader 2's vt/c.test.ts R2-H: 130 stored pages, only the 121st and 122nd related. Each
+    // page holds four sections, so the walk's blocks are more than one read of them.
+    const harness = convexTest(schema, allConvexModules());
+    const library = await syncingSource(harness, 'Library');
+    for (let index = 0; index < 130; index += 1) {
+      const related = index === 120 || index === 121;
+      const title = related
+        ? index === 120
+          ? 'Zebra quartz runbook'
+          : 'Zebra quartz runbook v2'
+        : `Unrelated topic number ${index} qx${index}`;
+      await storedPage(harness, library, {
+        ref: related ? `zebra-${index}.md` : `p${index}.md`,
+        title,
+        markdown: [
+          ...(index === 121 ? ['---', 'supersedes: zebra-120', '---'] : []),
+          `# ${title}`,
+          '',
+          `Content unique to page ${index} word${index} alpha${index}.`,
+          ...['One', 'Two', 'Three'].flatMap((section) => [
+            '',
+            `## ${section} of ${index}`,
+            '',
+            `Section ${section.toLowerCase()} of page ${index}: beta${index} gamma${index}.`,
+          ]),
+        ].join('\n'),
+        updatedAt: 1 + index,
+      });
+    }
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(library.sourceId, {
+          lastCompletedSyncId: library.runId,
+          activeSyncId: undefined,
+        }),
+    );
+    await measureWalk(harness, library);
+    expect(await relations(harness)).toMatchObject([
+      {
+        kind: 'possible_successor',
+        status: 'proposed',
+        from: { ref: 'zebra-121.md' },
+        to: { ref: 'zebra-120.md' },
+      },
+    ]);
+    // Nothing is owed once every page was measured, and a walk that changes nothing adds nothing.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(library.sourceId)))?.relationsOwed,
+    ).toBeUndefined();
+    await measureWalk(harness, await completedWalk(harness, library.sourceId));
+    expect(await relations(harness)).toHaveLength(1);
+  }, 120_000);
+
+  it('goes on at the next sync from where the cap on new proposals stopped it, and owes nothing once it reaches the end', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // Seventeen runbooks of three later versions each hold fifty-one relations; two more pages
+    // stored after them hold a fifty-second.
+    const first = await syncingSource(harness, 'Runbooks');
+    const later = [
+      await syncingSource(harness, 'Second editions'),
+      await syncingSource(harness, 'Third editions'),
+      await syncingSource(harness, 'Fourth editions'),
+    ];
+    const words =
+      'Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November Oscar Papa Quebec';
+    for (const word of words.split(' ')) {
+      const markdown = `# ${word}\n\n${word} procedure, in full.`;
+      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
+      for (const [index, source] of later.entries()) {
+        await storedPage(harness, source, {
+          ref: `${word}-v${index + 2}.md`,
+          title: `${word} v${index + 2}`,
+          markdown,
+          updatedAt: index + 2,
+        });
+      }
+    }
+    await storedPage(harness, first, {
+      ref: 'Zulu.md',
+      title: 'Zulu',
+      markdown: '# Zulu\n\nZulu procedure, in full.',
+    });
+    await storedPage(harness, later[0], {
+      ref: 'Zulu-v2.md',
+      title: 'Zulu v2',
+      markdown: '# Zulu\n\nZulu procedure, in full.',
+      updatedAt: 2,
+    });
+    const owed = async () =>
+      (await harness.run(async (ctx) => await ctx.db.get(first.sourceId)))?.relationsOwed;
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(first.sourceId, {
+          lastCompletedSyncId: first.runId,
+          activeSyncId: undefined,
+        }),
+    );
+    await measureWalk(harness, first);
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
+    // The cap ended the measuring inside the walk's pages: what is left is kept on the source.
+    expect(await owed()).toEqual({ generations: [first.runId], cursor: null });
+    // The next sync changes no page, so its own walk wrote nothing: it measures what is owed.
+    await measureWalk(harness, await completedWalk(harness, first.sourceId));
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
+    expect(await owed()).toBeUndefined();
+    // And two syncs on, the first walk's pages are out of the look-back and still nothing is lost.
+    await measureWalk(harness, await completedWalk(harness, first.sourceId));
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
+  }, 120_000);
+});
+
 describe('decide: the manager’s answer on a relation’s card', (): void => {
   it('supersedes the older page when the successor is confirmed, and sends parked work back', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -716,6 +861,78 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await standingOf(harness, relation._id)).toBeNull();
   });
 
+  it('refuses a stale second answer on a conflict already settled, so the two pages never supersede each other (W15-R6)', async (): Promise<void> => {
+    // Reader 2's vt/a.test.ts R2-A: two tabs show the proposed card; one answers "{A} is right",
+    // the other, stale, "{B} is right". The second was taken, and neither page was current.
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance, a, b } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [relation] = await relations(harness);
+    expect(relation.from.sourceId).toBe(finance.sourceId);
+    const answer = async (decision: 'from-is-right' | 'to-is-right' | 'both-hold') =>
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision,
+      });
+    await answer('from-is-right');
+    expect(await pageOf(harness, a)).toMatchObject({
+      status: 'superseded',
+      supersededBy: { sourceId: finance.sourceId, ref: 'escalation.md' },
+    });
+    for (const stale of ['to-is-right', 'from-is-right', 'both-hold'] as const) {
+      await expect(answer(stale), stale).rejects.toThrow(DECISION_NOT_OFFERED);
+    }
+    // The page the first answer named right is still current, and the other still gives way to it.
+    expect((await pageOf(harness, b)).status).toBeUndefined();
+    expect((await pageOf(harness, a)).status).toBe('superseded');
+    expect((await relations(harness))[0]).toMatchObject({ status: 'confirmed' });
+    // "This is current" on the superseded page's row is the way back: the conflict stands again
+    // and takes its answers.
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId: a, status: 'active' });
+    expect(await standingOf(harness, relation._id)).not.toBeNull();
+    await answer('to-is-right');
+    expect((await pageOf(harness, b)).status).toBe('superseded');
+    expect((await pageOf(harness, a)).status).toBe('active');
+    expect(handbook.sourceId).toBe(relation.to.sourceId);
+  });
+
+  it('refuses an answer that would make a page that is not current stand in for another (W15-R6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { finance, a, b } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [conflict] = await relations(harness);
+    // The card was drawn while both pages were current; the finance page is then archived by hand.
+    await asManager(harness).mutation(api.docStatus.setPageStatus, {
+      pageId: b,
+      status: 'archived',
+    });
+    await expect(
+      asManager(harness).mutation(api.docRelations.decide, {
+        relationId: conflict._id,
+        decision: 'from-is-right',
+      }),
+    ).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(harness, a)).status).toBeUndefined();
+    expect((await relations(harness))[0]).toMatchObject({ status: 'proposed' });
+
+    const versions = convexTest(schema, allConvexModules());
+    const { official, v1, v2 } = await twoVersions(versions);
+    await measure(versions, official, 'pipeline-runbook-v2.md');
+    const [successor] = await relations(versions);
+    await asManager(versions).mutation(api.docStatus.setPageStatus, {
+      pageId: v2,
+      status: 'draft',
+    });
+    await expect(
+      asManager(versions).mutation(api.docRelations.decide, {
+        relationId: successor._id,
+        decision: 'supersedes',
+      }),
+    ).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(versions, v1)).status).toBeUndefined();
+    expect((await relations(versions))[0]).toMatchObject({ status: 'proposed' });
+  });
+
   it('lets no conflict stand between pages of unequal trust, and offers no "They disagree" that would hold nothing', async (): Promise<void> => {
     // The second pass's minor 3: "They disagree" on such a pair was recorded, tagged no cite,
     // held no plan and took the card away, while the card said a step would be held.
@@ -879,6 +1096,19 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     expect(after.map((card) => [card.kind, card.status, card.offered])).toEqual([
       ['possible_successor', 'proposed', ['supersedes', 'keep-both', 'not-the-same']],
       ['possible_conflict', 'confirmed', ['from-is-right', 'to-is-right', 'both-hold']],
+    ]);
+    // Whether a page's time is its edit time is its source's kind (W15-R45): a list of URLs is
+    // given none and stamps a page with when it read it, on a proposed card and a confirmed one.
+    expect(after.map((card) => [card.from.edited, card.to.edited])).toEqual([
+      [true, true],
+      [true, true],
+    ]);
+    await harness.run(async (ctx) => await ctx.db.patch(finance.sourceId, { kind: 'urls' }));
+    await harness.run(async (ctx) => await ctx.db.patch(official.sourceId, { kind: 'mcp' }));
+    const read = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(read.map((card) => [card.kind, card.from.edited, card.to.edited])).toEqual([
+      ['possible_successor', false, true],
+      ['possible_conflict', false, true],
     ]);
     // Another manager sees none of them.
     expect(

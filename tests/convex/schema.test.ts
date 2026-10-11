@@ -2925,3 +2925,76 @@ describe('the schema module', (): void => {
     expect(reads).toEqual([]);
   });
 });
+
+describe('the pre-tag schema lines of wave 15 (15-T: additive and optional)', (): void => {
+  /** A table's indexes as the push declares them: each name with its fields. */
+  const indexesOf = (table: keyof typeof schema.tables): Record<string, readonly string[]> =>
+    Object.fromEntries(
+      schema.tables[table][' indexes']().map((index) => [index.indexDescriptor, index.fields]),
+    );
+
+  it('reads a source’s not-current pages off its slim listing rows, by an index of their own (W15-R7)', (): void => {
+    expect(indexesOf('docPageListings').by_source_not_current).toEqual(['sourceId', 'notCurrent']);
+    // The two indexes the finish and the stamp read are as they were.
+    expect(indexesOf('docPageListings')).toMatchObject({
+      by_source: ['sourceId', 'seenBy'],
+      by_source_ref: ['sourceId', 'ref'],
+    });
+  });
+
+  it('reads an employee’s holds by an index that ends on the refusal’s reason, and leaves the three-key index its order (D-6)', (): void => {
+    expect(indexesOf('workingAgreements')).toMatchObject({
+      by_user_agent_status: ['userId', 'agentId', 'status'],
+      by_user_agent_status_reason: ['userId', 'agentId', 'status', 'refusal.reason'],
+    });
+  });
+
+  it('takes every row a v0.18.0 deployment holds in the tables it touches, and the new fields beside them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      // As v0.18.0 wrote them: a listing with no status word, a run whose unread entries hold no
+      // kind and whose record holds no count of kinds, and no counts of its listing.
+      await ctx.db.insert('docPageListings', { sourceId, ref: 'a.md', seenBy: 1 });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        pagesListed: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        unread: { count: 1, pages: [{ ref: 'b.md', reason: 'HTTP 404' }] },
+      });
+      // And as v0.19.0 writes them.
+      await ctx.db.insert('docPageListings', {
+        sourceId,
+        ref: 'old.md',
+        seenBy: 1,
+        notCurrent: 'archived',
+      });
+      await ctx.db.patch(runId, {
+        batches: 3,
+        relisted: 0,
+        unread: {
+          count: 2,
+          notRead: 1,
+          pages: [
+            { ref: 'b.md', reason: 'HTTP 404', kind: 'failed' },
+            { ref: 'c', reason: 'A sheet.', kind: 'not-read' },
+          ],
+        },
+      });
+      await ctx.db.patch(sourceId, { relationsOwed: { generations: [runId], cursor: null } });
+    });
+  });
+});

@@ -228,55 +228,75 @@ export function fileNativeStatus(ref: string, markdown: string): PageStatus | un
 export const MARKER_EXCERPT_CHARS = 300;
 
 /**
+ * Each vocabulary word with the status it would mean if it marked its page: what a page judged
+ * current is held at when its top gains the word, until the model answers (D-1 (c)).
+ */
+const MARKER_WORDS: ReadonlyArray<readonly [string, Exclude<PageStatus, 'active'>]> = [
+  ['deprecated', 'superseded'],
+  ['superseded', 'superseded'],
+  ['obsolete', 'superseded'],
+  ['outdated', 'superseded'],
+  ['out of date', 'superseded'],
+  ['archived', 'archived'],
+  ['retired', 'archived'],
+  ['withdrawn', 'superseded'],
+  ['replaced by', 'superseded'],
+  ['do not use', 'superseded'],
+  ['no longer', 'superseded'],
+  ['legacy', 'superseded'],
+  ['draft', 'draft'],
+  ['work in progress', 'draft'],
+  ['wip', 'draft'],
+  ['not yet approved', 'draft'],
+  ['已废止', 'superseded'],
+  ['废止', 'superseded'],
+  ['已作废', 'superseded'],
+  ['作废', 'superseded'],
+  ['已废弃', 'superseded'],
+  ['废弃', 'superseded'],
+  ['已失效', 'superseded'],
+  ['已过期', 'superseded'],
+  ['已停用', 'superseded'],
+  ['已归档', 'archived'],
+  ['归档', 'archived'],
+  ['已替代', 'superseded'],
+  ['已被取代', 'superseded'],
+  ['不再使用', 'superseded'],
+  ['不再维护', 'superseded'],
+  ['旧版', 'superseded'],
+  ['草稿', 'draft'],
+  ['草案', 'draft'],
+  ['初稿', 'draft'],
+  ['征求意见稿', 'draft'],
+];
+
+/**
  * The words that may mark a whole page as no longer current. **A pre-filter only (N20, F16)**: a
  * hit decides nothing, since "archived" is also what a page about archiving tickets says; it
  * chooses the pages whose top is put to the model, one call a hit. English words match whole,
  * in any case; Chinese ones anywhere.
  */
-export const MARKER_VOCABULARY: readonly string[] = [
-  'deprecated',
-  'superseded',
-  'obsolete',
-  'outdated',
-  'out of date',
-  'archived',
-  'retired',
-  'withdrawn',
-  'replaced by',
-  'do not use',
-  'no longer',
-  'legacy',
-  'draft',
-  'work in progress',
-  'wip',
-  'not yet approved',
-  '已废止',
-  '废止',
-  '已作废',
-  '作废',
-  '已废弃',
-  '废弃',
-  '已失效',
-  '已过期',
-  '已停用',
-  '已归档',
-  '归档',
-  '已替代',
-  '已被取代',
-  '不再使用',
-  '不再维护',
-  '旧版',
-  '草稿',
-  '草案',
-  '初稿',
-  '征求意见稿',
-];
+export const MARKER_VOCABULARY: readonly string[] = MARKER_WORDS.map(([word]) => word);
 
-/** Each vocabulary word as its matcher: a whole word for Latin script, a substring otherwise. */
-const MARKER_MATCHERS: readonly RegExp[] = MARKER_VOCABULARY.map((word) => {
+/** A vocabulary word as its matcher: a whole word for Latin script, a substring otherwise. */
+function markerMatcher(word: string): RegExp {
   const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
   return /^[a-z ]+$/.test(word) ? new RegExp(`\\b${escaped}\\b`, 'i') : new RegExp(escaped);
-});
+}
+
+/** Each vocabulary word's matcher, with the status the word would mean. */
+const MARKER_MATCHERS: ReadonlyArray<{
+  readonly matcher: RegExp;
+  readonly status: Exclude<PageStatus, 'active'>;
+}> = MARKER_WORDS.map(([word, status]) => ({ matcher: markerMatcher(word), status }));
+
+/**
+ * The status a vocabulary word would mean if it marked its page, or undefined for a word that
+ * is not in the vocabulary.
+ */
+export function markerWordStatus(word: string): Exclude<PageStatus, 'active'> | undefined {
+  return MARKER_WORDS.find(([listed]) => listed === word)?.[1];
+}
 
 /** The most characters of marker lines kept as a judgement's quote. */
 const MARKER_QUOTE_LIMIT = 400;
@@ -321,7 +341,7 @@ export function markerCandidate(title: string, markdown: string): MarkerCandidat
   const hits = excerpt
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => MARKER_MATCHERS.some((matcher) => matcher.test(line)));
+    .filter((line) => MARKER_MATCHERS.some(({ matcher }) => matcher.test(line)));
   if (hits.length === 0) return undefined;
   return { excerpt, quote: hits.join('\n').slice(0, MARKER_QUOTE_LIMIT) };
 }
@@ -411,20 +431,101 @@ export function markerStands(
 }
 
 /**
- * The stored judgement that decides a page's status now: the page's last one, while the page
- * holds any marker line. A judgement of lines since edited still holds until the next judgement
- * replaces it (`markerStands` says the page is to be judged again), so a page judged not current
- * is not put back among the current ones by an edit to its notice, nor left there while the model
- * cannot be asked. A page that holds no marker line any more has nothing to be judged by.
+ * A page's top with no line singled out, as it is put to the model when its last judgement said
+ * the page is not current and no line of its top holds a vocabulary word any more (W15-R27): the
+ * top itself is then what is judged, and so the judgement's key.
+ *
+ * @param title - The page's title.
+ * @param markdown - The page's Markdown.
+ */
+export function unmarkedTop(title: string, markdown: string): MarkerCandidate {
+  const body = withoutFrontMatter(markdown).trimStart().slice(0, MARKER_EXCERPT_CHARS);
+  const excerpt = `${title.trim()}\n${body}`.trim();
+  return { excerpt, quote: excerpt.slice(0, MARKER_QUOTE_LIMIT) };
+}
+
+/**
+ * What a page's judgement is of now: its marker lines, or its whole top when it holds none. A
+ * stored judgement stands for the page while its quote is this one's.
+ */
+export function markerKey(title: string, markdown: string): MarkerCandidate {
+  return markerCandidate(title, markdown) ?? unmarkedTop(title, markdown);
+}
+
+/**
+ * What of a page is put to the model, if anything (D-1 (c); W15-R27): its marker lines when no
+ * stored judgement is of them, never judged or edited since; and its top when its last judgement
+ * said it is not current and the lines that said so are gone, since only the model can then say
+ * the page is current again (the notice may have been reworded in words the vocabulary does not
+ * hold). A page with no marker line that was never judged not current is never asked about.
+ *
+ * @param marker - The stored judgement, when the page has one.
+ * @param title - The page's title.
+ * @param markdown - The page's Markdown.
+ */
+export function markerToJudge(
+  marker: StoredMarker | undefined,
+  title: string,
+  markdown: string,
+): MarkerCandidate | undefined {
+  const candidate = markerCandidate(title, markdown);
+  if (candidate !== undefined) return marker?.quote === candidate.quote ? undefined : candidate;
+  if (marker === undefined || marker.status === 'active') return undefined;
+  const top = unmarkedTop(title, markdown);
+  return marker.quote === top.quote ? undefined : top;
+}
+
+/** The lines of a judgement's quote, each as written. */
+function quoteLines(quote: string): string[] {
+  return quote.split('\n').filter((line) => line !== '');
+}
+
+/**
+ * The status a page judged current is held at because its top has gained a marker since: a
+ * vocabulary word its judged lines did not hold, or one more line holding one than were judged.
+ * The status is the gained word's own. Undefined when the lines were only edited, or are fewer:
+ * the judgement that they are no marker then stands until the model answers.
+ */
+function gainedMarkerStatus(
+  judged: string,
+  now: string,
+): Exclude<PageStatus, 'active'> | undefined {
+  const newWord = MARKER_MATCHERS.find(({ matcher }) => matcher.test(now) && !matcher.test(judged));
+  if (newWord !== undefined) return newWord.status;
+  const before = new Set(quoteLines(judged));
+  const lines = quoteLines(now);
+  if (lines.length <= before.size) return undefined;
+  const added = lines.find((line) => !before.has(line)) ?? lines[0] ?? '';
+  return MARKER_MATCHERS.find(({ matcher }) => matcher.test(added))?.status;
+}
+
+/**
+ * The judgement that decides a page's status now, failing closed on a change (D-1 (c); W15-R27).
+ *
+ * - A judgement of the lines the page holds now decides.
+ * - A judgement that the page is **not current** holds until the model answers again, whether
+ *   its line was edited or removed: a corrected notice keeps the page out one sync longer, and a
+ *   deprecated page is never made current by an edit to its notice, nor while the model cannot
+ *   be asked.
+ * - A judgement that the lines are **no marker** stands while they are only edited; once the
+ *   top gains a marker (a new vocabulary word, or a further line holding one) the page is held
+ *   out, at the status the gained word would mean, until the model has read it.
+ * - A page never judged is decided by nothing here: a hit alone decides nothing.
+ *
+ * The manager's "This is current" stands over every one of these (`decidePageStatus`).
  *
  * @param marker - The stored judgement, when the page has one.
  * @param candidate - What the pre-filter finds on the page now.
  */
-export function markerInForce<Marker extends StoredMarker>(
-  marker: Marker | undefined,
+export function markerInForce(
+  marker: StoredMarker | undefined,
   candidate: MarkerCandidate | undefined,
-): Marker | undefined {
-  return candidate === undefined ? undefined : marker;
+): Pick<StoredMarker, 'status'> | undefined {
+  if (marker === undefined) return undefined;
+  if (marker.status !== 'active' || candidate === undefined) return marker;
+  if (marker.quote === candidate.quote) return marker;
+  const gained = gainedMarkerStatus(marker.quote, candidate.quote);
+  return gained === undefined ? marker : { status: gained };
 }
 
 /** What the rules read of one page. */

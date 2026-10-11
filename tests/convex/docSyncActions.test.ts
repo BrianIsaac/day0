@@ -1,14 +1,22 @@
 /** @vitest-environment node */
 
-import { randomBytes } from 'node:crypto';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getFunctionName } from 'convex/server';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterAll, beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { routeSpanModelFetch, SPAN_MODEL_TEST_URL } from '../fixtures/redaction-double';
-import { internal } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
+import { MAX_SYNC_BATCHES } from '../../src/docs/listing-bounds';
+import type { DocumentationReader } from '../../src/docs/readers/batch';
+import { ConfluenceDataCenterReader } from '../../src/docs/readers/confluence-dc';
+import { ConfluenceCloudReader } from '../../src/docs/readers/confluence-v2';
+import { GoogleDriveReader } from '../../src/docs/readers/drive';
 import { FolderReader } from '../../src/docs/readers/folder';
+import { SharePointReader } from '../../src/docs/readers/sharepoint';
+import { YuqueReader } from '../../src/docs/readers/yuque';
+import { sharePointReaderSecret } from '../../src/docs/sharepoint-source';
 import { UrlsReader, __setPageConnectionForTest } from '../../src/docs/readers/urls';
 import { privateHostAllowlist } from '../../src/lib/private-hosts';
 import { RedactorUnavailableError } from '../../src/redaction/client';
@@ -16,6 +24,7 @@ import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { managerIdentity } from './fakes/manager-identity';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
   LISTING_RESTARTS_REASON,
@@ -24,7 +33,7 @@ import {
   persistPageBatch,
   safeSyncError,
 } from '../../convex/docSyncActions';
-import type { DocPage } from '../../src/docs/types';
+import type { DocPage, DocSourceRecord } from '../../src/docs/types';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../../src/docs/status';
 import { FINISHING_CURSOR } from '../../convex/docSources';
 import {
@@ -675,6 +684,108 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
     ]);
   }, 30_000);
 
+  it('keeps a deprecated page out when its notice is reworded with no vocabulary word, asks the model of its top, and lets it back only on the answer (D-1 (c); W15-R27)', async (): Promise<void> => {
+    const DEPRECATED =
+      '# Pipeline runbook\n\nDEPRECATED: use the v2 runbook instead.\n\n## Steps\n\nRefresh.\n';
+    const { harness, sourceId, root } = await folderOf({ 'pipeline.md': DEPRECATED });
+    markerModel.reply = (prompt: string): unknown =>
+      prompt.includes('DEPRECATED')
+        ? { status: 'superseded', quote: 'DEPRECATED: use the v2 runbook instead.' }
+        : prompt.includes('replaced with the v2 runbook')
+          ? { status: 'superseded', quote: 'replaced with the v2 runbook' }
+          : { status: 'active', quote: '' };
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    // The notice is reworded: no line of the top holds a vocabulary word any more.
+    const reworded = DEPRECATED.replace(
+      'DEPRECATED: use the v2 runbook instead.',
+      'This runbook has been replaced with the v2 runbook.',
+    );
+    await writeFile(join(root, 'docs', 'pipeline.md'), reworded, 'utf8');
+    const asked = markerModel.prompts.length;
+    await sync(harness, sourceId);
+    // On the base the page was current here and the model was never asked.
+    expect(markerModel.prompts).toHaveLength(asked + 1);
+    expect(markerModel.prompts.at(-1)).toContain(
+      'This runbook has been replaced with the v2 runbook.',
+    );
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    // Judged of that top, it is asked nothing more while the top stands.
+    await sync(harness, sourceId);
+    expect(markerModel.prompts).toHaveLength(asked + 1);
+    // The notice is lifted in earnest, with the model down: the page stays out until it answers.
+    await writeFile(
+      join(root, 'docs', 'pipeline.md'),
+      reworded.replace(
+        'This runbook has been replaced with the v2 runbook.',
+        'How the tile is refreshed.',
+      ),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual([
+      'superseded',
+      'marker',
+      'superseded',
+    ]);
+    markerModel.reply = (): unknown => ({ status: 'active', quote: '' });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['pipeline.md']).toEqual(['active', 'default', null]);
+  }, 60_000);
+
+  it('holds a page judged current out once its top gains a marker line, until the model answers, and "This is current" overrules at once (D-1 (c); W15-R27)', async (): Promise<void> => {
+    const { harness, sourceId, root } = await folderOf({ 'howto/archive-a-ticket.md': ARCHIVING });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([null, null, 'active']);
+    // The page itself is archived at its source, by a line at its top; the model cannot be asked.
+    await writeFile(
+      join(root, 'docs', 'howto/archive-a-ticket.md'),
+      ARCHIVING.replace('\n\n', '\n\nARCHIVED: kept for the record only.\n\n'),
+      'utf8',
+    );
+    markerModel.reply = undefined;
+    await sync(harness, sourceId);
+    // On the base the stale judgement kept the page current until a later sync could ask.
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([
+      'archived',
+      'marker',
+      'active',
+    ]);
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(new Set(blocks.map((block) => block.status))).toEqual(new Set(['archived']));
+    const [page] = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.docStatus.setPageStatus, { pageId: page._id, status: 'active' });
+    expect((await statuses(harness))['howto/archive-a-ticket.md']?.slice(0, 2)).toEqual([
+      'active',
+      'manager',
+    ]);
+    // Cleared, it falls back to being held out; the model's answer then decides.
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.docStatus.clearPageStatus, { pageId: page._id });
+    markerModel.reply = (): unknown => ({
+      status: 'archived',
+      quote: 'ARCHIVED: kept for the record only.',
+    });
+    await sync(harness, sourceId);
+    expect((await statuses(harness))['howto/archive-a-ticket.md']).toEqual([
+      'archived',
+      'marker',
+      'archived',
+    ]);
+  }, 60_000);
+
   it('stops asking once a finish has spent its time on judgements, and asks the rest at the next sync', async (): Promise<void> => {
     // The second pass's minor 10: twenty judgements at thirty seconds each, one after another,
     // is the whole of an action's ten minutes, and nothing stopped the asking.
@@ -1160,6 +1271,7 @@ describe('documentation sync batching', (): void => {
     });
     expect(after.runs[0]).toMatchObject({ state: 'completed' });
     expect(after.runs[0].reason).toBeUndefined();
+    // Re-pinned for D-7: the record says the entry is a failure and counts no page of a kind.
     expect(after.runs[0].unread).toEqual({
       count: 1,
       pages: [
@@ -1168,12 +1280,15 @@ describe('documentation sync batching', (): void => {
           reason: expect.stringMatching(
             /^The page is \d+ KiB, larger than the 768 KiB Day0 stores\.$/,
           ),
+          kind: 'failed',
         },
       ],
+      notRead: 0,
     });
     expect(after.source).toMatchObject({ status: 'synced' });
     expect(after.source?.lastError).toMatch(
-      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads it again\.$/,
     );
     expect(JSON.stringify(after)).not.toContain(value);
   });
@@ -1812,4 +1927,309 @@ describe('documentation sync batching', (): void => {
     for (const value of stored) expect(JSON.stringify(pages)).not.toContain(value);
     expect(pages.every((page) => page.markdown.includes('<credential: '))).toBe(true);
   });
+
+  it('records which unread pages are of a kind Day0 does not read as their reader said it, and counts them apart (D-7)', async (): Promise<void> => {
+    const root = temporary('day0-sync-kinds-');
+    await mkdir(join(root, 'kinds'));
+    await writeFile(join(root, 'kinds', 'a.md'), '# A\n\nAlpha.\n', 'utf8');
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Kinds',
+      kind: 'folder',
+      locator: 'kinds',
+    });
+    const read = FolderReader.prototype.listPageBatch;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args
+    ) {
+      const batch = await read.apply(this, args);
+      return {
+        ...batch,
+        unread: [
+          // A failed read whose title holds the clause a kind was once read by.
+          {
+            ref: 'guide',
+            reason: 'Could not read "The kinds of file which Day0 does not read" (HTTP 403).',
+          },
+          {
+            ref: 'file-01DECK',
+            reason: '"Q3 board deck" is a slide deck, which Day0 does not read.',
+            kind: 'not-read' as const,
+          },
+        ],
+      };
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      run: (await ctx.db.query('docSyncRuns').collect())[0],
+    }));
+    expect(state.run?.unread).toMatchObject({
+      count: 2,
+      notRead: 1,
+      pages: [
+        { ref: 'guide', kind: 'failed' },
+        { ref: 'file-01DECK', kind: 'not-read' },
+      ],
+    });
+    expect(state.source?.lastError).toBe(
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      '1 page could not be read this sync and keeps its last stored version: guide: Could not read "The kinds of file which Day0 does not read" (HTTP 403). The next sync reads it again. 1 more listed page is of a kind Day0 does not read: file-01DECK: "Q3 board deck" is a slide deck, which Day0 does not read.',
+    );
+  });
+
+  /** A provider answer of reader 3's loops.mts. */
+  function loopAnswer(
+    status: number,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json', ...headers },
+    });
+  }
+
+  /** A Confluence page as the probe listed it. */
+  function loopPage(id: string): unknown {
+    return {
+      id,
+      title: `T${id}`,
+      status: 'current',
+      body: { storage: { value: '<p>x</p>' } },
+      version: { number: 1 },
+    };
+  }
+
+  /** What each probe reader waits and reads the clock with: nothing waits. */
+  const loopClock = { sleep: async (): Promise<void> => undefined, now: (): number => 1_000_000 };
+
+  /** One provider whose listing never ends: its real reader over the probe's answers. */
+  interface EndlessProvider {
+    readonly reader: DocumentationReader;
+    readonly record: Pick<DocSourceRecord, 'kind' | 'locator' | 'label'>;
+    readonly secret: string;
+  }
+
+  /**
+   * Reader 3's loops.mts (W15-R8), shape for shape: five providers that say more of a listing
+   * follows for ever, each answered as the probe answered it and read by its own reader.
+   */
+  const ENDLESS_WITH_PAGES: Readonly<Record<string, () => EndlessProvider>> = {
+    'a Confluence Cloud cursor that alternates A, B, A': () => {
+      let call = 0;
+      return {
+        reader: new ConfluenceCloudReader({
+          ...loopClock,
+          fetch: async (url: URL): Promise<Response> => {
+            if (url.pathname.endsWith('/spaces'))
+              return loopAnswer(200, { results: [{ id: '10' }] });
+            call += 1;
+            return loopAnswer(
+              200,
+              { results: [loopPage(String(call % 2))] },
+              {
+                link: `<https://api.atlassian.com/ex/confluence/x/wiki/api/v2/spaces/10/pages?cursor=${call % 2 === 1 ? 'B' : 'A'}>; rel="next"`,
+              },
+            );
+          },
+        }),
+        record: {
+          kind: 'confluence-v2',
+          label: 'Ops wiki',
+          locator:
+            'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+        },
+        secret: 'fixture-confluence-token',
+      };
+    },
+    'a Confluence Data Center that ignores start and always names a next page': () => ({
+      reader: new ConfluenceDataCenterReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> =>
+          url.pathname.includes('/rest/api/space/')
+            ? loopAnswer(200, { key: 'OPS' })
+            : loopAnswer(200, {
+                results: [loopPage('1'), loopPage('2')],
+                _links: { next: '/rest/api/content?start=2', base: 'https://wiki.acme.corp' },
+              }),
+      }),
+      record: {
+        kind: 'confluence-dc',
+        label: 'Ops wiki',
+        locator: 'https://wiki.acme.corp/display/OPS',
+      },
+      secret: 'fixture-confluence-pat',
+    }),
+    'a Yuque total of a million over one repeating page': () => ({
+      reader: new YuqueReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> =>
+          /docs\/\d+$/.test(url.pathname)
+            ? loopAnswer(200, {
+                data: {
+                  format: 'markdown',
+                  body: 'x',
+                  slug: 's',
+                  status: 1,
+                  content_updated_at: '2026-01-01T00:00:00Z',
+                },
+              })
+            : loopAnswer(200, {
+                data: [{ id: 1, title: 'a', type: 'Doc' }],
+                meta: { total: 1_000_000 },
+              }),
+      }),
+      record: { kind: 'yuque', label: 'Ops', locator: 'https://www.yuque.com/acme/ops' },
+      secret: 'fixture-yuque-token',
+    }),
+    'a SharePoint next link that alternates A, B, A': () => {
+      let call = 0;
+      const graph = async (url: URL): Promise<Response> => {
+        if (url.host === 'login.microsoftonline.com')
+          return loopAnswer(200, { access_token: 'at' });
+        if (url.pathname.endsWith('/content')) {
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://acme.sharepoint.com/dl' },
+          });
+        }
+        if (url.pathname.startsWith('/v1.0/sites/acme.sharepoint.com')) {
+          return loopAnswer(200, { id: 'site1' });
+        }
+        call += 1;
+        return loopAnswer(200, {
+          value: [{ id: `i${call % 2}`, name: 'a.md', size: 1, parentReference: { driveId: 'd' } }],
+          '@odata.nextLink': `https://graph.microsoft.com/v1.0/sites/site1/drive/root/delta?token=${call % 2 === 1 ? 'B' : 'A'}`,
+        });
+      };
+      return {
+        reader: new SharePointReader({
+          ...loopClock,
+          fetch: graph,
+          download: async (): Promise<Response> => new Response('# Hi', { status: 200 }),
+        }),
+        record: { kind: 'sharepoint', label: 'Site', locator: 'https://acme.sharepoint.com' },
+        secret: sharePointReaderSecret({
+          tenantId: '9188040d-6c67-4c5b-b112-36a304b66dad',
+          clientId: '6731de76-14a6-49ae-97bc-6eba6914391e',
+          clientSecret: 'fixture-client-secret',
+        }),
+      };
+    },
+  };
+
+  /** A folder source whose reads are answered by an endless provider's own reader. */
+  async function sourceOn(
+    harness: TestConvex<typeof schema>,
+    provider: EndlessProvider,
+  ): Promise<Id<'docSources'>> {
+    const root = temporary('day0-sync-endless-');
+    await mkdir(join(root, 'endless'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Endless',
+      kind: 'folder',
+      locator: 'endless',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit) =>
+        await provider.reader.listPageBatch(
+          { ...provider.record, _id: source._id },
+          provider.secret,
+          cursor,
+          limit,
+        ),
+    );
+    return sourceId;
+  }
+
+  /** Run the sync's scheduled batches, at most this many, and say how many are still waiting. */
+  async function drainAtMost(harness: TestConvex<typeof schema>, rounds: number): Promise<number> {
+    for (let round = 0; round < rounds && (await scheduled(harness)).length > 0; round += 1) {
+      drainScheduled();
+      await harness.finishInProgressScheduledFunctions();
+    }
+    return (await scheduled(harness)).length;
+  }
+
+  it.each(Object.keys(ENDLESS_WITH_PAGES))(
+    'ends a sync whose listing never ends, with its reason on the source and its pages kept: %s (W15-R8)',
+    async (shape: string): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const sourceId = await sourceOn(harness, ENDLESS_WITH_PAGES[shape]());
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      // On the base every one of these was still asking for its next batch after 300.
+      expect(await drainAtMost(harness, 300)).toBe(0);
+      const state = await harness.run(async (ctx) => ({
+        source: await ctx.db.get(sourceId),
+        runs: await ctx.db.query('docSyncRuns').order('desc').collect(),
+        pages: await ctx.db.query('docPages').collect(),
+      }));
+      expect(state.source?.status).toBe('error');
+      expect(state.source?.activeSyncId).toBeUndefined();
+      expect(state.source?.lastError).toMatch(
+        /^The source's listing did not end: it named 2\d\d pages this sync had already read, /,
+      );
+      expect(state.runs).toHaveLength(1);
+      expect(state.runs[0].state).toBe('error');
+      // What the listing did name stays stored.
+      expect(state.pages.length).toBeGreaterThan(0);
+    },
+    120_000,
+  );
+
+  it('ends a sync whose listing names no page and never ends, once it has asked as often as one sync may (W15-R8)', async (): Promise<void> => {
+    // The probe's fifth shape: Google Drive's page token alternating P1, P2 over empty pages.
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    let call = 0;
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await sourceOn(harness, {
+      reader: new GoogleDriveReader({
+        ...loopClock,
+        fetch: async (url: URL): Promise<Response> => {
+          if (url.host === 'oauth2.googleapis.com') return loopAnswer(200, { access_token: 'at' });
+          if (/\/files\/[^/]+$/.test(url.pathname) && !url.searchParams.has('q')) {
+            return loopAnswer(200, { id: 'F', mimeType: 'application/vnd.google-apps.folder' });
+          }
+          call += 1;
+          return loopAnswer(200, { files: [], nextPageToken: call % 2 === 1 ? 'P1' : 'P2' });
+        },
+      }),
+      record: {
+        kind: 'drive',
+        label: 'Drive',
+        locator: `https://drive.google.com/drive/folders/${'a'.repeat(20)}`,
+      },
+      secret: JSON.stringify({
+        client_email: 'reader@fixture.iam.gserviceaccount.com',
+        private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      }),
+    });
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    expect(await drainAtMost(harness, 20)).toBe(1);
+    const runId = await harness.run(async (ctx) => {
+      const [run] = await ctx.db.query('docSyncRuns').collect();
+      // The run counts what it has asked for: the first batch and twenty more.
+      expect(run.batches).toBe(21);
+      // As a run that has been asking all along stands just before its last allowed batch.
+      await ctx.db.patch(run._id, { batches: MAX_SYNC_BATCHES - 2 });
+      return run._id;
+    });
+    expect(await drainAtMost(harness, 20)).toBe(0);
+    const state = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      run: await ctx.db.get(runId),
+    }));
+    expect(state.run).toMatchObject({ state: 'error', batches: MAX_SYNC_BATCHES });
+    expect(state.source?.status).toBe('error');
+    expect(state.source?.lastError).toMatch(
+      /^The source's listing did not end within the 4,000 parts Day0 reads of one listing in a sync, /,
+    );
+  }, 120_000);
 });

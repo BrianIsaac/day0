@@ -29,7 +29,7 @@ import {
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
-import { confluencePage } from './confluence-v2';
+import { confluencePage, listingThatFits } from './confluence-v2';
 import { checkPageAddress, pinnedPageFetch } from './page-address';
 import {
   field,
@@ -107,11 +107,15 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     if (resumed === undefined) await this.checkSpace(http, locator, secret);
     const phase: Phase = resumed?.[1] === 'archived' ? 'archived' : 'current';
     const start = Number(resumed?.[2] ?? 0);
-    const listed = await this.listing(http, locator, secret, { phase, start, limit });
+    const { listed, oversize } = await listingThatFits(
+      limit,
+      async (count: number, bodies: boolean): Promise<ListedPages> =>
+        await this.listing(http, locator, secret, { phase, start, limit: count, bodies }),
+    );
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
     for (const result of listed.results) {
-      const read = this.page(source, result, listed.base);
+      const read = this.page(source, result, listed.base, oversize);
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
@@ -140,18 +144,23 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     accepted(answer, body);
   }
 
-  /** One page of one walk, bodies included. */
+  /** One page of one walk, with the pages' bodies unless it is asked for without. */
   private async listing(
     http: ProviderHttp,
     locator: ConfluenceDataCenterLocator,
     token: string,
-    at: { readonly phase: Phase; readonly start: number; readonly limit: number },
+    at: {
+      readonly phase: Phase;
+      readonly start: number;
+      readonly limit: number;
+      readonly bodies: boolean;
+    },
   ): Promise<ListedPages> {
     const url = new URL(`${locator.base}/rest/api/content`);
     url.searchParams.set('spaceKey', locator.spaceKey);
     url.searchParams.set('type', 'page');
     url.searchParams.set('status', at.phase);
-    url.searchParams.set('expand', 'body.storage,version');
+    url.searchParams.set('expand', at.bodies ? 'body.storage,version' : 'version');
     url.searchParams.set('start', String(at.start));
     url.searchParams.set('limit', String(at.limit));
     const answer = await http.send(url, { ...this.request(token), maxBytes: MAX_LISTING_BYTES });
@@ -200,6 +209,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     source: DocSourceRecord,
     result: unknown,
     base: string | undefined,
+    oversize: boolean,
   ): DocPage | UnreadPage {
     const id = textField(result, 'id');
     if (id === undefined) throw new Error('Confluence listed a page with no id.');
@@ -212,6 +222,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
         title: textField(result, 'title'),
         status: textField(result, 'status'),
         storage: textField(field(field(result, 'body'), 'storage'), 'value'),
+        oversize,
         versionNumber: field(version, 'number'),
         editedAt: textField(version, 'when'),
         url: base?.startsWith('https://') && webui !== undefined ? `${base}${webui}` : undefined,

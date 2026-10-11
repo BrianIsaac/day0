@@ -125,11 +125,11 @@ async function bindingAgreements(
 
 /**
  * One employee's holds (W14-R15): its own refused rows that each name an agreement for every
- * employee never checked against its charter. Read by their reason inside the index's range of the
- * employee's refused rows, so however many other refusals it holds, none hides a hold (the read
- * was the newest `AGREEMENTS_READ` refused rows, past which a hold stopped holding). At most one
- * hold stands for an agreement, and at most `AGREEMENTS_READ` agreements for every employee are
- * read as binding.
+ * employee never checked against its charter. Read by their reason through an index that ends on
+ * it (`by_user_agent_status_reason`; W15-R33, D-6), so the read is the holds alone: filtered
+ * after the read, every refused row of the employee was scanned on each read, and the stalled-step
+ * sweep reads fifty employees a transaction. At most one hold stands for an agreement, and at
+ * most `AGREEMENTS_READ` agreements for every employee are read as binding.
  */
 async function holdsOf(
   ctx: Pick<QueryCtx, 'db'>,
@@ -138,10 +138,13 @@ async function holdsOf(
 ): Promise<Doc<'workingAgreements'>[]> {
   return await ctx.db
     .query('workingAgreements')
-    .withIndex('by_user_agent_status', (q) =>
-      q.eq('userId', userId).eq('agentId', agentId).eq('status', 'refused'),
+    .withIndex('by_user_agent_status_reason', (q) =>
+      q
+        .eq('userId', userId)
+        .eq('agentId', agentId)
+        .eq('status', 'refused')
+        .eq('refusal.reason', 'unchecked-for-employee'),
     )
-    .filter((q) => q.eq(q.field('refusal.reason'), 'unchecked-for-employee'))
     .take(AGREEMENTS_READ);
 }
 
@@ -188,6 +191,22 @@ async function newestApprovedCharter(
     .order('desc')
     .take(CHARTER_VERSIONS);
   return versions.find((charter) => charter.approved);
+}
+
+/**
+ * Whether an employee's newest approved charter amends an earlier approved one, as against being
+ * its first: an established employee, whose agreements were checked against the charter before.
+ */
+async function hasEarlierApprovedCharter(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<boolean> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  return versions.filter((charter) => charter.approved).length > 1;
 }
 
 /** An employee's newest approved charter's boundaries, or null before its first approval. */
@@ -431,27 +450,36 @@ export async function keepPlanNoteInTransaction(
  * it was applied to, so a row every employee's plans apply stays bounded; the plan itself and its
  * `work.plan-drafted` event say which agreements it applied.
  *
+ * An agreement of the employee's owner that the plan was drafted with and that no longer binds it
+ * (retired, refused or held since the planner read it) is named in `leftOut` by its words
+ * (W15-R35): the plan's steps may still follow it, and the plan lost only its id.
+ *
  * @param ctx - Mutation context.
  * @param row - The work item whose plan is being stored.
  * @param ids - The ids the plan says it applied.
- * @returns The ids kept, each now listing the work item in `appliedTo`.
+ * @returns The ids kept, each now listing the work item in `appliedTo`, and the statements of the
+ *   agreements left out.
  */
 export async function markAgreementsAppliedInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   ids: readonly unknown[],
-): Promise<Id<'workingAgreements'>[]> {
+): Promise<{ kept: Id<'workingAgreements'>[]; leftOut: string[] }> {
   const agent = await ctx.db.get(row.agentId);
-  if (!agent) return [];
+  if (!agent) return { kept: [], leftOut: [] };
   const held = await heldFor(ctx, agent);
   const kept: Id<'workingAgreements'>[] = [];
+  const leftOut: string[] = [];
   for (const raw of ids) {
     const id = typeof raw === 'string' ? ctx.db.normalizeId('workingAgreements', raw) : null;
     if (!id || kept.includes(id)) continue;
     const agreement = await ctx.db.get(id);
-    if (!agreement || agreement.status !== 'active' || !binds(agreement, agent)) continue;
+    if (!agreement) continue;
     // Held for this employee since the plan was drafted: its charter was never checked against it.
-    if (held.has(id)) continue;
+    if (agreement.status !== 'active' || !binds(agreement, agent) || held.has(id)) {
+      if (agreement.userId === employeeOwnerScope(agent)) leftOut.push(agreement.statement);
+      continue;
+    }
     if (!agreement.appliedTo.includes(row._id)) {
       await ctx.db.patch(id, {
         appliedTo: [...agreement.appliedTo, row._id].slice(-AGREEMENT_APPLIED_KEPT),
@@ -459,13 +487,14 @@ export async function markAgreementsAppliedInTransaction(
     }
     kept.push(id);
   }
-  return kept;
+  return { kept, leftOut: [...new Set(leftOut)] };
 }
 
 /**
  * The plan as the manager's approval leaves it (W13-R29): an agreement it applied that was retired,
  * superseded or dismissed between the draft and the approval no longer binds the run the approval
- * starts, so it leaves the plan's `appliedAgreements`.
+ * starts, so it leaves the plan's `appliedAgreements`, and the plan says in `agreementsLeftOut`
+ * which it was drafted with and lost (W15-R35).
  *
  * @param ctx - The approval's mutation context.
  * @param row - The work item being approved.
@@ -481,18 +510,26 @@ export async function planAgreementsAtApproval(
   const agent = await ctx.db.get(row.agentId);
   const held = agent ? await heldFor(ctx, agent) : new Set<Id<'workingAgreements'>>();
   const inForce: string[] = [];
+  const leftOut: string[] = [...(plan.agreementsLeftOut ?? [])];
   for (const raw of ids) {
     const id = ctx.db.normalizeId('workingAgreements', raw);
     const agreement = id ? await ctx.db.get(id) : null;
     // One held for this employee since the draft is not in force for it (the second pass).
     if (agent && id && agreement?.status === 'active' && binds(agreement, agent) && !held.has(id)) {
       inForce.push(raw);
+    } else if (agent && agreement && agreement.userId === employeeOwnerScope(agent)) {
+      leftOut.push(agreement.statement);
     }
   }
   if (inForce.length === ids.length) return undefined;
   const settled: ExecutionPlan = { ...plan };
   delete settled.appliedAgreements;
-  return inForce.length > 0 ? { ...settled, appliedAgreements: inForce } : settled;
+  delete settled.agreementsLeftOut;
+  return {
+    ...settled,
+    ...(inForce.length > 0 ? { appliedAgreements: inForce } : {}),
+    ...(leftOut.length > 0 ? { agreementsLeftOut: [...new Set(leftOut)] } : {}),
+  };
 }
 
 /** How many distinct items a correction has governed: the one it was given on and those it was applied to. */
@@ -929,6 +966,12 @@ export interface CharterCheckInputs {
   readonly pastTheCheck: boolean;
   /** The agreements held for this employee: one the check allows is lifted (`liftHold`). */
   readonly held: readonly Id<'workingAgreements'>[];
+  /**
+   * Whether the charter amends one approved before it (W15-R12): the agreements were checked
+   * against that one and stay in effect while this check is owed, where a first charter's are
+   * held until it is had.
+   */
+  readonly established: boolean;
 }
 
 /**
@@ -947,7 +990,7 @@ export const charterCheckInputs = internalQuery({
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (!agent || userId === undefined) return null;
-    const [charter, agreements, past, held] = await Promise.all([
+    const [charter, agreements, past, held, established] = await Promise.all([
       approvedBounds(ctx, agent),
       ctx.db
         .query('workingAgreements')
@@ -958,13 +1001,21 @@ export const charterCheckInputs = internalQuery({
         .take(AGREEMENTS_READ),
       pastTheCheck(ctx, userId),
       heldForEmployee(ctx, userId, agent._id),
+      hasEarlierApprovedCharter(ctx, agent._id),
     ]);
     const asked =
       args.agreementIds === undefined
         ? agreements
         : agreements.filter((row) => args.agreementIds?.includes(row._id) === true);
     if (charter === null || asked.length === 0) return null;
-    return { userId, charter, agreements: asked, pastTheCheck: past, held: [...held] };
+    return {
+      userId,
+      charter,
+      agreements: asked,
+      pastTheCheck: past,
+      held: [...held],
+      established,
+    };
   },
 });
 

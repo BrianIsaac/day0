@@ -262,10 +262,15 @@ describe('DocumentationView', () => {
     backend.queries['docRelations:listOpen'] = RELATIONS;
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const text = view.container.textContent ?? '';
-    // The Sources card says the order, and each source has its Trust select; absent reads as team.
+    // The Sources card says what trust is in the Trust select's own words, a weight and never a
+    // strict order; each source has its Trust select, and absent reads as team. Re-pinned for
+    // W15-R45: the meta read "official over team over personal; within a source a page’s status
+    // decides", a strict order the selection does not keep, and a page that is not current is
+    // read from no source at all.
     expect(text).toContain(
-      'official over team over personal; within a source a page’s status decides; recency only breaks ties',
+      'Official is weighed above team, and team above personal, when pages answer alike. A page that is not current is read from no source; recency only breaks ties.',
     );
+    expect(text).not.toContain('official over team over personal');
     const trust = view.container.querySelector<HTMLSelectElement>(
       'select[aria-label="Trust for RevOps team wiki"]',
     );
@@ -278,13 +283,17 @@ describe('DocumentationView', () => {
     // The relation card, in the prototype's words, with the measure and the three answers.
     expect(text).toContain('These two look like versions of the same runbook');
     expect(text).toContain(
-      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths, draft v2” (How-to guides, edited 26 Sep 2026, 09:10) share 78 percent of their text. Mira reads both until you say otherwise.',
+      // Re-pinned for W15-R45: the cards are the owner's, and Mira may read only one of the two
+      // sources, so the sentence no longer names the employee whose tab draws it.
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths, draft v2” (How-to guides, edited 26 Sep 2026, 09:10) share 78 percent of their text. Every employee that reads both sources reads both pages until you say otherwise.',
     );
     expect(text).toContain('Keep both');
     expect(text).toContain('Not the same');
     // The conflict card for a confirmed conflict, in section 8's words.
     expect(text).toContain(
-      '“Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki) disagree under “Thresholds”: 10,000 against 5,000. Mira holds any step that relies on it and asks you.',
+      // Re-pinned for W15-R45 and D-4 (a): no employee is named, and a plan drafted before the
+      // conflict was confirmed is not held, so the sentence says from when.
+      '“Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki) disagree under “Thresholds”: 10,000 against 5,000. An employee that reads both pages holds any step that relies on it, from the next plan it drafts, and asks you.',
     );
     expect(text).toContain('Both hold');
     // The page table's Status and Decided by columns.
@@ -345,7 +354,8 @@ describe('DocumentationView', () => {
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const text = view.container.textContent ?? '';
     expect(text).toContain(
-      'may disagree under “Thresholds”: 10,000 against 5,000. Nothing is held for it: “Finance escalation” is in an official source and “Close checklist” in a team one, so Mira weighs the first above the second. Say which is right to take the other out of what Mira reads.',
+      // Re-pinned for W15-R45: no employee is named on a card that is the owner's.
+      'may disagree under “Thresholds”: 10,000 against 5,000. Nothing is held for it: “Finance escalation” is in an official source and “Close checklist” in a team one, so an employee that reads both weighs the first above the second. Say which is right to take the other out of what your employees read.',
     );
     expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
       'They disagree',
@@ -474,6 +484,41 @@ describe('DocumentationView', () => {
       'may disagree under “Thresholds”: 10,000 against 5,000. Nothing is held until you say they disagree.',
     );
     expect(text).toContain('They disagree');
+    view.unmount();
+  });
+
+  it('says from when a confirmed conflict holds a step: the next plan drafted, never one already drafted (W15-R45, D-4 (a))', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...RELATIONS[1],
+        status: 'proposed',
+        offered: ['disagree', 'from-is-right', 'to-is-right', 'both-hold'],
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    await press(view.container, 'They disagree');
+    await settle();
+    // On the base: "Confirmed: any step that relies on it is held for you.", untrue of a plan
+    // that was pending or approved when the manager said so.
+    expect(said(view.container)).toContain(
+      'Confirmed: a step that relies on it is held for you, from the next plan drafted.',
+    );
+    expect(said(view.container)).not.toContain('any step');
+    view.unmount();
+  });
+
+  it('says a page was last read, not edited, where its reader is given no edit time (W15-R45)', () => {
+    // A list of URLs and an MCP server stamp a page with when it was read; on the base the card
+    // called that time "edited".
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      { ...RELATIONS[0], from: { ...RELATIONS[0].from, edited: false } },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(view.container.textContent).toContain(
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths, draft v2” (How-to guides, last read 26 Sep 2026, 09:10) share 78 percent of their text.',
+    );
     view.unmount();
   });
 

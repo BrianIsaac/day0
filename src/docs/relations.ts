@@ -16,11 +16,18 @@ export {
  * merged, by code. Pure, over the pages' titles, front matter and stored blocks.
  */
 
-/** The most new proposals one source's finishing sync writes; the rest are proposed at the next. */
+/**
+ * The most new proposals one source's finishing sync writes. The measuring stops there, and what
+ * it had left to measure is kept on the source (`docSources.relationsOwed`) for the next sync's.
+ */
 export const RELATION_PROPOSALS_PER_SYNC = 50;
 
-/** The most pages one finishing sync measures for relations; the rest are measured at the next. */
-export const RELATION_PAGES_PER_SYNC = 100;
+/**
+ * How many pages one step of a finishing sync's measuring takes before it hands on to the next
+ * step, which goes on from there until every page the sync has to measure was (W15-R5): a step
+ * finishes the read of blocks it is in, so it may take a few more.
+ */
+export const RELATION_PAGES_PER_STEP = 100;
 
 /** The most other pages one page is measured against: the best of what its title and headings find. */
 export const RELATION_CANDIDATES_PER_PAGE = 3;

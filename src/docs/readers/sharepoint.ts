@@ -37,7 +37,7 @@ import {
   type UnreadPage,
 } from './batch';
 import { markdownPageTitle } from './folder';
-import { documentHtmlToMarkdown, underTitle } from './html-markdown';
+import { DocumentConversionError, documentHtmlToMarkdown, underTitle } from './html-markdown';
 import { checkPageAddress, PageAddressRefusal, pinnedPageFetch } from './page-address';
 import {
   AnswerTooLargeError,
@@ -49,6 +49,7 @@ import {
   type ProviderAnswer,
   type ProviderFetch,
   type ProviderHttpOptions,
+  webPageInPlaceOf,
 } from './provider-http';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
@@ -60,6 +61,9 @@ export interface SharePointReaderOptions extends ProviderHttpOptions {
 
 /** The provider's name in a sentence. */
 const PROVIDER = 'Microsoft Graph';
+
+/** The largest answer read from Graph: one site page with its content, or one listing. */
+const MAX_GRAPH_BYTES = 16 * 1024 * 1024;
 
 /** The largest Markdown file read, as the URL reader's page bound. */
 const MAX_MARKDOWN_BYTES = 2 * 1024 * 1024;
@@ -424,6 +428,7 @@ export class SharePointReader implements DocumentationReader {
       return {
         ref,
         reason: `"${name}" is a ${unreadKind}, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site's own pages.`,
+        kind: 'not-read',
       };
     }
     if (kind === undefined) return undefined;
@@ -494,7 +499,9 @@ export class SharePointReader implements DocumentationReader {
         return { reason: `"${name}" was deleted or moved in SharePoint after it was listed.` };
       }
       // Graph may send the file itself; the reference describes the redirect.
-      if (answered.status === 200) return answered.bytes;
+      if (answered.status === 200) {
+        return webPageInPlaceOf('SharePoint', answered, name) ?? answered.bytes;
+      }
       const location = answered.headers.get('location');
       if (answered.status !== 302 || location === null) {
         graphBody(answered, 'files');
@@ -511,7 +518,7 @@ export class SharePointReader implements DocumentationReader {
           reason: `${address.host} answered HTTP ${answer.status} for "${name}"; re-sync to try again.`,
         };
       }
-      return answer.bytes;
+      return webPageInPlaceOf('SharePoint', answer, name) ?? answer.bytes;
     } catch (error) {
       if (error instanceof AnswerTooLargeError) return tooLarge;
       if (address === undefined || !(error instanceof Error)) throw error;
@@ -541,11 +548,29 @@ export class SharePointReader implements DocumentationReader {
       `${session.graph}/v1.0/sites/${siteId}/pages/${encodeURIComponent(id)}/microsoft.graph.sitePage`,
     );
     url.searchParams.set('$expand', 'canvasLayout');
-    const answer = await this.graph(session, url);
+    let answer: ProviderAnswer;
+    try {
+      answer = await this.graph(session, url);
+    } catch (error) {
+      // A page past the bound is that page's: the rest of the site is read (W15-R11).
+      if (!(error instanceof AnswerTooLargeError)) throw error;
+      return {
+        ref,
+        reason: `"${title}" is larger than the ${mebibytes(MAX_GRAPH_BYTES)} Day0 reads of one SharePoint page.`,
+      };
+    }
     if (answer.status === 404) {
       return { ref, reason: `"${title}" was deleted in SharePoint after it was listed.` };
     }
     const page = graphBody(answer, 'pages');
+    let body: string;
+    try {
+      body = documentHtmlToMarkdown(canvasHtml(field(page, 'canvasLayout')));
+    } catch (error) {
+      // A page the converter cannot take is that page's (W15-R9).
+      if (!(error instanceof DocumentConversionError)) throw error;
+      return { ref, reason: `"${title}" is not read: ${error.message}.` };
+    }
     const state = field(page, 'publishingState');
     const edited = Date.parse(textField(page, 'lastModifiedDateTime') ?? '');
     const webUrl = textField(page, 'webUrl');
@@ -556,7 +581,7 @@ export class SharePointReader implements DocumentationReader {
       ref,
       title,
       ...(webUrl?.startsWith('https://') ? { url: webUrl } : {}),
-      markdown: underTitle(title, documentHtmlToMarkdown(canvasHtml(field(page, 'canvasLayout')))),
+      markdown: underTitle(title, body),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
       ...(nativeStatus === undefined ? {} : { nativeStatus }),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
@@ -568,7 +593,7 @@ export class SharePointReader implements DocumentationReader {
     return await session.http.send(url, {
       headers: { authorization: `Bearer ${session.token}` },
       redirect: 'manual',
-      maxBytes: 16 * 1024 * 1024,
+      maxBytes: MAX_GRAPH_BYTES,
     });
   }
 }

@@ -406,7 +406,7 @@ export class FeishuReader implements DocumentationReader {
     const failed: Array<{ readonly reason: string; readonly cause: string }> = [];
     for (const entry of listed.entries) {
       if (entry.type !== 'docx' || entry.shortcut) {
-        unread.push({ ref: entry.ref, reason: notReadReason(entry) });
+        unread.push({ ref: entry.ref, reason: notReadReason(entry), kind: 'not-read' });
         continue;
       }
       try {

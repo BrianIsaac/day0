@@ -41,11 +41,16 @@ export interface StoredBlockRow {
   readonly hash: string;
 }
 
-/** One `docBlocks.searchBlocks` call: the sources of one run, one query, so many a source. */
+/**
+ * One `docBlocks.searchBlocks` call: the sources of one run, one query, so many a source, and
+ * current pages only, as the product's scout asks (`convex/docSelection.ts`): a grade made
+ * without the filter could not see a regression in it or in the status pass (W15-R43).
+ */
 export type BlockSearch = (search: {
   sourceIds: string[];
   query: string;
   limit: number;
+  status: 'active';
 }) => StoredBlockRow[];
 
 /** What the bed stores of the corpus, proved before any search. */
@@ -152,7 +157,7 @@ export function backendScout(
     for (const query of queries) {
       for (const sourceIds of runs) {
         searches += 1;
-        for (const row of search({ sourceIds, query, limit })) {
+        for (const row of search({ sourceIds, query, limit, status: 'active' })) {
           const pageKey = corpusKey(sources, row.sourceId, row.pageRef);
           const id = `${pageKey}#${row.index}`;
           if (!found.has(id)) {

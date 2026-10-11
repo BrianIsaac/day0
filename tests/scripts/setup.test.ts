@@ -1056,6 +1056,14 @@ describe('the values written into .env.local', (): void => {
     );
   });
 
+  it('refuses an --add-private-host that names no host: an unset shell variable added nothing and said nothing (W15-R39)', (): void => {
+    for (const empty of ['', '  ', ' , ']) {
+      expect(() => parseSetupArguments(['--add-private-host', empty]), `"${empty}"`).toThrow(
+        '--add-private-host names no host. Give the host to add, for example `--add-private-host looker-tile`; an empty value is what an unset shell variable leaves.',
+      );
+    }
+  });
+
   it('says so when the operator’s private hosts leave out the demo tile real mode starts (14-D ruling 2)', (): void => {
     // Re-taken (W14-R36): the line names the one flag that adds it, on a setup or an upgrade.
     expect(demoTileNote('real', { DAY0_PRIVATE_HOSTS: 'mcp.corp.internal' })).toBe(

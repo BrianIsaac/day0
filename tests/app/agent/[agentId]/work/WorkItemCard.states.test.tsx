@@ -20,6 +20,7 @@ import {
   THREAD_REPLY,
   ZONE,
 } from '../../../../fixtures/work/drawn-states';
+import { PIP_DECLINED_OUTPUT } from '../../../../fixtures/work/pip-declined-2026-10-10';
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
 import { type StopRunAnswer } from '../../../../../src/work/stop';
@@ -778,6 +779,23 @@ describe('what the run answered about its own work (12-D, decision D-1 (b))', ()
     expect(
       chip(answered('not-done', ROOK_COMMENT, 'The October deal list is not in the tracker.')),
     ).toBe('Not done');
+  });
+
+  it('draws Pip’s declined set as not done by what was sent, never as Landed and never in the employee’s words (W15-R4)', (): void => {
+    const view = card({
+      ...DRAWN.landed,
+      output: PIP_DECLINED_OUTPUT,
+    } as unknown as Doc<'workItems'>);
+    expect(
+      view.container.querySelector('h3')?.previousElementSibling?.firstElementChild?.textContent,
+    ).toBe('Not done');
+    expect(view.text()).toContain('Not done, by what was sent:');
+    expect(view.text()).toContain(
+      'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+    );
+    // The reading is Day0's: it is never put in the employee's mouth.
+    expect(view.text()).not.toContain('in Mira’s own words');
+    view.unmount();
   });
 
   it("says a ticket this run closed beside a run that answered partial, so a Done ticket never stands under Partly done unsaid (12-D's Minor 5)", (): void => {

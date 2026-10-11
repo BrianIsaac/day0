@@ -401,6 +401,43 @@ function shownPeople(people: PromptPeople): { shown: PersonLine[]; left: number 
 }
 
 /**
+ * The block's people with every Slack id the owner's graph holds taken out of their words (D-5):
+ * the exact match the shape rule cannot make, since an id of letters alone (`UABCDEFGH`) cannot
+ * be told from an upper-case word (`TREASURER`) and the graph knows which it is. Made where the
+ * graph is read (`convex/peoplePrompt.ts`), so no id is handed on to a prompt's builder.
+ *
+ * @param people - What the graph's readers answered.
+ * @param slackIds - The Slack ids the owner's graph holds.
+ */
+export function withoutKnownSlackIds(
+  people: PromptPeople,
+  slackIds: readonly string[],
+): PromptPeople {
+  const known = new Set(slackIds);
+  if (known.size === 0) return people;
+  const clean = (text: string): string =>
+    text
+      .replace(SLACK_ID_SHAPE, (token) => (known.has(token) ? ' ' : token))
+      .replace(/\(\s*\)|\[\s*\]|<\s*>/g, ' ')
+      .replace(/\s+([,;:.)])/g, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const named = <Named extends PromptNamed>(person: Named): Named => ({
+    ...person,
+    displayName: clean(person.displayName),
+    ...(person.title === undefined ? {} : { title: clean(person.title) }),
+    ...(person.team === undefined ? {} : { team: clean(person.team) }),
+  });
+  const scoped = <Scoped extends { readonly scope?: string }>(row: Scoped): Scoped =>
+    row.scope === undefined ? row : { ...row, scope: clean(row.scope) };
+  return {
+    people: people.people.map((person) => ({ ...named(person), edges: person.edges.map(scoped) })),
+    escalation:
+      people.escalation.kind === 'person' ? scoped(named(people.escalation)) : people.escalation,
+  };
+}
+
+/**
  * The block's lines: the lead, one line per confirmed person (name, role and every edge), and the
  * escalation line, at most {@link PEOPLE_BLOCK_MAX_LINES} in all, the last person line saying how
  * many were left out when they do not fit. Nothing at all when the employee has no confirmed person

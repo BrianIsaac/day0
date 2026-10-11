@@ -1294,6 +1294,93 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     vi.useRealTimers();
   });
 
+  it('keeps a runbook’s change on the card when another page of the same title is archived the same day: the rule is the page’s, not the title’s (W15-R40)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { handbook, wiki, skillId } = await harness.run(async (ctx) => {
+      const source = async (label: string) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const handbook = await source('Handbook');
+      const wiki = await source('Team wiki');
+      // One skill read a "Close checklist" in each of two sources.
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'close',
+        description: 'close',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [
+          { sourceId: handbook, ref: 'close.md', title: 'Close checklist' },
+          { sourceId: wiki, ref: 'close.md', title: 'Close checklist' },
+        ],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: 'close',
+        description: 'close',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+      return { handbook, wiki, skillId };
+    });
+    const at = Date.UTC(2026, 9, 8, 9, 0);
+    // The handbook's page changed; the wiki's page of the same title was archived that day.
+    await harness.mutation(internal.skillVersions.stampChangedPage, {
+      userId: 'owner',
+      sourceId: handbook,
+      ref: 'close.md',
+      title: 'Close checklist',
+      changedAt: at,
+      cursor: null,
+    });
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [{ sourceId: wiki, ref: 'close.md', title: 'Close checklist', change: 'archived' }],
+      changedAt: at + 40,
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // On the base the archive of the other page took the change's place: one title, one day.
+    expect((await skill(harness, skillId)).recheckReason).toBe(
+      'its runbook "Close checklist" changed on 8 October 2026',
+    );
+    // The same page archived after its own change is still said better, as 15-J built it.
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [
+        { sourceId: handbook, ref: 'close.md', title: 'Close checklist', change: 'archived' },
+      ],
+      changedAt: at + 80,
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await skill(harness, skillId)).recheckReason).toBe(
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    );
+    vi.useRealTimers();
+  });
+
   it('refuses more pages than one scan stamps for', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await harness.run(

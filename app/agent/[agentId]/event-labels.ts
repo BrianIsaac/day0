@@ -687,7 +687,15 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `${counted(payload.readmitted, 'parked item') ?? 'parked items'} sent back to be evaluated: ${
       REQUEUE_TRIGGER_WORDS[text(payload.trigger) ?? ''] ?? 'a policy changed'
     }`,
-  'work.claim-refused': 'not taken: another employee holds this ticket',
+  // The record's words for the same payload (`record-words.ts`): a ticket a colleague settled is
+  // said as that, with who and when, never as a ticket still held (W15-R16).
+  'work.claim-refused': (payload) => {
+    const { name, settled } = payload.holder ?? {};
+    const on = text(settled?.commentedOn);
+    return settled === undefined
+      ? 'not taken: another employee holds this ticket'
+      : `not taken: ${text(name) ?? 'another employee'} settled ${text(settled.ticket) ?? 'the ticket it names'} with a comment${on ? ` on ${on}` : ''}`;
+  },
   'work.evaluated': (payload) => evaluatedWords(payload.decision),
   'work.skipped': (payload) => `skipped${because(payload.reason)}`,
   'work.scope-judgement-unavailable': (payload) =>

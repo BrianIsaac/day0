@@ -651,6 +651,60 @@ async function mark(
   });
 }
 
+describe('the current pages of a large mirror (W15-R7)', (): void => {
+  it('reads a mirror of 4,090 pages whole under Convex’s limits, with no query a page', async (): Promise<void> => {
+    // Reader 2's vt/b.test.ts R2-G: one index range a mirrored page passed 4,096 at about 4,090
+    // pages, and the whole-mirror fallback read the same pages, so the plan stage had no path.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agentId = await employee(harness);
+    const library = await source(harness, 'Library');
+    for (let start = 0; start < 4_090; start += 200) {
+      await harness.run(async (ctx) => {
+        for (let index = start; index < Math.min(4_090, start + 200); index += 1) {
+          const markdown = `# Page ${index}\n\nBody of page ${index} about invoices.`;
+          await ctx.db.insert('docPages', {
+            sourceId: library.sourceId,
+            ref: `p${index}.md`,
+            title: `Page ${index}`,
+            markdown,
+            updatedAt: 1,
+          });
+          await replacePageBlocks(ctx, {
+            userId: 'owner',
+            sourceId: library.sourceId,
+            pageRef: `p${index}.md`,
+            generation: library.runId,
+            markdown,
+          });
+          await ctx.db.insert('mockDocs', {
+            agentId,
+            slug: `s${index}`,
+            title: `Page ${index}`,
+            body: markdown,
+            category: 'team-doc',
+            sourceId: library.sourceId,
+            sourceRef: `p${index}.md`,
+            updatedAt: 1,
+          });
+        }
+      });
+    }
+    // Three of them are not current, each for its own reason.
+    await mark(harness, { ...library, ref: 'p7.md' }, 'archived');
+    await mark(harness, { ...library, ref: 'p2048.md' }, 'draft');
+    await mark(harness, { ...library, ref: 'p4089.md' }, 'superseded');
+    const snapshot = await harness.query(internal.mock.snapshotInternal, { agentId });
+    expect(snapshot.teamDocs).toHaveLength(4_087);
+    const titles = new Set(snapshot.teamDocs.map((doc) => doc.title));
+    for (const gone of ['Page 7', 'Page 2048', 'Page 4089']) expect(titles.has(gone)).toBe(false);
+    // One made current again is read again.
+    await mark(harness, { ...library, ref: 'p7.md' }, 'active');
+    expect(
+      (await harness.query(internal.mock.snapshotInternal, { agentId })).teamDocs,
+    ).toHaveLength(4_088);
+  }, 300_000);
+});
+
 describe('docSelection and a page that is not current (15-A; A20, A-1)', (): void => {
   /** A scouted how-to guide and a procedure contract, which is always included. */
   async function library(harness: Harness) {

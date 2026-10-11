@@ -19,6 +19,21 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
+    const holder = { name: 'Mateo', title: 'Post the September close status note' };
+    expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(
+      'not taken: another employee holds this ticket',
+    );
+    expect(
+      eventLabel({
+        type: 'work.claim-refused',
+        payload: {
+          holder: { ...holder, settled: { ticket: 'FIN-1', commentedOn: '19 September 2026' } },
+        },
+      }),
+    ).toBe('not taken: Mateo settled FIN-1 with a comment on 19 September 2026');
+  });
+
   it('labels each step of a handover request by the address it names', (): void => {
     const request = {
       transferId: 't1',

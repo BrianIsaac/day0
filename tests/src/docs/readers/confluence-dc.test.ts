@@ -271,4 +271,61 @@ describe('the Confluence Data Center documentation reader', (): void => {
     );
     expect(requests).toEqual([]);
   });
+
+  it('asks for fewer pages when a window of them is more than it reads of one answer, and names a single page past it unread (W15-R11)', async (): Promise<void> => {
+    const huge = 'z'.repeat(49 * 1024 * 1024);
+    const { reader, requests } = readerOnServer((request) => {
+      if (!request.url.pathname.endsWith('/rest/api/content')) return undefined;
+      if (request.url.searchParams.get('status') !== 'current') return json(200, { results: [] });
+      const start = Number(request.url.searchParams.get('start'));
+      const limit = Number(request.url.searchParams.get('limit'));
+      const withBody = (request.url.searchParams.get('expand') ?? '').includes('body.storage');
+      const all = [
+        { id: '1', title: 'Small', storage: '<p>fine</p>' },
+        { id: '2', title: 'Everything we ever wrote', storage: huge },
+        { id: '3', title: 'After it', storage: '<p>fine</p>' },
+      ];
+      const results = all.slice(start, start + limit).map((page) => ({
+        id: page.id,
+        title: page.title,
+        status: 'current',
+        ...(withBody ? { body: { storage: { value: page.storage } } } : {}),
+        version: { number: 1 },
+      }));
+      return json(200, {
+        results,
+        _links: start + results.length < all.length ? { next: '/rest/api/content?next' } : {},
+      });
+    });
+    const first = await reader.listPageBatch(space, TOKEN, undefined, 2);
+    expect(first.pages.map((page) => page.ref)).toEqual(['1']);
+    expect(first.nextCursor).toBe('dc|current|1');
+    const second = await reader.listPageBatch(space, TOKEN, first.nextCursor, 2);
+    expect(second.pages).toEqual([]);
+    expect(second.unread).toEqual([
+      {
+        ref: '2',
+        reason:
+          '"Everything we ever wrote" is larger than the 4 MiB Day0 converts of one Confluence page.',
+      },
+    ]);
+    expect(second.nextCursor).toBe('dc|current|2');
+    const third = await reader.listPageBatch(space, TOKEN, second.nextCursor, 2);
+    expect(third.pages.map((page) => page.ref)).toEqual(['3']);
+    expect(
+      requests
+        .filter((request) => request.url.pathname.endsWith('/rest/api/content'))
+        .map(
+          (request) =>
+            `${request.url.searchParams.get('start')}+${request.url.searchParams.get('limit')} ${request.url.searchParams.get('expand')}`,
+        ),
+    ).toEqual([
+      '0+2 body.storage,version',
+      '0+1 body.storage,version',
+      '1+2 body.storage,version',
+      '1+1 body.storage,version',
+      '1+1 version',
+      '2+2 body.storage,version',
+    ]);
+  }, 60_000);
 });

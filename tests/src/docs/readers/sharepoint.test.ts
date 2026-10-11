@@ -1,7 +1,11 @@
+import type { IncomingMessage } from 'node:http';
+import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
+import { pinnedPageFetch, type PageRequest } from '../../../../src/docs/readers/page-address';
 import { SharePointReader } from '../../../../src/docs/readers/sharepoint';
+import { MAX_WORD_BYTES } from '../../../../src/docs/readers/word';
 import { sharePointReaderSecret } from '../../../../src/docs/sharepoint-source';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
 import {
@@ -77,6 +81,28 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json', ...headers },
+  });
+}
+
+/** A transport no test expects a dial on. */
+const neverDialled: PageRequest = () => {
+  throw new Error('the plain http transport was dialled');
+};
+
+/** A transport that answers 200 with this many chunks of this size, as a download streams. */
+function streamOf(chunks: number, chunkBytes: number): PageRequest {
+  return (_url, _options, callback) => ({
+    on: (): void => undefined,
+    end: (): void => {
+      const response = Object.assign(new PassThrough(), {
+        statusCode: 200,
+        statusMessage: 'OK',
+        headers: { 'content-type': 'application/octet-stream' },
+      });
+      callback(response as unknown as IncomingMessage);
+      for (let sent = 0; sent < chunks; sent += 1) response.write(Buffer.alloc(chunkBytes, 65));
+      response.end();
+    },
   });
 }
 
@@ -271,10 +297,13 @@ describe('the SharePoint documentation reader', (): void => {
     const { reader, requests } = readerOnTenant();
     const { unread } = await wholeSite(reader);
     expect(unread).toEqual([
+      // Re-pinned for D-7: the deck and the PDF say they are of a kind Day0 does not read in
+      // their entries' own field; the file too large to read carries none and is a failure.
       {
         ref: 'file-01DECK',
         reason:
           '"Q3 board deck.pptx" is a slide deck, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
+        kind: 'not-read',
       },
       {
         ref: 'file-01HUGE',
@@ -284,6 +313,7 @@ describe('the SharePoint documentation reader', (): void => {
         ref: 'file-01SCAN',
         reason:
           '"Signed policy.pdf" is a PDF, which Day0 does not read: from a SharePoint library it reads Markdown files, Word documents (.docx) and the site\'s own pages.',
+        kind: 'not-read',
       },
     ]);
     // Nothing is downloaded of a file the reader does not read, and a spreadsheet is no page.
@@ -331,6 +361,26 @@ describe('the SharePoint documentation reader', (): void => {
       reason: '"close-the-quarter.md" is larger than the 2 MiB Day0 reads of one file.',
     });
     expect(batch.pages.map((page) => page.ref)).toEqual(['file-01ESCAL']);
+  });
+
+  it('never stores a web page that answered in a file’s place, whatever type it says it is (W15-R30)', async (): Promise<void> => {
+    // On the base a captive portal's page at the download host was stored as the Markdown file.
+    const portal = '<!doctype html>\n<html><body><h1>Sign in to continue</h1></body></html>';
+    for (const type of ['text/html; charset=utf-8', 'application/octet-stream']) {
+      const { reader } = readerOnTenant((request) =>
+        request.url.host === 'acme.sharepoint.com' &&
+        request.url.searchParams.get('UniqueId') === '01CLOSE'
+          ? new Response(portal, { status: 200, headers: { 'content-type': type } })
+          : undefined,
+      );
+      const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
+      expect(batch.unread[0], type).toEqual({
+        ref: 'file-01CLOSE',
+        reason:
+          '"close-the-quarter.md" came back from acme.sharepoint.com as a web page, not the document itself, so something between Day0 and SharePoint (a proxy or a sign-in page) may have answered for it: ask IT whether the machine Day0\'s backend runs on reaches acme.sharepoint.com directly.',
+      });
+      expect(batch.pages.map((page) => page.ref)).toEqual(['file-01ESCAL']);
+    }
   });
 
   it('follows a download address given relative to Graph, and reads a file Graph answers directly (second pass)', async (): Promise<void> => {
@@ -475,5 +525,61 @@ describe('the SharePoint documentation reader', (): void => {
       "A SharePoint source reads as an app registration, and this one has none: use Rotate on the source's row to give its tenant ID, client ID and client secret.",
     );
     expect(requests).toEqual([]);
+  });
+
+  it('names a site page nested too deeply to convert, or larger than it reads of one answer, unread, and reads the page beside it (W15-R9, W15-R11)', async (): Promise<void> => {
+    const deep = `${'<div>'.repeat(3_000)}x${'</div>'.repeat(3_000)}`;
+    const big = `<p>${'x'.repeat(17 * 1024 * 1024)}</p>`;
+    for (const [innerHtml, reason] of [
+      [
+        deep,
+        '"How to refresh the pipeline tile" is not read: it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one another, many levels down.',
+      ],
+      [
+        big,
+        '"How to refresh the pipeline tile" is larger than the 16 MiB Day0 reads of one SharePoint page.',
+      ],
+    ] as const) {
+      const { reader } = readerOnTenant((request) =>
+        request.url.pathname.endsWith(
+          '/pages/0a1b2c3d-0000-4000-8000-000000000001/microsoft.graph.sitePage',
+        )
+          ? json(200, { canvasLayout: { verticalSection: { webparts: [{ innerHtml }] } } })
+          : undefined,
+      );
+      const cursor = `sp:${JSON.stringify({ phase: 'pages', siteId: SITE_ID, skip: 0 })}`;
+      const batch = await reader.listPageBatch(site, SECRET, cursor, 3);
+      expect(batch.unread, reason).toEqual([
+        { ref: 'page-0a1b2c3d-0000-4000-8000-000000000001', reason },
+      ]);
+      expect(batch.pages.map((page) => page.ref)).toEqual([
+        'page-0a1b2c3d-0000-4000-8000-000000000002',
+      ]);
+    }
+  });
+
+  it('names a file whose download runs past the bound of the checked fetch unread, and reads the rest (W15-R11)', async (): Promise<void> => {
+    // Reader 3's pinned.mts: listed small, the stream itself goes past 16 MiB. The checked
+    // fetch bounds its own body and says so in its own error, which is the file's, not the batch's.
+    const tenant = providerFake('sharepoint');
+    const download = pinnedPageFetch(
+      { url: new URL('https://acme.sharepoint.com/'), addresses: ['203.0.113.7'] },
+      MAX_WORD_BYTES,
+      { http: neverDialled, https: streamOf(18, 1024 * 1024) },
+    );
+    const reader = new SharePointReader({
+      fetch: tenant.fetch,
+      download: async (input: URL, init: RequestInit): Promise<Response> =>
+        input.searchParams.get('UniqueId') === '01ESCAL'
+          ? await download(input, init)
+          : await tenant.fetch(input, init),
+      sleep: async (): Promise<void> => undefined,
+    });
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: 'file-01ESCAL',
+      reason: '"Escalation paths.docx" is larger than the 16 MiB Day0 reads of one Word document.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toEqual(['file-01CLOSE']);
   });
 });

@@ -198,14 +198,17 @@ describe('the Yuque documentation reader', (): void => {
     const { reader, requests } = readerOnSpace();
     const { unread } = await wholeRepository(reader);
     expect(unread).toEqual([
+      // Re-pinned for D-7: each says it is of a kind Day0 does not read in its entry's own field.
       {
         ref: '210000003',
         reason: '"Q3 numbers" is a Yuque sheet, which Day0 does not read: only documents are read.',
+        kind: 'not-read',
       },
       {
         ref: '210000006',
         reason:
           '"Pipeline map" is a Yuque board, which Day0 does not read: only documents are read.',
+        kind: 'not-read',
       },
     ]);
     for (const id of ['210000003', '210000006', '210000009']) {
@@ -226,6 +229,8 @@ describe('the Yuque documentation reader', (): void => {
       ref: '210000001',
       reason:
         '"Close the quarter" is a Yuque sheet, which Day0 does not read: only documents are read.',
+      // Re-pinned for D-7: the kind is the entry's own field.
+      kind: 'not-read',
     });
   });
 
@@ -300,5 +305,38 @@ describe('the Yuque documentation reader', (): void => {
       "A Yuque source reads with a token, and this one has none: use Rotate on the source's row to give one.",
     );
     expect(requests).toEqual([]);
+  });
+
+  it('names a document nested too deeply to convert unread, and reads the one beside it (W15-R9)', async (): Promise<void> => {
+    // Reader 3's poison.mts: a body of 3,000 nested divs.
+    const deep = `${'<div>'.repeat(3_000)}x${'</div>'.repeat(3_000)}`;
+    const { reader } = readerOnSpace((request) =>
+      request.url.pathname.endsWith('/docs/210000001')
+        ? json(200, { data: { id: 210000001, format: 'lake', body_html: deep, slug: 'close' } })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: '210000001',
+      reason:
+        '"Close the quarter" is not read: it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one another, many levels down.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toEqual(['210000002']);
+  });
+
+  it('names a document larger than it reads of one answer unread, and reads the one beside it (W15-R11)', async (): Promise<void> => {
+    // Reader 3's big.mts: a Markdown body of 17 MiB.
+    const big = 'x'.repeat(17 * 1024 * 1024);
+    const { reader } = readerOnSpace((request) =>
+      request.url.pathname.endsWith('/docs/210000001')
+        ? json(200, { data: { id: 210000001, format: 'markdown', body: big, slug: 'close' } })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: '210000001',
+      reason: '"Close the quarter" is larger than the 16 MiB Day0 reads of one Yuque document.',
+    });
+    expect(batch.pages.map((page) => page.ref)).toEqual(['210000002']);
   });
 });

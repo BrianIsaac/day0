@@ -59,7 +59,8 @@ async function withAppliedCorrections(
 /**
  * The plan as stored with the working agreements it applied: only ids the planner was offered
  * that are still active and bind this employee are kept, and each kept one lists the work item in
- * `appliedTo`. A plan that names none is stored as it came.
+ * `appliedTo`; one of the owner's that no longer binds the employee is named in
+ * `agreementsLeftOut`. A plan that names none is stored as it came.
  *
  * @param ctx - Mutation context.
  * @param row - The work item whose plan is being stored.
@@ -72,8 +73,13 @@ async function withAppliedAgreements(
 ): Promise<ExecutionPlan> {
   if (!plan || typeof plan !== 'object' || plan.appliedAgreements === undefined) return plan;
   const { appliedAgreements, ...rest } = plan;
-  const applied = await markAgreementsAppliedInTransaction(ctx, row, appliedAgreements);
-  return applied.length > 0 ? { ...rest, appliedAgreements: applied } : rest;
+  const { kept, leftOut } = await markAgreementsAppliedInTransaction(ctx, row, appliedAgreements);
+  return {
+    ...rest,
+    ...(kept.length > 0 ? { appliedAgreements: kept } : {}),
+    // What the planner read and the plan may not carry: said on the plan by its words (W15-R35).
+    ...(leftOut.length > 0 ? { agreementsLeftOut: leftOut } : {}),
+  };
 }
 
 /**

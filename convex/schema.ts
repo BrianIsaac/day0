@@ -449,6 +449,19 @@ export default defineSchema({
     activeSyncId: v.optional(v.id('docSyncRuns')),
     /** The completed generation whose pages are currently authoritative. */
     lastCompletedSyncId: v.optional(v.id('docSyncRuns')),
+    /**
+     * What a finishing sync's measuring of relations left unmeasured when its cap on new
+     * proposals stopped it (W15-R5): the runs whose pages are left, in the order they are read,
+     * and the place in the first's (`docRelations.pagesWrittenBy`'s cursor; null from its start).
+     * The next sync's measuring starts there, ahead of its own pages, and clears it once it
+     * reaches the end. Absent when nothing is owed. Written by `docRelations.settleRelationsOwed`.
+     */
+    relationsOwed: v.optional(
+      v.object({
+        generations: v.array(v.id('docSyncRuns')),
+        cursor: v.union(v.string(), v.null()),
+      }),
+    ),
     /** The completed generation whose system candidates were reconciled. */
     lastDiscoverySyncId: v.optional(v.id('docSyncRuns')),
     discoveryFingerprint: v.optional(v.string()),
@@ -497,6 +510,14 @@ export default defineSchema({
     listing: v.optional(v.number()),
     /** How many page refs the run's listing has named so far, a resumed run's carried. */
     pagesListed: v.optional(v.number()),
+    /**
+     * How many parts of its listing the run has read, and how many of the refs they named the
+     * listing had already named, a resumed run's carried (W15-R8): what stops a listing that
+     * does not end (`src/docs/listing-bounds.ts`). Written by `recordSyncBatch` from 0.19.0;
+     * absent on an older run, read as 0.
+     */
+    batches: v.optional(v.number()),
+    relisted: v.optional(v.number()),
     credentialRefs: v.array(v.string()),
     pageCount: v.number(),
     redactionCount: v.number(),
@@ -532,7 +553,20 @@ export default defineSchema({
     unread: v.optional(
       v.object({
         count: v.number(),
-        pages: v.array(v.object({ ref: v.string(), reason: v.string() })),
+        /**
+         * Each named page with why, and from 0.19.0 which of the two it is (D-7): a read that
+         * `failed`, which the next sync tries again, or a page of a kind Day0 does `not-read`,
+         * which no sync will read. Absent on an entry written before, which reads as a failure.
+         */
+        pages: v.array(
+          v.object({
+            ref: v.string(),
+            reason: v.string(),
+            kind: v.optional(v.union(v.literal('failed'), v.literal('not-read'))),
+          }),
+        ),
+        /** How many of `count` are of a kind Day0 does not read; absent on a record written before 0.19.0. */
+        notRead: v.optional(v.number()),
       }),
     ),
     /** What a completed run changed, as the final batch counted it. */
@@ -738,10 +772,23 @@ export default defineSchema({
     ref: v.string(),
     /** The source's listing (`docSources.listings`) that last named the ref; 0 for the upgrade's copy. */
     seenBy: v.number(),
+    /**
+     * The page's status while it is not current: superseded, archived or a draft, as its row and
+     * its blocks carry it (W15-R7). Absent for a current page. On this slim row so the selection
+     * reads which of a source's pages to leave out in one range of small rows, where it asked a
+     * query a mirrored page; a page row holds its whole text, so the same read over `docPages`
+     * would read every such page's body. Written with the blocks' status
+     * (`docBlocks.copyPageStatusToBlocks`), from 0.19.0.
+     */
+    notCurrent: v.optional(
+      v.union(v.literal('superseded'), v.literal('archived'), v.literal('draft')),
+    ),
   })
     /** By source, then listing: the finish's walk of the pages two complete walks did not name. */
     .index('by_source', ['sourceId', 'seenBy'])
-    .index('by_source_ref', ['sourceId', 'ref']),
+    .index('by_source_ref', ['sourceId', 'ref'])
+    /** One source's pages that are not current, read whole by the selection (W15-R7). */
+    .index('by_source_not_current', ['sourceId', 'notCurrent']),
 
   docSystemDiscoveries: defineTable({
     sourceId: v.id('docSources'),
@@ -1876,6 +1923,13 @@ export default defineSchema({
      * employee keeps running the verified body meanwhile. */
     recheckDueAt: v.optional(v.number()),
     recheckReason: v.optional(v.string()),
+    /**
+     * The documentation page `recheckReason` is about, when it is about one (W15-R40): a later
+     * stamp says the same cause better only for the same page, so what became of another page of
+     * the same title never takes a change's place on the card. Written with the reason by
+     * `stampRecheckDue` from 0.19.0, and cleared with it.
+     */
+    recheckPage: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
     /** Why and when the row left its employee's use (`retired`). */
     retiredAt: v.optional(v.number()),
     retiredReason: v.optional(v.string()),
@@ -2189,6 +2243,13 @@ export default defineSchema({
      * standing: selection reads the candidate's and the every-employee rows, owner first.
      */
     .index('by_user_agent_status', ['userId', 'agentId', 'status'])
+    /**
+     * One employee's refused rows of one reason (W15-R33; D-6): the holds of an agreement for
+     * every employee (`unchecked-for-employee`) are read by it, however many other refusals the
+     * employee holds. An index of its own: as a trailing key of `by_user_agent_status` the
+     * reason would order that index's readers of refused rows by reason before time.
+     */
+    .index('by_user_agent_status_reason', ['userId', 'agentId', 'status', 'refusal.reason'])
     /**
      * One owner's agreements about one person, in one standing (wave 14, 14-I for 14-FX; W13-R33):
      * the merge of two people repoints a person-scoped agreement from the one merged away, read

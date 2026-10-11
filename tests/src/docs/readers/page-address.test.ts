@@ -7,6 +7,7 @@ import {
   checkPageAddress,
   pinnedPageFetch,
   PageAddressRefusal,
+  PageTooLargeError,
   type CheckedPageAddress,
   type PageRequest,
 } from '../../../../src/docs/readers/page-address';
@@ -288,6 +289,11 @@ describe('pinnedPageFetch', (): void => {
     await expect(response.text()).rejects.toThrow(
       'http://wiki.corp.internal/start exceeds 1024 bytes.',
     );
+    // In an error of its own, so a reader tells a page that is too large from a failed read.
+    const again = await pinnedPageFetch(checked, 1024, { http: transport, https: transport })(
+      new URL('http://wiki.corp.internal/start'),
+    );
+    await expect(again.text()).rejects.toThrow(PageTooLargeError);
   });
 
   it('returns a redirect for the caller to check instead of following it', async (): Promise<void> => {

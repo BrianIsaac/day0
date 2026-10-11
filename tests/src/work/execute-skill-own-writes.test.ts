@@ -254,3 +254,72 @@ describe("a resumed closing set (Wren's second Retry, wave 13 item 8)", (): void
     expect(recorded.users[0] ?? '').not.toContain("That failure is the previous attempt's");
   });
 });
+
+describe("a closing comment that reports the first phase's landed posts (W15-R3)", (): void => {
+  // 15-FW's F5: phase one emitted and landed the two posts; the closing phase writes the comment
+  // the ticket asked for, which reports them and declares none, since they are not in its set.
+  const landed = (key: string, ts: string) => ({
+    tool: 'http.request' as const,
+    ok: true,
+    idempotencyKey: key,
+    effect: `HTTP 200 · {"ok":true,"channel":"C0BSQTE1H7E","ts":"${ts}"}`,
+    providerId: ts,
+  });
+  const comment: MockAction = { ...OWN_WRITES_COMMENT, reports: null as unknown as number[] };
+  const closing = {
+    ...OWN_WRITES_CLOSING,
+    actions: [comment],
+    planStepOutcomes: OWN_WRITES_CLOSING.planStepOutcomes.map((outcome) => ({
+      ...outcome,
+      evidence: 'ledger',
+    })),
+  };
+
+  /** The closing phase after a phase one whose two posts ended as these ledger rows say. */
+  async function afterPhaseOne(
+    rows: Parameters<typeof runDependentSkill>[0]['initialLedger'],
+  ): Promise<Awaited<ReturnType<typeof runDependentSkill>>> {
+    recorded.outputs.push(closing, closing);
+    return await runDependentSkill({
+      skill: { name: 'kanban-comment', description: 'Post and comment.', body: '# Skill' },
+      plan: REVOPS_6_PLAN,
+      candidate: { ...REVOPS_6, contentSummary: 'Post the two notes, then comment.' },
+      charter: BRAM_CHARTER,
+      mockEnv: {
+        spreadsheets: [],
+        slackChannels: [],
+        tweets: [],
+        tickets: [],
+        teamDocs: [],
+        howToGuides: [],
+      },
+      mode: 'real',
+      autonomousActions: false,
+      surfaces: [LINEAR, SLACK],
+      initialOutput: {
+        draft: 'Posted the two notes.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [NOTE_1, NOTE_2],
+        procedureTrails: [],
+      },
+      initialLedger: rows,
+    });
+  }
+
+  it('keeps the comment, with no repair call, when both posts landed', async (): Promise<void> => {
+    const output = await afterPhaseOne([landed('k-1', '17.1'), landed('k-2', '17.2')]);
+    expect(output.actions).toEqual([comment]);
+    expect(output.withheldActions ?? []).toEqual([]);
+    expect(recorded.users).toHaveLength(1);
+  });
+
+  it('still withholds it when the posts did not land: a held or failed write is no evidence', async (): Promise<void> => {
+    const output = await afterPhaseOne([
+      { tool: 'http.request', ok: false, held: true, idempotencyKey: 'k-1', reason: 'held' },
+      { tool: 'http.request', ok: false, idempotencyKey: 'k-2', reason: 'channel_not_found' },
+    ]);
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions?.map((row) => row.action)).toEqual([comment]);
+  });
+});

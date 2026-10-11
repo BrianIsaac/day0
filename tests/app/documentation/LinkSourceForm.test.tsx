@@ -66,7 +66,9 @@ describe('LinkSourceForm and the trust of a new source (15-A; A19)', (): void =>
     expect(trust.value).toBe('team');
     expect(view.container.textContent).toContain(
       // The words follow the selection: trust is a weight on the ranking, not a rule (minor 3).
-      'Official is weighed above team, and team above personal, when pages answer alike. Within a source, a page’s own status decides; recency only breaks ties.',
+      // Re-pinned for W15-R45: "Within a source, a page’s own status decides" was wrong of a
+      // page that is not current, which is read from no source.
+      'Official is weighed above team, and team above personal, when pages answer alike. A page that is not current is read from no source; recency only breaks ties.',
     );
     view.unmount();
   });

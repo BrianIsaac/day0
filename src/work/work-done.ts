@@ -22,6 +22,7 @@
 
 import { z } from 'zod';
 import {
+  actionIntent,
   isSurfaceTool,
   parseSurfaceAction,
   statusChangeTarget,
@@ -81,6 +82,111 @@ function oneLine(why: string): string {
   const cut = why.slice(0, WORK_DONE_WHY_LIMIT);
   const word = cut.lastIndexOf(' ');
   return `${(word > 0 ? cut.slice(0, word) : cut).trimEnd()}…`;
+}
+
+/** Whether an action writes: any mock office verb, or a surface call whose intent is a write. */
+function writes(action: MockAction | undefined): action is MockAction {
+  if (action === undefined) return false;
+  if (!isSurfaceTool(action.tool)) return true;
+  const parsed = parseSurfaceAction(action);
+  return parsed.ok && actionIntent(parsed.action) === 'write';
+}
+
+/** An action as two phases of one run would write it alike: its tool and its arguments. */
+function sameWrite(action: MockAction): string {
+  return JSON.stringify([action.tool, action.args]);
+}
+
+/**
+ * How many of the writes a finished run set out to make were sent, and how many were not.
+ *
+ * Unsent: a write whose ledger row is held (the manager did not approve it, or it was held back
+ * with a write it reports), in either phase, unless a later phase sent the same write; and a write
+ * Day0 withheld from the final set before it reached the manager. What the first phase had
+ * withheld is the closing phase's to write again, so it is not counted twice.
+ */
+function writesSent(output: unknown): { readonly sent: number; readonly unsent: number } {
+  const phases = ledgerPhases(output);
+  const landed = new Set<string>();
+  const held: string[] = [];
+  for (const { actions, applied } of phases) {
+    actions.forEach((action, index): void => {
+      if (!writes(action)) return;
+      const row = applied[index] as AppliedAction | undefined;
+      const isHeld = row?.held === true;
+      if (landedEntry(row)) landed.add(sameWrite(action));
+      else if (isHeld) held.push(sameWrite(action));
+    });
+  }
+  const sent = phases.reduce(
+    (count, { actions, applied }) =>
+      count +
+      actions.filter(
+        (action, index) => writes(action) && landedEntry(applied[index] as AppliedAction),
+      ).length,
+    0,
+  );
+  const withheld = (
+    (output as { withheldActions?: ReadonlyArray<{ action?: MockAction }> } | null)
+      ?.withheldActions ?? []
+  ).filter((row) => writes(row.action)).length;
+  return { sent, unsent: held.filter((write) => !landed.has(write)).length + withheld };
+}
+
+/**
+ * A `done` answer held to what the run's ledger says was sent (W15-R4).
+ *
+ * A run answers before its set is decided: the manager may then leave a write unapproved, and
+ * Day0 may hold a message back with the write it reports, or withhold one after its repair. On
+ * 10 October Pip's set was approved with its post unticked, nothing of it was sent, and the item
+ * read "Landed" on the strength of the answer given before. So a `done` over writes that were
+ * not sent reads as the ledger says: partly done when some were sent, not done when none was.
+ *
+ * @param output - A finished run's output, with its ledger.
+ * @returns The answer the ledger gives with its one line of why, or undefined when the run's own
+ *   answer stands: it did not answer `done`, or every write it set out to make was sent.
+ */
+export function doneAgainstLedger(output: unknown): WorkDoneFact | undefined {
+  if (workDoneFactOf(output)?.workDone !== 'done') return undefined;
+  const { sent, unsent } = writesSent(output);
+  if (unsent === 0) return undefined;
+  const total = sent + unsent;
+  return sent === 0
+    ? {
+        workDone: 'not-done',
+        workDoneWhy:
+          total === 1
+            ? 'The one write this run set out to make was not sent, so the work is not done, though the run answered that it was.'
+            : `None of the ${total} writes this run set out to make was sent, so the work is not done, though the run answered that it was.`,
+      }
+    : {
+        workDone: 'partial',
+        workDoneWhy: `${unsent} of the ${total} writes this run set out to make ${unsent === 1 ? 'was' : 'were'} not sent, so the work is partly done, though the run answered that it was done.`,
+      };
+}
+
+/**
+ * A finished run's output with its answer held to its ledger ({@link doneAgainstLedger}): what
+ * the write that completes a run stores, so every reader of the answer (the card, the record, a
+ * colleague's claim) reads what was sent. The run's own answer is kept beside it as
+ * `workDoneSaid`.
+ *
+ * @param output - The output the run finished with.
+ * @returns The same output when its answer stands; otherwise a copy with the ledger's answer.
+ */
+export function withAnswerHeldToLedger<T>(output: T): T {
+  const held = doneAgainstLedger(output);
+  const said = workDoneFactOf(output);
+  if (held === undefined || said === undefined) return output;
+  return { ...output, ...held, workDoneSaid: said };
+}
+
+/** Whether a stored output's answer is its ledger's reading rather than the run's own words. */
+export function workDoneFromLedger(output: unknown): boolean {
+  return (
+    workDoneFactOf((output as { workDoneSaid?: unknown } | null | undefined)?.workDoneSaid) !==
+    undefined
+  );
 }
 
 /** One action that lands a closing state on a ticket, by its index in the set. */

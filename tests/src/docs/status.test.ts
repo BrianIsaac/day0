@@ -9,8 +9,12 @@ import {
   markerCandidate,
   markerJudgementPrompt,
   markerJudgementSchema,
+  MARKER_VOCABULARY,
   markerInForce,
   markerStands,
+  markerToJudge,
+  markerWordStatus,
+  unmarkedTop,
   nativeStatusOfWord,
   notCurrentWord,
   pathStatus,
@@ -236,8 +240,104 @@ describe('the marker judgement', (): void => {
     );
     expect(markerInForce(marker, candidate)).toBe(marker);
     expect(markerInForce(marker, edited)).toBe(marker);
-    expect(markerInForce(marker, undefined)).toBeUndefined();
+    // Re-pinned for D-1 (c) (W15-R27): a judgement that the page is not current holds once its
+    // line is gone too, until the model reads the page again; it used to end at once.
+    expect(markerInForce(marker, undefined)).toBe(marker);
     expect(markerInForce(undefined, candidate)).toBeUndefined();
+  });
+});
+
+describe('a marker judgement held to a changed page (D-1 (c); W15-R27)', (): void => {
+  const TITLE = 'Pipeline runbook';
+  const DEPRECATED = 'DEPRECATED: use the v2 runbook instead.\n\nSteps...';
+  const judged = {
+    status: 'superseded' as const,
+    quote: markerCandidate(TITLE, DEPRECATED)!.quote,
+  };
+
+  it('keeps a page not current while its notice is reworded with a vocabulary word, and asks the model again', (): void => {
+    // The review's first input: the page is corrected, and stays out until the model reads it.
+    const corrected = 'No longer deprecated: this runbook is current again.\n\nSteps...';
+    expect(markerInForce(judged, markerCandidate(TITLE, corrected))).toBe(judged);
+    expect(markerToJudge(judged, TITLE, corrected)).toEqual(markerCandidate(TITLE, corrected));
+  });
+
+  it('keeps a page not current when its notice is reworded with no vocabulary word, and puts its top to the model', (): void => {
+    // The second input: this made the page current at once, with no model asked.
+    const reworded = 'This runbook has been replaced with the v2 runbook.\n\nSteps...';
+    expect(markerCandidate(TITLE, reworded)).toBeUndefined();
+    expect(markerInForce(judged, undefined)).toBe(judged);
+    const asked = markerToJudge(judged, TITLE, reworded);
+    expect(asked).toEqual(unmarkedTop(TITLE, reworded));
+    expect(asked?.excerpt).toBe(`${TITLE}\n${reworded}`);
+    // Judged of that top, it is not asked again until the top changes.
+    const answered = { status: 'superseded' as const, quote: asked!.quote };
+    expect(markerToJudge(answered, TITLE, reworded)).toBeUndefined();
+    expect(markerToJudge(answered, TITLE, `${reworded}\n\nMore.`)).toBeDefined();
+  });
+
+  it('holds a page judged current out, by the word its top gains, until the model answers', (): void => {
+    // The third input: a page about archiving tickets, judged current, gains an ARCHIVED line.
+    const about = 'An archived ticket leaves the board.\n\nSteps...';
+    const current = {
+      status: 'active' as const,
+      quote: markerCandidate('How to archive a ticket', about)!.quote,
+    };
+    const gained = markerCandidate(
+      'How to archive a ticket',
+      `ARCHIVED: kept for the record only.\n\n${about}`,
+    );
+    expect(markerInForce(current, gained)).toEqual({ status: 'archived' });
+    // A new word in a line already judged counts too, and says which status it would be.
+    const drafted = markerCandidate(
+      'How to archive a ticket',
+      'DRAFT. An archived ticket leaves the board.\n\nSteps...',
+    );
+    expect(markerInForce(current, drafted)).toEqual({ status: 'draft' });
+    const deprecated = markerCandidate('How to archive a ticket', `本文件已废止。\n\n${about}`);
+    expect(markerInForce(current, deprecated)).toEqual({ status: 'superseded' });
+  });
+
+  it('leaves a page judged current as it is when a judged line is only edited, or its lines are fewer', (): void => {
+    const about = 'An archived ticket leaves the board.\n\nSteps...';
+    const current = {
+      status: 'active' as const,
+      quote: markerCandidate('How to archive a ticket', about)!.quote,
+    };
+    const typo = markerCandidate(
+      'How to archive a ticket',
+      'An archived ticket leaves the board at once.\n\nSteps...',
+    );
+    expect(markerInForce(current, typo)).toBe(current);
+    expect(
+      decidePageStatus({ marker: markerInForce(current, typo), defaultStatus: 'active' }),
+    ).toEqual({ status: 'active', statusSource: 'default' });
+    expect(markerInForce(current, undefined)).toBe(current);
+    // Either way the edited page is put to the model again.
+    expect(
+      markerToJudge(
+        current,
+        'How to archive a ticket',
+        'An archived ticket leaves the board at once.',
+      ),
+    ).toBeDefined();
+  });
+
+  it('never puts a page to the model that was never judged not current and holds no vocabulary word', (): void => {
+    expect(markerToJudge(undefined, TITLE, 'Steps to refresh the tile.')).toBeUndefined();
+    expect(
+      markerToJudge({ status: 'active', quote: 'x' }, TITLE, 'Steps to refresh the tile.'),
+    ).toBeUndefined();
+  });
+
+  it('gives every vocabulary word the status it would mean', (): void => {
+    expect(MARKER_VOCABULARY).toHaveLength(36);
+    for (const word of MARKER_VOCABULARY) {
+      expect(['superseded', 'archived', 'draft'], word).toContain(markerWordStatus(word));
+    }
+    expect(markerWordStatus('retired')).toBe('archived');
+    expect(markerWordStatus('征求意见稿')).toBe('draft');
+    expect(markerWordStatus('do not use')).toBe('superseded');
   });
 });
 

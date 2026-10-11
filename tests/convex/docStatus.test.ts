@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { replacePageBlocks } from '../../convex/docBlocks';
-import { markerCandidate } from '../../src/docs/status';
+import { notCurrentRefs, replacePageBlocks } from '../../convex/docBlocks';
+import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
+import { markerCandidate, unmarkedTop } from '../../src/docs/status';
 import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -354,7 +355,7 @@ describe('restatePage: the rules over a stored page', (): void => {
       ref,
     });
 
-  it('reads a judged marker while the page holds marker lines: an edited line keeps the last judgement, a removed one ends it', async (): Promise<void> => {
+  it('reads a judged marker through an edit and a removal of its line: the last judgement that the page is not current holds until the model answers', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
     const markdown = '# 月结流程\n\n本文件已废止,请参阅《月结流程(2026版)》。\n\n## 步骤\n\n关账。';
@@ -383,15 +384,61 @@ describe('restatePage: the rules over a stored page', (): void => {
       status: 'superseded',
       statusSource: 'marker',
     });
-    // The marker line is taken out: nothing on the page says it is void, and no judgement decides.
+    // Re-pinned for D-1 (c) (W15-R27). The marker line is taken out: this made the page current
+    // at once, with no model asked, though the notice may only have been reworded in words the
+    // vocabulary does not hold. The judgement now holds until the model reads the page again.
     await harness.run(async (ctx) => {
       await ctx.db.patch(pageId, { markdown: '# 月结流程\n\n## 步骤\n\n关账。' });
     });
-    expect(await restate(harness, source, 'finance/close.md')).toBe(true);
+    expect(await restate(harness, source, 'finance/close.md')).toBe(false);
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+    });
+    // The manager's "This is current" overrules it at once.
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.docStatus.setPageStatus, { pageId, status: 'active' });
     expect(await pageOf(harness, pageId)).toMatchObject({
       status: 'active',
-      statusSource: 'default',
+      statusSource: 'manager',
     });
+  });
+
+  it('takes the model’s answer on the top of a page whose notice is gone: not current keeps it out, and stands; current lets it back with no judgement kept (W15-R27)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const reworded = '# Pipeline runbook\n\nThis runbook has been replaced with the v2 runbook.';
+    const top = unmarkedTop('Pipeline runbook', reworded);
+    const pageId = await storedPage(harness, source, {
+      ref: 'runbooks/pipeline.md',
+      title: 'Pipeline runbook',
+      markdown: reworded,
+      status: 'superseded',
+      statusSource: 'marker',
+      marker: {
+        status: 'superseded',
+        quote: 'DEPRECATED: use the v2 runbook instead.',
+        judgedAt: 3,
+      },
+    });
+    const answer = async (status: 'superseded' | 'active') =>
+      await harness.mutation(internal.docStatus.recordMarker, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'runbooks/pipeline.md',
+        quote: top.quote,
+        status,
+      });
+    expect(await answer('superseded')).toBe(true);
+    expect(await pageOf(harness, pageId)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'marker',
+      marker: { status: 'superseded', quote: top.quote },
+    });
+    expect(await answer('active')).toBe(true);
+    const back = await pageOf(harness, pageId);
+    expect([back.status, back.statusSource, back.marker]).toEqual(['active', 'default', undefined]);
   });
 
   it('supersedes a page a confirmed relation names a successor for, and names the successor', async (): Promise<void> => {
@@ -544,25 +591,29 @@ describe('restatePages: the status phase of a finishing sync', (): void => {
       from: null,
       record: false,
     });
+    // Re-pinned for D-1 (c) (W15-R27): the page judged a draft whose DRAFT line is gone was made
+    // current here, its judgement removed and no model asked. It now keeps the judgement and its
+    // top is handed back, so only the model's answer makes it current.
     expect(page).toMatchObject({
-      changed: 2,
+      changed: 1,
       done: true,
       checkpoint: finishingCursor({ phase: 'scopes', cursor: null }),
     });
-    // Only the Chinese page awaits a judgement: its lines hit the pre-filter and none is stored.
+    // The Chinese page awaits a judgement: its lines hit the pre-filter and none is stored.
     expect(page?.toJudge).toEqual([
       { ref: 'b-close.md', ...markerCandidate('月结流程', CHINESE)! },
+      { ref: 'd-stale.md', ...unmarkedTop('Onboarding', RUNBOOK) },
     ]);
-    // A standing judgement decides; one of lines the page no longer holds is removed with its status.
+    // A standing judgement decides; so does one that said not current of lines the page has lost.
     expect(await pageOf(harness, standing)).toMatchObject({
       status: 'superseded',
       statusSource: 'marker',
     });
-    const cleared = await pageOf(harness, stale);
-    expect([cleared.status, cleared.statusSource, cleared.marker]).toEqual([
-      'active',
-      'default',
-      undefined,
+    const kept = await pageOf(harness, stale);
+    expect([kept.status, kept.statusSource, kept.marker?.status]).toEqual([
+      'draft',
+      'marker',
+      'draft',
     ]);
     // The run's cursor now starts the scopes phase, where the finish goes on.
     expect((await harness.run(async (ctx) => await ctx.db.get(source.runId)))?.cursor).toBe(
@@ -755,6 +806,37 @@ describe('the manager’s own status for a page', (): void => {
     ]);
   });
 
+  it('says on the page’s slim listing row that it is not current, and takes that back when it is current again (W15-R7)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const listed = async () =>
+      await harness.run(
+        async (ctx) =>
+          (
+            await ctx.db
+              .query('docPageListings')
+              .withIndex('by_source_ref', (q) =>
+                q.eq('sourceId', source.sourceId).eq('ref', 'runbooks/pipeline-runbook.md'),
+              )
+              .unique()
+          )?.notCurrent ?? null,
+      );
+    const notCurrent = async () =>
+      await harness.run(async (ctx) => [
+        ...((await notCurrentRefs(ctx.db, source.sourceId)) ?? []),
+      ]);
+    expect(await notCurrent()).toEqual([]);
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'draft' });
+    expect(await listed()).toBe('draft');
+    expect(await notCurrent()).toEqual(['runbooks/pipeline-runbook.md']);
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    expect(await listed()).toBe('archived');
+    await asManager(harness).mutation(api.docStatus.setPageStatus, { pageId, status: 'active' });
+    expect(await listed()).toBeNull();
+    expect(await notCurrent()).toEqual([]);
+  });
+
   it('refuses a superseded page with no successor, itself as its successor, or a successor that is not the manager’s', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
@@ -771,6 +853,34 @@ describe('the manager’s own status for a page', (): void => {
     await expect(set(pageId)).rejects.toThrow('A page cannot supersede itself.');
     await expect(set(theirs)).rejects.toThrow('forbidden');
     expect((await pageOf(harness, pageId)).status).toBeUndefined();
+  });
+
+  it('refuses a successor that is not current itself, so two pages never supersede each other (W15-R6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const older = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook.md' });
+    const newer = await storedPage(harness, source, { ref: 'runbooks/pipeline-runbook-v2.md' });
+    const supersede = async (pageId: Id<'docPages'>, supersededBy: Id<'docPages'>) =>
+      await asManager(harness).mutation(api.docStatus.setPageStatus, {
+        pageId,
+        status: 'superseded',
+        supersededBy,
+      });
+    await supersede(older, newer);
+    // The other way round would leave neither page current.
+    await expect(supersede(newer, older)).rejects.toThrow(
+      'That page is not current itself, so it cannot stand in for another: make it current first, or name a page that is.',
+    );
+    expect((await pageOf(harness, newer)).status).toBeUndefined();
+    // Nor a draft or an archived page.
+    const draft = await storedPage(harness, source, { ref: 'drafts/next.md' });
+    await asManager(harness).mutation(api.docStatus.setPageStatus, {
+      pageId: draft,
+      status: 'draft',
+    });
+    const third = await storedPage(harness, source, { ref: 'runbooks/other.md' });
+    await expect(supersede(third, draft)).rejects.toThrow(SUCCESSOR_NOT_CURRENT);
+    expect((await pageOf(harness, third)).status).toBeUndefined();
   });
 
   it('clears back to what the page and its source say: the source’s own word, or the default', async (): Promise<void> => {

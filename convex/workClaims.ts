@@ -11,6 +11,7 @@ import {
   type ClaimHolder,
 } from '../src/work/claim-key';
 import { landedWritesOf } from '../src/work/landed-writes';
+import { workDoneFactOf } from '../src/work/work-done';
 import { dayLabelAt } from '../src/demo/day-label';
 import { agentZone } from '../src/lib/zone';
 import { isRevocationTrialRow } from './revocationEvaluation';
@@ -293,7 +294,8 @@ interface SettledElsewhere {
 
 /**
  * The live claim on one named ticket whose holder is another employee's finished work item that
- * landed a comment on it, read under each of the asking employee's tracker cards.
+ * landed a comment on it and answered that its work was done, read under each of the asking
+ * employee's tracker cards.
  */
 async function settledTicket(
   ctx: MutationCtx,
@@ -318,6 +320,11 @@ async function settledTicket(
       if (claim.agentId === row.agentId || claim.writeTarget !== undefined) continue;
       const holding = await ctx.db.get(claim.workItemId);
       if (holding?.state !== 'completed') continue;
+      // A run that answered its work was not all done settled nothing (W15-R13): "could not
+      // reach the sheet; left open" is a comment too. A row recorded before runs answered reads
+      // as it did.
+      const answer = workDoneFactOf(holding.output);
+      if (answer !== undefined && answer.workDone !== 'done') continue;
       const comment = landedComments(holding).at(-1);
       if (comment !== undefined) return { ticket, key, claim, holding, comment };
     }

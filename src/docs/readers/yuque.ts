@@ -24,8 +24,9 @@ import {
   type ReadPageBatch,
   type UnreadPage,
 } from './batch';
-import { documentHtmlToMarkdown, underTitle } from './html-markdown';
+import { DocumentConversionError, documentHtmlToMarkdown, underTitle } from './html-markdown';
 import {
+  AnswerTooLargeError,
   field,
   ProviderHttp,
   providerBody,
@@ -39,6 +40,9 @@ const PROVIDER = 'Yuque';
 
 /** The least time between two requests: 5,000 an hour. */
 const REQUEST_SPACING_MS = 720;
+
+/** The largest answer read: one document with its body, or one listing. */
+const MAX_ANSWER_BYTES = 16 * 1024 * 1024;
 
 /** The most documents one request lists (the spec's `limit` maximum). */
 const MAX_PAGE_LIMIT = 100;
@@ -220,21 +224,41 @@ export class YuqueReader implements DocumentationReader {
     const ref = String(id);
     const title = textField(entry, 'title')?.trim() || 'Untitled';
     const noun = notDocumentNoun(textField(entry, 'type'));
-    if (noun !== undefined) return { ref, reason: notDocument(title, noun) };
-    const answer = await this.send(session, this.address(session, `/${encodeURIComponent(ref)}`));
+    if (noun !== undefined) return { ref, reason: notDocument(title, noun), kind: 'not-read' };
+    let answer: ProviderAnswer;
+    try {
+      answer = await this.send(session, this.address(session, `/${encodeURIComponent(ref)}`));
+    } catch (error) {
+      // A document past the bound is that document's: the rest of the listing is read (W15-R11).
+      if (!(error instanceof AnswerTooLargeError)) throw error;
+      return {
+        ref,
+        reason: `"${title}" is larger than the ${MAX_ANSWER_BYTES / (1024 * 1024)} MiB Day0 reads of one Yuque document.`,
+      };
+    }
     const body = this.ownBody(answer, session.locator);
     if (answer.status === 404) {
       return { ref, reason: `"${title}" was deleted or moved in Yuque after it was listed.` };
     }
     const detail = field(accepted(answer, body), 'data');
     const format = textField(detail, 'format');
-    if (format === 'lakesheet') return { ref, reason: notDocument(title, 'sheet') };
-    const markdown =
-      format === 'markdown'
-        ? textField(detail, 'body')
-        : textField(detail, 'body_html') === undefined
-          ? undefined
-          : documentHtmlToMarkdown(textField(detail, 'body_html') ?? '');
+    if (format === 'lakesheet') {
+      return { ref, reason: notDocument(title, 'sheet'), kind: 'not-read' };
+    }
+    const html = textField(detail, 'body_html');
+    let markdown: string | undefined;
+    try {
+      markdown =
+        format === 'markdown'
+          ? textField(detail, 'body')
+          : html === undefined
+            ? undefined
+            : documentHtmlToMarkdown(html);
+    } catch (error) {
+      // A document the converter cannot take is that document's (W15-R9).
+      if (!(error instanceof DocumentConversionError)) throw error;
+      return { ref, reason: `"${title}" is not read: ${error.message}.` };
+    }
     if (markdown === undefined) {
       return { ref, reason: `Yuque gave no body for "${title}", so Day0 does not read it.` };
     }
@@ -285,7 +309,7 @@ export class YuqueReader implements DocumentationReader {
   private async send(session: Session, url: URL): Promise<ProviderAnswer> {
     return await session.http.send(url, {
       headers: { 'x-auth-token': session.token },
-      maxBytes: 16 * 1024 * 1024,
+      maxBytes: MAX_ANSWER_BYTES,
     });
   }
 

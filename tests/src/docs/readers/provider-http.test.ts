@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PageTooLargeError } from '../../../../src/docs/readers/page-address';
 import {
   AnswerTooLargeError,
   answerText,
@@ -7,6 +8,7 @@ import {
   providerBody,
   ProviderGatewayError,
   ProviderHttp,
+  ProviderRequestRefusedError,
   ProviderUnreachableError,
   textField,
   type ProviderAnswer,
@@ -117,6 +119,29 @@ describe('a reader’s connection to its provider', (): void => {
     );
   });
 
+  it('names the host and the cause when the request itself is refused: a redirect it does not follow, a certificate it cannot verify (W15-R30)', async (): Promise<void> => {
+    // On the base each reached the card as a bare "fetch failed", with no host and no cause.
+    const redirected = new TypeError('fetch failed', { cause: new Error('unexpected redirect') });
+    const intercepted = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('self-signed certificate in certificate chain'), {
+        code: 'SELF_SIGNED_CERT_IN_CHAIN',
+      }),
+    });
+    for (const [refusal, cause] of [
+      [redirected, 'unexpected redirect'],
+      [intercepted, 'self-signed certificate in certificate chain'],
+    ] as const) {
+      const { http, sleeps } = connection([refusal]);
+      const failure = await http.send(URL_A).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ProviderRequestRefusedError);
+      expect((failure as Error).message).toBe(
+        `Day0's request to api.example.test did not go through: ${cause}. Something between Day0 and api.example.test (a proxy that inspects HTTPS, or a sign-in page that redirects) may be answering for it: ask IT whether the machine Day0's backend runs on reaches api.example.test directly.`,
+      );
+      // Not a transient: asked once.
+      expect(sleeps).toEqual([]);
+    }
+  });
+
   it('tries a read cut off in flight again, and words one that keeps failing as the transient it is', async (): Promise<void> => {
     const reset = (): Error =>
       new TypeError('fetch failed', {
@@ -133,6 +158,24 @@ describe('a reader’s connection to its provider', (): void => {
   it('refuses an answer larger than the request’s bound', async (): Promise<void> => {
     const { http } = connection([new Response('x'.repeat(2_000))]);
     await expect(http.send(URL_A, { maxBytes: 1_000 })).rejects.toBeInstanceOf(AnswerTooLargeError);
+  });
+
+  it('says a body its own fetch bounded is too large, once, whatever its address holds (W15-R11)', async (): Promise<void> => {
+    // The checked page fetch errors its stream past its bound; a download address may hold any
+    // words, a transport marker among them, and the answer is still too large, not a transient.
+    const address = new URL('https://files.example.test/terminated-contracts.docx');
+    const { http, sent } = connection([
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller): void {
+            controller.enqueue(new Uint8Array(10));
+            controller.error(new PageTooLargeError(address, 16 * 1024 * 1024));
+          },
+        }),
+      ),
+    ]);
+    await expect(http.send(address)).rejects.toBeInstanceOf(AnswerTooLargeError);
+    expect(sent).toHaveLength(1);
   });
 });
 

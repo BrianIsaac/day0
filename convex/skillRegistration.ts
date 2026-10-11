@@ -114,7 +114,9 @@ export async function completeRegistrationInTransaction(
     adoptedAt: held?.adopted ? (row.adoptedAt ?? now) : undefined,
     // The offer is answered once the row registers, whichever way.
     offeredVersionId: undefined,
-    ...(stampedDuringRun ? {} : { recheckDueAt: undefined, recheckReason: undefined }),
+    ...(stampedDuringRun
+      ? {}
+      : { recheckDueAt: undefined, recheckReason: undefined, recheckPage: undefined }),
     ...RELEASED,
   });
   // A colleague's proposal of the name filed before this version existed is offered it now.

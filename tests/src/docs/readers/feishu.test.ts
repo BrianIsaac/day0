@@ -185,10 +185,12 @@ describe('the Feishu documentation reader', (): void => {
     const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
     expect(batch.pages).toEqual([]);
     expect(batch.unread).toEqual([
+      // Re-pinned for D-7: a node Day0 does not read says so in its entry's own field.
       {
         ref: 'wikcnShortcut00000000000001',
         reason:
           '"Handbook (shortcut)" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
+        kind: 'not-read',
       },
     ]);
     // Neither its content nor its children are asked for.
@@ -199,15 +201,18 @@ describe('the Feishu documentation reader', (): void => {
   it('names a sheet node unread with its reason', async (): Promise<void> => {
     const { reader, requests } = readerOnTenant();
     const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    // Re-pinned for D-7, here and for the mind note below: the kind is the entry's own field.
     expect(batch.unread).toContainEqual({
       ref: NODES.sheet.node,
       reason:
         '"Q3 numbers" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+      kind: 'not-read',
     });
     expect(batch.unread).toContainEqual({
       ref: NODES.map.node,
       reason:
         '"Pipeline map" is a Feishu mind note, which day0 does not read: only documents (docx) are read, as Markdown.',
+      kind: 'not-read',
     });
     // Nothing is asked of a node the reader does not read.
     expect(requests.some((request) => request.url.href.includes(NODES.sheet.obj))).toBe(false);

@@ -3,12 +3,21 @@ import {
   answerFieldsOf,
   closingAgainstFact,
   closingChanges,
+  doneAgainstLedger,
   doneAgainstWords,
   landedClosings,
+  withAnswerHeldToLedger,
   WORK_DONE_WHY_LIMIT,
   workDoneFactOf,
+  workDoneFromLedger,
 } from '../../../src/work/work-done';
 import type { MockAction } from '../../../src/work/types';
+import {
+  PIP_ANSWER,
+  PIP_DECLINED_OUTPUT,
+  PIP_SET,
+  pipRow,
+} from '../../fixtures/work/pip-declined-2026-10-10';
 import {
   FINISHED_WORDS,
   MOSS_DRAFT,
@@ -268,5 +277,136 @@ describe('answerFieldsOf (what a finished row keeps)', (): void => {
         initial: { workDone: 'done', workDoneWhy: 'Predicted.' },
       }),
     ).toEqual({});
+  });
+});
+
+describe('doneAgainstLedger (a done answer held to what was sent, W15-R4)', (): void => {
+  const NOTHING_SENT = {
+    workDone: 'not-done',
+    workDoneWhy:
+      'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+  };
+
+  it('reads Pip’s set, approved with the post unticked, as not done: nothing of it was sent', (): void => {
+    expect(doneAgainstLedger(PIP_DECLINED_OUTPUT)).toEqual(NOTHING_SENT);
+  });
+
+  it('reads a set some of whose writes landed as partly done, with how many did not', (): void => {
+    expect(
+      doneAgainstLedger({
+        ...PIP_DECLINED_OUTPUT,
+        applied: [pipRow(0, 'landed'), pipRow(1, 'declined'), pipRow(2, 'landed')],
+      }),
+    ).toEqual({
+      workDone: 'partial',
+      workDoneWhy:
+        '1 of the 3 writes this run set out to make was not sent, so the work is partly done, though the run answered that it was done.',
+    });
+    expect(
+      doneAgainstLedger({
+        ...PIP_DECLINED_OUTPUT,
+        applied: [pipRow(0, 'declined'), pipRow(1, 'withheld'), pipRow(2, 'landed')],
+      })?.workDoneWhy,
+    ).toBe(
+      '2 of the 3 writes this run set out to make were not sent, so the work is partly done, though the run answered that it was done.',
+    );
+  });
+
+  it('counts a write Day0 withheld from the set before it reached the manager', (): void => {
+    expect(
+      doneAgainstLedger({
+        ...PIP_DECLINED_OUTPUT,
+        actions: PIP_SET.slice(0, 2),
+        applied: [pipRow(0, 'landed'), pipRow(1, 'landed')],
+        withheldActions: [{ action: PIP_SET[2], reason: 'withheld by the evidence check' }],
+      }),
+    ).toEqual({
+      workDone: 'partial',
+      workDoneWhy:
+        '1 of the 3 writes this run set out to make was not sent, so the work is partly done, though the run answered that it was done.',
+    });
+  });
+
+  it('lets the answer stand when every write landed, and counts no read', (): void => {
+    expect(
+      doneAgainstLedger({
+        ...PIP_DECLINED_OUTPUT,
+        applied: [pipRow(0, 'landed'), pipRow(1, 'landed'), pipRow(2, 'landed')],
+      }),
+    ).toBeUndefined();
+    const read: MockAction = {
+      tool: 'mcp.call',
+      args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-5"}' },
+    };
+    expect(
+      doneAgainstLedger({
+        ...PIP_ANSWER,
+        actions: [read, linearState('Done')],
+        // A read the gate held is no write the run set out to make.
+        applied: [
+          { tool: 'mcp.call', ok: true, held: true, idempotencyKey: 'r' },
+          { tool: 'mcp.call', ok: true, idempotencyKey: 'w' },
+        ],
+      }),
+    ).toBeUndefined();
+  });
+
+  it('decides nothing for a run that did not answer done, or that answered nothing', (): void => {
+    expect(
+      doneAgainstLedger({ ...PIP_DECLINED_OUTPUT, workDone: 'partial', workDoneWhy: 'One left.' }),
+    ).toBeUndefined();
+    const { workDone: _answer, workDoneWhy: _why, ...before } = PIP_DECLINED_OUTPUT;
+    void _answer;
+    void _why;
+    expect(doneAgainstLedger(before)).toBeUndefined();
+  });
+
+  it('reads the first phase’s declined write as unsent, unless the closing set sent the same write', (): void => {
+    const first = { actions: [PIP_SET[0]], applied: [pipRow(0, 'declined')] };
+    const closing = (actions: MockAction[]) => ({
+      ...PIP_ANSWER,
+      initial: first,
+      actions,
+      applied: actions.map((_action, index) => pipRow(index, 'landed')),
+    });
+    expect(doneAgainstLedger(closing([PIP_SET[2]!]))?.workDone).toBe('partial');
+    expect(doneAgainstLedger(closing([PIP_SET[0]!, PIP_SET[2]!]))).toBeUndefined();
+    // What the first phase had withheld is the closing phase's to write again: not counted.
+    expect(
+      doneAgainstLedger({
+        ...PIP_ANSWER,
+        initial: {
+          actions: [],
+          applied: [],
+          withheldActions: [{ action: PIP_SET[1], reason: 'withheld by the evidence check' }],
+        },
+        actions: [PIP_SET[2]],
+        applied: [pipRow(2, 'landed')],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe('withAnswerHeldToLedger (what the completing write stores, W15-R4)', (): void => {
+  it('stores the ledger’s answer and keeps the run’s own beside it', (): void => {
+    const stored = withAnswerHeldToLedger(PIP_DECLINED_OUTPUT);
+    expect(stored).toMatchObject({
+      workDone: 'not-done',
+      workDoneWhy:
+        'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+      workDoneSaid: PIP_ANSWER,
+    });
+    expect(workDoneFromLedger(stored)).toBe(true);
+    // Stored once: reading it again changes nothing.
+    expect(withAnswerHeldToLedger(stored)).toEqual(stored);
+  });
+
+  it('leaves an output whose answer stands exactly as it is', (): void => {
+    const landed = {
+      ...PIP_DECLINED_OUTPUT,
+      applied: [pipRow(0, 'landed'), pipRow(1, 'landed'), pipRow(2, 'landed')],
+    };
+    expect(withAnswerHeldToLedger(landed)).toBe(landed);
+    expect(workDoneFromLedger(landed)).toBe(false);
   });
 });
