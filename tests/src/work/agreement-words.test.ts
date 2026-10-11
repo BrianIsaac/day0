@@ -9,6 +9,7 @@ import {
   keepNoteHint,
   proposalQuestion,
   refusalOffersAmendment,
+  refusedKicker,
   refusalSentence,
   sourceWords,
   checkStale,
@@ -67,7 +68,8 @@ describe('what the cards say of a working agreement', (): void => {
   it('says a keep for every employee refused past the employees its check reads, and offers no amendment (W13-R28)', (): void => {
     const tooMany = { reason: 'every-employee-too-many' as const };
     expect(refusalSentence(tooMany, 'Priya', 'charter')).toBe(
-      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you have more. You can keep it for a single employee instead.',
+      // Re-taken (found on the 15-FX bed): the row outlives the count, so it says when that was.
+      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you had more when you kept it. You can keep it for a single employee instead.',
     );
     expect(refusalSentence(tooMany, 'Priya', 'work')).toBe(
       refusalSentence(tooMany, 'Priya', 'charter'),
@@ -77,10 +79,25 @@ describe('what the cards say of a working agreement', (): void => {
 
   it('says an agreement for every employee held for one employee alone stays in effect for the others (W14-R15)', (): void => {
     const held = { reason: 'unchecked-for-employee' as const };
+    // Re-taken (15-FX): a hold is also written when the charter's check could not be had, and it
+    // lifts once the check can be, so the row says what is true of both and what happens next.
     expect(refusalSentence(held, 'Ines', 'charter')).toBe(
-      "Not in effect for Ines: Ines's charter was approved while you had more than 50 employees, more than Day0 checks an agreement for every employee against, so it was never checked against that charter. It stays in effect for your other employees.",
+      "Not in effect for Ines: Day0 has not checked it against Ines's charter, and it checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect for your other employees.",
+    );
+    expect(refusalSentence({ ...held, checkable: true }, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines yet: Day0 has not checked it against Ines's charter. It checks when Ines next drafts a plan, or now with Check now. It stays in effect for your other employees.",
     );
     expect(refusalOffersAmendment(held)).toBe(false);
+  });
+
+  it('heads a refused row by what happened to it: never kept, ended after it was in effect, or held (14-FX\u2019s M2)', (): void => {
+    expect(refusedKicker({ refusal: { reason: 'widens-scope' } })).toBe('Not kept');
+    expect(refusedKicker({})).toBe('Not kept');
+    // In effect until a new charter's check refused it: it ended, it was not "not kept".
+    expect(
+      refusedKicker({ effectiveFrom: 5, refusal: { reason: 'contradicts-will-not-do' } }),
+    ).toBe('Ended');
+    expect(refusedKicker({ refusal: { reason: 'unchecked-for-employee' } })).toBe('Held');
   });
 
   it('reads a kept agreement as stale once its check has waited past its tries, and says so (W13-R30)', (): void => {

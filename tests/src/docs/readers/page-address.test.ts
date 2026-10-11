@@ -7,6 +7,7 @@ import {
   checkPageAddress,
   pinnedPageFetch,
   PageAddressRefusal,
+  PageTooLargeError,
   type CheckedPageAddress,
   type PageRequest,
 } from '../../../../src/docs/readers/page-address';
@@ -52,6 +53,46 @@ describe('checkPageAddress', (): void => {
         privateHostAllowlist('wiki.corp.internal'),
       ),
     ).resolves.toMatchObject({ addresses: ['10.1.2.3'] });
+  });
+
+  it('reads plain http from a listed name only while every address it answers is inside the network (W14-R34)', async (): Promise<void> => {
+    const listed = privateHostAllowlist('mcp.linear.app wiki.corp.internal');
+    await expect(
+      checkPageAddress(
+        new URL('http://mcp.linear.app/'),
+        resolverOf({ 'mcp.linear.app': ['93.184.216.34'] }),
+        listed,
+      ),
+    ).rejects.toThrow(
+      'http://mcp.linear.app/ is plain http, and its host, though DAY0_PRIVATE_HOSTS lists it, answers with a public address: Day0 reads plain http only from a host inside your network.',
+    );
+    await expect(
+      checkPageAddress(
+        new URL('http://wiki.corp.internal/'),
+        resolverOf({ 'wiki.corp.internal': ['10.0.0.8', '93.184.216.34'] }),
+        listed,
+      ),
+    ).rejects.toThrow('answers with a public address');
+    // Over https a listed name may answer publicly, as before.
+    await expect(
+      checkPageAddress(
+        new URL('https://mcp.linear.app/'),
+        resolverOf({ 'mcp.linear.app': ['93.184.216.34'] }),
+        listed,
+      ),
+    ).resolves.toMatchObject({ addresses: ['93.184.216.34'] });
+  });
+
+  it('says a fake-IP proxy\u2019s answer for what it is, with the two ways past it (W14-R43)', async (): Promise<void> => {
+    await expect(
+      checkPageAddress(
+        new URL('https://docs.partner.example/handbook'),
+        resolverOf({ 'docs.partner.example': ['198.18.0.5'] }),
+        privateHostAllowlist(''),
+      ),
+    ).rejects.toThrow(
+      'https://docs.partner.example/handbook: its host answers with 198.18.0.5, an address of the range a fake-IP proxy hands out (198.18.0.0/15), so Day0 cannot tell what it reaches and does not read it. Set the proxy\u2019s DNS to answer real addresses, or list the host in DAY0_PRIVATE_HOSTS.',
+    );
   });
 
   it('refuses an unlisted private name or address literal before resolving it', async (): Promise<void> => {
@@ -248,6 +289,11 @@ describe('pinnedPageFetch', (): void => {
     await expect(response.text()).rejects.toThrow(
       'http://wiki.corp.internal/start exceeds 1024 bytes.',
     );
+    // In an error of its own, so a reader tells a page that is too large from a failed read.
+    const again = await pinnedPageFetch(checked, 1024, { http: transport, https: transport })(
+      new URL('http://wiki.corp.internal/start'),
+    );
+    await expect(again.text()).rejects.toThrow(PageTooLargeError);
   });
 
   it('returns a redirect for the caller to check instead of following it', async (): Promise<void> => {

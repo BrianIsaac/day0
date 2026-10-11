@@ -1,9 +1,10 @@
 /**
  * Where a documentation sync that has read every page is in finishing it.
  *
- * A generation that has read its last page finishes in four phases, each a
+ * A generation that has read its last page finishes in five phases, each a
  * bounded page at a time: it deletes the stored pages neither it nor the complete walk before it
  * listed, then the superseded page credentials that have aged out, then those mirrors, then
+ * restates the status of the pages it keeps (wave 15, 15-A; A-2), then
  * re-reads the intake scopes and completes. The run's
  * cursor records the phase and the phase's own cursor after every page, so
  * a finish the runtime cut off resumes where it stopped, and a resume that
@@ -14,7 +15,7 @@
 export const FINISHING_CURSOR = '\u0000finishing';
 
 /** The finish's phases, in the order it walks them. */
-export const FINISHING_PHASES = ['pages', 'credentials', 'mirrors', 'scopes'] as const;
+export const FINISHING_PHASES = ['pages', 'credentials', 'mirrors', 'status', 'scopes'] as const;
 
 /** One phase of the finish. */
 export type FinishingPhase = (typeof FINISHING_PHASES)[number];

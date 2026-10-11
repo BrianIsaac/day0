@@ -1,9 +1,10 @@
 /**
- * A Feishu tenant answered in-process from the recorded fixtures beside this file.
+ * A Feishu tenant answered in-process from the fixtures beside this file.
  *
  * The fixtures were written on 8 October 2026 from the response shapes Feishu
- * documents (`tenant.json` names each route and the file that answers it); no
- * tenant was called. The double checks what the real API checks that the
+ * documents (`tenant.json` names each route and the file that answers it):
+ * written from the reference, not recorded from a tenant, and no tenant was
+ * called (W14-R43). The double checks what the real API checks that the
  * reader depends on: the app's id and secret at the token route, and a token
  * it issued on every other route.
  */
@@ -12,7 +13,7 @@ import { join } from 'node:path';
 
 const DIRECTORY = join(import.meta.dirname, '.');
 
-/** One recorded route: the request it answers and the fixture file it answers with. */
+/** One fixture route: the request it answers and the fixture file it answers with. */
 interface FixtureRoute {
   readonly method: string;
   readonly path: string;
@@ -21,7 +22,7 @@ interface FixtureRoute {
   readonly body: string;
 }
 
-/** The recorded tenant: its app, its wiki space and folder, and every route. */
+/** The fixture tenant: its app, its wiki space and folder, and every route. */
 export interface FeishuTenant {
   readonly app: { readonly appId: string; readonly appSecret: string };
   readonly spaceId: string;
@@ -31,7 +32,7 @@ export interface FeishuTenant {
   readonly routes: readonly FixtureRoute[];
 }
 
-/** The recorded tenant, as `tenant.json` describes it. */
+/** The fixture tenant, as `tenant.json` describes it. */
 export const feishuTenant: FeishuTenant = JSON.parse(
   readFileSync(join(DIRECTORY, 'tenant.json'), 'utf8'),
 ) as FeishuTenant;
@@ -44,7 +45,7 @@ export interface RecordedRequest {
   readonly at: number;
 }
 
-/** A response a test puts in place of the recorded one, or undefined to keep it. */
+/** A response a test puts in place of the fixture's, or undefined to keep it. */
 export type RequestOverride = (request: RecordedRequest) => Response | undefined;
 
 /** A fixture's body as JSON text. */
@@ -61,7 +62,7 @@ function matches(route: FixtureRoute, method: string, url: URL): boolean {
 }
 
 /**
- * A fetch that answers from the recorded tenant.
+ * A fetch that answers from the fixture tenant.
  *
  * @param options - The tokens the token route issues in turn (the last repeats), the clock the
  *   requests are stamped with, and an override for a test's own answer.

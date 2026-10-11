@@ -10,6 +10,7 @@ import {
   type PlanObligationsRow,
   type PlanStepOutcomeRow,
   clipLedgerRow,
+  finishedAs,
 } from './work-item';
 import { type ManagerFeedback, managerFeedbackLabel } from '@/work/manager-feedback';
 import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../components/time';
@@ -38,10 +39,20 @@ export const CHIP_SWAP_MS = 320;
  * the old chip fades out as the new one fades in, in the same cell (v3 section 5.2); the first
  * state is simply there, and under reduced motion only the new one shows.
  *
- * @param item - The row's state, and the reason it stopped when it did.
+ * A finished row's chip is its run's own answer, never "Landed" above a card that says the work
+ * was partly done or not done (W14-R47).
+ *
+ * @param item - The row's state, the reason it stopped when it did, and its run's output.
  */
-export function StateChip({ item }: { item: Pick<Doc<'workItems'>, 'state' | 'skipReason'> }) {
-  const label = workItemStateLabel(item);
+export function StateChip({
+  item,
+}: {
+  item: Pick<Doc<'workItems'>, 'state' | 'skipReason' | 'output'>;
+}) {
+  const label = workItemStateLabel(
+    item,
+    item.state === 'completed' ? finishedAs(item.output) : undefined,
+  );
   const shown = `${label.tone}:${label.text}`;
   const previous = usePreviousValue(shown, CHIP_SWAP_MS);
   const chip = (said: string, place?: 'from' | 'to') => {

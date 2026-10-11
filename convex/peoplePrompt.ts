@@ -4,11 +4,12 @@ import { internalQuery, type QueryCtx } from './_generated/server';
 import { employeeOwnerScope } from './ownership';
 import { confirmedPersonOf } from './itemPeople';
 import { collaboratorsOfEmployee, escalationContactOfEmployee } from './people';
-import type {
-  PromptNamed,
-  PromptPeople,
-  PromptPerson,
-  PromptEscalation,
+import {
+  withoutKnownSlackIds,
+  type PromptNamed,
+  type PromptPeople,
+  type PromptPerson,
+  type PromptEscalation,
 } from '../src/people/prompt-block';
 
 /*
@@ -29,6 +30,21 @@ function named(person: Pick<Doc<'people'>, 'displayName' | 'title' | 'team'>): P
   };
 }
 
+/** The most Slack ids of an owner's graph read to keep them out of the block's words. */
+const SLACK_IDS_READ = 500;
+
+/**
+ * The Slack ids the owner's graph holds (D-5), for the exact match the block's shape rule cannot
+ * make: read here and used here, so none of them leaves this module.
+ */
+async function slackIdsOf(ctx: QueryCtx, userId: string): Promise<string[]> {
+  const identities = await ctx.db
+    .query('personIdentities')
+    .withIndex('by_user_provider_external', (q) => q.eq('userId', userId).eq('provider', 'slack'))
+    .take(SLACK_IDS_READ);
+  return identities.map((identity) => identity.externalId);
+}
+
 /**
  * The People block's people for an employee now: one entry per confirmed person its collaborator,
  * neighbouring-role and dotted-line edges in force reach, in name order, with every such edge to
@@ -43,9 +59,11 @@ export async function promptPeopleOf(
   agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
   now: number,
 ): Promise<PromptPeople> {
-  const [collaborators, escalation] = await Promise.all([
+  const scope = employeeOwnerScope(agent);
+  const [collaborators, escalation, slackIds] = await Promise.all([
     collaboratorsOfEmployee(ctx, agent, now),
     escalationContactOfEmployee(ctx, agent, undefined, now),
+    scope === undefined ? [] : slackIdsOf(ctx, scope),
   ]);
   const byPerson = new Map<Id<'people'>, PromptPerson>();
   for (const answer of collaborators) {
@@ -69,7 +87,8 @@ export async function promptPeopleOf(
           ...(escalation.scope === undefined ? {} : { scope: escalation.scope }),
         }
       : { kind: 'manager' };
-  return { people: [...byPerson.values()], escalation: contact };
+  // A Slack id the graph holds is taken out of every word here, whatever its letters (D-5).
+  return withoutKnownSlackIds({ people: [...byPerson.values()], escalation: contact }, slackIds);
 }
 
 /**

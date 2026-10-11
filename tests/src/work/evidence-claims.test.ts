@@ -8,7 +8,7 @@ import {
   itemEvidence,
   messageTexts,
   reportedEarlierWrites,
-  reportsEarlierWrite,
+  reportsFindings,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   unsupportedClaims,
@@ -715,14 +715,14 @@ describe('a message that reports a write of its own set (W12X-2, wave 13 item 1)
   });
 
   it('names the earlier writes a message reports, and none for a message that reports nothing', (): void => {
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toBe(true);
-    expect(reportsEarlierWrite(OWN_WRITES_COMMENT, [])).toBe(false);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [NOTE_1, NOTE_2])).toEqual([0, 1]);
+    expect(reportedEarlierWrites(OWN_WRITES_COMMENT, [])).toEqual([]);
     expect(
-      reportsEarlierWrite(
+      reportedEarlierWrites(
         commentOn('REVOPS-6', 'Could not find the stop-drill page; who owns it?'),
         [NOTE_1, NOTE_2],
       ),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 
@@ -840,22 +840,24 @@ describe('which sentences bind a message to the writes before it', (): void => {
 
   it('binds a plain report the check does not read as a claim', (): void => {
     const earlier = comment('Stop drill: both notes are going out in #revops today.');
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [earlier])).toBe(true);
-    expect(reportsEarlierWrite(comment('Commented the stop-drill plan.'), [NOTE_1])).toBe(false);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [earlier])).toEqual([
+      0,
+    ]);
+    expect(reportedEarlierWrites(comment('Commented the stop-drill plan.'), [NOTE_1])).toEqual([]);
     expect(
-      reportsEarlierWrite(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
-    ).toBe(true);
+      reportedEarlierWrites(comment('Shared both stop-drill notes in #revops.'), [NOTE_1, NOTE_2]),
+    ).toEqual([0, 1]);
   });
 
   it('binds no hedge and no condition: they report nothing made', (): void => {
-    expect(reportsEarlierWrite(comment('The stop-drill notes were not posted.'), [NOTE_1])).toBe(
-      false,
-    );
     expect(
-      reportsEarlierWrite(comment('Once the stop-drill notes are posted, the drill begins.'), [
+      reportedEarlierWrites(comment('The stop-drill notes were not posted.'), [NOTE_1]),
+    ).toEqual([]);
+    expect(
+      reportedEarlierWrites(comment('Once the stop-drill notes are posted, the drill begins.'), [
         NOTE_1,
       ]),
-    ).toBe(false);
+    ).toEqual([]);
   });
 });
 
@@ -1172,5 +1174,315 @@ describe("the item's own figures beside a report of the set's writes (W13-R44)",
     const coverage = slackPost('C0BSQTE1H7E', 'Pipeline coverage this week: 74%.');
     const claim = commentOn('REVOPS-6', 'Posted the REVOPS-6 coverage of 74% in #revops.');
     expect(unsupportedClaimFindings([coverage, claim], asked)).toEqual([]);
+  });
+});
+
+describe('a mock office message beside the writes its words report (W14-R44)', (): void => {
+  // Pip's set on 14-FW's bed (`wave14-fw-2026-10-08-bed/mock-landed.txt`), the post's body as far
+  // as the bed's log kept it: the comment reports the post and declared `reports: []`.
+  const PIP_POST: MockAction = {
+    tool: 'slack.postMessage',
+    args: {
+      channelSlug: 'office-asks',
+      threadKey: 'thread-double-charge',
+      body: 'Hi Hana, here is the first reply for Northwind on invoice INV-2207, per the billing replies doc, for you to send: "Hi Northwind, thank you for letting us know, and sorry for the trouble with invoice INV-2207. Billing reviews duplicate charges within two business days and will write back to you with the outcome."',
+    },
+    reports: [],
+  };
+  const PIP_COMMENT: MockAction = {
+    tool: 'ticket.update',
+    args: {
+      slug: 'REVOPS-204',
+      status: 'done',
+      comment:
+        "First reply to Northwind's double-charge ask on invoice INV-2207 was drafted per the billing replies doc and posted in Hana's thread (channel://office-asks#thread-double-charge) for her to send. No refund was promised; the review outcome is billing's decision.",
+    },
+    reports: [],
+  };
+
+  it('binds the comment to the post it reports, though it declared none', (): void => {
+    expect(boundEarlierWrites(PIP_COMMENT, [PIP_POST])).toEqual([0]);
+  });
+
+  it('reads each mock verb as the write it is: a post, a comment, a state change, a row', (): void => {
+    const dm = (body: string): MockAction => ({
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'dm-manager', body },
+      reports: null,
+    });
+    const update: MockAction = {
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-204', status: 'done' },
+    };
+    const row: MockAction = {
+      tool: 'spreadsheet.appendRow',
+      args: {
+        sheetSlug: 'q4-tracker',
+        tabName: 'Pipeline',
+        cells: [{ header: 'Deal', value: 'Initech' }],
+      },
+    };
+    const tweet: MockAction = {
+      tool: 'twitter.reply',
+      args: { tweetSlug: 't1', body: 'Thanks, Northwind.' },
+    };
+    // A comment report names the comment; a move names the state change; a post names both posts.
+    expect(boundEarlierWrites(dm('Commented on the ticket.'), [PIP_POST, PIP_COMMENT])).toEqual([
+      1,
+    ]);
+    expect(boundEarlierWrites(dm('Moved REVOPS-204 to done.'), [PIP_POST, update])).toEqual([1]);
+    expect(boundEarlierWrites(dm('Posted both replies.'), [PIP_POST, tweet, update])).toEqual([
+      0, 1,
+    ]);
+    expect(
+      boundEarlierWrites(dm('Added the Initech row to the tracker.'), [PIP_POST, row]),
+    ).toEqual([1]);
+  });
+
+  it('binds nothing where the words report no write of the set', (): void => {
+    const question: MockAction = {
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-204', comment: 'Which billing doc holds the duplicate charge reply?' },
+      reports: [],
+    };
+    expect(boundEarlierWrites(question, [PIP_POST])).toEqual([]);
+  });
+});
+
+describe('a message that reports a write later in its set (W15-R1)', (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  // Reader 4's p1b.mts, the shape 15-FW's bed saw on REVOPS-5: the DM says the reminder is posted,
+  // and the post and the comment that would make it true come after it in the set.
+  const read: MockAction = {
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'GET', path: 'conversations.list' },
+  };
+  const dm: MockAction = {
+    ...slackPost('D0C6MMVTY06', 'The coverage reminder for REVOPS-5 is posted in #revops.'),
+    reports: [],
+  };
+  const post: MockAction = {
+    ...slackPost('C0REVOPS', 'Coverage reminder: pipeline coverage this week is 68%.'),
+    reports: [],
+  };
+  const comment = (reports: number[]): MockAction => ({
+    ...commentOn('REVOPS-5', 'Coverage reminder posted.'),
+    reports,
+  });
+  const LATER =
+    'action 1 (slack POST chat.postMessage) reports a write that comes after it in this set: it says "The coverage reminder for REVOPS-5 is posted in #revops.", which reports [2, 3], and Day0 sends a set in its order; put the message after every write it reports and list them in `reports`, or word it as what is still to come';
+
+  it('raises a finding that names the later writes and asks for the message after them', (): void => {
+    expect(unsupportedClaimFindings([read, dm, post, comment([2])], empty)).toEqual([
+      { index: 1, issue: LATER },
+    ]);
+  });
+
+  it('raises it whichever messages the claim check reads, and in the reading mock mode runs', (): void => {
+    const set = [read, dm, post, comment([2])];
+    expect(unsupportedClaimFindings(set, empty, () => false)).toEqual([{ index: 1, issue: LATER }]);
+    expect(reportsFindings(set)).toEqual([{ index: 1, issue: LATER }]);
+  });
+
+  it('raises nothing where the message reports a write before it, though a later write shares its words', (): void => {
+    const after: MockAction = {
+      ...slackPost('D0C6MMVTY06', 'The coverage reminder for REVOPS-5 is posted in #revops.'),
+      reports: [1],
+    };
+    expect(unsupportedClaimFindings([read, post, after, comment([1])], empty)).toEqual([]);
+  });
+
+  it('raises nothing for a plan, a doubt, or a reply recorded before the field', (): void => {
+    const planned: MockAction = {
+      ...slackPost('D0C6MMVTY06', 'I will post the coverage reminder in #revops next.'),
+      reports: [],
+    };
+    const doubted: MockAction = {
+      ...slackPost('D0C6MMVTY06', 'The coverage reminder is not posted in #revops yet.'),
+      reports: [],
+    };
+    expect(reportsFindings([read, planned, post])).toEqual([]);
+    expect(reportsFindings([read, doubted, post])).toEqual([]);
+    const { reports: _unused, ...recordedBefore } = dm;
+    void _unused;
+    expect(reportsFindings([read, recordedBefore, post])).toEqual([]);
+  });
+});
+
+describe('a declared reports that names fewer writes than the words report (W15-R2)', (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  // Reader 4's p6.mts: two posts whose words share nothing with the comment that reports them.
+  const read: MockAction = {
+    tool: 'http.request',
+    args: { surface: 'slack', method: 'GET', path: 'conversations.list' },
+  };
+  const fire: MockAction = {
+    ...slackPost('C1', 'Fire alarm test is at 10 on Friday.'),
+    reports: null as unknown as number[],
+  };
+  const route: MockAction = {
+    ...slackPost('C1', 'Evacuation route is the east stairs.'),
+    reports: null as unknown as number[],
+  };
+  const both = (reports: number[]): MockAction => ({
+    ...commentOn('REVOPS-2', 'Posted both notes in #revops.'),
+    reports,
+  });
+  const fewer = (declared: string): string =>
+    `action 3 (linear save_comment) reports more writes of this set than its \`reports\` names: it says "Posted both notes in #revops." and \`reports\` names ${declared}, while the writes before it that the sentence can mean are [1, 2]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`;
+
+  it('raises a finding for an empty declaration on a message whose words report writes by their kind alone', (): void => {
+    expect(unsupportedClaimFindings([read, fire, route, both([])], empty)).toEqual([
+      { index: 3, issue: fewer('[]') },
+    ]);
+  });
+
+  it('raises a finding for a declaration that names one write of the two the words report', (): void => {
+    expect(unsupportedClaimFindings([read, fire, route, both([1])], empty)).toEqual([
+      { index: 3, issue: fewer('[1]') },
+    ]);
+    expect(unsupportedClaimFindings([read, fire, route, both([2])], empty)).toEqual([
+      { index: 3, issue: fewer('[2]') },
+    ]);
+  });
+
+  it('raises nothing once the declaration names both, and the comment is then held with either post', (): void => {
+    expect(unsupportedClaimFindings([read, fire, route, both([1, 2])], empty)).toEqual([]);
+    const held = { disposition: 'held', reason: 'write held for the manager' } as const;
+    const auto = { disposition: 'auto' } as const;
+    expect(
+      heldWithReportedWrites([read, fire, route, both([1, 2])], [auto, held, auto, auto]).map(
+        (verdict) => verdict.disposition,
+      ),
+    ).toEqual(['auto', 'held', 'auto', 'held']);
+  });
+
+  it('asks one write of a sentence that names one, so a precise declaration stands (W14-R8)', (): void => {
+    const second: MockAction = {
+      ...commentOn('REVOPS-2', 'Posted the second note in #revops.'),
+      reports: [2],
+    };
+    expect(unsupportedClaimFindings([read, fire, route, second], empty)).toEqual([]);
+    const none: MockAction = {
+      ...commentOn('REVOPS-2', 'Posted the note in #revops.'),
+      reports: [],
+    };
+    expect(unsupportedClaimFindings([read, fire, none], empty).map((found) => found.index)).toEqual(
+      [2],
+    );
+  });
+
+  it('reads a count the sentence gives: three posts need three', (): void => {
+    const third: MockAction = {
+      ...slackPost('C1', 'Assembly point is the car park.'),
+      reports: null as unknown as number[],
+    };
+    const all = (reports: number[]): MockAction => ({
+      ...commentOn('REVOPS-2', 'Posted all three notes in #revops.'),
+      reports,
+    });
+    expect(
+      unsupportedClaimFindings([fire, route, third, all([0, 1])], empty).map(
+        (found) => found.index,
+      ),
+    ).toEqual([3]);
+    expect(unsupportedClaimFindings([fire, route, third, all([0, 1, 2])], empty)).toEqual([]);
+  });
+
+  it('reads the mock office the same way: the hosted visitor’s path', (): void => {
+    const post = (body: string): MockAction => ({
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'revops', body },
+      reports: null as unknown as number[],
+    });
+    const tick = (reports: number[]): MockAction => ({
+      tool: 'ticket.update',
+      args: { slug: 'REVOPS-2', comment: 'Posted both notes in #revops.' },
+      reports,
+    });
+    const set = (reports: number[]): MockAction[] => [
+      post('Fire alarm test is at 10 on Friday.'),
+      post('Evacuation route is the east stairs.'),
+      tick(reports),
+    ];
+    expect(reportsFindings(set([])).map((found) => found.index)).toEqual([2]);
+    expect(reportsFindings(set([1])).map((found) => found.index)).toEqual([2]);
+    expect(reportsFindings(set([0, 1]))).toEqual([]);
+  });
+});
+
+describe("a closing message that reports the first phase's landed writes (W15-R3)", (): void => {
+  // Reader 4's p1.mts: phase one landed the two posts; the closing comment reports them and
+  // rightly declares none, since they are not in its own response.
+  const posts = [
+    slackPost('C0REVOPS', 'Stop drill note 1: the fire alarm test is at 10.'),
+    slackPost('C0REVOPS', 'Stop drill note 2: the evacuation route is B.'),
+  ];
+  const ledger = appliedLedgerPrompt(
+    posts,
+    posts.map((_post, index) => ({
+      ok: true,
+      tool: 'http.request' as const,
+      idempotencyKey: `k-${index}`,
+      effect: `slack POST chat.postMessage ok ts=17.${index}`,
+    })),
+  );
+  const close = (reports: number[] | null): MockAction => ({
+    ...commentOn('REVOPS-3', 'Posted both stop-drill notes in #revops.'),
+    reports: reports as number[],
+  });
+
+  it('was withheld while the landed writes were only text in the ledger', (): void => {
+    const findings = unsupportedClaimFindings([close(null)], {
+      ledger,
+      documentation: [],
+      managerFeedback: [],
+    });
+    expect(findings.map((finding) => finding.index)).toEqual([0]);
+    expect(findings[0]!.issue).toContain('asserted a fact the ledger');
+  });
+
+  it('takes the landed writes of the earlier phase as what the message reports', (): void => {
+    for (const reports of [null, []]) {
+      expect(
+        unsupportedClaimFindings([close(reports)], {
+          ledger,
+          documentation: [],
+          managerFeedback: [],
+          prior: posts,
+        }),
+      ).toEqual([]);
+    }
+  });
+
+  it('still refuses a figure no landed write carries, and binds nothing to a write of another response', (): void => {
+    const figure: MockAction = {
+      ...commentOn('REVOPS-3', 'Posted the stop-drill attendance of 74% in #revops.'),
+      reports: [],
+    };
+    expect(
+      unsupportedClaimFindings([figure], {
+        ledger,
+        documentation: [],
+        managerFeedback: [],
+        prior: posts,
+      }).map((finding) => finding.index),
+    ).toEqual([0]);
+    // The earlier phase's writes are evidence, never writes of this set: nothing is bound to them.
+    expect(boundEarlierWrites(close(null), [])).toEqual([]);
+  });
+});
+
+describe("an earlier phase's write that only shares a word with the report (W15-R3)", (): void => {
+  it('is not the two notes a closing comment says were posted', (): void => {
+    // REVOPS-6: phase one landed the DM that says the notes are starting; a comment that says
+    // both notes are posted, with neither posted yet, finds no support in that one DM.
+    const findings = unsupportedClaimFindings([OWN_WRITES_COMMENT, NOTE_1, NOTE_2], {
+      ledger: `0. landed · ${JSON.stringify(STARTING_DM)} · HTTP 200 · {"ok":true}`,
+      documentation: [],
+      managerFeedback: [],
+      prior: [STARTING_DM],
+    });
+    expect(findings.map((finding) => finding.index)).toEqual([0]);
   });
 });

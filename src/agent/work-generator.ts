@@ -4,7 +4,7 @@ import { log } from '../lib/logger';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
-import { otherRolesAskThreads } from '../work/office-asks';
+import { NO_OPEN_ASK_FOR_ROLE, otherRolesAskThreads } from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -158,7 +158,7 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
   const lines: string[] = [];
   // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
   // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
-  const otherRoles = otherRolesAskThreads(charterWords(charter));
+  const otherRoles = otherRolesAskThreads(charterWords(charter), charter.proposedFunction);
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
     for (const c of env.slackChannels) {
@@ -166,7 +166,12 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
       const messages = c.recentMessages
         .filter((m) => !(m.threadKey && otherRoles.has(`${c.slug}#${m.threadKey}`)))
         .slice(-MESSAGES_SHOWN);
-      if (messages.length === 0) lines.push('      (no messages)');
+      // Every message left out was another role's ask: the channel is where asks arrive, not empty.
+      if (messages.length === 0) {
+        lines.push(
+          c.recentMessages.length > 0 ? `      ${NO_OPEN_ASK_FOR_ROLE}` : '      (no messages)',
+        );
+      }
       for (const m of messages) {
         const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
         lines.push(`      ${m.sender}${thread}: "${shown(m.body)}"`);

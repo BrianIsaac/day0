@@ -692,24 +692,31 @@ function wordedWriteKind(action: MockAction): 'comment' | 'message' | undefined 
  * standing grant). A comment or message with other words on the same target is the plan's and is
  * sent, as before; a status change, a browser write and a read are never reused here.
  *
- * A manager's note that asks for a correction or a further message reuses nothing, as it reuses
- * nothing of an earlier run's ({@link reusedLedger}): the same words again are then what the
- * manager asked for (W13-R47).
+ * A manager's note that asks for a correction or a further message reuses nothing sent before the
+ * note was given, as it reuses nothing of an earlier run's ({@link reusedLedger}): the same words
+ * again are then what the manager asked for (W13-R47). A row this run landed after the note
+ * existed already is that further copy, so it is reused like any other: the manager who asked
+ * for one more gets one more, not one from each phase (W14-R45). A row with no landing time kept
+ * cannot be shown to answer the note and is sent again.
  *
  * @param actions - The closing set's actions.
  * @param thisRun - The writes this run's first phase recorded (`thisRunWrites`).
  * @param run - The run the reused rows take their identity from.
- * @param options - The manager's note on the retry, if any.
+ * @param options - The manager's note on the retry, if any, and when it was given.
  * @returns A reused row for each action that has one, undefined elsewhere.
  */
 export function reusedFromThisRun(
   actions: readonly MockAction[],
   thisRun: readonly LandedWrite[],
   run: { workItemId: string; runId: string; actionIndexOffset: number },
-  options: { readonly managerFeedback?: string } = {},
+  options: { readonly managerFeedback?: string; readonly feedbackAt?: number } = {},
 ): Array<ReusedAppliedAction | undefined> {
-  if (correctionRequested(options.managerFeedback)) return actions.map(() => undefined);
+  const { feedbackAt } = options;
+  const askedAgain = correctionRequested(options.managerFeedback);
+  const answersTheNote = (applied: AppliedAction): boolean =>
+    feedbackAt !== undefined && applied.landedAt !== undefined && applied.landedAt >= feedbackAt;
   const sent = thisRun.flatMap((source) => {
+    if (askedAgain && !answersTheNote(source.applied)) return [];
     const kind = landedEntry(source.applied) ? wordedWriteKind(source.action) : undefined;
     return kind ? [{ source, kind, payload: payload(source.action) }] : [];
   });

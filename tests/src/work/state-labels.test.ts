@@ -112,6 +112,21 @@ describe('workItemStateLabel', () => {
       tone: 'warn',
     });
     expect(workItemStateLabel({ state: 'completed' })).toEqual({ text: 'Landed', tone: 'ok' });
+    // W14-R47: the chip follows the finished run's own answer, as the record's dot does.
+    expect(workItemStateLabel({ state: 'completed' }, 'done')).toEqual({
+      text: 'Landed',
+      tone: 'ok',
+    });
+    expect(workItemStateLabel({ state: 'completed' }, 'partly done')).toEqual({
+      text: 'Partly done',
+      tone: 'warn',
+    });
+    expect(workItemStateLabel({ state: 'completed' }, 'not done')).toEqual({
+      text: 'Not done',
+      tone: 'muted',
+    });
+    // The answer is a finished run's: no other state reads it.
+    expect(workItemStateLabel({ state: 'executing' }, 'not done').text).toBe('Working');
     expect(workItemStateLabel({ state: 'executing' }).text).toBe('Working');
     expect(workItemStateLabel({ state: 'claimed' }).text).toBe('Working');
   });

@@ -21,6 +21,7 @@ import {
   type BackoffPolicy,
 } from '../../lib/transport-error';
 import { markdownPageTitle } from './folder';
+import { notCurrentWord } from '../status';
 import {
   listingCursor,
   offsetInListing,
@@ -505,14 +506,26 @@ export function authorizationHeader(secret: string): string {
   return /^(?:Bearer|Basic)\s+/i.test(secret) ? secret : `Bearer ${secret}`;
 }
 
-/** Read a nested string without trusting a provider response shape. */
-function nestedString(value: unknown, path: string[]): string | undefined {
+/** Read a nested value without trusting a provider response shape. */
+function nestedValue(value: unknown, path: string[]): unknown {
   let current = value;
   for (const key of path) {
     if (!current || typeof current !== 'object' || Array.isArray(current)) return undefined;
     current = (current as Record<string, unknown>)[key];
   }
-  return typeof current === 'string' ? current : undefined;
+  return current;
+}
+
+/** Read a nested string without trusting a provider response shape. */
+function nestedString(value: unknown, path: string[]): string | undefined {
+  const found = nestedValue(value, path);
+  return typeof found === 'string' ? found : undefined;
+}
+
+/** A page's revision as its source numbers it, as the one string every reader stores. */
+function revisionOf(value: unknown): string | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
 
 /**
@@ -703,6 +716,9 @@ export class McpReader implements DocumentationReader {
           if (typeof content.fileContent !== 'string') {
             throw new Error('Google Drive file content is unavailable.');
           }
+          // A trashed file is still listed (the search takes no `trashed` clause Day0 can rely
+          // on, V15-5): it is read as archived, so it is stored and never selected.
+          const revision = revisionOf(file.version);
           return {
             sourceId: source._id,
             ref: fileId,
@@ -714,6 +730,8 @@ export class McpReader implements DocumentationReader {
               Number.isFinite(Date.parse(file.modifiedTime))
                 ? Date.parse(file.modifiedTime)
                 : Date.now(),
+            ...(file.trashed === true ? { nativeStatus: 'archived' as const } : {}),
+            ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
         }),
       );
@@ -798,6 +816,13 @@ export class McpReader implements DocumentationReader {
             typeof result.lastModified === 'string'
               ? result.lastModified
               : nestedString(retrieved, ['version', 'createdAt']);
+          // The page's own status, from the search or from its read: archived, a draft, in the
+          // trash. A current page says nothing (`notCurrentWord`).
+          const nativeStatus =
+            notCurrentWord(content.status) ??
+            notCurrentWord(result.status) ??
+            notCurrentWord(nestedValue(retrieved, ['status']));
+          const revision = revisionOf(nestedValue(retrieved, ['version', 'number']));
           return {
             sourceId: source._id,
             ref: pageId,
@@ -806,6 +831,8 @@ export class McpReader implements DocumentationReader {
             markdown: unwrapWholePageFence(markdown),
             updatedAt:
               modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
+            ...(nativeStatus !== undefined ? { nativeStatus } : {}),
+            ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
         }),
       );
@@ -851,6 +878,9 @@ export class McpReader implements DocumentationReader {
             throw new Error('Notion page Markdown is unavailable.');
           }
           if (retrieved.truncated === true) throw new Error('Notion page Markdown was truncated.');
+          // Notion keeps an archived page and one in the trash in its search: both are read as
+          // archived, with no edit to the page's text (15-A).
+          const archived = result.archived === true || result.in_trash === true;
           return {
             sourceId: source._id,
             ref: pageId,
@@ -862,6 +892,7 @@ export class McpReader implements DocumentationReader {
               Number.isFinite(Date.parse(result.last_edited_time))
                 ? Date.parse(result.last_edited_time)
                 : Date.now(),
+            ...(archived ? { nativeStatus: 'archived' as const } : {}),
           };
         }),
       );

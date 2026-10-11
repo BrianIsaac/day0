@@ -50,3 +50,38 @@ describe('the ask pool beside roles outside the redeploy five (the second pass)'
     expect(others.has(charge)).toBe(false);
   });
 });
+
+describe('a role a word of four letters cannot name (W14-R49)', (): void => {
+  const named = (proposedFunction: string): Charter =>
+    ({
+      proposedFunction,
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
+    }) as unknown as Charter;
+  const others = (role: string): ReadonlySet<string> =>
+    otherRolesAskThreads(charterWords(named(role)), role);
+  const drive = 'office-asks#thread-drive-access';
+  const monitor = 'office-asks#thread-spare-monitor';
+  const charge = 'office-asks#thread-double-charge';
+
+  it('shows an IT role by its name alone the drive lock-out, and never the invoice its "support" reads', (): void => {
+    for (const role of ['IT support', 'IT/Systems administrator']) {
+      expect([...others(role)], role).toEqual([monitor, charge]);
+    }
+  });
+
+  it('still shows a customer-facing role the invoice and not the lock-out', (): void => {
+    for (const role of ['Customer success', 'Support engineer']) {
+      expect([...others(role)], role).toEqual([drive, monitor]);
+    }
+  });
+
+  it('reads the pronoun "it" as no IT role', (): void => {
+    expect([...others('Answer each customer and close it out.')]).toEqual([drive, monitor]);
+  });
+
+  it('shows a role none of the three asks name none of them', (): void => {
+    for (const role of ['Office manager', 'Operations', 'Finance analyst']) {
+      expect([...others(role)], role).toEqual([drive, monitor, charge]);
+    }
+  });
+});

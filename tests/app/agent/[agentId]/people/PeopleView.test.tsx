@@ -1075,7 +1075,8 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     const confirmed = section(view.container, 'Confirmed');
     expect(confirmed.textContent).toContain('Proposed changeTeam directory proposes a change');
     expect(confirmed.textContent).toContain(
-      'Team directory proposes a change: title “Head of revenue operations”, address priya.shah@kestrel.test. What you confirmed stays until you take it.',
+      // W14-R18: a change that names an address says what Take does with it.
+      'Team directory proposes a change: title “Head of revenue operations”, address priya.shah@kestrel.test. What you confirmed stays until you take it. Take looks the new address up in Slack and Linear, and drops the accounts Day0 found by the old one.',
     );
     expect(confirmed.textContent).toContain(
       'Evidence: “Priya Shah, Head of revenue operations, priya.shah@kestrel.test” (Team directory, 6 Oct 2026, 02:00).',

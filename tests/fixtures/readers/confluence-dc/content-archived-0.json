@@ -1,0 +1,65 @@
+{
+  "results": [
+    {
+      "id": "4587530",
+      "type": "page",
+      "status": "archived",
+      "title": "Escalation paths (2024)",
+      "version": {
+        "by": {
+          "type": "known",
+          "username": "mira",
+          "displayName": "Mira Castillo"
+        },
+        "when": "2025-01-15T12:00:00.000Z",
+        "message": "",
+        "number": 3,
+        "minorEdit": false,
+        "hidden": false
+      },
+      "extensions": {
+        "position": "none"
+      },
+      "_links": {
+        "webui": "/pages/viewpage.action?pageId=4587530",
+        "edit": "/pages/resumedraft.action?draftId=4587530",
+        "tinyui": "/x/4587530",
+        "self": "https://wiki.acme.corp/confluence/rest/api/content/4587530"
+      },
+      "_expandable": {
+        "container": "/rest/api/space/OPS",
+        "metadata": "",
+        "operations": "",
+        "children": "/rest/api/content/4587530/child",
+        "history": "/rest/api/content/4587530/history",
+        "ancestors": "",
+        "descendants": "/rest/api/content/4587530/descendant",
+        "space": "/rest/api/space/OPS"
+      },
+      "body": {
+        "storage": {
+          "value": "<p>Superseded by the 2026 page. Call the duty manager.</p>",
+          "representation": "storage",
+          "_expandable": {
+            "content": "/rest/api/content/4587530"
+          }
+        },
+        "_expandable": {
+          "editor": "",
+          "view": "",
+          "export_view": "",
+          "styled_view": "",
+          "anonymous_export_view": ""
+        }
+      }
+    }
+  ],
+  "start": 0,
+  "limit": 2,
+  "size": 1,
+  "_links": {
+    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=archived&expand=body.storage,version",
+    "base": "https://wiki.acme.corp/confluence",
+    "context": "/confluence"
+  }
+}

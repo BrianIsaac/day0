@@ -1,10 +1,15 @@
 import type { DocSourceKind } from '../types';
 import type { DocumentationReader } from './batch';
+import { ConfluenceDataCenterReader } from './confluence-dc';
+import { ConfluenceCloudReader } from './confluence-v2';
+import { GoogleDriveReader } from './drive';
 import { FeishuReader } from './feishu';
 import { FolderReader } from './folder';
 import { GitReader } from './git';
 import { McpReader } from './mcp';
+import { SharePointReader } from './sharepoint';
 import { UrlsReader } from './urls';
+import { YuqueReader } from './yuque';
 
 /**
  * Resolve a documentation reader.
@@ -27,5 +32,15 @@ export function readerFor(kind: DocSourceKind): DocumentationReader {
       return new McpReader();
     case 'feishu':
       return new FeishuReader();
+    case 'confluence-v2':
+      return new ConfluenceCloudReader();
+    case 'confluence-dc':
+      return new ConfluenceDataCenterReader();
+    case 'sharepoint':
+      return new SharePointReader();
+    case 'yuque':
+      return new YuqueReader();
+    case 'drive':
+      return new GoogleDriveReader();
   }
 }

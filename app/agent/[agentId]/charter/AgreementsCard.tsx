@@ -9,14 +9,18 @@ import {
   awaitingCheck,
   awaitingManager,
   bindingWords,
+  CHECK_HOLD_NOW,
+  checkingHoldLine,
   checkingLine,
   checkStale,
   checkUnavailableLine,
   CHECKING_AGAIN,
-  NOT_KEPT,
+  keepForOneLabel,
+  keptForOneLine,
   quotedSentence,
   REFUSED_WITHOUT_REASON,
   refusalSentence,
+  refusedKicker,
   sourceWords,
   WITHDRAWN,
   type AgreementView,
@@ -32,10 +36,12 @@ import { INLINE_LINK } from './CharterDocument';
 /** What the card does to one agreement, each call answered by the backend's own refusal words. */
 export interface AgreementCalls {
   readonly onKeepForEveryEmployee: (agreementId: AgreementView['_id']) => Promise<unknown>;
+  /** Keep, for this employee alone, a keep for every employee refused past the bound (W14-R15). */
+  readonly onKeepForOne: (agreementId: AgreementView['_id']) => Promise<unknown>;
   readonly onEdit: (agreementId: AgreementView['_id'], statement: string) => Promise<unknown>;
   readonly onRetire: (agreementId: AgreementView['_id']) => Promise<unknown>;
   readonly onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
-  /** Try a kept agreement's check again once it is stale (W13-R30). */
+  /** Try a kept agreement's check again once it is stale (W13-R30), or check a hold now. */
   readonly onRecheck: (agreementId: AgreementView['_id']) => Promise<unknown>;
 }
 
@@ -113,16 +119,18 @@ function editControlOf(
  * in force for the employee, its own and every employee's, each with whom it binds, where it came
  * from and since when, and Edit (a supersede), Retire and, for the employee's own, Keep for every
  * employee (A10); an agreement kept here waiting on its check; a refusal of what was kept here,
- * with Dismiss; and a proposal, which is decided on the Work tab. Real mode only, as agreements
- * are.
+ * with Dismiss, and, for a keep for every employee refused past the bound, Keep for this employee
+ * alone; a hold of an agreement for every employee, with Check now once it can be checked
+ * (W14-R15); and a proposal, which is decided on the Work tab. Real mode only, as agreements are.
  *
- * @param props - The agreements, the employee's name, the Work tab, and the four calls.
+ * @param props - The agreements, the employee's name, the Work tab, and the calls.
  */
 export function AgreementsCard({
   agreements,
   employeeName,
   workHref,
   onKeepForEveryEmployee,
+  onKeepForOne,
   onEdit,
   onRetire,
   onDismiss,
@@ -159,6 +167,14 @@ export function AgreementsCard({
       (row.sourceType === 'manager-card' || row.refusal?.reason === 'unchecked-for-employee'),
   );
   const waiting = agreements.filter(awaitingManager);
+  // A refused keep for every employee already kept for this employee offers no second keep.
+  const keptHere = (row: AgreementView): boolean =>
+    agreements.some(
+      (own) =>
+        own.agentId !== undefined &&
+        own.statement === row.statement &&
+        (own.status === 'active' || awaitingCheck(own)),
+    );
   const empty = inForce.length + checking.length + refused.length + waiting.length === 0;
   return (
     <Card title={AGREEMENTS_TITLE} meta={AGREEMENTS_META} focusRef={card}>
@@ -295,7 +311,7 @@ export function AgreementsCard({
               className="p-3 rounded-md border border-[var(--color-warn-line)] text-sm"
             >
               <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-warn)]">
-                {NOT_KEPT}
+                {refusedKicker(row)}
               </p>
               <p className="mt-1 text-[var(--color-fg)] whitespace-pre-wrap break-words">
                 “{row.statement}”
@@ -305,8 +321,41 @@ export function AgreementsCard({
                   ? refusalSentence(row.refusal, employeeName, 'charter')
                   : REFUSED_WITHOUT_REASON}
               </p>
-              {row.refusal?.reason === 'unchecked-for-employee' ? null : (
+              {row.refusal?.reason === 'unchecked-for-employee' ? (
+                row.refusal.checkable === true ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      size="small"
+                      disabled={change.busy}
+                      aria-label={`Check “${row.statement}” against ${employeeName}'s charter now`}
+                      onClick={() =>
+                        change.run(() => onRecheck(row._id), {
+                          done: checkingHoldLine(employeeName),
+                          refused: 'The check was not started.',
+                        })
+                      }
+                    >
+                      {CHECK_HOLD_NOW}
+                    </Button>
+                  </div>
+                ) : null
+              ) : (
                 <div className="mt-2 flex flex-wrap gap-2">
+                  {row.refusal?.reason === 'every-employee-too-many' && !keptHere(row) ? (
+                    <Button
+                      size="small"
+                      disabled={change.busy}
+                      aria-label={`${keepForOneLabel(employeeName)}: “${row.statement}”`}
+                      onClick={() =>
+                        change.run(() => onKeepForOne(row._id), {
+                          done: keptForOneLine(employeeName),
+                          refused: `The working agreement was not kept for ${employeeName}.`,
+                        })
+                      }
+                    >
+                      {keepForOneLabel(employeeName)}
+                    </Button>
+                  ) : null}
                   <Button
                     variant="quiet"
                     size="small"

@@ -221,9 +221,9 @@ function keptClauseWords(kept: KeptClause): string {
     case 'another-rule':
       return `keeps the clause ${clause} because another rule still needs it: ${quotedClauses([kept.rule ?? 'another rule'])}`;
     case 'not-this-rule':
-      return `keeps the clause ${clause}: it does not carry your words`;
+      return `keeps the clause ${clause}, which does not carry your words`;
     case 'no-words':
-      return `keeps the clause ${clause}: your words are not in it to take out`;
+      return `keeps the clause ${clause}, since your words are not in it to take out`;
     default: {
       const unknown: never = kept.because;
       throw new Error(`unknown kept clause ${String(unknown)}`);

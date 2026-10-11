@@ -20,6 +20,8 @@ import {
   INTERRUPTED_APPLY_REASON,
   type ReconciliationEntry,
 } from '../../../../../src/work/reconciliation';
+import { withAnswerHeldToLedger } from '../../../../../src/work/work-done';
+import { PIP_DECLINED_OUTPUT, pipRow } from '../../../../fixtures/work/pip-declined-2026-10-10';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -240,16 +242,19 @@ describe('what the card says was not done follows the run’s answer (12-D)', ()
     expect(
       notDoneOnCard({ draft: words, notes: '', workDone: 'done', workDoneWhy: 'All match.' }),
     ).toBeUndefined();
+    // Re-pinned for W15-R4: the card's reading now says whose answer it is (`from`), the run's
+    // here, so a ledger's reading is never quoted as the employee's own words.
     expect(
       notDoneOnCard({ draft: words, notes: '', workDone: 'partial', workDoneWhy: 'Two remain.' }),
-    ).toEqual({ answer: 'partial', statements: ['Two remain.'], closed: [] });
+    ).toEqual({ answer: 'partial', from: 'run', statements: ['Two remain.'], closed: [] });
     // Re-pinned for 12-D's Minor 5: the answer now carries the tickets the run closed all the
     // same (none here), so the card can name a close beside it.
     expect(
       notDoneOnCard({ draft: 'Done.', notes: '', workDone: 'not-done', workDoneWhy: 'No list.' }),
-    ).toEqual({ answer: 'not-done', statements: ['No list.'], closed: [] });
+    ).toEqual({ answer: 'not-done', from: 'run', statements: ['No list.'], closed: [] });
     expect(notDoneOnCard({ draft: words, notes: '' })).toEqual({
       answer: 'not-done',
+      from: 'run',
       statements: [words],
       closed: [],
     });
@@ -272,6 +277,42 @@ describe('what the record says a finished run came to follows its card (13-FD)',
       finishedAs({ draft: 'I could not find the vendor charges in the tracker.', notes: '' }),
     ).toBe('not done');
     expect(finishedAs(undefined)).toBe('done');
+  });
+});
+
+describe('a done answer over writes that were not sent (W15-R4)', (): void => {
+  it('reads Pip’s row, completed before the release with done over a declined set, as not done by its ledger', (): void => {
+    expect(finishedAs(PIP_DECLINED_OUTPUT)).toBe('not done');
+    expect(notDoneOnCard(PIP_DECLINED_OUTPUT as never)).toEqual({
+      answer: 'not-done',
+      from: 'ledger',
+      statements: [
+        'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+      ],
+      closed: [],
+    });
+  });
+
+  it('reads a row the completing write stored with the ledger’s answer the same way, and says whose answer it is', (): void => {
+    const stored = withAnswerHeldToLedger({
+      ...PIP_DECLINED_OUTPUT,
+      applied: [pipRow(0, 'landed'), pipRow(1, 'declined'), pipRow(2, 'landed')],
+    });
+    expect(finishedAs(stored)).toBe('partly done');
+    expect(notDoneOnCard(stored as never)).toMatchObject({ answer: 'partial', from: 'ledger' });
+    // A run's own answer is still the run's.
+    expect(
+      notDoneOnCard({ draft: 'd', notes: '', workDone: 'partial', workDoneWhy: 'Two remain.' }),
+    ).toMatchObject({ from: 'run' });
+  });
+
+  it('keeps done for a set whose every write landed', (): void => {
+    expect(
+      finishedAs({
+        ...PIP_DECLINED_OUTPUT,
+        applied: [pipRow(0, 'landed'), pipRow(1, 'landed'), pipRow(2, 'landed')],
+      }),
+    ).toBe('done');
   });
 });
 

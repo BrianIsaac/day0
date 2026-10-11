@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  BACKEND_BASE_LABEL,
   BACKEND_IMAGE,
   backendImageState,
+  baseLabelInspect,
+  dockerfileBaseLabel,
   layersInspect,
+  referenceDigest,
   pinnedNodeImage,
   redactorVolumeClone,
   REDACTOR_VOLUME_SUFFIXES,
@@ -72,5 +76,53 @@ describe('the backend image on this machine (W14-R17)', (): void => {
     expect(backendImageState(answer(base), answer(base))).toBe('stale');
     expect(backendImageState({ status: 0, stdout: 'not json' }, answer(base))).toBe('stale');
     expect(backendImageState({ status: 1, stdout: '' }, answer(base))).toBe('missing');
+  });
+
+  it('trusts the built image by its base label, whether or not the base image is on this machine (W14-R20)', (): void => {
+    const digest = `sha256:${'d7'.repeat(32)}`;
+    const labelled = (value: string): { status: number; stdout: string } => ({
+      status: 0,
+      stdout: `${value}\n`,
+    });
+    const built = answer([...base, 'sha256:git']);
+    const gone = { status: 1, stdout: '' };
+    // A built image loaded from a file (`docker load`): its base was never pulled here.
+    expect(backendImageState(built, gone, { inspected: labelled(digest), digest })).toBe('current');
+    expect(backendImageState(built, undefined, { inspected: labelled(digest), digest })).toBe(
+      'current',
+    );
+    // Built from another pin: stale by its label, even though some layers of the base match.
+    expect(
+      backendImageState(built, answer(base), {
+        inspected: labelled(`sha256:${'0a'.repeat(32)}`),
+        digest,
+      }),
+    ).toBe('stale');
+    // Built before the label: the layers decide, as before.
+    expect(backendImageState(built, answer(base), { inspected: labelled(''), digest })).toBe(
+      'current',
+    );
+    expect(backendImageState(built, gone, { inspected: labelled('<no value>'), digest })).toBe(
+      'stale',
+    );
+    expect(backendImageState(gone, answer(base), { inspected: gone, digest })).toBe('missing');
+  });
+
+  it('reads the base digest off a pinned reference and off the Dockerfile\u2019s label, and asks Docker for the label', (): void => {
+    const digest = `sha256:${'d7'.repeat(32)}`;
+    expect(referenceDigest(`ghcr.io/get-convex/convex-backend:latest@${digest}`)).toBe(digest);
+    expect(referenceDigest('ghcr.io/get-convex/convex-backend:latest')).toBeUndefined();
+    expect(referenceDigest(undefined)).toBeUndefined();
+    expect(dockerfileBaseLabel(`FROM x@${digest}\nLABEL ${BACKEND_BASE_LABEL}="${digest}"\n`)).toBe(
+      digest,
+    );
+    expect(dockerfileBaseLabel(`FROM x@${digest}\n`)).toBeUndefined();
+    expect(baseLabelInspect(BACKEND_IMAGE)).toEqual([
+      'image',
+      'inspect',
+      'day0-convex-backend:git',
+      '--format',
+      '{{index .Config.Labels "dev.dayzer0.backend.base"}}',
+    ]);
   });
 });

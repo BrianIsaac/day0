@@ -22,6 +22,7 @@ import {
   replyTargetLine,
   skillAgentName,
   surfaceInstructions,
+  HELD_SET_REAL,
 } from '../../../src/work/execute-skill';
 import { actionModeInstruction } from '../../../src/work/plan';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
@@ -2098,11 +2099,13 @@ describe('frozen prompt text', (): void => {
     }
   });
 
+  // Re-pinned (W14-R48, v0.19.0): the head counts no items, the action format names `reports`,
+  // and the action-mode line says the approval may be of part of the set.
   it('keeps the mock executor preamble byte-identical', (): void => {
     expect(executorPreamble('mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
       A skill body has been loaded as your behavioural prior for this turn. The plan has been approved; you are authorised to act.
-      Apply the skill to the candidate. Produce three things:
+      Apply the skill to the candidate. Produce every numbered item below:
         1. A draft (human-readable): the deliverable the manager reads and decides whether to ratify.
         2. Notes: short assumptions or open questions (single sentence).
         3. Actions: typed mutations against mock work surfaces (spreadsheet, slack, twitter, ticket). These are the only things that reach the work environment.
@@ -2117,14 +2120,14 @@ describe('frozen prompt text', (): void => {
         - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Emit every action in this response and set \`needsDependentPhase\` to false: the mock environment treats it as one approval set and runs no second authoring phase.
 
-      Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }. The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
+      Action format: see the how-to-update guides in your context. Each action is { tool: string, args: object }, with \`reports\` beside them on a verb that can carry a message (item 6). The args object contains exactly the fields for its selected tool and no fields from another tool. Available tools:
         - spreadsheet.appendRow: { sheetSlug, tabName, cells: [{ header, value }, …] }
         - slack.postMessage:    { channelSlug, threadKey: string or null, body }
         - twitter.reply:        { tweetSlug, body }
         - ticket.update:        { slug, status: value or null, comment: string or null }
 
       Discipline:
-        - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer \`workDone\` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.
+        - Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer \`workDone\` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
         - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
@@ -2410,9 +2413,57 @@ describe('the words a mock run writes into a message (finding 3 of the v0.17.0 r
   // a step as "waits for your approval", a line written for the planner's steps.
   it('tells a mock run its messages are read once they land, never that they wait for approval', (): void => {
     const preamble = executorPreamble('mock');
+    // Re-pinned (W14-R48): a visitor may untick a row, so the approval may be of part of the set,
+    // and a message waits on the writes it reports.
     expect(preamble).toContain(
-      "  - Every emitted action is held for the manager's literal approval, and the approval of the set sends every write in it. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.",
+      "  - Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.",
     );
     expect(preamble).not.toContain('waits for your approval');
+  });
+});
+
+describe("the preambles' words against what the run is asked for and what the apply does (W14-R48)", (): void => {
+  it('counts no items above a list of six or seven', (): void => {
+    for (const mode of ['mock', 'real'] as const) {
+      const preamble = executorPreamble(mode);
+      expect(preamble).not.toContain('Produce three things');
+      expect(preamble).toContain(
+        'Apply the skill to the candidate. Produce every numbered item below:',
+      );
+    }
+    expect(executorPreamble('mock')).toContain('  6. Reports:');
+    expect(executorPreamble('real')).toContain('  7. Reports:');
+  });
+
+  it('names `reports` where it says what an action is made of', (): void => {
+    expect(executorPreamble('mock')).toContain(
+      'Each action is { tool: string, args: object }, with `reports` beside them on a verb that can carry a message (item 6).',
+    );
+    expect(executorPreamble('real')).toContain(
+      'Action format: each action is { tool: string, args: object }, with `reports` beside them (item 7).',
+    );
+  });
+
+  it('tells a supervised real run a message waits on the writes it reports, as the apply binds it', (): void => {
+    expect(HELD_SET_REAL).not.toContain('every write before it');
+    expect(HELD_SET_REAL).toContain(
+      'Day0 sends it only once every write it reports has landed, and holds it back otherwise.',
+    );
+  });
+
+  it('tells a mock run the manager may approve part of the set, and a message waits on what it reports', (): void => {
+    const preamble = executorPreamble('mock');
+    expect(preamble).not.toContain('the approval of the set sends every write in it');
+    expect(preamble).toContain(
+      "Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed.",
+    );
+  });
+
+  it('has the mock planner plan each write as the step that makes it, never a step that waits for approval', (): void => {
+    const instruction = actionModeInstruction(false, 'mock');
+    expect(instruction).not.toContain('waits for your approval');
+    expect(instruction).toContain(
+      'Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval.',
+    );
   });
 });

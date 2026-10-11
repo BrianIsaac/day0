@@ -7,7 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { contractSchema } from './contract-schema';
-import { SPENT_REEVALUATION_KEYS } from '../../convex/work';
+import { SPENT_REEVALUATION_KEYS } from '../../convex/workReevaluation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 

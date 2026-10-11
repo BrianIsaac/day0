@@ -4,6 +4,7 @@ import {
   evidenceText,
   identityLabel,
   possiblySameLine,
+  proposedChangeLine,
   proposedEdgeLine,
   proposedInMock,
   readsInMock,
@@ -12,6 +13,20 @@ import {
 } from '../../../src/people/words';
 
 describe('people words', (): void => {
+  it('says that Take looks a proposed address up, and nothing of a lookup where no address is proposed (W14-R18)', (): void => {
+    expect(
+      proposedChangeLine('Team directory', {
+        title: 'Head of revenue operations',
+        primaryEmail: 'priya.shah@kestrel.test',
+      }),
+    ).toBe(
+      'Team directory proposes a change: title \u201cHead of revenue operations\u201d, address priya.shah@kestrel.test. What you confirmed stays until you take it. Take looks the new address up in Slack and Linear, and drops the accounts Day0 found by the old one.',
+    );
+    expect(proposedChangeLine('Team directory', { team: 'Finance' })).toBe(
+      'Team directory proposes a change: team \u201cFinance\u201d. What you confirmed stays until you take it.',
+    );
+  });
+
   it("shows a table row's quote as words, without its cell bars or code marks", (): void => {
     expect(evidenceText('| Slack | `#ops-requests` asks | Noor Rahman |')).toBe(
       'Slack · #ops-requests asks · Noor Rahman',

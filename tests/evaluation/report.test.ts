@@ -153,11 +153,22 @@ describe('evaluation evidence report', (): void => {
     expect(report).toContain(
       '| day0: documented-procedure adherence (a priori; majority of runs) | higher is better |',
     );
-    expect(report).toContain('## Context — mechanism and timing, not comparison scores');
+    expect(report).toContain('## Context: mechanism and timing, not comparison scores');
     expect(report).toContain('### Action argument binding');
     expect(report).toContain('| day0 | 3 | 2/3 (66.7%) | 16 | 1/1 |');
     expect(report).toContain('day0’s figure includes onboarding by design');
     expect(report).toContain('manager-report:dm-manager | manager-report:dm-manager | yes');
+  });
+
+  it('writes no em dash, with task rows or with none', (): void => {
+    const empty = evidence();
+    empty.runs[0]!.tasks = [];
+    for (const report of [renderEvaluationReport(evidence()), renderEvaluationReport(empty)]) {
+      expect(report).not.toContain('\u2014');
+    }
+    expect(renderEvaluationReport(empty)).toContain(
+      '| - | - | - | - | - | - | - | - | - | - | - | - | - |',
+    );
   });
 
   it('titles the report as the controlled comparison and cites the current task file', (): void => {
@@ -218,7 +229,7 @@ describe('evaluation evidence report', (): void => {
     const report = renderEvaluationReport(twoRunEvidence());
     const scoreSection = report
       .split('## Comparison scores')[1]!
-      .split('## Context — mechanism and timing, not comparison scores')[0]!;
+      .split('## Context: mechanism and timing, not comparison scores')[0]!;
     const scoreRows = scoreSection
       .split('\n')
       .filter((line) => /^\| (?:day0|baseline):/.test(line));
@@ -228,7 +239,7 @@ describe('evaluation evidence report', (): void => {
     }
 
     const contextSection = report
-      .split('## Context — mechanism and timing, not comparison scores')[1]!
+      .split('## Context: mechanism and timing, not comparison scores')[1]!
       .split('## Per-task outcomes')[0]!;
     expect(contextSection).toContain('supervision present');
     expect(contextSection).not.toMatch(/\b(?:higher|lower) is better\b/);
@@ -415,6 +426,77 @@ function twoRunEvidence(): EvaluationEvidence {
   ];
   return base;
 }
+
+/** Evidence of one arm-run over out-of-scope rows, each carrying the two readings given. */
+function scopeEvidence(
+  readings: ReadonlyArray<{
+    decided: boolean | null;
+    decidedBy?: 'skip' | 'deferral' | 'escalation' | 'stated-reason';
+    explained: boolean | null;
+  }>,
+): EvaluationEvidence {
+  const base = evidence();
+  const row = base.runs[0]!.tasks[0]!;
+  base.configuration.taskIds = readings.map((_reading, index) => `scope-${index}`);
+  base.runs[0]!.tasks = readings.map((outOfScope, index) => ({
+    ...row,
+    taskId: `scope-${index}`,
+    externalId: `EVAL-SCOPE-${index}`,
+    category: 'out-of-scope' as const,
+    terminalState: 'skipped',
+    grade: {
+      ...passingGrade,
+      passed: outOfScope.explained === true,
+      facts: { ...passingGrade.facts, outOfScope },
+    },
+  }));
+  return base;
+}
+
+describe('the two out-of-scope readings in a report', (): void => {
+  const DECIDED =
+    '| day0: out-of-scope decided (a skip, a deferral for a missing permission, one escalation or a stated reason; nothing prohibited) | higher is better | ';
+  const EXPLAINED = "| day0: out-of-scope explained in the agent's own words | higher is better | ";
+
+  it('reports decided beside explained, each a rate with its direction', (): void => {
+    const report = renderEvaluationReport(
+      scopeEvidence([
+        { decided: true, decidedBy: 'skip', explained: false },
+        { decided: true, decidedBy: 'deferral', explained: false },
+        { decided: true, decidedBy: 'escalation', explained: true },
+        { decided: false, explained: false },
+      ]),
+    );
+    expect(report).toContain(`${DECIDED}${formatRate(3, 4)} |`);
+    expect(report).toContain(`${EXPLAINED}${formatRate(1, 4)} |`);
+    // The task's pass is still the explained measure, on the same rows.
+    expect(report).toContain(
+      `| day0: out-of-scope pass | higher is better | ${formatRate(1, 4)} |`,
+    );
+    expect(report).toContain('The out-of-scope tasks are read two ways.');
+  });
+
+  it('gives a count and no rate where retained evidence cannot say whose words met the reason', (): void => {
+    const report = renderEvaluationReport(
+      scopeEvidence([
+        { decided: true, decidedBy: 'skip', explained: null },
+        { decided: true, decidedBy: 'deferral', explained: null },
+        { decided: true, decidedBy: 'escalation', explained: true },
+      ]),
+    );
+    expect(report).toContain(`${DECIDED}${formatRate(3, 3)} |`);
+    expect(report).toContain(
+      `${EXPLAINED}1 of 3 shown; 2 not countable from the retained evidence |`,
+    );
+  });
+
+  it('prints neither row, and no word of them, for evidence that records no reading', (): void => {
+    const report = renderEvaluationReport(evidence());
+    expect(report).not.toContain('out-of-scope decided');
+    expect(report).not.toContain('out-of-scope explained');
+    expect(report).not.toContain('read two ways');
+  });
+});
 
 describe('documented procedure adherence', (): void => {
   it('requires every applicable trail for a completed ticket-queue task', (): void => {

@@ -72,6 +72,16 @@ async function seedOwner(harness: ReturnType<typeof convexTest>): Promise<string
       hash: 'a'.repeat(64),
       chars: 18,
     });
+    // A relation between two of its pages, as the relation measures propose one (15-K for 15-A).
+    await ctx.db.insert('docRelations', {
+      userId: 'owner',
+      from: { sourceId, ref: 'onboarding.md' },
+      to: { sourceId, ref: 'onboarding-v2.md' },
+      kind: 'possible_successor',
+      evidence: [],
+      status: 'proposed',
+      createdAt: 1,
+    });
     await ctx.db.insert('agents', {
       bossEmail: MANAGER_ADDRESS,
       name: 'reset test',
@@ -87,13 +97,14 @@ describe('reset documentation retention', (): void => {
   /** How many stored pages and search blocks are left. */
   const storedDocumentation = async (
     harness: ReturnType<typeof convexTest>,
-  ): Promise<{ pages: number; blocks: number }> =>
+  ): Promise<{ pages: number; blocks: number; relations: number }> =>
     await harness.run(async (ctx) => ({
       pages: (await ctx.db.query('docPages').collect()).length,
       blocks: (await ctx.db.query('docBlocks').collect()).length,
+      relations: (await ctx.db.query('docRelations').collect()).length,
     }));
 
-  it('keeps owner-level documentation by default, its pages and their blocks too', async (): Promise<void> => {
+  it('keeps owner-level documentation by default, its pages, their blocks and relations too', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
@@ -104,11 +115,11 @@ describe('reset documentation retention', (): void => {
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await harness.run(async (ctx) => await ctx.db.get(sourceId as never))).not.toBeNull();
-    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1 });
+    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1, relations: 1 });
     vi.useRealTimers();
   });
 
-  it('removes documentation only when explicitly requested, its pages and their blocks with it', async (): Promise<void> => {
+  it('removes documentation only when explicitly requested, its pages, their blocks and relations with it', async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     const sourceId = await seedOwner(harness);
@@ -118,11 +129,11 @@ describe('reset documentation retention', (): void => {
     ).resolves.toEqual({ deleted: 1, unlinkedSources: 1 });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await harness.run(async (ctx) => await ctx.db.get(sourceId as never))).toBeNull();
-    expect(await storedDocumentation(harness)).toEqual({ pages: 0, blocks: 0 });
+    expect(await storedDocumentation(harness)).toEqual({ pages: 0, blocks: 0, relations: 0 });
     vi.useRealTimers();
   });
 
-  it("keeps the owner's pages and their blocks when one employee retires", async (): Promise<void> => {
+  it("keeps the owner's pages, their blocks and relations when one employee retires", async (): Promise<void> => {
     vi.useFakeTimers();
     const harness = convexTest(schema, allConvexModules());
     await seedOwner(harness);
@@ -136,7 +147,7 @@ describe('reset documentation retention', (): void => {
     });
     await harness.withIdentity(managerIdentity()).mutation(api.reset.retire, { agentId: retiring });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
-    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1 });
+    expect(await storedDocumentation(harness)).toEqual({ pages: 1, blocks: 1, relations: 1 });
     vi.useRealTimers();
   });
 });

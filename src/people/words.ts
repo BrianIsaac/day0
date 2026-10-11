@@ -323,7 +323,8 @@ export interface ProposedChangeWords {
 /**
  * The line a confirmed person's row says a source's proposed change in (W13-R3, wording draft):
  * "Team directory proposes a change: title “Head of revenue operations”, address
- * priya.shah@kestrel.test. What you confirmed stays until you take it."
+ * priya.shah@kestrel.test. What you confirmed stays until you take it." A change that names an
+ * address also says what Take does with it (W14-R18): the lookup, and the old address's accounts.
  *
  * @param where - Where the words came from, as the evidence says it.
  */
@@ -333,7 +334,11 @@ export function proposedChangeLine(where: string, change: ProposedChangeWords): 
     ...(change.team === undefined ? [] : [`team \u201c${change.team}\u201d`]),
     ...(change.primaryEmail === undefined ? [] : [`address ${change.primaryEmail}`]),
   ];
-  return `${where} proposes a change: ${parts.join(', ')}. What you confirmed stays until you take it.`;
+  const lookup =
+    change.primaryEmail === undefined
+      ? ''
+      : ' Take looks the new address up in Slack and Linear, and drops the accounts Day0 found by the old one.';
+  return `${where} proposes a change: ${parts.join(', ')}. What you confirmed stays until you take it.${lookup}`;
 }
 
 /**

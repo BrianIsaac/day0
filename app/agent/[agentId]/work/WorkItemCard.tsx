@@ -118,6 +118,9 @@ export function retryModeOf(
     case 'cancelled':
       return { kind: 'cancelled', hadPlan: item.plan !== undefined };
     case 'skipped':
+      // An ask naming a ticket a colleague settled is the manager's to give all the same: it may
+      // ask for more than the comment gave (D-1 (a)).
+      if (colleagueHolding(item)?.settled) return { kind: 'take', waived: 'settled' };
       // Refused at the claim: the colleague who holds the item works it, and
       // the row comes back by itself if they let it go, so the control is the
       // colleague's card, where the manager can let it go.
@@ -402,9 +405,14 @@ export function WorkItemCard({
             <span className="font-semibold">
               {notDone.answer === 'partial' ? 'Partly done' : 'Not done'}
             </span>
-            , in {employeeName}’s own words:
+            {notDone.from === 'ledger'
+              ? ', by what was sent:'
+              : `, in ${employeeName}’s own words:`}
           </Lead>
-          {notDone.statements.length === 1 ? (
+          {notDone.from === 'ledger' ? (
+            // Day0's reading of the ledger, not the employee's words: said plainly, never quoted.
+            <p className="mt-1.5 text-[15px]">{notDone.statements[0]}</p>
+          ) : notDone.statements.length === 1 ? (
             <p className="mt-1.5 text-[15px]">
               <Quote>{notDone.statements[0]}</Quote>
             </p>
@@ -546,6 +554,7 @@ export function WorkItemCard({
           questions={questions}
           busy={deciding}
           employeeName={employeeName}
+          requesterName={item.requesterName}
           autonomousActions={autonomousActions}
           gate={gate}
           onApprove={(decision) =>

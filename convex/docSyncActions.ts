@@ -37,7 +37,13 @@ import {
   finishingStep,
   type FinishingStep,
 } from '../src/docs/finishing';
+import { listingOverrun } from '../src/docs/listing-bounds';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
+import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
+import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
+import { judgeMarker } from '../src/docs/marker-judge';
+import type { MeasuringPlan } from './docRelations';
+import type { StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -184,6 +190,11 @@ async function mirrorPages(
  * redaction and no split (P8-10; 14-I): its stored credentials stay stated, and it is mirrored
  * as before. Without a credential key no hash is taken and every page is redacted, as before.
  *
+ * What a page's source says of it (its native status and revision) is no part of that hash and
+ * never reaches `upsertPage`: it is recorded beside the hash (`docStatus.recordRead`) for every
+ * page stored again, and for a page kept as stored whose source now says otherwise, so a page
+ * archived at its source with no edit is archived here (15-A; A-2).
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -293,9 +304,19 @@ async function persistPage(
   }
   const contentHash =
     redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  const said = {
+    sourceId: source._id,
+    syncRunId,
+    ref: page.ref,
+    ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+    ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+  };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
-    if (kept !== undefined) return kept;
+    if (kept !== undefined) {
+      if (kept.saidOtherwise) await ctx.runMutation(internal.docStatus.recordRead, said);
+      return kept;
+    }
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
   const result = await redactCredentials(
@@ -330,11 +351,19 @@ async function persistPage(
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
   };
+  // The page store takes what it stores, by name: the status and revision a reader reports ride
+  // beside the page's hash and never through `upsertPage` (A-2), whose validator takes neither.
   await ctx.runMutation(internal.docSources.upsertPage, {
-    ...safePage,
+    sourceId: safePage.sourceId,
+    ref: safePage.ref,
+    title: safePage.title,
+    ...(safePage.url !== undefined ? { url: safePage.url } : {}),
+    markdown: safePage.markdown,
+    updatedAt: safePage.updatedAt,
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
   });
+  await ctx.runMutation(internal.docStatus.recordRead, said);
   return { page: safePage, credentialRefs };
 }
 
@@ -343,7 +372,8 @@ async function persistPage(
  * address and body, and the refs of the credentials the page states, which are its stored rows
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
- * redaction removes.
+ * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
+ * revision) is no longer the one the row holds.
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
@@ -351,7 +381,7 @@ async function keptUnchangedPage(
   page: DocPage,
   contentHash: string,
   known: readonly string[],
-): Promise<{ page: DocPage; credentialRefs: string[] } | undefined> {
+): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
   const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
     sourceId: source._id,
     ref: page.ref,
@@ -376,6 +406,8 @@ async function keptUnchangedPage(
   return {
     page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
     credentialRefs,
+    saidOtherwise:
+      stored.nativeStatus !== page.nativeStatus || stored.sourceRevision !== page.sourceRevision,
   };
 }
 
@@ -510,6 +542,18 @@ export const syncBatch = internalAction({
       const finishing = finishingStep(args.cursor);
       if (finishing !== undefined)
         return await finishGeneration(ctx, source, args.runId, finishing);
+      // A listing that keeps saying more follows is stopped here, whichever reader reads it
+      // (W15-R8): the run's own counts say when it is repeating itself or has asked too often.
+      const overrun = listingOverrun(context.run);
+      if (overrun !== undefined) {
+        await ctx.runMutation(internal.docSources.failSync, {
+          sourceId: source._id,
+          runId: args.runId,
+          status: 'error',
+          reason: overrun,
+        });
+        return { ok: false, pages: 0, redactions: 0, complete: true, reason: overrun };
+      }
       known = await ownerKnownValues(ctx, source.userId);
       // An MCP source always reads with its connection secret; a git or URL
       // source reads with its own secret when it was linked with one (E-74).
@@ -533,6 +577,11 @@ export const syncBatch = internalAction({
       if (batch.nextCursor?.startsWith('\u0000')) {
         throw new Error('Documentation reader returned a continuation Day0 reserves.');
       }
+      // Asked before the batch is stored, which stamps each stored page with the listing too.
+      const relisted = await ctx.runQuery(internal.docSources.relistedRefs, {
+        runId: args.runId,
+        refs: [...batch.pages, ...batch.unread].map((page): string => page.ref),
+      });
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
       });
@@ -551,6 +600,7 @@ export const syncBatch = internalAction({
           (page): UnreadPage => ({
             ref: page.ref,
             reason: safeSyncError(page.reason, secret, known),
+            kind: page.kind ?? 'failed',
           }),
         ),
         ...persisted.unread,
@@ -570,6 +620,7 @@ export const syncBatch = internalAction({
         pageCount: persisted.pages,
         redactionCount: persisted.redactions,
         unread,
+        relisted,
       });
       const counts = { pages: persisted.pages, redactions: persisted.redactions };
       if (!recorded) return { ok: false, ...counts, complete: true };
@@ -636,14 +687,16 @@ export const syncBatch = internalAction({
  *
  * From the point the run's cursor records, the stored pages neither it nor the
  * complete walk before it listed, the superseded page credentials that have
- * aged out and then those pages' mirrors are removed a page at a time, the employees'
+ * aged out and then those pages' mirrors are removed a page at a time, the status of
+ * every page it keeps is restated with its markers judged (`walkStatusPhase`), the employees'
  * intake scopes are re-read against the pages as they now stand (real mode),
  * and `finishSync` supersedes the credentials no page states and publishes
  * the synced state. Each step is fenced on the run's cursor, so a newer sync
  * stops it, and the cursor records where the finish stands, so a finish cut
  * off part-way resumes there (`src/docs/finishing.ts`). A completed
- * generation schedules discovery and the re-orientation of the absent
- * systems its pages may now document.
+ * generation schedules discovery, the re-orientation of the absent
+ * systems its pages may now document, and the measures that propose relations
+ * between its pages and the owner's others (`proposeRelations`).
  */
 async function finishGeneration(
   ctx: ActionCtx,
@@ -694,6 +747,16 @@ async function finishGeneration(
     mirrorsRemoved = mirrors.removed;
     checkpoint = mirrors.checkpoint;
   }
+  if (finishWalks(from.phase, 'status')) {
+    const status = await walkStatusPhase(ctx, {
+      sourceId: source._id,
+      runId,
+      checkpoint,
+      from: from.phase === 'status' ? from.cursor : null,
+    });
+    if (status === null) return stopped;
+    checkpoint = status.checkpoint;
+  }
   const surfacesToReapprove =
     SURFACE_MODE === 'real' ? await restateScopes(ctx, source._id, runId) : 0;
   const completed = await ctx.runMutation(internal.docSources.finishSync, {
@@ -722,6 +785,12 @@ async function finishGeneration(
     await ctx.scheduler.runAfter(0, internal.orientationActions.reorientAbsent, {
       sourceId: source._id,
       pagesRemoved,
+    });
+    // The pages this generation stored or changed, measured against the owner's other pages:
+    // proposals for the manager's cards, never a change by themselves (15-A).
+    await ctx.scheduler.runAfter(0, internal.docSyncActions.proposeRelations, {
+      sourceId: source._id,
+      runId,
     });
   }
   return {
@@ -769,6 +838,168 @@ async function walkFinishingPhase(
     from = page.from;
   }
 }
+
+/**
+ * Walk the status phase to its end: every page the generation keeps is restated a bounded page
+ * per transaction (`docStatus.restatePages`), and between pages the model is asked about each
+ * page whose marker lines no stored judgement stands for, one call a page, at most
+ * `MARKER_JUDGEMENTS_PER_SYNC` a finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20;
+ * the rest are asked at the next sync). A judgement the model could not give leaves the page as
+ * it was and is logged: a marker is never why a sync fails, and a vocabulary hit alone decides
+ * nothing.
+ *
+ * @returns The run's cursor after the phase (the scopes phase's start), or null when the run
+ *   moved on from under the finish.
+ */
+async function walkStatusPhase(
+  ctx: ActionCtx,
+  start: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly checkpoint: string;
+    readonly from: string | null;
+  },
+): Promise<{ checkpoint: string } | null> {
+  let checkpoint = start.checkpoint;
+  let from = start.from;
+  let judged = 0;
+  let judging = 0;
+  for (let walked = 1; ; walked += 1) {
+    const page: StatusPhasePage | null = await ctx.runMutation(internal.docStatus.restatePages, {
+      sourceId: start.sourceId,
+      runId: start.runId,
+      checkpoint,
+      from,
+      record: walked % FINISHING_CHECKPOINT_EVERY === 0,
+    });
+    if (page === null) return null;
+    checkpoint = page.checkpoint;
+    for (const marker of page.toJudge) {
+      if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
+      judged += 1;
+      const asked = Date.now();
+      try {
+        const status = await judgeMarker(marker);
+        await ctx.runMutation(internal.docStatus.recordMarker, {
+          sourceId: start.sourceId,
+          syncRunId: start.runId,
+          ref: marker.ref,
+          quote: marker.quote,
+          status,
+        });
+      } catch (error) {
+        log.warn('documentation marker not judged: the page keeps its status', {
+          sourceId: start.sourceId,
+          ref: marker.ref,
+          reason: safeSyncError(error),
+        });
+      }
+      judging += Date.now() - asked;
+    }
+    if (page.done) return { checkpoint };
+    from = page.from;
+  }
+}
+
+/**
+ * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
+ * (and the runs it took over from, back to the complete walk before it) is measured against the
+ * owner's other active pages (`docRelations.measurePage`), `RELATION_PAGES_PER_STEP` pages a step
+ * and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
+ * finish once the generation has completed, as discovery is, so the splits its pages scheduled
+ * have landed and the measures cost the finish none of its time. A proposal changes no page and
+ * holds nothing; the manager answers its card. A page that cannot be measured is logged and
+ * passed over.
+ *
+ * A step that has measured its share schedules the next with what is left (`rest`), so a library
+ * of any size is measured to its end (W15-R5: the first hundred pages were measured and nothing
+ * recorded how far it got). The cap on new proposals ends the measuring where it is reached, and
+ * what is left is then kept on the source for the next sync's measuring, which starts there
+ * (`docRelations.measuringPlan`).
+ *
+ * @returns How many pages this step measured and how many relations the sync has proposed so far.
+ */
+export const proposeRelations = internalAction({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    /** What an earlier step of this measuring left; absent on the first. */
+    rest: v.optional(
+      v.object({
+        generations: v.array(v.id('docSyncRuns')),
+        cursor: v.union(v.string(), v.null()),
+      }),
+    ),
+    /** The new proposals the earlier steps wrote; absent on the first. */
+    proposed: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> => {
+    const { sourceId, runId } = args;
+    const plan: MeasuringPlan | null =
+      args.rest ?? (await ctx.runQuery(internal.docRelations.measuringPlan, { sourceId, runId }));
+    let measured = 0;
+    let proposed = args.proposed ?? 0;
+    if (plan === null) return { measured, proposed };
+    const generations = [...plan.generations];
+    let cursor = plan.cursor;
+    const seen = new Set<string>();
+    while (generations.length > 0) {
+      if (measured >= RELATION_PAGES_PER_STEP) {
+        await ctx.scheduler.runAfter(0, internal.docSyncActions.proposeRelations, {
+          sourceId,
+          runId,
+          rest: { generations, cursor },
+          proposed,
+        });
+        return { measured, proposed };
+      }
+      const written: { refs: string[]; next: string | null } = await ctx.runQuery(
+        internal.docRelations.pagesWrittenBy,
+        { sourceId, generation: generations[0], cursor },
+      );
+      for (const ref of written.refs) {
+        if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
+          // The cap: this read's pages are owed from its start, since some of them are unmeasured.
+          await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
+            sourceId,
+            runId,
+            owed: { generations, cursor },
+          });
+          return { measured, proposed };
+        }
+        if (seen.has(ref)) continue;
+        seen.add(ref);
+        measured += 1;
+        try {
+          proposed += await ctx.runMutation(internal.docRelations.measurePage, {
+            sourceId,
+            syncRunId: runId,
+            ref,
+            room: RELATION_PROPOSALS_PER_SYNC - proposed,
+          });
+        } catch (error) {
+          log.warn('documentation page not measured for relations', {
+            sourceId,
+            ref,
+            reason: safeSyncError(error),
+          });
+        }
+      }
+      if (written.next === null) {
+        generations.shift();
+        cursor = null;
+      } else {
+        cursor = written.next;
+      }
+    }
+    await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
+      sourceId,
+      runId,
+      owed: null,
+    });
+    return { measured, proposed };
+  },
+});
 
 /**
  * Re-read every approved intake scope quoting this source against its pages as they now stand.

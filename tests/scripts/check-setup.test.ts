@@ -10,6 +10,7 @@ import {
   composeRunningServices,
   docSourceDependency,
   egressHosts,
+  REPORTED_FILES,
   main,
   migrationsSection,
   modelSection,
@@ -349,6 +350,40 @@ describe('the support report', (): void => {
     );
   });
 
+  it('names the hosts each of wave 15’s readers reaches, in real mode only (15-X)', (): void => {
+    const rows = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' });
+    const purposeOf = (host: string): string | undefined =>
+      rows.find((row) => row.host === host)?.purpose;
+    expect(purposeOf('api.atlassian.com')).toBe(
+      'a Confluence Cloud documentation source, when one is linked',
+    );
+    expect(purposeOf('login.microsoftonline.com')).toBe(
+      "a SharePoint documentation source: the app registration's sign-in, when one is linked",
+    );
+    expect(purposeOf('graph.microsoft.com')).toBe(
+      'a SharePoint documentation source: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.com)',
+    );
+    expect(purposeOf('login.chinacloudapi.cn')).toBe(
+      "a SharePoint documentation source on the cloud 21Vianet operates: the app registration's sign-in, when one is linked",
+    );
+    expect(purposeOf('microsoftgraph.chinacloudapi.cn')).toBe(
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+    );
+    expect(purposeOf('www.yuque.com')).toBe(
+      "a Yuque documentation source, when one is linked (a space's own <space>.yuque.com instead, where the repository is on one)",
+    );
+    expect(purposeOf('oauth2.googleapis.com')).toBe(
+      "a Google Drive documentation source: the service account's token, when one is linked",
+    );
+    expect(purposeOf('www.googleapis.com')).toBe(
+      'a Google Drive documentation source: the Drive API, when one is linked',
+    );
+    const mock = egressHosts({ OPENAI_API_KEY: 'k' }).map((row) => row.host);
+    for (const host of ['api.atlassian.com', 'graph.microsoft.com', 'www.googleapis.com']) {
+      expect(mock).not.toContain(host);
+    }
+  });
+
   it('names each git host DAY0_GIT_HOSTS lists, and none when the list is refused (14-F)', (): void => {
     const rows = egressHosts({
       DAY0_SURFACE_MODE: 'real',
@@ -423,6 +458,45 @@ describe('the support report', (): void => {
       images: [{ service: 'backend', running: true }],
     });
     expect(report.egress.map((row) => row.host)).toContain('gateway.example.com');
+  });
+
+  it('names the base a built service is pinned to beside the tag it is built as, and the files that decide the build (W14-R20)', (): void => {
+    const digest = `sha256:${'d7'.repeat(32)}`;
+    const compose = [
+      'services:',
+      '  backend:',
+      '    build:',
+      '      context: docker',
+      '      dockerfile: backend.Dockerfile',
+      '    image: day0-convex-backend:git',
+      '  model:',
+      '    image: ollama/ollama:latest@sha256:bbb',
+      '',
+    ].join('\n');
+    const read = (path: string): string => {
+      expect(path).toBe('docker/backend.Dockerfile');
+      return `FROM ghcr.io/get-convex/convex-backend:latest@${digest}\nRUN true\n`;
+    };
+    expect(composeImages(compose, read)).toEqual([
+      { service: 'backend', image: 'day0-convex-backend:git', base: digest },
+      { service: 'model', image: 'ollama/ollama:latest@sha256:bbb' },
+    ]);
+    // The checkout's own files: the backend's row names the digest its Dockerfile pins.
+    const [backend] = composeImages(readFileSync('docker-compose.yml', 'utf8'));
+    expect(backend).toMatchObject({ service: 'backend', image: 'day0-convex-backend:git' });
+    expect(backend?.base).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(REPORTED_FILES).toContain('docker/backend.Dockerfile');
+  });
+
+  it('names the ports archive in place of the two archive hosts on an arm64 machine (D-2 (a))', (): void => {
+    const purpose =
+      "the backend image's build at setup and upgrade (git's packages, over http on port 80)";
+    const hosts = (architecture: string): string[] =>
+      egressHosts({}, [], architecture)
+        .filter((row) => row.purpose === purpose)
+        .map((row) => row.host);
+    expect(hosts('x64')).toEqual(['archive.ubuntu.com', 'security.ubuntu.com']);
+    expect(hosts('arm64')).toEqual(['ports.ubuntu.com']);
   });
 
   it('reads the pinned image of every service from a compose file', (): void => {

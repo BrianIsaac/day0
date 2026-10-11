@@ -182,6 +182,39 @@ describe('the promotion card', (): void => {
     view.unmount();
   });
 
+  it('puts a control behind “You can keep it for a single employee instead”, and Check now on a hold that can be checked (W14-R15)', async (): Promise<void> => {
+    const tooMany: AgreementView = {
+      ...refused,
+      _id: 'wa8' as Id<'workingAgreements'>,
+      agentId: undefined,
+      statement: 'Quote the carrier reference.',
+      refusal: { reason: 'every-employee-too-many' },
+    };
+    const held: AgreementView = {
+      ...refused,
+      _id: 'wa9' as Id<'workingAgreements'>,
+      statement: 'Name the vessel in every customer comment.',
+      refusal: { reason: 'unchecked-for-employee', checkable: true },
+    };
+    const calls: string[] = [];
+    const view = proposals([tooMany, held], calls);
+    await press(view.container, 'Keep for Priya: “Quote the carrier reference.”');
+    await press(
+      view.container,
+      "Check “Name the vessel in every customer comment.” against Priya's charter now",
+    );
+    expect(calls).toEqual(['keep wa8 Priya', 'recheck wa9']);
+    // A hold is not the manager's to dismiss; the refused keep is.
+    expect(
+      [...view.container.querySelectorAll('[aria-label^="Dismiss the refused"]')].map((node) =>
+        node.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Dismiss the refused agreement “Quote the carrier reference.”']);
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+
   it('has no axe violation and 44 px targets in every state', async (): Promise<void> => {
     const view = proposals([proposal, checking, refused, credential]);
     await settle();
@@ -235,6 +268,91 @@ describe('the plan approval tick', (): void => {
       workItemId,
     });
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    view.unmount();
+  });
+
+  it('offers to keep the note for later asks from a confirmed requester instead, one choice at a time (15-FX, the person scope)', async (): Promise<void> => {
+    const decisions: unknown[] = [];
+    const view = mount(
+      <PlanApprovalForm
+        riskNotes="Which template applies to a customs hold?"
+        questions={[]}
+        onApprove={(decision) => decisions.push(decision)}
+        onCancel={(): void => undefined}
+        employeeName="Priya"
+        requesterName="Hana Sato"
+        gate="real"
+      />,
+    );
+    const boxOf = (label: string): HTMLInputElement => {
+      const found = [...view.container.querySelectorAll('label')].find((node) =>
+        node.textContent?.startsWith(label),
+      );
+      if (!found?.control) throw new Error(`no tick: ${label}`);
+      expect(found.className).toMatch(/(^|\s)min-h-11(\s|$)/);
+      return found.control as HTMLInputElement;
+    };
+    const kind = boxOf('Keep this note for later work of this kind');
+    const requester = boxOf('Keep this note for later asks from Hana Sato');
+    expect(view.container.textContent).toContain(
+      'Your answer above becomes a working agreement for Priya on asks from Hana Sato once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.',
+    );
+    expect(requester.disabled).toBe(true);
+    const field = [...view.container.querySelectorAll('label')].find(
+      (label) => label.textContent === 'Your answer to the note, for this run (optional)',
+    )?.control as HTMLInputElement;
+    typeInto(field, 'Template B for customs holds.');
+    await act(async () => kind.click());
+    await act(async () => requester.click());
+    // One note is kept one way: choosing the requester unticks the kind.
+    expect(kind.checked).toBe(false);
+    expect(requester.checked).toBe(true);
+    await press(view.container, 'Approve plan with answers');
+    await act(async () => requester.click());
+    await press(view.container, 'Approve plan with answers');
+    expect(decisions).toEqual([
+      {
+        answers: [],
+        note: 'Template B for customs holds.',
+        keepNote: true,
+        keepNoteFor: 'requester',
+      },
+      { answers: [], note: 'Template B for customs holds.' },
+    ]);
+    const workItemId = 'w1' as Id<'workItems'>;
+    expect(
+      planApprovalRequest(workItemId, {
+        answers: [],
+        note: 'Template B.',
+        keepNote: true,
+        keepNoteFor: 'requester',
+      }),
+    ).toEqual({ workItemId, note: 'Template B.', keepNote: true, keepNoteFor: 'requester' });
+    // Nothing is sent of the choice when nothing is kept.
+    expect(
+      planApprovalRequest(workItemId, {
+        answers: [],
+        note: 'Template B.',
+        keepNoteFor: 'requester',
+      }),
+    ).toEqual({ workItemId, note: 'Template B.' });
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('offers the requester choice only where the requester is a confirmed person', (): void => {
+    const view = mount(
+      <PlanApprovalForm
+        riskNotes="Which template?"
+        questions={[]}
+        onApprove={(): void => undefined}
+        onCancel={(): void => undefined}
+        gate="real"
+      />,
+    );
+    expect(view.container.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+    expect(view.container.textContent).not.toContain('later asks from');
     view.unmount();
   });
 

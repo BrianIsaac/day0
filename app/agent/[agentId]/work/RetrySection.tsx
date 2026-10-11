@@ -32,7 +32,7 @@ export type RetryMode =
   /** A run that stopped because documentation its plan cited has since changed: Retry redrafts. */
   | { readonly kind: 'cites-changed' }
   | { readonly kind: 'cancelled'; readonly hadPlan: boolean }
-  | { readonly kind: 'take'; readonly waived: 'scope' | 'quality-fit' }
+  | { readonly kind: 'take'; readonly waived: 'scope' | 'quality-fit' | 'settled' }
   | { readonly kind: 'skip-retry' }
   | { readonly kind: 'parked' };
 
@@ -87,7 +87,9 @@ export function retryWhy(
     case 'take':
       return mode.waived === 'scope'
         ? `${TAKE_IT_ANYWAY} is your decision that this work is ${employeeName}'s to do: it is evaluated again as in scope, and its plan still waits for your approval.`
-        : `${TAKE_IT_ANYWAY} is your decision that this work is worth doing: it is evaluated again without the quality-fit filter, and its plan still waits for your approval.`;
+        : mode.waived === 'settled'
+          ? `${TAKE_IT_ANYWAY} is your decision that this asks for something the comment did not settle: it is evaluated again, and its plan still waits for your approval.`
+          : `${TAKE_IT_ANYWAY} is your decision that this work is worth doing: it is evaluated again without the quality-fit filter, and its plan still waits for your approval.`;
     case 'skip-retry':
       return SKIP_RETRY_NOTE;
     case 'parked':

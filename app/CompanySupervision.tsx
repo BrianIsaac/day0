@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { dayLabelAt } from '@/demo/day-label';
 import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@/metrics/types';
 import { decidedCount, formatAuditTrail, formatMetricDuration } from './metric-format';
 
@@ -190,11 +191,11 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     unit: 'documentation read per item, and recall',
     wide: true,
     definition:
-      'The characters of documentation the model was given for an item, beside the input tokens billed for the item where the provider reported them. Recall is a test result: on the labelled test items, where people marked the pages and sections they would open, the share Day0 chose too.',
+      'The characters of documentation the model was given for an item, beside the input tokens billed for the item where the provider reported them. Recall is a test result: on the labelled test items, where people marked the pages and sections they would open, the share Day0 chose too, graded on the day shown with the search Day0 itself runs.',
     value: ({ retrieval }) =>
       retrieval.recall === null
         ? retrievalRead(retrieval.tokens)
-        : `${retrievalRead(retrieval.tokens)}; recall ${Math.round(retrieval.recall.pages * 100)}% of pages and ${Math.round(retrieval.recall.blocks * 100)}% of sections on ${retrieval.recall.cases} test items over a ${retrieval.recall.corpusPages}-page test library`,
+        : `${retrievalRead(retrieval.tokens)}; recall ${Math.round(retrieval.recall.pages * 100)}% of pages and ${Math.round(retrieval.recall.blocks * 100)}% of sections on ${retrieval.recall.cases} test items over a ${retrieval.recall.corpusPages}-page test library, graded on ${dayLabelAt(Date.parse(retrieval.recall.gradedAt), 'UTC')}`,
   },
 ];
 

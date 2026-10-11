@@ -1,0 +1,60 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites('acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe')/pages/microsoft.graph.sitePage",
+  "value": [
+    {
+      "id": "0a1b2c3d-0000-4000-8000-000000000001",
+      "name": "How-to-refresh-the-tile.aspx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/SitePages/How-to-refresh-the-tile.aspx",
+      "title": "How to refresh the pipeline tile",
+      "pageLayout": "article",
+      "promotionKind": "page",
+      "showComments": true,
+      "showRecommendedPages": false,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-09-28T07:00:00Z",
+      "eTag": "\"{0A1B2C3D-0000-4000-8000-000000000001},3\"",
+      "createdBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "publishingState": {
+        "level": "published",
+        "versionId": "3.0"
+      }
+    },
+    {
+      "id": "0a1b2c3d-0000-4000-8000-000000000002",
+      "name": "Escalation-2027.aspx",
+      "webUrl": "https://acme.sharepoint.com/sites/Runbooks/SitePages/Escalation-2027.aspx",
+      "title": "Escalation paths 2027",
+      "pageLayout": "article",
+      "promotionKind": "page",
+      "showComments": true,
+      "showRecommendedPages": false,
+      "createdDateTime": "2026-06-02T08:00:00Z",
+      "lastModifiedDateTime": "2026-10-05T07:00:00Z",
+      "eTag": "\"{0A1B2C3D-0000-4000-8000-000000000002},0\"",
+      "createdBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "lastModifiedBy": {
+        "user": {
+          "displayName": "Mira Castillo"
+        }
+      },
+      "publishingState": {
+        "level": "checkout",
+        "versionId": "0.4"
+      }
+    }
+  ],
+  "@odata.nextLink": "https://graph.microsoft.com/v1.0/sites/acme.sharepoint.com,2c712604-1370-44e7-a1f5-426573fda7bb,2d2244c3-251a-49ea-93c8-39e1c3a060fe/pages/microsoft.graph.sitePage?$skiptoken=fixture-pages-2"
+}

@@ -2102,7 +2102,8 @@ describe('probing the browser floor', (): void => {
     await expect(
       probeBrowserSurface(request({ endpoint: 'http://portal.example.com/login' }), makeClient),
     ).rejects.toThrow(
-      'The web UI http://portal.example.com/login is plain http on a host DAY0_PRIVATE_HOSTS does not list',
+      // Re-taken (W14-R32): the refusal opens on what to do.
+      'Document the https address of the web UI http://portal.example.com/login, or list its host in DAY0_PRIVATE_HOSTS if it is inside this network: it is plain http on a host DAY0_PRIVATE_HOSTS does not list',
     );
     expect(makeClient).not.toHaveBeenCalled();
   });
@@ -2110,7 +2111,8 @@ describe('probing the browser floor', (): void => {
   it('opens a plaintext web UI only on a host DAY0_PRIVATE_HOSTS lists (R9)', async (): Promise<void> => {
     vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
     await expect(probeBrowserSurface(request(), () => fakeDriver({}).client)).rejects.toThrow(
-      `The web UI ${TILE} is plain http on a host DAY0_PRIVATE_HOSTS does not list`,
+      // Re-taken (W14-R32): the refusal opens on what to do.
+      `Document the https address of the web UI ${TILE}, or list its host in DAY0_PRIVATE_HOSTS if it is inside this network: it is plain http on a host DAY0_PRIVATE_HOSTS does not list`,
     );
     vi.stubEnv('DAY0_PRIVATE_HOSTS', 'looker-tile');
     const { client, navigated } = fakeDriver({});

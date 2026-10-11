@@ -1,0 +1,23 @@
+{
+  "results": [
+    {
+      "id": "1048578",
+      "key": "OPS",
+      "name": "Operations",
+      "type": "global",
+      "status": "current",
+      "authorId": "712020:0f3b6a1c-fixture",
+      "spaceOwnerId": "712020:0f3b6a1c-fixture",
+      "createdAt": "2026-06-01T08:00:00.000Z",
+      "homepageId": "98310",
+      "description": null,
+      "icon": null,
+      "_links": {
+        "webui": "/spaces/OPS"
+      }
+    }
+  ],
+  "_links": {
+    "base": "https://acme.atlassian.net/wiki"
+  }
+}

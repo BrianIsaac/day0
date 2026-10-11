@@ -18,7 +18,7 @@ import {
   skillOwnerKeyOf,
   STORED_COPY_CLEARED,
 } from './skillVersions';
-import { applyVerdict } from './work';
+import { applyVerdict } from './workVerdicts';
 import { stopRunsInTransaction } from './workRuns';
 import { moveWaitingWork } from './waitingWork';
 import { scheduleNextStep, STEP_LEASE_MS } from './workLoop';

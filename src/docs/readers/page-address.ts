@@ -4,7 +4,11 @@ import { request as httpsRequest, type RequestOptions } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import type { Readable } from 'node:stream';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
-import { isDiallablePrivateAddress, isNonPublicAddress } from '../../lib/network-addresses';
+import {
+  isDiallablePrivateAddress,
+  isFakeIpAddress,
+  isNonPublicAddress,
+} from '../../lib/network-addresses';
 import {
   configuredPrivateHosts,
   isPrivateHostAllowed,
@@ -133,6 +137,19 @@ export async function checkPageAddress(
       `${url.href}: its host is listed in ${PRIVATE_HOSTS_VAR} but answers with a loopback, link-local, multicast or unspecified address, which Day0 never reads from.`,
     );
   }
+  // A listed name is a server inside the operator's network; one that answers publicly is read
+  // over https like any public page, never in the clear (W14-R34).
+  if (url.protocol === 'http:' && isListed && !addresses.every(isNonPublicAddress)) {
+    throw new PageAddressRefusal(
+      `${url.href} is plain http, and its host, though ${PRIVATE_HOSTS_VAR} lists it, answers with a public address: Day0 reads plain http only from a host inside your network.`,
+    );
+  }
+  const fakeIp = isListed ? undefined : addresses.find(isFakeIpAddress);
+  if (fakeIp !== undefined) {
+    throw new PageAddressRefusal(
+      `${url.href}: its host answers with ${fakeIp}, an address of the range a fake-IP proxy hands out (198.18.0.0/15), so Day0 cannot tell what it reaches and does not read it. Set the proxy\u2019s DNS to answer real addresses, or list the host in ${PRIVATE_HOSTS_VAR}.`,
+    );
+  }
   if (!isListed && addresses.some(isNonPublicAddress)) {
     throw new PageAddressRefusal(
       `${url.href}: its host answers with a private, loopback, link-local or otherwise non-public address and ${PRIVATE_HOSTS_VAR} does not list it, so Day0 does not read it.`,
@@ -221,6 +238,19 @@ function decodedBody(url: URL, response: IncomingMessage): { body: Readable; dec
   return { body: response.pipe(decoder), decoded: true };
 }
 
+/**
+ * A page's body ran past the most the fetch reads of it.
+ *
+ * An error of its own, so a reader tells a page that is too large, which is that page's and stays
+ * so at the next sync, from a read that failed and is worth another try (W15-R11).
+ */
+export class PageTooLargeError extends Error {
+  constructor(url: URL, limitBytes: number) {
+    super(`${url.href} exceeds ${byteSize(limitBytes)}.`);
+    this.name = 'PageTooLargeError';
+  }
+}
+
 /** A body that errors once more than `limit` bytes have arrived, counted after decoding. */
 function boundedBody(url: URL, response: Readable, limit: number): ReadableStream<Uint8Array> {
   let settled = false;
@@ -236,7 +266,7 @@ function boundedBody(url: URL, response: Readable, limit: number): ReadableStrea
         if (settled) return;
         received += chunk.byteLength;
         if (received > limit) {
-          fail(new Error(`${url.href} exceeds ${byteSize(limit)}.`));
+          fail(new PageTooLargeError(url, limit));
           response.destroy();
           return;
         }

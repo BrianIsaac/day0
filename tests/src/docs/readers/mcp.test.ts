@@ -539,6 +539,61 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     });
   const secret = 'contract-value';
 
+  it('reads a Notion page in the trash or archived as archived, and says nothing of an ordinary page (15-A; K-10)', async (): Promise<void> => {
+    const pagesOf = async (page: Record<string, unknown>) =>
+      (
+        await readerWith({
+          'API-post-search': () =>
+            textResult({ results: [{ id: 'page-1', ...page }], has_more: false }),
+          'API-retrieve-page-markdown': () => textResult({ markdown: '# Runbook' }),
+        }).listPageBatch(sourceOf('notion'), secret, undefined, 25)
+      ).pages;
+    expect((await pagesOf({ in_trash: true }))[0].nativeStatus).toBe('archived');
+    expect((await pagesOf({ archived: true }))[0].nativeStatus).toBe('archived');
+    const [ordinary] = await pagesOf({ archived: false, in_trash: false });
+    expect(ordinary).not.toHaveProperty('nativeStatus');
+    expect((await pagesOf({}))[0]).not.toHaveProperty('nativeStatus');
+  });
+
+  it('reads a trashed Drive file as archived, and its version as the page’s revision (V15-5)', async (): Promise<void> => {
+    const pagesOf = async (file: Record<string, unknown>) =>
+      (
+        await readerWith({
+          search_files: () => textResult({ files: [{ id: 'file-1', title: 'Runbook', ...file }] }),
+          read_file_content: () => textResult({ fileContent: '# Runbook' }),
+        }).listPageBatch(sourceOf('drive'), secret, undefined, 25)
+      ).pages;
+    expect((await pagesOf({ trashed: true, version: '41' }))[0]).toMatchObject({
+      nativeStatus: 'archived',
+      sourceRevision: '41',
+    });
+    const [ordinary] = await pagesOf({ trashed: false });
+    expect(ordinary).not.toHaveProperty('nativeStatus');
+    expect(ordinary).not.toHaveProperty('sourceRevision');
+  });
+
+  it('reads a Confluence page’s own status and version: archived, a draft, and nothing for a current page', async (): Promise<void> => {
+    const pagesOf = async (content: Record<string, unknown>, page: Record<string, unknown> = {}) =>
+      (
+        await readerWith({
+          getAccessibleAtlassianResources: () => textResult({ resources: [{ id: 'cloud-1' }] }),
+          searchConfluenceUsingCql: () =>
+            textResult({ results: [{ content: { id: 'page-1', title: 'Runbook', ...content } }] }),
+          getConfluencePage: () => textResult({ markdown: '# Runbook', ...page }),
+        }).listPageBatch(sourceOf('confluence'), secret, undefined, 10)
+      ).pages;
+    expect((await pagesOf({ status: 'archived' }))[0].nativeStatus).toBe('archived');
+    expect((await pagesOf({ status: 'draft' }))[0].nativeStatus).toBe('draft');
+    expect((await pagesOf({ status: 'trashed' }))[0].nativeStatus).toBe('archived');
+    // The page's own read says so when the search did not.
+    expect((await pagesOf({}, { status: 'archived', version: { number: 7 } }))[0]).toMatchObject({
+      nativeStatus: 'archived',
+      sourceRevision: '7',
+    });
+    const [current] = await pagesOf({ status: 'current' });
+    expect(current).not.toHaveProperty('nativeStatus');
+  });
+
   it('walks Confluence in creation order, which a page edited mid-walk cannot change', async (): Promise<void> => {
     const calls: Array<Record<string, unknown>> = [];
     const batch = await confluence(

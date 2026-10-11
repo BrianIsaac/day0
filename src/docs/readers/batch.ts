@@ -12,10 +12,19 @@ import { shortHash } from '../../lib/short-hash';
 import { TransientProviderError, transportFailureKind } from '../../lib/transport-error';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 
+/**
+ * Which of the two a listed page that was not read is (D-7): a read that `failed` (forbidden,
+ * too large, gone), which keeps the page's last version and is tried again at the next sync; or
+ * a page of a kind Day0 does `not-read` (a sheet, a slide deck, a PDF), which no sync will read.
+ */
+export type UnreadKind = 'failed' | 'not-read';
+
 /** A listed page the reader could not read, and why, in words safe to store. */
 export interface UnreadPage {
   readonly ref: string;
   readonly reason: string;
+  /** Which it is; a reader names a kind it does not read, and every other unread page failed. */
+  readonly kind?: UnreadKind;
 }
 
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */

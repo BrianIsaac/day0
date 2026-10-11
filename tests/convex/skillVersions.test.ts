@@ -6,12 +6,15 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
+  changedRunbookReason,
   copyVersionsForMove,
   deleteOwnerLibrary,
   holdersOf,
   LIBRARY_LOOKUP_LIMIT,
   ownerVersions,
   releaseAuthor,
+  RUNBOOKS_A_SCAN,
+  runbookReason,
   sharedSkillsOn,
   stampRecheckDue,
   stampRecheckDueOnSurfaces,
@@ -1059,5 +1062,351 @@ describe('stampChangedPage (14-I)', (): void => {
     );
     expect((await skill(harness, holders.withdrawn)).recheckDueAt).toBeUndefined();
     vi.useRealTimers();
+  });
+});
+
+describe('stampChangedPages: the runbooks no longer current, in one read of the library (15-A; W14-R22; 14-I m5)', (): void => {
+  it('words each change as the card says it', (): void => {
+    const page = { title: 'Refresh the tile' };
+    const day = '8 October 2026';
+    expect(runbookReason({ ...page, change: 'changed' }, day)).toBe(
+      changedRunbookReason('Refresh the tile', day),
+    );
+    expect(runbookReason({ ...page, change: 'superseded' }, day)).toBe(
+      'its runbook "Refresh the tile" was superseded on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'archived' }, day)).toBe(
+      'its runbook "Refresh the tile" was archived on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'draft' }, day)).toBe(
+      'its runbook "Refresh the tile" was marked a draft on 8 October 2026',
+    );
+    expect(runbookReason({ ...page, change: 'removed', source: 'Handbook' }, day)).toBe(
+      'its runbook "Refresh the tile" was removed from Handbook on 8 October 2026',
+    );
+  });
+
+  it('stamps the holders of every version that read any of the pages, each with its page’s reason, and schedules one scan for them all', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { sourceId, holders } = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Europe/London' });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const holderOf = async (name: string, ref: string | undefined) => {
+        const versionId = await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name,
+          description: name,
+          surfaceClass: 'kanban',
+          operation: 'comment',
+          version: 1,
+          body: '# Body',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: ref === undefined ? [] : [{ sourceId, ref, title: ref }],
+          verifiedAt: 1,
+          createdAt: 1,
+        });
+        return await ctx.db.insert('skills', {
+          agentId,
+          name,
+          description: name,
+          body: '# Body',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+        });
+      };
+      // Past one page of the library (100 versions), so the scan goes on by schedule.
+      for (let index = 0; index < 100; index += 1) {
+        await holderOf(`a-${String(index).padStart(3, '0')}`, undefined);
+      }
+      return {
+        sourceId,
+        holders: {
+          superseded: await holderOf('z-superseded', 'v1.md'),
+          removed: await holderOf('z-removed', 'gone.md'),
+          untouched: await holderOf('z-untouched', 'other.md'),
+        },
+      };
+    });
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [
+        { sourceId, ref: 'v1.md', title: 'Pipeline runbook', change: 'superseded' },
+        {
+          sourceId,
+          ref: 'gone.md',
+          title: 'Old escalation',
+          change: 'removed',
+          source: 'Handbook',
+        },
+      ],
+      changedAt: Date.UTC(2026, 9, 7, 23, 30),
+      cursor: null,
+    });
+    // One continuation carries both pages: the library is read once for them all.
+    const pending = await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect()).map((job) => job.name),
+    );
+    expect(pending).toEqual(['skillVersions:stampChangedPages']);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await skill(harness, holders.superseded)).recheckReason).toBe(
+      'its runbook "Pipeline runbook" was superseded on 8 October 2026',
+    );
+    expect((await skill(harness, holders.removed)).recheckReason).toBe(
+      'its runbook "Old escalation" was removed from Handbook on 8 October 2026',
+    );
+    expect((await skill(harness, holders.untouched)).recheckDueAt).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('lets what became of a runbook stand over the change of its text, whichever scan lands first (15-J; 15-X X-8)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { sourceId, holders } = await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Europe/London' });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks site',
+        kind: 'sharepoint',
+        locator: 'https://acme.sharepoint.com/sites/runbooks',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const holderOf = async (name: string, refs: readonly string[], due?: string) => {
+        const versionId = await ctx.db.insert('skillVersions', {
+          userId: 'owner',
+          name,
+          description: name,
+          surfaceClass: 'kanban',
+          operation: 'comment',
+          version: 1,
+          body: '# Body',
+          bodyHash: 'b'.repeat(64),
+          requiredScopes: [],
+          harnessTools: [],
+          authorName: 'Priya',
+          readRefs: refs.map((ref) => ({ sourceId, ref, title: ref })),
+          verifiedAt: 1,
+          createdAt: 1,
+        });
+        return await ctx.db.insert('skills', {
+          agentId,
+          name,
+          description: name,
+          body: '# Body',
+          sourceType: 'agent-authored',
+          state: 'registered',
+          versionId,
+          ownerKey: 'owner',
+          createdAt: 1,
+          ...(due === undefined ? {} : { recheckDueAt: 5, recheckReason: due }),
+        });
+      };
+      return {
+        sourceId,
+        holders: {
+          textFirst: await holderOf('text-first', ['deleted.md']),
+          statusFirst: await holderOf('status-first', ['binned.md']),
+          otherCause: await holderOf('other-cause', ['deleted.md'], 'its Linear tools changed'),
+          otherRunbook: await holderOf('other-runbook', ['edited.md', 'deleted.md']),
+        },
+      };
+    });
+    const at = Date.UTC(2026, 9, 7, 23, 30);
+    const textChanged = async (ref: string, title: string, changedAt: number): Promise<void> => {
+      await harness.mutation(internal.skillVersions.stampChangedPage, {
+        userId: 'owner',
+        sourceId,
+        ref,
+        title,
+        changedAt,
+        cursor: null,
+      });
+    };
+    const archived = async (ref: string, title: string, changedAt: number): Promise<void> => {
+      await harness.mutation(internal.skillVersions.stampChangedPages, {
+        userId: 'owner',
+        pages: [{ sourceId, ref, title, change: 'archived' }],
+        changedAt,
+        cursor: null,
+      });
+    };
+    // Another runbook of the last holder changed first: an earlier cause of its own.
+    await textChanged('edited.md', 'Edited page', at - 60_000);
+    // A file deleted in SharePoint, as one sync stores it: its page's text becomes one sentence
+    // (the store's scan, scheduled first) and its source marks it archived (the status scan).
+    await textChanged('deleted.md', 'Close checklist', at);
+    await archived('deleted.md', 'Close checklist', at + 40);
+    // The same pair landing the other way round.
+    await archived('binned.md', 'Bin page', at);
+    await textChanged('binned.md', 'Bin page', at + 40);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const textFirst = await skill(harness, holders.textFirst);
+    expect(textFirst.recheckReason).toBe(
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    );
+    // Still due since the first of the two stamps: one cause, said better.
+    expect(textFirst.recheckDueAt).toBe(at);
+    expect((await skill(harness, holders.statusFirst)).recheckReason).toBe(
+      'its runbook "Bin page" was archived on 8 October 2026',
+    );
+    // A cause that is not this runbook's text stays the card's, as for every trigger (A13).
+    expect((await skill(harness, holders.otherCause)).recheckReason).toBe(
+      'its Linear tools changed',
+    );
+    expect((await skill(harness, holders.otherRunbook)).recheckReason).toBe(
+      'its runbook "Edited page" changed on 8 October 2026',
+    );
+    // Both triggers are still on the record, in the order they landed.
+    const said = await harness.run(async (ctx) =>
+      (
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (index) => index.eq('agentId', agentId))
+          .collect()
+      )
+        .filter((event) => event.type === 'skill.recheck-due')
+        .filter((event) => (event.payload as { skillId: string }).skillId === holders.textFirst)
+        .map((event) => (event.payload as { reason: string }).reason),
+    );
+    expect(said).toEqual([
+      'its runbook "Close checklist" changed on 8 October 2026',
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    ]);
+    vi.useRealTimers();
+  });
+
+  it('keeps a runbook’s change on the card when another page of the same title is archived the same day: the rule is the page’s, not the title’s (W15-R40)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const { handbook, wiki, skillId } = await harness.run(async (ctx) => {
+      const source = async (label: string) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label,
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const handbook = await source('Handbook');
+      const wiki = await source('Team wiki');
+      // One skill read a "Close checklist" in each of two sources.
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'close',
+        description: 'close',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [
+          { sourceId: handbook, ref: 'close.md', title: 'Close checklist' },
+          { sourceId: wiki, ref: 'close.md', title: 'Close checklist' },
+        ],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: 'close',
+        description: 'close',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+      return { handbook, wiki, skillId };
+    });
+    const at = Date.UTC(2026, 9, 8, 9, 0);
+    // The handbook's page changed; the wiki's page of the same title was archived that day.
+    await harness.mutation(internal.skillVersions.stampChangedPage, {
+      userId: 'owner',
+      sourceId: handbook,
+      ref: 'close.md',
+      title: 'Close checklist',
+      changedAt: at,
+      cursor: null,
+    });
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [{ sourceId: wiki, ref: 'close.md', title: 'Close checklist', change: 'archived' }],
+      changedAt: at + 40,
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // On the base the archive of the other page took the change's place: one title, one day.
+    expect((await skill(harness, skillId)).recheckReason).toBe(
+      'its runbook "Close checklist" changed on 8 October 2026',
+    );
+    // The same page archived after its own change is still said better, as 15-J built it.
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [
+        { sourceId: handbook, ref: 'close.md', title: 'Close checklist', change: 'archived' },
+      ],
+      changedAt: at + 80,
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await skill(harness, skillId)).recheckReason).toBe(
+      'its runbook "Close checklist" was archived on 8 October 2026',
+    );
+    vi.useRealTimers();
+  });
+
+  it('refuses more pages than one scan stamps for', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'Handbook',
+          kind: 'folder',
+          locator: '.',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.skillVersions.stampChangedPages, {
+        userId: 'owner',
+        pages: Array.from({ length: RUNBOOKS_A_SCAN + 1 }, (_unused, index) => ({
+          sourceId,
+          ref: `page-${index}.md`,
+          title: `Page ${index}`,
+          change: 'archived' as const,
+        })),
+        changedAt: 1,
+        cursor: null,
+      }),
+    ).rejects.toThrow(`at most ${RUNBOOKS_A_SCAN} pages`);
   });
 });

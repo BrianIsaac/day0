@@ -11,7 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
 import { appendEvent } from './eventLog';
-import { itemPersonIds } from './itemPeople';
+import { confirmedPersonOf, itemPersonIds } from './itemPeople';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { surfaceSlug } from '../src/surfaces/slug';
@@ -21,7 +21,12 @@ import {
   type CharterBounds,
   type JudgedCorrection,
 } from '../src/work/agreements';
-import { awaitingCheck, awaitingManager, type AgreementView } from '../src/work/agreement-words';
+import {
+  awaitingCheck,
+  awaitingManager,
+  HOLD_PAST_THE_CHECK,
+  type AgreementView,
+} from '../src/work/agreement-words';
 import type { ExecutionPlan } from '../src/work/types';
 import {
   AGREEMENT_KEEP_REFUSAL_REASONS,
@@ -81,6 +86,10 @@ const AGREEMENT_SENTENCE_WORDS = 2;
 export const AGREEMENT_NOT_A_SENTENCE =
   'A working agreement needs a sentence a later plan can follow. A one-word answer such as “Yes” is not one.';
 
+/** The refusal of a plan note kept for a requester intake did not resolve to a confirmed person. */
+export const PLAN_NOTE_NO_REQUESTER =
+  'This item’s requester is not a person you confirmed, so the note cannot be kept for their asks.';
+
 /** The refusal of a second change of an agreement while its first waits on its check. */
 export const AGREEMENT_CHANGE_WAITING = 'This working agreement has a change waiting on its check.';
 
@@ -115,26 +124,50 @@ async function bindingAgreements(
 }
 
 /**
- * The agreements for every employee held for one employee alone (W14-R15): its own refused rows
- * that name one, written when its charter was approved past the employees the check reads.
+ * One employee's holds (W14-R15): its own refused rows that each name an agreement for every
+ * employee never checked against its charter. Read by their reason through an index that ends on
+ * it (`by_user_agent_status_reason`; W15-R33, D-6), so the read is the holds alone: filtered
+ * after the read, every refused row of the employee was scanned on each read, and the stalled-step
+ * sweep reads fifty employees a transaction. At most one hold stands for an agreement, and at
+ * most `AGREEMENTS_READ` agreements for every employee are read as binding.
  */
+async function holdsOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  userId: string,
+  agentId: Id<'agents'>,
+): Promise<Doc<'workingAgreements'>[]> {
+  return await ctx.db
+    .query('workingAgreements')
+    .withIndex('by_user_agent_status_reason', (q) =>
+      q
+        .eq('userId', userId)
+        .eq('agentId', agentId)
+        .eq('status', 'refused')
+        .eq('refusal.reason', 'unchecked-for-employee'),
+    )
+    .take(AGREEMENTS_READ);
+}
+
+/** The agreements for every employee held for one employee alone (W14-R15, {@link holdsOf}). */
 async function heldForEmployee(
   ctx: Pick<QueryCtx, 'db'>,
   userId: string,
   agentId: Id<'agents'>,
 ): Promise<Set<Id<'workingAgreements'>>> {
-  const refused = await ctx.db
-    .query('workingAgreements')
-    .withIndex('by_user_agent_status', (q) =>
-      q.eq('userId', userId).eq('agentId', agentId).eq('status', 'refused'),
-    )
-    .order('desc')
-    .take(AGREEMENTS_READ);
   return new Set(
-    refused.flatMap((row) =>
-      row.refusal?.reason === 'unchecked-for-employee' && row.supersedes ? [row.supersedes] : [],
+    (await holdsOf(ctx, userId, agentId)).flatMap((row) =>
+      row.supersedes ? [row.supersedes] : [],
     ),
   );
+}
+
+/** The agreements for every employee held for an employee, none for one no owner holds. */
+async function heldFor(
+  ctx: Pick<QueryCtx, 'db'>,
+  agent: Doc<'agents'>,
+): Promise<Set<Id<'workingAgreements'>>> {
+  const scope = employeeOwnerScope(agent);
+  return scope === undefined ? new Set() : await heldForEmployee(ctx, scope, agent._id);
 }
 
 /** Whether an agreement binds an employee: its own, or every employee's of the same owner. */
@@ -147,17 +180,41 @@ function binds(row: Doc<'workingAgreements'>, agent: Doc<'agents'>): boolean {
   );
 }
 
+/** An employee's newest approved charter, or nothing before its first approval. */
+async function newestApprovedCharter(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<Doc<'charters'> | undefined> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  return versions.find((charter) => charter.approved);
+}
+
+/**
+ * Whether an employee's newest approved charter amends an earlier approved one, as against being
+ * its first: an established employee, whose agreements were checked against the charter before.
+ */
+async function hasEarlierApprovedCharter(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<boolean> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  return versions.filter((charter) => charter.approved).length > 1;
+}
+
 /** An employee's newest approved charter's boundaries, or null before its first approval. */
 async function approvedBounds(
   ctx: Pick<QueryCtx, 'db'>,
   agent: Doc<'agents'>,
 ): Promise<CharterBounds | null> {
-  const versions = await ctx.db
-    .query('charters')
-    .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-    .order('desc')
-    .take(CHARTER_VERSIONS);
-  const approved = versions.find((charter) => charter.approved);
+  const approved = await newestApprovedCharter(ctx, agent._id);
   if (approved === undefined) return null;
   const body = approved.body as {
     proposedBoundaries?: { willDo?: unknown; willNotDo?: unknown };
@@ -284,24 +341,62 @@ async function keepReplacement(
   return agreementId;
 }
 
+/** What a kept plan note is kept for: later work of the item's kind, or its requester's asks. */
+export type PlanNoteKeptFor = 'kind' | 'requester';
+
+/** What a kept plan note is scoped to: the item's source surface, or its requester. */
+type PlanNoteScope =
+  | { readonly scope: 'surface'; readonly scopeRef: string }
+  | { readonly scope: 'person'; readonly personId: Id<'people'> };
+
+/**
+ * The scope a plan note is kept under: the item's source surface for work of its kind, or, for
+ * its requester's asks, the confirmed person intake resolved the requester to.
+ *
+ * @throws ConvexError for a requester who is not an active person of the owner's.
+ */
+async function planNoteScope(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  userId: string,
+  keptFor: PlanNoteKeptFor,
+): Promise<PlanNoteScope> {
+  if (keptFor === 'kind') return { scope: 'surface', scopeRef: surfaceSlug(row.sourceSystem) };
+  const requester = await confirmedPersonOf(ctx, userId, row.requesterPerson);
+  if (requester === undefined) throw new ConvexError(PLAN_NOTE_NO_REQUESTER);
+  return { scope: 'person', personId: requester._id };
+}
+
+/** Whether an agreement is kept under a plan note's scope. */
+function underPlanNoteScope(agreement: Doc<'workingAgreements'>, kept: PlanNoteScope): boolean {
+  return kept.scope === 'surface'
+    ? agreement.scope === 'surface' && agreement.scopeRef === kept.scopeRef
+    : agreement.scope === 'person' && agreement.personId === kept.personId;
+}
+
 /**
  * Keep the note of a plan approval as a working agreement (the "Keep this note for later work of
  * this kind" tick), in the approval's transaction: for the item's employee, scoped to work on the
- * item's source surface, kept by the manager on the card (A14) and active once the check that the
- * same click schedules answers. Real mode only: nothing reads an agreement in mock mode. The same
- * note kept again keeps the agreement already in force or waiting, rather than a second one.
+ * item's source surface or, kept for the requester (15-FX), to asks from the confirmed person the
+ * requester resolved to (a `person` scope, which a Same person merge repoints, W13-R33); kept by
+ * the manager on the card (A14) and active once the check that the same click schedules answers.
+ * Real mode only: nothing reads an agreement in mock mode. The same note kept again under the same
+ * scope keeps the agreement already in force or waiting, rather than a second one.
  *
  * @param ctx - The approval's mutation context.
  * @param row - The plan-pending work item.
  * @param note - The manager's note, as written.
+ * @param keptFor - Later work of the item's kind, or later asks from its requester.
  * @returns The kept agreement, or the one already kept for the same note.
- * @throws ConvexError in mock mode, for an employee no owner holds, or for a note longer than an
- *   agreement keeps or of fewer than three words (W13-R32).
+ * @throws ConvexError in mock mode, for an employee no owner holds, for a note longer than an
+ *   agreement keeps or of fewer than three words (W13-R32), or, kept for the requester, for one
+ *   who is not a person the manager confirmed.
  */
 export async function keepPlanNoteInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   note: string,
+  keptFor: PlanNoteKeptFor = 'kind',
 ): Promise<Id<'workingAgreements'>> {
   if (SURFACE_MODE !== 'real') throw new ConvexError(AGREEMENTS_REAL_MODE_ONLY);
   const agent = await ctx.db.get(row.agentId);
@@ -318,7 +413,7 @@ export async function keepPlanNoteInTransaction(
   ) {
     throw new ConvexError(AGREEMENT_NOT_A_SENTENCE);
   }
-  const scopeRef = surfaceSlug(row.sourceSystem);
+  const scope = await planNoteScope(ctx, row, userId, keptFor);
   // The same note kept again keeps the agreement already in force, or already waiting on its check.
   const kept = [
     ...(await bindingAgreements(ctx, userId, row.agentId, 'active')),
@@ -327,8 +422,7 @@ export async function keepPlanNoteInTransaction(
     (agreement) =>
       agreement.agentId === row.agentId &&
       agreement.statement === statement &&
-      agreement.scope === 'surface' &&
-      agreement.scopeRef === scopeRef,
+      underPlanNoteScope(agreement, scope),
   );
   if (kept) return kept._id;
   const now = Date.now();
@@ -337,8 +431,7 @@ export async function keepPlanNoteInTransaction(
     agentId: row.agentId,
     kind: 'preference',
     statement,
-    scope: 'surface',
-    scopeRef,
+    ...scope,
     sourceType: 'plan-approval',
     workItemId: row._id,
     status: 'proposed',
@@ -357,24 +450,36 @@ export async function keepPlanNoteInTransaction(
  * it was applied to, so a row every employee's plans apply stays bounded; the plan itself and its
  * `work.plan-drafted` event say which agreements it applied.
  *
+ * An agreement of the employee's owner that the plan was drafted with and that no longer binds it
+ * (retired, refused or held since the planner read it) is named in `leftOut` by its words
+ * (W15-R35): the plan's steps may still follow it, and the plan lost only its id.
+ *
  * @param ctx - Mutation context.
  * @param row - The work item whose plan is being stored.
  * @param ids - The ids the plan says it applied.
- * @returns The ids kept, each now listing the work item in `appliedTo`.
+ * @returns The ids kept, each now listing the work item in `appliedTo`, and the statements of the
+ *   agreements left out.
  */
 export async function markAgreementsAppliedInTransaction(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
   ids: readonly unknown[],
-): Promise<Id<'workingAgreements'>[]> {
+): Promise<{ kept: Id<'workingAgreements'>[]; leftOut: string[] }> {
   const agent = await ctx.db.get(row.agentId);
-  if (!agent) return [];
+  if (!agent) return { kept: [], leftOut: [] };
+  const held = await heldFor(ctx, agent);
   const kept: Id<'workingAgreements'>[] = [];
+  const leftOut: string[] = [];
   for (const raw of ids) {
     const id = typeof raw === 'string' ? ctx.db.normalizeId('workingAgreements', raw) : null;
     if (!id || kept.includes(id)) continue;
     const agreement = await ctx.db.get(id);
-    if (!agreement || agreement.status !== 'active' || !binds(agreement, agent)) continue;
+    if (!agreement) continue;
+    // Held for this employee since the plan was drafted: its charter was never checked against it.
+    if (agreement.status !== 'active' || !binds(agreement, agent) || held.has(id)) {
+      if (agreement.userId === employeeOwnerScope(agent)) leftOut.push(agreement.statement);
+      continue;
+    }
     if (!agreement.appliedTo.includes(row._id)) {
       await ctx.db.patch(id, {
         appliedTo: [...agreement.appliedTo, row._id].slice(-AGREEMENT_APPLIED_KEPT),
@@ -382,13 +487,14 @@ export async function markAgreementsAppliedInTransaction(
     }
     kept.push(id);
   }
-  return kept;
+  return { kept, leftOut: [...new Set(leftOut)] };
 }
 
 /**
  * The plan as the manager's approval leaves it (W13-R29): an agreement it applied that was retired,
  * superseded or dismissed between the draft and the approval no longer binds the run the approval
- * starts, so it leaves the plan's `appliedAgreements`.
+ * starts, so it leaves the plan's `appliedAgreements`, and the plan says in `agreementsLeftOut`
+ * which it was drafted with and lost (W15-R35).
  *
  * @param ctx - The approval's mutation context.
  * @param row - The work item being approved.
@@ -402,16 +508,28 @@ export async function planAgreementsAtApproval(
   const ids = plan?.appliedAgreements;
   if (plan === undefined || ids === undefined) return undefined;
   const agent = await ctx.db.get(row.agentId);
+  const held = agent ? await heldFor(ctx, agent) : new Set<Id<'workingAgreements'>>();
   const inForce: string[] = [];
+  const leftOut: string[] = [...(plan.agreementsLeftOut ?? [])];
   for (const raw of ids) {
     const id = ctx.db.normalizeId('workingAgreements', raw);
     const agreement = id ? await ctx.db.get(id) : null;
-    if (agent && agreement?.status === 'active' && binds(agreement, agent)) inForce.push(raw);
+    // One held for this employee since the draft is not in force for it (the second pass).
+    if (agent && id && agreement?.status === 'active' && binds(agreement, agent) && !held.has(id)) {
+      inForce.push(raw);
+    } else if (agent && agreement && agreement.userId === employeeOwnerScope(agent)) {
+      leftOut.push(agreement.statement);
+    }
   }
   if (inForce.length === ids.length) return undefined;
   const settled: ExecutionPlan = { ...plan };
   delete settled.appliedAgreements;
-  return inForce.length > 0 ? { ...settled, appliedAgreements: inForce } : settled;
+  delete settled.agreementsLeftOut;
+  return {
+    ...settled,
+    ...(inForce.length > 0 ? { appliedAgreements: inForce } : {}),
+    ...(leftOut.length > 0 ? { agreementsLeftOut: [...new Set(leftOut)] } : {}),
+  };
 }
 
 /** How many distinct items a correction has governed: the one it was given on and those it was applied to. */
@@ -486,6 +604,84 @@ export async function scheduleProposalsAfterPlan(
       (correction) => correction.agreementJudgedAt === undefined || itemsGoverned(correction) >= 2,
     ) || (await staleChecksOf(ctx, agentId)).length > 0;
   if (due) await scheduleProposals(ctx, agentId);
+  await scheduleHoldChecks(ctx, agentId);
+}
+
+/**
+ * Schedule the check that lifts an employee's holds (W14-R15's lift): each agreement for every
+ * employee held for it is checked against its charter once the owner has no more employees than
+ * the check reads. Nothing for an employee with no hold, or while the owner is past the bound (no
+ * model is asked). Called where the employee's plan is stored; a charter's approval and a resume
+ * check every agreement for every employee anyway (`scheduleCharterCheck`). Real mode only.
+ *
+ * @param ctx - Mutation context.
+ * @param agentId - The employee.
+ */
+async function scheduleHoldChecks(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
+  if (SURFACE_MODE !== 'real') return;
+  const agent = await ctx.db.get(agentId);
+  const userId = agent ? employeeOwnerScope(agent) : undefined;
+  if (userId === undefined) return;
+  await scheduleCheckOfHolds(ctx, agentId, await holdsOf(ctx, userId, agentId), Date.now());
+}
+
+/**
+ * Schedule one check of the agreements an employee's holds name, unless the owner is past the
+ * employees the check reads, and stamp each hold as tried now (`refusal.judgedAt`), which is what
+ * {@link scheduleDueHoldChecks} reads. A hold whose agreement is in effect for nobody any more
+ * (retired, refused by another charter, replaced by an edit) is set aside here, with no check: it
+ * holds nothing, and left standing it would be scheduled for ever and count against the holds
+ * read (the second pass).
+ *
+ * @returns Whether a check was scheduled.
+ */
+async function scheduleCheckOfHolds(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  holds: readonly Doc<'workingAgreements'>[],
+  now: number,
+): Promise<boolean> {
+  const moot = await mootHolds(ctx, holds);
+  for (const holdId of moot) await ctx.db.patch(holdId, { status: 'dismissed' });
+  const live = holds.filter((hold) => !moot.has(hold._id));
+  const first = live[0];
+  if (first === undefined || (await pastTheCheck(ctx, first.userId))) return false;
+  for (const hold of live) {
+    if (hold.refusal) await ctx.db.patch(hold._id, { refusal: { ...hold.refusal, judgedAt: now } });
+  }
+  await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+    agentId,
+    attempt: 0,
+    agreementIds: live.flatMap((hold) => (hold.supersedes ? [hold.supersedes] : [])),
+  });
+  return true;
+}
+
+/**
+ * For the stalled-step sweep (`workLoop.resumeAgentStepsInTransaction`): schedule the check of an
+ * employee's holds not tried within `CHECK_STALE_MS`, so a hold written while the work was paused
+ * is lifted after the pause ends, whether or not the employee itself was resumed (the pause of a
+ * whole deployment resumes none by name: 14-FX's recorded gap). One check a stale window, however
+ * often the sweep runs. Real mode only.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param agentId - The employee.
+ * @param now - The sweep's time.
+ * @returns How many checks it scheduled: one or none.
+ */
+export async function scheduleDueHoldChecks(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<number> {
+  if (SURFACE_MODE !== 'real') return 0;
+  const agent = await ctx.db.get(agentId);
+  const userId = agent ? employeeOwnerScope(agent) : undefined;
+  if (userId === undefined) return 0;
+  const due = (await holdsOf(ctx, userId, agentId)).filter(
+    (hold) => (hold.refusal?.judgedAt ?? 0) <= now - CHECK_STALE_MS,
+  );
+  return (await scheduleCheckOfHolds(ctx, agentId, due, now)) ? 1 : 0;
 }
 
 /**
@@ -768,6 +964,14 @@ export interface CharterCheckInputs {
   readonly agreements: readonly Doc<'workingAgreements'>[];
   /** Whether the owner now has more employees than an every-employee check reads (W13-R28). */
   readonly pastTheCheck: boolean;
+  /** The agreements held for this employee: one the check allows is lifted (`liftHold`). */
+  readonly held: readonly Id<'workingAgreements'>[];
+  /**
+   * Whether the charter amends one approved before it (W15-R12): the agreements were checked
+   * against that one and stay in effect while this check is owed, where a first charter's are
+   * held until it is had.
+   */
+  readonly established: boolean;
 }
 
 /**
@@ -786,7 +990,7 @@ export const charterCheckInputs = internalQuery({
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (!agent || userId === undefined) return null;
-    const [charter, agreements, past] = await Promise.all([
+    const [charter, agreements, past, held, established] = await Promise.all([
       approvedBounds(ctx, agent),
       ctx.db
         .query('workingAgreements')
@@ -796,13 +1000,22 @@ export const charterCheckInputs = internalQuery({
         .order('desc')
         .take(AGREEMENTS_READ),
       pastTheCheck(ctx, userId),
+      heldForEmployee(ctx, userId, agent._id),
+      hasEarlierApprovedCharter(ctx, agent._id),
     ]);
     const asked =
       args.agreementIds === undefined
         ? agreements
         : agreements.filter((row) => args.agreementIds?.includes(row._id) === true);
     if (charter === null || asked.length === 0) return null;
-    return { userId, charter, agreements: asked, pastTheCheck: past };
+    return {
+      userId,
+      charter,
+      agreements: asked,
+      pastTheCheck: past,
+      held: [...held],
+      established,
+    };
   },
 });
 
@@ -828,6 +1041,9 @@ export const settleCharterCheck = internalMutation({
       effectiveUntil: now,
       refusal: { ...args.refusal, judgedAt: now },
     });
+    // A hold of it for this employee holds nothing now: the agreement binds nobody.
+    const hold = await holdOf(ctx, row, args.agentId);
+    if (hold !== undefined) await ctx.db.patch(hold._id, { status: 'dismissed' });
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agreement.refused',
@@ -838,13 +1054,26 @@ export const settleCharterCheck = internalMutation({
   },
 });
 
+/** One employee's hold of one agreement for every employee, if it stands. */
+async function holdOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<Doc<'workingAgreements'> | undefined> {
+  return (await holdsOf(ctx, agreement.userId, agentId)).find(
+    (row) => row.supersedes === agreement._id,
+  );
+}
+
 /**
  * Internal: hold an active agreement for every employee for one employee alone, whose newly
- * approved charter came past the employees the check reads (W14-R15): the agreement stays in
- * effect for every other employee, and this employee's own refused row, which names it, takes it
- * out of what this employee's planner and runs read. Nothing for a row no longer active or no
- * longer for every employee, or one already held for the employee. Writes `agreement.refused` on
- * the employee.
+ * approved charter it was never checked against: the charter came past the employees the check
+ * reads (W14-R15), or the check could not be had after its last retry (15-FX: it fails closed,
+ * where it left the agreement binding unchecked). The agreement stays in effect for every other
+ * employee, and this employee's own refused row, which names it, takes it out of what this
+ * employee's planner and runs read, until a check that can be had lifts it (`liftHold`). Nothing
+ * for a row no longer active or no longer for every employee, or one already held for the
+ * employee. Writes `agreement.refused` on the employee.
  */
 export const holdForEmployee = internalMutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
@@ -873,6 +1102,36 @@ export const holdForEmployee = internalMutation({
       agentId: args.agentId,
       type: 'agreement.refused',
       payload: { agreementId: heldId, everyEmployee: true, reason },
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Internal: lift one employee's hold of an agreement for every employee, once a check against its
+ * charter allowed it (W14-R15's lift): the hold is set aside (`dismissed`) and the agreement binds
+ * the employee from now. Nothing when no hold stands, or the agreement is no longer active for
+ * every employee. Writes `agreement.activated` (`afterHold`) on the employee.
+ */
+export const liftHold = internalMutation({
+  args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.agreementId);
+    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    const hold = await holdOf(ctx, row, args.agentId);
+    if (hold === undefined) return null;
+    const now = Date.now();
+    await ctx.db.patch(hold._id, { status: 'dismissed' });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agreement.activated',
+      payload: {
+        agreementId: row._id,
+        everyEmployee: true,
+        approvedVia: row.approvedVia ?? 'agreements-card',
+        afterHold: true,
+      },
       createdAt: now,
     });
     return null;
@@ -988,9 +1247,31 @@ export const settleCheck = internalMutation({
       },
       createdAt: now,
     });
+    if (everyEmployee) await checkChartersApprovedSince(ctx, row);
     return { status: 'active' };
   },
 });
+
+/**
+ * Check an agreement for every employee, as it takes effect, against each charter approved since
+ * the manager kept it (W14-R57): its own check may have read the charters before that approval,
+ * and the approval's check reads active agreements only, so neither had checked the pair.
+ */
+async function checkChartersApprovedSince(
+  ctx: MutationCtx,
+  row: Doc<'workingAgreements'>,
+): Promise<void> {
+  const since = row.approvedAt ?? row.createdAt;
+  for (const employee of await ownerEmployees(ctx, row.userId, EMPLOYEES_CHECKED)) {
+    const charter = await newestApprovedCharter(ctx, employee._id);
+    if (charter === undefined || (charter.approvedAt ?? charter.createdAt) < since) continue;
+    await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+      agentId: employee._id,
+      attempt: 0,
+      agreementIds: [row._id],
+    });
+  }
+}
 
 /**
  * Internal: the active agreements a candidate is planned with, selected in code (8 rows, 2,000
@@ -1057,7 +1338,7 @@ export async function activeAgreementsOf(
  * An agreement as the cards read it: what they draw, and not the items it was applied to, which
  * change with every plan stored.
  */
-function cardViewOf(row: Doc<'workingAgreements'>): AgreementView {
+function cardViewOf(row: Doc<'workingAgreements'>, checkable = false): AgreementView {
   return {
     _id: row._id,
     ...(row.agentId !== undefined ? { agentId: row.agentId } : {}),
@@ -1073,6 +1354,7 @@ function cardViewOf(row: Doc<'workingAgreements'>): AgreementView {
           refusal: {
             reason: row.refusal.reason,
             ...(row.refusal.clause !== undefined ? { clause: row.refusal.clause } : {}),
+            ...(checkable ? { checkable: true } : {}),
           },
         }
       : {}),
@@ -1082,8 +1364,10 @@ function cardViewOf(row: Doc<'workingAgreements'>): AgreementView {
 /**
  * The agreements on an employee's cards: its own and every employee's, proposed (with those kept
  * and waiting on their check, and without a proposal whose every-employee copy waits on its
- * check), active and refused, newest first. Public, guarded by
- * `assertOwnsAgent`; writes nothing.
+ * check), active and refused, newest first. A hold of an agreement for every employee says
+ * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
+ * check reads), and one whose agreement is in effect for nobody any more is left out. Public,
+ * guarded by `assertOwnsAgent`; writes nothing.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -1102,12 +1386,32 @@ export const listForAgent = query({
     const copied = new Set(
       rows.flatMap((row) => (awaitingCheck(row) && row.supersedes ? [row.supersedes] : [])),
     );
+    const holds = rows.filter((row) => row.refusal?.reason === 'unchecked-for-employee');
+    const [checkable, moot] = await Promise.all([
+      holds.length === 0 ? false : pastTheCheck(ctx, userId).then((past) => !past),
+      mootHolds(ctx, holds),
+    ]);
     return rows
-      .filter((row) => !(awaitingManager(row) && copied.has(row._id)))
+      .filter((row) => !(awaitingManager(row) && copied.has(row._id)) && !moot.has(row._id))
       .sort((left, right) => right.createdAt - left.createdAt)
-      .map(cardViewOf);
+      .map((row) => cardViewOf(row, checkable && holds.includes(row)));
   },
 });
+
+/** The holds whose agreement for every employee is no longer in effect, so they hold nothing. */
+async function mootHolds(
+  ctx: Pick<QueryCtx, 'db'>,
+  holds: readonly Doc<'workingAgreements'>[],
+): Promise<Set<Id<'workingAgreements'>>> {
+  const held = await Promise.all(
+    holds.map(async (hold) => (hold.supersedes ? await ctx.db.get(hold.supersedes) : null)),
+  );
+  return new Set(
+    holds
+      .filter((_, index) => held[index]?.status !== 'active' || held[index]?.agentId !== undefined)
+      .map((hold) => hold._id),
+  );
+}
 
 /**
  * The agreement a card changes, if the caller owns it and it binds the card's employee. The
@@ -1179,12 +1483,58 @@ function replacementOf(
 }
 
 /**
+ * Keep, for one employee alone, an agreement whose keep for every employee was refused past the
+ * bound (W14-R15): a new agreement of that employee's own with the same words, kind and scope,
+ * checked against its charter. The refused row stays, for the other employees' cards. Kept again
+ * for the same employee, the one already in force or waiting on its check stands.
+ */
+async function keepForOneEmployee(
+  ctx: MutationCtx,
+  refused: Doc<'workingAgreements'>,
+  kept: {
+    readonly agentId: Id<'agents'>;
+    readonly via: AgreementApprovedVia;
+    readonly now: number;
+  },
+): Promise<void> {
+  const own = [
+    ...(await bindingAgreements(ctx, refused.userId, kept.agentId, 'active')),
+    ...(await bindingAgreements(ctx, refused.userId, kept.agentId, 'proposed')).filter(
+      awaitingCheck,
+    ),
+  ];
+  const already = own.some(
+    (row) =>
+      row.agentId === kept.agentId &&
+      row.statement === refused.statement &&
+      row.scope === refused.scope &&
+      row.scopeRef === refused.scopeRef &&
+      row.personId === refused.personId,
+  );
+  if (already) return;
+  // No `supersedes`: the refused row was never in effect, and a change of a row that does not
+  // stand lapses at its check (`settleCheck`).
+  const agreementId = await ctx.db.insert('workingAgreements', {
+    ...replacementOf(refused, {
+      agentId: kept.agentId,
+      statement: refused.statement,
+      via: kept.via,
+      now: kept.now,
+    }),
+    supersedes: undefined,
+  });
+  await scheduleCheck(ctx, agreementId, kept.agentId);
+}
+
+/**
  * Keep an agreement from a card (A14): a proposal for its employee, or for every employee of the
  * owner (A10); or an employee's own active agreement, now for every employee. The keep is recorded
  * here and the check it schedules makes it active, or refused with the clause; an active one kept
- * for every employee stays in effect for its employee until its every-employee copy passes.
- * Public, guarded by `assertOwnsAgreement` first and the card's employee after. Writes the
- * agreement and schedules its check.
+ * for every employee stays in effect for its employee until its every-employee copy passes. A
+ * keep for every employee refused past the bound (`every-employee-too-many`) is kept for the
+ * card's employee alone (the control behind "You can keep it for a single employee instead",
+ * W14-R15). Public, guarded by `assertOwnsAgreement` first and the card's employee after. Writes
+ * the agreement and schedules its check.
  */
 export const keep = mutation({
   args: {
@@ -1197,6 +1547,11 @@ export const keep = mutation({
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
     const now = Date.now();
     const ownEmployees = agreement.agentId !== undefined;
+    if (agreement.refusal?.reason === 'every-employee-too-many' && !args.forEveryEmployee) {
+      if (agreement.status !== 'refused') throw new ConvexError(AGREEMENT_MOVED_ON);
+      await keepForOneEmployee(ctx, agreement, { agentId: args.agentId, via: args.via, now });
+      return { ok: true };
+    }
     if (awaitingManager(agreement) && !(args.forEveryEmployee && ownEmployees)) {
       await ctx.db.patch(agreement._id, { approvedAt: now, approvedVia: args.via });
       await checkOrRefuse(ctx, agreement, args.agentId, now);
@@ -1292,13 +1647,26 @@ export const dismiss = mutation({
 
 /**
  * Try the check of a kept agreement again from a card (W13-R30): one whose check could not be had,
- * whose card says so once it is stale. Public, guarded by `assertOwnsAgreement` first and the
- * card's employee after; refused for one no longer waiting on its check. Schedules the check.
+ * whose card says so once it is stale; or check an agreement for every employee held for the
+ * card's employee against its charter (W14-R15's lift), refused while the owner has more employees
+ * than the check reads. Public, guarded by `assertOwnsAgreement` first and the card's employee
+ * after; refused for one neither waiting on its check nor a hold. Schedules the check.
  */
 export const recheck = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+    const hold =
+      agreement.status === 'refused' && agreement.refusal?.reason === 'unchecked-for-employee';
+    if (hold && agreement.supersedes !== undefined) {
+      if (await pastTheCheck(ctx, agreement.userId)) throw new ConvexError(HOLD_PAST_THE_CHECK);
+      await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+        agentId: args.agentId,
+        attempt: 0,
+        agreementIds: [agreement.supersedes],
+      });
+      return { ok: true };
+    }
     if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
     await scheduleCheck(ctx, agreement._id, args.agentId);
     return { ok: true };

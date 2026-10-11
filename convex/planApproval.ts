@@ -12,12 +12,9 @@ import {
   scheduleProposalsAfterPlan,
 } from './workingAgreements';
 import { appendEvent } from './eventLog';
-import {
-  approvePlanInTransaction,
-  MANAGER_FEEDBACK_MAX_CHARS,
-  sendBackToDrafting,
-  type ManagerAnswerRow,
-} from './work';
+import { sendBackToDrafting } from './planRedraft';
+import { MANAGER_FEEDBACK_MAX_CHARS } from './work';
+import { approvePlanInTransaction, type ManagerAnswerRow } from './managerDecisions';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
@@ -62,7 +59,8 @@ async function withAppliedCorrections(
 /**
  * The plan as stored with the working agreements it applied: only ids the planner was offered
  * that are still active and bind this employee are kept, and each kept one lists the work item in
- * `appliedTo`. A plan that names none is stored as it came.
+ * `appliedTo`; one of the owner's that no longer binds the employee is named in
+ * `agreementsLeftOut`. A plan that names none is stored as it came.
  *
  * @param ctx - Mutation context.
  * @param row - The work item whose plan is being stored.
@@ -75,8 +73,13 @@ async function withAppliedAgreements(
 ): Promise<ExecutionPlan> {
   if (!plan || typeof plan !== 'object' || plan.appliedAgreements === undefined) return plan;
   const { appliedAgreements, ...rest } = plan;
-  const applied = await markAgreementsAppliedInTransaction(ctx, row, appliedAgreements);
-  return applied.length > 0 ? { ...rest, appliedAgreements: applied } : rest;
+  const { kept, leftOut } = await markAgreementsAppliedInTransaction(ctx, row, appliedAgreements);
+  return {
+    ...rest,
+    ...(kept.length > 0 ? { appliedAgreements: kept } : {}),
+    // What the planner read and the plan may not carry: said on the plan by its words (W15-R35).
+    ...(leftOut.length > 0 ? { agreementsLeftOut: leftOut } : {}),
+  };
 }
 
 /**
@@ -229,7 +232,8 @@ const MANUAL_ESTIMATE_MAX_MINUTES = 10_000;
 /**
  * Public, owner-guarded (`assertOwnsWorkItem`): approves an item's plan, answering any charter
  * question the card asked, and schedules the run; with `keepNote`, also keeps the note as a working
- * agreement and schedules its check, in the same transaction.
+ * agreement and schedules its check, in the same transaction: for later work on the item's
+ * surface, or, with `keepNoteFor: 'requester'`, for later asks from the item's requester.
  */
 export const approvePlan = mutation({
   args: {
@@ -247,6 +251,13 @@ export const approvePlan = mutation({
      * for this employee in the same click, active once its check against the charter answers.
      */
     keepNote: v.optional(v.boolean()),
+    /**
+     * What a kept note is kept for (15-FX, the person scope's first writer): later work of this
+     * kind (the default, and what a page from before this argument means), or later asks from the
+     * item's requester, a person the manager confirmed. Optional, so an older page's call
+     * validates.
+     */
+    keepNoteFor: v.optional(v.union(v.literal('kind'), v.literal('requester'))),
   },
   handler: async (ctx, args) => {
     const row = await assertOwnsWorkItem(ctx, args.workItemId);
@@ -270,7 +281,7 @@ export const approvePlan = mutation({
     await approvePlanInTransaction(ctx, row, 'dashboard', undefined, answers);
     if (args.keepNote === true) {
       if (!args.note?.trim()) throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
-      await keepPlanNoteInTransaction(ctx, row, args.note);
+      await keepPlanNoteInTransaction(ctx, row, args.note, args.keepNoteFor ?? 'kind');
     }
     return { ok: true };
   },

@@ -1,0 +1,138 @@
+{
+  "reference": [
+    {
+      "url": "https://docs.atlassian.com/ConfluenceServer/rest/8.9.3/",
+      "read": "2026-10-10 (undated: GET /rest/api/content with spaceKey, type, status, expand, start and limit; GET /rest/api/space/{spaceKey}; the Version schema's when and number)"
+    },
+    {
+      "url": "https://developer.atlassian.com/server/confluence/pagination-in-the-rest-api/",
+      "read": "2026-10-10 (last updated 2018-10-02, context: the envelope results, start, limit, size and _links.next, base, context)"
+    },
+    {
+      "url": "https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/",
+      "read": "2026-10-10 (last updated 2022-05-02, context: a listed page's id, status, title and _links.webui)"
+    },
+    {
+      "url": "https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html",
+      "read": "2026-10-10 (last modified 2025-03-21, context: the token as a bearer)"
+    }
+  ],
+  "unverified": "Whether Data Center answers status=archived (V15-1b): the reference documents current, trashed and any. content-archived-0.json encodes a server that lists archived pages; the reader's test also answers the request with a refusal.",
+  "authorization": "Bearer fixture-confluence-pat",
+  "unauthorised": {
+    "status": 401,
+    "body": "unauthorised.json"
+  },
+  "notFound": {
+    "status": 404,
+    "body": "not-found.json"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/space/OPS",
+      "status": 200,
+      "body": "space-ops.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content",
+      "query": [
+        [
+          "spaceKey",
+          "OPS"
+        ],
+        [
+          "type",
+          "page"
+        ],
+        [
+          "status",
+          "current"
+        ],
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "start",
+          "0"
+        ],
+        [
+          "limit",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "content-current-0.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content",
+      "query": [
+        [
+          "spaceKey",
+          "OPS"
+        ],
+        [
+          "type",
+          "page"
+        ],
+        [
+          "status",
+          "current"
+        ],
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "start",
+          "2"
+        ],
+        [
+          "limit",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "content-current-2.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content",
+      "query": [
+        [
+          "spaceKey",
+          "OPS"
+        ],
+        [
+          "type",
+          "page"
+        ],
+        [
+          "status",
+          "archived"
+        ],
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "start",
+          "0"
+        ],
+        [
+          "limit",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "content-archived-0.json"
+    }
+  ]
+}

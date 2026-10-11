@@ -1,0 +1,49 @@
+{
+  "id": "0a1b2c3d-0000-4000-8000-000000000002",
+  "name": "Escalation-2027.aspx",
+  "webUrl": "https://acme.sharepoint.com/sites/Runbooks/SitePages/Escalation-2027.aspx",
+  "title": "Escalation paths 2027",
+  "pageLayout": "article",
+  "promotionKind": "page",
+  "showComments": true,
+  "showRecommendedPages": false,
+  "createdDateTime": "2026-06-02T08:00:00Z",
+  "lastModifiedDateTime": "2026-10-05T07:00:00Z",
+  "eTag": "\"{0A1B2C3D-0000-4000-8000-000000000002},0\"",
+  "createdBy": {
+    "user": {
+      "displayName": "Mira Castillo"
+    }
+  },
+  "lastModifiedBy": {
+    "user": {
+      "displayName": "Mira Castillo"
+    }
+  },
+  "publishingState": {
+    "level": "checkout",
+    "versionId": "0.4"
+  },
+  "canvasLayout": {
+    "horizontalSections": [
+      {
+        "layout": "twoColumns",
+        "id": "1",
+        "emphasis": "none",
+        "columns": [
+          {
+            "id": "1",
+            "width": 6,
+            "webparts": [
+              {
+                "@odata.type": "#microsoft.graph.textWebPart",
+                "id": "wp",
+                "innerHtml": "<p>Draft: the 2027 duty roster.</p>"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

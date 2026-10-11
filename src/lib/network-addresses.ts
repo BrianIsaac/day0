@@ -68,14 +68,62 @@ for (const [network, prefix] of [
 const UNIQUE_LOCAL_V6 = new BlockList();
 UNIQUE_LOCAL_V6.addSubnet('fc00::', 7, 'ipv6');
 
+/** NAT64's well-known prefix (RFC 6052): an IPv4 address carried in the last 32 bits. */
+const NAT64_PREFIX = new BlockList();
+NAT64_PREFIX.addSubnet('64:ff9b::', 96, 'ipv6');
+
+/** The range a fake-IP proxy answers every name from (RFC 2544's benchmarking range). */
+const FAKE_IP_RANGE = new BlockList();
+FAKE_IP_RANGE.addSubnet('198.18.0.0', 15, 'ipv4');
+
+/** The 16-bit groups of an IPv6 address, `::` and a dotted tail expanded. */
+function ipv6Groups(address: string): number[] {
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(address);
+  const text =
+    dotted === null
+      ? address
+      : `${dotted[1]}${((Number(dotted[2]) << 8) | Number(dotted[3])).toString(16)}:${((Number(dotted[4]) << 8) | Number(dotted[5])).toString(16)}`;
+  const [head = '', tail] = text.split('::');
+  const groups = (part: string): number[] =>
+    part === '' ? [] : part.split(':').map((group) => parseInt(group, 16));
+  const left = groups(head);
+  const right = tail === undefined ? [] : groups(tail);
+  return [...left, ...new Array<number>(8 - left.length - right.length).fill(0), ...right];
+}
+
+/**
+ * The IPv4 address a NAT64 address carries (`64:ff9b::808:808` is 8.8.8.8), or nothing for any
+ * other address. An IPv6-only network answers every IPv4 host this way, so the address is as
+ * public, or as private, as the one it carries (W14-R43).
+ */
+function nat64Embedded(address: string): string | undefined {
+  if (isIP(address) !== 6 || !NAT64_PREFIX.check(address, 'ipv6')) return undefined;
+  const groups = ipv6Groups(address);
+  const high = groups[6] ?? 0;
+  const low = groups[7] ?? 0;
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
 /** Whether one resolved address is outside every public range. */
 export function isNonPublicAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return NON_PUBLIC_ADDRESSES.check(address, 'ipv4');
   if (family === 6) {
+    const embedded = nat64Embedded(address);
+    if (embedded !== undefined) return isNonPublicAddress(embedded);
     return !GLOBAL_UNICAST_V6.check(address, 'ipv6') || NON_PUBLIC_ADDRESSES.check(address, 'ipv6');
   }
   return true;
+}
+
+/**
+ * Whether an address is one a fake-IP proxy hands out (198.18.0.0/15): such a proxy answers every
+ * name, public or not, from this range and maps it back itself, so the address says nothing of
+ * what it reaches. It stays non-public; a refusal names it so the operator knows the cause
+ * (W14-R43).
+ */
+export function isFakeIpAddress(address: string): boolean {
+  return isIP(address) === 4 && FAKE_IP_RANGE.check(address, 'ipv4');
 }
 
 /**
@@ -86,6 +134,10 @@ export function isNonPublicAddress(address: string): boolean {
 export function isDiallablePrivateAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return !NEVER_DIALLED_V4.check(address, 'ipv4');
-  if (family === 6) return UNIQUE_LOCAL_V6.check(address, 'ipv6') || !isNonPublicAddress(address);
+  if (family === 6) {
+    const embedded = nat64Embedded(address);
+    if (embedded !== undefined) return isDiallablePrivateAddress(embedded);
+    return UNIQUE_LOCAL_V6.check(address, 'ipv6') || !isNonPublicAddress(address);
+  }
   return false;
 }

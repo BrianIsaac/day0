@@ -2,6 +2,7 @@
 
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
+import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import {
   proposePersonInTransaction,
@@ -10,6 +11,7 @@ import {
 } from '../../convex/peopleProposals';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { managerIdentity } from './fakes/manager-identity';
 import {
   graphRows,
   seedEmployee,
@@ -193,6 +195,66 @@ describe('peopleProposals', (): void => {
       proposedAt: 10,
     });
     expect(held).toBe((await graphRows(harness)).people[0]?._id);
+  });
+
+  it('does not propose a change the manager dismissed again at the next extraction of the same page, and still proposes a different one (W14-R52)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await seedPerson(harness, 'Ana Tan', {
+      primaryEmail: 'ana@acme.test',
+      title: 'Controller',
+    });
+    const fromPage = (title: string): ProposedPerson =>
+      priya(agentId, {
+        name: 'Ana Tan',
+        email: 'ana@acme.test',
+        title,
+        evidence: [{ quote: `Ana Tan, ${title}`, where: 'Team page', at: 5 }],
+      });
+    await propose(harness, fromPage('Finance lead'));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toMatchObject({
+      title: 'Finance lead',
+    });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.personChanges.dismiss, { personId, agentId });
+    await propose(harness, fromPage('Finance lead'));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toBeUndefined();
+    await propose(harness, fromPage('finance  lead'));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toBeUndefined();
+    await propose(harness, fromPage('Head of finance'));
+    expect((await graphRows(harness)).people[0]?.proposedChange).toMatchObject({
+      title: 'Head of finance',
+    });
+  });
+
+  it("gives a proposal no plus-tagged spelling of an address the manager said is someone else's, as address or identity (W14-R54)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const personId = await seedPerson(harness, 'Mei Lin', {
+      status: 'unverified',
+      notTheirAddresses: ['mei@kestrel.test'],
+    });
+    await seedIdentity(harness, personId, {
+      provider: 'slack',
+      externalId: 'U0MEI',
+      providerWorkspaceId: 'T1',
+    });
+    await propose(
+      harness,
+      priya(agentId, {
+        name: 'Mei Lin',
+        email: 'mei+hr@kestrel.test',
+        identities: [
+          { provider: 'slack', externalId: 'U0MEI', workspaceId: 'T1' },
+          { provider: 'email', externalId: 'mei+hr@kestrel.test' },
+        ],
+      }),
+    );
+    const { people, identities } = await graphRows(harness);
+    expect(people).toHaveLength(1);
+    expect(people[0]?.primaryEmail).toBeUndefined();
+    expect(identities.map((row) => row.provider)).toEqual(['slack']);
   });
 
   it('writes no address onto a confirmed person matched by an identity', async (): Promise<void> => {

@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -28,13 +28,14 @@ function erased(statement: ts.ImportDeclaration): boolean {
 }
 
 /**
- * The project files one module imports at runtime: relative specifiers only (a package or an
- * alias is not a module of this tree's graph), type-only imports and re-exports left out.
+ * The relative specifiers a module's text imports at runtime, in source order: a package or an
+ * alias is not a module of this tree's graph, and a type-only import or re-export is erased.
  *
- * @param file - An absolute path to a `.ts` or `.tsx` module.
+ * @param text - The module's source.
+ * @param file - Its name, for the parser's choice of syntax (`.tsx` reads JSX).
  */
-function runtimeImports(file: string): string[] {
-  const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest);
+export function runtimeSpecifiers(text: string, file = 'module.ts'): string[] {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest);
   const found: string[] = [];
   for (const statement of source.statements) {
     const specifier = ts.isImportDeclaration(statement)
@@ -45,12 +46,104 @@ function runtimeImports(file: string): string[] {
         ? statement.moduleSpecifier
         : undefined;
     if (specifier === undefined || !ts.isStringLiteral(specifier)) continue;
-    if (!specifier.text.startsWith('.')) continue;
-    const base = resolve(dirname(file), specifier.text);
+    if (specifier.text.startsWith('.')) found.push(specifier.text);
+  }
+  return found;
+}
+
+/**
+ * The project files one module imports at runtime, each resolved as the bundlers resolve a
+ * relative specifier; one that names no file of the tree is left out.
+ *
+ * @param file - An absolute path to a `.ts` or `.tsx` module.
+ */
+function runtimeImports(file: string): string[] {
+  const found: string[] = [];
+  for (const specifier of runtimeSpecifiers(readFileSync(file, 'utf8'), file)) {
+    const base = resolve(dirname(file), specifier);
     const target = CANDIDATES.map((suffix) => `${base}${suffix}`).find((path) => existsSync(path));
     if (target !== undefined) found.push(target);
   }
   return found;
+}
+
+/**
+ * The cycles of a module graph: its strongly connected components of more than one module, and
+ * any module that imports itself, each sorted by name and the list sorted by its first name, so
+ * a failure reads the same on every run. Tarjan's walk, iterative so a deep chain cannot
+ * overflow the stack.
+ *
+ * @param graph - Each module with the modules it imports; an import of a module the graph does
+ *   not hold is no edge.
+ */
+export function importCycles(graph: ReadonlyMap<string, readonly string[]>): string[][] {
+  const order = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const cycles: string[][] = [];
+  const edgesOf = (module: string): readonly string[] =>
+    (graph.get(module) ?? []).filter((next) => graph.has(next));
+
+  for (const root of graph.keys()) {
+    if (order.has(root)) continue;
+    const walk: { readonly module: string; next: number }[] = [{ module: root, next: 0 }];
+    order.set(root, order.size);
+    low.set(root, order.get(root)!);
+    stack.push(root);
+    onStack.add(root);
+    for (let frame = walk.at(-1); frame !== undefined; frame = walk.at(-1)) {
+      const edges = edgesOf(frame.module);
+      const target = edges[frame.next];
+      if (target !== undefined) {
+        frame.next += 1;
+        if (!order.has(target)) {
+          order.set(target, order.size);
+          low.set(target, order.get(target)!);
+          stack.push(target);
+          onStack.add(target);
+          walk.push({ module: target, next: 0 });
+        } else if (onStack.has(target)) {
+          low.set(frame.module, Math.min(low.get(frame.module)!, order.get(target)!));
+        }
+        continue;
+      }
+      walk.pop();
+      const parent = walk.at(-1);
+      if (parent !== undefined)
+        low.set(parent.module, Math.min(low.get(parent.module)!, low.get(frame.module)!));
+      if (low.get(frame.module) !== order.get(frame.module)) continue;
+      const component: string[] = [];
+      for (let member = stack.pop(); member !== undefined; member = stack.pop()) {
+        onStack.delete(member);
+        component.push(member);
+        if (member === frame.module) break;
+      }
+      if (component.length > 1 || edges.includes(frame.module)) cycles.push(component.sort());
+    }
+  }
+  return cycles.sort((a, b) => a[0]!.localeCompare(b[0]!));
+}
+
+/**
+ * The runtime import graph among the Convex modules: every `convex/*.ts` by its module name
+ * (`work`, `planApproval`) with the sibling modules it imports a value from. The generated files
+ * sit in their own directory and are no node of it, and neither is anything under `src/`, which
+ * `convex/` only ever imports downwards (the standard's 10.1).
+ */
+export function convexRuntimeImports(): Map<string, string[]> {
+  const convex = join(ROOT, 'convex');
+  const files = readdirSync(convex).filter(
+    (file) => file.endsWith('.ts') && !file.endsWith('.d.ts'),
+  );
+  return new Map(
+    files.map((file): [string, string[]] => [
+      basename(file, '.ts'),
+      runtimeImports(join(convex, file))
+        .filter((target) => dirname(target) === convex)
+        .map((target) => basename(target, '.ts')),
+    ]),
+  );
 }
 
 /**

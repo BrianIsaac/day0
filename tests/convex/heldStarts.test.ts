@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { AUTHORING_LEASE_MS } from '../../src/lib/skill-authoring';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { approvedSkill } from './fakes/skill-work';
@@ -262,6 +263,42 @@ describe('a held start the resume does not take up (W13-R46)', (): void => {
     await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
     expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toEqual([]);
     expect(await eventsOf(harness, 'skill.authoring-hold-spent')).toHaveLength(1);
+  });
+
+  it('keeps the hold of a skill a run holds at the resume, and starts it once that run has died with attempts left (W14-R51)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const skillId = await approvedSkill(harness);
+    const agentId = await agentOf(harness, skillId);
+    await pause(harness, agentId);
+    await harness.mutation(internal.skills.claimAuthoringRun, { skillId });
+    // A run holds the skill when the pause ends (a press after the pause was lifted elsewhere).
+    const claimedAt = Date.now();
+    await harness.run(async (ctx) => {
+      const authoringRunId = await ctx.db.insert('events', {
+        agentId,
+        type: 'skill.authoring',
+        payload: { skillId },
+        createdAt: claimedAt,
+      });
+      await ctx.db.patch(skillId, { authoringRunId, authoringClaimedAt: claimedAt });
+    });
+    await harness.withIdentity(OWNER).mutation(api.agents.resume, { agentId });
+
+    // Nothing is started beside the live run, and the hold is not spent: the run may yet die.
+    expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toEqual([]);
+    expect(await eventsOf(harness, 'skill.authoring-hold-spent')).toEqual([]);
+
+    // The run dies holding its claim; once the claim's lease has passed, the sweep starts it.
+    vi.setSystemTime(claimedAt + AUTHORING_LEASE_MS + 1);
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toEqual([
+      { skillId },
+    ]);
+    // And only once: the sweep after it starts nothing more.
+    await harness.mutation(internal.work.resumeStalledSteps, {});
+    expect(await scheduled(harness, 'skillActions:authorAndRegisterSkillInternal')).toHaveLength(1);
   });
 
   it('spends the hold of a system no longer waiting to be found, saying why', async (): Promise<void> => {

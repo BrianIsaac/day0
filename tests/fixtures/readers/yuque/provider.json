@@ -1,0 +1,119 @@
+{
+  "reference": [
+    {
+      "url": "https://raw.githubusercontent.com/yuque/yuque-mcp-server/main/scripts/yuque-openapi.json",
+      "read": "2026-10-10 (Yuque's own copy of its OpenAPI, info.version 2.0.1: GET /api/v2/repos/{group_login}/{book_slug}/docs with offset, limit (maximum 100) and deleted; GET .../docs/{id}; V2Doc and V2DocDetail: type, format, status 0 draft and 1 published, body, body_html, content_updated_at, deleted_at; the X-Auth-Token header)"
+    },
+    {
+      "url": "https://www.yuque.com/yuque/developer/api",
+      "read": "2026-10-09 by the wave file's pane (undated: tokens on a paid plan; 5,000 requests an hour)"
+    }
+  ],
+  "unverified": "The bodies of Yuque's refusals (the spec gives each status a description and no schema), whether deleted=true lists only the deleted documents, and how a status is typed in an answer (the spec says a string) are as the spec prints them, not as a space sent them.",
+  "authorization": "unused",
+  "unauthorised": {
+    "status": 401,
+    "body": "unauthorised.json"
+  },
+  "notFound": {
+    "status": 404,
+    "body": "not-found.json"
+  },
+  "tokenHeader": {
+    "name": "x-auth-token",
+    "value": "fixture-yuque-token"
+  },
+  "routes": [
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs",
+      "query": [
+        [
+          "offset",
+          "0"
+        ],
+        [
+          "limit",
+          "*"
+        ],
+        [
+          "deleted",
+          "false"
+        ]
+      ],
+      "status": 200,
+      "body": "docs-0.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs",
+      "query": [
+        [
+          "offset",
+          "3"
+        ],
+        [
+          "limit",
+          "*"
+        ],
+        [
+          "deleted",
+          "false"
+        ]
+      ],
+      "status": 200,
+      "body": "docs-3.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs",
+      "query": [
+        [
+          "offset",
+          "0"
+        ],
+        [
+          "limit",
+          "*"
+        ],
+        [
+          "deleted",
+          "true"
+        ]
+      ],
+      "status": 200,
+      "body": "docs-deleted-0.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs/210000001",
+      "status": 200,
+      "body": "doc-close.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs/210000002",
+      "status": 200,
+      "body": "doc-tile.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs/210000004",
+      "status": 200,
+      "body": "doc-draft.json"
+    },
+    {
+      "method": "GET",
+      "host": "acme.yuque.com",
+      "path": "/api/v2/repos/revops/runbooks/docs/210000005",
+      "status": 200,
+      "body": "doc-ops.json"
+    }
+  ]
+}

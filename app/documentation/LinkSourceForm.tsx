@@ -1,17 +1,28 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useAction } from 'convex/react';
+import { useAction, useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
+import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
 import { DOCS_NOTION_LOCATOR, serverKindHelp } from '@/docs/components';
 import { feishuLocator, feishuReaderSecret, type FeishuRegion } from '@/docs/feishu-source';
 import { REPOSITORY_URL } from '@/setup/quickstart';
 import { Button } from '../components/Button';
 import { INPUT_CLASS } from '../components/Field';
 import { refusalText } from '../components/use-change';
+import { HELP, LABEL } from './field-classes';
+import { ReaderCredentialFields, ReaderKindHelp } from './ReaderFields';
+import {
+  isReaderKind,
+  READER_KINDS,
+  READER_WHERE,
+  readerLinkValues,
+  type ReaderKind,
+} from './reader-link';
+import { TRUST_HELP, TRUST_NAMES } from './SourceTable';
 
 /** The kinds of location the backend reads, as `docSources.link` takes them. */
-export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu';
+export type SourceKind = 'folder' | 'git' | 'urls' | 'mcp' | 'feishu' | ReaderKind;
 
 /** The MCP servers a documentation source can be read from. */
 export type ServerKind = 'notion' | 'confluence' | 'drive' | 'generic';
@@ -23,6 +34,7 @@ const SOURCE_KINDS: ReadonlyArray<readonly [SourceKind, string]> = [
   ['urls', 'List of URLs'],
   ['mcp', 'MCP server'],
   ['feishu', 'Feishu or Lark wiki or folder'],
+  ...READER_KINDS,
 ];
 
 /** The regions a Feishu source can be in, with the name the manager reads. */
@@ -41,12 +53,6 @@ const SERVER_KINDS: ReadonlyArray<readonly [ServerKind, string]> = [
 
 /** The label the form starts with, for the documentation folder it starts on. */
 const FOLDER_LABEL = 'Team folder';
-
-/** A field's label above it. */
-const LABEL = 'text-[13px] font-medium text-[var(--color-fg-2)]';
-
-/** A field's help beneath it. */
-const HELP = 'text-[13px] text-[var(--color-muted)]';
 
 /**
  * The location a kind starts from: the documentation folder itself for a folder, nothing for the
@@ -80,8 +86,9 @@ export const FEISHU_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/reader
 /**
  * The secret a link sends for a source kind (E-74).
  *
- * An MCP server's connection secret is required, and so is a Feishu app's
- * ID and secret (joined by the form); a git repository or a list of wiki
+ * An MCP server's connection secret is required, and so are a Feishu app's
+ * ID and secret (joined by the form) and the secret of each of wave 15's
+ * reader kinds (`readerLinkValues`); a git repository or a list of wiki
  * pages may carry the reader's own secret, sent only when one was typed; a
  * folder takes none.
  *
@@ -89,7 +96,7 @@ export const FEISHU_GUIDE_URL = `${REPOSITORY_URL}/blob/main/docs/running/reader
  * @param typed - What the secret field held, or the Feishu app's ID and secret joined.
  */
 export function credentialForLink(kind: SourceKind, typed: string): string | undefined {
-  if (kind === 'mcp' || kind === 'feishu') return typed;
+  if (kind === 'mcp' || kind === 'feishu' || isReaderKind(kind)) return typed;
   return (kind === 'git' || kind === 'urls') && typed !== '' ? typed : undefined;
 }
 
@@ -129,7 +136,7 @@ export function ReaderSecretField(props: { kind: SourceKind }): React.ReactNode 
 /**
  * A Feishu source's region and the app it reads as: the app's ID, and its
  * secret, entered here and encrypted when submitted. Uncontrolled, so the
- * form's reset clears the secret the moment it is submitted.
+ * form's reset clears the secret once the source is linked, and a refused link keeps it.
  *
  * @returns The region choice and the two app fields.
  */
@@ -195,8 +202,8 @@ export function FeishuAppFields(): React.ReactNode {
 /**
  * Say what this source kind will actually reach, and what has to be running.
  *
- * Four of the five kinds are read by the backend itself and depend on nothing
- * else; the fifth reaches an MCP server, and only one of those servers is one
+ * Every kind but one is read by the backend itself and depends on nothing
+ * else; the MCP kind reaches an MCP server, and only one of those servers is one
  * day0 bundles a component for. Saying so in the form is what keeps a reader
  * from assuming every documentation source needs a container started. A
  * Feishu source also says where IT's guide to its app is.
@@ -208,6 +215,7 @@ export function SourceKindHelp(props: {
   kind: SourceKind;
   serverKind: ServerKind;
 }): React.ReactNode {
+  if (isReaderKind(props.kind)) return <ReaderKindHelp kind={props.kind} />;
   if (props.kind === 'feishu') {
     return (
       <p className={HELP}>
@@ -232,12 +240,16 @@ export function SourceKindHelp(props: {
 /**
  * The form that links one documentation location for all the owner's employees, in the kinds
  * the backend reads (`docSources.link`): a folder of Markdown, a git repository, a list of URLs,
- * an MCP server (Notion, Confluence, Google Drive or generic resources), or a Feishu or Lark
- * wiki space or folder. A secret field is write-only: the form is reset the moment it is
- * submitted. A refusal is said under the form.
+ * an MCP server (Notion, Confluence, Google Drive or generic resources), a Feishu or Lark wiki
+ * space or folder, a SharePoint site, a Confluence space (Cloud or Data Center), a Yuque
+ * repository, or a Google Drive folder. A secret field is write-only: the form is reset once the
+ * source is linked, and never shows a stored secret. A refused link keeps what was typed, the
+ * secret with it, so it can be corrected (W14-R38); the refusal is said under the form.
  */
 export function LinkSourceForm(): React.ReactNode {
   const link = useAction(api.docSources.link);
+  const setAuthority = useMutation(api.docStatus.setSourceAuthority);
+  const [authority, setAuthorityChoice] = useState<SourceAuthority>('team');
   const [kind, setKind] = useState<SourceKind>('folder');
   const [label, setLabel] = useState(FOLDER_LABEL);
   const [locator, setLocator] = useState('.');
@@ -251,27 +263,44 @@ export function LinkSourceForm(): React.ReactNode {
     const form = event.currentTarget;
     const values = new FormData(form);
     const region: FeishuRegion = values.get('region') === 'lark' ? 'lark' : 'feishu';
+    const reader = isReaderKind(kind) ? readerLinkValues(kind, locator, values) : undefined;
     const credential =
       kind === 'feishu'
         ? feishuReaderSecret(
             String(values.get('appId') ?? ''),
             String(values.get('appSecret') ?? ''),
           )
-        : String(values.get('credential') || '');
-    form.reset();
+        : (reader?.credential ?? String(values.get('credential') || ''));
     setBusy(true);
     setError(null);
     try {
-      await link({
+      const sourceId = await link({
         label,
         kind,
-        locator: kind === 'feishu' ? feishuLocator(region, locator) : locator,
+        locator: kind === 'feishu' ? feishuLocator(region, locator) : (reader?.locator ?? locator),
         serverKind: kind === 'mcp' ? serverKind : undefined,
         credential: credentialForLink(kind, credential),
       });
+      // Only now: a refused link keeps its fields, the secret among them, to be corrected. The
+      // source is linked from here on, whatever becomes of its trust, so the form is cleared
+      // first and a second press cannot link the same location again.
+      form.reset();
       const cleared = linkFormAfterLink();
       setLabel(cleared.label);
       setLocator(cleared.locator);
+      setAuthorityChoice('team');
+      // A new source is a team source (A19); another trust is set on it once it is linked.
+      if (authority !== 'team') {
+        try {
+          await setAuthority({ sourceId, authority });
+        } catch {
+          // The failure is the trust's alone, and the table's Trust select is where it is put
+          // right: said as that, never as a link that did not happen.
+          setError(
+            `The location was linked, as a team source: its trust could not be set to ${TRUST_NAMES[authority].toLowerCase()}. Set it in the Trust column of the table.`,
+          );
+        }
+      }
     } catch (failure) {
       setError(refusalText(failure, 'The location was not linked.'));
     } finally {
@@ -340,7 +369,9 @@ export function LinkSourceForm(): React.ReactNode {
                   ? DOCS_NOTION_LOCATOR
                   : kind === 'feishu'
                     ? "Wiki space ID, or a Drive folder's address"
-                    : 'Location URL, or one URL per line'
+                    : isReaderKind(kind)
+                      ? READER_WHERE[kind]
+                      : 'Location URL, or one URL per line'
             }
             className={`${INPUT_CLASS} min-h-20 w-full`}
           />
@@ -380,8 +411,31 @@ export function LinkSourceForm(): React.ReactNode {
           </div>
         ) : null}
         {kind === 'feishu' ? <FeishuAppFields /> : null}
+        {/* Keyed by the kind, so a secret typed for one kind is never left in another's field. */}
+        {isReaderKind(kind) ? <ReaderCredentialFields key={kind} kind={kind} /> : null}
         <ReaderSecretField kind={kind} />
         <SourceKindHelp kind={kind} serverKind={serverKind} />
+        <div className="grid gap-1.5">
+          <label htmlFor="source-trust" className={LABEL}>
+            Trust
+          </label>
+          <select
+            id="source-trust"
+            value={authority}
+            onChange={(event) => setAuthorityChoice(event.target.value as SourceAuthority)}
+            aria-describedby="source-trust-help"
+            className={`${INPUT_CLASS} w-full`}
+          >
+            {SOURCE_AUTHORITIES.map((value) => (
+              <option key={value} value={value}>
+                {TRUST_NAMES[value]}
+              </option>
+            ))}
+          </select>
+          <p id="source-trust-help" className={HELP}>
+            {TRUST_HELP}
+          </p>
+        </div>
         <p role="alert" className="text-[13px] text-[var(--color-danger)]">
           {error ?? ''}
         </p>

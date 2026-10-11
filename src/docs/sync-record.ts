@@ -4,10 +4,22 @@
  * A page one sync cannot read keeps its last stored version (P5-11), and the
  * run says which pages those were, so the operator can see why a page did not
  * change. The record lives on the run's own `unread` field: a count of every
- * such page and the first `MAX_UNREAD_LISTED` of them by name, each reason on
- * one bounded line. The source's line on the documentation page carries the
- * same record on one line. The run's `reason` says only why it ended short,
- * so a rewrite of the reason never touches the record (D D1 (a)).
+ * such page and `MAX_UNREAD_LISTED` of them by name, each reason on one
+ * bounded line. The source's line on the documentation page carries the same
+ * record on one line. The run's `reason` says only why it ended short, so a
+ * rewrite of the reason never touches the record (D D1 (a)).
+ *
+ * Two kinds of page are in the record, and it keeps them apart (W14-R40): a
+ * page a read failed on (forbidden, too large, gone), which keeps its last
+ * version and is read again; and a page of a kind Day0 does not read (a
+ * sheet, a slide deck, a PDF), which no sync will read. The failures are
+ * named first, so a wiki's sheets never hide its one forbidden document behind
+ * "and N more", and only a failure is said to be read again. Each entry says
+ * which it is (`kind`, D-7), as its reader said it, and the record counts the
+ * pages of a kind apart (`notRead`), so neither is read back out of a reason's
+ * words: a failed page whose own title held "which Day0 does not read" was
+ * classed a kind and its failure hidden (W15-R29). An entry written before
+ * 0.19.0 holds no kind and reads as a failure.
  *
  * Releases before 0.6.0 wrote the record as text below the reason; the
  * `sync-runs-unread` migration moved each onto the field at 0.6.0, and from
@@ -22,16 +34,31 @@ export const MAX_UNREAD_LISTED = 10;
 /** The longest a page's reference or reason in a record may be. */
 const MAX_RECORD_LINE = 240;
 
-/** The pages a sync run could not read: how many, and the first of them by name. */
+/**
+ * The pages a sync run could not read: how many, and some of them by name, a failed read ahead
+ * of a kind Day0 does not read.
+ */
 export interface UnreadRecord {
   readonly count: number;
   readonly pages: UnreadPage[];
+  /** How many of `count` are of a kind Day0 does not read; absent on a record written before 0.19.0. */
+  readonly notRead?: number;
 }
 
 /** The record fields of a run, as a run row carries them. */
 export interface RunRecordFields {
   readonly unread?: UnreadRecord;
   readonly reason?: string;
+}
+
+/**
+ * Whether an unread page is of a kind Day0 does not read, rather than a read that failed: as its
+ * reader said it. An entry with no kind, written before 0.19.0, is a failure.
+ *
+ * @param page - A page of the record, or of a batch.
+ */
+export function isKindNotRead(page: Pick<UnreadPage, 'kind'>): boolean {
+  return page.kind === 'not-read';
 }
 
 /**
@@ -58,19 +85,60 @@ function header(count: number): string {
  * @param record - The run's record so far, or nothing.
  * @param unread - The pages this batch could not read, their reasons redacted.
  * @returns The record counting every page and naming at most `MAX_UNREAD_LISTED`, each on one
- *   bounded line, or the record unchanged when the batch read every page.
+ *   bounded line, the pages a read failed on ahead of the pages of a kind Day0 does not read; or
+ *   the record unchanged when the batch read every page.
  */
 export function withUnreadPages(
   record: UnreadRecord | undefined,
   unread: readonly UnreadPage[],
 ): UnreadRecord | undefined {
   if (unread.length === 0) return record;
-  const pages = [...(record?.pages ?? [])];
-  for (const page of unread) {
-    if (pages.length >= MAX_UNREAD_LISTED) break;
-    pages.push({ ref: recordLine(page.ref), reason: recordLine(page.reason) });
+  const seen = [
+    ...(record?.pages ?? []),
+    ...unread.map(
+      (page): UnreadPage => ({
+        ref: recordLine(page.ref),
+        reason: recordLine(page.reason),
+        kind: page.kind ?? 'failed',
+      }),
+    ),
+  ];
+  const pages = [
+    ...seen.filter((page): boolean => !isKindNotRead(page)),
+    ...seen.filter((page): boolean => isKindNotRead(page)),
+  ].slice(0, MAX_UNREAD_LISTED);
+  // A record carried from before the count was kept gains none: its unnamed pages cannot be told.
+  const countsKinds = record === undefined || record.notRead !== undefined;
+  return {
+    count: (record?.count ?? 0) + unread.length,
+    pages,
+    ...(countsKinds
+      ? { notRead: (record?.notRead ?? 0) + unread.filter((page) => isKindNotRead(page)).length }
+      : {}),
+  };
+}
+
+/** A character an address or a file name goes on with: after a reference, it names a longer one. */
+const NAME_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/**
+ * Whether a reason names the page by its reference, whole: the reference stands in it with no
+ * letter, digit or path before it and none after. A search for the reference's letters found
+ * the ref `a` in "Gave no body" and `/p1` in `/p10`, and the page then went unnamed (W15-R29).
+ */
+function namesRef(reason: string, ref: string): boolean {
+  if (ref === '') return false;
+  for (let at = reason.indexOf(ref); at >= 0; at = reason.indexOf(ref, at + 1)) {
+    const before = reason.slice(0, at);
+    const after = reason.slice(at + ref.length);
+    const joinedBefore = /[\p{L}\p{N}_/.-]$/u.test(before);
+    // A full stop, a dash or a slash goes on with the name only when a name character follows.
+    const joinedAfter =
+      NAME_CHARACTER.test(after.charAt(0)) ||
+      (/^[/.#?&=%:-]/.test(after) && NAME_CHARACTER.test(after.charAt(1)));
+    if (!joinedBefore && !joinedAfter) return true;
   }
-  return { count: (record?.count ?? 0) + unread.length, pages };
+  return false;
 }
 
 /**
@@ -86,17 +154,48 @@ export function unreadPagesLine(
   nothingStored = false,
 ): string | undefined {
   if (record === undefined || record.count === 0) return undefined;
-  const more = record.count - record.pages.length;
-  const named = [
-    ...record.pages.map((page): string => `${page.ref}: ${page.reason}`),
-    ...(more > 0 ? [`and ${more} more`] : []),
-  ].join('; ');
+  const failed = record.pages.filter((page): boolean => !isKindNotRead(page));
+  const kinds = record.pages.filter((page): boolean => isKindNotRead(page));
+  // The record counts its pages of a kind (`notRead`), so both counts are exact. A record written
+  // before it kept that count names failures first: while a page of a kind is still named every
+  // failure is, and once ten failures fill the list the pages it does not name are counted with
+  // the failures, as every page was before.
+  const failures =
+    record.notRead !== undefined
+      ? record.count - record.notRead
+      : kinds.length > 0
+        ? failed.length
+        : record.count;
+  const kindCount = record.count - failures;
+  const named = (pages: readonly UnreadPage[], more: number): string =>
+    // Each reason is a sentence of its own; joined, only the line's last full stop is kept.
+    [
+      // A reason that names its page (a URL reader's does, since a redirect may end elsewhere)
+      // is not prefixed with it again.
+      ...pages.map((page): string => {
+        const reason = page.reason.replace(/\.$/, '');
+        return namesRef(reason, page.ref) ? reason : `${page.ref}: ${reason}`;
+      }),
+      ...(more > 0 ? [`and ${more} more`] : []),
+    ].join('; ');
+  // Ten failures can fill the list, so that no page of a kind is named: they are then counted.
+  const kindNames = kinds.length === 0 ? '' : `: ${named(kinds, kindCount - kinds.length)}`;
+  const kindLine =
+    kindCount === 0
+      ? undefined
+      : `${kindCount}${failures > 0 ? ' more' : ''} listed ${kindCount === 1 ? 'page is' : 'pages are'} ` +
+        `of a kind Day0 does not read${kindNames}.`;
+  if (failures === 0) return kindLine;
+  const failedNames = named(failed, failures - failed.length);
+  let failureLine: string;
   if (nothingStored) {
-    const pages = record.count === 1 ? '1 page' : `${record.count} pages`;
-    const it = record.count === 1 ? 'it' : 'them';
-    return `${pages} could not be read, and nothing from this source is stored yet: ${named.replace(/\.$/, '')}. Day0 reads ${it} again at the next sync; a page it refuses stays unread until the page or its address changes.`;
+    const pages = failures === 1 ? '1 page' : `${failures} pages`;
+    const it = failures === 1 ? 'it' : 'them';
+    failureLine = `${pages} could not be read, and nothing from this source is stored yet: ${failedNames}. Day0 reads ${it} again at the next sync; a page it refuses stays unread until the page or its address changes.`;
+  } else {
+    failureLine = `${header(failures)}: ${failedNames}. The next sync reads ${failures === 1 ? 'it' : 'them'} again.`;
   }
-  return `${header(record.count)}: ${named.replace(/\.$/, '')}. The next sync reads them again.`;
+  return kindLine === undefined ? failureLine : `${failureLine} ${kindLine}`;
 }
 
 /**

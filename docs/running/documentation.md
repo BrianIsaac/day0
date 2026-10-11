@@ -18,6 +18,15 @@ documented-API example is checked that way once day0 reads that grammar.
   is refused. Listing a host in `DAY0_GIT_HOSTS` does not make it a private host: a host listed
   there must resolve to a public address, and one that resolves inside the network is refused
   until it is listed in `DAY0_PRIVATE_HOSTS` instead.
+- A URLs source reads a public page over `https` only. Plain `http` is read only from a host
+  `DAY0_PRIVATE_HOSTS` lists, and only while that host answers with addresses inside your
+  network: a listed name that answers a public address is read over `https` like any other page.
+  A page an earlier release read over public `http` is not read again, but **the copy it stored
+  stays in the employee's reading**: day0 does not remove it by itself. Unlink the source, or
+  link the page by its `https` address, to stop it being read.
+- A machine behind a fake-IP proxy (one that answers every name from `198.18.0.0/15`) sees every
+  public host refused, since the address says nothing of what it reaches: set the proxy's DNS to
+  answer real addresses, or list the hosts day0 reads in `DAY0_PRIVATE_HOSTS`.
 - A repository is cloned, which needs a `git` binary in the backend: from this release a
   GitHub or GitLab repository is cloned first too, and read through the host's archive only when
   the clone fails. The backend image an install builds carries git
@@ -32,6 +41,21 @@ documented-API example is checked that way once day0 reads that grammar.
   company's own app: every new-style document as Markdown, and every sheet, base, mind note or
   file named as not read. How IT sets up the app, and what each refusal means:
   [reader-feishu.md](reader-feishu.md).
+- A SharePoint source reads one site: the Markdown files and Word documents (`.docx`) in its
+  document library, and the site's own pages, as the app registration IT made. A slide deck, a
+  PDF or an old `.doc` is named as not read. [reader-sharepoint.md](reader-sharepoint.md).
+- A Confluence source reads one space, on Confluence Cloud as a service account or on a
+  Confluence Data Center server with a personal access token; an archived page is read and
+  marked archived. [reader-confluence.md](reader-confluence.md).
+- A Yuque source reads one repository's documents with a token, which needs a paid plan; a sheet
+  or a board is named as not read. [reader-yuque.md](reader-yuque.md).
+- A Google Drive source reads one folder and the folders under it as a service account the
+  folder is shared with: Google Docs and Word documents. [reader-drive.md](reader-drive.md).
+- A Word document is converted to Markdown where day0 runs: its headings, lists and tables are
+  kept and its pictures are left out. A heading must be made with Word's heading styles to be
+  read as one.
+- On SharePoint, Confluence, Yuque and Google Drive a page's title is the title its source
+  gives it (for a Word document, its file's name), and day0 puts it first in the page.
 - A page's title is its first `# ` heading, or its file name when it has none.
 - Each linked source is read again on a schedule. A change reaches day0 at the next sync, not when
   you save.

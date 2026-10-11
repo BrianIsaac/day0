@@ -23,6 +23,8 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
+import { forgetProposalsOf } from './docRelations';
+import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
   unreadPagesLine,
@@ -46,7 +48,6 @@ import {
   finishingStep,
   type FinishingPhase,
 } from '../src/docs/finishing';
-import type { MigrationName } from './migrations';
 import schema from './schema';
 
 const sourceKind = v.union(
@@ -55,6 +56,11 @@ const sourceKind = v.union(
   v.literal('git'),
   v.literal('urls'),
   v.literal('feishu'),
+  v.literal('sharepoint'),
+  v.literal('confluence-v2'),
+  v.literal('confluence-dc'),
+  v.literal('yuque'),
+  v.literal('drive'),
 );
 
 const serverKind = v.union(
@@ -65,7 +71,16 @@ const serverKind = v.union(
 );
 
 /** The listed pages a batch could not read, each kept at its last stored version (P5-11). */
-const unreadPages = v.optional(v.array(v.object({ ref: v.string(), reason: v.string() })));
+const unreadPages = v.optional(
+  v.array(
+    v.object({
+      ref: v.string(),
+      reason: v.string(),
+      /** A read that failed, or a page of a kind Day0 does not read (D-7); absent reads as failed. */
+      kind: v.optional(v.union(v.literal('failed'), v.literal('not-read'))),
+    }),
+  ),
+);
 
 export { FINISHING_CURSOR };
 
@@ -116,8 +131,11 @@ const RUN_PRUNE_BATCH = 32;
 /**
  * The migration that reads completed runs by their completion time
  * (`credentials-sync-revoke`): completed runs are kept for it until it has run.
+ * Typed by its literal rather than `MigrationName`, so this module imports
+ * nothing from `./migrations` (the import cycle, the helpers split's S-2); its
+ * test holds it to `MIGRATION_NAMES`.
  */
-const RUNS_READ_BY_MIGRATION: MigrationName = 'credentials-sync-revoke';
+export const RUNS_READ_BY_MIGRATION = 'credentials-sync-revoke';
 
 /** Why a run that a newer one replaced before it finished ended. */
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
@@ -216,7 +234,7 @@ export { validateLinkInput, validateReaderSecret, type LinkInput };
 /**
  * Purge the credentials and discovered systems of one source being removed.
  *
- * Its pages, mirrors and runs are deleted in pages afterwards
+ * Its mirrors, blocks, relations, pages, listings and runs are deleted in pages afterwards
  * (`deleteSourceRows`), since a whole source's rows can outgrow one transaction.
  *
  * Args:
@@ -441,8 +459,8 @@ export const resync = mutation({
  * Unlink an owned source; real mode only.
  *
  * Public, for the source's owner. Deletes the source, purges its credentials
- * and discovered systems, and schedules its pages, mirrors and runs for
- * deletion in pages (`deleteSourceRows`), since a whole source's rows can
+ * and discovered systems, and schedules its mirrors, blocks, relations, pages, listings and
+ * runs for deletion in pages (`deleteSourceRows`), since a whole source's rows can
  * outgrow one transaction. No reader reaches a page of a deleted source: the
  * readers list pages by the employee's sources.
  */
@@ -468,15 +486,44 @@ async function removeSource(ctx: MutationCtx, source: Doc<'docSources'>): Promis
 
 /**
  * The tables a removed source leaves rows in, in the order they are deleted: what an employee
- * reads directly first (its mirrors, then the blocks a search reads), the record last.
+ * reads directly first (its mirrors, then the blocks a search reads, then the relations that
+ * decide which page is read), the record last.
  */
 const SOURCE_ROW_TABLES = [
   'mockDocs',
   'docBlocks',
+  'docRelations',
   'docPages',
   'docPageListings',
   'docSyncRuns',
 ] as const;
+
+/**
+ * Relations one page of a source's deletion reads. `take` has no byte bound and the schema bounds
+ * no relation's evidence, so the page is sized by the 1 MiB a document may reach: eight stay
+ * inside a transaction's 16 MiB read however much evidence each holds.
+ */
+const RELATION_DELETE_PAGE = 8;
+
+/**
+ * One bounded page of the relations from a source's pages, or, once none is left, to them: a
+ * relation goes with either end's source. Read with `take`, as a function may paginate once.
+ */
+async function sourceRelationsPage(
+  ctx: MutationCtx,
+  sourceId: Id<'docSources'>,
+): Promise<{ page: Doc<'docRelations'>[]; isDone: boolean }> {
+  const from = await ctx.db
+    .query('docRelations')
+    .withIndex('by_from', (index) => index.eq('from.sourceId', sourceId))
+    .take(RELATION_DELETE_PAGE);
+  if (from.length > 0) return { page: from, isDone: false };
+  const to = await ctx.db
+    .query('docRelations')
+    .withIndex('by_to', (index) => index.eq('to.sourceId', sourceId))
+    .take(RELATION_DELETE_PAGE);
+  return { page: to, isDone: to.length < RELATION_DELETE_PAGE };
+}
 
 /**
  * Delete one bounded page of a removed source's rows in one table, and schedule the next.
@@ -492,17 +539,20 @@ export const deleteSourceRows = internalMutation({
   },
   handler: async (ctx, args): Promise<number> => {
     const table = args.table ?? SOURCE_ROW_TABLES[0];
-    // A source's blocks are read by their page index, which leads with the source.
+    // A source's blocks are read by their page index, which leads with the source; its relations
+    // by either end.
     const page =
       table === 'docBlocks'
         ? await ctx.db
             .query('docBlocks')
             .withIndex('by_source_page', (index) => index.eq('sourceId', args.sourceId))
             .paginate({ ...PAGED_READ, cursor: null })
-        : await ctx.db
-            .query(table)
-            .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
-            .paginate({ ...PAGED_READ, cursor: null });
+        : table === 'docRelations'
+          ? await sourceRelationsPage(ctx, args.sourceId)
+          : await ctx.db
+              .query(table)
+              .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId))
+              .paginate({ ...PAGED_READ, cursor: null });
     for (const row of page.page) await ctx.db.delete(row._id);
     const next = page.isDone ? SOURCE_ROW_TABLES[SOURCE_ROW_TABLES.indexOf(table) + 1] : table;
     if (next !== undefined) {
@@ -733,7 +783,8 @@ export const sourcesForAgentInternal = internalQuery({
  * start (`fresh`, as a new connection secret needs), a run too old or a
  * resume that got nowhere reads from page one (`runToResume`) and starts the
  * source's next listing, so every page an earlier one named is pruned unless
- * this one names it again.
+ * this one names it again. Either way it carries the count of listing restarts an unfinished
+ * sync before it spent, less one (W14-R33); only a completed walk or `fresh` clears it.
  *
  * @returns The new run's id; its `cursor` is where its first batch reads from.
  */
@@ -749,6 +800,11 @@ export const beginSync = internalMutation({
       .order('desc')
       .take(2);
     const resumed = args.fresh === true ? undefined : runToResume(latest, previous, now);
+    // The restarts an unfinished sync spent carry into the next, less one, so each scheduled sync
+    // after the cap has one fresh start of its own, not three more (W14-R33). A walk that
+    // completes owes nothing, and a re-read by hand starts over.
+    const spent =
+      args.fresh === true || latest?.state === 'completed' ? 0 : (latest?.restarts ?? 0);
     const active = source.activeSyncId ? await ctx.db.get(source.activeSyncId) : null;
     if (active?.state === 'running') {
       await ctx.db.patch(active._id, {
@@ -775,12 +831,15 @@ export const beginSync = internalMutation({
       cursor: resumed?.cursor,
       listing: resumed === undefined ? await nextListing(ctx, source) : runListing(resumed),
       pagesListed: resumed === undefined ? 0 : listedCount(resumed),
+      ...(resumed?.batches === undefined ? {} : { batches: resumed.batches }),
+      ...(resumed?.relisted === undefined ? {} : { relisted: resumed.relisted }),
       credentialRefs: resumed?.credentialRefs ?? [],
       pageCount: resumed?.pageCount ?? 0,
       redactionCount: resumed?.redactionCount ?? 0,
       unread: unreadRecordIn(resumed),
       state: 'running',
       createdAt: now,
+      ...(spent > 1 ? { restarts: spent - 1 } : {}),
     });
     await ctx.db.patch(source._id, {
       activeSyncId: runId,
@@ -901,6 +960,30 @@ export const syncContext = internalQuery({
 });
 
 /**
+ * How many of the refs a batch's reader named the run's listing had already named (W15-R8).
+ *
+ * Internal; the sync asks before it stores the batch, since storing a page stamps its ref with
+ * the listing too. A listing that keeps naming pages it has named is one that does not end
+ * (`src/docs/listing-bounds.ts`). One indexed read a ref, at most a batch of them.
+ */
+export const relistedRefs = internalQuery({
+  args: { runId: v.id('docSyncRuns'), refs: v.array(v.string()) },
+  handler: async (ctx, args): Promise<number> => {
+    const run = await ctx.db.get(args.runId);
+    if (run === null || run.listing === undefined) return 0;
+    let relisted = 0;
+    for (const ref of new Set(args.refs)) {
+      const row = await ctx.db
+        .query('docPageListings')
+        .withIndex('by_source_ref', (index) => index.eq('sourceId', run.sourceId).eq('ref', ref))
+        .unique();
+      if (row?.seenBy === run.listing) relisted += 1;
+    }
+    return relisted;
+  },
+});
+
+/**
  * Record one non-final batch and advance its provider-safe cursor.
  *
  * The batch's `refs` and `credentialRefs` include the pages it could not
@@ -919,6 +1002,8 @@ export const recordSyncBatch = internalMutation({
     pageCount: v.number(),
     redactionCount: v.number(),
     unread: unreadPages,
+    /** How many of the refs the reader named the run's listing had already named (`relistedRefs`). */
+    relisted: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const [source, run] = await Promise.all([ctx.db.get(args.sourceId), ctx.db.get(args.runId)]);
@@ -935,6 +1020,8 @@ export const recordSyncBatch = internalMutation({
     await ctx.db.patch(run._id, {
       cursor: args.nextCursor,
       pagesListed: listedCount(run) + args.refs.length,
+      batches: (run.batches ?? 0) + 1,
+      relisted: (run.relisted ?? 0) + (args.relisted ?? 0),
       credentialRefs: [...run.credentialRefs, ...args.credentialRefs],
       pageCount: run.pageCount + args.pageCount,
       redactionCount: run.redactionCount + args.redactionCount,
@@ -1047,7 +1134,7 @@ export const prunePages = internalMutation({
       .query('docPageListings')
       .withIndex('by_source', (index) => index.eq('sourceId', args.sourceId).lt('seenBy', below))
       .paginate({ numItems: STALE_LISTING_PAGE, cursor: args.from });
-    let removed = 0;
+    const gone: Array<{ ref: string; title: string }> = [];
     for (const row of page.page) {
       const stored = await ctx.db
         .query('docPages')
@@ -1062,13 +1149,21 @@ export const prunePages = internalMutation({
           sourceId: args.sourceId,
           pageRef: row.ref,
         });
-        removed += 1;
+        gone.push({ ref: stored.ref, title: stored.title });
       }
       await ctx.db.delete(row._id);
     }
+    // A removed or moved runbook re-checks the skills that read it (W14-R22).
+    await stampRemovedPages(ctx, finishing.source, gone, Date.now());
+    // Its unanswered relations go with it: no card draws a page that is gone.
+    await forgetProposalsOf(
+      ctx,
+      args.sourceId,
+      gone.map((page) => page.ref),
+    );
     return await closeFinishingPage(ctx, finishing.run, args, 'pages', 'credentials', {
       ...page,
-      removed,
+      removed: gone.length,
     });
   },
 });
@@ -1161,7 +1256,7 @@ export const pruneMirrors = internalMutation({
       await ctx.db.delete(mirror._id);
       removed += 1;
     }
-    return await closeFinishingPage(ctx, finishing.run, args, 'mirrors', 'scopes', {
+    return await closeFinishingPage(ctx, finishing.run, args, 'mirrors', 'status', {
       ...page,
       removed,
     });
@@ -1390,16 +1485,20 @@ export const applyRestatedScope = internalMutation({
   },
 });
 
+/** The most pages kept after one miss that a finish counts; past it the count is a floor. */
+const MISSED_ONCE_COUNTED = 4_096;
+
 /**
  * Complete a generation: supersede the credentials it no longer found and publish one synced state.
  *
  * Internal. The sync action calls it last, once the generation has read every
- * page, removed the pages and mirrors two complete walks in a row did not list and re-read the intake
- * scopes (its cursor is the finish's `scopes` checkpoint), passing what those
- * steps removed as `pruned`; a resumed finish counts its own part only. A
- * caller that finishes a run from its last read batch passes that batch
+ * page, removed the pages and mirrors two complete walks in a row did not list, restated the
+ * kept pages' statuses and re-read the intake scopes (its cursor is the finish's `scopes`
+ * checkpoint), passing what those steps removed as `pruned`; a resumed finish counts its own
+ * part only. A caller that finishes a run from its last read batch passes that batch
  * instead, whose refs are stamped with the run's listing. `pagesKept` is the
- * pages the generation lists. A page the generation could not read is
+ * pages the source holds after it: those the generation lists and those it missed once and keeps
+ * (W14-R24), whose values stay among the run's stated ones. A page the generation could not read is
  * stamped too, so it keeps its last stored version, mirror and credentials;
  * the run's unread record names it and the source's line says so until a
  * sync reads it (P5-11).
@@ -1459,18 +1558,35 @@ export const finishSync = internalMutation({
     let credentialsSuperseded = 0;
     const below = await pruneBelow(ctx, source);
     const listing = runListing(run);
+    const unstated: Doc<'credentials'>[] = [];
     for (const credential of credentials) {
       if (typeof credential.source === 'string' || currentCredentialRefs.has(credential.source.ref))
         continue;
-      // A page this walk missed but the finish keeps (two-walk prune) still states its values.
-      const pageRef = credentialPageRef(credential.source.ref);
-      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) continue;
       // An earlier sync already superseded it and unbound its surfaces; doing
       // it again would rewrite nothing but the count.
       if (credential.status === 'superseded') continue;
+      // A page this walk missed but the finish keeps (two-walk prune) still states its values:
+      // they stay among the run's stated refs, which the next walk reads as stated before (W14-R24).
+      const pageRef = credentialPageRef(credential.source.ref);
+      if (await missedButKept(ctx, { sourceId: source._id, pageRef, below, listing })) {
+        currentCredentialRefs.add(credential.source.ref);
+      } else {
+        unstated.push(credential);
+      }
+    }
+    for (const credential of unstated) {
       await supersedeCredential(ctx, credential, swap);
       credentialsSuperseded += 1;
     }
+    // The pages kept after one miss: listing rows stamped from the last complete walk's listing
+    // up to this walk's, read by the listing's own index (small rows, never a page body).
+    const missedOnce = await ctx.db
+      .query('docPageListings')
+      .withIndex('by_source', (index) =>
+        index.eq('sourceId', source._id).gte('seenBy', below).lt('seenBy', listing),
+      )
+      .take(MISSED_ONCE_COUNTED);
+    const pagesKept = pagesListed + missedOnce.length;
     const pageCount = run.pageCount + args.pageCount;
     const redactionCount = run.redactionCount + args.redactionCount;
     const unreadRecord = withUnreadPages(unreadRecordIn(run), args.unread ?? []);
@@ -1492,7 +1608,7 @@ export const finishSync = internalMutation({
       completedAt: now,
       reason: undefined,
       unread: unreadRecord,
-      summary: { pagesKept: pagesListed, ...pruned, credentialsSuperseded },
+      summary: { pagesKept, ...pruned, credentialsSuperseded },
     });
     // A generation that holds no page and read none is not read (W14-R11): "Read" with a page
     // count would be untrue of it.
@@ -1921,7 +2037,9 @@ export const upsertPage = internalMutation({
  * Delete all documentation owned by one caller during an explicit full reset.
  *
  * Each source goes now, with its credentials and discovered systems; its
- * pages, mirrors and runs are deleted in scheduled pages (`deleteSourceRows`).
+ * pages, mirrors, blocks, relations and runs are deleted in scheduled pages
+ * (`deleteSourceRows`). Both ends of an owner's relation are the owner's
+ * sources, so every relation goes with them.
  *
  * Args:
  *   ctx: Convex mutation context.

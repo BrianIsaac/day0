@@ -17,11 +17,15 @@ import { buildRetrievalGrade, renderRetrievalGrade, scoutedBlocks } from './matr
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
 const IMAGE = `sha256:${'a'.repeat(64)}`;
 
-/** The bed's three folder sources, one for each of the corpus's sources. */
+/**
+ * The bed's four folder sources, one for each of the corpus's sources: three until 11 October
+ * 2026, when the pages of mixed trust added the official one.
+ */
 const SOURCES: readonly BedSource[] = [
   { id: 'source-company', corpus: 'company' },
   { id: 'source-notion', corpus: 'notion' },
   { id: 'source-rehearsal', corpus: 'rehearsal' },
+  { id: 'source-policy', corpus: 'policy' },
 ];
 
 /** The corpus as a bed would store it: each page's row and its blocks split as here. */
@@ -85,9 +89,10 @@ describe('the labelled set graded with a bed’s own search as the scout', (): v
     const pages = retrievalPages();
     const stored = storedRows(pages);
     const proof = ingestionProof(pages, SOURCES, stored.pages, stored.blocks);
-    expect(proof.pagesStored).toBe(17);
+    // Re-pinned on 11 October 2026: 17 pages until the four of mixed trust joined the corpus.
+    expect(proof.pagesStored).toBe(21);
     expect(proof.blocksStored).toBe(stored.blocks.length);
-    expect(Object.keys(proof.blocksByPage)).toHaveLength(17);
+    expect(Object.keys(proof.blocksByPage)).toHaveLength(21);
     expect(proof.textDiffers).toEqual([]);
 
     const missing = stored.pages.filter((page) => page.ref !== 'onboarding.md');
@@ -119,9 +124,16 @@ describe('the labelled set graded with a bed’s own search as the scout', (): v
       return search(args);
     }, SOURCES);
     const found = scout(['签字', 'tile refresh'], pages);
+    // Re-pinned for W15-R43: the harness asks for current pages only, as the product's scout
+    // does (`status: 'active'`), so a grade sees a regression in the filter or in the status pass.
     expect(calls).toEqual([
-      { sourceIds: SOURCES.map((source) => source.id), query: '签字', limit: 12 },
-      { sourceIds: SOURCES.map((source) => source.id), query: 'tile refresh', limit: 12 },
+      { sourceIds: SOURCES.map((source) => source.id), query: '签字', limit: 12, status: 'active' },
+      {
+        sourceIds: SOURCES.map((source) => source.id),
+        query: 'tile refresh',
+        limit: 12,
+        status: 'active',
+      },
     ]);
     expect(searches()).toBe(2);
     expect(found.map((block) => block.pageKey)).toContain(
@@ -137,22 +149,30 @@ describe('the labelled set graded with a bed’s own search as the scout', (): v
   });
 
   it('grades as the emulation does when the search answers as the emulation does', (): void => {
-    const pages = retrievalPages();
-    const { scout } = backendScout(emulatedSearch(pages), SOURCES);
-    const now = new Date('2026-10-09T00:00:00.000Z');
-    const emulated = buildRetrievalGrade(COMMIT, now);
-    const backend = buildRetrievalGrade(COMMIT, now, { scout });
-    expect(backend.recall).toEqual(emulated.recall);
-    expect(backend.observations).toEqual(emulated.observations);
+    // Over the set as it stood on 9 October and over the set with its items of mixed trust.
+    for (const now of [
+      new Date('2026-10-09T00:00:00.000Z'),
+      new Date('2026-10-11T12:00:00.000Z'),
+    ]) {
+      const pages = retrievalPages(now);
+      const { scout } = backendScout(emulatedSearch(pages), SOURCES);
+      const emulated = buildRetrievalGrade(COMMIT, now);
+      const backend = buildRetrievalGrade(COMMIT, now, { scout });
+      expect(backend.recall).toEqual(emulated.recall);
+      expect(backend.observations).toEqual(emulated.observations);
+      expect(backend.order).toEqual(emulated.order);
+    }
   });
 
   it('records the scout, the bed’s image and the emulated figure beside its own, and renders both on one line', (): void => {
-    const pages = retrievalPages();
+    // The grade of 9 October 2026, over the corpus as it stood that day.
+    const now = new Date('2026-10-09T00:00:00.000Z');
+    const pages = retrievalPages(now);
     const stored = storedRows(pages);
     const { scout, searches } = backendScout(emulatedSearch(pages), SOURCES);
     const grade = buildBackendGrade({
       commit: COMMIT,
-      now: new Date('2026-10-09T00:00:00.000Z'),
+      now,
       scout,
       searches,
       bed: { project: 'day0-w14q2', image: IMAGE },

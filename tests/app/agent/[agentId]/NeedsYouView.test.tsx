@@ -69,6 +69,25 @@ describe('skippedSentence', () => {
     expect(skippedSentence(item('claimed-by-colleague: Priya has it'), 'Mira')).toBe(
       'Skipped “Please email the Acme customer about their renewal pricing”: a colleague is working it.',
     );
+    // D-1 (a): a ticket a colleague settled is not one the colleague is still working.
+    expect(
+      skippedSentence(
+        {
+          ...item(
+            'claimed-by-colleague: Mateo settled FIN-1 with a comment on 19 September 2026 (t)',
+          ),
+          verdict: {
+            decision: 'skip',
+            reason:
+              'claimed-by-colleague: Mateo settled FIN-1 with a comment on 19 September 2026 (t)',
+            claimedBy: { agentId: 'a2', name: 'Mateo', settled: { ticket: 'FIN-1' } },
+          },
+        },
+        'Mira',
+      ),
+    ).toBe(
+      'Skipped “Please email the Acme customer about their renewal pricing”: a colleague already settled the ticket it names.',
+    );
     expect(skippedSentence(item(), 'Mira')).toBe(
       'Skipped “Please email the Acme customer about their renewal pricing”.',
     );

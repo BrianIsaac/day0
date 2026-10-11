@@ -103,7 +103,7 @@ const BLOCK = [
   '- Escalate to: Sara Lindqvist, for missing Linear access; anything else, the manager.',
 ].join('\n');
 
-const CHARTER_LINE = 'Charter namedCollaborators: Lee Tan (Linear access)';
+const CHARTER_LINE = 'People the charter names: Lee Tan (Linear access)';
 
 const phaseOne = {
   draft: 'Commenting the delay notice.',
@@ -134,6 +134,8 @@ const initialOutput = {
 
 const skill = { name: 'kanban-comment', description: 'Comment.', body: '# Skill' };
 
+// The labels below were re-pinned at W14-R50 (v0.19.0): the executor's charter lines carry the
+// planner's words ("Will do:", "Approved by:") where they printed the charter's field names.
 describe('the People block in the executor prompts (13-J)', (): void => {
   beforeEach((): void => {
     recorded.users.length = 0;
@@ -154,8 +156,8 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     });
     const user = recorded.users[0]!;
     expect(user).toContain(`\n\n--- People ---\n${BLOCK}\n`);
-    expect(user).not.toContain('Charter namedCollaborators');
-    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Charter approvalChain'));
+    expect(user).not.toContain('People the charter names');
+    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Approved by'));
     expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Approved plan:'));
   });
 
@@ -175,8 +177,8 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     });
     const user = recorded.users[0]!;
     expect(user).toContain(`\n\n--- People ---\n${BLOCK}\n`);
-    expect(user).not.toContain('Charter namedCollaborators');
-    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Charter approvalChain'));
+    expect(user).not.toContain('People the charter names');
+    expect(user.indexOf(BLOCK)).toBeGreaterThan(user.indexOf('Approved by'));
     expect(user.indexOf(BLOCK)).toBeLessThan(user.indexOf('Approved plan:'));
   });
 
@@ -248,7 +250,7 @@ describe('the People block in the executor prompts (13-J)', (): void => {
     });
     for (const user of recorded.users) {
       expect(user).toContain(
-        'Charter namedCollaborators: Lee Tan (Linear access) | Mei Lin (carrier escalations)',
+        'People the charter names: Lee Tan (Linear access) | Mei Lin (carrier escalations)',
       );
       expect(user).toContain(BLOCK);
     }

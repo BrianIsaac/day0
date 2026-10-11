@@ -75,14 +75,14 @@ export async function runBackendGrade(
   options: BackendRunOptions,
   now = new Date(),
 ): Promise<string> {
-  const pages = retrievalPages();
+  const pages = retrievalPages(now);
   const proof = ingestionProof(
     pages,
     options.sources,
     exportedRows<StoredPageRow>(options.exportDir, 'docPages'),
     exportedRows<StoredBlockRow>(options.exportDir, 'docBlocks'),
   );
-  const { scout, searches } = backendScout(({ sourceIds, query, limit }) => {
+  const { scout, searches } = backendScout(({ sourceIds, query, limit, status }) => {
     const result = spawnSync(
       'npx',
       [
@@ -93,7 +93,7 @@ export async function runBackendGrade(
         '--codegen',
         'disable',
         'docBlocks:searchBlocks',
-        JSON.stringify({ userId: options.userId, sourceIds, query, limit }),
+        JSON.stringify({ userId: options.userId, sourceIds, query, limit, status }),
       ],
       { cwd: options.bed, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 60_000 },
     );

@@ -310,6 +310,83 @@ describe('the executor asks the run whether the work was done', (): void => {
   });
 });
 
+describe('a mock run whose message reports writes its declaration leaves out (W15-R2)', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  // Reader 4's p6.mts in the mock office: two posts, then the comment that reports both and
+  // declares none, which bound nothing, so it landed after the posts were declined.
+  const post = (body: string): MockAction => ({
+    tool: 'slack.postMessage',
+    args: { channelSlug: 'revops', body },
+    reports: null as unknown as number[],
+  });
+  const reply = (reports: number[]) => ({
+    draft: 'Posted both notes and closed the ticket.',
+    notes: '',
+    needsDependentPhase: false,
+    workDone: 'done',
+    workDoneWhy: 'Both notes are posted and the ticket is closed.',
+    actions: [
+      post('Fire alarm test is at 10 on Friday.'),
+      post('Evacuation route is the east stairs.'),
+      {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-204', status: 'done', comment: 'Posted both notes in #revops.' },
+        reports,
+      },
+    ],
+    procedureTrails: [{ trailId: 'trail-1', actionIndex: 2, inapplicabilityReason: null }],
+  });
+
+  it('sends the set back once for the declaration, and takes the corrected set as it is', async (): Promise<void> => {
+    recorded.outputs.push(reply([]), reply([0, 1]));
+    const output = await runSkill({ skill, plan, candidate: ticket, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(2);
+    expect(
+      correctionOf(recorded.calls[1]!.user, '--- Required action-set correction ---'),
+    ).toContain(
+      'action 2 (ticket.update) reports more writes of this set than its `reports` names: it says "Posted both notes in #revops." and `reports` names [], while the writes before it that the sentence can mean are [0, 1]',
+    );
+    expect(output.actions).toHaveLength(3);
+    expect(output.actions[2]!.reports).toEqual([0, 1]);
+    expect(output.withheldActions ?? []).toEqual([]);
+  });
+
+  it('withholds the message with its reason when the declaration is still short after the one repair, and keeps the posts', async (): Promise<void> => {
+    const corrections: string[] = [];
+    recorded.outputs.push(reply([]), reply([1]));
+    const output = await runSkill({
+      skill,
+      plan,
+      candidate: ticket,
+      charter,
+      mockEnv,
+      onAuditCorrection: (_removed, reason): void => {
+        corrections.push(reason);
+      },
+    });
+    expect(output.actions.map((action) => action.tool)).toEqual([
+      'slack.postMessage',
+      'slack.postMessage',
+    ]);
+    expect(output.withheldActions?.map((row) => row.action.tool)).toEqual(['ticket.update']);
+    expect(output.withheldActions?.[0]?.reason).toContain(
+      'reports more writes of this set than its `reports` names',
+    );
+    expect(corrections).toHaveLength(1);
+  });
+
+  it('asks nothing more of a set whose declarations agree with its words: one call', async (): Promise<void> => {
+    recorded.outputs.push(reply([0, 1]));
+    const output = await runSkill({ skill, plan, candidate: ticket, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions).toHaveLength(3);
+  });
+});
+
 describe('a real run held to its answer', (): void => {
   beforeEach((): void => {
     recorded.calls.length = 0;

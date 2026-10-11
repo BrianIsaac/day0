@@ -77,7 +77,10 @@ print(code,end='')
           ...(scenario.startsWith('cleanup') ? { BASH_ENV: shellEnvironment } : {}),
         },
         encoding: 'utf8',
-        timeout: 10_000,
+        // Above anything the probe's own one-second network timeouts add up to, and under the
+        // cases' 30 s: at a load average of 45 the script's ten or so spawned doubles took more
+        // than the 10 s this was, and the killed process read as a failed probe (status null).
+        timeout: 25_000,
       },
     );
     return {
@@ -93,7 +96,7 @@ print(code,end='')
 }
 
 // Each case runs the probe script under bash with its own one-second network
-// timeouts and a ten-second cap on the process, so the default five-second
+// timeouts and a 25-second cap on the process, so the default five-second
 // test timeout is below what the case itself allows on a loaded machine.
 describe.skipIf(!hasHostTools('bash', 'python3'))(
   'arrival probe response paths (needs bash and python3)',

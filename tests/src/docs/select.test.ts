@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { splitPage } from '../../../src/docs/blocks';
 import {
+  AUTHORITY_WEIGHT,
   BLOCKS_PER_PAGE_LIMIT,
   DOCUMENTATION_CHAR_LIMIT,
+  PICK_FLOOR_CHARS,
   SELECTED_BLOCK_LIMIT,
   SELECTED_PAGE_LIMIT,
   alwaysIncludedPages,
@@ -404,6 +406,157 @@ describe('selectDocumentation', (): void => {
     expect(selection.teamDocs).toEqual([]);
   });
 
+  it('ranks an official page above a team page above a personal one when they answer the item alike (A5)', (): void => {
+    const body = '# Tile notes\n\nRefresh the Looker pipeline tile coverage figure every Monday.';
+    const personal = {
+      ...page('mine/tile.md', 'Tile notes', body),
+      authority: 'personal' as const,
+    };
+    const team = { ...page('team/tile.md', 'Tile notes', body), authority: 'team' as const };
+    const official = {
+      ...page('official/tile.md', 'Tile notes', body),
+      authority: 'official' as const,
+    };
+    // The mirror lists the personal page first: trust, not place, orders the three.
+    const pages = [personal, team, official, holidays];
+    const selection = selectDocumentation({
+      request: { ...request, shape: undefined, target: undefined },
+      pages,
+      scouted: everyBlock(pages),
+    });
+    expect(selection.ranked.slice(0, 3)).toEqual([
+      `${official.key}#0`,
+      `${team.key}#0`,
+      `${personal.key}#0`,
+    ]);
+  });
+
+  it('keeps a team runbook that answers the item above an official page that only names it (D-10; W15-R23)', (): void => {
+    // Reader 2's p3-rank.mts: at 1, 0.85 and 0.7 an official page of 25 characters that matched
+    // three of the item's seven terms outranked the team runbook that answers the item in full.
+    const item = {
+      ...request,
+      title: 'Escalate overdue invoice',
+      summary: 'invoice overdue escalate finance approval limit',
+      roleFunction: '',
+      shape: undefined,
+      target: undefined,
+    };
+    const official = {
+      ...page('policy.md', 'Finance policy', '# Finance policy\n\nOverdue invoice escalate.'),
+      authority: 'official' as const,
+    };
+    const runbook = {
+      ...page(
+        'runbook.md',
+        'Escalating overdue invoices',
+        '# Escalating overdue invoices\n\nWhen an invoice is overdue, escalate to finance and get approval within the limit.',
+      ),
+      authority: 'team' as const,
+    };
+    const pages = [official, runbook, holidays];
+    const selection = selectDocumentation({ request: item, pages, scouted: everyBlock(pages) });
+    expect(selection.ranked.slice(0, 2)).toEqual([`${runbook.key}#0`, `${official.key}#0`]);
+    // The weights themselves, one constant: near enough to 1 to order only pages that answer alike.
+    expect(AUTHORITY_WEIGHT).toEqual({ official: 1, team: 0.95, personal: 0.9 });
+  });
+
+  it('reads a page with no trust as a team page, between official and personal', (): void => {
+    const body = '# Tile notes\n\nRefresh the Looker pipeline tile coverage figure every Monday.';
+    const personal = {
+      ...page('mine/tile.md', 'Tile notes', body),
+      authority: 'personal' as const,
+    };
+    const untold = page('team/tile.md', 'Tile notes', body);
+    const official = {
+      ...page('official/tile.md', 'Tile notes', body),
+      authority: 'official' as const,
+    };
+    const pages = [personal, untold, official, holidays];
+    const selection = selectDocumentation({
+      request: { ...request, shape: undefined, target: undefined },
+      pages,
+      scouted: everyBlock(pages),
+    });
+    expect(selection.ranked.slice(0, 3)).toEqual([
+      `${official.key}#0`,
+      `${untold.key}#0`,
+      `${personal.key}#0`,
+    ]);
+  });
+
+  it('lets recency order only pages of equal trust that answer alike, and never over trust', (): void => {
+    const body = '# Tile notes\n\nRefresh the Looker pipeline tile coverage figure every Monday.';
+    const older = { ...page('team/tile-a.md', 'Tile notes', body), updatedAt: 1 };
+    const newer = { ...page('team/tile-b.md', 'Tile notes', body), updatedAt: 2 };
+    const newestButPersonal = {
+      ...page('mine/tile.md', 'Tile notes', body),
+      authority: 'personal' as const,
+      updatedAt: 3,
+    };
+    const pages = [older, newer, newestButPersonal, holidays];
+    const selection = selectDocumentation({
+      request: { ...request, shape: undefined, target: undefined },
+      pages,
+      scouted: everyBlock(pages),
+    });
+    expect(selection.ranked.slice(0, 3)).toEqual([
+      `${newer.key}#0`,
+      `${older.key}#0`,
+      `${newestButPersonal.key}#0`,
+    ]);
+  });
+
+  it('weighs trust, it does not sort by it: a team page that answers the item stays above an official page that barely does', (): void => {
+    const answer = page(
+      'team/tile.md',
+      'Tile notes',
+      '# Tile notes\n\nRefresh the Looker pipeline tile: the coverage figure is stale after the standup.',
+    );
+    const barely = {
+      ...page(
+        'official/glossary.md',
+        'Glossary',
+        '# Glossary\n\nA figure is a number in a report.',
+      ),
+      authority: 'official' as const,
+    };
+    const pages = [barely, answer, holidays];
+    const selection = selectDocumentation({
+      request: { ...request, shape: undefined, target: undefined },
+      pages,
+      scouted: everyBlock(pages),
+    });
+    expect(selection.ranked[0]).toBe(`${answer.key}#0`);
+  });
+
+  it('keeps a floor of the budget for the ranked pick when the pages always included would fill it (D-3)', (): void => {
+    // A guide for the target surface, always included, longer than the whole budget.
+    const guide = page(
+      'runbooks/long.md',
+      'How to refresh the tile',
+      Array.from(
+        { length: 40 },
+        (_unused, section) =>
+          `## Looker tile refresh, part ${section}\n\n${`Refresh the Looker pipeline tile. `.repeat(25)}`,
+      ).join('\n\n'),
+      'how-to-guide',
+    );
+    const answer = page(
+      'team/coverage.md',
+      'Coverage figure',
+      '# Coverage figure\n\nThe coverage figure on the pipeline tile is stale until the nightly load finishes at six.',
+    );
+    const pages = [guide, answer, holidays];
+    const selection = selectDocumentation({ request, pages, scouted: everyBlock(pages) });
+    expect(selection.always).toEqual([guide.key]);
+    expect(selection.chars).toBeLessThanOrEqual(DOCUMENTATION_CHAR_LIMIT);
+    // The always-included guide is cut to leave the pick its floor, and the answer is carried.
+    expect(selection.teamDocs.map((doc) => doc.title)).toEqual(['Coverage figure']);
+    expect(selection.howToGuides).toHaveLength(1);
+    expect(PICK_FLOOR_CHARS).toBe(6_000);
+  });
+
   it('ranks no block that shares only a function word with the item', (): void => {
     const selection = selectDocumentation({
       request: { ...request, shape: undefined, target: undefined },
@@ -445,6 +598,43 @@ describe('selectDocumentation', (): void => {
     });
     expect(selection.ranked[0]).toBe(`${chinese.key}#0`);
     expect(selection.teamDocs.map((doc) => doc.slug)).toEqual([chinese.slug]);
+  });
+});
+
+describe('selectDocumentation and a passage two pages disagree on (15-A)', (): void => {
+  it('tags the cite line of a disputed block [conflict], and no other, with what it disputes on its citation', (): void => {
+    const blocks = everyBlock([tileRunbook, holidays]).map((block) => ({
+      ...block,
+      hash: `hash-${block.id}`,
+    }));
+    const disputed = blocks.find((block) => block.text.includes('Press Refresh'))!;
+    const conflict = {
+      relationId: 'relation-1',
+      heading: 'Refresh',
+      pages: [
+        { title: 'How to refresh the pipeline tile', source: 'Handbook' },
+        { title: 'Tile notes', source: 'Team wiki' },
+      ],
+    } as const;
+    const selection = selectDocumentation({
+      request,
+      pages: [tileRunbook, holidays],
+      scouted: blocks,
+      pageBlocks: new Map([[tileRunbook.key, blocks.filter((b) => b.pageKey === tileRunbook.key)]]),
+      conflicts: new Map([[disputed.hash, conflict]]),
+    });
+    const lines = selection.howToGuides[0].body
+      .split('\n')
+      .filter((line) => line.startsWith('[cite: '));
+    expect(lines).toEqual([
+      '[cite: Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Sign in]',
+      '[cite: Handbook/runbooks/refresh-tile.md#How to refresh the pipeline tile > Refresh] [conflict]',
+    ]);
+    expect(selection.citations.map((citation) => citation.conflict)).toEqual([undefined, conflict]);
+    // A tagged line is still a cite line: found as one, and never part of what a message quotes.
+    expect(carriesCiteLines(selection.howToGuides[0].body)).toBe(true);
+    expect(withoutCiteLines(selection.howToGuides[0].body)).not.toContain('[conflict]');
+    expect(selection.chars).toBe(documentationChars(selection));
   });
 });
 

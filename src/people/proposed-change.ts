@@ -6,6 +6,8 @@
  * No Convex dependency: the merge and its tests read it alike.
  */
 
+import { sha256OfText } from '../lib/sha256';
+
 /** The values a change may name; each one present differs from the person's confirmed value. */
 export interface ProposedValues {
   readonly title?: string;
@@ -23,6 +25,25 @@ export interface ConfirmedValues extends ProposedValues {
 function given(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+}
+
+/** An address with a `+tag` taken off its local part: the mailbox the tagged spelling reaches. */
+function withoutPlusTag(address: string): string {
+  const at = address.lastIndexOf('@');
+  const plus = address.indexOf('+');
+  return plus <= 0 || plus > at ? address : `${address.slice(0, plus)}${address.slice(at)}`;
+}
+
+/**
+ * Whether an address is one the manager said is someone else's, read by its mailbox: a
+ * plus-tagged spelling ("mei+hr@kestrel.test") is the address it tags (W14-R54).
+ *
+ * @param marked - The person's `notTheirAddresses`, normalised.
+ * @param address - The address a source gives, normalised.
+ */
+export function isNotTheirAddress(marked: readonly string[] | undefined, address: string): boolean {
+  const mailbox = withoutPlusTag(address);
+  return (marked ?? []).some((kept) => withoutPlusTag(kept) === mailbox);
 }
 
 /**
@@ -44,7 +65,7 @@ export function proposedValues(
     ...(team !== undefined && team !== person.team ? { team } : {}),
     ...(address !== undefined &&
     address !== person.primaryEmail &&
-    !(person.notTheirAddresses ?? []).includes(address)
+    !isNotTheirAddress(person.notTheirAddresses, address)
       ? { primaryEmail: address }
       : {}),
   };
@@ -58,4 +79,42 @@ export function sameValues(left: ProposedValues, right: ProposedValues): boolean
     left.team === right.team &&
     left.primaryEmail === right.primaryEmail
   );
+}
+
+/** How many dismissed changes a person remembers: the newest (`people.dismissedChanges`). */
+export const DISMISSED_CHANGES_KEPT = 20;
+
+/** A title or team as the digest reads it: one width, one case, single spaces. */
+function digestWords(value: string | undefined): string {
+  return (value ?? '').normalize('NFKC').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * The digest a dismissed change is remembered by (W14-R52): SHA-256, as lower-case hex, of the
+ * three lines `title=`, `team=` and `address=`, each value in one width and case with single
+ * spaces (the address trimmed with its ASCII letters lower-cased, its one spelling), an absent
+ * value empty. The whole change is the unit: the same title beside a different team is another
+ * change.
+ *
+ * @remarks The input is fixed for good. A changed input re-proposes every change a manager
+ * dismissed once, so a later rule gets a new field, never a new input here.
+ */
+export function changeDigest(change: ProposedValues): string {
+  const address = (change.primaryEmail ?? '')
+    .trim()
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  return sha256OfText(
+    `title=${digestWords(change.title)}\nteam=${digestWords(change.team)}\naddress=${address}`,
+  );
+}
+
+/**
+ * A person's dismissed changes with one more, newest last, each digest once, the newest
+ * {@link DISMISSED_CHANGES_KEPT} kept.
+ *
+ * @param held - The digests the person holds, oldest first.
+ * @param digest - The change dismissed now.
+ */
+export function withDismissedChange(held: readonly string[] | undefined, digest: string): string[] {
+  return [...(held ?? []).filter((kept) => kept !== digest), digest].slice(-DISMISSED_CHANGES_KEPT);
 }

@@ -21,6 +21,15 @@ describe('the charter document', (): void => {
     expect(goalIsGap('No backlog older than a week.')).toBe(false);
   });
 
+  it('draws a goal that only remarks on a missing number as a goal (W14-R57)', (): void => {
+    const goal = 'Get the backlog below 20, no target number given for the 60-day mark';
+    expect(goalIsGap(goal)).toBe(false);
+    expect(goalIsGap('Own the weekly close. No target date was given.')).toBe(false);
+    // The gap still opens the goal's words, with or without "There was".
+    expect(goalIsGap('There was no goal given for day 60.')).toBe(true);
+    expect(goalIsGap('no 60-day milestone was named')).toBe(true);
+  });
+
   it('names each system once, with its kind, on one line', (): void => {
     expect(
       systemsLine([

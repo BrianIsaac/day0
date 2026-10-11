@@ -185,11 +185,18 @@ describe('fetch under a faked clock', (): void => {
       expect(passedThrough).toHaveLength(2);
       for (const test of swallowed) {
         expect(test.status).toBe('failed');
-        expect(test.failureMessages.join('\n')).toContain('http://double.test:8000/v1/spans');
+        expect(test.failureMessages.join('\n')).toContain('http://233.252.0.1:8000/v1/spans');
         // Under the nested run's 5 s test timeout: a stall would end there, a refusal in milliseconds.
         expect(test.duration ?? Number.POSITIVE_INFINITY).toBeLessThan(3_000);
       }
-      for (const test of [...quiet, ...passedThrough]) expect(test.status).toBe('passed');
+      // Named with the nested run's own failure: a full-suite gate on 9 October saw one of these
+      // fail and could not say which; one on 11 October named the third, timed out, and a cold
+      // lookup of the `.test` name the fixture then fetched took five seconds straight after. Its
+      // address is now one the machine refuses without a lookup, and the third test fails by the
+      // name asked for if a request does need the resolver.
+      for (const test of [...quiet, ...passedThrough]) {
+        expect(test.status, `${test.title}: ${test.failureMessages.join('\n')}`).toBe('passed');
+      }
     } finally {
       rmSync(reportDir, { recursive: true, force: true });
     }

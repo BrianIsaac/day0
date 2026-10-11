@@ -12,17 +12,18 @@ import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
-  LISTING_AFTER_HANDOVER,
-  MANAGER_CHANGED_RESEND_REASON,
   NOTHING_TO_DECIDE_REASON,
-  PLAN_CANCELLED_REASON,
-  REEVALUATION_BATCH,
   THREAD_NOT_FOUND_REASON,
   UNREADABLE_REPLY_REASON,
   UNSENT_NOTE_REASON,
 } from '../../convex/work';
+import { PLAN_CANCELLED_REASON } from '../../convex/managerDecisions';
+import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
+import { LISTING_AFTER_HANDOVER } from '../../convex/workSeeding';
+import { REEVALUATION_BATCH } from '../../convex/workReevaluation';
 import { AWAITING_APPROVAL, HELD_MUTATION, HELD_PUBLIC_POST } from '../../src/surfaces/policy';
 import { openQuestionStopReason } from '../../src/work/obligations';
+import { PIP_ANSWER, PIP_DECLINED_OUTPUT } from '../fixtures/work/pip-declined-2026-10-10';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
@@ -31,12 +32,12 @@ import { collectLedgerObservations } from '../../convex/metrics';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
+import { GROUNDING_READ_AFTER_HANDOVER } from '../../convex/work';
 import {
-  GROUNDING_READ_AFTER_HANDOVER,
   HANDED_OVER_REQUEST_REASON,
   returnApprovalsForHandover,
   voidDecisionRequestsForHandover,
-} from '../../convex/work';
+} from '../../convex/decisionRequests';
 import { stopRunsForHandover } from '../../convex/workRuns';
 import { HANDOVER_IN_PROGRESS_REASON, HANDOVER_STOP_REASON } from '../../convex/transferInFlight';
 // Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
@@ -3416,6 +3417,35 @@ describe('the exact-action gate', (): void => {
     expect(row.state).toBe('completed');
     expect(row.pendingRunId).toBeUndefined();
     expect(row.approvedIndexes).toBeUndefined();
+  });
+
+  it('completes Pip’s declined set with the answer its ledger gives, on the row and in the record (W15-R4)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, runId, agentId } = await seed(harness, 'executing');
+    await harness.mutation(internal.workRuns.setCompleted, {
+      workItemId,
+      runId,
+      output: PIP_DECLINED_OUTPUT,
+    });
+    const row = await readItem(harness, workItemId);
+    expect(row.state).toBe('completed');
+    const held = {
+      workDone: 'not-done',
+      workDoneWhy:
+        'None of the 3 writes this run set out to make was sent, so the work is not done, though the run answered that it was.',
+      workDoneSaid: PIP_ANSWER,
+    };
+    expect(row.output).toMatchObject(held);
+    const completed = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent_type', (index) =>
+            index.eq('agentId', agentId).eq('type', 'work.completed'),
+          )
+          .unique(),
+    );
+    expect((completed?.payload as { output: unknown }).output).toMatchObject(held);
   });
 
   it('still refuses to complete a run with a failed unheld action', async (): Promise<void> => {
@@ -8489,7 +8519,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement on the record once, however often the mock loop asks again', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 3; ask += 1) {
@@ -8504,7 +8534,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('leaves real mode as it was: every judgement of a queued row is written', async (): Promise<void> => {
     useSurfaceMode('real');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { waiting } = await seedAtCap(harness);
     for (let ask = 0; ask < 2; ask += 1) {
@@ -8517,7 +8547,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('writes the queued judgement again under a newer approved charter, so the record names the rules that decided', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     const charter = async (version: string): Promise<Id<'charters'>> =>
@@ -8545,7 +8575,7 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 
   it('still writes the claim once a slot frees', async (): Promise<void> => {
     useSurfaceMode('mock');
-    const { applyVerdict } = await import('../../convex/work');
+    const { applyVerdict } = await import('../../convex/workVerdicts');
     const harness = convexTest(schema, allConvexModules());
     const { agentId, waiting } = await seedAtCap(harness);
     await harness.run(async (ctx) => {
@@ -8565,6 +8595,49 @@ describe('a queued item judged again with no slot free (round 0141 R-D item 5)',
 });
 
 describe('work.listForAgent', (): void => {
+  it('reads the newest items up to its bound, in the order the page has always been given (W14-R51)', async (): Promise<void> => {
+    const { WORK_LIST_LIMIT } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const states = ['discovered', 'completed', 'skipped'] as const;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let item = 0; item <= WORK_LIST_LIMIT; item += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${item}`,
+          title: 'Add the close-summary audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: states[item % states.length]!,
+          observedAt: item,
+          createdAt: item,
+        });
+      }
+    });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+
+    // One more item than the bound: the oldest is the one left out.
+    expect(listed).toHaveLength(WORK_LIST_LIMIT);
+    expect(listed.map((item) => item.externalId)).not.toContain('REVOPS-0');
+    // The order below the bound is unchanged: by state, last first, the newest first within one.
+    expect(listed.slice(0, 2).map((item) => [item.state, item.externalId])).toEqual([
+      [
+        'skipped',
+        `REVOPS-${WORK_LIST_LIMIT - (WORK_LIST_LIMIT % 3 === 2 ? 0 : (WORK_LIST_LIMIT % 3) + 1)}`,
+      ],
+      [
+        'skipped',
+        `REVOPS-${WORK_LIST_LIMIT - (WORK_LIST_LIMIT % 3 === 2 ? 0 : (WORK_LIST_LIMIT % 3) + 1) - 3}`,
+      ],
+    ]);
+    expect(listed.at(-1)?.state).toBe('completed');
+  });
+
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

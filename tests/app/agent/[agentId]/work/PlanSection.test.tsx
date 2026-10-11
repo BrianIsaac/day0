@@ -53,6 +53,19 @@ describe("a work item's plan", (): void => {
   });
 });
 
+describe('a working agreement a plan was drafted with and lost (W15-R35)', (): void => {
+  it('says so under the steps, in the agreement’s words, and nothing on a plan that lost none', (): void => {
+    const lost = section(DRAWN.planPending, {
+      ...PLAN,
+      agreementsLeftOut: ['Name the vessel in every comment.'],
+    });
+    expect(lost).toContain(
+      'Drafted with a working agreement that is no longer in effect for this employee: ‘Name the vessel in every comment.’ The steps above may still follow it.',
+    );
+    expect(section(DRAWN.planPending)).not.toContain('no longer in effect');
+  });
+});
+
 describe('the working agreements a plan applied, on its card (W13-R29)', (): void => {
   it('lists each agreement the plan applied by its words, and none it did not', (): void => {
     const markup = renderToStaticMarkup(

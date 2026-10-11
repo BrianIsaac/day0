@@ -789,6 +789,27 @@ describe("a closing set's message this run's first phase already sent (W12V-13, 
     ).toMatchObject({ reusedFrom: 'work:run:0' });
   });
 
+  it('reuses, under a resend note, the copy this run sent after the note was given (W14-R45)', () => {
+    const note = 'Send the manager a second message with the same summary.';
+    const notedAt = 1_791_151_000_000;
+    const landedAt = (at: number): LandedWrite => ({
+      ...sent,
+      applied: { ...sent.applied, landedAt: at },
+    });
+    const options = { managerFeedback: note, feedbackAt: notedAt };
+    // The retried run's first phase already sent the copy the note asked for: the closing set's
+    // identical DM is that copy, and the manager who asked for one more gets one more, not two.
+    expect(reusedFromThisRun([dm], [landedAt(notedAt + 5_000)], thisRun, options)[0]).toMatchObject(
+      { reusedFrom: 'work:run:0' },
+    );
+    // A resumed closing set whose first phase ran before the note: sent again, as asked.
+    expect(reusedFromThisRun([dm], [landedAt(notedAt - 5_000)], thisRun, options)).toEqual([
+      undefined,
+    ]);
+    // A row with no landing time kept cannot be shown to answer the note: sent again.
+    expect(reusedFromThisRun([dm], [sent], thisRun, options)).toEqual([undefined]);
+  });
+
   it('reuses nothing the first phase held, failed or only read, and no status change', () => {
     const held: LandedWrite = {
       action: dm,

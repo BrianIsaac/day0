@@ -1,4 +1,3 @@
-import TurndownService from 'turndown';
 import { fetchWithBackoff, PROVIDER_BACKOFF, type BackoffPolicy } from '../../lib/transport-error';
 import type { DocPage, DocSourceRecord } from '../types';
 import {
@@ -11,6 +10,7 @@ import {
   type UnreadPage,
 } from './batch';
 import { markdownPageTitle } from './folder';
+import { htmlToMarkdown } from './html-markdown';
 import { authorizationHeader } from './mcp';
 import {
   checkPageAddress,
@@ -216,7 +216,6 @@ export class UrlsReader implements DocumentationReader {
     urls: URL[],
     access: PageAccess,
   ): Promise<Array<DocPage | UnreadPage>> {
-    const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
     const reads: Array<DocPage | UnreadPage> = [];
     // Each try checks the address again and dials only what it checked, one timeout per try.
     const { resolve, dial, privateHosts } = this.connection;
@@ -228,7 +227,7 @@ export class UrlsReader implements DocumentationReader {
     );
     for (const url of urls) {
       try {
-        reads.push(await this.fetchPage(source, url, read, turndown, access));
+        reads.push(await this.fetchPage(source, url, read, access));
       } catch (error) {
         reads.push({ ref: url.href, reason: unreadReason(error) });
       }
@@ -241,7 +240,6 @@ export class UrlsReader implements DocumentationReader {
     source: DocSourceRecord,
     url: URL,
     read: (input: URL, init?: RequestInit) => Promise<Response>,
-    turndown: TurndownService,
     access: PageAccess,
   ): Promise<DocPage> {
     const response = await fetchWithinSite(url, read, access, (address: URL): boolean =>
@@ -261,7 +259,7 @@ export class UrlsReader implements DocumentationReader {
     if (Buffer.byteLength(body) > MAX_PAGE_BYTES) throw new Error(`${url.href} exceeds 2 MiB.`);
     const contentType = response.headers.get('content-type') || '';
     const isHtml = contentType.includes('html') || /<html[\s>]/i.test(body);
-    const markdown = isHtml ? turndown.turndown(body) : body;
+    const markdown = isHtml ? htmlToMarkdown(body) : body;
     const fallback = `${url.hostname}${url.pathname === '/' ? '' : url.pathname}`;
     return {
       sourceId: source._id,

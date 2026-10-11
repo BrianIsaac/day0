@@ -1,0 +1,10 @@
+{
+  "statusCode": 401,
+  "data": {
+    "authorized": false,
+    "valid": true,
+    "errors": [],
+    "successful": false
+  },
+  "message": "No valid authentication found"
+}

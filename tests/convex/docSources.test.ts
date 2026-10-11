@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -7,6 +8,7 @@ import schema from '../../convex/schema';
 import {
   FINISHING_CURSOR,
   RUN_HISTORY_MS,
+  RUNS_READ_BY_MIGRATION,
   STALE_LISTING_PAGE,
   STALE_SYNC_MS,
   SUPERSEDED_CREDENTIAL_KEEP_MS,
@@ -16,6 +18,7 @@ import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { finishingCursor } from '../../src/docs/finishing';
 import { listingCursor } from '../../src/docs/readers/batch';
 import { allConvexModules } from './all-modules';
+import { MIGRATION_NAMES } from '../../convex/migrations';
 
 import { mirroredDocSlug } from '../../src/docs/types';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -520,6 +523,91 @@ describe('documentation sources in real mode', (): void => {
     });
   });
 
+  it("unlinks a source's page relations, those from its pages and those to them, and keeps another pair's (15-K)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const kept = await harness.run(async (ctx) => {
+      const other = async (label: string): Promise<Id<'docSources'>> =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label,
+          kind: 'folder',
+          locator: label,
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      const [wiki, howTos] = [await other('wiki'), await other('how-tos')];
+      const relation = async (
+        from: Id<'docSources'>,
+        to: Id<'docSources'>,
+      ): Promise<Id<'docRelations'>> =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: from, ref: 'page.md' },
+          to: { sourceId: to, ref: 'page.md' },
+          kind: 'possible_duplicate',
+          evidence: [],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      await relation(sourceId, wiki);
+      await relation(howTos, sourceId);
+      return await relation(wiki, howTos);
+    });
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
+    expect(left.map((row) => row._id)).toEqual([kept]);
+  });
+
+  it("unlinks a source's relations inside a transaction's read limit however much evidence each holds, across pages from both ends (15-K, second pass)", async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { sourceId } = await seedSyncedSource(harness);
+    const other = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docSources', {
+          userId: 'owner',
+          label: 'wiki',
+          kind: 'folder',
+          locator: 'wiki',
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    // The schema bounds no relation's evidence: each row here is about 900 KB of block refs, so
+    // a page of twenty such rows from one end reads past 16 MiB.
+    const blockRefs = Array.from({ length: 14_000 }, (_unused, index) =>
+      index.toString(16).padStart(64, '0'),
+    );
+    for (let index = 0; index < 21; index += 1) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from:
+            index % 2 === 0 ? { sourceId, ref: `a-${index}.md` } : { sourceId: other, ref: 'b.md' },
+          to:
+            index % 2 === 0 ? { sourceId: other, ref: 'b.md' } : { sourceId, ref: `a-${index}.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'text-overlap', value: 0.9, blockRefs }],
+          status: 'proposed',
+          createdAt: 1,
+        });
+      });
+    }
+    await harness.withIdentity(managerIdentity()).mutation(api.docSources.unlink, { sourceId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await harness.run(
+      async (ctx) => (await ctx.db.query('docRelations').take(5)).length,
+    );
+    expect(left).toBe(0);
+  }, 120_000);
+
   it('deletes the ciphertext of every credential an unlink revokes and keeps the row', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -847,7 +935,12 @@ describe('documentation sources in real mode', (): void => {
     expect(failed?.reason).toBe(
       'The documentation read was interrupted (timeout). at read (urls.ts:1) A newer sync of the source took over from its cursor after 0 pages.',
     );
-    expect(failed?.unread).toEqual({ count: 1, pages: [{ ref: 'page.md', reason: 'HTTP 404' }] });
+    // Re-pinned for D-7: the record says each entry is a failure and counts no page of a kind.
+    expect(failed?.unread).toEqual({
+      count: 1,
+      pages: [{ ref: 'page.md', reason: 'HTTP 404', kind: 'failed' }],
+      notRead: 0,
+    });
     expect(completed).toMatchObject({
       state: 'completed',
       unread: {
@@ -3304,6 +3397,99 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     expect(await stored(harness, sourceId)).toEqual({ pages: ['kept.md'], mirrors: ['kept.md'] });
   });
 
+  it('stamps the skills that read a page once the second walk removes it, naming its source (W14-R22)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-10T09:00:00.000Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const skillId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.query('agents').first();
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'source test',
+        readRefs: [{ sourceId, ref: 'missed.md', title: 'missed.md' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId: agent!._id,
+        name: 'follow-the-runbook',
+        description: 'Follow the runbook',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+    const reason = async (): Promise<string | undefined> => {
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      return (await harness.run(async (ctx) => await ctx.db.get(skillId)))?.recheckReason;
+    };
+    // Missed once, the page is kept and its readers are left alone.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBeUndefined();
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await reason()).toBe(
+      'its runbook "missed.md" was removed from Drive on 10 October 2026',
+    );
+  });
+
+  it('removes the proposals of a page it removes, which nobody could answer, and keeps what the manager decided (15-A)', async (): Promise<void> => {
+    // The second pass's minor 4: a removed page's proposals stayed, drawn on no card, in the
+    // read of the cards still to answer.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    await harness.run(async (ctx) => {
+      const relation = {
+        userId: 'owner',
+        kind: 'possible_duplicate' as const,
+        evidence: [{ measure: 'shared-text', value: 80 }],
+        createdAt: 1,
+      };
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'missed.md' },
+        to: { sourceId, ref: 'kept.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'proposed',
+      });
+      await ctx.db.insert('docRelations', {
+        ...relation,
+        from: { sourceId, ref: 'kept.md' },
+        to: { sourceId, ref: 'missed.md' },
+        status: 'confirmed',
+      });
+    });
+    const standings = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (await ctx.db.query('docRelations').collect()).map((row) => row.status),
+      );
+    // Missed once, the page is kept, and so is everything that names it.
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['proposed', 'proposed', 'confirmed']);
+    await walk(harness, sourceId, ['kept.md']);
+    expect(await standings()).toEqual(['confirmed']);
+  });
+
   it('keeps the credentials of a page it keeps after one miss, and supersedes them when the page goes (second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers();
@@ -3335,6 +3521,49 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
 
     await walk(harness, sourceId, ['kept.md']);
     expect(await status()).toBe('superseded');
+  });
+
+  it('counts a page it keeps after one miss among the pages the source holds, and its values among those stated (W14-R24)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await walkedSource(harness);
+    const ref = credentialSourceRef('missed.md', 'a'.repeat(32));
+    const superseded = credentialSourceRef('missed.md', 'b'.repeat(32));
+    await harness.run(async (ctx): Promise<void> => {
+      const value = { userId: 'owner', kind: 'value' as const, ciphertext: 'encrypted', iv: 'iv' };
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref },
+        createdAt: 1,
+      });
+      // A value an earlier sync superseded on the same page is stated by nobody.
+      await ctx.db.insert('credentials', {
+        ...value,
+        label: 'Looker tile password',
+        source: { sourceId, ref: superseded },
+        status: 'superseded',
+        supersededAt: 1,
+        createdAt: 1,
+      });
+      const source = await ctx.db.get(sourceId);
+      await ctx.db.patch(source!.lastCompletedSyncId!, { credentialRefs: [ref] });
+    });
+
+    const once = await walk(harness, sourceId, ['kept.md']);
+    // The source still holds both pages: the one this walk listed and the one it missed once.
+    expect(once).toMatchObject({ pagesListed: 1 });
+    expect(once?.summary).toMatchObject({ pagesKept: 2, pagesRemoved: 0 });
+    await expect(
+      harness.query(internal.docSources.syncReport, { sourceId }),
+    ).resolves.toMatchObject({ pageCount: 2 });
+    // And the kept page still states its value, so the next walk reads it as stated before (N23).
+    expect(once?.credentialRefs).toEqual([ref]);
+
+    const twice = await walk(harness, sourceId, ['kept.md']);
+    expect(twice?.summary).toMatchObject({ pagesKept: 1, pagesRemoved: 1 });
+    expect(twice?.credentialRefs).toEqual([]);
   });
 
   it('counts the misses from the last complete walk that listed the page, so a page listed again starts over', async (): Promise<void> => {
@@ -3371,5 +3600,13 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     await harness.mutation(internal.docSources.beginSync, { sourceId, fresh: true });
 
     expect((await stored(harness, sourceId)).pages).toEqual(['kept.md', 'missed.md']);
+  });
+});
+
+describe('the import cycle through the documentation store (the helpers split, S-2; 15-K)', (): void => {
+  it('imports nothing from the migrations, and keeps its run pruner on a migration the upgrade runs', (): void => {
+    const source = readFileSync(new URL('../../convex/docSources.ts', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/from '\.\/migrations'/);
+    expect(MIGRATION_NAMES).toContain(RUNS_READ_BY_MIGRATION);
   });
 });

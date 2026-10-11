@@ -717,6 +717,49 @@ describe('retrying a skipped item', (): void => {
       'To give it to this employee instead, cancel it on Priya&#x27;s card; it comes back here by itself once they let it go.',
     );
   });
+
+  describe('an ask skipped because a colleague settled the ticket it names (D-1 (a))', (): void => {
+    const reason =
+      'claimed-by-colleague: Mateo settled FIN-1 with a comment on 19 September 2026 (Post the September close status note)';
+    const settledSkip = (): Doc<'workItems'> =>
+      ({
+        ...skipped(reason),
+        verdict: {
+          decision: 'skip',
+          reason,
+          claimedBy: {
+            claimId: 'c1',
+            agentId: 'a2',
+            workItemId: 'w9',
+            name: 'Mateo',
+            title: 'Post the September close status note',
+            settled: {
+              ticket: 'FIN-1',
+              commentedAt: 1_789_787_050_000,
+              commentedOn: '19 September 2026',
+            },
+          },
+        },
+      }) as unknown as Doc<'workItems'>;
+
+    it("names the colleague, the ticket and the comment's date, and never says the colleague holds it", (): void => {
+      const markup = render(settledSkip());
+      expect(markup.replace(/<!-- -->/g, '')).toMatch(
+        /<a [^>]*href="\/agent\/a2"[^>]*>Mateo<\/a> settled FIN-1 with a comment on 19 September 2026 \(Post the September close status note\)\./,
+      );
+      expect(markup).not.toContain('Another employee holds this');
+      expect(markup).not.toContain('claimed-by-colleague:');
+      expect(markup).not.toContain('it comes back here by itself');
+    });
+
+    it('offers Take it anyway, saying what it decides', (): void => {
+      const markup = render(settledSkip());
+      expect(markup).toContain(`>${TAKE_IT_ANYWAY}<`);
+      expect(markup).toContain(
+        `${TAKE_IT_ANYWAY} is your decision that this asks for something the comment did not settle: it is evaluated again, and its plan still waits for your approval.`,
+      );
+    });
+  });
 });
 
 describe('phone approval delivery', (): void => {

@@ -601,9 +601,11 @@ export function hostCarriesSlug(host: string, slug: string): boolean {
  * A URL belongs to a system only when the prose of the sentence it appears
  * in names the system as a whole word (the URL text itself does not count),
  * when the URL host carries the system slug as whole labels, or when the
- * sentence names the system's vendor word and the host carries it too: a page
- * titled "Slack automation policy" documents "Slack Web API over HTTPS at
- * `https://slack.com/api/`" for itself (W13V-1). Co-occurrence in a paragraph is not attribution: a page that documents
+ * sentence names the system's vendor word and the host is the vendor's own
+ * (`hostIsVendors`): a page titled "Slack automation policy" documents "Slack
+ * Web API over HTTPS at `https://slack.com/api/`" for itself (W13V-1), while
+ * "Google Sheets" takes nothing from `drive.google.com` (W14-R53).
+ * Co-occurrence in a paragraph is not attribution: a page that documents
  * Linear's MCP endpoint and mentions Slack in the next sentence documents
  * nothing for Slack, and a sentence about Slackbot documents nothing for
  * Slack. A sentence that denies a surface contributes no URL at all.
@@ -629,11 +631,7 @@ export function attributedUrls(text: string, system: string, slug: string): stri
       for (const raw of sentence.match(URL_PATTERN) ?? []) {
         const url = raw.replace(/[.,;:!?]+$/, '');
         const host = hostOf(url);
-        if (
-          named ||
-          hostCarriesSlug(host, slug) ||
-          (vendorNamed && hostCarriesSlug(host, vendor))
-        ) {
+        if (named || hostCarriesSlug(host, slug) || (vendorNamed && hostIsVendors(host, vendor))) {
           urls.add(url);
         }
       }
@@ -644,7 +642,8 @@ export function attributedUrls(text: string, system: string, slug: string): stri
 
 /**
  * The word a system's name opens on when the name says more than the system ("Slack" of "Slack
- * automation policy"), or nothing for a one-word name or a lead word too short to name a vendor.
+ * automation policy"), or nothing for a one-word name, a lead word too short to name a vendor, a
+ * common word, or a vendor with many products, whose word says nothing of which one (W14-R53).
  */
 function vendorWord(system: string): string | undefined {
   const words = system
@@ -652,12 +651,16 @@ function vendorWord(system: string): string | undefined {
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
   const lead = words[0];
-  return words.length > 1 && lead !== undefined && lead.length >= 3 && !NOT_A_VENDOR.has(lead)
+  return words.length > 1 &&
+    lead !== undefined &&
+    lead.length >= 3 &&
+    !NOT_A_VENDOR.has(lead) &&
+    !MANY_PRODUCT_VENDORS.has(lead)
     ? lead
     : undefined;
 }
 
-/** Lead words of a page title that name no vendor ("The team wiki", "Our CRM"). */
+/** Lead words of a page title that name no vendor ("The team wiki", "Our CRM", "Data warehouse"). */
 const NOT_A_VENDOR: ReadonlySet<string> = new Set([
   'the',
   'our',
@@ -675,7 +678,83 @@ const NOT_A_VENDOR: ReadonlySet<string> = new Set([
   'admin',
   'access',
   'policy',
+  'data',
+  'order',
+  'orders',
+  'mail',
+  'prod',
+  'production',
+  'staging',
+  'docs',
+  'wiki',
+  'status',
+  'api',
+  'app',
+  'web',
+  'portal',
 ]);
+
+/**
+ * Vendors whose name opens many products ("Google Sheets", "Microsoft Teams", "GitHub Actions"):
+ * the word names no one system, so a URL on the vendor's host is not that system's (W14-R53). A
+ * system of theirs is attributed by its whole name or its slug in the host, as any other.
+ */
+const MANY_PRODUCT_VENDORS: ReadonlySet<string> = new Set([
+  'google',
+  'microsoft',
+  'apple',
+  'amazon',
+  'aws',
+  'azure',
+  'atlassian',
+  'zoom',
+  'github',
+  'gitlab',
+  'adobe',
+  'oracle',
+  'salesforce',
+  'sap',
+  'zoho',
+  'meta',
+  'ibm',
+  'cisco',
+]);
+
+/** The labels before a vendor's apex that name an interface of its product, never a sibling one. */
+const VENDOR_INTERFACE_LABELS: ReadonlySet<string> = new Set(['www', 'api', 'mcp', 'app']);
+
+/** Second-level labels of a two-part public suffix ("co.uk", "com.sg"). */
+const SECOND_LEVEL_SUFFIXES: ReadonlySet<string> = new Set([
+  'co',
+  'com',
+  'org',
+  'net',
+  'ac',
+  'gov',
+  'edu',
+]);
+
+/**
+ * Whether a host is a vendor's own: its apex (`slack.com`, `kestrel.co.uk`) or an interface of it
+ * (`api.slack.com`, `mcp.linear.app`). A sibling product's host (`drive.google.com`,
+ * `support.slack.com`, `status.atlassian.com`) and a company's own host that only opens on the
+ * word (`data.acme.test`) are not (W14-R53).
+ *
+ * @param host - The URL's host, with or without a port.
+ * @param vendor - The vendor word, lower case.
+ */
+export function hostIsVendors(host: string, vendor: string): boolean {
+  const labels = host.replace(/:\d+$/, '').toLowerCase().split('.').filter(Boolean);
+  const at = labels.indexOf(vendor);
+  if (at < 0) return false;
+  const before = labels.slice(0, at);
+  const after = labels.slice(at + 1);
+  const ownSuffix =
+    after.length === 1 || (after.length === 2 && SECOND_LEVEL_SUFFIXES.has(after[0] ?? ''));
+  const ownInterface =
+    before.length === 0 || (before.length === 1 && VENDOR_INTERFACE_LABELS.has(before[0] ?? ''));
+  return ownSuffix && ownInterface;
+}
 
 /**
  * Decide whether a host is private to this machine or the compose network.

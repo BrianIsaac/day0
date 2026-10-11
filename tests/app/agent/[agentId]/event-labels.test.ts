@@ -19,6 +19,21 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
+    const holder = { name: 'Mateo', title: 'Post the September close status note' };
+    expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(
+      'not taken: another employee holds this ticket',
+    );
+    expect(
+      eventLabel({
+        type: 'work.claim-refused',
+        payload: {
+          holder: { ...holder, settled: { ticket: 'FIN-1', commentedOn: '19 September 2026' } },
+        },
+      }),
+    ).toBe('not taken: Mateo settled FIN-1 with a comment on 19 September 2026');
+  });
+
   it('labels each step of a handover request by the address it names', (): void => {
     const request = {
       transferId: 't1',
@@ -825,7 +840,31 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         payload: { agreementId: 'a2', everyEmployee: true, reason: 'unchecked-for-employee' },
       }),
     ).toBe(
-      'working agreement for every employee not in effect for this employee: you had more than 50 employees when its charter was approved',
+      // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
+      'working agreement for every employee not in effect for this employee: not checked against its charter',
     );
+    expect(
+      eventLabel({
+        type: 'agreement.activated',
+        payload: {
+          agreementId: 'a2',
+          everyEmployee: true,
+          approvedVia: 'promotion-card',
+          afterHold: true,
+        },
+      }),
+    ).toBe(
+      'working agreement for every employee now in effect for this employee: checked against its charter',
+    );
+  });
+
+  it('says an answer on a relation’s card was taken back, apart from one that was given (15-A)', (): void => {
+    const label = (decision: string): string =>
+      eventLabel({
+        type: 'documentation.relation-decided',
+        payload: { relationId: 'r1', kind: 'possible_successor', decision },
+      });
+    expect(label('supersedes')).toBe('documentation: a newer version of a page decided');
+    expect(label('undo')).toBe('documentation: the answer on a newer version of a page taken back');
   });
 });

@@ -191,11 +191,37 @@ export interface ExecutionPlan {
   /** Set when the agreements the planner saw were scrubbed without the span model. */
   agreementsRedaction?: 'structural-only';
   /**
+   * The statements of the working agreements the plan was drafted with that no longer bound the
+   * employee when it was stored or approved (retired, refused or held meanwhile; W15-R35): the
+   * steps may still follow them, so the card says so. Written by `setPlan` and the approval.
+   */
+  agreementsLeftOut?: string[];
+  /**
    * The documentation each step follows, real mode only (wave 14, 14-R): the cite lines the
    * planner named for a step, each with the stored blocks under it in the planner's selection.
    * The closing phase refuses to run on a plan whose cited block is gone.
    */
   cites?: PlanCite[];
+}
+
+/**
+ * What a cite is disputed by (wave 15, 15-A): a conflict the manager confirmed between the cited
+ * page and another of equal trust, under one heading. The selection tags such a cite line
+ * `[conflict]`, and a plan that cites one waits for the manager.
+ */
+export interface CiteConflict {
+  /** The relation (`docRelations` id) the manager confirmed. */
+  readonly relationId: string;
+  /** The heading the two pages disagree under. */
+  readonly heading: string;
+  /** The two pages, each by its title and its source's label. */
+  readonly pages: readonly [CiteConflictPage, CiteConflictPage];
+}
+
+/** One page of a disputed cite. */
+export interface CiteConflictPage {
+  readonly title: string;
+  readonly source: string;
 }
 
 /** One cite of a plan step: the cite line's words and the stored blocks under it. */
@@ -204,7 +230,13 @@ export interface PlanCite {
   readonly step: number;
   /** The words inside the brackets of the cite line, `<source>/<page>#<heading path>`. */
   readonly label: string;
+  /** The source the cited page is of (`docSources` id), since two sources may share a label (W14-R27). */
+  readonly sourceId?: string;
+  /** The cited page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
+  /** Set when the cited passage was disputed as the plan was drafted (`CiteConflict`). */
+  readonly conflict?: CiteConflict;
 }
 
 /** The four verbs that write to the per-agent mock environment. */
@@ -616,7 +648,13 @@ export interface CitedBlock {
 export interface DocumentationCitation {
   /** The words inside the brackets of `[cite: <source>/<page>#<heading path>]`. */
   readonly label: string;
+  /** The source the page is of (`docSources` id); absent for an office page with no source. */
+  readonly sourceId?: string;
+  /** The page's ref within its source. */
+  readonly pageRef?: string;
   readonly blocks: readonly CitedBlock[];
+  /** Set when the cite line was printed `[conflict]`: what the passage is disputed by. */
+  readonly conflict?: CiteConflict;
 }
 
 /** What one documentation selection put in a prompt, for the record and the plan's cites. */

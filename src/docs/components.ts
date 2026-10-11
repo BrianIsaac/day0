@@ -1,15 +1,25 @@
 /**
  * Which documentation sources need a day0 component, and whether it is there.
  *
- * Day0 reads documentation through five source kinds, and only one of them
+ * Day0 reads documentation through ten source kinds, and only one of them
  * needs anything running beside the backend:
  *
- *   folder  a directory mounted read-only into the backend. No container.
- *   git     a repository the backend clones. No container.
- *   urls    pages the backend fetches. No container.
- *   feishu  a Feishu or Lark wiki space or folder the backend reads through
- *           Feishu's open platform as the customer's app. No container.
- *   mcp     an MCP server, and which one is the `serverKind`.
+ *   folder         a directory mounted read-only into the backend. No container.
+ *   git            a repository the backend clones. No container.
+ *   urls           pages the backend fetches. No container.
+ *   feishu         a Feishu or Lark wiki space or folder the backend reads through
+ *                  Feishu's open platform as the customer's app. No container.
+ *   sharepoint     a SharePoint site the backend reads through Microsoft Graph as
+ *                  the customer's app registration. No container.
+ *   confluence-v2  a Confluence Cloud space the backend reads through Atlassian's
+ *                  gateway as a service account. No container.
+ *   confluence-dc  a Confluence Data Center space the backend reads on the
+ *                  customer's own server. No container.
+ *   yuque          a Yuque repository the backend reads through Yuque's API. No
+ *                  container.
+ *   drive          a Google Drive folder the backend reads through the Drive API
+ *                  as a service account. No container.
+ *   mcp            an MCP server, and which one is the `serverKind`.
  *
  * Of the MCP server kinds, `notion` is the only one day0 bundles: Notion's
  * hosted server is OAuth-only, so a headless deployment runs Notion's own

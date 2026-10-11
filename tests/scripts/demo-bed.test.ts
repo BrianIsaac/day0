@@ -25,6 +25,7 @@ import {
   bedEnvDefaults,
   imagesPreflightItem,
   bedPorts,
+  builtImagesRefusal,
   composeImages,
   credentialKeyToAdopt,
   demoTiers,
@@ -313,11 +314,15 @@ describe('the protected volumes and projects', (): void => {
       writeFileSync(join(directory, '.env.local'), `COMPOSE_PROJECT_NAME=${project}\n`);
       return directory;
     };
+    let invocations = 0;
     const invoke = async (cwd: string, args: string[]): Promise<void> => {
+      // A call log of its own (W14-R37): a Docker call is named by the invocation that made it.
+      invocations += 1;
+      const log = `${calls}-${invocations}`;
       const result = await new Promise<{ status: number | null; stderr: string }>((resolve) => {
         const child = spawn(command, [script, ...args], {
           cwd,
-          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: calls },
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DOCKER_CALL_LOG: log },
         });
         let stderr = '';
         child.stderr.on('data', (chunk: Buffer): void => {
@@ -329,11 +334,17 @@ describe('the protected volumes and projects', (): void => {
       expect(result.stderr, args.join(' ')).toMatch(
         /protected|only ever read|file names project|COMPOSE_PROJECT_NAME=|snapshot does not take --project/,
       );
+      expect(
+        existsSync(log) ? readFileSync(log, 'utf8') : '',
+        `${args.join(' ')} (in ${cwd}) reached Docker`,
+      ).toBe('');
     };
     try {
       // Thirty-three processes, each refusing before Docker: run together, not one after another,
       // so the test's time is one process's and not thirty-three under a loaded machine's.
-      await Promise.all(
+      // Settled, never raced (W14-R37): a failure waits for every other child to close before the
+      // directory they run in is deleted, and every failing invocation is named, not the first.
+      const settled = await Promise.allSettled(
         [...PROTECTED_PROJECTS, ...READ_ONLY_PROJECTS].flatMap((protectedProject) => {
           const cwd = checkoutFor(protectedProject);
           return [
@@ -351,7 +362,12 @@ describe('the protected volumes and projects', (): void => {
           ].map(async (args) => await invoke(cwd, args));
         }),
       );
-      expect(existsSync(calls)).toBe(false);
+      const failures = settled.flatMap((outcome) =>
+        outcome.status === 'rejected'
+          ? [outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)]
+          : [],
+      );
+      expect(failures).toEqual([]);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
@@ -683,6 +699,41 @@ describe('the compose file is pinned to digests', (): void => {
       status: 'gap',
       detail: `missing: backend (day0-convex-backend:git, built from ${base}); build it with \`pnpm backend:build\` before travelling, not at the venue`,
     });
+  });
+
+  it('trusts a built image by its base label, not its tag, and stops `up` before it writes anything when none of the pinned base is here (W14-R19, W14-R20)', (): void => {
+    const base = `ghcr.io/get-convex/convex-backend:latest@sha256:${'a'.repeat(64)}`;
+    const images = [
+      { service: 'backend', reference: base, pinned: true, builtAs: 'day0-convex-backend:git' },
+      {
+        service: 'looker-tile',
+        reference: `node:22-alpine@sha256:${'b'.repeat(64)}`,
+        pinned: true,
+      },
+    ];
+    const present = (): boolean => true;
+    // Another checkout's build holds the machine-wide tag.
+    const other = (): string => `sha256:${'c'.repeat(64)}`;
+    expect(imagesPreflightItem(images, present, other)).toEqual({
+      label: 'Images: 1/2 present (1 built here), 2/2 pinned',
+      status: 'gap',
+      detail:
+        'stale: backend (day0-convex-backend:git was built from sha256:cccccccccccc, and this checkout pins sha256:aaaaaaaaaaaa); build it with `pnpm backend:build` before travelling, not at the venue',
+    });
+    expect(builtImagesRefusal(images, present, other)).toBe(
+      'the bed cannot start: stale: backend (day0-convex-backend:git was built from sha256:cccccccccccc, and this checkout pins sha256:aaaaaaaaaaaa); build it with `pnpm backend:build`',
+    );
+    // A laptop that never built it: said before the env file, the keys or the volumes are written.
+    expect(builtImagesRefusal(images, (reference) => !reference.startsWith('day0-'))).toBe(
+      `the bed cannot start: missing: backend (day0-convex-backend:git, built from ${base}); build it with \`pnpm backend:build\``,
+    );
+    // Labelled with the pinned base, or built before the label: the bed starts; a pulled image
+    // that is missing is the pre-flight's to say, not a reason to stop `up`.
+    expect(builtImagesRefusal(images, present, () => `sha256:${'a'.repeat(64)}`)).toBeUndefined();
+    expect(builtImagesRefusal(images, present, () => undefined)).toBeUndefined();
+    expect(
+      builtImagesRefusal(images, (reference) => reference.startsWith('day0-')),
+    ).toBeUndefined();
   });
 
   it('reports an unpinned image as such', (): void => {

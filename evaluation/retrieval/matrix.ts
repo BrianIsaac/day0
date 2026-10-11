@@ -9,9 +9,9 @@ import {
   type SelectionRequest,
 } from '../../src/docs/select';
 import {
-  RETRIEVAL_CASES,
   RETRIEVAL_ROLES,
   RETRIEVAL_SURFACES,
+  retrievalCases,
   retrievalPages,
   type RetrievalCase,
 } from './fixture';
@@ -79,6 +79,11 @@ export interface RetrievalObservation {
   promptPages: string[];
   /** The documentation characters the prompt carries. */
   chars: number;
+  /**
+   * For an item that names two pages of different trust: whether the one that must rank first
+   * did, in the ranked pick. Absent for every other item.
+   */
+  order?: { first: string; then: string; held: boolean };
 }
 
 /** One run of the grade. */
@@ -101,6 +106,11 @@ export interface RetrievalGradeEvidence {
   recall: { pages: number; blocks: number };
   /** The mean recall of the ranked pick alone, over the cases with labels left to find. */
   rankedRecall: { pages: number; blocks: number; pageCases: number; blockCases: number };
+  /**
+   * The items that name an order between two pages of different trust, and on how many it held.
+   * Beside the recall and not part of R2's bar; absent when the set graded had no such item.
+   */
+  order?: { cases: number; held: number };
   bar: typeof RECALL_BAR;
   meetsBar: boolean;
   noModelCalls: true;
@@ -162,6 +172,16 @@ function recallOf(expected: readonly string[], found: ReadonlySet<string>): Reca
     missed,
     recall: expected.length === 0 ? 1 : (expected.length - missed.length) / expected.length,
   };
+}
+
+/**
+ * Whether the page that must rank first does: its first block in the ranked pick comes before
+ * the other page's first block, or the other page is not picked at all.
+ */
+function ranksFirst(ranked: readonly string[], first: string, then: string): boolean {
+  const at = (page: string): number => ranked.findIndex((key) => key.startsWith(`${page}#`));
+  const [firstAt, thenAt] = [at(first), at(then)];
+  return firstAt !== -1 && (thenAt === -1 || firstAt < thenAt);
 }
 
 /** The selection request the planner makes for one labelled item. */
@@ -226,6 +246,14 @@ export function gradeCase(
     },
     promptPages,
     chars: selection.chars,
+    ...(entry.order
+      ? {
+          order: {
+            ...entry.order,
+            held: ranksFirst(selection.ranked, entry.order.first, entry.order.then),
+          },
+        }
+      : {}),
   };
 }
 
@@ -236,14 +264,19 @@ function mean(values: readonly number[]): number {
     : values.reduce((total, value) => total + value, 0) / values.length;
 }
 
-/** Grade every labelled item at a commit, without a model, with the emulated scout or the one given. */
+/**
+ * Grade every labelled item at a commit, without a model, with the emulated scout or the one
+ * given, over the set as it stood on the day of `now`: a grade dated before a page or an item
+ * joined is taken without it.
+ */
 export function buildRetrievalGrade(
   commit: string,
   now = new Date(),
   options: { scout?: Scout } = {},
 ): RetrievalGradeEvidence {
-  const pages = retrievalPages();
-  const observations = RETRIEVAL_CASES.map((entry) => gradeCase(entry, pages, options.scout));
+  const pages = retrievalPages(now);
+  const observations = retrievalCases(now).map((entry) => gradeCase(entry, pages, options.scout));
+  const ordered = observations.flatMap((row) => (row.order ? [row.order] : []));
   const recall = {
     pages: mean(observations.map((row) => row.pages.recall)),
     blocks: mean(observations.map((row) => row.sections.recall)),
@@ -269,6 +302,9 @@ export function buildRetrievalGrade(
     observations,
     recall,
     rankedRecall,
+    ...(ordered.length > 0
+      ? { order: { cases: ordered.length, held: ordered.filter((row) => row.held).length } }
+      : {}),
     bar: RECALL_BAR,
     meetsBar: [recall, rankedRecall].every(
       (row) => row.pages >= RECALL_BAR.pages && row.blocks >= RECALL_BAR.blocks,
@@ -287,7 +323,13 @@ export function renderRetrievalGrade(evidence: RetrievalGradeEvidence): string {
   const rows = evidence.observations.map(
     (row) =>
       `| ${row.id} | ${percent(row.pages.recall)} | ${percent(row.sections.recall)} | ${row.ranked.pages ? percent(row.ranked.pages.recall) : '-'} | ${row.ranked.sections ? percent(row.ranked.sections.recall) : '-'} | ${row.chars.toLocaleString('en-GB')} | ${
-        [...row.pages.missed, ...row.sections.missed].join(', ') || 'none'
+        [
+          ...row.pages.missed,
+          ...row.sections.missed,
+          ...(row.order && !row.order.held
+            ? [`order: ${row.order.first} not ahead of ${row.order.then}`]
+            : []),
+        ].join(', ') || 'none'
       } |`,
   );
   const backend = evidence.scout === 'backend' ? evidence.backend : undefined;
@@ -313,6 +355,12 @@ export function renderRetrievalGrade(evidence: RetrievalGradeEvidence): string {
     '',
     `R2's bar: ${percent(evidence.bar.pages)} of pages, ${percent(evidence.bar.blocks)} of blocks, on both. ${evidence.meetsBar ? 'At or above the bar.' : 'Below the bar.'}`,
     '',
+    ...(evidence.order
+      ? [
+          `Order between two pages of different trust (${evidence.order.cases} items, each naming the page that must rank first): held on ${evidence.order.held}.`,
+          '',
+        ]
+      : []),
     '| Item | Pages | Sections | Ranked pages | Ranked sections | Characters | Missed |',
     '|---|---|---|---|---|---|---|',
     ...rows,

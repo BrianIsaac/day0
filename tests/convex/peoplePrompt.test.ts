@@ -102,6 +102,29 @@ describe('peoplePrompt.forItem: the People block', (): void => {
     }
   });
 
+  it('takes a Slack id the owner’s graph holds out of the block’s words though it is letters alone, by the graph and not its shape (D-5)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const lee = await seedPerson(harness, 'Lee Tan', { title: 'Close lead (UABCDEFGH)' } as never);
+    await seedIdentity(harness, lee, { provider: 'slack', externalId: 'UABCDEFGH' });
+    await seedEdge(harness, lee, {
+      type: 'collaborator',
+      fromAgentId: agentId,
+      scope: 'The close; ping UABCDEFGH first',
+    });
+    const workItemId = await seedItem(harness, agentId);
+    const { people } = await harness.query(internal.peoplePrompt.forItem, { workItemId });
+    // On the base the id stayed in the title and the scope: an all-letter token reads as a word.
+    expect(JSON.stringify(people)).not.toContain('UABCDEFGH');
+    expect(people.people).toEqual([
+      {
+        displayName: 'Lee Tan',
+        title: 'Close lead',
+        edges: [{ type: 'collaborator', scope: 'The close; ping first' }],
+      },
+    ]);
+  });
+
   it('answers no one and the manager for an employee with no confirmed person, a proposal or an ended edge', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

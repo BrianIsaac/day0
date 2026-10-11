@@ -21,6 +21,7 @@ export interface ItemPlan {
   appliedCorrections?: string[];
   correctionsRedaction?: 'structural-only';
   appliedAgreements?: string[];
+  agreementsLeftOut?: string[];
 }
 
 /** A working agreement as the plan card names it: its id and its words. */
@@ -83,6 +84,13 @@ export function PlanSection({
           ))}
         </ul>
       ) : null}
+      {(plan.agreementsLeftOut ?? []).map((statement) => (
+        // The planner read it and the run does not carry it: the steps may still follow it.
+        <p key={statement} className="text-[13px] text-[var(--color-warn)]">
+          Drafted with a working agreement that is no longer in effect for this employee: ‘
+          {statement}’ The steps above may still follow it.
+        </p>
+      ))}
       <PlanObligationsLine
         steps={plan.steps}
         obligations={plan.obligations}

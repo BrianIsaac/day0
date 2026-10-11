@@ -29,7 +29,14 @@ import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
-import { landedClosings, workDoneFactOf, type LandedClosing } from '@/work/work-done';
+import {
+  doneAgainstLedger,
+  landedClosings,
+  workDoneFactOf,
+  workDoneFromLedger,
+  type LandedClosing,
+} from '@/work/work-done';
+import type { FinishedAs } from '@/work/state-labels';
 
 /** One row of the applied ledger as the card reads it. */
 interface LedgerRow {
@@ -220,6 +227,17 @@ export function cancelledReason(item: {
   return 'cancelled by the manager';
 }
 
+/** The colleague a claim-refused skip names, with what it settled when the skip is for that. */
+export interface ColleagueHolding {
+  readonly agentId: string;
+  readonly name: string;
+  /**
+   * Set when the row is an ask skipped for naming a ticket the colleague had settled (D-1 (a)):
+   * the ticket, the colleague's work item, and the day its comment landed when that was kept.
+   */
+  readonly settled?: { readonly ticket: string; readonly title: string; readonly on?: string };
+}
+
 /**
  * The colleague a claim-refused skip names, for the card's link to them.
  *
@@ -231,10 +249,18 @@ export function cancelledReason(item: {
  */
 export function colleagueHolding(
   item: Pick<Doc<'workItems'>, 'state' | 'verdict'>,
-): { agentId: string; name: string } | undefined {
+): ColleagueHolding | undefined {
   if (item.state !== 'skipped') return undefined;
   const verdict = item.verdict as
-    | { reason?: unknown; claimedBy?: { agentId?: unknown; name?: unknown } }
+    | {
+        reason?: unknown;
+        claimedBy?: {
+          agentId?: unknown;
+          name?: unknown;
+          title?: unknown;
+          settled?: { ticket?: unknown; commentedOn?: unknown };
+        };
+      }
     | undefined;
   const holder = verdict?.claimedBy;
   if (
@@ -244,7 +270,21 @@ export function colleagueHolding(
     return undefined;
   }
   if (typeof holder?.agentId !== 'string' || typeof holder.name !== 'string') return undefined;
-  return { agentId: holder.agentId, name: holder.name };
+  const ticket = holder.settled?.ticket;
+  const on = holder.settled?.commentedOn;
+  return {
+    agentId: holder.agentId,
+    name: holder.name,
+    ...(typeof ticket === 'string'
+      ? {
+          settled: {
+            ticket,
+            title: typeof holder.title === 'string' ? holder.title : '',
+            ...(typeof on === 'string' ? { on } : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 /**
@@ -614,7 +654,7 @@ export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
 }
 
 /** A finished run's end as the record says it: the word its card leads with (13-FD). */
-export type FinishedAs = 'done' | 'partly done' | 'not done';
+export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event
@@ -631,9 +671,14 @@ export function finishedAs(output: unknown): FinishedAs {
   return notDone.answer === 'partial' ? 'partly done' : 'not done';
 }
 
-/** What a finished run's card says was not done: the run's answer, and the words it says it in. */
+/** What a finished run's card says was not done: the answer, whose it is, and the words it is said in. */
 export interface NotDoneOnCard {
   readonly answer: 'partial' | 'not-done';
+  /**
+   * Whose answer it is: the run's own, quoted as the employee's words, or the ledger's reading of
+   * a run that answered done over writes that were not sent (W15-R4), which is Day0's sentence.
+   */
+  readonly from: 'run' | 'ledger';
   readonly statements: readonly string[];
   /**
    * The tickets the run closed all the same (a closing round's first set, 12-D's Minor 5), so a
@@ -645,8 +690,10 @@ export interface NotDoneOnCard {
 /**
  * What a finished run's card says was not done (12-D, decision D-1 (b)). It follows the run's own
  * answer: `partial` or `not-done` with its one line of why, and nothing for a run that answered
- * `done`, whatever its words read as. A row recorded before v0.16.0 carries no answer and reads as
- * it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
+ * `done`, whatever its words read as, unless writes it set out to make were not sent: then the
+ * ledger's reading stands in its place (W15-R4), stored by the completing write from v0.19.0 and
+ * read here for a row completed before. A row recorded before v0.16.0 carries no answer and reads
+ * as it did: the clauses its words say the work was not done in ({@link unfinishedInOwnWords}).
  *
  * @param output - The finished run's output.
  * @returns The answer and its words, or undefined for a run that reads as finished.
@@ -656,10 +703,21 @@ export function notDoneOnCard(output: RunOutput | undefined): NotDoneOnCard | un
   const fact = workDoneFactOf(output);
   const closed = landedClosings(output);
   if (fact !== undefined) {
+    const held = doneAgainstLedger(output);
+    if (held !== undefined && held.workDone !== 'done') {
+      return { answer: held.workDone, from: 'ledger', statements: [held.workDoneWhy], closed };
+    }
     return fact.workDone === 'done'
       ? undefined
-      : { answer: fact.workDone, statements: [fact.workDoneWhy], closed };
+      : {
+          answer: fact.workDone,
+          from: workDoneFromLedger(output) ? 'ledger' : 'run',
+          statements: [fact.workDoneWhy],
+          closed,
+        };
   }
   const statements = unfinishedInOwnWords(output);
-  return statements.length > 0 ? { answer: 'not-done', statements, closed } : undefined;
+  return statements.length > 0
+    ? { answer: 'not-done', from: 'run', statements, closed }
+    : undefined;
 }

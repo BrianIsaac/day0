@@ -263,6 +263,195 @@ describe('the note the tick keeps, held to what an edit keeps (W13-R32)', (): vo
   });
 });
 
+describe('a plan note kept for asks from the requester (15-FX, the person scope)', (): void => {
+  const NOTE = 'Quote the carrier reference in the first line.';
+
+  /** A person of the owner's graph, confirmed unless the test says otherwise. */
+  async function seedPerson(
+    harness: Harness,
+    name: string,
+    fields: Partial<Doc<'people'>> = {},
+  ): Promise<Id<'people'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('people', {
+          userId: 'owner',
+          displayName: name,
+          nameKey: name.toLowerCase(),
+          status: 'active',
+          source: 'manager',
+          evidence: [],
+          confirmedAt: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          ...fields,
+        }),
+    );
+  }
+
+  /** A plan-pending item whose requester intake resolved as the test says. */
+  async function seedAsk(
+    harness: Harness,
+    requesterPerson: Doc<'workItems'>['requesterPerson'],
+  ): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'> }> {
+    const seeded = await seed(harness, 'plan-pending');
+    await harness.run(async (ctx) => await ctx.db.patch(seeded.workItemId, { requesterPerson }));
+    return seeded;
+  }
+
+  /** The agreements the planner reads for a new candidate of the employee from a requester. */
+  async function plannerReads(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    externalId: string,
+    requester: Id<'people'>,
+  ): Promise<string[]> {
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'chat-message',
+          sourceSystem: 'Slack',
+          externalId,
+          title: 'A new ask',
+          contentSummary: 'Please look at this.',
+          contentRefs: [],
+          state: 'claimed',
+          requesterPerson: { kind: 'person', personId: requester },
+          verdict: { decision: 'claim', value: 60, risk: 20, requiredPermissions: [] },
+          observedAt: 2,
+          createdAt: 2,
+        }),
+    );
+    return (
+      await harness.query(internal.workingAgreements.selectedForCandidate, { workItemId })
+    ).map((row) => row.statement);
+  }
+
+  it('is a person-scoped agreement that survives Same person, read for that requester alone', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const hana = await seedPerson(harness, 'Hana Sato');
+    const kofi = await seedPerson(harness, 'Kofi Mensah');
+    const { agentId, workItemId } = await seedAsk(harness, { kind: 'person', personId: hana });
+
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, {
+      workItemId,
+      note: NOTE,
+      keepNote: true,
+      keepNoteFor: 'requester',
+    });
+    const [kept] = await agreementsOf(harness);
+    expect(kept).toMatchObject({
+      userId: 'owner',
+      agentId,
+      statement: NOTE,
+      scope: 'person',
+      personId: hana,
+      sourceType: 'plan-approval',
+      workItemId,
+      approvedVia: 'plan-approval',
+    });
+    expect(kept).not.toHaveProperty('scopeRef');
+    await drain(harness);
+    expect((await agreementsOf(harness))[0]?.status).toBe('active');
+
+    // A page proposes "Hana S." and the manager says she is the same person.
+    const offered = await seedPerson(harness, 'Hana S.', {
+      status: 'unverified',
+      possiblySameAs: hana,
+      confirmedAt: undefined,
+    });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.people.samePerson, { personId: offered, agentId });
+    expect((await agreementsOf(harness))[0]).toMatchObject({ status: 'active', personId: hana });
+    expect(await plannerReads(harness, agentId, 'S-2', hana)).toEqual([NOTE]);
+    expect(await plannerReads(harness, agentId, 'S-3', kofi)).toEqual([]);
+  });
+
+  it('keeps the same note for the same requester once', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const hana = await seedPerson(harness, 'Hana Sato');
+    const first = await seedAsk(harness, { kind: 'person', personId: hana });
+    const keep = { note: NOTE, keepNote: true, keepNoteFor: 'requester' as const };
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: first.workItemId, ...keep });
+    const second = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: first.agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'Linear',
+          externalId: 'LOG-2',
+          title: 'Exception: SH-4472 held at customs',
+          contentSummary: 'Notify the customer.',
+          contentRefs: [],
+          state: 'plan-pending',
+          requesterPerson: { kind: 'person', personId: hana },
+          verdict: { decision: 'claim', value: 60, risk: 20, requiredPermissions: [] },
+          plan,
+          observedAt: 2,
+          createdAt: 2,
+        }),
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.planApproval.approvePlan, { workItemId: second, ...keep });
+    expect(await agreementsOf(harness)).toHaveLength(1);
+  });
+
+  it('refuses to keep a note for a requester who is not a person the manager confirmed, and approves nothing', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const proposed = await seedPerson(harness, 'Ren Ito', {
+      status: 'unverified',
+      confirmedAt: undefined,
+    });
+    for (const requesterPerson of [
+      undefined,
+      { kind: 'unknown' as const },
+      { kind: 'person' as const, personId: proposed },
+    ]) {
+      const { workItemId } = await seedAsk(harness, requesterPerson);
+      await expect(
+        harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, {
+          workItemId,
+          note: NOTE,
+          keepNote: true,
+          keepNoteFor: 'requester',
+        }),
+      ).rejects.toMatchObject({
+        data: 'This item’s requester is not a person you confirmed, so the note cannot be kept for their asks.',
+      });
+      expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+        'plan-pending',
+      );
+    }
+    expect(await agreementsOf(harness)).toEqual([]);
+  });
+
+  it('keeps the note for work of the kind when an older page sends no choice, or names the kind', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const hana = await seedPerson(harness, 'Hana Sato');
+    const { workItemId } = await seedAsk(harness, { kind: 'person', personId: hana });
+    await harness.withIdentity(OWNER).mutation(api.planApproval.approvePlan, {
+      workItemId,
+      note: NOTE,
+      keepNote: true,
+      keepNoteFor: 'kind',
+    });
+    expect((await agreementsOf(harness))[0]).toMatchObject({
+      scope: 'surface',
+      scopeRef: 'linear',
+    });
+    expect((await agreementsOf(harness))[0]).not.toHaveProperty('personId');
+  });
+});
+
 describe('a stored plan and the working agreements it applied', (): void => {
   it('keeps only active agreements that bind the employee, and lists the item on each', async (): Promise<void> => {
     useSurfaceMode('real');

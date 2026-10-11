@@ -5,7 +5,7 @@ import { httpAction, internalMutation, internalQuery, type MutationCtx } from '.
 import { purgeCredential } from './credentials';
 import { appendEvent } from './eventLog';
 import { endedByItsRevoke } from './organisationConnectionReads';
-import { resolveManagerReply } from './work';
+import { resolveManagerReply } from './managerReplies';
 import { isManagerChannel } from './workLoop';
 import {
   bridgeSecretMatches,

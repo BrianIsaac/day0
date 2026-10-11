@@ -91,12 +91,18 @@ removes the secret, and day0 stops reading the source until a new one is rotated
 
 ## What a page day0 cannot read shows
 
-The source's row lists every page it could not read, each with its reason. These are the reasons
-a Feishu source gives, word for word:
+The source's row counts every page it did not read and names up to ten of them, each with its
+reason. A page a read failed on (the app may not open it, it is too large, it was deleted) is
+named ahead of a page of a kind day0 does not read (a sheet, a base, a mind note), so the
+sheets in a wiki never hide the one document that needs someone's attention; the rest are
+counted as "and N more". Only a page a read failed on is said to be read again at the next sync.
+These are the reasons a Feishu source gives, word for word:
 
 - `"Q3 numbers" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as
 Markdown.` The same sentence names a base, a mind note, a slide deck, a file, or a document in
   the old format.
+- `"Handbook" is a shortcut, which day0 does not read twice: the page it points to is read where
+it lives, if that is in this source.`
 - `The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to
 its wiki space as a member.` The page is in the space but the app may not open it: add the app
   to that document (step 2's last paragraph).
@@ -108,7 +114,7 @@ repeats, ask IT to look the code up in Feishu's documentation.`
 - `Feishu answered HTTP 500 for "..." each time it was asked (Feishu code ...); re-sync to try
 again.` Feishu failed on that document through every retry; the rest of the source was read.
 
-A page that could not be read keeps its last version in day0 until a later read succeeds.
+A page a read failed on keeps its last version in day0 until a later read succeeds.
 
 When the whole source cannot be read, its status says why instead:
 
@@ -117,17 +123,24 @@ When the whole source cannot be read, its status says why instead:
   done, or the group was removed.
 - `Feishu found no wiki space with this ID (Feishu code 131005): check the space ID.`
 - `Feishu refused the app ID and secret this source uses (...): use Rotate on the source's row to
-enter the app's current ID and secret.` The secret was rotated or the app was disabled.
+enter the app's current ID and secret.` The secret was rotated or the app was disabled. The
+  sentence goes on to name the region this source asks: **Rotate** changes the ID and secret,
+  never the region. If the app was made on Lark and the source was linked as Feishu (or the other
+  way round), **Unlink** the source and link it again with the right region.
 - `Feishu refused the request as this app (...): check that the app has the scopes reader-feishu.md
 lists and that its latest version is published.` A scope from step 1 is missing, or the version
   that added it was never published.
 - `Feishu was rate limited ...`: Feishu stayed busy past day0's waits; the next read tries again.
+- `Day0 could not reach open.feishu.cn: ...`: nothing answered at Feishu's host from the machine
+  the backend runs on (a firewall, or a name that does not resolve there). See the next section.
 
 ## For the network
 
 The backend reaches `open.feishu.cn` for a Feishu source and `open.larksuite.com` for a Lark
 source, over HTTPS, and no other Feishu host. In real mode, `pnpm check:setup` lists both in its
-egress list.
+egress list. The backend connects to them directly: it uses no HTTP proxy, so a network that
+allows outbound HTTPS only through a proxy must allow these two hosts for the machine day0 runs
+on.
 
 ## Not yet checked against a real tenant
 
