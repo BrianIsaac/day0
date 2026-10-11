@@ -2,7 +2,7 @@
 
 Generated 2026-10-11T05:50:52.716Z from commit `1bdf9df85e63ca7983bbd872ed0d1a7d54d4cfba` with harness v2. Evidence status: 6/6 configured runs completed.
 
-Re-read from run 2026-10-09T00:02:57.331Z (commit `1bdf9df85e63ca7983bbd872ed0d1a7d54d4cfba`) with graders at commit `3d090dbf470839b6e67e26bd68abf1883d0d7943`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. No backend was read and no model call was made.
+Re-read from run 2026-10-09T00:02:57.331Z (commit `1bdf9df85e63ca7983bbd872ed0d1a7d54d4cfba`) with graders at commit `3d090dbf470839b6e67e26bd68abf1883d0d7943`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. A deferred row is taken as a deferral for a missing permission, since the verdict that would say so was not kept. No backend was read and no model call was made.
 
 ## Comparison scores
 

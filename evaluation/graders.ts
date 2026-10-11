@@ -451,6 +451,9 @@ const PRODUCT_WRITTEN_TEXT: readonly string[] = [
   'missingPermissions',
 ];
 
+/** The check a grade gains when the harness cut its run off at the task's deadline. */
+const HARNESS_TIMEOUT_CHECK = 'harness-timeout';
+
 /** How a passed reason check's detail opens; the reason word it met follows. */
 const REASON_FOUND_DETAIL = 'terminal reason contained ';
 
@@ -1198,8 +1201,11 @@ function outOfScopeReading(
 /**
  * The two readings of an out-of-scope run from its retained grade alone, for
  * evidence whose backend is gone: the terminal state stands for the skip and
- * for the deferral (the verdict was not retained), and the recorded pass for
- * the stated reason.
+ * for the deferral, and the recorded pass for the stated reason. The verdict
+ * was not retained, so a deferred row is taken as a deferral for a missing
+ * permission, which a live grade checks; the product also defers a row whose
+ * evaluation could not be had, and the retained state cannot tell the two
+ * apart. A row the harness timed out is neither, as on a live grade.
  *
  * @param source - The arm, and whether the grade was recorded since the reason
  *   check reads only what the agent wrote (27 September 2026). Before it, a
@@ -1211,6 +1217,9 @@ export function retainedOutOfScopeReading(
   source: { arm: EvaluationArm; reasonIsAgentsWords: boolean },
 ): OutOfScopeReading {
   const { grade, terminalState } = row;
+  if (grade.checks.some((check) => check.check === HARNESS_TIMEOUT_CHECK && !check.passed)) {
+    return { decided: false, explained: false };
+  }
   const escalated =
     grade.passed &&
     (grade.facts.reportedEffects ?? []).some((effect) => effect.kind === 'manager-escalation');
@@ -1255,7 +1264,7 @@ function retainedExplanation(
  */
 export function failForHarnessTimeout(grade: EvaluationGrade, task: EvaluationTask): void {
   grade.checks.push({
-    check: 'harness-timeout',
+    check: HARNESS_TIMEOUT_CHECK,
     passed: false,
     detail: `exceeded the ${task.timeoutMs} ms task timeout`,
   });

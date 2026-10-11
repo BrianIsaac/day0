@@ -2,7 +2,7 @@
 
 Generated 2026-10-11T05:50:48.449Z from commit `ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264` with harness v2. Evidence status: 6/6 configured runs completed.
 
-Re-read from run 2026-09-12T06:49:17.201Z (commit `ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264`) with graders at commit `3d090dbf470839b6e67e26bd68abf1883d0d7943`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. No backend was read and no model call was made. That run was graded before 27 September 2026, when the product’s or the harness’s own text could meet a reason word: a pass that met a word such text carries is counted as decided where its state shows it, and as explained neither way, since the reason text was not kept.
+Re-read from run 2026-09-12T06:49:17.201Z (commit `ac9c59ebd1b777ea007e69b2aa0ac5b8e597f264`) with graders at commit `3d090dbf470839b6e67e26bd68abf1883d0d7943`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. A deferred row is taken as a deferral for a missing permission, since the verdict that would say so was not kept. No backend was read and no model call was made. That run was graded before 27 September 2026, when the product’s or the harness’s own text could meet a reason word: a pass that met a word such text carries is counted as decided where its state shows it, and as explained neither way, since the reason text was not kept.
 
 ## Comparison scores
 

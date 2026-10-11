@@ -1486,6 +1486,20 @@ describe('the two out-of-scope readings of a retained grade', (): void => {
     ).toEqual({ decided: false, explained: false });
   });
 
+  it('reads a retained row the harness timed out as neither, as a live grade does', (): void => {
+    for (const state of ['skipped', 'deferred', 'failed']) {
+      const row = retained(state, state === 'failed' ? contained('access') : lacked);
+      row.grade.checks.push(check('harness-timeout', false, 'exceeded the 900000 ms task timeout'));
+      row.grade.passed = false;
+      for (const reasonIsAgentsWords of [true, false]) {
+        expect(
+          retainedOutOfScopeReading(row, { arm: 'day0', reasonIsAgentsWords }),
+          `${state} ${reasonIsAgentsWords}`,
+        ).toEqual({ decided: false, explained: false });
+      }
+    }
+  });
+
   it('does not count an older pass as explained when the word it met is one the product or the harness writes', (): void => {
     const before = { arm: 'day0', reasonIsAgentsWords: false } as const;
     expect(

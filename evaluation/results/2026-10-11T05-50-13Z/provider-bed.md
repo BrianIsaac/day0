@@ -2,10 +2,10 @@
 
 Completed 11 October 2026 on the disposable compose project `day0-w15q` (backend
 `http://127.0.0.1:3260`, sandbox local, no fake Slack or Linear: the comparison's office is the
-seeded mock tables), at commit `3d090dbf`: the staging tip `f225e79d`, which carries the release
+seeded mock tables), at commit `3d090dbf`: the `staging` branch's tip `f225e79d`, which carries the release
 commit `bdce2eae` (`v0.19.0`, not yet tagged), with three evaluation commits on it (the
 grader's two readings, the re-read of stored results and the report's heading); no product
-code differs from the staging tip. Both arms, all 15 tasks of `evaluation/tasks/comparison.json` as it stands, three
+code differs from that tip. Both arms, all 15 tasks of `evaluation/tasks/comparison.json` as it stands, three
 repetitions, the default 750 ms approval delay: **6/6 arm-runs, 90/90 terminal rows; all three
 Day0 charters approved; no harness timeout, no deadline overrun, no exhausted authoring cap.**
 It is the first bed whose out-of-scope rows were graded live as decided beside explained in the
@@ -42,8 +42,8 @@ defaults. Both arms share all 18 recorded parity fields.
 
 Wall time from first deployment to final completion: **1,189.090 s (19 min 49.090 s)**. Day0
 task median 13.949 s (0.030 to 78.587 s); ordinary 5.525 s (2.307 to 29.797 s). Day0 used 19
-skill-authoring attempts; the ordinary arm authors none by construction. The pane's own test
-gate ran on the same machine during part of the run, so the timings are context only.
+skill-authoring attempts; the ordinary arm authors none by construction. This repository's own
+test suite ran on the same machine during part of the run, so the timings are context only.
 
 ## What the rows show
 
@@ -121,4 +121,4 @@ writes it reports; since v0.19.0 that check runs in mock mode too, on the live r
 Product code differs from the 9 October and 12 September beds, and the mock prompts moved at
 v0.19.0, so these figures do not isolate any one change. The fixed mock office and three
 repetitions do not establish general performance. Supervision is mechanism context, not a
-score. No billing reading was available to this pane, so no spend figure is claimed.
+score. No billing reading was taken for this run, so no spend figure is claimed.

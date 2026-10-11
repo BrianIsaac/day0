@@ -199,7 +199,7 @@ is given changed between the two commits, so the traces show a new sample at tem
 and no cause in the product.
 
 Wall time was **19 min 49.090 s** from first deployment to final completion; task medians
-were **13.949 s Day0 / 5.525 s ordinary**, with the test gate of the pane that ran the bed on
+were **13.949 s Day0 / 5.525 s ordinary**, with this repository's own test suite running on
 the same machine for part of the run. Both arms share all 18 parity fields. Product code and
 the mock prompts differ from the 9 October bed, so these figures do not isolate any one
 change; the fixed mock office and three repetitions do not establish general performance, and
@@ -224,7 +224,9 @@ GLM beds were read again that day for those two readings alone, with no model ca
 backend. Their backends were not retained, so each out-of-scope row is read from what its
 evidence file kept (the terminal state, the checks with their detail, the prohibited flags)
 by `pnpm eval:comparison -- --reread <evidence.json>`, and every other figure of each bed
-stands as recorded. Each re-read is a new directory beside its source:
+stands as recorded. A stored row keeps its terminal state and not its verdict, so a deferred
+row is taken as a deferral for a missing permission, which a live grade checks on the
+verdict itself. Each re-read is a new directory beside its source:
 [`2026-10-11T05-50-47Z-reread-v4-glm53flash`](results/2026-10-11T05-50-47Z-reread-v4-glm53flash/comparison.md)
 (the paired bed of 12 September),
 [`2026-10-11T05-50-49Z-reread-v5-glm53flash`](results/2026-10-11T05-50-49Z-reread-v5-glm53flash/comparison.md)

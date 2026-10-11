@@ -720,7 +720,7 @@ function regradedLine(evidence: EvaluationEvidence): string {
     evidence.configuration.taskDefinitions === undefined
       ? ' That run was graded before 27 September 2026, when the product’s or the harness’s own text could meet a reason word: a pass that met a word such text carries is counted as decided where its state shows it, and as explained neither way, since the reason text was not kept.'
       : '';
-  return `\n\nRe-read from ${origin}: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. No backend was read and no model call was made.${olderGrade}`;
+  return `\n\nRe-read from ${origin}: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. A deferred row is taken as a deferral for a missing permission, since the verdict that would say so was not kept. No backend was read and no model call was made.${olderGrade}`;
 }
 
 /** The re-grade and re-render provenance sentences, each empty when it does not apply. */

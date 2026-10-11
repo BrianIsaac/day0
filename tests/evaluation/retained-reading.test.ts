@@ -190,7 +190,7 @@ describe('a stored result re-read from its retained grades', (): void => {
     });
     const report = renderEvaluationReport(reread);
     expect(report).toContain(
-      'Re-read from run 2026-10-09T00:02:57.000Z (commit `run-commit`) with graders at commit `grader-commit`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. No backend was read and no model call was made.',
+      'Re-read from run 2026-10-09T00:02:57.000Z (commit `run-commit`) with graders at commit `grader-commit`: the backend of that run was not retained, so only the two out-of-scope readings were computed, from each row’s recorded grade; every other check, flag and figure is the run’s own as recorded. A deferred row is taken as a deferral for a missing permission, since the verdict that would say so was not kept. No backend was read and no model call was made.',
     );
     expect(report).not.toContain('Re-graded from run');
     expect(report).not.toContain('graded before 27 September 2026');
