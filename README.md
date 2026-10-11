@@ -865,6 +865,7 @@ It resolves values the way the running app does, which matters more than it soun
 | Voice | ElevenLabs Conversational AI (`@elevenlabs/elevenlabs-js` 2.46, `@elevenlabs/react` 1.5) |
 | Sandboxes | `python:3.12-slim` for skill smoke tests, in a [bundled local sandbox](#the-local-skill-sandbox) or in Daytona (`@daytona/sdk`) |
 | Validation | Zod 4 |
+| Document conversion | `turndown` 7 for HTML and Confluence storage to Markdown; `mammoth` 1.12.3 for Word documents (`.docx`), in the reader |
 
 ## Routes
 
