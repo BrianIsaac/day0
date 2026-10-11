@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
@@ -327,5 +330,55 @@ describe('the backend image (14-F ruling 1 (a), 8 October)', (): void => {
     expect(run).toContain('(archive|security|ports)');
     // With no mirror named the sources are as the base image wrote them.
     expect(run.indexOf('if [ -n "$APT_MIRROR" ]')).toBeLessThan(run.indexOf('apt-get update'));
+  });
+
+  it('writes a mirror into the sources as it was given, whatever characters its address holds (W15-R39)', (): void => {
+    // The step that rewrites the sources, run as the build runs it, on a copy of the base
+    // image's sources (reader 5's `apt/t.sources`). On the base an `&` in the mirror wrote the
+    // matched address back into it, and a `#` ended the expression ("unknown option to `s'").
+    const run = instructions.find((line) => /^RUN\s/i.test(line))!;
+    const rewrite = /^RUN (if \[ -n "\$APT_MIRROR" \]; then .*?;\s+fi)\s/.exec(run)?.[1];
+    expect(rewrite).toBeDefined();
+    const sources = [
+      'Types: deb',
+      'URIs: http://archive.ubuntu.com/ubuntu/',
+      'Suites: noble noble-updates',
+      'URIs: http://security.ubuntu.com/ubuntu/',
+      'URIs: http://ports.ubuntu.com/ubuntu-ports/',
+      'deb http://archive.ubuntu.com/ubuntu noble main',
+      '',
+    ].join('\n');
+    for (const mirror of [
+      'https://mirror.example/ubuntu',
+      'https://mirror.example/ubuntu/',
+      'https://mirror.example/apt?repo=ubuntu&arch=amd64',
+      'https://mirror.example/ubuntu#noble',
+      'https://mirror.example/a\\b',
+    ]) {
+      const directory = mkdtempSync(join(tmpdir(), 'day0-apt-'));
+      try {
+        writeFileSync(join(directory, 'ubuntu.sources'), sources);
+        const result = spawnSync('sh', ['-c', rewrite!.replaceAll('/etc/apt', directory)], {
+          env: { ...process.env, APT_MIRROR: mirror },
+          encoding: 'utf8',
+        });
+        expect(result.stderr, mirror).toBe('');
+        expect(result.status, mirror).toBe(0);
+        const at = `${mirror.replace(/\/$/, '')}/`;
+        expect(readFileSync(join(directory, 'ubuntu.sources'), 'utf8'), mirror).toBe(
+          [
+            'Types: deb',
+            `URIs: ${at}`,
+            'Suites: noble noble-updates',
+            `URIs: ${at}`,
+            `URIs: ${at}`,
+            `deb ${at} noble main`,
+            '',
+          ].join('\n'),
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
   });
 });

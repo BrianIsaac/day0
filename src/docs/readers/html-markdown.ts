@@ -214,19 +214,95 @@ const PANEL_NAMES: Readonly<Record<string, string>> = {
 /** The macros whose plain-text body is code, drawn in a fence. */
 const CODE_MACROS: ReadonlySet<string> = new Set(['code', 'noformat']);
 
+/**
+ * Rewrite every element of the named kinds that is closed, in one pass over the text.
+ *
+ * What a lazy pattern (`<ac:link\b[^>]*>[\s\S]*?<\/ac:link>`) matches, found without its cost:
+ * the pattern scans from each opening tag to the end of the text for a closing tag that is not
+ * there, so a body of elements never closed cost the square of its length (W15-R28). Here the
+ * end of a tag and the last closing tag of each name are each looked for once and remembered.
+ *
+ * @param text - The text to rewrite.
+ * @param names - The elements' names as an alternation, each with its prefix (`ac:image|time`).
+ * @param rewrite - What stands for one element: its opening tag's attributes as written, what it
+ *   holds, and its name.
+ * @returns The text with each closed element rewritten; one left open stays as it is.
+ */
+function rewriteElements(
+  text: string,
+  names: string,
+  rewrite: (attributes: string, inner: string, name: string) => string,
+): string {
+  const opening = new RegExp(`<(${names})(?![\\w-])`, 'g');
+  const lastClose = new Map<string, number>();
+  let rewritten = '';
+  let kept = 0;
+  let tagEnd = -1;
+  for (let open = opening.exec(text); open !== null; open = opening.exec(text)) {
+    const name = open[1];
+    const attributesAt = opening.lastIndex;
+    if (tagEnd < attributesAt) tagEnd = text.indexOf('>', attributesAt);
+    // No tag ends from here on, so no element of any name opens.
+    if (tagEnd < 0) break;
+    const close = `</${name}>`;
+    const last = lastClose.get(close) ?? text.lastIndexOf(close);
+    lastClose.set(close, last);
+    // An element opened after the last closing tag of its name is never closed.
+    if (last <= tagEnd) continue;
+    const closeAt = text.indexOf(close, tagEnd + 1);
+    rewritten +=
+      text.slice(kept, open.index) +
+      rewrite(text.slice(attributesAt, tagEnd), text.slice(tagEnd + 1, closeAt), name);
+    kept = closeAt + close.length;
+    opening.lastIndex = kept;
+  }
+  return rewritten + text.slice(kept);
+}
+
+/**
+ * Every CDATA section as the text it holds, escaped: text as typed. Confluence splits one that
+ * holds `]]>` into two. Read up to the last `]]>` only, since a section opened after it is never
+ * closed and a pattern would scan from each such opening to the end of the text (W15-R28).
+ */
+function cdataAsText(text: string): string {
+  const end = text.lastIndexOf(']]>');
+  if (end < 0) return text;
+  const closed = text
+    .slice(0, end + 3)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_all, typed: string): string => escapeHtml(typed));
+  return closed + text.slice(end + 3);
+}
+
 /** A macro's parameters by name, each value as the XML wrote it. */
 function macroParameters(inner: string): Map<string, string> {
   const parameters = new Map<string, string>();
-  const pattern = /<ac:parameter\b([^>]*)>([\s\S]*?)<\/ac:parameter>/g;
-  for (let match = pattern.exec(inner); match !== null; match = pattern.exec(inner)) {
-    parameters.set(attribute(match[1], 'ac:name') ?? '', match[2].trim());
-  }
+  rewriteElements(inner, 'ac:parameter', (attributes, value): string => {
+    parameters.set(attribute(attributes, 'ac:name') ?? '', value.trim());
+    return '';
+  });
   return parameters;
 }
 
-/** The contents of a macro's body element, or undefined when it has none. */
+/**
+ * The contents of a macro's body element, from its first opening tag to its last closing one, or
+ * undefined when it has none.
+ */
 function macroBody(inner: string, element: string): string | undefined {
-  return new RegExp(`<ac:${element}\\b[^>]*>([\\s\\S]*)<\\/ac:${element}>`).exec(inner)?.[1];
+  const open = new RegExp(`<ac:${element}(?![\\w-])`).exec(inner);
+  if (open === null) return undefined;
+  const tagEnd = inner.indexOf('>', open.index + open[0].length);
+  const close = inner.lastIndexOf(`</ac:${element}>`);
+  return tagEnd < 0 || close <= tagEnd ? undefined : inner.slice(tagEnd + 1, close);
+}
+
+/** What the first closed element of the named kinds holds, or undefined when there is none. */
+function firstElement(text: string, names: string): string | undefined {
+  let first: string | undefined;
+  rewriteElements(text, names, (_attributes, inner): string => {
+    first ??= inner;
+    return '';
+  });
+  return first;
 }
 
 /**
@@ -268,16 +344,13 @@ const MAX_MACRO_DEPTH = 50;
 
 /** A macro element that holds no other macro: the innermost, which each pass rewrites. */
 const INNERMOST_MACRO =
-  /<ac:(structured-macro|macro)\b([^>]*)>((?:(?!<ac:(?:structured-)?macro\b)[\s\S])*?)<\/ac:\1>/g;
+  /<ac:(structured-macro|macro)\b([^<>]*)>((?:(?!<ac:(?:structured-)?macro\b)[\s\S])*?)<\/ac:\1>/g;
 
 /** A link to a page, an attachment or a space: its words, or what it points to when it has none. */
 function linkHtml(inner: string): string {
-  const body =
-    /<ac:(?:plain-text-link-body|link-body)\b[^>]*>([\s\S]*?)<\/ac:(?:plain-text-link-body|link-body)>/.exec(
-      inner,
-    )?.[1];
+  const body = firstElement(inner, 'ac:plain-text-link-body|ac:link-body');
   if (body !== undefined && body.trim() !== '') return body.trim();
-  const target = /<ri:[\w-]+\b[^>]*>/.exec(inner)?.[0] ?? '';
+  const target = /<ri:[\w-]+(?![\w-])[^<>]*>/.exec(inner)?.[0] ?? '';
   return (
     attribute(target, 'ri:content-title') ??
     attribute(target, 'ri:filename') ??
@@ -288,9 +361,9 @@ function linkHtml(inner: string): string {
 
 /** An image: a picture at an address stays one; an attached file is named, since day0 reads text. */
 function imageHtml(tag: string, inner: string): string {
-  const url = attribute(/<ri:url\b[^>]*>/.exec(inner)?.[0] ?? '', 'ri:value');
+  const url = attribute(/<ri:url\b[^<>]*>/.exec(inner)?.[0] ?? '', 'ri:value');
   if (url !== undefined) return `<img src="${url}" alt="${attribute(tag, 'ac:alt') ?? ''}">`;
-  const file = attribute(/<ri:attachment\b[^>]*>/.exec(inner)?.[0] ?? '', 'ri:filename');
+  const file = attribute(/<ri:attachment\b[^<>]*>/.exec(inner)?.[0] ?? '', 'ri:filename');
   return file === undefined ? '' : `(image: ${file})`;
 }
 
@@ -301,31 +374,27 @@ function imageHtml(tag: string, inner: string): string {
  * @returns HTML with no `ac:`, `ri:` or `at:` element and no CDATA section.
  */
 export function confluenceStorageToHtml(storage: string): string {
-  let html = storage
-    // A CDATA section is text as typed; Confluence splits one that holds `]]>` into two.
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_all, text: string): string => escapeHtml(text))
+  let html = cdataAsText(storage)
     // XML closes an empty element in its own tag, which HTML reads as left open. One class and
     // one lazy step: a second optional run of spaces here made a padded tag cost its square.
-    .replace(/<((?:ac|ri|at):[\w-]+|time)\b([^<>]*?)\/>/g, '<$1$2></$1>')
-    .replace(/<ac:(emoticon|placeholder|task-id|task-uuid)\b[^>]*>[\s\S]*?<\/ac:\1>/g, '')
-    // A new-editor node (a panel, a decision) carries its content, its attributes as text, and
-    // a rendering of the same content for older readers: the content alone is read, once.
-    .replace(/<ac:adf-attribute\b[^>]*>[\s\S]*?<\/ac:adf-attribute>/g, '')
-    .replace(
-      /<ac:adf-extension\b[^>]*>([\s\S]*?)<\/ac:adf-extension>/g,
-      (_all, inner: string): string =>
-        inner.includes('<ac:adf-content')
-          ? inner.replace(/<ac:adf-fallback\b[^>]*>[\s\S]*?<\/ac:adf-fallback>/g, '')
-          : inner,
-    )
-    .replace(
-      /<time\b([^>]*)>\s*<\/time>/g,
-      (_all, tag: string): string => attribute(tag, 'datetime') ?? '',
-    )
-    .replace(/<ac:image\b([^>]*)>([\s\S]*?)<\/ac:image>/g, (_all, tag: string, inner: string) =>
-      imageHtml(tag, inner),
-    )
-    .replace(/<ac:link\b[^>]*>([\s\S]*?)<\/ac:link>/g, (_all, inner: string) => linkHtml(inner));
+    // The name ends where no name character follows: `\b` let a name of dashes be cut at each
+    // dash in turn, which cost its square too (W15-R28).
+    .replace(/<((?:ac|ri|at):[\w-]+(?![\w-])|time\b)([^<>]*?)\/>/g, '<$1$2></$1>');
+  html = rewriteElements(html, 'ac:emoticon|ac:placeholder|ac:task-id|ac:task-uuid', () => '');
+  // A new-editor node (a panel, a decision) carries its content, its attributes as text, and
+  // a rendering of the same content for older readers: the content alone is read, once.
+  html = rewriteElements(html, 'ac:adf-attribute', () => '');
+  html = rewriteElements(html, 'ac:adf-extension', (_attributes, inner): string =>
+    inner.includes('<ac:adf-content') ? rewriteElements(inner, 'ac:adf-fallback', () => '') : inner,
+  );
+  html = html.replace(
+    /<time\b([^<>]*)>\s*<\/time>/g,
+    (_all, tag: string): string => attribute(tag, 'datetime') ?? '',
+  );
+  html = rewriteElements(html, 'ac:image', (attributes, inner): string =>
+    imageHtml(attributes, inner),
+  );
+  html = rewriteElements(html, 'ac:link', (_attributes, inner): string => linkHtml(inner));
   for (let depth = 0; depth < MAX_MACRO_DEPTH; depth += 1) {
     const unwrapped = html.replace(
       INNERMOST_MACRO,
@@ -337,16 +406,18 @@ export function confluenceStorageToHtml(storage: string): string {
   return (
     html
       .replace(
-        /<ac:task-status\b[^>]*>\s*(\w+)\s*<\/ac:task-status>/g,
+        /<ac:task-status\b[^<>]*>\s*(\w+)\s*<\/ac:task-status>/g,
         (_all, status: string): string =>
           `<input type="checkbox"${status === 'complete' ? ' checked' : ''}>`,
       )
-      .replace(/<(\/?)ac:task-list(?![\w-])[^>]*>/g, '<$1ul>')
+      .replace(/<(\/?)ac:task-list(?![\w-])[^<>]*>/g, '<$1ul>')
       // A task's status and body are elements named after it, so the name must end here.
-      .replace(/<(\/?)ac:task(?![\w-])[^>]*>/g, '<$1li>')
-      .replace(/<(\/?)ac:layout-cell\b[^>]*>/g, '<$1div>')
+      .replace(/<(\/?)ac:task(?![\w-])[^<>]*>/g, '<$1li>')
+      .replace(/<(\/?)ac:layout-cell\b[^<>]*>/g, '<$1div>')
       // Whatever storage element is left is read through: its text stays, its tag goes.
-      .replace(/<\/?(?:ac|ri|at):[\w-]+\b[^>]*>/g, '')
+      // A tag's attributes hold no `<` (XML escapes one), so the scan for a tag's end stops at
+      // the next tag: run to the next `>` instead, a body of tags never ended cost its square.
+      .replace(/<\/?(?:ac|ri|at):[\w-]+(?![\w-])[^<>]*>/g, '')
   );
 }
 

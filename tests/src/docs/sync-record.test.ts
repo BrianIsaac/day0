@@ -75,7 +75,8 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     expect(unreadPagesLine(sheets)).not.toMatch(/could not be read|reads them again/);
     const mixed = withUnreadPages(sheets, [forbidden]);
     expect(unreadPagesLine(mixed)).toBe(
-      '1 page could not be read this sync and keeps its last stored version: wikcnPayroll: The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member. The next sync reads them again. 2 more listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      '1 page could not be read this sync and keeps its last stored version: wikcnPayroll: The Feishu app cannot read "Payroll" (Feishu code 2889902): add the app to the document, or to its wiki space as a member. The next sync reads it again. 2 more listed pages are of a kind Day0 does not read: wikcnSheet1: "Sheet 1" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown; wikcnSheet2: "Sheet 2" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
     );
   });
 
@@ -174,7 +175,8 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
     expect(
       unreadPagesLine(withUnreadPages(undefined, [{ ref: 'a.md', reason: 'HTTP 404.' }])),
     ).toBe(
-      '1 page could not be read this sync and keeps its last stored version: a.md: HTTP 404. The next sync reads them again.',
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      '1 page could not be read this sync and keeps its last stored version: a.md: HTTP 404. The next sync reads it again.',
     );
   });
 
@@ -190,6 +192,31 @@ describe('the record of pages a sync could not read (P5-11)', (): void => {
       ),
     ).toBe(
       `2 pages could not be read this sync and keep their last stored version: ${reason}; b.md: HTTP 404. The next sync reads them again.`,
+    );
+  });
+
+  it('names a page its reason does not, though the reason holds its reference’s letters (W15-R29)', (): void => {
+    // Reader 6's `unread.mts`: a ref `a` and the reason "Gave no body." lost the ref, since the
+    // reason was searched for the ref's letters and "Gave" holds them.
+    expect(
+      unreadPagesLine(withUnreadPages(undefined, [{ ref: 'a', reason: 'Gave no body.' }])),
+    ).toBe(
+      '1 page could not be read this sync and keeps its last stored version: a: Gave no body. The next sync reads it again.',
+    );
+    // A reason that names a longer address names another page.
+    expect(
+      unreadPagesLine(
+        withUnreadPages(undefined, [
+          { ref: 'https://acme.test/p1', reason: 'https://acme.test/p10 answered 500.' },
+          { ref: 'https://acme.test/p1', reason: 'https://acme.test/p1/archive answered 500.' },
+          {
+            ref: 'https://acme.test/p2',
+            reason: 'Day0 was sent on to https://acme.test/p2, which answered 500.',
+          },
+        ]),
+      ),
+    ).toBe(
+      '3 pages could not be read this sync and keep their last stored version: https://acme.test/p1: https://acme.test/p10 answered 500; https://acme.test/p1: https://acme.test/p1/archive answered 500; Day0 was sent on to https://acme.test/p2, which answered 500. The next sync reads them again.',
     );
   });
 

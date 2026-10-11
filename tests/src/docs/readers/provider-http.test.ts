@@ -8,6 +8,7 @@ import {
   providerBody,
   ProviderGatewayError,
   ProviderHttp,
+  ProviderRequestRefusedError,
   ProviderUnreachableError,
   textField,
   type ProviderAnswer,
@@ -116,6 +117,29 @@ describe('a reader’s connection to its provider', (): void => {
     expect((failure as Error).message).toBe(
       "Day0 could not reach api.example.test: connect ECONNREFUSED 10.0.0.7:443. The machine Day0's backend runs on must reach api.example.test directly over HTTPS, with no proxy in between: ask IT to allow it.",
     );
+  });
+
+  it('names the host and the cause when the request itself is refused: a redirect it does not follow, a certificate it cannot verify (W15-R30)', async (): Promise<void> => {
+    // On the base each reached the card as a bare "fetch failed", with no host and no cause.
+    const redirected = new TypeError('fetch failed', { cause: new Error('unexpected redirect') });
+    const intercepted = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('self-signed certificate in certificate chain'), {
+        code: 'SELF_SIGNED_CERT_IN_CHAIN',
+      }),
+    });
+    for (const [refusal, cause] of [
+      [redirected, 'unexpected redirect'],
+      [intercepted, 'self-signed certificate in certificate chain'],
+    ] as const) {
+      const { http, sleeps } = connection([refusal]);
+      const failure = await http.send(URL_A).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ProviderRequestRefusedError);
+      expect((failure as Error).message).toBe(
+        `Day0's request to api.example.test did not go through: ${cause}. Something between Day0 and api.example.test (a proxy that inspects HTTPS, or a sign-in page that redirects) may be answering for it: ask IT whether the machine Day0's backend runs on reaches api.example.test directly.`,
+      );
+      // Not a transient: asked once.
+      expect(sleeps).toEqual([]);
+    }
   });
 
   it('tries a read cut off in flight again, and words one that keeps failing as the transient it is', async (): Promise<void> => {

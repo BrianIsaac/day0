@@ -34,6 +34,7 @@ import {
   textField,
   type ProviderAnswer,
   type ProviderHttpOptions,
+  webPageInPlaceOf,
 } from './provider-http';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
@@ -349,7 +350,8 @@ export class GoogleDriveReader implements DocumentationReader {
       if (error instanceof AnswerTooLargeError) return tooLarge;
       throw error;
     }
-    if (answer.status === 200) return answerText(answer);
+    if (answer.status === 200)
+      return webPageInPlaceOf(PROVIDER, answer, name) ?? answerText(answer);
     const reason = reasonOf(providerBody(PROVIDER, answer));
     if (reason === 'exportSizeLimitExceeded') return tooLarge;
     return fileRefusal(answer, name, reason);
@@ -384,6 +386,8 @@ export class GoogleDriveReader implements DocumentationReader {
     if (answer.status !== 200) {
       return fileRefusal(answer, name, reasonOf(providerBody(PROVIDER, answer)));
     }
+    const page = webPageInPlaceOf(PROVIDER, answer, name);
+    if (page !== undefined) return page;
     let markdown: string;
     try {
       markdown = await wordToMarkdown(answer.bytes);

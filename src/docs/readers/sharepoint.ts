@@ -49,6 +49,7 @@ import {
   type ProviderAnswer,
   type ProviderFetch,
   type ProviderHttpOptions,
+  webPageInPlaceOf,
 } from './provider-http';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
@@ -498,7 +499,9 @@ export class SharePointReader implements DocumentationReader {
         return { reason: `"${name}" was deleted or moved in SharePoint after it was listed.` };
       }
       // Graph may send the file itself; the reference describes the redirect.
-      if (answered.status === 200) return answered.bytes;
+      if (answered.status === 200) {
+        return webPageInPlaceOf('SharePoint', answered, name) ?? answered.bytes;
+      }
       const location = answered.headers.get('location');
       if (answered.status !== 302 || location === null) {
         graphBody(answered, 'files');
@@ -515,7 +518,7 @@ export class SharePointReader implements DocumentationReader {
           reason: `${address.host} answered HTTP ${answer.status} for "${name}"; re-sync to try again.`,
         };
       }
-      return answer.bytes;
+      return webPageInPlaceOf('SharePoint', answer, name) ?? answer.bytes;
     } catch (error) {
       if (error instanceof AnswerTooLargeError) return tooLarge;
       if (address === undefined || !(error instanceof Error)) throw error;

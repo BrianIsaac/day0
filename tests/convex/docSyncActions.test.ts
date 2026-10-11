@@ -1287,7 +1287,8 @@ describe('documentation sync batching', (): void => {
     });
     expect(after.source).toMatchObject({ status: 'synced' });
     expect(after.source?.lastError).toMatch(
-      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads them again\.$/,
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      /^1 page could not be read this sync and keeps its last stored version: tile\.md: The page is \d+ KiB, larger than the 768 KiB Day0 stores\. The next sync reads it again\.$/,
     );
     expect(JSON.stringify(after)).not.toContain(value);
   });
@@ -1976,7 +1977,8 @@ describe('documentation sync batching', (): void => {
       ],
     });
     expect(state.source?.lastError).toBe(
-      '1 page could not be read this sync and keeps its last stored version: guide: Could not read "The kinds of file which Day0 does not read" (HTTP 403). The next sync reads them again. 1 more listed page is of a kind Day0 does not read: file-01DECK: "Q3 board deck" is a slide deck, which Day0 does not read.',
+      // Re-pinned with W15-R29: one page is "it", where the line said "reads them again".
+      '1 page could not be read this sync and keeps its last stored version: guide: Could not read "The kinds of file which Day0 does not read" (HTTP 403). The next sync reads it again. 1 more listed page is of a kind Day0 does not read: file-01DECK: "Q3 board deck" is a slide deck, which Day0 does not read.',
     );
   });
 

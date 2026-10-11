@@ -587,9 +587,10 @@ hosted copy".`;
  * The hosts given to one `--add-private-host`, each held to what `DAY0_PRIVATE_HOSTS` takes before
  * anything is written: the list's own parser refuses this machine's names and the addresses Day0
  * never dials, and a list that cannot be parsed refuses every private host afterwards. One
- * argument may carry several, separated as the list separates them.
+ * argument may carry several, separated as the list separates them. One that carries none is
+ * refused: `--add-private-host "$UNSET"` added nothing and said nothing (W15-R39).
  *
- * @throws Error naming the flag and the parser's reason.
+ * @throws Error naming the flag and the parser's reason, or that it names no host.
  */
 function privateHostArguments(value: string): string[] {
   try {
@@ -599,7 +600,14 @@ function privateHostArguments(value: string): string[] {
       `--add-private-host: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return value.split(/[\s,]+/).filter(Boolean);
+  const hosts = value.split(/[\s,]+/).filter(Boolean);
+  if (hosts.length === 0) {
+    throw new Error(
+      '--add-private-host names no host. Give the host to add, for example `--add-private-host ' +
+        `${DEMO_TILE_HOST}\`; an empty value is what an unset shell variable leaves.`,
+    );
+  }
+  return hosts;
 }
 
 /**

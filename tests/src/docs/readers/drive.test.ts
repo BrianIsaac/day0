@@ -292,6 +292,28 @@ describe('the Google Drive documentation reader', (): void => {
     );
   });
 
+  it('never stores a web page that answered in a document’s place: a captive portal’s 200 is named unread (W15-R30)', async (): Promise<void> => {
+    // On the base the portal's page was stored as "Close the quarter", over the real one.
+    const { reader } = readerOnDrive((request) =>
+      request.url.pathname.endsWith('/files/1DocCloseTheQuarter00000000000000001/export')
+        ? new Response(
+            '<!DOCTYPE html><html><body><h1>Sign in to the guest network</h1></body></html>',
+            {
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+            },
+          )
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(folder, SECRET, undefined, 3);
+    expect(batch.unread[0]).toEqual({
+      ref: '1DocCloseTheQuarter00000000000000001',
+      reason:
+        '"Close the quarter" came back from www.googleapis.com as a web page, not the document itself, so something between Day0 and Google Drive (a proxy or a sign-in page) may have answered for it: ask IT whether the machine Day0\'s backend runs on reaches www.googleapis.com directly.',
+    });
+    expect(batch.pages.map((page) => page.title)).toEqual(['Escalation paths']);
+  });
+
   it('names a document it may not export unread with Google’s reason, and reads the rest', async (): Promise<void> => {
     const { reader } = readerOnDrive((request) =>
       request.url.pathname.endsWith('/files/1DocCloseTheQuarter00000000000000001/export')

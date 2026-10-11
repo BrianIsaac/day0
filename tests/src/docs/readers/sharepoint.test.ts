@@ -363,6 +363,26 @@ describe('the SharePoint documentation reader', (): void => {
     expect(batch.pages.map((page) => page.ref)).toEqual(['file-01ESCAL']);
   });
 
+  it('never stores a web page that answered in a file’s place, whatever type it says it is (W15-R30)', async (): Promise<void> => {
+    // On the base a captive portal's page at the download host was stored as the Markdown file.
+    const portal = '<!doctype html>\n<html><body><h1>Sign in to continue</h1></body></html>';
+    for (const type of ['text/html; charset=utf-8', 'application/octet-stream']) {
+      const { reader } = readerOnTenant((request) =>
+        request.url.host === 'acme.sharepoint.com' &&
+        request.url.searchParams.get('UniqueId') === '01CLOSE'
+          ? new Response(portal, { status: 200, headers: { 'content-type': type } })
+          : undefined,
+      );
+      const batch = await reader.listPageBatch(site, SECRET, undefined, 3);
+      expect(batch.unread[0], type).toEqual({
+        ref: 'file-01CLOSE',
+        reason:
+          '"close-the-quarter.md" came back from acme.sharepoint.com as a web page, not the document itself, so something between Day0 and SharePoint (a proxy or a sign-in page) may have answered for it: ask IT whether the machine Day0\'s backend runs on reaches acme.sharepoint.com directly.',
+      });
+      expect(batch.pages.map((page) => page.ref)).toEqual(['file-01ESCAL']);
+    }
+  });
+
   it('follows a download address given relative to Graph, and reads a file Graph answers directly (second pass)', async (): Promise<void> => {
     const direct = readerOnTenant((request) =>
       request.url.pathname.endsWith('/items/01CLOSE/content')

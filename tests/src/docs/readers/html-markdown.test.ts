@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  confluenceStorageToHtml,
   confluenceStorageToMarkdown,
   DocumentConversionError,
   documentHtmlToMarkdown,
@@ -162,6 +163,48 @@ describe('confluenceStorageToMarkdown', (): void => {
     const started = performance.now();
     expect(confluenceStorageToMarkdown(padded)).toContain('Before');
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it('rewrites a body of elements that are never closed in the time of one pass over it, not one pass an element (W15-R28)', (): void => {
+    // Reader 3's `cmt.mts` (a comment wrapping 40,000 `<ac:emoticon`: 5.4 s on the base, minutes
+    // at the 4 MiB bound) and its siblings: every scan that ran from each opening tag to the end
+    // of the body for a closing tag that is not there.
+    const dashes = 'a-'.repeat(50_000);
+    const bodies: Readonly<Record<string, string>> = {
+      'a comment of opening emoticons': `<!-- ${'<ac:emoticon '.repeat(40_000)} -->`,
+      'emoticons never closed': '<ac:emoticon ac:name="a">'.repeat(40_000),
+      'emoticon tags never ended': '<ac:emoticon '.repeat(40_000),
+      'CDATA never closed': '<![CDATA['.repeat(100_000),
+      'new-editor attributes never closed': '<ac:adf-attribute key="a">'.repeat(60_000),
+      'new-editor nodes never closed': '<ac:adf-extension>'.repeat(60_000),
+      'images never closed': '<ac:image>'.repeat(60_000),
+      'links never closed': '<ac:link>'.repeat(60_000),
+      'parameters never closed, in a macro': `<ac:structured-macro ac:name="info">${'<ac:parameter ac:name="a">'.repeat(40_000)}</ac:structured-macro>`,
+      'a tag name of dashes, never ended': `<ac:${dashes}`,
+      'dates never ended': '<time '.repeat(60_000),
+      'task statuses never ended': '<ac:task-status '.repeat(60_000),
+      'macros never ended': '<ac:structured-macro '.repeat(60_000),
+      'macro bodies never closed': `<ac:structured-macro ac:name="info">${'<ac:rich-text-body>'.repeat(60_000)}</ac:structured-macro>`,
+      'link bodies never closed': `<ac:link>${'<ac:link-body>'.repeat(60_000)}</ac:link>`,
+      'image addresses never ended': `<ac:image>${'<ri:url '.repeat(60_000)}</ac:image>`,
+      'a tag name of dashes': `<ac:${dashes}x>y</ac:${dashes}x>`,
+    };
+    for (const [name, hostile] of Object.entries(bodies)) {
+      const started = performance.now();
+      const html = confluenceStorageToHtml(`<p>Before</p>${hostile}<p>After</p>`);
+      expect(performance.now() - started, name).toBeLessThan(1_000);
+      expect(html, name).toContain('<p>Before</p>');
+    }
+  });
+
+  it('reads what stands after the last closing tag as it always has: an element left open is read through', (): void => {
+    expect(
+      confluenceStorageToMarkdown(
+        '<p>One <ac:emoticon ac:name="tick"></ac:emoticon>two <ac:emoticon ac:name="cross">three</p>' +
+          '<p><![CDATA[a < b]]> and <![CDATA[open</p>' +
+          '<p><ac:link><ri:page ri:content-title="Close checklist" /></ac:link>, <ac:link>left open</p>',
+      ),
+    ).toBe('One two three\n\na < b and\n\nClose checklist, left open');
   });
 
   it('leaves no storage tag in the Markdown, whatever macro it does not know', (): void => {

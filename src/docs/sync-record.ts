@@ -118,6 +118,29 @@ export function withUnreadPages(
   };
 }
 
+/** A character an address or a file name goes on with: after a reference, it names a longer one. */
+const NAME_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/**
+ * Whether a reason names the page by its reference, whole: the reference stands in it with no
+ * letter, digit or path before it and none after. A search for the reference's letters found
+ * the ref `a` in "Gave no body" and `/p1` in `/p10`, and the page then went unnamed (W15-R29).
+ */
+function namesRef(reason: string, ref: string): boolean {
+  if (ref === '') return false;
+  for (let at = reason.indexOf(ref); at >= 0; at = reason.indexOf(ref, at + 1)) {
+    const before = reason.slice(0, at);
+    const after = reason.slice(at + ref.length);
+    const joinedBefore = /[\p{L}\p{N}_/.-]$/u.test(before);
+    // A full stop, a dash or a slash goes on with the name only when a name character follows.
+    const joinedAfter =
+      NAME_CHARACTER.test(after.charAt(0)) ||
+      (/^[/.#?&=%:-]/.test(after) && NAME_CHARACTER.test(after.charAt(1)));
+    if (!joinedBefore && !joinedAfter) return true;
+  }
+  return false;
+}
+
 /**
  * The record on one line, for the source's status on the documentation page.
  *
@@ -151,7 +174,7 @@ export function unreadPagesLine(
       // is not prefixed with it again.
       ...pages.map((page): string => {
         const reason = page.reason.replace(/\.$/, '');
-        return reason.includes(page.ref) ? reason : `${page.ref}: ${reason}`;
+        return namesRef(reason, page.ref) ? reason : `${page.ref}: ${reason}`;
       }),
       ...(more > 0 ? [`and ${more} more`] : []),
     ].join('; ');
@@ -170,7 +193,7 @@ export function unreadPagesLine(
     const it = failures === 1 ? 'it' : 'them';
     failureLine = `${pages} could not be read, and nothing from this source is stored yet: ${failedNames}. Day0 reads ${it} again at the next sync; a page it refuses stays unread until the page or its address changes.`;
   } else {
-    failureLine = `${header(failures)}: ${failedNames}. The next sync reads them again.`;
+    failureLine = `${header(failures)}: ${failedNames}. The next sync reads ${failures === 1 ? 'it' : 'them'} again.`;
   }
   return kindLine === undefined ? failureLine : `${failureLine} ${kindLine}`;
 }
