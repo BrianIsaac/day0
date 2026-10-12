@@ -132,13 +132,22 @@ describe('the Clerk appearance', () => {
     );
   });
 
-  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour", () => {
+  // Re-pinned (16-T): the mark drew the dark set's accent and card only. Chrome answers an
+  // image's `prefers-color-scheme` from the colour-scheme of the page that draws it (probed on
+  // Chromium 1248, 12 October 2026), so the mark takes each set's values from the scheme the page
+  // is in, whichever way the viewer chose it.
+  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour, in each theme", () => {
     const mark = checkoutFile('public/day0-mark.svg');
     expect(rects(mark)).toEqual(rects(checkoutFile('app/icon.svg')));
     expect(mark).toMatch(/viewBox="0 0 16 16"/);
-    expect(mark.match(/fill="#22d3ee"/g)).toHaveLength(2);
-    // Re-pinned (16-T): the card's colour is a token now; the eyes keep the dark card's value.
-    expect(mark.match(new RegExp(`fill="${token('card')}"`, 'g'))).toHaveLength(2);
+    const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
+    const [dark, light] = style.split('@media (prefers-color-scheme: light)');
+    expect(dark).toContain(`.head { fill: ${token('accent')}; }`);
+    expect(dark).toContain(`.eye { fill: ${token('card')}; }`);
+    expect(light).toContain(`.head { fill: ${lightToken('accent')}; }`);
+    expect(light).toContain(`.eye { fill: ${lightToken('card')}; }`);
+    expect(mark.match(/class="head"/g)).toHaveLength(2);
+    expect(mark.match(/class="eye"/g)).toHaveLength(2);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { Appearance } from '@clerk/ui';
 
-/** Day0's mark drawn for Clerk's dark card (`public/day0-mark.svg`), served from the app itself. */
+/** Day0's mark drawn for Clerk's card in either theme (`public/day0-mark.svg`), served from the app itself. */
 export const DAY0_MARK_URL = '/day0-mark.svg';
 
 /**
