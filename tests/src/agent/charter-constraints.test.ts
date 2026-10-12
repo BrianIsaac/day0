@@ -1704,6 +1704,19 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
       'Reply to customers without leaving that to support.',
     ],
     ['Own refunds, which belong to billing.', 'Own refunds, which belong to billing.'],
+    // A list of acts is the acts, never a redirect (the second pass).
+    [
+      'Never change prices, run discounts, or send quotes.',
+      'Change prices, run discounts, or send quotes.',
+    ],
+    [
+      'Never send invoices, check balances, or issue refunds.',
+      'Send invoices, check balances, or issue refunds.',
+    ],
+    [
+      'Do not send invoices; pass them to billing.',
+      'Send invoices without passing them to billing.',
+    ],
     ['Never', 'Never'],
   ])('reads %j as %j', (clause, act): void => {
     expect(willNotDoAsAct(clause)).toBe(act);
@@ -1736,6 +1749,34 @@ describe('withRoutingRules (RM27)', (): void => {
         origin: 'derived',
         binds: [{ field: 'escalationTriggers', index: 1 }],
       },
+    ]);
+  });
+
+  it('draws nothing from a sentence that lifts or describes a route rather than asking for one (the second pass)', (): void => {
+    const drawn = withRoutingRules(
+      charter(['Escalate to product when an ask is a bug.']),
+      {
+        collaborators:
+          'You do not need to check with me first. Reps usually talk to me first when a deal stalls. Don’t ask me first, just go.',
+      },
+      [],
+      [],
+    );
+    expect(drawn.rules).toEqual([]);
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Escalate to product when an ask is a bug.',
+    ]);
+  });
+
+  it("writes the manager's contractions in the third person too", (): void => {
+    const drawn = withRoutingRules(
+      charter([]),
+      { collaborators: "Talk to me first if I'm away or I've not answered." },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Talk to the manager first if the manager is away or the manager has not answered.',
     ]);
   });
 

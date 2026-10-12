@@ -173,14 +173,23 @@ export function willNotDoAsAct(clause: string): string {
   const trimmed = clause.trim();
   const act = trimmed.replace(PROHIBITION_OPENING, '');
   if (act === trimmed || act === '') return clause;
-  const split = /^(.*?)\s*[,;]\s+(?:instead,?\s+|and\s+|but\s+)?([A-Za-z]+)\b(.*)$/.exec(act);
+  // One separator only: "Never change prices, run discounts, or send quotes." is a list of acts,
+  // each ruled out as written, never a redirect (the second pass).
+  const split =
+    (act.match(/[,;]/g) ?? []).length === 1
+      ? /^(.*?)\s*[,;]\s+(?:instead,?\s+|and\s+|but\s+)?([A-Za-z]+)\b(.*)$/.exec(act)
+      : null;
   const gerund = split ? REDIRECT_GERUNDS[split[2]!.toLowerCase()] : undefined;
+  const redirects = split !== null && REDIRECT_DESTINATION.test(split[3] ?? '');
   const joined =
-    split && gerund
+    split && gerund && redirects
       ? `${split[1]} without ${gerund}${split[3]!.replace(/\s+instead(?=[.!]?$)/i, '')}`
       : act;
   return joined.replace(/^[a-z]/, (first) => first.toUpperCase());
 }
+
+/** Where a redirect sends the work: a person, or the way it goes there. */
+const REDIRECT_DESTINATION = /\b(?:through|via|to|with|by|past)\b|\bthe manager\b/i;
 
 /**
  * The charter with each will-not-do clause written as the act it rules out ({@link
@@ -583,6 +592,10 @@ function managerSentencesAsSaid(answers: Partial<Record<DayOneTopic, string>>): 
 /** The manager's first person in the third person the clauses are written in. */
 function inTheThirdPerson(sentence: string): string {
   return sentence
+    .replace(/\bI['\u2019]m\b/g, 'the manager is')
+    .replace(/\bI['\u2019]ll\b/g, 'the manager will')
+    .replace(/\bI['\u2019]ve\b/g, 'the manager has')
+    .replace(/\bI['\u2019]d\b/g, 'the manager would')
     .replace(/\b[Mm]y\b(?![.'\u2019]\w)/g, "the manager's")
     .replace(FIRST_PERSON, 'the manager')
     .replace(/\bthe manager am\b/g, 'the manager is');
@@ -608,6 +621,52 @@ function routingClause(sentence: string): string {
 function quotedBy(sentence: string, quotes: readonly string[]): boolean {
   const key = quoteKey(sentence);
   return quotes.some((quote: string): boolean => quoteKey(quote).includes(key));
+}
+
+/** The words an instruction to route work through the manager may open on, before the route. */
+const ROUTE_OPENERS: ReadonlySet<string> = new Set([
+  'please',
+  'always',
+  'just',
+  'then',
+  'so',
+  'and',
+  'you',
+  'should',
+  'must',
+  'everything',
+  'anything',
+  'all',
+  'go',
+  'goes',
+  'send',
+  'route',
+  'bring',
+  'take',
+  'it',
+  'them',
+  'this',
+  'that',
+  'things',
+  'these',
+  'those',
+  'now',
+]);
+
+/**
+ * Whether a sentence asks for work to be routed through the manager (`THROUGH_ME`), as against
+ * lifting a route or describing one (the second pass): the words before the route, back to the
+ * clause's start, are an instruction's own ("Anything unusual, talk to me first.", "Go through me
+ * for both.", "Everything via me."), never a negative ("You do not need to check with me first.",
+ * "Don't ask me first.") or another subject ("Reps usually talk to me first.").
+ */
+function asksForARoute(sentence: string): boolean {
+  const route = THROUGH_ME.exec(sentence);
+  if (route === null) return false;
+  const before = sentence.slice(0, route.index);
+  const lead = before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(';')) + 1);
+  const words = lead.toLowerCase().match(/[a-z\u2019']+/g) ?? [];
+  return words.every((word) => ROUTE_OPENERS.has(word));
 }
 
 /** A charter and the rules a step drew on it. */
@@ -639,7 +698,7 @@ export function withRoutingRules(
   const rules: CharterConstraint[] = [];
   const spoken = (): string[] => [...listed, ...rules].map((rule) => rule.quote);
   for (const sentence of managerSentencesAsSaid(answers)) {
-    if (!THROUGH_ME.test(sentence)) continue;
+    if (!asksForARoute(sentence)) continue;
     if (quotedBy(sentence, spoken()) || quotedBy(sentence, struck)) continue;
     const escalations = current.proposedBoundaries.escalationTriggers;
     const placed = (test: (clause: string) => boolean): ClauseRef[] =>
