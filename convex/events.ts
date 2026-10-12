@@ -6,18 +6,29 @@ import {
 } from 'convex/server';
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, employeeOwnerScope } from './ownership';
+import { assertOwnsAgent, employeeOwnerScope, getCallerOrThrow, ownerScope } from './ownership';
 import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import { agentZone, dayKey } from '../src/lib/zone';
+import { agentZone, dayKey, deploymentZone } from '../src/lib/zone';
 import {
+  OWNER_EXPORT_FORMAT,
+  OWNER_SECTIONS,
   ownerKeyDigest,
+  ownerSectionAfter,
   sectionAfter,
   TRACE_FORMAT,
   TRACE_PAGE_ROWS,
   TRACE_SECTIONS,
   TRACE_VERSION,
+  type OwnerDeparture,
+  type OwnerDocPage,
+  type OwnerDocSource,
+  type OwnerExportHead,
+  type OwnerPage,
+  type OwnerRows,
+  type OwnerSection,
+  type TraceAgent,
   type TraceHandover,
   type TraceHead,
   type TraceLedgerLine,
@@ -464,6 +475,22 @@ async function organisationLedgerOf(
     );
 }
 
+/** An agent as a trace names it: its evaluation flag carried in place of the manager's address. */
+function traceAgentOf(agent: Doc<'agents'>): TraceAgent {
+  return {
+    id: agent._id,
+    name: agent.name,
+    ...(agent.userId !== undefined ? { userId: agent.userId } : {}),
+    state: agent.state,
+    ...(agent.arm !== undefined ? { arm: agent.arm } : {}),
+    ...(agent.mode !== undefined ? { mode: agent.mode } : {}),
+    zone: agentZone(agent),
+    evaluation: isEvaluationAgent(agent),
+    createdAt: agent.createdAt,
+    creationTime: agent._creationTime,
+  };
+}
+
 /**
  * The head of an agent's trace: the manifest, the agent, the owner section,
  * the credential labels and the organisation's ledger about its connections,
@@ -506,18 +533,7 @@ export const exportHead = internalQuery({
         eventTypes: EVENT_TYPES,
         handovers,
       },
-      agent: {
-        id: agent._id,
-        name: agent.name,
-        ...(agent.userId !== undefined ? { userId: agent.userId } : {}),
-        state: agent.state,
-        ...(agent.arm !== undefined ? { arm: agent.arm } : {}),
-        ...(agent.mode !== undefined ? { mode: agent.mode } : {}),
-        zone,
-        evaluation: isEvaluationAgent(agent),
-        createdAt: agent.createdAt,
-        creationTime: agent._creationTime,
-      },
+      agent: traceAgentOf(agent),
       owner: { retired },
       credentialNames: credentials.flatMap((credential) =>
         credential ? [{ label: credential.label }] : [],
@@ -595,6 +611,16 @@ const SECTION_PAGES: Readonly<
       .query('managerDecisionNotices')
       .withIndex('by_agent', (q) => q.eq('agentId', agentId))
       .paginate(options),
+  reorientations: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_status', (q) => q.eq('agentId', agentId))
+      .paginate(options),
+  reorientationTalks: async (ctx, agentId, options) =>
+    await ctx.db
+      .query('reorientationTalks')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .paginate(options),
   replacedRequests: async (ctx, agentId, options) =>
     await ctx.db
       .query('replacedDecisionRequests')
@@ -666,6 +692,275 @@ export const exportPage = internalQuery({
         : following !== undefined
           ? { section: following, cursor: null }
           : null,
+    };
+  },
+});
+
+/**
+ * The most of an owner's agents one owner export reads: far above the twenty the figures count
+ * and the 51 of a large bed (V16-4); past it the head says how many were left out.
+ */
+export const OWNER_EXPORT_AGENT_LIMIT = 500;
+
+/** The most of an owner's documentation sources whose pages one owner export walks. */
+const OWNER_EXPORT_SOURCE_LIMIT = 100;
+
+/** The most stored pages one page of the owner export reads: each row holds its page's text. */
+const OWNER_EXPORT_PAGE_ROWS = 25;
+
+/** The bytes one page of stored pages may read, so a library of long pages pages on. */
+const OWNER_EXPORT_PAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The head of an owner export (wave 16, 16-F; decision F-1): the manifest, every employee the
+ * caller holds by id and name, the agents the figures set aside, and where the owner's rows
+ * start. Internal; `exportActions.exportForOwner` runs it under the caller's identity, and the
+ * owner key is the caller's own, so no other owner's agent is ever listed.
+ */
+export const exportOwnerHead = internalQuery({
+  args: { exportedAt: v.number() },
+  handler: async (ctx, args): Promise<OwnerExportHead> => {
+    const { ownerKey } = await getCallerOrThrow(ctx);
+    const [stamp, read] = await Promise.all([
+      ctx.db.query('deploymentVersions').order('desc').first(),
+      ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+        .take(OWNER_EXPORT_AGENT_LIMIT + 1),
+    ]);
+    const agents = read.slice(0, OWNER_EXPORT_AGENT_LIMIT);
+    const zone = deploymentZone();
+    return {
+      manifest: {
+        format: OWNER_EXPORT_FORMAT,
+        version: TRACE_VERSION,
+        exportedAt: args.exportedAt,
+        exportedOn: dayKey(args.exportedAt, zone),
+        zone,
+        release: stamp?.release ?? null,
+        commit: stamp?.commit ?? null,
+        pageRows: TRACE_PAGE_ROWS,
+        ownerKey,
+      },
+      employees: agents
+        .filter((agent) => !isEvaluationAgent(agent))
+        .map((agent) => ({ id: agent._id, name: agent.name })),
+      setAside: agents.filter(isEvaluationAgent).map(traceAgentOf),
+      omittedAgents: read.length - agents.length,
+      next: { section: OWNER_SECTIONS[0], cursor: null },
+    };
+  },
+});
+
+/** Where a walk of the owner's stored pages stands: the source it is in, and the cursor inside it. */
+interface PagesCursor {
+  readonly sourceId: string;
+  readonly cursor: string | null;
+}
+
+/** A pages cursor read back from the string the export hands out, or a refusal. */
+function pagesCursorOf(cursor: string): PagesCursor {
+  const parsed: unknown = JSON.parse(cursor);
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    typeof (parsed as Record<string, unknown>).sourceId !== 'string' ||
+    !['string', 'object'].includes(typeof (parsed as Record<string, unknown>).cursor)
+  ) {
+    throw new Error('not a cursor of the owner export’s stored pages');
+  }
+  return parsed as PagesCursor;
+}
+
+/** The fields of a stored page the owner export never carries: its text and what is read off it. */
+const PAGE_FIELDS_LEFT_OUT = new Set(['markdown', 'contentHash', 'marker', 'decidedBy']);
+
+/** One stored page without its text, its keyed hash, a marker's words or who decided it. */
+function pageWithoutText(page: Doc<'docPages'>): OwnerDocPage {
+  const kept = Object.fromEntries(
+    Object.entries(page).filter(([key]) => !PAGE_FIELDS_LEFT_OUT.has(key)),
+  ) as unknown as OwnerDocPage;
+  return page.marker === undefined
+    ? kept
+    : { ...kept, marker: { status: page.marker.status, judgedAt: page.marker.judgedAt } };
+}
+
+/**
+ * One page of the owner's stored pages, source by source in the order the owner linked them,
+ * each without its text. The cursor names the source and the backend's cursor inside it.
+ */
+async function ownerPagesPage(
+  ctx: QueryCtx,
+  ownerKey: string,
+  cursor: string | null,
+): Promise<{ rows: OwnerDocPage[]; next: string | null }> {
+  const sources = await ctx.db
+    .query('docSources')
+    .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+    .take(OWNER_EXPORT_SOURCE_LIMIT);
+  const at = cursor === null ? undefined : pagesCursorOf(cursor);
+  const index = at === undefined ? 0 : sources.findIndex((source) => source._id === at.sourceId);
+  const source = sources[index];
+  // A source unlinked between two pages has no pages left to read; the walk ends there.
+  if (source === undefined) return { rows: [], next: null };
+  const page = await ctx.db
+    .query('docPages')
+    .withIndex('by_source', (q) => q.eq('sourceId', source._id))
+    .paginate({
+      cursor: at?.cursor ?? null,
+      numItems: OWNER_EXPORT_PAGE_ROWS,
+      maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
+    });
+  const following = sources[index + 1];
+  const next: PagesCursor | null = !page.isDone
+    ? { sourceId: source._id, cursor: page.continueCursor }
+    : following !== undefined
+      ? { sourceId: following._id, cursor: null }
+      : null;
+  return {
+    rows: page.page.map(pageWithoutText),
+    next: next === null ? null : JSON.stringify(next),
+  };
+}
+
+/** One page of a section of the owner's rows: its rows before redaction, and the next cursor. */
+type OwnerSectionPage = { rows: unknown[]; next: string | null };
+
+/** A paginated read as an owner section's page. */
+function asOwnerPage<Row>(
+  page: PaginationResult<Row>,
+  map: (row: Row) => unknown[] = (row) => [row],
+): OwnerSectionPage {
+  return { rows: page.page.flatMap(map), next: page.isDone ? null : page.continueCursor };
+}
+
+/** One page of each section of the owner's rows, every read keyed by the caller's owner key. */
+const OWNER_SECTION_PAGES: Readonly<
+  Record<
+    OwnerSection,
+    (ctx: QueryCtx, ownerKey: string, options: PaginationOptions) => Promise<OwnerSectionPage>
+  >
+> = {
+  retirements: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('retirements')
+        .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+        .paginate(options),
+      (row) => [withoutOwner(row)],
+    ),
+  departures: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('managerTransfers')
+        .withIndex('by_from_owner_state', (q) => q.eq('fromOwnerKey', ownerKey))
+        .paginate(options),
+      (row): OwnerDeparture[] =>
+        row.state === 'accepting' || row.state === 'accepted'
+          ? [
+              {
+                _id: row._id,
+                agentId: row.agentId,
+                agentName: row.agentName,
+                state: row.state,
+                requestedAt: row.requestedAt,
+                ...(row.decidedAt !== undefined ? { decidedAt: row.decidedAt } : {}),
+              },
+            ]
+          : [],
+    ),
+  docSources: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('docSources')
+        .withIndex('by_user', (q) => q.eq('userId', ownerKey))
+        .paginate(options),
+      (row): OwnerDocSource[] => [
+        {
+          _id: row._id,
+          _creationTime: row._creationTime,
+          label: row.label,
+          kind: row.kind,
+          ...(row.authority !== undefined ? { authority: row.authority } : {}),
+          ...(row.defaultStatus !== undefined ? { defaultStatus: row.defaultStatus } : {}),
+          status: row.status,
+          ...(row.lastSyncAt !== undefined ? { lastSyncAt: row.lastSyncAt } : {}),
+          createdAt: row.createdAt,
+        },
+      ],
+    ),
+  docPages: async (ctx, ownerKey, options) => await ownerPagesPage(ctx, ownerKey, options.cursor),
+  docRelations: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('docRelations')
+        .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
+        .paginate(options),
+    ),
+  skillVersions: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('skillVersions')
+        .withIndex('by_owner_name_version', (q) => q.eq('userId', ownerKey))
+        .paginate(options),
+    ),
+  people: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('people')
+        .withIndex('by_user_status', (q) => q.eq('userId', ownerScope({ ownerKey })))
+        .paginate(options),
+    ),
+  personIdentities: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('personIdentities')
+        .withIndex('by_user_provider_external', (q) => q.eq('userId', ownerScope({ ownerKey })))
+        .paginate(options),
+    ),
+  relationships: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('relationships')
+        .withIndex('by_user_type', (q) => q.eq('userId', ownerScope({ ownerKey })))
+        .paginate(options),
+    ),
+  workingAgreements: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_status', (q) => q.eq('userId', ownerScope({ ownerKey })))
+        .paginate(options),
+    ),
+};
+
+/**
+ * One page of one section of the owner's rows, redacted for export, with where the next page
+ * starts. At most `TRACE_PAGE_ROWS` rows (stored pages fewer). Internal;
+ * `exportActions.exportOwnerPage` runs it under the caller's identity, and every read is keyed by
+ * the caller's own owner key.
+ */
+export const exportOwnerPage = internalQuery({
+  args: {
+    section: v.union(...OWNER_SECTIONS.map((section) => v.literal(section))),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<OwnerPage> => {
+    const { ownerKey } = await getCallerOrThrow(ctx);
+    const page = await OWNER_SECTION_PAGES[args.section](ctx, ownerKey, {
+      cursor: args.cursor,
+      numItems: TRACE_PAGE_ROWS,
+    });
+    const following = ownerSectionAfter(args.section);
+    return {
+      section: args.section,
+      rows: page.rows.map((row) => redactForExport(row)) as OwnerRows[OwnerSection],
+      next:
+        page.next !== null
+          ? { section: args.section, cursor: page.next }
+          : following !== undefined
+            ? { section: following, cursor: null }
+            : null,
     };
   },
 });

@@ -232,6 +232,8 @@ vi.mock('convex/react', () => {
       async (): Promise<void> => {
         state.sent.push(getFunctionName(reference));
       },
+    // The export card's actions (16-F), which no test here presses.
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
   };
 });
 

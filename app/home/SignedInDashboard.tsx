@@ -15,6 +15,7 @@ import { AuthorisationUnfinished } from './AuthorisationUnfinished';
 import { DeployForm } from './DeployForm';
 import { HandedOver } from './HandedOver';
 import { EmployeeRoster } from './EmployeeRoster';
+import { ExportCard } from './ExportCard';
 import { MonthCard } from './MonthCard';
 import { NeedsYouList } from './NeedsYouList';
 import { OnItsWay } from './OnItsWay';
@@ -164,6 +165,8 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {showDeployForm ? <AfterDeploy /> : null}
           <DocumentationCard sources={docSources?.length} />
+          {/* Beside the month's figures, the one file they are recomputed from (16-F). */}
+          {staffed ? <ExportCard /> : null}
         </aside>
         {/* After the aside in the page's order, so on a phone, and for the keyboard and a screen
             reader at any width, what Deploy does comes before the card that wipes (walk m17); at

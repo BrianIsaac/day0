@@ -13,7 +13,12 @@ import {
   recomputeFromTraces,
   runRecompute,
 } from '../../scripts/recompute-metrics';
-import { assembleTrace, type AgentTrace } from '../../src/export/trace';
+import {
+  assembleOwnerExport,
+  assembleTrace,
+  type AgentTrace,
+  type OwnerExport,
+} from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
 import { hasHostTool } from '../setup/host-tools';
 import { MANAGER_ADDRESS, managerIdentity } from '../convex/fakes/manager-identity';
@@ -472,10 +477,84 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     writeFileSync(stray, JSON.stringify({ version: 1, events: [] }));
     const refused = capture();
     expect(runRecompute([stray], refused.io)).toBe(2);
-    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2, 3 or 4)');
+    // Re-pinned for 16-F: the refusal named versions 2 to 4 long after 5 to 7 were read; it now
+    // names what the command reads, a trace or an owner export.
+    expect(refused.err.join('\n')).toContain(
+      'is not a day0 trace or owner export this release reads',
+    );
     const mixed = capture();
     expect(runRecompute([stray, directory], mixed.io)).toBe(2);
     expect(mixed.err.join('\n')).toContain('not both');
+  });
+});
+
+/** The owner export the owner's browser assembles, through the public actions. */
+async function exportedOwnerFile(
+  harness: ReturnType<typeof convexTest>,
+  owner: string = OWNER,
+): Promise<OwnerExport> {
+  const caller = harness.withIdentity(managerIdentity(owner));
+  return await assembleOwnerExport({
+    head: async () => await caller.action(api.exportActions.exportForOwner, {}),
+    page: async (cursor) => await caller.action(api.exportActions.exportOwnerPage, cursor),
+    employee: {
+      head: async ({ agentId }) =>
+        await caller.action(api.exportActions.exportForAgent, {
+          agentId: agentId as Id<'agents'>,
+        }),
+      page: async ({ agentId, page }) =>
+        await caller.action(api.exportActions.exportPage, {
+          agentId: agentId as Id<'agents'>,
+          ...page,
+        }),
+    },
+  });
+}
+
+describe('recomputing the figures from the owner export (wave 16, 16-F)', (): void => {
+  it('recomputes metrics:forOwner from the one file with --expect, the evaluation agent set aside', async (): Promise<void> => {
+    const harness = await companyBackend();
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-owner-'));
+    temporary.push(directory);
+    const file = join(directory, 'owner.json');
+    const expected = join(directory, 'expected.json');
+    writeFileSync(file, JSON.stringify(await exportedOwnerFile(harness)));
+    writeFileSync(expected, JSON.stringify(live));
+
+    const run = capture();
+    expect(runRecompute([file, '--expect', expected], run.io), run.err.join('\n')).toBe(0);
+    expect(run.out.at(-1)).toBe(`every figure in ${expected} holds`);
+    expect(live.excludedAgents).toBe(1);
+  });
+
+  it('names an employee handed elsewhere as not counted, and counts it with the other manager’s trace beside the file', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await handOverMateo(harness);
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    const ownerFile = await exportedOwnerFile(harness);
+    const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-owner-handover-'));
+    temporary.push(directory);
+    const file = join(directory, 'owner.json');
+    writeFileSync(file, JSON.stringify(ownerFile));
+
+    const alone = capture();
+    expect(runRecompute([file], alone.io)).toBe(0);
+    expect(alone.out.find((line) => line.startsWith('recomputed '))).toContain(
+      'handed to another manager and not read here, so not counted: Mateo',
+    );
+
+    const colleagues = (await exportedTraces(harness)).filter(
+      (trace) => trace.agent.userId === COLLEAGUE,
+    );
+    const beside = join(directory, 'mateo.json');
+    writeFileSync(beside, JSON.stringify(colleagues[0]));
+    const expected = join(directory, 'expected.json');
+    writeFileSync(expected, JSON.stringify(live));
+    const both = capture();
+    expect(runRecompute([file, beside, '--expect', expected], both.io), both.err.join('\n')).toBe(
+      0,
+    );
   });
 });
 
