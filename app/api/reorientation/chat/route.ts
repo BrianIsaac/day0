@@ -21,7 +21,6 @@ import { streamCallOptions } from '@/lib/stream-settings';
 import { repliesIn, uiMessagesOf } from '@/agent/one-to-one-conversation';
 import { reorientationTalkBodyOf } from '@/agent/chat-turn-body';
 import {
-  REORIENTATION_COMPLETE,
   TALK_ANSWER_NOT_KEPT,
   keptTalkAnswer,
   talkOutcomeOfCalls,
@@ -30,6 +29,7 @@ import {
   type TalkOutcome,
 } from '@/agent/reorientation-talk';
 import {
+  REORIENTATION_COMPLETE,
   REORIENTATION_COMPLETE_TOOL,
   REORIENTATION_TALK_PROMPT_CACHE_KEY,
   TALK_FINISH_NOTE,

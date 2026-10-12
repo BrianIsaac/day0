@@ -14,7 +14,7 @@ import {
   sentenceOf,
   revisitDay,
 } from '@/agent/reorientation-words';
-import { Button } from '../../../components/Button';
+import { Button, ButtonLink } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
@@ -343,6 +343,12 @@ export function ReorientationCard({
               >
                 Dismiss
               </Button>
+              {/* Discuss (16-D): a talk of its own about this card, ending in a new proposal on it. */}
+              <ButtonLink href={`/agent/${card.agentId}/reorientation/talk/${reorientationId}`}>
+                {card.status === 'discussing'
+                  ? `Carry on the talk with ${name}`
+                  : `Discuss with ${name}`}
+              </ButtonLink>
             </div>
             <p className="text-[13px] text-[var(--color-muted)]">
               {decisionWords({

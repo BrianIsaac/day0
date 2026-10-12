@@ -475,4 +475,43 @@ describe('a reorientation card', (): void => {
       view.unmount();
     }
   });
+
+  it('offers Discuss with Mira after the three decisions, to the card’s own talk', async (): Promise<void> => {
+    const view = drawn(BASE);
+    const foot = [...view.container.querySelectorAll('button, a')].map(
+      (control) => control.textContent ?? '',
+    );
+    expect(foot.slice(-4)).toEqual(['Approve', 'Defer a week', 'Dismiss', 'Discuss with Mira']);
+    expect(
+      view.container.querySelector('a[href="/agent/agent-1/reorientation/talk/card-1"]')
+        ?.textContent,
+    ).toBe('Discuss with Mira');
+    await floor(view.container);
+    view.unmount();
+  });
+
+  it('offers to carry on a talk under way, on a pending card and a deferred one too', async (): Promise<void> => {
+    for (const card of [
+      { status: 'discussing' as const },
+      { status: 'discussing' as const, proposed: { kind: 'pending' as const } },
+    ]) {
+      const view = drawn(withCard(card));
+      expect(
+        view.container.querySelector('a[href="/agent/agent-1/reorientation/talk/card-1"]')
+          ?.textContent,
+      ).toBe('Carry on the talk with Mira');
+      view.unmount();
+    }
+    const deferred = drawn(withCard({ status: 'deferred', revisitAt: Date.UTC(2026, 9, 3, 9) }));
+    expect(deferred.container.querySelector('a[href$="/talk/card-1"]')?.textContent).toBe(
+      'Discuss with Mira',
+    );
+    deferred.unmount();
+  });
+
+  it('offers no Discuss on a decided card', async (): Promise<void> => {
+    const view = drawn(withCard({ status: 'applied', decidedAt: OPENED + 60_000 }));
+    expect(view.container.querySelector('a[href$="/talk/card-1"]')).toBeNull();
+    view.unmount();
+  });
 });

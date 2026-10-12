@@ -50,6 +50,7 @@ const { RecordView } = await import('../../app/agent/[agentId]/record/RecordView
 const { ManageView } = await import('../../app/agent/[agentId]/manage/ManageView');
 const { ReorientationView } =
   await import('../../app/agent/[agentId]/reorientation/ReorientationView');
+const { TalkView } = await import('../../app/agent/[agentId]/reorientation/TalkRoom');
 const { SignedInDashboard } = await import('../../app/home/SignedInDashboard');
 const { RetiredNoticeProvider } = await import('../../app/RetiredNotice');
 
@@ -101,6 +102,12 @@ const PAGES: Readonly<Record<string, Page>> = {
     'reorientation',
     () => createElement(ReorientationView),
     'charter assumed has changed',
+  ),
+  // A card's Discuss room (16-D), its talk under way.
+  'reorientation-talk': tab(
+    'reorientation',
+    () => createElement(TalkView, { reorientationId: 'card-1' }),
+    'Shall I put that on the card?',
   ),
 };
 

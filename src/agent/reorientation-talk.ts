@@ -14,7 +14,7 @@ import {
   type TurnRequest,
 } from './one-to-one-conversation';
 import { proposalReplySchema, type ProposalReply } from './reorientation-proposal';
-import { REORIENTATION_COMPLETE_TOOL } from './reorientation-talk-prompts';
+import { REORIENTATION_COMPLETE, REORIENTATION_COMPLETE_TOOL } from './reorientation-talk-prompts';
 import { errorMessage } from '../lib/errors';
 import { log } from '../lib/logger';
 
@@ -25,9 +25,6 @@ import { log } from '../lib/logger';
  * (`decideTurn`, `decideAnswer`, the 40-turn bound), and ending in a proposal on the card, never
  * an application. The one-to-one's session and its readers never see a talk.
  */
-
-/** The name of the tool a talk ends with, which the route offers and the room draws. */
-export const REORIENTATION_COMPLETE = 'reorientationComplete';
 
 /**
  * What the room asks of a talk before its turn is put to the employee: one of the one-to-one's

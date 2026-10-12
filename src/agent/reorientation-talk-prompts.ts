@@ -14,6 +14,12 @@ import {
  * A new prompt in v0.20.0 (the standard's 15.2); no other prompt moves.
  */
 
+/**
+ * The name of the tool a talk ends with, which the route offers and the room draws. Here, beside
+ * the tool's words, so a client component reads it without the talk's server-side rules.
+ */
+export const REORIENTATION_COMPLETE = 'reorientationComplete';
+
 /** The provider's prompt cache key for the talk's system prompt; moved with the prompt. */
 export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v1';
 
