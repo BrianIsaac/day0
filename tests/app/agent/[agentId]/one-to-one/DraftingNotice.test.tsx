@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
   DraftingNotice,
-  draftingOutcome,
   draftingWords,
 } from '../../../../../app/agent/[agentId]/one-to-one/DraftingNotice';
 
@@ -56,7 +55,9 @@ describe('what the room says while the charter drafts', (): void => {
     expect(html).toMatch(/<button[^>]*>Hold the one-to-one again<\/button>/);
   });
 
-  it('draws the drafting line with no control, the room saying it in its own status region', (): void => {
+  // Re-pinned for the v0.19.0 walk's finding 8 (16-FX): the line is said by its own status region,
+  // where a second, hidden region of the room's repeated it, so the page carried it twice.
+  it('draws the drafting line with no control, saying it in its own status region', (): void => {
     const html = renderToStaticMarkup(
       <DraftingNotice
         name="Mira"
@@ -67,13 +68,27 @@ describe('what the room says while the charter drafts', (): void => {
       />,
     );
     expect(html).toMatch(/^<div tabindex="-1" data-drafting="drafting"/);
-    expect(
-      draftingOutcome(draftingWords('Mira', { kind: 'drafting' }, { kind: 'posting' })),
-    ).toEqual({
-      tone: 'done',
-      text: 'Drafting your charter, usually under a minute. Your answers are kept beside it, so you can re-read what you said while you review.',
-    });
+    const region = /<p role="status"[^>]*>(.*?)<\/p>/.exec(html)?.[1]?.replace(/<[^>]+>/g, '');
+    expect(region).toBe(
+      'Drafting your charter, usually under a minute. Your answers are kept beside it, so you can re-read what you said while you review.',
+    );
     expect(html).not.toContain('<button');
+  });
+
+  it('waits as an empty, visually hidden status region while the one-to-one is still open', (): void => {
+    const html = renderToStaticMarkup(
+      <DraftingNotice
+        name="Mira"
+        phase={{ kind: 'talking' }}
+        post={{ kind: 'idle' }}
+        open={false}
+        onDraftAgain={() => undefined}
+        onHoldAgain={() => undefined}
+      />,
+    );
+    expect(html).toBe(
+      '<div><p role="status" aria-live="polite" aria-atomic="true" class="empty:sr-only"></p></div>',
+    );
   });
 });
 
