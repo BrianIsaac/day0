@@ -263,6 +263,26 @@ export function talkOutcomeOfCalls(
 }
 
 /**
+ * Why a model's tool calls carried no outcome, for the log (W16-R19, W1b): the tools it called, and
+ * when it called `reorientationComplete` in a shape the tool does not take, the paths of the fields
+ * the schema refused. Never the field's words, which are the model's and may quote the manager.
+ */
+export function talkOutcomeMiss(
+  calls: ReadonlyArray<{ readonly toolName: string; readonly input: unknown }>,
+): { readonly toolCalls: string[]; readonly refusedFields?: string[] } {
+  const toolCalls = calls.map((call) => call.toolName);
+  const call = calls.find((candidate) => candidate.toolName === REORIENTATION_COMPLETE);
+  if (call === undefined) return { toolCalls };
+  const parsed = talkOutcomeSchema.safeParse(call.input);
+  return parsed.success
+    ? { toolCalls }
+    : {
+        toolCalls,
+        refusedFields: [...new Set(parsed.error.issues.map((issue) => issue.path.join('.')))],
+      };
+}
+
+/**
  * Keep one employee turn of a talk as it finishes, before the room hears that it did: the
  * one-to-one's `keptAnswer` for a talk. The turn's `start` carries the id the store keeps it
  * under; its `finish` is held back until it is kept, and then carries the kept mark. A turn that
