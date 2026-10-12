@@ -66,7 +66,7 @@ describe('proposalPrompt', (): void => {
     expect(prompt).toContain('- Work affected: “Answer the ask”, plan-approved');
     expect(prompt).toContain('1. Charter clause (Will do): “Triage tier-2 asks” [edit-clause]');
     expect(prompt).toContain(
-      '4. Page “Escalation paths”, now active; its successor is “Escalation paths, version 2” [page-status: active, superseded, archived, draft, clear]',
+      '4. Page “Escalation paths”, now active; its successor is “Escalation paths, version 2” [page-status: superseded, archived, draft, clear]',
     );
     expect(prompt).toContain('5. Access “linear:write”, not held [scope: grant]');
   });
@@ -179,13 +179,38 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
     }
   });
 
+  it('offers a page no status it already has (the walk’s W-1)', (): void => {
+    const superseded: ProposalCandidate[] = [
+      {
+        kind: 'page',
+        page,
+        title: 'Escalation paths',
+        status: 'superseded',
+        supersededBy: { page, title: 'Escalation paths, version 2' },
+      },
+    ];
+    expect(
+      proposalPrompt({
+        employeeName: 'Mira',
+        roleFunction: 'Triage tier-2 asks.',
+        trigger: 'page-status-changed',
+        summary: '“Escalation paths” was superseded',
+        evidence: [],
+        candidates: superseded,
+      }),
+    ).toContain('[page-status: active, archived, draft, clear]');
+    expect((): unknown =>
+      proposalOf(reply({ change: 'page-status', candidate: 1, action: 'superseded' }), superseded),
+    ).toThrow('is not one of active, archived, draft, clear');
+  });
+
   it('offers superseded only for a page whose successor the evidence names', (): void => {
     const lone: ProposalCandidate[] = [
       { kind: 'page', page, title: 'Escalation paths', status: 'active' },
     ];
     expect((): unknown =>
       proposalOf(reply({ change: 'page-status', candidate: 1, action: 'superseded' }), lone),
-    ).toThrow('is not one of active, archived, draft, clear');
+    ).toThrow('is not one of archived, draft, clear');
   });
 
   it('bounds a rationale and an edit to six hundred characters', (): void => {

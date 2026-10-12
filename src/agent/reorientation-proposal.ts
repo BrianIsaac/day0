@@ -173,12 +173,18 @@ function actionsOf(candidate: ProposalCandidate): string {
   }
 }
 
-/** The statuses a page candidate may be proposed: superseded only where a successor is named. */
+/**
+ * The statuses a page candidate may be proposed: never the one it has (the walk's W-1: a card
+ * proposed marking superseded the page the manager had just marked so), and superseded only where
+ * a successor is named.
+ */
 function pageActionsOf(
   candidate: Extract<ProposalCandidate, { kind: 'page' }>,
 ): readonly (typeof PAGE_STATUS_PROPOSALS)[number][] {
   return PAGE_STATUS_PROPOSALS.filter(
-    (status) => status !== 'superseded' || candidate.supersededBy !== undefined,
+    (status) =>
+      status !== candidate.status &&
+      (status !== 'superseded' || candidate.supersededBy !== undefined),
   );
 }
 

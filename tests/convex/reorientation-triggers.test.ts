@@ -191,6 +191,12 @@ describe('skill withdrawn: the manager withdraws a library version (skill.revoke
       const [card] = await cardsOf(harness, agentId);
       expect(card.evidence.skillVersionIds).toEqual([versionId]);
       expect(card.affected.skills).toEqual([skillId]);
+      // The withdrawal retired the skill: the judgement is offered no action on it (the walk's
+      // W-2: a card proposed re-checking a retired skill, which Approve then refused).
+      const read = await harness.query(internal.reorientation.proposalInput, {
+        reorientationId: card._id,
+      });
+      expect(read?.input.candidates.filter((candidate) => candidate.kind === 'skill')).toEqual([]);
     }
   });
 });
@@ -556,6 +562,15 @@ describe('a person dismissed (person.dismissed)', (): void => {
         userId: OWNER_SUBJECT,
       },
     ]);
+    // The dismissal retired the edge: the judgement is offered no edge to retire again (the
+    // walk's W-3: the card proposed retiring the edge the dismissal had retired).
+    const [card] = await cardsOf(harness, agentId);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    expect(read?.input.candidates.filter((candidate) => candidate.kind === 'relationship')).toEqual(
+      [],
+    );
   });
 });
 

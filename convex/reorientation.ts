@@ -952,7 +952,8 @@ async function candidatesOf(
   }
   for (const id of unique([card.affected.relationships, card.evidence.relationshipIds], idKey)) {
     const edge = await ctx.db.get(id);
-    if (edge !== null && edge.status !== 'superseded') {
+    // An edge already retired or superseded has nothing left to change (the walk's W-3).
+    if (edge !== null && edge.status !== 'superseded' && edge.status !== 'retired') {
       candidates.push({
         kind: 'relationship',
         relationshipId: id,
@@ -985,7 +986,10 @@ async function candidatesOf(
   }
   for (const id of unique([card.affected.skills, card.evidence.skillIds], idKey)) {
     const skill = await ctx.db.get(id);
-    if (skill !== null) candidates.push({ kind: 'skill', skillId: id, name: skill.name });
+    // Only a registered skill takes a re-check, a retirement or a withdrawal (the walk's W-2).
+    if (skill?.state === 'registered') {
+      candidates.push({ kind: 'skill', skillId: id, name: skill.name });
+    }
   }
   return candidates;
 }
