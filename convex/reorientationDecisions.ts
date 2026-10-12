@@ -27,6 +27,7 @@ import {
 } from '../src/agent/reorientation-words';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
 import { UNDECIDED_REORIENTATION_STATUSES } from '../src/agent/reorientation-vocabulary';
+import { RELATIONSHIP_NOUNS } from '../src/people/words';
 
 /*
  * A reorientation card's decisions (wave 16, 16-O; the wave file's section 5.2, A11): Approve
@@ -58,6 +59,8 @@ export interface CardView {
   readonly pages: Array<{ sourceId: Id<'docSources'>; ref: string; title: string }>;
   readonly skills: Array<{ _id: Id<'skills'>; name: string }>;
   readonly agreements: Array<{ _id: Id<'workingAgreements'>; statement: string }>;
+  /** The edges it names, each as the person and what they are to the employee. */
+  readonly people: Array<{ _id: Id<'relationships'>; words: string }>;
   /** The charter version an Approve of a charter change would amend, when there is one. */
   readonly charterVersion?: string;
 }
@@ -400,6 +403,22 @@ export const listForAgent = query({
       const agreements = await Promise.all(
         card.affected.agreements.slice(0, 10).map(async (id) => await ctx.db.get(id)),
       );
+      const edges = await Promise.all(
+        [...new Set([...card.affected.relationships, ...card.evidence.relationshipIds])]
+          .slice(0, 10)
+          .map(async (id) => await ctx.db.get(id)),
+      );
+      const people: CardView['people'] = [];
+      for (const edge of edges) {
+        if (edge === null) continue;
+        const person = await ctx.db.get(edge.toPersonId);
+        people.push({
+          _id: edge._id,
+          words: `${person?.displayName ?? 'Someone'}, its ${RELATIONSHIP_NOUNS[edge.type]}${
+            edge.scope !== undefined && edge.scope !== '' ? ` for ${edge.scope}` : ''
+          }`,
+        });
+      }
       views.push({
         card,
         workItems: rows.flatMap((row) =>
@@ -414,6 +433,7 @@ export const listForAgent = query({
         agreements: agreements.flatMap((agreement) =>
           agreement === null ? [] : [{ _id: agreement._id, statement: agreement.statement }],
         ),
+        people,
         ...(charter?.approved ? { charterVersion: charter.version } : {}),
       });
     }

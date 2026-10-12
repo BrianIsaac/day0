@@ -535,8 +535,21 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
   it('decides the relation from the answer on the plan’s card, and refuses a second answer', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
-    const { relationId, workItemId } = await askedInRequest(harness);
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
     const [question] = await questionsOf(harness, workItemId);
+    expect(
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId }),
+    ).toEqual([
+      {
+        _id: question._id,
+        workItemId,
+        question: ASKED,
+        pages: [
+          { title: 'Finance escalation', source: 'Finance wiki' },
+          { title: 'Pipeline runbook', source: 'Handbook' },
+        ],
+      },
+    ]);
     await expect(
       asManager(harness).mutation(api.managerQuestions.answerConflict, {
         questionId: question._id,
@@ -552,6 +565,9 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         choice: 'from',
       }),
     ).rejects.toThrow('That question has already been answered.');
+    expect(
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId }),
+    ).toEqual([]);
   });
 
   it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {

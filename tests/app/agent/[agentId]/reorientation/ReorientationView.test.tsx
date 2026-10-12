@@ -14,19 +14,36 @@ vi.mock('convex/react', () => ({
 import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { asEmployee } from '../../../../fixtures/dom/employee';
 
+/*
+ * The reorientation page (16-O): the employee's cards, or the no-card state in section 7's words
+ * (re-pinned from wave 15's "opens no card here yet", which a card now contradicts: RM24), and the
+ * card the manager opens by hand.
+ */
+
 describe('ReorientationView', () => {
-  it('says what real mode re-checks after a documentation sync, and points at Surfaces and Amend', () => {
+  it('says what opens a card in real mode when none is open, and points at the charter', () => {
+    backend.queries['reorientationDecisions:listForAgent'] = [];
     const html = renderToStaticMarkup(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
     expect(html).toContain('No reorientation card is open');
-    expect(html).toContain('After each documentation sync');
-    expect(html).toContain('href="/agent/agent-1/surfaces"');
+    expect(html).toContain(
+      'A card opens when a person, a page, a skill or an access Mira relies on changes.',
+    );
     expect(html).toContain('href="/agent/agent-1/charter"');
-    expect(html).not.toMatch(/<button/);
+    expect(html).toContain('When the role changes');
+    expect(html).toContain('Open a card');
   });
 
-  it('says the hosted office does not change, and points at Amend', () => {
+  it('says a handover opens a card in the hosted office, whose pages do not change', () => {
+    backend.queries['reorientationDecisions:listForAgent'] = [];
     const html = renderToStaticMarkup(asEmployee(<ReorientationView />));
-    expect(html).toContain('pages do not change');
-    expect(html).toContain('href="/agent/agent-1/charter"');
+    expect(html).toContain('pages do not change, so a card opens here when Mira');
+    expect(html).toContain('is handed over to you');
+  });
+
+  it('says it is loading until the cards are read, and draws nothing else', () => {
+    backend.queries['reorientationDecisions:listForAgent'] = undefined;
+    const html = renderToStaticMarkup(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+    expect(html).toContain('Loading the reorientation cards');
+    expect(html).not.toContain('No reorientation card is open');
   });
 });

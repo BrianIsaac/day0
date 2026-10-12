@@ -221,6 +221,76 @@ function populated(): Record<string, unknown> {
       item('w-done', { state: 'completed', plan, output: { draft: 'd', notes: '', actions: [] } }),
     ],
     'managerQuestions:openForAgent': [],
+    // A plan's conflict question beside it, and a reorientation card holding that plan (16-O).
+    'managerQuestions:conflictsForAgent': [
+      {
+        _id: 'q-conflict',
+        workItemId: 'w-plan',
+        question:
+          'Two pages disagree under “Thresholds”: Finance escalation (Finance wiki) and Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that rely on this until you answer.',
+        pages: [
+          { title: 'Finance escalation', source: 'Finance wiki' },
+          { title: 'Pipeline runbook', source: 'Handbook' },
+        ],
+      },
+    ],
+    'reorientationDecisions:listForAgent': [
+      {
+        card: {
+          _id: 'card-1',
+          _creationTime: 1,
+          agentId,
+          userId: 'owner',
+          trigger: 'relationship-changed',
+          triggerKey: 'event-1',
+          triggerSummary: 'Aman Rao, its approver, changed',
+          evidence: {
+            eventIds: [],
+            pageRefs: [],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: ['edge-1'],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [
+              { field: 'escalationTriggers', index: 0, text: 'Escalate deck numbers.' },
+            ],
+            agreements: [],
+            relationships: ['edge-1'],
+            skills: [],
+            surfaces: [],
+            workItems: ['w-plan'],
+          },
+          proposed: {
+            kind: 'charter-change',
+            changes: [
+              {
+                kind: 'edit-clause',
+                field: 'escalationTriggers',
+                index: 0,
+                text: 'Escalate deck numbers to Aman first.',
+              },
+            ],
+            rationale: 'Aman approves deck numbers now.',
+            before: 'Escalate deck numbers.',
+            after: 'Escalate deck numbers to Aman first.',
+          },
+          risk: 'high',
+          blockingWork: ['w-plan'],
+          status: 'open',
+          day: '1970-01-01',
+          createdAt: 1,
+        },
+        workItems: [{ _id: 'w-plan', title: 'Item w-plan', state: 'plan-pending' }],
+        pages: [],
+        skills: [],
+        agreements: [],
+        people: [{ _id: 'edge-1', words: 'Aman Rao, its approver' }],
+        charterVersion: '0.1',
+      },
+    ],
     'skills:proposed': [
       {
         _id: 'skill-p',
@@ -366,7 +436,12 @@ const TABS: ReadonlyArray<readonly [string, string | null, () => ReactNode, stri
   ['Surfaces', 'surfaces', () => <SurfacesView />, 'Documentation it reads'],
   ['Record', 'record', () => <RecordView />, 'Every event'],
   ['Manage', 'manage', () => <ManageView />, 'Autonomous actions'],
-  ['reorientation', 'reorientation', () => <ReorientationView />, 'No reorientation card is open'],
+  [
+    'reorientation',
+    'reorientation',
+    () => <ReorientationView />,
+    "Something Priya's charter assumed has changed",
+  ],
 ];
 
 /** The page with one tab open, rendered and settled, every disclosure opened. */

@@ -117,3 +117,58 @@ export function conflictChoiceWords(
 export function conflictReplyLine(id: string): string {
   return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
 }
+
+/** A card's title (the prototype's): "Something {name}'s charter assumed has changed". */
+export function cardTitle(name: string): string {
+  return `Something ${name}'s charter assumed has changed`;
+}
+
+/** The day a card opens again, as its date: "3 October", in the employee's zone. */
+export function revisitDay(ms: number, zone: string | undefined): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    ...(zone !== undefined ? { timeZone: zone } : {}),
+  }).format(ms);
+}
+
+/** How many plans a card holds, as its line says it. */
+export function heldWords(held: number): string {
+  if (held === 0) return 'nothing held';
+  return held === 1 ? '1 plan held' : `${held} plans held`;
+}
+
+/**
+ * The card's waiting line while the judgement works (section 7): "{name} is working out what to
+ * propose. Nothing is held while it does." A high-risk card holds its plans meanwhile, and says so
+ * (flagged: the draft's second sentence would be untrue there).
+ */
+export function pendingWords(name: string, held: number): string {
+  const opening = `${name} is working out what to propose.`;
+  return held === 0
+    ? `${opening} Nothing is held while it does.`
+    : `${opening} ${held === 1 ? 'The plan it holds waits' : `The ${held} plans it holds wait`} until you decide the card.`;
+}
+
+/** What a card says when the judgement could not propose: the card stays, and Dismiss is the way on. */
+export function failedProposalWords(name: string): string {
+  return `${name} could not work out a proposal for this change. Nothing changes unless you act: dismiss the card, or amend the charter yourself.`;
+}
+
+/**
+ * The card's foot (the prototype's): what each decision does. "Approve writes charter version
+ * 0.2. Defer revisits on 3 October and changes nothing. Dismiss closes the card and Mira keeps
+ * working under version 0.1."
+ */
+export function decisionWords(args: {
+  readonly name: string;
+  readonly approves: string;
+  readonly revisit: string;
+  readonly charterVersion?: string;
+}): string {
+  const keeps =
+    args.charterVersion !== undefined
+      ? `Dismiss closes the card and ${args.name} keeps working under version ${args.charterVersion}.`
+      : 'Dismiss closes the card and nothing changes.';
+  return `${args.approves} Defer revisits on ${args.revisit} and changes nothing. ${keeps}`;
+}

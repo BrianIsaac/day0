@@ -131,6 +131,13 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
         control: 'Review',
       };
     }
+    // The section 7 draft (RM24): the card's own line names what changed.
+    case 'reorientation':
+      return {
+        ask: 'something its charter assumed has changed',
+        about: `${entry.subject}.`,
+        control: 'Review',
+      };
   }
 }
 
@@ -160,6 +167,8 @@ export function inboxEntryHref(entry: InboxItem): string {
     case 'transfer':
       // The employee's page refuses a caller who does not own it yet; the home opens the dialog.
       return reviewHref(entry.transferId);
+    case 'reorientation':
+      return `${page}/reorientation#card-${entry.reorientationId}`;
   }
 }
 

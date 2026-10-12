@@ -27,6 +27,7 @@ import { planApprovalRequest } from './PlanApproval';
 import type { RefusedSkill } from './VerdictSection';
 import { EmptyQueue } from './EmptyQueue';
 import { WorkItemCard } from './WorkItemCard';
+import type { ConflictQuestionRow } from './ConflictQuestion';
 
 /**
  * What the queue says after "Check for new work".
@@ -232,6 +233,7 @@ export function WorkQueue({
   agentId,
   workItems,
   openQuestions,
+  conflictQuestions = [],
   surfaces,
   registeredSkillCount,
   charterApproved,
@@ -263,6 +265,8 @@ export function WorkQueue({
   loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */
   openQuestions: Doc<'managerQuestions'>[];
+  /** The conflict questions waiting beside the employee's plans (RM20 (a)). */
+  conflictQuestions?: readonly ConflictQuestionRow[];
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -413,6 +417,9 @@ export function WorkQueue({
                   surfaces={surfaces}
                   autonomousActions={autonomousActions}
                   questions={openQuestions.filter((question) => question.workItemId === item._id)}
+                  conflicts={conflictQuestions.filter(
+                    (question) => question.workItemId === item._id,
+                  )}
                   corrections={corrections}
                   agreements={agreements}
                   autonomyChanges={autonomyChanges}

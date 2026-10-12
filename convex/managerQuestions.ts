@@ -409,3 +409,47 @@ export const conflictConfirmedSince = internalQuery({
     return null;
   },
 });
+
+/** A conflict's question as the plan's card draws it: the question, the two pages, the item. */
+export interface ConflictQuestionView {
+  readonly _id: Id<'managerQuestions'>;
+  readonly workItemId: Id<'workItems'>;
+  readonly question: string;
+  /** The two pages, first and second, while the conflict still stands; null once it does not. */
+  readonly pages: readonly [CiteConflictPage, CiteConflictPage] | null;
+}
+
+/** The conflict questions one read of an employee's takes: one a plan and conflict, few open. */
+const OPEN_CONFLICTS_READ = 50;
+
+/**
+ * The conflict questions still waiting beside an employee's plans (RM20 (a)), each with the two
+ * pages its answers name, for the Work tab's cards. Public, guarded by the employee's owner.
+ */
+export const conflictsForAgent = query({
+  args: { agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<ConflictQuestionView[]> => {
+    await assertOwnsAgent(ctx, args.agentId);
+    const rows = await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+      .order('desc')
+      .take(OPEN_CONFLICTS_READ * 4);
+    const views: ConflictQuestionView[] = [];
+    for (const row of rows) {
+      if (row.type !== 'retrieval' || row.relationId === undefined || row.answer !== undefined) {
+        continue;
+      }
+      if (views.length >= OPEN_CONFLICTS_READ) break;
+      const standing = await standingConflictOf(ctx, await ctx.db.get(row.relationId));
+      const pages = standing === undefined ? null : citeConflictOf(standing).pages;
+      views.push({
+        _id: row._id,
+        workItemId: row.workItemId,
+        question: row.question,
+        pages: pages === null ? null : [pages[0], pages[1]],
+      });
+    }
+    return views;
+  },
+});
