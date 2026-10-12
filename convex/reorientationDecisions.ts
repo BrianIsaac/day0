@@ -19,7 +19,7 @@ import {
   retireSkillInTransaction,
   withdrawSkillInTransaction,
 } from './skillControls';
-import { charterClausesWhere, heldStageOf, openCard } from './reorientation';
+import { charterClausesWhere, heldStageOf, markApproving, openCard } from './reorientation';
 import {
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
@@ -277,9 +277,9 @@ export const approve = mutation({
     const caller = await getCallerOrThrow(ctx);
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
-    // Closed before the target runs and given its outcome after, so the change Approve makes
-    // opens no second card about itself on this employee (`openCard` reads an applied card with
-    // no outcome, which only this transaction can see).
+    // Closed before the target runs and given its outcome after; the change Approve makes opens
+    // no second card about itself on this employee (`markApproving`).
+    markApproving(ctx, card.agentId);
     await ctx.db.patch(card._id, {
       status: 'applied',
       decidedAt: now,

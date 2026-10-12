@@ -307,20 +307,24 @@ async function standingCards(
   return byStatus.flat();
 }
 
+/** The employees whose card each transaction is approving, by its database handle. */
+const approvingThisTransaction = new WeakMap<object, Set<Id<'agents'>>>();
+
 /**
- * Whether one of the employee's cards is being approved in this transaction, so the change Approve
- * applies opens no second card about itself on the same employee. Approve closes the card
- * `applied` before its target runs and writes the card's outcome after (`reorientationDecisions`),
- * so an applied card with no outcome is seen only inside that Approve's own transaction.
+ * Mark the employee whose card this transaction approves, so the change Approve applies opens no
+ * second card about itself on the same employee (O-13). Called by `reorientationDecisions.approve`
+ * before the target runs; the mark lives as long as the transaction, whatever the employee's
+ * other cards (the second pass's minor: a read of the newest applied cards missed an old one).
  */
-async function approvingNow(ctx: QueryCtx, agentId: Id<'agents'>): Promise<boolean> {
-  return (
-    await ctx.db
-      .query('reorientations')
-      .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', 'applied'))
-      .order('desc')
-      .take(UNDECIDED_CARDS_READ)
-  ).some((card) => card.outcome === undefined);
+export function markApproving(ctx: MutationCtx, agentId: Id<'agents'>): void {
+  const approving = approvingThisTransaction.get(ctx.db) ?? new Set<Id<'agents'>>();
+  approving.add(agentId);
+  approvingThisTransaction.set(ctx.db, approving);
+}
+
+/** Whether this transaction is approving one of the employee's cards. */
+function approvingNow(ctx: MutationCtx, agentId: Id<'agents'>): boolean {
+  return approvingThisTransaction.get(ctx.db)?.has(agentId) === true;
 }
 
 /** Whether a card already carries a report: its own key, or a joined trigger's event. */
@@ -343,6 +347,7 @@ export async function openCard(
   reported: CardTrigger,
 ): Promise<Id<'reorientations'> | null> {
   const now = reported.now ?? Date.now();
+  if (approvingNow(ctx, reported.agentId)) return null;
   if (!takeInlineCard(ctx)) {
     await ctx.scheduler.runAfter(0, internal.reorientation.openCardLater, {
       card: {
@@ -361,7 +366,6 @@ export async function openCard(
   }
   const agent = await ctx.db.get(reported.agentId);
   if (agent === null || agent.userId === undefined) return null;
-  if (await approvingNow(ctx, agent._id)) return null;
   const standing = await standingCards(ctx, agent._id);
   if (standing.some((card) => carries(card, reported.triggerKey))) return null;
   const reached =

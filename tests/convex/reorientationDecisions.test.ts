@@ -320,6 +320,39 @@ describe('approve: the proposal applied through its target', (): void => {
     ).toEqual(['notion:read']);
   });
 
+  it('opens no card about its own change however many cards the employee has decided since (the second pass’s minor)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'linear:write', createdAt: 1 });
+    });
+    const old = await proposedCard(harness, agentId, {
+      kind: 'scope',
+      scope: 'linear:write',
+      action: 'revoke',
+      rationale: 'It should only read Linear now.',
+    });
+    // Fifty-one cards opened and approved after it, newer than it in the store.
+    await harness.run(async (ctx) => {
+      const [card] = await ctx.db.query('reorientations').collect();
+      for (let at = 0; at < 51; at += 1) {
+        const { _id: _old, _creationTime: _time, ...fields } = card;
+        await ctx.db.insert('reorientations', {
+          ...fields,
+          triggerKey: `decided-${at}`,
+          status: 'applied',
+          decidedAt: 1,
+          outcome: { summary: 'nothing needed to change' },
+        });
+      }
+    });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: old });
+    const cards = await cardsOf(harness, agentId);
+    expect(cards.filter((card) => card.trigger === 'access-revoked')).toEqual([]);
+  });
+
   it('retires a skill, and schedules a re-check of another', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
