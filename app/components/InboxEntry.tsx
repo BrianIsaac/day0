@@ -4,6 +4,7 @@ import { useId } from 'react';
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
+import { sentenceOf } from '@/agent/reorientation-words';
 import { clockTime } from './time';
 import { ButtonLink } from './Button';
 import { reviewHref } from '../home/transfer-link';
@@ -135,7 +136,7 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
     case 'reorientation':
       return {
         ask: 'something its charter assumed has changed',
-        about: `${entry.subject}.`,
+        about: sentenceOf(entry.subject),
         control: 'Review',
       };
   }

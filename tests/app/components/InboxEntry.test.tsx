@@ -188,6 +188,16 @@ describe('the tenth kind: a reorientation card (16-O; section 7)', (): void => {
       'Mira · something its charter assumed has changed',
     );
   });
+
+  it('ends a summary that ends in its own full stop with one (the second pass’s m2)', (): void => {
+    const withStop = {
+      ...card,
+      subject: 'The skill “close-summary” was withdrawn: it closes the wrong tickets.',
+    } as unknown as InboxItem;
+    expect(inboxEntryWords(withStop).about).toBe(
+      'The skill “close-summary” was withdrawn: it closes the wrong tickets.',
+    );
+  });
 });
 
 describe('InboxEntry', (): void => {

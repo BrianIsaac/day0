@@ -841,7 +841,7 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       text(payload.summary) ? `: ${payload.summary}` : ''
     }`,
   'reorientation.proposed': (payload) =>
-    `${payload.kind === 'none' ? 'nothing needs to change, the card proposes' : 'reorientation card proposes a change'}${
+    `${payload.kind === 'none' ? 'reorientation card proposes nothing needs to change' : 'reorientation card proposes a change'}${
       payload.by === 'discussion' ? ' after the discussion' : ''
     }`,
   'reorientation.approved': (payload) =>
