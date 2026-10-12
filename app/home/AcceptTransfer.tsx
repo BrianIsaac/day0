@@ -171,8 +171,9 @@ interface ReadsForItProps {
  * or the line that none is linked; in the hosted office, what its employees read.
  */
 function ReadsForIt({ documentation, excluded, busy, onRead }: ReadsForItProps) {
-  // The hosted office links nothing, so it says what its employees read instead (RM26 (a)).
-  const hosted = useQuery(api.config.surfaceMode)?.mode === 'mock';
+  // The hosted office links nothing, so it says what its employees read instead (RM26 (a)); until
+  // the mode answers, neither line is said, as the home's card and the Documentation page wait.
+  const mode = useQuery(api.config.surfaceMode)?.mode;
   return (
     <fieldset className="grid gap-1.5">
       <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
@@ -180,7 +181,11 @@ function ReadsForIt({ documentation, excluded, busy, onRead }: ReadsForItProps) 
       </legend>
       {documentation.length === 0 ? (
         <p className="text-sm text-[var(--color-muted)]">
-          {hosted ? MOCK_OFFICE_DOCUMENTATION : NO_DOCUMENTATION}
+          {mode === undefined
+            ? 'Loading'
+            : mode === 'mock'
+              ? MOCK_OFFICE_DOCUMENTATION
+              : NO_DOCUMENTATION}
         </p>
       ) : (
         <>

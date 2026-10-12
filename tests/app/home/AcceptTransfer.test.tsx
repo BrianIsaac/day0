@@ -22,13 +22,15 @@ const backend = vi.hoisted(() => ({
   subscriptions: [] as unknown[],
   /** The state the acceptance answers with: moved at once, or waiting for the runs. */
   acceptState: 'accepted' as 'accepted' | 'accepting',
-  /** The deployment's surface mode, as `config.surfaceMode` answers it. */
-  mode: 'real' as 'real' | 'mock',
+  /** The deployment's surface mode, as `config.surfaceMode` answers it; `loading` answers nothing. */
+  mode: 'real' as 'real' | 'mock' | 'loading',
 }));
 
 vi.mock('convex/react', () => ({
   useQuery: (query: FunctionReference<'query'>): unknown =>
-    getFunctionName(query) === 'config:surfaceMode' ? { mode: backend.mode } : undefined,
+    getFunctionName(query) === 'config:surfaceMode' && backend.mode !== 'loading'
+      ? { mode: backend.mode }
+      : undefined,
   useQueries: (queries: Record<string, { query: FunctionReference<'query'>; args: unknown }>) => {
     backend.subscriptions.push(queries);
     return Object.fromEntries(
@@ -310,6 +312,17 @@ describe('AcceptTransfer', () => {
       'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
     );
     expect(dialog().textContent).not.toContain('You have linked no documentation');
+  });
+
+  it('says neither documentation line while the mode is still loading (the joins)', () => {
+    // A hosted viewer saw "You have linked no documentation" until the mode answered, where the
+    // home's card and the Documentation page say "Loading" in that window.
+    backend.mode = 'loading';
+    backend.preview = { ...PREVIEW, documentation: [] };
+    mount(<AcceptTransfer />);
+    expect(dialog().textContent).not.toContain('You have linked no documentation');
+    expect(dialog().textContent).not.toContain('The hosted office reads its own seeded pages');
+    expect(dialog().textContent).toContain('Loading');
   });
 
   it('says the runs the move waits for and the fifteen minutes (D18)', () => {
