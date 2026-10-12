@@ -31,6 +31,15 @@ afterEach((): void => {
   vi.useRealTimers();
 });
 
+/** The types of an employee's events, oldest first. */
+async function eventTypesOfAgent(harness: Harness, agentId: Id<'agents'>): Promise<string[]> {
+  return await harness.run(async (ctx) =>
+    (await ctx.db.query('events').collect())
+      .filter((event) => event.agentId === agentId)
+      .map((event) => event.type),
+  );
+}
+
 /** The employee's cards, as the trigger tests compare them. */
 async function cardsSaid(
   harness: Harness,
@@ -800,13 +809,84 @@ describe('the counted rows: three refusals, skips or rejections', (): void => {
     expect(await cardsSaid(harness, agentId)).toEqual([
       {
         trigger: 'repeated-refusal',
-        triggerSummary: "Day0's gate refused its “linear:read” work 3 times in seven days",
+        // Counted by run since the second pass (a run refusing a scope twice is one refusal).
+        triggerSummary: "Day0's gate refused its “linear:read” work in 3 runs in seven days",
         risk: 'low',
         userId: OWNER_SUBJECT,
       },
     ]);
     await refusedRun(4);
     expect(await cardsOf(harness, agentId)).toHaveLength(1);
+  });
+
+  it('counts refusals by run, joins a second scope once at its crossing, and restarts both counts after the card is decided (second pass M1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    let index = 0;
+    const refusedRun = async (scopes: readonly string[]): Promise<void> => {
+      index += 1;
+      const runId = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'work.execution-claimed',
+            payload: {},
+            createdAt: 1,
+          }),
+      );
+      const workItemId = await seedWork(harness, agentId, 'executing', {
+        externalId: `REVOPS-${index}`,
+        executionRunId: runId,
+      });
+      await harness.mutation(internal.workRuns.setCompleted, {
+        workItemId,
+        runId,
+        output: {
+          actions: [],
+          applied: [
+            { tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: `k${index}` },
+            ...scopes.map((scope) => ({
+              tool: 'mcp.call',
+              ok: true,
+              held: true,
+              reason: `dropped: Day0's gate refused this read before sending it: no grant (${scope})`,
+            })),
+          ],
+        },
+      });
+    };
+    const opened = async (): Promise<number> =>
+      (await eventTypesOfAgent(harness, agentId)).filter((type) => type === 'reorientation.opened')
+        .length;
+    // One run refusing a scope three times is one refusal.
+    await refusedRun(['linear:read', 'linear:read', 'linear:read']);
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    await refusedRun(['linear:read']);
+    await refusedRun(['linear:read', 'notion:read']);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card?.triggerKey).toBe('refusal:linear:read');
+    expect(await opened()).toBe(1);
+    // A fourth refusal of the scope the card carries writes nothing more.
+    await refusedRun(['linear:read']);
+    expect(await opened()).toBe(1);
+    // A second scope reaches three the same day and joins, once.
+    await refusedRun(['notion:read']);
+    await refusedRun(['notion:read']);
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+    expect(await opened()).toBe(2);
+    await refusedRun(['notion:read']);
+    expect(await opened()).toBe(2);
+    // Dismissed: neither scope opens a card again until it repeats three more times.
+    vi.setSystemTime(Date.now() + 60_000);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(card!._id, { status: 'dismissed', decidedAt: Date.now() }),
+    );
+    vi.setSystemTime(Date.now() + 60_000);
+    await refusedRun(['notion:read', 'linear:read']);
+    await refusedRun(['notion:read']);
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+    await refusedRun(['notion:read']);
+    expect(await cardsOf(harness, agentId)).toHaveLength(2);
   });
 
   it('opens one card on the third out-of-scope skip under one willNotDo clause in thirty days', async (): Promise<void> => {

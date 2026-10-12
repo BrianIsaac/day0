@@ -781,14 +781,18 @@ export function refusedScopeOf(reason: string | undefined): string | undefined {
 }
 
 /**
- * When the manager last decided a card of a trigger with a key, or 0: a count starts after it, so a
- * dismissed pattern opens a card again only once it repeats again.
+ * When the manager last decided a card about a counted pattern, or 0: a card of the trigger whose
+ * key is the pattern's, or one the pattern joined (its evidence holds any of the pattern's events).
+ * A count starts after it, so a dismissed pattern opens a card again only once it repeats again.
  */
 async function lastDecidedAt(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-  trigger: ReorientationTrigger,
-  triggerKey: string,
+  pattern: {
+    readonly trigger: ReorientationTrigger;
+    readonly triggerKey: string;
+    readonly eventIds: ReadonlySet<string>;
+  },
 ): Promise<number> {
   const decided = await Promise.all(
     (['applied', 'dismissed'] as const).map(
@@ -804,15 +808,48 @@ async function lastDecidedAt(
     0,
     ...decided
       .flat()
-      .filter((card) => card.trigger === trigger && card.triggerKey === triggerKey)
+      .filter(
+        (card) =>
+          card.trigger === pattern.trigger &&
+          (card.triggerKey === pattern.triggerKey ||
+            card.evidence.eventIds.some((id) => pattern.eventIds.has(id))),
+      )
       .map((card) => card.decidedAt ?? card.createdAt),
   );
 }
 
+/** One counted occurrence of a pattern: the event it was written in, and when. */
+interface Occurrence {
+  readonly id: Id<'events'>;
+  readonly at: number;
+}
+
 /**
- * Open a card for every scope Day0's gate refused the employee three times in seven days (section
- * 3's refusal row), counted over the held rows of its settled runs since the last card about the
- * scope was decided. Called where a run's ledger is settled (`workRuns.setCompleted`).
+ * The occurrences of a pattern since the manager last decided a card about it, each event once,
+ * when there are exactly enough to open a card: a card opens, or a trigger joins the day's card,
+ * at the crossing only, so a pattern that goes on repeating writes nothing more until it is decided.
+ */
+async function crossing(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  pattern: { readonly trigger: ReorientationTrigger; readonly triggerKey: string },
+  occurrences: readonly Occurrence[],
+): Promise<Occurrence[] | undefined> {
+  const distinct = [
+    ...new Map(occurrences.map((occurrence) => [occurrence.id, occurrence])).values(),
+  ];
+  const since = await lastDecidedAt(ctx, agentId, {
+    ...pattern,
+    eventIds: new Set(distinct.map((occurrence) => occurrence.id)),
+  });
+  const counted = distinct.filter((occurrence) => occurrence.at > since);
+  return counted.length === REPEAT_THRESHOLD ? counted : undefined;
+}
+
+/**
+ * Open a card for every scope Day0's gate refused the employee in three runs in seven days (section
+ * 3's refusal row), counted over the held rows of its settled runs, a run once, since the last card
+ * about the scope was decided. Called where a run's ledger is settled (`workRuns.setCompleted`).
  */
 export async function openRepeatedRefusalCards(
   ctx: MutationCtx,
@@ -824,31 +861,32 @@ export async function openRepeatedRefusalCards(
   })
     .order('desc')
     .take(COUNTED_EVENTS_READ);
-  const byScope = new Map<string, Array<{ id: Id<'events'>; at: number }>>();
+  const byScope = new Map<string, Occurrence[]>();
   for (const event of events) {
     const rows =
       (event.payload as { withheld?: ReadonlyArray<{ reason?: string }> }).withheld ?? [];
-    for (const row of rows) {
-      const scope = refusedScopeOf(row.reason);
-      if (scope !== undefined) {
-        byScope.set(scope, [
-          ...(byScope.get(scope) ?? []),
-          { id: event._id, at: event._creationTime },
-        ]);
-      }
+    for (const scope of new Set(rows.flatMap((row) => refusedScopeOf(row.reason) ?? []))) {
+      byScope.set(scope, [
+        ...(byScope.get(scope) ?? []),
+        { id: event._id, at: event._creationTime },
+      ]);
     }
   }
   for (const [scope, refusals] of byScope) {
     const triggerKey = `${REFUSAL_KEY_PREFIX}${scope}`;
-    const since = await lastDecidedAt(ctx, agentId, 'repeated-refusal', triggerKey);
-    const counted = refusals.filter((refusal) => refusal.at > since);
-    if (counted.length < REPEAT_THRESHOLD) continue;
+    const counted = await crossing(
+      ctx,
+      agentId,
+      { trigger: 'repeated-refusal', triggerKey },
+      refusals,
+    );
+    if (counted === undefined) continue;
     await openCard(ctx, {
       agentId,
       trigger: 'repeated-refusal',
       triggerKey,
-      summary: `Day0's gate refused its “${scope}” work ${counted.length} times in seven days`,
-      evidence: { eventIds: [...new Set(counted.map((refusal) => refusal.id))] },
+      summary: `Day0's gate refused its “${scope}” work in ${counted.length} runs in seven days`,
+      evidence: { eventIds: counted.map((refusal) => refusal.id) },
       affected: await scopeReach(ctx, agentId, scope),
       writeScope: isWriteScope(scope),
       now,
@@ -868,21 +906,24 @@ export async function openRepeatedSkipCard(
   now: number,
 ): Promise<void> {
   const triggerKey = `skip:${clause}`;
-  const since = await lastDecidedAt(ctx, agentId, 'repeated-skip', triggerKey);
   const skips = (
-    await eventsOfType(ctx, agentId, 'work.skipped', {
-      after: Math.max(since, now - REPEAT_WINDOW_MS),
-    })
+    await eventsOfType(ctx, agentId, 'work.skipped', { after: now - REPEAT_WINDOW_MS })
       .order('desc')
       .take(COUNTED_EVENTS_READ)
   ).filter((event) => (event.payload as { clause?: unknown }).clause === clause);
-  if (skips.length < REPEAT_THRESHOLD) return;
+  const counted = await crossing(
+    ctx,
+    agentId,
+    { trigger: 'repeated-skip', triggerKey },
+    skips.map((event) => ({ id: event._id, at: event._creationTime })),
+  );
+  if (counted === undefined) return;
   await openCard(ctx, {
     agentId,
     trigger: 'repeated-skip',
     triggerKey,
-    summary: `${skips.length} items in thirty days were skipped as outside its role under “${clause}”`,
-    evidence: { eventIds: skips.map((event) => event._id) },
+    summary: `${counted.length} items in thirty days were skipped as outside its role under “${clause}”`,
+    evidence: { eventIds: counted.map((skip) => skip.id) },
     affected: {
       charterClauses: await charterClausesWhere(
         ctx,
@@ -907,21 +948,24 @@ export async function openRepeatedRejectionCard(
   agentId: Id<'agents'>,
   now: number,
 ): Promise<void> {
-  const since = await lastDecidedAt(ctx, agentId, 'repeated-rejection', REJECTIONS_KEY);
   const rejections = (
-    await eventsOfType(ctx, agentId, 'work.cancelled', {
-      after: Math.max(since, now - REPEAT_WINDOW_MS),
-    })
+    await eventsOfType(ctx, agentId, 'work.cancelled', { after: now - REPEAT_WINDOW_MS })
       .order('desc')
       .take(COUNTED_EVENTS_READ)
   ).filter((event) => (event.payload as { decidedVia?: unknown }).decidedVia !== undefined);
-  if (rejections.length < REPEAT_THRESHOLD) return;
+  const counted = await crossing(
+    ctx,
+    agentId,
+    { trigger: 'repeated-rejection', triggerKey: REJECTIONS_KEY },
+    rejections.map((event) => ({ id: event._id, at: event._creationTime })),
+  );
+  if (counted === undefined) return;
   await openCard(ctx, {
     agentId,
     trigger: 'repeated-rejection',
     triggerKey: REJECTIONS_KEY,
-    summary: `You rejected ${rejections.length} of its plans in thirty days`,
-    evidence: { eventIds: rejections.map((event) => event._id) },
+    summary: `You rejected ${counted.length} of its plans in thirty days`,
+    evidence: { eventIds: counted.map((rejection) => rejection.id) },
     affected: {
       charterClauses: await charterClausesWhere(
         ctx,
