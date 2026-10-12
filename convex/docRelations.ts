@@ -188,8 +188,10 @@ const measuringPlanValidator = v.object({
 /**
  * What a completed sync's measuring has to measure (W15-R5): first what an earlier sync's was
  * stopped short of by its cap on new proposals (`docSources.relationsOwed`), from the place it
- * stopped, then the runs of its own look-back that are not among those. Internal; reads the
- * source and a few run rows.
+ * stopped, then the runs of its own look-back that are not among those and wrote a block. A run
+ * that stored no changed page wrote none, so it has nothing to measure and is never owed (wave
+ * 15's pre-tag bed: a capped library gained a run id at every sync). Internal; reads the source,
+ * a few run rows and one block of each.
  *
  * @returns The plan, or null when the run is no longer the source's running or last completed
  *   one: a newer sync measures instead, and reads what is owed itself.
@@ -202,7 +204,16 @@ export const measuringPlan = internalQuery({
     if (source.activeSyncId !== args.runId && source.lastCompletedSyncId !== args.runId) {
       return null;
     }
-    const own = await generationsOf(ctx, args.sourceId, args.runId);
+    const own: Id<'docSyncRuns'>[] = [];
+    for (const generation of await generationsOf(ctx, args.sourceId, args.runId)) {
+      const written = await ctx.db
+        .query('docBlocks')
+        .withIndex('by_source_generation', (q) =>
+          q.eq('sourceId', args.sourceId).eq('generation', generation),
+        )
+        .first();
+      if (written !== null) own.push(generation);
+    }
     const owed = source.relationsOwed;
     if (owed === undefined || owed.generations.length === 0) {
       return { generations: own, cursor: null };
