@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { contrast, lightToken, over, token } from '../fixtures/theme-contrast';
 
 /**
  * Every colour the product draws comes from a token (16-T, wave 16 section 5.5), so the light set
@@ -58,5 +59,36 @@ describe('the colours the product draws', () => {
     for (const path of Object.keys(ALLOWED)) {
       expect(readFileSync(join(ROOT, path), 'utf8'), path).toMatch(LITERAL);
     }
+  });
+});
+
+describe("a tone's text on an alpha fill of its own hue", () => {
+  // The second pass's finding: the accent's 15% chip was fixed, and the Spreadsheet tab's 20% and
+  // the roster's 10% autonomy pill drew the same pair in light, out of the signed-in pass's reach.
+  const PAIR =
+    /bg-\[var\(--color-(accent|warn|ok|danger)\)\]\/(\d+)[^'"`]*?text-\[var\(--color-\1\)\]/g;
+
+  it('stays at 4.5:1 or better over a card and over the page, in both themes', () => {
+    const short = sources(join(ROOT, 'app')).flatMap((path) =>
+      [...readFileSync(path, 'utf8').matchAll(PAIR)].flatMap(([, tone = '', percent = '']) => {
+        const alpha = Number(percent) / 100;
+        return (['dark', 'light'] as const).flatMap((theme) => {
+          // The dark danger family is short of AA on its fills by the design's own pair (4.34:1 on
+          // danger-soft, 4.03:1 on its 15% mix), recorded in the wave 6 A handover for a product
+          // call and pinned so in globals.test.ts; the light set's danger passes.
+          if (tone === 'danger' && theme === 'dark') return [];
+          const read = theme === 'dark' ? token : lightToken;
+          return ['card', 'bg'].flatMap((surface) => {
+            const ratio = contrast(read(tone), over(read(tone), alpha, read(surface)));
+            return ratio < 4.5
+              ? [
+                  `${relative(ROOT, path)} ${tone}/${percent} on ${surface} in ${theme}: ${ratio.toFixed(2)}`,
+                ]
+              : [];
+          });
+        });
+      }),
+    );
+    expect(short).toEqual([]);
   });
 });
