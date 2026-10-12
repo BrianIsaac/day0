@@ -99,6 +99,7 @@ export const MIGRATION_NAMES = [
   'credentials-organisation-purge',
   'work-decision-closed',
   'docs-blocks-status',
+  'docs-relations-remeasure',
 ] as const;
 
 /** One migration's name. */
@@ -175,6 +176,12 @@ const SUPERVISION_RELEASE = '0.16.0';
  * search carries, which its search now filters on (15-K).
  */
 const DOCUMENT_AUTHORITY_RELEASE = '0.19.0';
+
+/**
+ * The release of reorientation and the figures (wave 16): the dated successor signal's one
+ * measure of the library stored before it (16-K; RM19 (a), K-3).
+ */
+const REORIENTATION_RELEASE = '0.20.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -315,6 +322,12 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'writes active as the status of every block of the documentation search, the status every page had before this release, so the search’s filter on status finds it; a block that has a status is left, and mock mode stores no block',
     thenRemoves:
       'nothing: every block a split writes from this release carries its page’s status (15-A)',
+  },
+  'docs-relations-remeasure': {
+    release: REORIENTATION_RELEASE,
+    does: 'marks the relations measure owed, from its start, on every documentation source that stores a page, so the existing library is measured once by the dated successor signal; it measures nothing itself, a source with no stored page owes nothing, a source already owed keeps the place its measure reached, and mock mode stores no page',
+    thenRemoves:
+      'nothing: every page a sync stores from this release is measured by the signal as it is stored, and the measure clears each source’s mark as it reaches the end (16-FD)',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -937,6 +950,7 @@ const MIGRATION_PAGES: Readonly<
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
   'docs-blocks-status': stampBlockStatus,
+  'docs-relations-remeasure': markRemeasureOwed,
 };
 
 /**
@@ -958,6 +972,34 @@ async function stampBlockStatus(ctx: MutationCtx, cursor: string | null): Promis
   for (const block of page.page) {
     if (block.status !== undefined) continue;
     await ctx.db.patch(block._id, { status: 'active' });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/** Sources one page of the remeasure pass reads: an owner links a handful, each read whole. */
+const REMEASURE_SOURCES_READ = 100;
+
+/**
+ * One page of the relations remeasure pass (16-K; RM19 (a), K-3): every source that stores a page
+ * is marked owed the measure from its start (`relationsRemeasure`, a null cursor), which 16-FD's
+ * measure reads and clears; the pass measures nothing. A source with no stored page owes nothing
+ * (its pages are measured as a sync stores them), and one already marked keeps the place its
+ * measure reached, so a second run changes nothing.
+ */
+async function markRemeasureOwed(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db
+    .query('docSources')
+    .paginate({ numItems: REMEASURE_SOURCES_READ, cursor });
+  let changed = 0;
+  for (const source of page.page) {
+    if (source.relationsRemeasure !== undefined) continue;
+    const stored = await ctx.db
+      .query('docPages')
+      .withIndex('by_source', (q) => q.eq('sourceId', source._id))
+      .first();
+    if (stored === null) continue;
+    await ctx.db.patch(source._id, { relationsRemeasure: { cursor: null } });
     changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };

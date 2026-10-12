@@ -1002,22 +1002,22 @@ describe('the release stamp', (): void => {
     });
 
     await runAll(harness);
-    // Re-pinned at 0.19.0, the wave 15 schema step (its block status pass), from 0.6.0, 0.10.0,
-    // 0.13.0, 0.14.0, 0.15.0, 0.16.0, 0.17.0 and 0.18.0: a stamp names a release no older than
-    // the newest a shipped migration names.
+    // Re-pinned at 0.20.0, the wave 16 schema step (its relations remeasure pass), from 0.6.0,
+    // 0.10.0, 0.13.0, 0.14.0, 0.15.0, 0.16.0, 0.17.0, 0.18.0 and 0.19.0: a stamp names a release
+    // no older than the newest a shipped migration names.
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.19.0', previous: null });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.20.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.20.0', previous: null });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0', commit: 'abc1234' }),
-    ).resolves.toEqual({ release: '0.19.0', previous: '0.19.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.20.0', commit: 'abc1234' }),
+    ).resolves.toEqual({ release: '0.20.0', previous: '0.20.0' });
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.20.0', commit: 'def5678' }),
-    ).resolves.toEqual({ release: '0.20.0', previous: '0.19.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: '0.21.0', commit: 'def5678' }),
+    ).resolves.toEqual({ release: '0.21.0', previous: '0.20.0' });
 
     const status = await harness.query(internal.migrations.status, {});
     expect(status.pending).toEqual([]);
-    expect(status.release).toMatchObject({ release: '0.20.0', commit: 'def5678' });
+    expect(status.release).toMatchObject({ release: '0.21.0', commit: 'def5678' });
     expect(
       await harness.run(async (ctx) => (await ctx.db.query('deploymentVersions').collect()).length),
     ).toBe(2);
@@ -2857,7 +2857,8 @@ describe('the messages tab and not-their-address passes, retired at 0.19.0 (N10,
     expect(await import('../../convex/peopleProposals')).not.toHaveProperty('notTheirAddresses');
   });
 
-  it("runs every pass and stamps 0.19.0 over a 0.18.0 deployment's finished rows of both, its marked person unchanged", async (): Promise<void> => {
+  // Re-pinned at 0.20.0 (16-K): the stamp names the newest release a shipped migration names.
+  it("runs every pass and stamps the newest release over a 0.18.0 deployment's finished rows of both, its marked person unchanged", async (): Promise<void> => {
     const harness = limitedHarness();
     const person = await harness.run(async (ctx) => {
       for (const [name, release] of [
@@ -2897,8 +2898,8 @@ describe('the messages tab and not-their-address passes, retired at 0.19.0 (N10,
     const before = await harness.run(async (ctx) => await ctx.db.get(person));
     await runAll(harness);
     await expect(
-      harness.mutation(internal.migrations.recordRelease, { release: '0.19.0' }),
-    ).resolves.toMatchObject({ release: '0.19.0' });
+      harness.mutation(internal.migrations.recordRelease, { release: NEWEST_MIGRATION_RELEASE }),
+    ).resolves.toMatchObject({ release: NEWEST_MIGRATION_RELEASE });
     expect(await harness.run(async (ctx) => await ctx.db.get(person))).toEqual(before);
     const rows = await harness.run(async (ctx) => await ctx.db.query('migrations').collect());
     expect(
@@ -3217,5 +3218,99 @@ describe('the block status pass (15-K; K-1)', (): void => {
       changed: 0,
       completedAt: expect.any(Number),
     });
+  });
+});
+
+describe('the relations remeasure pass (16-K; RM19 (a), K-3)', (): void => {
+  /** Every source's owed remeasure, by label. */
+  const owed = async (harness: Harness): Promise<Record<string, unknown>> =>
+    await harness.run(async (ctx) =>
+      Object.fromEntries(
+        (await ctx.db.query('docSources').collect()).map((row) => [
+          row.label,
+          row.relationsRemeasure,
+        ]),
+      ),
+    );
+
+  /** A source of an owner under a label, with a stored page when `withPage` says so. */
+  const labelled = async (
+    harness: Harness,
+    label: string,
+    withPage: boolean,
+  ): Promise<Id<'docSources'>> => {
+    const sourceId = await source(harness, 'owner');
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(sourceId, { label });
+    });
+    if (withPage) {
+      await completedRun(harness, sourceId);
+      await storedPage(harness, { sourceId, ref: `${label}.md`, markdown: `# ${label}\n\nText.` });
+    }
+    return sourceId;
+  };
+
+  it('is registered at 0.20.0, last, the newest release any migration names', (): void => {
+    expect(MIGRATIONS['docs-relations-remeasure'].release).toBe('0.20.0');
+    expect(MIGRATION_NAMES.at(-1)).toBe('docs-relations-remeasure');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.20.0');
+  });
+
+  it('marks the measure owed, from its start, on every source that stores a page; one with none owes nothing; and it is safe to run twice', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await labelled(harness, 'handbook', true);
+    await labelled(harness, 'wiki', true);
+    await labelled(harness, 'linking', false);
+    const started = await labelled(harness, 'started', true);
+    // A source whose measure has already begun (a sync after the push and before the pass, or a
+    // second run of the pass) keeps the place it reached.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(started, { relationsRemeasure: { cursor: 'reached' } });
+    });
+    const pagesBefore = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    await runAll(harness);
+    expect(await owed(harness)).toEqual({
+      handbook: { cursor: null },
+      wiki: { cursor: null },
+      linking: undefined,
+      started: { cursor: 'reached' },
+    });
+    const row = async () =>
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (entry) => entry.name === 'docs-relations-remeasure',
+      );
+    expect(await row()).toMatchObject({
+      release: '0.20.0',
+      read: 4,
+      changed: 2,
+      completedAt: expect.any(Number),
+    });
+    // The pass measures nothing itself (16-FD's measure does): no page and no relation changes.
+    expect(await harness.run(async (ctx) => await ctx.db.query('docPages').collect())).toEqual(
+      pagesBefore,
+    );
+    expect(await harness.run(async (ctx) => await ctx.db.query('docRelations').collect())).toEqual(
+      [],
+    );
+    await harness.run(async (ctx) => {
+      const done = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'docs-relations-remeasure'))
+        .unique();
+      if (done !== null) await ctx.db.delete(done._id);
+    });
+    await expect(
+      harness.mutation(internal.migrations.runMigrationPage, { name: 'docs-relations-remeasure' }),
+    ).resolves.toMatchObject({ read: 4, changed: 0 });
+  });
+
+  it('reads nothing on a deployment that links no source, as the hosted mock deployment does', async (): Promise<void> => {
+    const harness = limitedHarness();
+    await agent(harness, { userId: 'owner' });
+    await runAll(harness);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(
+      status.migrations.find((entry) => entry.name === 'docs-relations-remeasure'),
+    ).toMatchObject({ read: 0, changed: 0, completedAt: expect.any(Number) });
   });
 });
