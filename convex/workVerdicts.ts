@@ -17,7 +17,7 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import { appendEvent, eventsOfType } from './eventLog';
-import { openRepeatedSkipCard } from './reorientation';
+import { openRepeatedSkipCard } from './reorientationPatterns';
 import {
   type ParkedVerdict,
   REEVALUATION_BATCH,

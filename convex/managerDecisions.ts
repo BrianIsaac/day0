@@ -14,7 +14,7 @@ import {
 import { type DecisionKind, MANAGER_FEEDBACK_MAX_CHARS } from '../src/work/manager-channel';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
-import { openRepeatedRejectionCard } from './reorientation';
+import { openRepeatedRejectionCard } from './reorientationPatterns';
 import { actionsOf, indexesWith, ledgerOf, verdictList } from './workLedger';
 import { releaseExternalClaim, releaseItemClaim, settleWriteTargetClaims } from './workClaims';
 import { scheduleRequestClose, settleBatchesHolding } from './decisionRequests';

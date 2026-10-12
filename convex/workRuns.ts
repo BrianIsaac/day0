@@ -17,7 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
-import { openRepeatedRefusalCards, refusedScopeOf } from './reorientation';
+import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
   failInTransaction,
