@@ -575,6 +575,9 @@ export interface OwnerExport {
   readonly omittedAgents: number;
 }
 
+/** The owner export versions this release reads: 8 is the first, and a later one keeps it. */
+const OWNER_READABLE_VERSIONS: ReadonlySet<unknown> = new Set([TRACE_VERSION]);
+
 /** The owner section after the given one, or undefined after the last. */
 export function ownerSectionAfter(section: OwnerSection): OwnerSection | undefined {
   return OWNER_SECTIONS[OWNER_SECTIONS.indexOf(section) + 1];
@@ -647,7 +650,7 @@ export function readOwnerExport(value: unknown): OwnerExport | undefined {
     manifest === null ||
     typeof manifest !== 'object' ||
     (manifest as Record<string, unknown>).format !== OWNER_EXPORT_FORMAT ||
-    (manifest as Record<string, unknown>).version !== TRACE_VERSION ||
+    !OWNER_READABLE_VERSIONS.has((manifest as Record<string, unknown>).version) ||
     owner === null ||
     typeof owner !== 'object' ||
     !OWNER_SECTIONS.every((section) =>

@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   paginationOptsValidator,
   type PaginationOptions,
@@ -702,9 +702,6 @@ export const exportPage = internalQuery({
  */
 export const OWNER_EXPORT_AGENT_LIMIT = 500;
 
-/** The most of an owner's documentation sources whose pages one owner export walks. */
-const OWNER_EXPORT_SOURCE_LIMIT = 100;
-
 /** The most stored pages one page of the owner export reads: each row holds its page's text. */
 const OWNER_EXPORT_PAGE_ROWS = 25;
 
@@ -723,12 +720,14 @@ export const exportOwnerHead = internalQuery({
     const { ownerKey } = await getCallerOrThrow(ctx);
     const [stamp, read] = await Promise.all([
       ctx.db.query('deploymentVersions').order('desc').first(),
+      // Newest first, as the figures keep the most recent employees; listed in deploy order.
       ctx.db
         .query('agents')
         .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+        .order('desc')
         .take(OWNER_EXPORT_AGENT_LIMIT + 1),
     ]);
-    const agents = read.slice(0, OWNER_EXPORT_AGENT_LIMIT);
+    const agents = read.slice(0, OWNER_EXPORT_AGENT_LIMIT).reverse();
     const zone = deploymentZone();
     return {
       manifest: {
@@ -752,71 +751,110 @@ export const exportOwnerHead = internalQuery({
   },
 });
 
-/** Where a walk of the owner's stored pages stands: the source it is in, and the cursor inside it. */
+/**
+ * Where a walk of the owner's stored pages stands: the source it is in, by id and by when it was
+ * linked (so the walk goes on past a source unlinked between two pages), and the backend's cursor
+ * inside it.
+ */
 interface PagesCursor {
   readonly sourceId: string;
+  readonly linkedAt: number;
   readonly cursor: string | null;
 }
 
-/** A pages cursor read back from the string the export hands out, or a refusal. */
+/** Why a pages cursor is refused: it is not one this export handed out. */
+const NOT_A_PAGES_CURSOR = 'not a cursor of the owner export’s stored pages';
+
+/** A pages cursor read back from the string the export hands out, or a refusal a client reads. */
 function pagesCursorOf(cursor: string): PagesCursor {
-  const parsed: unknown = JSON.parse(cursor);
-  if (
-    parsed === null ||
-    typeof parsed !== 'object' ||
-    typeof (parsed as Record<string, unknown>).sourceId !== 'string' ||
-    !['string', 'object'].includes(typeof (parsed as Record<string, unknown>).cursor)
-  ) {
-    throw new Error('not a cursor of the owner export’s stored pages');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor);
+  } catch {
+    // Not JSON: not a cursor this export handed out, refused below in the client's words.
+    parsed = undefined;
   }
-  return parsed as PagesCursor;
+  const fields =
+    parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  if (
+    typeof fields.sourceId !== 'string' ||
+    typeof fields.linkedAt !== 'number' ||
+    (fields.cursor !== null && typeof fields.cursor !== 'string')
+  ) {
+    throw new ConvexError(NOT_A_PAGES_CURSOR);
+  }
+  return { sourceId: fields.sourceId, linkedAt: fields.linkedAt, cursor: fields.cursor };
 }
+
+/** A row without the named fields, the rest as stored. */
+function withoutKeys<Row extends object>(row: Row, keys: ReadonlySet<string>): Partial<Row> {
+  return Object.fromEntries(Object.entries(row).filter(([key]) => !keys.has(key))) as Partial<Row>;
+}
+
+/** The field of a relation the owner export never carries: the address of who decided it. */
+const RELATION_FIELDS_LEFT_OUT = new Set(['decidedBy']);
 
 /** The fields of a stored page the owner export never carries: its text and what is read off it. */
 const PAGE_FIELDS_LEFT_OUT = new Set(['markdown', 'contentHash', 'marker', 'decidedBy']);
 
 /** One stored page without its text, its keyed hash, a marker's words or who decided it. */
 function pageWithoutText(page: Doc<'docPages'>): OwnerDocPage {
-  const kept = Object.fromEntries(
-    Object.entries(page).filter(([key]) => !PAGE_FIELDS_LEFT_OUT.has(key)),
-  ) as unknown as OwnerDocPage;
+  const kept = withoutKeys(page, PAGE_FIELDS_LEFT_OUT) as OwnerDocPage;
   return page.marker === undefined
     ? kept
     : { ...kept, marker: { status: page.marker.status, judgedAt: page.marker.judgedAt } };
 }
 
+/** The owner's first source linked after a moment, in the order the owner linked them. */
+async function sourceLinkedAfter(
+  ctx: QueryCtx,
+  ownerKey: string,
+  linkedAt: number,
+): Promise<Doc<'docSources'> | null> {
+  return await ctx.db
+    .query('docSources')
+    .withIndex('by_user', (q) => q.eq('userId', ownerKey).gt('_creationTime', linkedAt))
+    .first();
+}
+
 /**
  * One page of the owner's stored pages, source by source in the order the owner linked them,
- * each without its text. The cursor names the source and the backend's cursor inside it.
+ * each without its text. The cursor names the source, when it was linked and the backend's cursor
+ * inside it; a source unlinked between two pages is passed over, the walk going on with the next.
  */
 async function ownerPagesPage(
   ctx: QueryCtx,
   ownerKey: string,
   cursor: string | null,
 ): Promise<{ rows: OwnerDocPage[]; next: string | null }> {
-  const sources = await ctx.db
-    .query('docSources')
-    .withIndex('by_user', (q) => q.eq('userId', ownerKey))
-    .take(OWNER_EXPORT_SOURCE_LIMIT);
   const at = cursor === null ? undefined : pagesCursorOf(cursor);
-  const index = at === undefined ? 0 : sources.findIndex((source) => source._id === at.sourceId);
-  const source = sources[index];
-  // A source unlinked between two pages has no pages left to read; the walk ends there.
-  if (source === undefined) return { rows: [], next: null };
+  const current = at === undefined ? null : ctx.db.normalizeId('docSources', at.sourceId);
+  const held = current === null ? null : await ctx.db.get(current);
+  const source =
+    held !== null && held.userId === ownerKey
+      ? held
+      : await sourceLinkedAfter(ctx, ownerKey, at?.linkedAt ?? -1);
+  if (source === null) return { rows: [], next: null };
   const page = await ctx.db
     .query('docPages')
     .withIndex('by_source', (q) => q.eq('sourceId', source._id))
     .paginate({
-      cursor: at?.cursor ?? null,
+      // A cursor inside a source that went is no cursor in the next one.
+      cursor: source === held ? (at?.cursor ?? null) : null,
       numItems: OWNER_EXPORT_PAGE_ROWS,
       maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
     });
-  const following = sources[index + 1];
-  const next: PagesCursor | null = !page.isDone
-    ? { sourceId: source._id, cursor: page.continueCursor }
-    : following !== undefined
-      ? { sourceId: following._id, cursor: null }
-      : null;
+  const following = page.isDone
+    ? await sourceLinkedAfter(ctx, ownerKey, source._creationTime)
+    : source;
+  const next: PagesCursor | null =
+    following === null
+      ? null
+      : {
+          sourceId: following._id,
+          linkedAt: following._creationTime,
+          cursor: following === source ? page.continueCursor : null,
+        };
   return {
     rows: page.page.map(pageWithoutText),
     next: next === null ? null : JSON.stringify(next),
@@ -824,7 +862,10 @@ async function ownerPagesPage(
 }
 
 /** One page of a section of the owner's rows: its rows before redaction, and the next cursor. */
-type OwnerSectionPage = { rows: unknown[]; next: string | null };
+interface OwnerSectionPage {
+  readonly rows: unknown[];
+  readonly next: string | null;
+}
 
 /** A paginated read as an owner section's page. */
 function asOwnerPage<Row>(
@@ -890,12 +931,14 @@ const OWNER_SECTION_PAGES: Readonly<
       ],
     ),
   docPages: async (ctx, ownerKey, options) => await ownerPagesPage(ctx, ownerKey, options.cursor),
+  // Who decided a relation is the manager's address, left out as a page's is.
   docRelations: async (ctx, ownerKey, options) =>
     asOwnerPage(
       await ctx.db
         .query('docRelations')
         .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
         .paginate(options),
+      (relation) => [withoutKeys(relation, RELATION_FIELDS_LEFT_OUT)],
     ),
   skillVersions: async (ctx, ownerKey, options) =>
     asOwnerPage(

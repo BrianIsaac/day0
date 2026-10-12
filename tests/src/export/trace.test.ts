@@ -281,6 +281,10 @@ describe('assembling the owner export (wave 16, 16-F)', (): void => {
     expect(
       readOwnerExport({ ...file, manifest: { ...file.manifest, version: 7 } }),
     ).toBeUndefined();
+    // Only the versions this release names are read; version 8 is the first owner export.
+    expect(
+      readOwnerExport({ ...file, manifest: { ...file.manifest, version: 9 } }),
+    ).toBeUndefined();
     expect(
       readOwnerExport({ ...file, owner: { ...file.owner, people: undefined } }),
     ).toBeUndefined();

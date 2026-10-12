@@ -235,6 +235,8 @@ async function seedOwner(harness: Harness, owner: string, tag: string): Promise<
       to: { sourceId, ref: 'refunds-2.md' },
       kind: 'possible_duplicate',
       evidence: [{ measure: 'text-overlap', value: 0.9 }],
+      decidedBy: bossEmail,
+      decidedAt: 4,
       status: 'proposed',
       createdAt: 1,
     });
@@ -406,6 +408,9 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     for (const field of ['markdown', 'contentHash', 'decidedBy'])
       expect(first).not.toHaveProperty(field);
     expect(first?.marker).not.toHaveProperty('quote');
+    // Who decided a relation is the manager's address, left out as a page's is (the second pass).
+    expect(file.owner.docRelations[0]).not.toHaveProperty('decidedBy');
+    expect(file.owner.docRelations[0]).toMatchObject({ decidedAt: 4 });
     expect(file.owner.docSources[0]).not.toHaveProperty('locator');
     expect(file.owner.docSources[0]).toMatchObject({ label: 'Alpha handbook', kind: 'folder' });
   });
@@ -495,5 +500,69 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     await expect(
       harness.action(api.exportActions.exportOwnerPage, { section: 'people', cursor: null }),
     ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe('the owner export’s walk of stored pages (the second pass’s finding 4)', (): void => {
+  it('goes on to the next source when the one it is in is unlinked between two pages', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [first, second] = await harness.run(async (ctx) => {
+      const source = async (label: string, pages: number) => {
+        const sourceId = await ctx.db.insert('docSources', {
+          userId: 'owner-a',
+          label,
+          kind: 'folder',
+          locator: `/srv/${label}`,
+          status: 'synced',
+          createdAt: 1,
+          updatedAt: 1,
+        });
+        for (let index = 0; index < pages; index += 1) {
+          await ctx.db.insert('docPages', {
+            sourceId,
+            ref: `${label}-${index}.md`,
+            title: `${label} ${index}`,
+            markdown: 'Synthetic.',
+            updatedAt: 1,
+          });
+        }
+        return sourceId;
+      };
+      return [await source('first', 30), await source('second', 2)];
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+    const page = await caller.action(api.exportActions.exportOwnerPage, {
+      section: 'docPages',
+      cursor: null,
+    });
+    expect(page.next?.section).toBe('docPages');
+    await harness.run(async (ctx) => {
+      for (const row of await ctx.db
+        .query('docPages')
+        .withIndex('by_source', (q) => q.eq('sourceId', first))
+        .collect()) {
+        await ctx.db.delete(row._id);
+      }
+      await ctx.db.delete(first);
+    });
+
+    const after = await caller.action(api.exportActions.exportOwnerPage, {
+      section: 'docPages',
+      cursor: page.next?.cursor ?? null,
+    });
+
+    expect(after.rows.map((row) => (row as { sourceId: string }).sourceId)).toEqual([
+      second,
+      second,
+    ]);
+  });
+
+  it('refuses a cursor that is not one of its own, in words a client reads', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness
+        .withIdentity(managerIdentity('owner-a'))
+        .action(api.exportActions.exportOwnerPage, { section: 'docPages', cursor: 'not json' }),
+    ).rejects.toThrow('not a cursor of the owner export’s stored pages');
   });
 });
