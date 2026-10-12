@@ -9,6 +9,7 @@ import {
   heldByReorientation,
   openCard,
   moveCardsToOwner,
+  proposalInputOf,
   riskOf,
 } from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
@@ -457,6 +458,38 @@ describe('the judgement’s write-back', (): void => {
     expect(card.status).toBe('open');
     expect(card.proposed).toMatchObject({ kind: 'pending', failure: 'the model did not answer' });
     expect(card.proposed.kind === 'pending' && typeof card.proposed.failedAt).toBe('number');
+  });
+});
+
+describe('proposalInputOf: what a proposal is drawn from (the judgement and Discuss)', (): void => {
+  it('gives the card’s candidates whatever it proposes, and the judgement’s read only while pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const cardId = (await openTestCard(harness, {
+      agentId,
+      trigger: 'role-changed',
+      triggerKey: 'role-changed:1',
+      summary: 'Priya now approves committee-deck numbers',
+    }))!;
+    const pending = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: cardId,
+    });
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: cardId,
+      proposed: { kind: 'none', rationale: 'Nothing needs to change.' },
+      basis: await basisOf(harness, cardId),
+    });
+    const card = await cardOf(harness, cardId);
+    const input = await harness.run(async (ctx) => await proposalInputOf(ctx, card));
+    expect(input).toEqual(pending?.input);
+    expect(input?.candidates.map((candidate) => candidate.kind)).toEqual([
+      'charter-clause',
+      'charter-clause',
+      'charter-clause',
+    ]);
+    await expect(
+      harness.query(internal.reorientation.proposalInput, { reorientationId: cardId }),
+    ).resolves.toBeNull();
   });
 });
 

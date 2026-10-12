@@ -1033,6 +1033,30 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
 }
 
 /**
+ * What a proposal about one card is drawn from: the employee, what changed, what the card rests on
+ * and the numbered candidates. Null when the employee is gone. Read by the judgement
+ * (`proposalInput`) and by a Discuss conversation (`convex/reorientationTalk.ts`, 16-D), so both
+ * choose among the same candidates in the same order.
+ */
+export async function proposalInputOf(
+  ctx: QueryCtx,
+  card: Doc<'reorientations'>,
+): Promise<ProposalInput | null> {
+  const agent = await ctx.db.get(card.agentId);
+  if (agent === null) return null;
+  const charter = await approvedCharter(ctx, card.agentId);
+  return {
+    employeeName: agent.name,
+    roleFunction:
+      charter !== undefined ? (charter.body as Charter).proposedFunction : 'not yet chartered',
+    trigger: card.trigger,
+    summary: card.triggerSummary,
+    evidence: await evidenceLines(ctx, card),
+    candidates: await candidatesOf(ctx, card, charter),
+  };
+}
+
+/**
  * What the judgement reads of one card, or null when the card is decided or gone. Internal; read
  * by `reorientationActions.propose`.
  */
@@ -1042,21 +1066,8 @@ export const proposalInput = internalQuery({
     const card = await ctx.db.get(args.reorientationId);
     if (card === null || card.proposed.kind !== 'pending') return null;
     if (!(STANDING_STATUSES as readonly string[]).includes(card.status)) return null;
-    const agent = await ctx.db.get(card.agentId);
-    if (agent === null) return null;
-    const charter = await approvedCharter(ctx, card.agentId);
-    return {
-      input: {
-        employeeName: agent.name,
-        roleFunction:
-          charter !== undefined ? (charter.body as Charter).proposedFunction : 'not yet chartered',
-        trigger: card.trigger,
-        summary: card.triggerSummary,
-        evidence: await evidenceLines(ctx, card),
-        candidates: await candidatesOf(ctx, card, charter),
-      },
-      basis: proposalBasis(card),
-    };
+    const input = await proposalInputOf(ctx, card);
+    return input === null ? null : { input, basis: proposalBasis(card) };
   },
 });
 

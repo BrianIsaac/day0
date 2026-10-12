@@ -372,6 +372,39 @@ export function employeePage(): Record<string, unknown> {
         charterVersion: '0.1',
       },
     ],
+    // The card's Discuss talk under way (16-D), so the floor measures the room in each theme.
+    'reorientationTalk:forCard': {
+      reorientationId: 'card-1',
+      agentId,
+      summary: 'Aman Rao, its approver, changed',
+      status: 'discussing',
+      proposed: { kind: 'pending' },
+      talk: {
+        _id: 'talk-1',
+        state: 'active',
+        conversation: 0,
+        turns: [
+          {
+            id: 'e0',
+            speaker: 'employee',
+            text: 'Aman approves deck numbers now. Should deck numbers go to Aman first?',
+            at: minutes(29),
+          },
+          {
+            id: 'm0',
+            speaker: 'manager',
+            text: 'Yes, deck numbers go to Aman first, then to me.',
+            at: minutes(28),
+          },
+          {
+            id: 'e1',
+            speaker: 'employee',
+            text: 'Then I will escalate deck numbers to Aman first. Shall I put that on the card?',
+            at: minutes(27),
+          },
+        ],
+      },
+    },
     'skills:proposed': [
       {
         _id: 'skill-p',

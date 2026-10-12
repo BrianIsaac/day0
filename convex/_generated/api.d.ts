@@ -89,6 +89,7 @@ import type * as reorientation from '../reorientation.js';
 import type * as reorientationActions from '../reorientationActions.js';
 import type * as reorientationDecisions from '../reorientationDecisions.js';
 import type * as reorientationPatterns from '../reorientationPatterns.js';
+import type * as reorientationTalk from '../reorientationTalk.js';
 import type * as reset from '../reset.js';
 import type * as retirements from '../retirements.js';
 import type * as revocationEvaluation from '../revocationEvaluation.js';
@@ -228,6 +229,7 @@ declare const fullApi: ApiFromModules<{
   reorientationActions: typeof reorientationActions;
   reorientationDecisions: typeof reorientationDecisions;
   reorientationPatterns: typeof reorientationPatterns;
+  reorientationTalk: typeof reorientationTalk;
   reset: typeof reset;
   retirements: typeof retirements;
   revocationEvaluation: typeof revocationEvaluation;

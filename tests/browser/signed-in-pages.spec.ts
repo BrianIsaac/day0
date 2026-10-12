@@ -42,6 +42,7 @@ const PAGES = [
   'record',
   'manage',
   'reorientation',
+  'reorientation-talk',
 ] as const;
 
 /**
@@ -60,6 +61,7 @@ const KNOWN_DEBT: Readonly<Record<(typeof PAGES)[number], readonly Debt[]>> = {
   record: [],
   manage: [],
   reorientation: [],
+  'reorientation-talk': [],
 };
 
 function expectOnlyKnownDebt(
