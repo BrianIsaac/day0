@@ -1,3 +1,4 @@
+import { inPlainNames } from './plain-references';
 import { z } from 'zod';
 import { Agent } from '@mastra/core/agent';
 import { agentJson, MODEL_CONFIG, MODEL_PROVIDER_MAX_RETRIES } from '../lib/mastra';
@@ -222,6 +223,14 @@ const DEPENDENT_PHASE_MOCK =
 const MOCK_ACTION_MODE =
   "Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer `workDone` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.";
 
+/**
+ * How a mock run names a record in what the manager and the asker read (W19-7, 12 October 2026):
+ * on the v0.19.0 walk Nell's DM said "the IT access and passwords page (docs-fixture/it-access)".
+ * The run's messages, draft and notes are also read through `inPlainNames`, the floor under it.
+ */
+const MOCK_PLAIN_NAMES =
+  '  - In every message, the draft and the notes, name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...';
+
 /** Where `reports` sits in each preamble's numbered list; the action format line names it. */
 const MOCK_REPORTS_ITEM = 6;
 const REAL_REPORTS_ITEM = 7;
@@ -246,6 +255,7 @@ const MOCK_PREAMBLE = [
   '  - Stay inside charter boundaries.',
   '  - Never invent values you do not have. If a cell value is unknown, leave it blank in `cells` and flag the gap in `notes`.',
   '  - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.',
+  MOCK_PLAIN_NAMES,
 ].join('\n');
 
 export {
@@ -789,6 +799,12 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
     case 'spreadsheet.appendRow':
       return action;
     case 'twitter.reply':
+      // A mock office message names a record as its reader would (W19-7): the floor under the rule.
+      return {
+        tool: action.tool,
+        args: { ...action.args, body: inPlainNames(action.args.body) },
+        ...reportsOf(action),
+      };
     case 'mcp.call':
       return { tool: action.tool, args: action.args, ...reportsOf(action) };
     case 'slack.postMessage':
@@ -798,7 +814,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
         args: {
           channelSlug: action.args.channelSlug,
           ...(action.args.threadKey === null ? {} : { threadKey: action.args.threadKey }),
-          body: action.args.body,
+          body: inPlainNames(action.args.body),
         },
       };
     case 'ticket.update':
@@ -808,7 +824,7 @@ function materialiseGeneratedAction(action: GeneratedAction): MockAction {
         args: {
           slug: action.args.slug,
           ...(action.args.status === null ? {} : { status: action.args.status }),
-          ...(action.args.comment === null ? {} : { comment: action.args.comment }),
+          ...(action.args.comment === null ? {} : { comment: inPlainNames(action.args.comment) }),
         },
       };
     case 'http.request':
@@ -3139,7 +3155,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
     ...doneAgainstWordsIssues(output),
     ...reportsFindings(output.actions).map((finding) => finding.issue),
   ];
-  if (issues.length === 0) return output;
+  if (issues.length === 0) return inPlainWords(output);
 
   const repairPrompt = [
     userPrompt,
@@ -3177,7 +3193,12 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   // After the one repair a message whose declaration still disagrees with its words is withheld
   // with the reason, as real mode withholds it, and the rest of the set goes on.
   const agreed = await withholdUnsupported(repaired, reportsFindings, args.onAuditCorrection);
-  return await heldAgainstWords(agreed, args.onAuditCorrection);
+  return inPlainWords(await heldAgainstWords(agreed, args.onAuditCorrection));
+}
+
+/** A mock run's draft and notes with every hosted office reference named as its record (W19-7). */
+function inPlainWords<T extends { draft: string; notes: string }>(output: T): T {
+  return { ...output, draft: inPlainNames(output.draft), notes: inPlainNames(output.notes) };
 }
 
 /**

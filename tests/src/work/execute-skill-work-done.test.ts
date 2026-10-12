@@ -539,3 +539,61 @@ describe("Pip's true comment on the v0.19.0 walk (RM22 (a), W19-2)", (): void =>
     expect(corrections).toEqual([]);
   });
 });
+
+describe('the hosted office messages name records as a manager does (W19-7, the v0.19.0 walk)', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('writes Nell’s DM and its draft with the page named, never by reference', async (): Promise<void> => {
+    // Nell's docs item, `A-Nell-docs-full.txt`: its one write was this DM.
+    const said =
+      'Prep for the Monday queue run is done: I have read the IT access and passwords page (docs-fixture/it-access).';
+    recorded.outputs.push({
+      draft: said,
+      notes: 'Read docs-fixture/it-access.',
+      needsDependentPhase: false,
+      workDone: 'done',
+      workDoneWhy: 'The page is read.',
+      actions: [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'dm-manager', threadKey: null, body: said },
+          reports: null,
+        },
+      ],
+      procedureTrails: [
+        { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not a ticket.' },
+      ],
+    });
+    const docsItem: WorkCandidate = {
+      ...ticket,
+      sourceCategory: 'inbox',
+      sourceSystem: 'docs',
+      externalId: 'docs-it-access',
+      contentRefs: ['docs-fixture/it-access'],
+    };
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(JSON.stringify(output)).not.toMatch(/docs-fixture\/|channel:\/\//);
+    expect(output.actions[0]?.args.body).toBe(
+      'Prep for the Monday queue run is done: I have read the IT access and passwords page.',
+    );
+    expect(output.notes).toBe('Read the it access page.');
+  });
+
+  it('tells the mock executor to name records as the manager would', (): void => {
+    expect(
+      executorInstructions({
+        mode: 'mock',
+        autonomousActions: false,
+        skillBody: '# skill',
+        surfaces: [],
+        mockEnv,
+        now: 0,
+      }),
+    ).toContain(
+      '  - In every message, the draft and the notes, name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...',
+    );
+  });
+});
