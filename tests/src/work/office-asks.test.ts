@@ -16,7 +16,12 @@ describe("the office's company-wide asks by role (finding 2 of the v0.17.0 redep
     expect([...otherRolesAskThreads(charterWords(NELL))]).toEqual([monitor, charge, coverage]);
     expect([...otherRolesAskThreads(charterWords(PIP))]).toEqual([drive, monitor, coverage]);
     expect([...otherRolesAskThreads(charterWords(QUILL))]).toEqual([drive, charge, coverage]);
-    expect([...otherRolesAskThreads(charterWords(LARK))]).toEqual([drive, monitor, charge]);
+    // Lark's role is shown the coverage ask by its own sentence, as the generator reads it.
+    expect([...otherRolesAskThreads(charterWords(LARK), LARK.proposedFunction)]).toEqual([
+      drive,
+      monitor,
+      charge,
+    ]);
     expect([...otherRolesAskThreads(charterWords(MOSS))]).toEqual([
       drive,
       monitor,
@@ -123,8 +128,42 @@ describe("the revenue team's ask in #revops-asks by role (W19-3)", (): void => {
     expect(
       otherRolesAskThreads(charterWords(LARK_W19), LARK_W19.proposedFunction).has(coverage),
     ).toBe(false);
-    expect(otherRolesAskThreads(charterWords(LARK)).has(coverage)).toBe(false);
+    expect(otherRolesAskThreads(charterWords(LARK), LARK.proposedFunction).has(coverage)).toBe(
+      false,
+    );
     expect(otherRolesAskThreads(charterWords(MOSS)).has(coverage)).toBe(true);
     expect(otherRolesAskThreads(charterWords(QUILL)).has(coverage)).toBe(true);
+  });
+});
+
+describe("the coverage ask beside roles whose words are the team's too (W19-3, the second pass)", (): void => {
+  const coverage = 'revops-asks#thread-pipeline-coverage';
+  const role = (proposedFunction: string, willDo: string[]): Charter =>
+    ({
+      proposedFunction,
+      proposedBoundaries: { willDo, willNotDo: [], escalationTriggers: [] },
+    }) as unknown as Charter;
+  const shown = (charter: Charter): boolean =>
+    !otherRolesAskThreads(charterWords(charter), charter.proposedFunction).has(coverage);
+
+  it('keeps it from a role that deals, books, forecasts or runs a pipeline of its own', (): void => {
+    for (const charter of [
+      role('Act as the facilities coordinator.', ['Manage the meeting room bookings.']),
+      role('Act as the support lead.', ['Deal with customer deals and complaints politely.']),
+      role('Act as the DevOps engineer.', ['Keep the deployment pipeline green.']),
+      role('Act as the finance analyst.', ['Explain the forecast variance each month.']),
+      role('Act as the IT support desk.', ['Answer Salesforce sign-in questions.']),
+    ]) {
+      expect(shown(charter), charter.proposedFunction).toBe(false);
+    }
+  });
+
+  it('shows it to a revenue or sales operations role, however its name is spelt', (): void => {
+    for (const name of ['Rev ops analyst', 'RevOps lead', 'Sales ops coordinator']) {
+      expect(shown(role(name, [])), name).toBe(true);
+    }
+    expect(
+      shown(role('Act as the pipeline analyst.', ['Keep Salesforce opportunities current.'])),
+    ).toBe(true);
   });
 });

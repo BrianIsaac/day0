@@ -86,16 +86,18 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
   },
 ];
 
-/** A revenue operations role by its name, where its words name none of the team's. */
-const REVENUE_ROLE = /\brev(?:enue\s+)?ops\b|\brevenue operations\b|\bsales operations\b/i;
+/** A revenue or sales operations role by its name, "rev ops" and "RevOps" included. */
+const REVENUE_ROLE = /\brev(?:enue)?\s*ops\b|\brevenue operations\b|\bsales (?:operations|ops)\b/i;
 
 /**
  * The revenue team's own asks the office seeds outside `#office-asks`, with the roles whose work
  * each is (W19-3). On the v0.19.0 walk Priya's pipeline coverage ask in `#revops-asks`, shown to
  * every role as the team's, was drawn as their second ticket by the IT helpdesk and the support
  * triage employees, who judged it part of the job and then escalated it as outside their clauses.
- * It is a revenue operations ask, shown as the company-wide asks are: to the roles it names.
- * "revenue" alone is not one of its words: a finance close role keeps the Q4 Revenue Tracker too.
+ * It is a revenue operations ask, shown as the company-wide asks are: to the roles it names. Its
+ * words are the narrow ones ("deals", "forecast" and "pipeline" are a facilities, a finance and a
+ * devops role's words too); the role's own sentence names the rest, and a helpdesk, facilities,
+ * support, billing or finance role is never shown it (the second pass).
  */
 export const TEAM_ASKS: readonly OfficeAsk[] = [
   {
@@ -103,8 +105,10 @@ export const TEAM_ASKS: readonly OfficeAsk[] = [
     threadKey: 'thread-pipeline-coverage',
     sender: 'Priya',
     body: 'New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.',
-    roleWords: ['pipeline', 'deals', 'forecast', 'revops', 'sales', 'salesforce', 'bookings'],
+    roleWords: ['revops', 'salesforce'],
     roleNamed: REVENUE_ROLE,
+    notWith: ['helpdesk', 'facilities', 'support', 'billing', 'finance'],
+    notRoleNamed: IT_ROLE,
   },
 ];
 
