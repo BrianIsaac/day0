@@ -265,6 +265,22 @@ describe('the evidence guard', (): void => {
     expect(rendered).toContain('  - Priya: pipeline; intro path: manager');
     expect(rendered).toContain('  - Finance ops: never booking revenue');
   });
+
+  it('closes an answered question the manager left unpunctuated before its answer (W15-R39)', (): void => {
+    const rendered = renderCharter({
+      ...runThroughBody(),
+      answeredQuestions: [
+        {
+          question: 'Which carrier handles Asia',
+          answer: 'DHL',
+          answeredAt: '2026-10-10T00:00:00.000Z',
+        },
+        { question: '谁负责周报？', answer: 'Aiko。', answeredAt: '2026-10-10T00:00:00.000Z' },
+      ],
+    });
+    expect(rendered).toContain('  - Which carrier handles Asia? Answer: DHL');
+    expect(rendered).toContain('  - 谁负责周报？ Answer: Aiko。');
+  });
 });
 
 describe('the charter prompt', (): void => {

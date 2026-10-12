@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
+import { askedQuestion } from '../work/charter-answers';
 import {
   CLAUSE_FIELDS,
   CONSTRAINT_KINDS,
@@ -735,7 +736,9 @@ export function renderCharter(c: Charter, date = new Date()): string {
     ...((c.answeredQuestions ?? []).length > 0
       ? [
           'ANSWERED QUESTIONS                                         [from manager, after approval]',
-          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} Answer: ${q.answer}`),
+          ...(c.answeredQuestions ?? []).map(
+            (q) => `  - ${askedQuestion(q.question)} Answer: ${q.answer}`,
+          ),
           '',
         ]
       : []),

@@ -1,5 +1,17 @@
 import type { Charter } from '../agent/charter';
 
+/** A sentence's closing mark, in either script: a full stop, a question or exclamation mark, a colon. */
+const CLOSED = /[.?!:\u3002\uff1f\uff01\uff1a]$/u;
+
+/**
+ * A question the manager answered, closed by a question mark where it was left unpunctuated, so
+ * its answer is never read as part of it (W15-R39: "Which carrier handles Asia Answer: DHL").
+ */
+export function askedQuestion(question: string): string {
+  const trimmed = question.trim();
+  return trimmed === '' || CLOSED.test(trimmed) ? trimmed : `${trimmed}?`;
+}
+
 /**
  * The questions the manager answered in the charter, as a prompt reads them.
  *
@@ -16,6 +28,6 @@ export function answeredQuestionLines(charter: Pick<Charter, 'answeredQuestions'
   if (answered.length === 0) return [];
   return [
     'Questions the manager answered in the charter (they hold for this work):',
-    ...answered.map((entry) => `  - ${entry.question} ${entry.answer}`),
+    ...answered.map((entry) => `  - ${askedQuestion(entry.question)} ${entry.answer}`),
   ];
 }
