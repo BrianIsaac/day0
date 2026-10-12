@@ -97,6 +97,19 @@ describe('front matter', (): void => {
     expect(frontMatterStatus('---\ndraft: false\n---\n# Live').status).toBeUndefined();
   });
 
+  it('reads a quoted value with a comment after it, and a comment inside the quotes as the value (W15-R26)', (): void => {
+    // Reader 2's p1-status.mts: the comment came off and the quotes stayed, so the word was
+    // `"draft"` and decided nothing.
+    expect(frontMatterStatus('---\nstatus: "Draft" # c\n---\n# x').status).toBe('draft');
+    expect(
+      frontMatterStatus("---\nstatus: 'archived'   # moved to the wiki\n---\n# x").status,
+    ).toBe('archived');
+    expect(
+      frontMatterStatus('---\nsupersedes: "runbooks/v1 # old.md" # the first one\n---\n# x')
+        .supersedes,
+    ).toEqual(['runbooks/v1 # old.md']);
+  });
+
   it('states nothing for a word it does not know, a page with no block, or a page that opens with a rule', (): void => {
     expect(frontMatterStatus('---\nstatus: reviewed\n---\n# Page')).toEqual({
       supersedes: [],
