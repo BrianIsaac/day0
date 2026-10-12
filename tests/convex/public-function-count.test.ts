@@ -25,9 +25,9 @@ interface RegisteredFunction {
  * with 15-A's `docStatus:setPageStatus`, `docStatus:clearPageStatus`,
  * `docStatus:setSourceAuthority`, `docRelations:decide` and `docRelations:listOpen`; 220 with
  * 16-O's `reorientationDecisions:approve`, `:dismiss`, `:defer`, `:openByHand` and
- * `:listForAgent`).
+ * `:listForAgent`; 221 with 16-O's `managerQuestions:answerConflict`).
  */
-const PINNED_COUNT = 220;
+const PINNED_COUNT = 221;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 

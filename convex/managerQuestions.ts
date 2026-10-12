@@ -1,8 +1,26 @@
-import { v } from 'convex/values';
-import { mutation, query, type MutationCtx } from './_generated/server';
+import { ConvexError, v } from 'convex/values';
+import {
+  internalQuery,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
+import {
+  assertOwnsAgent,
+  assertOwnsWorkItem,
+  getCallerOrThrow,
+  verifiedAddressOf,
+} from './ownership';
 import { amendCharterInTransaction } from './charters';
+import { citeConflictOf, standingConflictOf } from './docConflicts';
+import { decideRelationInTransaction } from './docRelations';
+import {
+  CONFLICT_CHOICES,
+  conflictChoiceWords,
+  type ConflictChoice,
+} from '../src/agent/reorientation-words';
 import type { CharterAnswerVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
 import {
@@ -227,4 +245,109 @@ export const answer = mutation({
     await assertOwnsAgent(ctx, record.agentId);
     return await answerQuestionInTransaction(ctx, record, args.text, 'dashboard');
   },
+});
+
+/** Why a conflict's answer was refused, in the card's words. */
+export const CONFLICT_ANSWER_REFUSALS = {
+  gone: 'That question is no longer stored.',
+  notConflict: 'That question is not about two pages that disagree.',
+  answered: 'That question has already been answered.',
+} as const;
+
+/** The decision of the relation an answer stands for. */
+const DECISION_OF: Readonly<Record<ConflictChoice, 'from-is-right' | 'to-is-right' | 'both-hold'>> =
+  { from: 'from-is-right', to: 'to-is-right', both: 'both-hold' };
+
+/**
+ * Answer a conflict's question beside its plan (RM20 (a)): the answer decides the relation as the
+ * Documentation tab's card would (the first page right, the second, or both hold), and the record
+ * of the question keeps the answer and where it was given. A conflict the manager settled
+ * elsewhere meanwhile is not decided again; the answer is kept. The steps the plan withheld for it
+ * are redrafted on Retry.
+ *
+ * @param ctx - The answer's transaction.
+ * @param question - The question, as read in this transaction.
+ * @param answer - The choice, where it was given, and the manager's verified address.
+ * @returns The answer in words, for the card and the Slack acknowledgement.
+ * @throws ConvexError when the question is not a conflict's or was answered.
+ */
+export async function answerConflictInTransaction(
+  ctx: MutationCtx,
+  question: Doc<'managerQuestions'>,
+  answer: {
+    readonly choice: ConflictChoice;
+    readonly via: 'dashboard' | 'slack';
+    readonly decidedBy: string | undefined;
+  },
+): Promise<{ text: string }> {
+  if (question.type !== 'retrieval' || question.relationId === undefined) {
+    throw new ConvexError(CONFLICT_ANSWER_REFUSALS.notConflict);
+  }
+  if (question.answer !== undefined) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.answered);
+  const relation = await ctx.db.get(question.relationId);
+  const standing = await standingConflictOf(ctx, relation);
+  const text =
+    standing === undefined
+      ? answer.choice === 'both'
+        ? 'Both hold'
+        : `${answer.choice === 'from' ? 'The first page' : 'The second page'} is right`
+      : conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
+  if (relation !== null && standing !== undefined) {
+    await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], answer.decidedBy);
+  }
+  await ctx.db.patch(question._id, {
+    answer: { text, answeredAt: Date.now(), via: answer.via },
+  });
+  return { text };
+}
+
+/**
+ * Answer a conflict's question from the plan's card on the dashboard. Public, guarded by
+ * `getCallerOrThrow` first and then the question's employee's owner. Writes the relation's
+ * decision, with what it sets off, and the question's answer.
+ */
+export const answerConflict = mutation({
+  args: {
+    questionId: v.id('managerQuestions'),
+    choice: v.union(...CONFLICT_CHOICES.map((choice) => v.literal(choice))),
+  },
+  handler: async (ctx, args): Promise<{ text: string }> => {
+    const caller = await getCallerOrThrow(ctx);
+    const question = await ctx.db.get(args.questionId);
+    if (question === null) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.gone);
+    await assertOwnsAgent(ctx, question.agentId);
+    return await answerConflictInTransaction(ctx, question, {
+      choice: args.choice,
+      via: 'dashboard',
+      decidedBy: verifiedAddressOf(caller),
+    });
+  },
+});
+
+/** The questions one item's plan raised and nobody has answered, oldest first. */
+export async function openConflictQuestions(
+  ctx: Pick<QueryCtx, 'db'>,
+  workItemId: Id<'workItems'>,
+): Promise<Doc<'managerQuestions'>[]> {
+  return (
+    await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+      .collect()
+  ).filter(
+    (question) =>
+      question.type === 'retrieval' &&
+      question.relationId !== undefined &&
+      question.answer === undefined,
+  );
+}
+
+/**
+ * The conflict questions a plan's decision request carries, by their text. Internal; read by
+ * `managerChannelActions.requestDecision`.
+ */
+export const conflictQuestionsForRequest = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<string[]> =>
+    (await openConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
 });

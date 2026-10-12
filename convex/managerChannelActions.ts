@@ -218,6 +218,13 @@ export const requestDecision = internalAction({
       supersedes: args.supersedes,
     });
     if (!prepared.prepared) return { sent: false, reason: prepared.reason };
+    // A plan's conflict questions ride its own request (RM20 (a)).
+    const questions =
+      args.kind === 'plan'
+        ? await ctx.runQuery(internal.managerQuestions.conflictQuestionsForRequest, {
+            workItemId: args.workItemId,
+          })
+        : [];
 
     let text = decisionRequestText({
       agentName: prepared.agentName,
@@ -237,6 +244,7 @@ export const requestDecision = internalAction({
         prepared.surface.path === 'documented-api' && isSlackApiEndpoint(prepared.surface.endpoint),
       buttons: prepared.withButtons,
       typedCode: prepared.typedCode,
+      questions,
     });
     // Other held action sets are already waiting on this channel: offer one
     // code that decides them all, each named with its own; only where a typed
