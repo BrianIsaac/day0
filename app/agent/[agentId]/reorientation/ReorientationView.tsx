@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '../../../components/Button';
@@ -85,6 +85,34 @@ function WhyCards() {
 }
 
 /**
+ * Bring the card an address names into view and focus (`/agent/<id>/reorientation#card-<id>`,
+ * 16-D's W-3): the inbox's Review and the talk's Back to the card navigate on the client, where
+ * the cards arrive after the page and the browser's own jump to the fragment finds nothing; a
+ * later change of the fragment lands the same way. The card's scroll margin keeps its title clear
+ * of the sticky header, as a direct load does.
+ *
+ * @param ready - Whether the cards are drawn.
+ */
+function useCardAnchor(ready: boolean): void {
+  // Counts the fragment's changes, so each one lands again.
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    const changed = (): void => {
+      if (window.location.hash.startsWith('#card-')) setChanges((count) => count + 1);
+    };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, []);
+  useEffect(() => {
+    if (!ready || !window.location.hash.startsWith('#card-')) return;
+    const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    if (!card) return;
+    card.scrollIntoView({ block: 'start' });
+    card.focus({ preventScroll: true });
+  }, [ready, changes]);
+}
+
+/**
  * The reorientation page, under the Needs you tab (`/agent/<id>/reorientation`; wave 16, 16-O):
  * the employee's cards, the ones waiting on the manager first, each with its evidence, what it
  * reaches, what the employee proposes and the decisions; the decided ones after with what their
@@ -96,6 +124,7 @@ export function ReorientationView() {
   const zone = useAgentZone();
   const now = useNow();
   const views = useQuery(api.reorientationDecisions.listForAgent, { agentId: agent._id });
+  useCardAnchor(views !== undefined);
   const charter = <Link href={employeeTabHref(agent._id, 'charter')}>Charter tab</Link>;
   const standing = (views ?? []).filter(
     (view) => view.card.status !== 'applied' && view.card.status !== 'dismissed',
