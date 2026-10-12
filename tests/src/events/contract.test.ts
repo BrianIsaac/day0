@@ -6,9 +6,13 @@ import {
   AGENT_EVENT_TYPES,
   CONNECTION_EVENT_TYPES,
   EVENT_TYPES,
+  REORIENTATION_EVENT_TYPES,
   isConnectionEventType,
   isEventOf,
   isEventType,
+  type AmendmentVia,
+  type PlanHeldForReorientation,
+  type ReorientationEventPayloads,
 } from '../../../src/events/contract';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
@@ -170,5 +174,51 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
       .filter((path) => /withIndex\(\s*['"]by_agent_type['"]/.test(readFileSync(path, 'utf8')))
       .map((path) => relative(ROOT, path));
     expect(direct).toEqual([]);
+  });
+});
+
+describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): void => {
+  it('names the six reorientation events and the typed question, none yet listed, since no writer writes them before 16-O', (): void => {
+    expect(REORIENTATION_EVENT_TYPES).toEqual([
+      'reorientation.opened',
+      'reorientation.proposed',
+      'reorientation.approved',
+      'reorientation.dismissed',
+      'reorientation.deferred',
+      'reorientation.reopened',
+      'manager.question-asked',
+    ]);
+    for (const type of REORIENTATION_EVENT_TYPES) expect(isEventType(type), type).toBe(false);
+  });
+
+  it('types each payload, the seventh hold reason and an amendment by reorientation', (): void => {
+    const reorientationId = 'r1' as PlanHeldForReorientation['reorientationId'];
+    const held: PlanHeldForReorientation = {
+      workItemId: 'w1' as PlanHeldForReorientation['workItemId'],
+      reason: 'reorientation-pending',
+      reorientationId,
+      summary: 'Hana Mori now approves refunds in place of Ken Ito',
+    };
+    const asked: ReorientationEventPayloads['manager.question-asked'] = {
+      questionId: 'q1' as ReorientationEventPayloads['manager.question-asked']['questionId'],
+      workItemId: held.workItemId,
+      question: 'Two pages disagree under "Refunds". Which is right?',
+      type: 'retrieval',
+      blocking: false,
+      relationId: 'rel1' as ReorientationEventPayloads['manager.question-asked']['relationId'],
+    };
+    const proposed: ReorientationEventPayloads['reorientation.proposed'] = {
+      reorientationId,
+      summary: held.summary,
+      kind: 'charter-change',
+      by: 'judgement',
+    };
+    const via: AmendmentVia = 'reorientation';
+    expect([held.reason, asked.type, proposed.kind, via]).toEqual([
+      'reorientation-pending',
+      'retrieval',
+      'charter-change',
+      'reorientation',
+    ]);
   });
 });

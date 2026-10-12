@@ -36,6 +36,12 @@ import type {
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
+import type { ManagerQuestionType } from '../agent/manager-questions';
+import type {
+  ReorientationProposalKind,
+  ReorientationRisk,
+  ReorientationTrigger,
+} from '../agent/reorientation-vocabulary';
 import type { ManagerNotificationMode } from '../work/manager-notes';
 import type { PlannerObligations } from '../work/plan-obligations';
 import type { RelationshipType } from '../people/vocabulary';
@@ -50,8 +56,11 @@ type CharterId = Id<'charters'>;
 type RunId = Id<'events'>;
 type SessionId = Id<'voiceSessions'>;
 
-/** Where a charter amendment came from. */
-export type AmendmentVia = 'dashboard' | 'plan-approval';
+/**
+ * Where a charter amendment came from: the charter card, a plan approval's answer, or a
+ * reorientation card's Approve (wave 16, 16-K for 16-O).
+ */
+export type AmendmentVia = 'dashboard' | 'plan-approval' | 'reorientation';
 
 /** Where the manager decided a plan or a held set. */
 export type DecidedVia = 'dashboard' | 'channel';
@@ -1543,6 +1552,20 @@ export interface PlanHeldForConflict extends WorkItemNamed {
   readonly pages: ReadonlyArray<{ readonly title: string; readonly source: string }>;
 }
 
+/**
+ * `work.plan-held` for a plan whose row an undecided reorientation card holds, the seventh reason
+ * (wave 16, 16-K for 16-O): a medium or high risk card names the row in its `blockingWork`, so the
+ * switch does not run the plan until the card is decided. Declared here and joined to
+ * {@link WorkPlanHeldPayload} by 16-O with its renderers (`event-labels.ts`'s and
+ * `record-words.ts`'s held-reason maps take an entry for every member).
+ */
+export interface PlanHeldForReorientation extends WorkItemNamed {
+  readonly reason: 'reorientation-pending';
+  readonly reorientationId: Id<'reorientations'>;
+  /** The card's trigger summary, as the hold's words name it. */
+  readonly summary: string;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
@@ -1876,6 +1899,87 @@ export interface WorkManagerDigestFailedPayload {
   readonly reason: string;
 }
 
+/** A reorientation event's card, by its id and its trigger summary. */
+interface ReorientationNamed {
+  readonly reorientationId: Id<'reorientations'>;
+  /** The card's trigger summary when the event was written, so the record reads it alone. */
+  readonly summary: string;
+}
+
+/**
+ * The payload of `reorientation.opened`: a card opened on a trigger, or a trigger of the same
+ * kind the same day joined the card already open (`joined`, C6).
+ */
+export interface ReorientationOpenedPayload extends ReorientationNamed {
+  readonly trigger: ReorientationTrigger;
+  readonly triggerKey: string;
+  readonly risk: ReorientationRisk;
+  readonly joined?: boolean;
+}
+
+/**
+ * The payload of `reorientation.proposed`: what the card now proposes, never `pending`, written
+ * by the scheduled judgement (O-2) or a Discuss conversation that ended in a proposal (16-D).
+ */
+export interface ReorientationProposedPayload extends ReorientationNamed {
+  readonly kind: Exclude<ReorientationProposalKind, 'pending'>;
+  readonly by: 'judgement' | 'discussion';
+}
+
+/** The payload of `reorientation.approved`: what Approve applied, and what it did. */
+export interface ReorientationApprovedPayload extends ReorientationNamed {
+  readonly kind: Exclude<ReorientationProposalKind, 'pending'>;
+  /** What the target's transaction did, in the record's words. */
+  readonly result: string;
+  /** The charter version an approved charter change wrote. */
+  readonly charterId?: CharterId;
+}
+
+/** The payload of `reorientation.dismissed`: the card closed and nothing changed. */
+export type ReorientationDismissedPayload = ReorientationNamed;
+
+/** The payload of `reorientation.deferred`: the card set aside until a date (A21). */
+export interface ReorientationDeferredPayload extends ReorientationNamed {
+  readonly revisitAt: number;
+}
+
+/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date. */
+export interface ReorientationReopenedPayload extends ReorientationNamed {
+  readonly revisitAt: number;
+}
+
+/**
+ * The payload of `manager.question-asked`: a question of a type other than the charter's own
+ * open questions (`charter.question-asked` keeps those), whether it holds its plan, and what it
+ * is about (a conflict's relation, RM20; a reorientation card).
+ */
+export interface ManagerQuestionAskedPayload {
+  readonly questionId: Id<'managerQuestions'>;
+  readonly workItemId: WorkItemId;
+  readonly question: string;
+  readonly type: ManagerQuestionType;
+  readonly blocking: boolean;
+  readonly relationId?: Id<'docRelations'>;
+  readonly reorientationId?: Id<'reorientations'>;
+}
+
+/**
+ * The wave 16 event types and their payloads (16-K for 16-O and 16-D), declared by the schema
+ * step and not yet in {@link EventPayloads}: a listed type no writer writes fails the contract's
+ * test, and the record's three maps (`RECORD_FILTER_OF`, `record-words.ts`'s `WORDS`,
+ * `event-labels.ts`'s `LABELS`) take an entry for every listed type. 16-O moves each into
+ * `EventPayloads` and `EVENT_TYPES` in the commit that writes and renders it.
+ */
+export interface ReorientationEventPayloads {
+  'reorientation.opened': ReorientationOpenedPayload;
+  'reorientation.proposed': ReorientationProposedPayload;
+  'reorientation.approved': ReorientationApprovedPayload;
+  'reorientation.dismissed': ReorientationDismissedPayload;
+  'reorientation.deferred': ReorientationDeferredPayload;
+  'reorientation.reopened': ReorientationReopenedPayload;
+  'manager.question-asked': ManagerQuestionAskedPayload;
+}
+
 /**
  * Every event type and its payload. The keys are the contract's types; the
  * tuple below lists the same keys at run time.
@@ -2086,6 +2190,17 @@ function everyKey<Of extends string>() {
     tuple: Tuple & ([Of] extends [Tuple[number]] ? unknown : never),
   ): Tuple => tuple;
 }
+
+/** The wave 16 event types not yet written (see {@link ReorientationEventPayloads}), at run time. */
+export const REORIENTATION_EVENT_TYPES = everyKey<keyof ReorientationEventPayloads>()([
+  'reorientation.opened',
+  'reorientation.proposed',
+  'reorientation.approved',
+  'reorientation.dismissed',
+  'reorientation.deferred',
+  'reorientation.reopened',
+  'manager.question-asked',
+]);
 
 /** Every event type Day0 writes, at run time. */
 export const EVENT_TYPES = everyKey<EventType>()([
