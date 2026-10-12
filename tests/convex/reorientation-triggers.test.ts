@@ -756,3 +756,125 @@ describe('the revocation rows (credential.revoked-at-source failed; organisation
     ]);
   });
 });
+
+describe('the counted rows: three refusals, skips or rejections', (): void => {
+  it('opens one card on the third gate refusal of one scope in seven days, and none for two', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const refusedRun = async (index: number): Promise<void> => {
+      const runId = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'work.execution-claimed',
+            payload: {},
+            createdAt: 1,
+          }),
+      );
+      const workItemId = await seedWork(harness, agentId, 'executing', {
+        externalId: `REVOPS-${index}`,
+        executionRunId: runId,
+      });
+      await harness.mutation(internal.workRuns.setCompleted, {
+        workItemId,
+        runId,
+        output: {
+          actions: [],
+          applied: [
+            { tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: `k${index}` },
+            {
+              tool: 'linear.read',
+              ok: true,
+              held: true,
+              reason:
+                "dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
+            },
+          ],
+        },
+      });
+    };
+    await refusedRun(1);
+    await refusedRun(2);
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    await refusedRun(3);
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'repeated-refusal',
+        triggerSummary: "Day0's gate refused its “linear:read” work 3 times in seven days",
+        risk: 'low',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+    await refusedRun(4);
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+  });
+
+  it('opens one card on the third out-of-scope skip under one willNotDo clause in thirty days', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const skip = async (index: number, clause: string): Promise<void> => {
+      const workItemId = await seedWork(harness, agentId, 'discovered', {
+        externalId: `REVOPS-${index}`,
+      });
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: the deck is not its to change',
+          clause,
+        },
+      });
+    };
+    await skip(1, 'Change committee-deck numbers');
+    await skip(2, 'Change committee-deck numbers');
+    await skip(3, 'Answer billing disputes');
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    await skip(4, 'Change committee-deck numbers');
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'repeated-skip',
+        triggerSummary:
+          '3 items in thirty days were skipped as outside its role under “Change committee-deck numbers”',
+        risk: 'medium',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+    expect((await cardsOf(harness, agentId))[0].affected.charterClauses).toEqual([
+      { field: 'willNotDo', index: 0, text: 'Change committee-deck numbers' },
+    ]);
+  });
+
+  it('opens one card when the manager rejects a third plan in thirty days, and again only after a decided card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    const reject = async (index: number): Promise<void> => {
+      const workItemId = await seedWork(harness, agentId, 'plan-pending', {
+        externalId: `REVOPS-${index}`,
+        plan: { steps: ['Reply'] },
+      });
+      await owner.mutation(api.work.cancelPlan, { workItemId, reason: 'Not like this.' });
+    };
+    await reject(1);
+    await reject(2);
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    await reject(3);
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'repeated-rejection',
+        triggerSummary: 'You rejected 3 of its plans in thirty days',
+        risk: 'medium',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+    const [card] = await cardsOf(harness, agentId);
+    // The manager decides the card a minute later; the clock is fake, so it is moved by hand.
+    vi.setSystemTime(Date.now() + 60_000);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(card._id, { status: 'dismissed', decidedAt: Date.now() }),
+    );
+    vi.setSystemTime(Date.now() + 60_000);
+    await reject(4);
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+  });
+});

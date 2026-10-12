@@ -162,7 +162,7 @@ export function isScopeUnavailable(verdict: EvaluationVerdict): verdict is Scope
 function unadmittedVerdict(scope: Extract<ScopeJudgement, { admitted: false }>): EvaluationVerdict {
   return scope.basis === 'unavailable'
     ? { decision: 'defer', reason: SCOPE_JUDGEMENT_UNAVAILABLE, cause: scope.cause }
-    : { decision: 'skip', reason: scope.reason };
+    : { decision: 'skip', reason: scope.reason, ...(scope.clause ? { clause: scope.clause } : {}) };
 }
 
 /** The permission scopes a candidate needs, from its source system and the manager channel. */

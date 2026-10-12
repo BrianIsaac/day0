@@ -1377,6 +1377,8 @@ export interface WorkEvaluatedPayload extends WorkItemNamed {
 /** The payload of `work.skipped`. */
 export interface WorkSkippedPayload extends WorkItemNamed {
   readonly reason?: string;
+  /** The willNotDo clause an out-of-scope skip quoted, as the charter writes it (16-O). */
+  readonly clause?: string;
 }
 
 /** The payload of `work.scope-judgement-unavailable`. */
