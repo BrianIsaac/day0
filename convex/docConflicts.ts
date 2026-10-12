@@ -17,7 +17,8 @@ import type { CiteConflict, PlanCite } from '../src/work/types';
  * The standing conflict (wave 15, 15-A; split out of `convex/docRelations.ts` by wave 16's 16-s,
  * decision D-8): a confirmed conflict between two active pages of equal trust whose blocks still
  * disagree, read by the selection (which tags the cites of its blocks), by the plan's decision
- * (which holds a plan that cites one) and by the cards; and the answers a relation's card offers
+ * (which asks which page is right beside a plan that rests on one, 16-O) and by the cards; and the
+ * answers a relation's card offers
  * as the relation stands. The registered functions that answer and draw the cards (`decide`,
  * `listOpen`) stay in `convex/docRelations.ts` under their paths.
  *
@@ -49,7 +50,7 @@ export interface StandingConflict {
  * are stored and active, their trust is equal (official over team over personal settles a
  * disagreement between unequal pages by itself), and the blocks its evidence names still
  * disagree. Read by the selection, which tags the cites of those blocks, and by the plan's
- * decision, which holds a plan that cites one.
+ * decision, which asks which page is right beside a plan that rests on one.
  *
  * @param ctx - A query's or a mutation's context.
  * @param relation - The relation's row, or null when it is gone.
@@ -234,12 +235,14 @@ async function selectionFellBack(
 
 /**
  * The hashes of the blocks a plan relies on: its cited blocks, or, where it cites nothing, the
- * blocks its recorded selection showed the planner; undefined when it cites nothing and no
- * selection was recorded.
+ * blocks its selection showed the planner: those kept on the item with their hashes
+ * (`workItems.selectedBlocks`, W15-R17), or for an item selected before they were kept, the ones
+ * its selection record names; undefined when it cites nothing and no selection was kept or
+ * recorded.
  */
 async function planBlockHashes(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
 ): Promise<Set<string> | undefined> {
   const cites = (row.plan as { cites?: ReadonlyArray<Pick<PlanCite, 'blocks'>> } | null | undefined)
     ?.cites;
@@ -249,6 +252,9 @@ async function planBlockHashes(
       for (const block of cite.blocks ?? []) if (block.hash !== undefined) hashes.add(block.hash);
     }
     return hashes;
+  }
+  if (row.selectedBlocks !== undefined && row.selectedBlocks.length > 0) {
+    return new Set(row.selectedBlocks.map((block) => block.hash));
   }
   const selected = await selectedBlocks(ctx, row);
   if (selected === undefined) return undefined;
@@ -274,7 +280,7 @@ async function planBlockHashes(
  */
 export async function conflictsOnPlanBlocks(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
   agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'>,
 ): Promise<CiteConflict[]> {
   if (agent.userId === undefined) return [];
@@ -314,7 +320,7 @@ export async function conflictsOnPlanBlocks(
  */
 export async function conflictsUnderPlan(
   ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
   agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'>,
 ): Promise<CiteConflict[]> {
   const byRelation = new Map<string, CiteConflict>();

@@ -382,6 +382,43 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
   });
 
+  it('asks from the selection kept on the item, with no selection record left to read (the joins: W15-R17 beside W15-R18)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, {});
+    // What `docSelection.recordPlanSelection` keeps at the plan's selection (16-FD), and no
+    // `work.documentation-selected` record among the employee's newest that names the item.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        selectedBlocks: disputed.blocks.map((block) => ({
+          id: block.id as Id<'docBlocks'>,
+          hash: block.hash!,
+        })),
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
   it('asks about every conflict between pages the employee reads when the plan read the whole mirror (W15-R18, the third input)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
