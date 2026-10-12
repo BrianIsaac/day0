@@ -289,6 +289,69 @@ describe('approve: the proposal applied through its target', (): void => {
     ]);
   });
 
+  it('opens no card on any employee when Approve edits an edge for everyone (W16-R2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await seedEmployee(harness);
+    const mateo = await seedEmployee(harness, { name: 'Mateo' });
+    const edge = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Ines Duarte',
+        nameKey: 'ines duarte',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      // An approver for everyone: no employee or person it is from (bed 1's edge).
+      return await ctx.db.insert('relationships', {
+        userId: OWNER_SUBJECT,
+        toPersonId: person,
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    const opened = async (): Promise<number> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('events')
+              .filter((q) => q.eq(q.field('type'), 'reorientation.opened'))
+              .collect(),
+        )
+      ).length;
+    const reorientationId = await proposedCard(
+      harness,
+      priya,
+      {
+        kind: 'relationship',
+        relationshipId: edge,
+        action: 'edit',
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes and REVOPS close plans',
+        rationale: 'Ines approves REVOPS close plans too now.',
+      },
+      { evidence: { relationshipIds: [edge] }, affected: { relationships: [edge] } },
+    );
+    const before = await opened();
+    await owner.mutation(api.reorientationDecisions.approve, { reorientationId });
+    await harness.finishInProgressScheduledFunctions();
+    // Bed 1: 50 joined events on one Approve. The change the manager approved opens or joins no
+    // card on the employee it was approved for, nor on any other the same edge reaches.
+    expect(await opened()).toBe(before);
+    expect(await cardsOf(harness, mateo)).toEqual([]);
+    expect((await cardsOf(harness, priya)).map((card) => card.status)).toEqual(['applied']);
+  });
+
   it('sets a page superseded by its named successor, and hands another back to its source', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

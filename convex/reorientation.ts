@@ -324,14 +324,23 @@ async function standingCards(
 const approvingThisTransaction = new WeakMap<object, Set<Id<'agents'>>>();
 
 /**
- * Mark the employee whose card this transaction approves, so the change Approve applies opens no
- * second card about itself on the same employee (O-13). Called by `reorientationDecisions.approve`
- * before the target runs; the mark lives as long as the transaction, whatever the employee's
- * other cards (the second pass's minor: a read of the newest applied cards missed an old one).
+ * Mark the employees the change a card's Approve applies reaches, so that change opens no second
+ * card about itself (O-13): the card's own employee, and every employee of the owner when the
+ * proposal edits or retires an edge for everyone, which `people.openEdgeCards` would otherwise fan
+ * out to again, each Approve re-opening the rest (W16-R2: bed 1's 50 joined events). Called by
+ * `reorientationDecisions.approve` before the target runs; the mark lives as long as the
+ * transaction, whatever the employees' other cards (the second pass's minor: a read of the newest
+ * applied cards missed an old one).
  */
-export function markApproving(ctx: MutationCtx, agentId: Id<'agents'>): void {
+export async function markApproving(ctx: MutationCtx, card: Doc<'reorientations'>): Promise<void> {
   const approving = approvingThisTransaction.get(ctx.db) ?? new Set<Id<'agents'>>();
-  approving.add(agentId);
+  approving.add(card.agentId);
+  if (card.proposed.kind === 'relationship') {
+    const edge = await ctx.db.get(card.proposed.relationshipId);
+    if (edge !== null && edge.fromAgentId === undefined && edge.fromPersonId === undefined) {
+      for (const agent of await ownerAgents(ctx, edge.userId)) approving.add(agent._id);
+    }
+  }
   approvingThisTransaction.set(ctx.db, approving);
 }
 

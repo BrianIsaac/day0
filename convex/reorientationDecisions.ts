@@ -292,8 +292,9 @@ export const approve = mutation({
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
     // Closed before the target runs and given its outcome after; the change Approve makes opens
-    // no second card about itself on this employee (`markApproving`).
-    markApproving(ctx, card.agentId);
+    // no second card about itself on this employee, nor on the others an edge for everyone
+    // reaches (`markApproving`).
+    await markApproving(ctx, card);
     await ctx.db.patch(card._id, {
       status: 'applied',
       decidedAt: now,
