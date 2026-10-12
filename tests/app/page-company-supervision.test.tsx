@@ -110,6 +110,8 @@ vi.mock('convex/react', () => {
       };
     }
     if (name === 'docSources:listMine') return [];
+    // Re-pinned for 16-F: the card is drawn once the deployment's mode is known.
+    if (name === 'config:surfaceMode') return { mode: 'real', label: 'real' };
     // Every other query is still loading, so the test does not depend on
     // what the rest of the page reads.
     return undefined;

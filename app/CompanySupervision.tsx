@@ -501,6 +501,8 @@ export function CompanySupervisionCard({
 export function CompanySupervision() {
   const figures = useQuery(api.metrics.forOwner);
   const surface = useQuery(api.config.surfaceMode);
-  if (!figures || figures.employees.length === 0) return null;
+  // Drawn once the mode is known, so the retrieval column never changes its words under the
+  // reader (the second pass's finding 10): the mode decides whether it says why it is empty.
+  if (!figures || figures.employees.length === 0 || surface === undefined) return null;
   return <CompanySupervisionCard figures={figures} mode={surface?.mode} />;
 }
