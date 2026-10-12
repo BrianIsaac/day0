@@ -130,7 +130,7 @@ export function DocsTab({
                   aria-current={active?.slug === d.slug ? 'true' : undefined}
                   className={`min-h-11 w-full rounded-lg px-2.5 py-1.5 text-left ${
                     active?.slug === d.slug
-                      ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                      ? 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]'
                       : 'text-[var(--color-fg-2)] hover:bg-[var(--color-inset)] hover:text-[var(--color-fg)]'
                   }`}
                 >

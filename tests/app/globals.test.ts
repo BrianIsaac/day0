@@ -145,6 +145,22 @@ describe('the light theme tokens (16-T, wave 16 section 5.5)', () => {
     expect(contrast(lightToken('bg'), lightToken('accent'))).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("draws accent text on the accent's chip fill at 4.5:1 or better in both themes", () => {
+    // The browser job's signed-in pass measured the 15% mix at 4.34:1 in light (a pressed filter, a
+    // state chip): the light set fills with the opaque accent-soft instead; dark keeps the mix.
+    expect(ruleBody(DARK_SELECTOR)).toContain(
+      '--color-accent-fill: color-mix(in oklab, var(--color-accent) 15%, transparent);',
+    );
+    expect(ruleBody(LIGHT_SELECTOR)).toContain('--color-accent-fill: var(--color-accent-soft);');
+    for (const surface of ['card', 'bg', 'inset']) {
+      expect(
+        contrast(token('accent'), over(token('accent'), 0.15, token(surface))),
+        surface,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(lightToken('accent'), lightToken('accent-soft'))).toBeGreaterThanOrEqual(4.5);
+  });
+
   it('draws the link underline at 3:1 or more on every light surface a link sits on (C3)', () => {
     const alpha =
       Number(

@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 export type ChipTone = 'accent' | 'ok' | 'warn' | 'danger';
 
 const CHIP_TONE: Record<ChipTone, string> = {
-  accent: 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]',
+  accent: 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]',
   ok: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]',
   warn: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
   danger: 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]',

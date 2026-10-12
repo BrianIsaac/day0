@@ -34,6 +34,9 @@
   --color-ok-line: #396754;
   --color-danger-soft: #281d1f;
   --color-danger-line: #733937;
+  /* The accent's chip fill, under accent text (a state chip, a pressed filter): the accent mixed
+     into what is behind it. */
+  --color-accent-fill: color-mix(in oklab, var(--color-accent) 15%, transparent);
   /* The accent's bright point: the orbit's packets on the landing, lighter than the accent in the
      dark set and the icon's darker step in the light one, so it reads on either page. */
   --color-glint: #a5f3fc;
@@ -73,6 +76,8 @@
   --color-ok-line: #92ada3;
   --color-danger-soft: #f9edec;
   --color-danger-line: #cd9893;
+  /* Opaque: the 15% mix put the accent's text at 4.34:1 on a light card. */
+  --color-accent-fill: var(--color-accent-soft);
   --color-glint: #0891b2;
   --color-scrim: #18181b;
   --color-shadow: #18181b;
