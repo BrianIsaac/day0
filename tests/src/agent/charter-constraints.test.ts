@@ -16,6 +16,8 @@ import {
   withoutConstraints,
   withClauseRemoved,
   withoutProvenanceSuffixes,
+  willNotDoAsAct,
+  withRoutingRules,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
 import {
@@ -1675,5 +1677,83 @@ describe('the second pass on the binding (13-R)', (): void => {
       changes: true,
       keptClauses: [{ clause: 'Draft replies.', because: 'not-this-rule' }],
     });
+  });
+});
+
+describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
+  it.each([
+    ['Never change a deal amount in the tracker.', 'Change a deal amount in the tracker.'],
+    [
+      'Do not contact the sales lead directly, go through the manager for deal matters.',
+      'Contact the sales lead directly without going through the manager for deal matters.',
+    ],
+    [
+      'Never edit the tracker; ask the manager instead.',
+      'Edit the tracker without asking the manager.',
+    ],
+    [
+      'Never change a deal amount, even when a rep asks.',
+      'Change a deal amount, even when a rep asks.',
+    ],
+    [
+      'I will not own the deals, which belong to the sales lead.',
+      'Own the deals, which belong to the sales lead.',
+    ],
+    [
+      "Don't reply to customers, leave that to support.",
+      'Reply to customers without leaving that to support.',
+    ],
+    ['Own refunds, which belong to billing.', 'Own refunds, which belong to billing.'],
+    ['Never', 'Never'],
+  ])('reads %j as %j', (clause, act): void => {
+    expect(willNotDoAsAct(clause)).toBe(act);
+  });
+});
+
+describe('withRoutingRules (RM27)', (): void => {
+  const charter = (escalationTriggers: string[]): Charter =>
+    ({
+      ...runThrough(),
+      proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers },
+    }) as Charter;
+
+  it('writes an unrouted "through me" as an Escalates clause in the third person and binds a rule to it', (): void => {
+    const drawn = withRoutingRules(
+      charter(['Escalate to product when an ask is a bug.']),
+      { collaborators: 'Product owns bug reports. Run it by me before you reply to my director.' },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Escalate to product when an ask is a bug.',
+      "Run it by the manager before you reply to the manager's director.",
+    ]);
+    expect(drawn.rules).toEqual([
+      {
+        kind: 'reporting-line',
+        quote: 'Run it by me before you reply to my director.',
+        wording: [],
+        origin: 'derived',
+        binds: [{ field: 'escalationTriggers', index: 1 }],
+      },
+    ]);
+  });
+
+  it('binds a route through the manager no other rule binds, and draws nothing for a question', (): void => {
+    const drawn = withRoutingRules(
+      charter(['Contact any rep only via the manager.']),
+      {
+        collaborators: 'Reps are busy. Everything via me.',
+        'open-questions': 'Should I go through me?',
+      },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Contact any rep only via the manager.',
+    ]);
+    expect(drawn.rules.map((rule) => [rule.quote, rule.binds])).toEqual([
+      ['Everything via me.', [{ field: 'escalationTriggers', index: 0 }]],
+    ]);
   });
 });
