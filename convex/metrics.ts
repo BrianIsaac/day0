@@ -745,6 +745,8 @@ interface PilotTotals {
   toCompletion: number[];
   answered: number;
   amended: number;
+  /** The reorientation cards opened (a joined trigger not again), approved, dismissed and deferred. */
+  cards: { opened: number; approved: number; dismissed: number; deferred: number };
   estimatedItems: number;
   estimatedMinutes: number;
   /** The items whose prompts carried a documentation selection, and their characters summed. */
@@ -814,6 +816,7 @@ function pilotTotals(
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
+  const cards = { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
   const documentationChars = new Map<string, number>();
   const inputTokens = new Map<string, number>();
   for (const event of ordered) {
@@ -872,7 +875,16 @@ function pilotTotals(
     if (isEventOf(event, 'charter.question-answered')) {
       answered += 1;
       if (payload?.amended === true) amended += 1;
+      continue;
     }
+    // The reorientation figure counts cards (16-O; A9): a trigger that joined a card is not a card.
+    if (isEventOf(event, 'reorientation.opened')) {
+      if (payload?.joined !== true) cards.opened += 1;
+      continue;
+    }
+    if (isEventOf(event, 'reorientation.approved')) cards.approved += 1;
+    else if (isEventOf(event, 'reorientation.dismissed')) cards.dismissed += 1;
+    else if (isEventOf(event, 'reorientation.deferred')) cards.deferred += 1;
   }
   const askedAt = new Map(discoveredAt);
   for (const item of workItems) askedAt.set(item._id, item.observedAt);
@@ -894,6 +906,7 @@ function pilotTotals(
     toCompletion: durations(firstCompletion),
     answered,
     amended,
+    cards,
     estimatedItems: estimates.length,
     estimatedMinutes: estimates.reduce((total, minutes) => total + minutes, 0),
     ...retrievalTotals(documentationChars, inputTokens),
@@ -917,6 +930,7 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       p90ToCompletionMs: completion.p90LatencyMs,
     },
     reorientation: {
+      cards: { ...totals.cards },
       answered: totals.answered,
       amended: totals.amended,
       rate: totals.answered > 0 ? totals.amended / totals.answered : null,
@@ -943,6 +957,12 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     toCompletion: rows.flatMap((row) => row.toCompletion),
     answered: rows.reduce((total, row) => total + row.answered, 0),
     amended: rows.reduce((total, row) => total + row.amended, 0),
+    cards: {
+      opened: rows.reduce((total, row) => total + row.cards.opened, 0),
+      approved: rows.reduce((total, row) => total + row.cards.approved, 0),
+      dismissed: rows.reduce((total, row) => total + row.cards.dismissed, 0),
+      deferred: rows.reduce((total, row) => total + row.cards.deferred, 0),
+    },
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
     estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
     retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),

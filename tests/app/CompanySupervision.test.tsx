@@ -5,6 +5,7 @@ import {
   CompanySupervisionCard,
   decisionsCell,
   PILOT_FIGURES,
+  reorientationWords,
 } from '../../app/CompanySupervision';
 import type { AgentMetrics, OwnerMetrics, PilotFigures } from '../../src/metrics/types';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -89,7 +90,12 @@ function agentMetrics(overrides: {
         medianToCompletionMs: null,
         p90ToCompletionMs: null,
       },
-      reorientation: { answered: 0, amended: 0, rate: null },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      },
       hoursSaved: { estimatedItems: 0, hours: null },
       retrieval: { tokens: null, recall: GRADED_RECALL },
     },
@@ -304,7 +310,12 @@ describe('the company supervision card', (): void => {
                     medianToCompletionMs: 67_000,
                     p90ToCompletionMs: 300_000,
                   },
-                  reorientation: { answered: 2, amended: 1, rate: 0.5 },
+                  reorientation: {
+                    cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+                    answered: 2,
+                    amended: 1,
+                    rate: 0.5,
+                  },
                   hoursSaved: { estimatedItems: 2, hours: 1.5 },
                   retrieval: { tokens: null, recall: GRADED_RECALL },
                 },
@@ -328,7 +339,8 @@ describe('the company supervision card', (): void => {
     const priyaRow = rowOf(pilot, 'Priya');
     expect(priyaRow).toContain('1 of 4 (25%)');
     expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');
-    expect(priyaRow).toContain('1 of 2 answers');
+    // Re-pinned for 16-O: the figure counts cards first, and its answers line names what they amended.
+    expect(priyaRow).toContain('1 of 2 charter answers amended it');
     expect(priyaRow).toContain('1.5 h over 2 items');
     // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
     expect(priyaRow).toContain(
@@ -516,5 +528,34 @@ describe('the company supervision card at a narrow width', (): void => {
 
   it('sets no type below the 12 px floor', (): void => {
     expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
+  });
+});
+
+describe('the reorientation figure in words (16-O; A9)', (): void => {
+  const none = { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
+  it('says the cards and what was decided on them, then the answers, and not yet with neither', (): void => {
+    expect(reorientationWords({ cards: none, answered: 0, amended: 0, rate: null })).toBe(
+      'not yet',
+    );
+    expect(
+      reorientationWords({
+        cards: { opened: 3, approved: 1, dismissed: 1, deferred: 1 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      }),
+    ).toBe('3 cards: 1 approved, 1 dismissed, 1 deferred');
+    expect(
+      reorientationWords({
+        cards: { opened: 1, approved: 1, dismissed: 0, deferred: 0 },
+        answered: 2,
+        amended: 1,
+        rate: 0.5,
+      }),
+    ).toBe('1 card: 1 approved, 0 dismissed, 0 deferred; 1 of 2 charter answers amended it');
+    // A backend older than 0.20.0 counts no cards (mid-redeploy): its line is the answers alone.
+    expect(reorientationWords({ answered: 2, amended: 1, rate: 0.5 })).toBe(
+      '1 of 2 charter answers amended it',
+    );
   });
 });

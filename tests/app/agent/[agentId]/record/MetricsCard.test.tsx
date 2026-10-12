@@ -76,7 +76,8 @@ describe('dashboard decisions on the supervision card (P6-9)', (): void => {
     expect(markup).toMatch(/<h3[^>]*>Pilot figures<\/h3><dl/);
     expect(markup).toContain('1 of 3 (33%)');
     expect(markup).toContain('2 min / 3 min (2 done)');
-    expect(markup).toContain('1 of 1 answer');
+    // Re-pinned for 16-O: the figure's answers line names what they amended.
+    expect(markup).toContain('1 of 1 charter answer amended it');
     expect(markup).toMatch(/hours saved<span[^>]*>your estimates, internal gauge<\/span>/);
     expect(markup).toContain('1.3 h over 2 items');
     // The retrieval figure is measured since wave 14 (14-R): this backend shape carries no recall.
