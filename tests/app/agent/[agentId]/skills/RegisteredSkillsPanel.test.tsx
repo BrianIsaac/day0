@@ -241,6 +241,28 @@ describe('what Retry does to an unregistered skill', (): void => {
     expect(failed).toMatch(/<div role="status"[^>]*><p[^>]*>Authoring did not finish: /);
   });
 
+  it("says Nell's refusal in words, with the check's own words behind What the check said (W19-8)", (): void => {
+    // Nell's attempt 1 on the v0.19.0 walk (`A-Nell-skills-after.txt`).
+    const log =
+      "the authored skill is not a reusable procedure: SKILL.md uses `<closed-state>` without declaring it under `## Inputs`; declare it there as a line starting with `<closed-state>`, as in: - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).";
+    const markup = renderToStaticMarkup(
+      <RegisteredSkillsPanel
+        skills={[]}
+        unregistered={[{ ...refused, verificationLog: log } as unknown as Doc<'skills'>]}
+        authoringFailure={`kanban-comment-and-close: ${log}`}
+        onAuthoringAttempt={noop}
+        employee="Nell"
+      />,
+    );
+    expect(markup).toContain(
+      'Authoring did not finish: kanban-comment-and-close: The draft uses &lt;closed-state&gt; without listing it as one of its inputs',
+    );
+    const [outside, inside] = markup.split('<summary');
+    expect(outside).not.toContain('## Inputs');
+    expect(inside).toContain('What the check said');
+    expect(inside).toContain('## Inputs');
+  });
+
   it('offers a refused skill a fresh authoring call', (): void => {
     const markup = panel([refused]);
     expect(markup).toContain('title="Author this skill again, with the reason it stopped');
