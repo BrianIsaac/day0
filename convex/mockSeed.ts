@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { internalMutation } from './_generated/server';
-import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL } from '../src/work/office-asks';
+import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL, TEAM_ASKS } from '../src/work/office-asks';
 
 /**
  * Seed the per-agent mock work environment. Idempotent - safe to call
@@ -475,13 +475,10 @@ export const seedMockEnvironment = internalMutation({
         timestamp: Date.now(),
       });
     };
-    await seedMessage(
-      'revops-asks',
-      'thread-pipeline-coverage',
-      'Priya',
-      'requester',
-      'New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.',
-    );
+    // The revenue team's own ask, shown by the generator to a revenue role only (W19-3).
+    for (const ask of TEAM_ASKS) {
+      await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
+    }
     await seedMessage(
       'dm-manager',
       undefined,

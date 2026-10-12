@@ -3,17 +3,26 @@ import { otherRolesAskThreads } from '../../../src/work/office-asks';
 import type { Charter } from '../../../src/agent/charter';
 import { charterWords } from '../../../src/work/scope';
 import { LARK, MOSS, NELL, PIP, QUILL } from '../../fixtures/agent/office-roles-2026-10-07';
+import { LARK_W19, NELL_W19, PIP_W19 } from '../../fixtures/agent/office-roles-2026-10-11';
 
 describe("the office's company-wide asks by role (finding 2 of the v0.17.0 redeploy)", (): void => {
   it("names every other role's ask for each of the redeploy's five employees", (): void => {
     const drive = 'office-asks#thread-drive-access';
     const monitor = 'office-asks#thread-spare-monitor';
     const charge = 'office-asks#thread-double-charge';
-    expect([...otherRolesAskThreads(charterWords(NELL))]).toEqual([monitor, charge]);
-    expect([...otherRolesAskThreads(charterWords(PIP))]).toEqual([drive, monitor]);
-    expect([...otherRolesAskThreads(charterWords(QUILL))]).toEqual([drive, charge]);
+    // Re-taken for W19-3: the revenue team's pipeline coverage ask joined the pool, and only Lark's
+    // role is shown it.
+    const coverage = 'revops-asks#thread-pipeline-coverage';
+    expect([...otherRolesAskThreads(charterWords(NELL))]).toEqual([monitor, charge, coverage]);
+    expect([...otherRolesAskThreads(charterWords(PIP))]).toEqual([drive, monitor, coverage]);
+    expect([...otherRolesAskThreads(charterWords(QUILL))]).toEqual([drive, charge, coverage]);
     expect([...otherRolesAskThreads(charterWords(LARK))]).toEqual([drive, monitor, charge]);
-    expect([...otherRolesAskThreads(charterWords(MOSS))]).toEqual([drive, monitor, charge]);
+    expect([...otherRolesAskThreads(charterWords(MOSS))]).toEqual([
+      drive,
+      monitor,
+      charge,
+      coverage,
+    ]);
   });
 });
 
@@ -62,26 +71,60 @@ describe('a role a word of four letters cannot name (W14-R49)', (): void => {
   const drive = 'office-asks#thread-drive-access';
   const monitor = 'office-asks#thread-spare-monitor';
   const charge = 'office-asks#thread-double-charge';
+  // Re-taken for W19-3: the revenue team's ask joined the pool; none of these roles is its.
+  const coverage = 'revops-asks#thread-pipeline-coverage';
 
   it('shows an IT role by its name alone the drive lock-out, and never the invoice its "support" reads', (): void => {
     for (const role of ['IT support', 'IT/Systems administrator']) {
-      expect([...others(role)], role).toEqual([monitor, charge]);
+      expect([...others(role)], role).toEqual([monitor, charge, coverage]);
     }
   });
 
   it('still shows a customer-facing role the invoice and not the lock-out', (): void => {
     for (const role of ['Customer success', 'Support engineer']) {
-      expect([...others(role)], role).toEqual([drive, monitor]);
+      expect([...others(role)], role).toEqual([drive, monitor, coverage]);
     }
   });
 
   it('reads the pronoun "it" as no IT role', (): void => {
-    expect([...others('Answer each customer and close it out.')]).toEqual([drive, monitor]);
+    expect([...others('Answer each customer and close it out.')]).toEqual([
+      drive,
+      monitor,
+      coverage,
+    ]);
   });
 
   it('shows a role none of the three asks name none of them', (): void => {
     for (const role of ['Office manager', 'Operations', 'Finance analyst']) {
-      expect([...others(role)], role).toEqual([drive, monitor, charge]);
+      expect([...others(role)], role).toEqual([drive, monitor, charge, coverage]);
     }
+  });
+
+  it('shows a revenue operations role by its name alone the coverage ask', (): void => {
+    for (const role of ['RevOps analyst', 'Revenue operations lead', 'Sales operations']) {
+      expect(others(role).has(coverage), role).toBe(false);
+    }
+  });
+});
+
+describe("the revenue team's ask in #revops-asks by role (W19-3)", (): void => {
+  const coverage = 'revops-asks#thread-pipeline-coverage';
+
+  it('keeps Priya’s pipeline coverage ask from the IT helpdesk and support triage roles the walk handed it to', (): void => {
+    expect(
+      otherRolesAskThreads(charterWords(NELL_W19), NELL_W19.proposedFunction).has(coverage),
+    ).toBe(true);
+    expect(
+      otherRolesAskThreads(charterWords(PIP_W19), PIP_W19.proposedFunction).has(coverage),
+    ).toBe(true);
+  });
+
+  it('shows it to the revenue operations role, and to no finance close role', (): void => {
+    expect(
+      otherRolesAskThreads(charterWords(LARK_W19), LARK_W19.proposedFunction).has(coverage),
+    ).toBe(false);
+    expect(otherRolesAskThreads(charterWords(LARK)).has(coverage)).toBe(false);
+    expect(otherRolesAskThreads(charterWords(MOSS)).has(coverage)).toBe(true);
+    expect(otherRolesAskThreads(charterWords(QUILL)).has(coverage)).toBe(true);
   });
 });

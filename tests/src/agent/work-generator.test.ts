@@ -39,6 +39,12 @@ import {
   QUILL,
   SARA_ASK,
 } from '../../fixtures/agent/office-roles-2026-10-07';
+import {
+  LARK_W19,
+  NELL_W19,
+  PIP_W19,
+  PRIYA_ASK,
+} from '../../fixtures/agent/office-roles-2026-10-11';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -651,5 +657,44 @@ describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 
       slackChannels: [{ ...OFFICE_ASKS.slackChannels[0], recentMessages: [] }],
     } as never);
     expect(prompts.at(-1) ?? '').toContain('      (no messages)');
+  });
+});
+
+describe("the revenue team's ask a role is shown (W19-3, the v0.19.0 walk)", (): void => {
+  /** The office as the walk's employees saw it: Priya's ask in #revops-asks, Hana's in #office-asks. */
+  const WALKED = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'revops-asks',
+        displayName: '#revops-asks',
+        kind: 'channel',
+        recentMessages: [
+          { sender: 'Priya', threadKey: 'thread-pipeline-coverage', body: PRIYA_ASK },
+        ],
+      },
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+      },
+    ],
+  };
+
+  it.each([
+    ['Nell, the IT helpdesk triager', NELL_W19, false],
+    ['Pip, the support triage coordinator', PIP_W19, false],
+    ['Lark, the revenue operations coordinator', LARK_W19, true],
+  ] as const)('shows %s Priya’s ask only if it is its role’s', async (_who, charter, shown) => {
+    await generateWorkItemsFromCharter(charter, WALKED as never);
+    const prompt = prompts.at(-1) ?? '';
+    if (shown) expect(prompt).toContain(PRIYA_ASK);
+    else {
+      expect(prompt).not.toContain(PRIYA_ASK);
+      expect(prompt).toContain(
+        '  - slug "revops-asks" (channel, displayed as "#revops-asks")\n      (no ask for this role is open here)',
+      );
+    }
   });
 });

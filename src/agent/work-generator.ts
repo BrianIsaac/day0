@@ -4,7 +4,12 @@ import { log } from '../lib/logger';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
-import { NO_OPEN_ASK_FOR_ROLE, otherRolesAskThreads } from '../work/office-asks';
+import {
+  NO_OPEN_ASK_FOR_ROLE,
+  NO_TEAM_ASK_FOR_ROLE,
+  OFFICE_ASKS_CHANNEL,
+  otherRolesAskThreads,
+} from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -156,8 +161,8 @@ function shown(text: string): string {
  */
 function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
-  // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
-  // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
+  // The pooled asks of other roles are left out, as the office's seeded tickets are: they are
+  // another role's work (finding 2 of the v0.17.0 redeploy, W19-3; `src/work/office-asks.ts`).
   const otherRoles = otherRolesAskThreads(charterWords(charter), charter.proposedFunction);
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
@@ -168,9 +173,8 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
         .slice(-MESSAGES_SHOWN);
       // Every message left out was another role's ask: the channel is where asks arrive, not empty.
       if (messages.length === 0) {
-        lines.push(
-          c.recentMessages.length > 0 ? `      ${NO_OPEN_ASK_FOR_ROLE}` : '      (no messages)',
-        );
+        const none = c.slug === OFFICE_ASKS_CHANNEL ? NO_OPEN_ASK_FOR_ROLE : NO_TEAM_ASK_FOR_ROLE;
+        lines.push(c.recentMessages.length > 0 ? `      ${none}` : '      (no messages)');
       }
       for (const m of messages) {
         const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
