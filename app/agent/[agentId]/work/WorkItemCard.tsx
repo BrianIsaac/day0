@@ -171,6 +171,14 @@ function retryDone(mode: RetryMode, title: string): string {
   }
 }
 
+/** The states a row has finished in: nothing the manager decided on it is still to happen. */
+const FINISHED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'skipped',
+]);
+
 /**
  * One work item in its state, as round two section 3.7 draws it: the head (the state in the
  * manager's words, where it came from, the ask), then what the state is about (a skip citing
@@ -248,8 +256,15 @@ export function WorkItemCard({
   const change = useChange(cardRef);
   const deciding = change.busy;
   const [stopping, setStopping] = useState(false);
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
+  // The state a decision on this card was made in: what the card said of it is not said once the
+  // row it decided has finished, where "it applies now" would no longer be true (W19-8).
+  const [decidedIn, setDecidedIn] = useState<Doc<'workItems'>['state'] | undefined>(undefined);
+  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
+    setDecidedIn(item.state);
     change.run(call, { done, refused });
+  };
+  const outcomeOutlived =
+    decidedIn !== undefined && decidedIn !== item.state && FINISHED_STATES.has(item.state);
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -733,7 +748,7 @@ export function WorkItemCard({
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">
-        <StatusRegion outcome={change.outcome} />
+        <StatusRegion outcome={outcomeOutlived ? null : change.outcome} />
       </div>
     </article>
   );
