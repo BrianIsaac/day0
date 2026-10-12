@@ -21,9 +21,9 @@ import { judgeProposal } from '../src/agent/reorientation-judgement';
 export const propose = internalAction({
   args: { reorientationId: v.id('reorientations') },
   handler: async (ctx, args): Promise<void> => {
-    const input = await ctx.runQuery(internal.reorientation.proposalInput, args);
-    if (input === null) return;
-    const judged = await judgeProposal(input);
+    const read = await ctx.runQuery(internal.reorientation.proposalInput, args);
+    if (read === null) return;
+    const judged = await judgeProposal(read.input);
     if (judged.outcome === 'unavailable') {
       log.warn('reorientation: the proposal judgement failed', {
         reorientationId: args.reorientationId,
@@ -32,12 +32,14 @@ export const propose = internalAction({
       await ctx.runMutation(internal.reorientation.recordProposalFailure, {
         reorientationId: args.reorientationId,
         failure: judged.reason,
+        basis: read.basis,
       });
       return;
     }
     await ctx.runMutation(internal.reorientation.writeProposal, {
       reorientationId: args.reorientationId,
       proposed: judged.proposed,
+      basis: read.basis,
     });
   },
 });

@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
 import {
+  basisOf,
   cardOf,
   cardsOf,
   eventTypesOf,
@@ -48,6 +49,7 @@ async function proposedCard(
   await harness.mutation(internal.reorientation.writeProposal, {
     reorientationId: cardId,
     proposed,
+    basis: await basisOf(harness, cardId),
   });
   return cardId;
 }

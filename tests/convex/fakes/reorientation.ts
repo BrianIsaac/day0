@@ -1,7 +1,7 @@
 import type { TestConvex } from 'convex-test';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type schema from '../../../convex/schema';
-import { openCard, type CardTrigger } from '../../../convex/reorientation';
+import { openCard, proposalBasis, type CardTrigger } from '../../../convex/reorientation';
 import { MANAGER_ADDRESS, OWNER_SUBJECT } from './manager-identity';
 
 /*
@@ -103,6 +103,14 @@ export async function openTestCard(
   trigger: CardTrigger,
 ): Promise<Id<'reorientations'> | null> {
   return await harness.run(async (ctx) => await openCard(ctx, trigger));
+}
+
+/** What the judgement read of a card, as its write carries it (`proposalBasis`). */
+export async function basisOf(
+  harness: Harness,
+  reorientationId: Id<'reorientations'>,
+): Promise<string> {
+  return proposalBasis(await cardOf(harness, reorientationId));
 }
 
 /** One card as stored. */

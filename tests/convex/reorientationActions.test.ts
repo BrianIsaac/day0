@@ -17,6 +17,8 @@ const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mas
 const model = vi.hoisted(() => ({
   reply: undefined as unknown,
   asked: [] as string[],
+  /** Something that happens while the model is answering, once. */
+  meanwhile: undefined as (() => Promise<void>) | undefined,
 }));
 
 // The model call is the seam: the judgement's own prompt and reading run as written.
@@ -24,6 +26,9 @@ vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string) => ({ name }),
   agentJson: schemaChecked(async (call: ScriptedCall): Promise<unknown> => {
     model.asked.push(call.user);
+    const meanwhile = model.meanwhile;
+    model.meanwhile = undefined;
+    await meanwhile?.();
     if (model.reply instanceof Error) throw model.reply;
     return model.reply;
   }),
@@ -33,6 +38,7 @@ beforeEach((): void => {
   vi.useFakeTimers();
   model.reply = undefined;
   model.asked = [];
+  model.meanwhile = undefined;
 });
 afterEach((): void => {
   vi.useRealTimers();
@@ -61,6 +67,55 @@ async function judgedCard(harness: Harness) {
 }
 
 describe('propose: the card’s scheduled judgement (O-2)', (): void => {
+  it('writes no proposal from what a join changed meanwhile, and the join’s own judgement proposes (second pass M6)', async (): Promise<void> => {
+    model.reply = {
+      change: 'none',
+      candidate: null,
+      action: null,
+      text: null,
+      rationale: 'Nothing.',
+    };
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    model.meanwhile = async (): Promise<void> => {
+      await openTestCard(harness, {
+        agentId,
+        trigger: 'relationship-changed',
+        triggerKey: 'event-2',
+        summary: 'Dana now handles renewals escalations',
+        affected: {
+          charterClauses: [
+            { field: 'willDo', index: 0, text: 'Answer renewal asks from the account team' },
+          ],
+        },
+      });
+    };
+    const cardId = (await openTestCard(harness, {
+      agentId,
+      trigger: 'relationship-changed',
+      triggerKey: 'event-1',
+      summary: 'Priya now approves tier-2 answers about committee-deck numbers',
+      affected: {
+        charterClauses: [
+          {
+            field: 'escalationTriggers',
+            index: 0,
+            text: 'Surface tier-2 answer drafts to the manager for review',
+          },
+        ],
+      },
+    }))!;
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // The first answer read the card before the join; the second read it with the join.
+    expect(model.asked).toHaveLength(2);
+    expect(model.asked[0]).not.toContain('Answer renewal asks from the account team');
+    expect(model.asked[1]).toContain('Answer renewal asks from the account team');
+    expect((await cardOf(harness, cardId)).proposed.kind).toBe('none');
+    expect(
+      (await eventTypesOf(harness, agentId)).filter((type) => type === 'reorientation.proposed'),
+    ).toHaveLength(1);
+  });
+
   it('writes the proposal the model gives onto the card, never applying it', async (): Promise<void> => {
     model.reply = {
       change: 'edit-clause',

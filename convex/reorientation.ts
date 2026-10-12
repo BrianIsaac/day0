@@ -1121,7 +1121,7 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
  */
 export const proposalInput = internalQuery({
   args: { reorientationId: v.id('reorientations') },
-  handler: async (ctx, args): Promise<ProposalInput | null> => {
+  handler: async (ctx, args): Promise<{ input: ProposalInput; basis: string } | null> => {
     const card = await ctx.db.get(args.reorientationId);
     if (card === null || card.proposed.kind !== 'pending') return null;
     if (!(STANDING_STATUSES as readonly string[]).includes(card.status)) return null;
@@ -1129,28 +1129,46 @@ export const proposalInput = internalQuery({
     if (agent === null) return null;
     const charter = await approvedCharter(ctx, card.agentId);
     return {
-      employeeName: agent.name,
-      roleFunction:
-        charter !== undefined ? (charter.body as Charter).proposedFunction : 'not yet chartered',
-      trigger: card.trigger,
-      summary: card.triggerSummary,
-      evidence: await evidenceLines(ctx, card),
-      candidates: await candidatesOf(ctx, card, charter),
+      input: {
+        employeeName: agent.name,
+        roleFunction:
+          charter !== undefined ? (charter.body as Charter).proposedFunction : 'not yet chartered',
+        trigger: card.trigger,
+        summary: card.triggerSummary,
+        evidence: await evidenceLines(ctx, card),
+        candidates: await candidatesOf(ctx, card, charter),
+      },
+      basis: proposalBasis(card),
     };
   },
 });
 
 /**
+ * What of a card a join changes, as one string: the judgement's proposal is written only onto the
+ * card it read (the second pass's M6). A join while the model answers schedules its own judgement,
+ * which reads the joined card; the earlier answer is then set aside, not written.
+ */
+export function proposalBasis(card: Doc<'reorientations'>): string {
+  return JSON.stringify([card.evidence, card.affected, card.risk]);
+}
+
+/**
  * Write the judgement's proposal onto its card, which never applies it. Internal; called by
- * `reorientationActions.propose`. A card decided meanwhile, or one whose proposal a Discuss
- * conversation already wrote, keeps what it has. Writes `reorientation.proposed`.
+ * `reorientationActions.propose`. A card decided meanwhile, one a join changed since the judgement
+ * read it (its own judgement proposes), or one whose proposal a Discuss conversation already wrote,
+ * keeps what it has. Writes `reorientation.proposed`.
  */
 export const writeProposal = internalMutation({
-  args: { reorientationId: v.id('reorientations'), proposed: reorientationTalkProposalValidator },
+  args: {
+    reorientationId: v.id('reorientations'),
+    proposed: reorientationTalkProposalValidator,
+    basis: v.string(),
+  },
   handler: async (ctx, args): Promise<{ written: boolean }> => {
     const card = await ctx.db.get(args.reorientationId);
     if (card === null || card.proposed.kind !== 'pending') return { written: false };
     if (!(STANDING_STATUSES as readonly string[]).includes(card.status)) return { written: false };
+    if (proposalBasis(card) !== args.basis) return { written: false };
     await ctx.db.patch(card._id, { proposed: args.proposed });
     await appendEvent(ctx, {
       agentId: card.agentId,
@@ -1169,13 +1187,15 @@ export const writeProposal = internalMutation({
 
 /**
  * Record that the judgement could not propose (K-10): the card stays open with nothing proposed,
- * and says when and why. Internal; called by `reorientationActions.propose`.
+ * and says when and why. Internal; called by `reorientationActions.propose`. A failure about a card
+ * a join changed since is not recorded: the join's own judgement answers for it.
  */
 export const recordProposalFailure = internalMutation({
-  args: { reorientationId: v.id('reorientations'), failure: v.string() },
+  args: { reorientationId: v.id('reorientations'), failure: v.string(), basis: v.string() },
   handler: async (ctx, args): Promise<void> => {
     const card = await ctx.db.get(args.reorientationId);
     if (card === null || card.proposed.kind !== 'pending') return;
+    if (proposalBasis(card) !== args.basis) return;
     await ctx.db.patch(card._id, {
       proposed: { kind: 'pending', failedAt: Date.now(), failure: args.failure },
     });

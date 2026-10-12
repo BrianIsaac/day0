@@ -11,6 +11,7 @@ import {
 } from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
 import {
+  basisOf,
   cardOf,
   cardsOf,
   eventTypesOf,
@@ -355,12 +356,17 @@ describe('the judgement’s write-back', (): void => {
     }))!;
     const proposed = { kind: 'none' as const, rationale: 'The page changed only its title.' };
     await expect(
-      harness.mutation(internal.reorientation.writeProposal, { reorientationId: cardId, proposed }),
+      harness.mutation(internal.reorientation.writeProposal, {
+        reorientationId: cardId,
+        proposed,
+        basis: await basisOf(harness, cardId),
+      }),
     ).resolves.toEqual({ written: true });
     await expect(
       harness.mutation(internal.reorientation.writeProposal, {
         reorientationId: cardId,
         proposed: { kind: 'none', rationale: 'Again.' },
+        basis: await basisOf(harness, cardId),
       }),
     ).resolves.toEqual({ written: false });
     expect((await cardOf(harness, cardId)).proposed).toEqual(proposed);
@@ -375,9 +381,14 @@ describe('the judgement’s write-back', (): void => {
       triggerKey: 'event-2',
       summary: 'Linear access ended',
     }))!;
+    const basis = await basisOf(harness, other);
     await harness.run(async (ctx) => await ctx.db.patch(other, { status: 'dismissed' }));
     await expect(
-      harness.mutation(internal.reorientation.writeProposal, { reorientationId: other, proposed }),
+      harness.mutation(internal.reorientation.writeProposal, {
+        reorientationId: other,
+        proposed,
+        basis,
+      }),
     ).resolves.toEqual({ written: false });
   });
 
@@ -393,6 +404,7 @@ describe('the judgement’s write-back', (): void => {
     await harness.mutation(internal.reorientation.recordProposalFailure, {
       reorientationId: cardId,
       failure: 'the model did not answer',
+      basis: await basisOf(harness, cardId),
     });
     const card = await cardOf(harness, cardId);
     expect(card.status).toBe('open');
