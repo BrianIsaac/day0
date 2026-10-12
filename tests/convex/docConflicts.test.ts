@@ -8,6 +8,7 @@ import type { SelectionRequest } from '../../src/docs/select';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { fieldsOf } from './fakes/reorientation';
 import {
   asManager,
   eventsOf,
@@ -435,7 +436,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         createdAt: 1,
       });
     });
-    const { conflict: _drafted, ...cite } = untagged;
+    const cite = Object.fromEntries(Object.entries(untagged).filter(([key]) => key !== 'conflict'));
     const workItemId = await planned(harness, agentId, { cites: [{ step: 1, ...cite }] });
     await harness.mutation(internal.work.decidePlan, { workItemId });
     expect(await questionsOf(harness, workItemId)).toEqual([
@@ -573,6 +574,13 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         answer: expect.objectContaining({ text: 'Pipeline runbook is right', via: 'slack' }),
       }),
     ]);
+    // The acknowledgement says what Retry does with the steps that waited (the second pass's m7).
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notice.text).toBe(
+      'Recorded: Pipeline runbook is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
+    );
     // A second answer finds nothing waiting, and says so.
     await expect(
       harness.mutation(internal.work.resolveChannelDecision, {
@@ -592,8 +600,11 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     const [first] = await questionsOf(harness, workItemId);
     const other = await harness.run(async (ctx) => {
       const row = await ctx.db.get(workItemId);
-      const { _id: _row, _creationTime: _time, decision: _decision, ...fields } = row!;
-      const otherItem = await ctx.db.insert('workItems', { ...fields, externalId: 'REVOPS-13' });
+      const otherItem = await ctx.db.insert('workItems', {
+        ...fieldsOf(row!),
+        decision: undefined,
+        externalId: 'REVOPS-13',
+      });
       return await ctx.db.insert('managerQuestions', {
         agentId: first.agentId,
         key: first.key,
@@ -663,6 +674,44 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
       }),
     ).resolves.toMatchObject({ status: 'replaced', replacedBy: 'cd4xyz' });
+  });
+
+  it('answers the first question whose conflict still stands, passing over one that no longer does (the second pass’s m3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const [stale] = await questionsOf(harness, workItemId);
+    // A second conflict on the same pages stands; the first question's relation no longer does.
+    const live = await harness.run(async (ctx) => {
+      const relation = await ctx.db.get(relationId);
+      const liveRelation = await ctx.db.insert('docRelations', fieldsOf(relation!));
+      await ctx.db.patch(relationId, { status: 'proposed' });
+      return await ctx.db.insert('managerQuestions', {
+        agentId: stale.agentId,
+        key: `conflict:${liveRelation}`,
+        question: stale.question,
+        context: stale.context,
+        askedAt: stale.askedAt + 1,
+        workItemId,
+        charterId: stale.charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId: liveRelation,
+      });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(live)))?.answer).toMatchObject({
+      text: 'Pipeline runbook is right',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(stale._id)))?.answer).toBeUndefined();
   });
 
   it('answers a reply once, so a poll that delivers it again answers no second question (the second pass’s minor)', async (): Promise<void> => {

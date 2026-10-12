@@ -353,6 +353,24 @@ export async function openConflictQuestions(
   );
 }
 
+/**
+ * The questions one item's plan raised that nobody has answered and whose conflict still stands,
+ * oldest first: what a typed answer answers and what the plan's request asks (the second pass's
+ * m3 and m4). A question whose conflict no longer stands (a page archived or gone since, the
+ * relation no longer confirmed) holds nothing and is asked no more.
+ */
+export async function standingConflictQuestions(
+  ctx: QueryCtx,
+  workItemId: Id<'workItems'>,
+): Promise<Doc<'managerQuestions'>[]> {
+  const standing: Doc<'managerQuestions'>[] = [];
+  for (const question of await openConflictQuestions(ctx, workItemId)) {
+    const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
+    if ((await standingConflictOf(ctx, relation)) !== undefined) standing.push(question);
+  }
+  return standing;
+}
+
 /** The agent's questions the poll's check reads back, newest first (standard 10.4). */
 const QUESTIONS_OWED_READ = 100;
 
@@ -396,7 +414,7 @@ export async function conflictAnswerOwedOn(
 export const conflictQuestionsForRequest = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<string[]> =>
-    (await openConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
+    (await standingConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
 });
 
 /**

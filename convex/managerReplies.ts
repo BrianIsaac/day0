@@ -14,7 +14,7 @@ import { appendEvent } from './eventLog';
 import { providerTsToMs } from '../src/work/provider-ts';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 import { requestThreadOf } from './decisionRequests';
-import { answerConflictInTransaction, openConflictQuestions } from './managerQuestions';
+import { answerConflictInTransaction, standingConflictQuestions } from './managerQuestions';
 import { CONFLICT_CHOICES, type ConflictChoice } from '../src/agent/reorientation-words';
 import {
   approveActionsInTransaction,
@@ -328,7 +328,7 @@ async function answerFromChannel(
     )
     .unique();
   if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
-  const [question] = await openConflictQuestions(ctx, row._id);
+  const [question] = await standingConflictQuestions(ctx, row._id);
   const notice = async (text: string) =>
     await queueManagerReplyNotice(ctx, {
       surfaceId: surface._id,
@@ -351,7 +351,8 @@ async function answerFromChannel(
     decidedBy: agent?.bossEmail,
   });
   const notified = await notice(
-    `Recorded: ${text}. The steps that relied on it are drafted again on Retry.`,
+    // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
+    `Recorded: ${text}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
   );
   return { status: 'answered' as const, notified };
 }

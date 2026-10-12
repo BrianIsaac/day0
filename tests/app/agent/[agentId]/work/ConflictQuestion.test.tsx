@@ -59,11 +59,11 @@ describe('the conflict question on a plan’s card', (): void => {
     view.unmount();
   });
 
-  it('offers no answer once the conflict was settled elsewhere, and says where', async (): Promise<void> => {
+  it('offers no answer once the conflict no longer stands, and says nothing waits on it (the second pass’s m4)', async (): Promise<void> => {
     const view = mount(<ConflictQuestion question={{ ...QUESTION, pages: null }} />);
     expect(view.container.querySelectorAll('button')).toHaveLength(0);
     expect(view.container.textContent).toContain(
-      'The two pages no longer disagree: the conflict was settled on the Documentation tab.',
+      'The two pages no longer disagree as they did, so nothing waits on this question.',
     );
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     view.unmount();

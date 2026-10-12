@@ -865,6 +865,20 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
   const question =
     'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.';
 
+  it('asks at most three questions in the request and counts the rest (the second pass’s m14)', (): void => {
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [1, 2, 3, 4, 5].map((n) => `${question} (${n})`),
+    });
+    expect(text).toContain(`${question} (3)`);
+    expect(text).not.toContain(`${question} (4)`);
+    expect(text).toContain('And 2 more on the plan’s card in day0.');
+  });
+
   it('carries the question and its answer line before the reply line, and only on a plan', (): void => {
     expect(
       decisionRequestText({

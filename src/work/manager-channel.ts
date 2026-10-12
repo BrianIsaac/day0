@@ -576,12 +576,21 @@ export function decisionRequestText(args: {
  */
 function questionLines(questions: readonly string[], id: string, typedCode: boolean): string[] {
   if (questions.length === 0) return [];
+  const asked = questions.slice(0, REQUEST_QUESTIONS_SHOWN);
+  const more = questions.length - asked.length;
   return [
     '',
-    ...questions.map((question) => slackEscaped(question)),
+    ...asked.map((question) => slackEscaped(question)),
+    ...(more > 0 ? [`And ${more} more on the plan’s card in day0.`] : []),
     typedCode ? conflictReplyLine(id) : 'Answer it on the plan’s card in day0.',
   ];
 }
+
+/**
+ * The most conflict questions one request asks (the second pass's m14): the rest are counted and
+ * answered on the plan's card, so many long questions never push a request past the message limit.
+ */
+const REQUEST_QUESTIONS_SHOWN = 3;
 
 /**
  * A request's last line: how it is decided. The typed code only where the employee's app takes
