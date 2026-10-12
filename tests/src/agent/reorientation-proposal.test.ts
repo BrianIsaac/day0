@@ -10,6 +10,7 @@ import {
   type ProposalCandidate,
   type ProposalReply,
 } from '../../../src/agent/reorientation-proposal';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import { scopeCovers } from '../../../src/people/resolution';
 import { RELATIONSHIP_SCOPE_LIMIT } from '../../../src/people/words';
 
@@ -343,6 +344,12 @@ describe('countedEventLine: what a counted card rests on, as the judgement reads
 });
 
 describe('the proposal judgement’s system prompt', (): void => {
+  it('holds the rationale and the words it writes to the house copy rules, as the talk is (W16-R20, W5b)', (): void => {
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(PLAIN_PUNCTUATION_IN_EVERY_FIELD);
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain('Spell in British English.');
+    expect(REORIENTATION_PROPOSAL_SYSTEM).not.toContain('—');
+  });
+
   it('asks for a relationship’s new scope as a phrase, never a sentence (W16-R3, D-3 (a))', (): void => {
     expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(
       '- `relationship`: `action` is edit or retire; `text` is the new scope for edit: a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence.',

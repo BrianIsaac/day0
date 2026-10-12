@@ -16,6 +16,7 @@ import { isScopePhrase } from '../people/words';
 import { redactTokenShapes } from '../surfaces/redact';
 import { PLAN_CANCELLED_REASON } from '../work/stop';
 import { awaitingCheck } from '../work/agreement-words';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import {
   PAGE_STATUS_PROPOSALS,
   RELATIONSHIP_PROPOSAL_ACTIONS,
@@ -230,6 +231,7 @@ export const REORIENTATION_PROPOSAL_SYSTEM = [
   '',
   'Prefer the smallest change the evidence supports. Prefer `none` to a change the evidence does not ask for.',
   '`rationale`: one or two plain sentences for the manager, naming what changed and why your proposal follows from it. No field names, ids or internal labels.',
+  PLAIN_PUNCTUATION_IN_EVERY_FIELD,
 ].join('\n');
 
 /** The actions a candidate's line offers, in the words the prompt uses. */
