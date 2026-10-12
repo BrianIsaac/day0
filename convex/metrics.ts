@@ -11,6 +11,7 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceRecord } from '../src/surfaces/types';
 import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
+import { finishedAnswerOf } from '../src/work/work-done';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
@@ -742,7 +743,10 @@ interface PilotTotals {
   /** Of the reused runs, those of a skill adopted from another employee (A14). */
   adopted: number;
   toEnd: number[];
+  /** From the ask to the first completion, of the items whose run answered done. */
   toCompletion: number[];
+  /** The items whose first completion answered partly done (RM23 (a)). */
+  partlyDone: number;
   answered: number;
   amended: number;
   estimatedItems: number;
@@ -811,6 +815,9 @@ function pilotTotals(
   let adopted = 0;
   const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
+  // Every item's first completion, whatever its run answered: a later one is not the first.
+  const completedOnce = new Set<string>();
+  let partlyDone = 0;
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
@@ -864,8 +871,13 @@ function pilotTotals(
     }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
       if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
-      if (isEventOf(event, 'work.completed') && !firstCompletion.has(workItemId)) {
-        firstCompletion.set(workItemId, event.createdAt);
+      if (isEventOf(event, 'work.completed') && !completedOnce.has(workItemId)) {
+        completedOnce.add(workItemId);
+        // One reading, the run's answer held to its ledger (RM23 (a)): only a done answer is a
+        // completion the cycle time measures; a partly done one is named beside it.
+        const answer = finishedAnswerOf(event.payload.output);
+        if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
+        else if (answer === 'partial') partlyDone += 1;
       }
       continue;
     }
@@ -892,6 +904,7 @@ function pilotTotals(
     adopted,
     toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
+    partlyDone,
     answered,
     amended,
     estimatedItems: estimates.length,
@@ -913,6 +926,7 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       ended: totals.toEnd.length,
       medianToEndMs: latencySummary(totals.toEnd).medianLatencyMs,
       completed: totals.toCompletion.length,
+      partlyDone: totals.partlyDone,
       medianToCompletionMs: completion.medianLatencyMs,
       p90ToCompletionMs: completion.p90LatencyMs,
     },
@@ -941,6 +955,7 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     adopted: rows.reduce((total, row) => total + row.adopted, 0),
     toEnd: rows.flatMap((row) => row.toEnd),
     toCompletion: rows.flatMap((row) => row.toCompletion),
+    partlyDone: rows.reduce((total, row) => total + row.partlyDone, 0),
     answered: rows.reduce((total, row) => total + row.answered, 0),
     amended: rows.reduce((total, row) => total + row.amended, 0),
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),

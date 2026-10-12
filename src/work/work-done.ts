@@ -189,6 +189,34 @@ export function workDoneFromLedger(output: unknown): boolean {
   );
 }
 
+/**
+ * How a finished run ended, the one reading every count of finished work takes (RM23 (a)): the
+ * Work tab's Done filter, the home's "Landed this month", the cycle time's "(N done)" and the
+ * recompute all read it here, as the card, the chip and the record do. The run's answer held to
+ * its ledger ({@link doneAgainstLedger}), stored so by the completing write from v0.19.0 and read
+ * so here for a row completed before; output recorded before the answer (v0.16.0) reads as not
+ * done when its own words say so, and as done otherwise, as the card reads it.
+ *
+ * @param output - A finished run's output, as the row or its `work.completed` event stores it.
+ */
+export function finishedAnswerOf(output: unknown): WorkDoneAnswer {
+  const listed = (actions: unknown): readonly MockAction[] =>
+    Array.isArray(actions) ? (actions as MockAction[]) : [];
+  const fact = workDoneFactOf(output);
+  if (fact !== undefined) return doneAgainstLedger(output)?.workDone ?? fact.workDone;
+  if (typeof output !== 'object' || output === null) return 'done';
+  const run = output as {
+    readonly draft?: unknown;
+    readonly actions?: readonly MockAction[];
+    readonly initial?: { readonly actions?: readonly MockAction[] };
+  };
+  const words = runOwnWords({
+    draft: run.draft,
+    actions: [...listed(run.initial?.actions), ...listed(run.actions)],
+  });
+  return notDoneStatements(words).length > 0 ? 'not-done' : 'done';
+}
+
 /** One action that lands a closing state on a ticket, by its index in the set. */
 export interface ClosingChange {
   readonly index: number;

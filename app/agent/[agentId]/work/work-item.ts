@@ -31,6 +31,7 @@ import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue
 import { notDoneStatements, runOwnWords } from '@/work/not-done';
 import {
   doneAgainstLedger,
+  finishedAnswerOf,
   landedClosings,
   workDoneFactOf,
   workDoneFromLedger,
@@ -658,17 +659,16 @@ export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event
- * carries exactly as the card reads it ({@link notDoneOnCard}): "partly done" or "not done" when
- * the run said so, "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
+ * carries exactly as the card reads it ({@link notDoneOnCard}), through the one reading every
+ * count takes (`finishedAnswerOf`, RM23 (a)): "partly done" or "not done" when the run said so,
+ * "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
  * cards said "Partly done", the word the release reserves for the run's answer.
  *
  * @param output - The run's output as the event stores it.
  */
 export function finishedAs(output: unknown): FinishedAs {
-  const run = typeof output === 'object' && output !== null ? (output as RunOutput) : undefined;
-  const notDone = notDoneOnCard(run);
-  if (notDone === undefined) return 'done';
-  return notDone.answer === 'partial' ? 'partly done' : 'not done';
+  const answer = finishedAnswerOf(output);
+  return answer === 'done' ? 'done' : answer === 'partial' ? 'partly done' : 'not done';
 }
 
 /** What a finished run's card says was not done: the answer, whose it is, and the words it is said in. */

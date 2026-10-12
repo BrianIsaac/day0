@@ -70,12 +70,17 @@ export interface PilotFigures {
   skillReuse: { runs: number; reused: number; adopted: number; rate: number | null };
   /**
    * From the ask (`observedAt`: the provider's own time when intake had one)
-   * to the item's first terminal event, and to its first completion.
+   * to the item's first terminal event, and to its first completion where its run answered that
+   * the work was done; the items whose first completion answered partly done are counted beside
+   * (RM23 (a)), and every completion is among the ended.
    */
   cycleTime: {
     ended: number;
     medianToEndMs: number | null;
+    /** The items whose first completion answered done. */
     completed: number;
+    /** The items whose first completion answered partly done. */
+    partlyDone: number;
     medianToCompletionMs: number | null;
     p90ToCompletionMs: number | null;
   };

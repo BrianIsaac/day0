@@ -158,13 +158,22 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     label: 'Cycle time',
     unit: 'ask to done, median / p90',
     definition:
-      'From the ask (the provider’s own time when intake had one) to the item’s first completion, over the items completed.',
-    value: ({ cycleTime }) =>
-      cycleTime.completed === 0
-        ? cycleTime.ended === 0
-          ? 'not yet'
-          : `none done; ${count(cycleTime.ended, 'item')} ended after ${formatMetricDuration(cycleTime.medianToEndMs)}`
-        : `${formatMetricDuration(cycleTime.medianToCompletionMs)} / ${formatMetricDuration(cycleTime.p90ToCompletionMs)} (${cycleTime.completed} done)`,
+      'From the ask (the provider’s own time when intake had one) to the item’s first completion, over the items whose run answered that the work was done. Items finished partly done are counted beside it.',
+    // One reading, the run's answer (RM23 (a)): partly done work is named beside the done, never
+    // counted in it. A figure pushed before the field has no partly done to name.
+    value: ({ cycleTime }) => {
+      const partly = cycleTime.partlyDone ?? 0;
+      if (cycleTime.completed === 0) {
+        if (cycleTime.ended === 0) return 'not yet';
+        const ended = `none done; ${count(cycleTime.ended, 'item')} ended after ${formatMetricDuration(cycleTime.medianToEndMs)}`;
+        return partly > 0 ? `${ended} (${partly} partly done)` : ended;
+      }
+      const done =
+        partly > 0
+          ? `${cycleTime.completed} done, ${partly} partly done`
+          : `${cycleTime.completed} done`;
+      return `${formatMetricDuration(cycleTime.medianToCompletionMs)} / ${formatMetricDuration(cycleTime.p90ToCompletionMs)} (${done})`;
+    },
   },
   {
     label: 'Reorientation',

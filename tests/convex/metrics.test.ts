@@ -14,6 +14,10 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
+import {
+  WALK_EMPLOYEES,
+  type WalkEmployee,
+} from '../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 
 const OWNER = managerIdentity();
 
@@ -277,6 +281,7 @@ describe('agent evaluation metrics', (): void => {
           ended: 3,
           medianToEndMs: 619_999,
           completed: 1,
+          partlyDone: 0,
           medianToCompletionMs: 649_999,
           p90ToCompletionMs: 649_999,
         },
@@ -880,6 +885,7 @@ describe('supervision figures for a company of employees', (): void => {
           ended: 1,
           medianToEndMs: 122_999,
           completed: 0,
+          partlyDone: 0,
           medianToCompletionMs: null,
           p90ToCompletionMs: null,
         },
@@ -2401,6 +2407,7 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
         ended: 3,
         medianToEndMs: 6_000,
         completed: 2,
+        partlyDone: 0,
         medianToCompletionMs: 90_000,
         p90ToCompletionMs: 120_000,
       },
@@ -2434,8 +2441,78 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       ended: 1,
       medianToEndMs: 10_000,
       completed: 1,
+      partlyDone: 0,
       medianToCompletionMs: 10_000,
       p90ToCompletionMs: 10_000,
     });
+  });
+});
+
+describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
+  let created = 0;
+  /** One employee of the v0.19.0 walk as its records: each finished card's completion carries its output. */
+  const recordsOf = (employee: WalkEmployee, agentId: string) => {
+    const events: Doc<'events'>[] = [];
+    const workItems: Doc<'workItems'>[] = [];
+    employee.cards.forEach((card, index) => {
+      const workItemId = `${agentId}-item-${index}`;
+      workItems.push({
+        _id: workItemId,
+        _creationTime: 1,
+        agentId,
+        state: card.state,
+        observedAt: 1_000,
+        createdAt: 1_000,
+        ...(card.output === undefined ? {} : { output: card.output }),
+      } as unknown as Doc<'workItems'>);
+      events.push({
+        _id: `event-${(created += 1)}`,
+        _creationTime: created,
+        agentId,
+        type: card.state === 'completed' ? 'work.completed' : 'work.skipped',
+        payload: card.output === undefined ? { workItemId } : { workItemId, output: card.output },
+        createdAt: 1_000 + 60_000 * (index + 1),
+      } as unknown as Doc<'events'>);
+    });
+    return {
+      agent: { _id: agentId as Id<'agents'>, name: employee.name, createdAt: 0 },
+      events,
+      workItems,
+      charters: [],
+    };
+  };
+
+  it('reads the walk’s nine finished cards as four done and five partly, where it printed nine done', (): void => {
+    const figures = computeCompanyMetrics(
+      WALK_EMPLOYEES.map((employee) => recordsOf(employee, employee.name.toLowerCase())),
+      { excludedAgents: 0, omittedEmployees: 0 },
+    );
+    expect(
+      figures.employees.map(({ name, metrics }) => [
+        name,
+        metrics.pilot.cycleTime.completed,
+        metrics.pilot.cycleTime.partlyDone,
+        metrics.pilot.cycleTime.ended,
+      ]),
+    ).toEqual([
+      ['Lark', 1, 2, 4],
+      ['Nell', 2, 1, 4],
+      ['Pip', 1, 2, 4],
+    ]);
+    expect(figures.company.pilot.cycleTime).toMatchObject({
+      completed: 4,
+      partlyDone: 5,
+      ended: 12,
+    });
+  });
+
+  it('takes the median to completion over the done answers alone', (): void => {
+    const lark = computeAgentMetrics(
+      recordsOf(WALK_EMPLOYEES[0]!, 'lark').events,
+      recordsOf(WALK_EMPLOYEES[0]!, 'lark').workItems,
+      [],
+    );
+    // Lark's one done card is its third, completed three minutes after its ask.
+    expect(lark.pilot.cycleTime.medianToCompletionMs).toBe(180_000);
   });
 });

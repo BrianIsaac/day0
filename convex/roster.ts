@@ -31,6 +31,8 @@ import {
   stoppedRowNeedsManager,
 } from '../src/work/needs-manager';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
+import { finishedAnswerOf } from '../src/work/work-done';
+import type { WorkDoneAnswer } from '../src/work/types';
 
 /*
  * The landing page's roster: one row per employee of an owner, read for `agents.rosterForUser`,
@@ -88,8 +90,12 @@ const MONTH_LANDED_READ_LIMIT = 100;
 const landedThisMonthValidator = v.object({
   /** The month, `YYYY-MM`, in the employee's zone. */
   month: v.string(),
-  /** Each day of the month an item first landed on, `YYYY-MM-DD`, with how many, oldest first. */
-  days: v.array(v.object({ day: v.string(), landed: v.number() })),
+  /**
+   * Each day of the month an item first finished on, `YYYY-MM-DD`, oldest first: how many landed,
+   * their runs answering done, and how many finished partly done, named beside them (RM23 (a)),
+   * absent on a day with none.
+   */
+  days: v.array(v.object({ day: v.string(), landed: v.number(), partly: v.optional(v.number()) })),
   /** True when the read reached its bound, so the month holds at least this many. */
   atLeast: v.boolean(),
 });
@@ -99,9 +105,12 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
 
 /**
  * The items an employee completed this month in its own zone (N12), each
- * counted once, on the day it first completed within the month. Reads the
- * month's `work.completed` events by the type index, from the month's first
- * midnight on, and dates each by the instant it was logged.
+ * counted once, on the day it first completed within the month: landed when
+ * that completion's run answered done, partly done when it answered so, and
+ * neither when it answered not done (RM23 (a); `finishedAnswerOf`, the one
+ * reading the card, the Work tab and the cycle time take). Reads the month's
+ * `work.completed` events by the type index, from the month's first midnight
+ * on, and dates each by the instant it was logged.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -120,23 +129,35 @@ async function landedThisMonth(
   const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
     .order('desc')
     .take(MONTH_LANDED_READ_LIMIT + 1);
-  const firstLanded = new Map<string, number>();
+  const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
   for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
     if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
     const workItemId: unknown = event.payload.workItemId;
     // Read newest first, so the last completion kept per item is its first in the month.
-    if (typeof workItemId === 'string') firstLanded.set(workItemId, event.createdAt);
+    if (typeof workItemId === 'string') {
+      firstFinished.set(workItemId, {
+        at: event.createdAt,
+        answer: finishedAnswerOf(event.payload.output),
+      });
+    }
   }
-  const byDay = new Map<string, number>();
-  for (const at of firstLanded.values()) {
+  const byDay = new Map<string, { landed: number; partly: number }>();
+  for (const { at, answer } of firstFinished.values()) {
+    if (answer === 'not-done') continue;
     const day = dayKey(at, zone);
-    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    const counted = byDay.get(day) ?? { landed: 0, partly: 0 };
+    byDay.set(
+      day,
+      answer === 'done'
+        ? { ...counted, landed: counted.landed + 1 }
+        : { ...counted, partly: counted.partly + 1 },
+    );
   }
   return {
     month,
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([day, landed]) => ({ day, landed })),
+      .map(([day, { landed, partly }]) => ({ day, landed, ...(partly > 0 ? { partly } : {}) })),
     atLeast: read.length > MONTH_LANDED_READ_LIMIT,
   };
 }

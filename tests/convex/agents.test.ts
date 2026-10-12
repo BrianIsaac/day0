@@ -26,6 +26,7 @@ import {
 } from '../../src/agent/manager-standing';
 import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
+import { WALK_EMPLOYEES } from '../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 import { guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
@@ -2073,6 +2074,45 @@ describe('the employee roster', (): void => {
         { day: '2026-09-01', landed: 1 },
         { day: '2026-09-03', landed: 1 },
       ],
+      atLeast: false,
+    });
+  });
+
+  it('counts a done answer landed and names the partly done beside it, as the walk’s Lark showed', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-11T14:00:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const lark = await deployEmployee(harness, 'owner', 'Lark');
+    const [walkLark] = WALK_EMPLOYEES;
+    await harness.run(async (ctx) => {
+      for (const [index, card] of walkLark!.cards.entries()) {
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId: lark,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${index}`,
+          title: card.title,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: card.state,
+          observedAt: 1,
+          createdAt: 1,
+        });
+        if (card.state !== 'completed') continue;
+        await ctx.db.insert('events', {
+          agentId: lark,
+          type: 'work.completed',
+          payload: { workItemId, output: card.output },
+          createdAt: Date.now(),
+        });
+      }
+    });
+
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-11', landed: 1, partly: 2 }],
       atLeast: false,
     });
   });

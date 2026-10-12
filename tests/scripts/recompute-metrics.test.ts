@@ -514,12 +514,16 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       skillReuse: { runs: 3, reused: 0, adopted: 0, rate: 0 },
       // One item's stop was retried by the manager and it then completed, so
       // its end is the completion (review m36), not the stop.
+      // Re-pinned for 16-F (RM23 (a)): the Looker item's completion predates the run's answer and
+      // its own words say "The documented refresh could not be completed", so its card reads Not
+      // done; the cycle time now counts the two done completions, the third among the ended.
       cycleTime: {
         ended: 3,
         medianToEndMs: 382_466,
-        completed: 3,
-        medianToCompletionMs: 382_466,
-        p90ToCompletionMs: 616_459,
+        completed: 2,
+        partlyDone: 0,
+        medianToCompletionMs: 379_271,
+        p90ToCompletionMs: 382_466,
       },
       reorientation: { answered: 0, amended: 0, rate: null },
       hoursSaved: { estimatedItems: 0, hours: null },

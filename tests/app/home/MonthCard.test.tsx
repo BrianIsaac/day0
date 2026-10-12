@@ -48,6 +48,27 @@ describe('MonthCard', (): void => {
     expect(dayText(html, 26)).toBe('26 3 waiting 3');
   });
 
+  it('counts a day’s done answers as landed and names its partly done work beside them (RM23 (a))', (): void => {
+    const html = renderToStaticMarkup(
+      <MonthCard
+        roster={[
+          {
+            landedThisMonth: {
+              month: '2026-09',
+              days: [{ day: '2026-09-11', landed: 1, partly: 2 }],
+              atLeast: false,
+            },
+          } as unknown as RosterRow,
+          employee('2026-09', [['2026-09-11', 2]]),
+        ]}
+        figures={null}
+        waiting={0}
+        now={NOW}
+      />,
+    );
+    expect(dayText(html, 11)).toBe('11 3 landed 2 partly 3');
+  });
+
   it('shows the figures once there are any, and says when a busy month was counted in part', (): void => {
     const figures = {
       employees: [{}],

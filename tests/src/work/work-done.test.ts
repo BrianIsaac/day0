@@ -5,6 +5,7 @@ import {
   closingChanges,
   doneAgainstLedger,
   doneAgainstWords,
+  finishedAnswerOf,
   landedClosings,
   withAnswerHeldToLedger,
   WORK_DONE_WHY_LIMIT,
@@ -27,6 +28,7 @@ import {
   ROOK_COMMENT,
   UNFINISHED_WORDS,
 } from '../../fixtures/work/work-done-corpora';
+import { WALK_EMPLOYEES } from '../../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 
 /** The mock ticket change a first ticket run ends with: its comment and the status it sets. */
 function ticketUpdate(comment: string, status: 'done' | 'in-progress'): MockAction {
@@ -408,5 +410,36 @@ describe('withAnswerHeldToLedger (what the completing write stores, W15-R4)', ()
     };
     expect(withAnswerHeldToLedger(landed)).toBe(landed);
     expect(workDoneFromLedger(landed)).toBe(false);
+  });
+});
+
+describe('finishedAnswerOf (one reading of a finished run for every count, RM23 (a))', (): void => {
+  const answers = { 'PARTLY DONE': 'partial', LANDED: 'done' } as const;
+
+  it('reads each finished card of the v0.19.0 walk as its chip said, by the run’s answer or the ledger’s', (): void => {
+    for (const employee of WALK_EMPLOYEES) {
+      for (const card of employee.cards.filter((each) => each.state === 'completed')) {
+        expect(finishedAnswerOf(card.output), `${employee.name}: ${card.title}`).toBe(
+          answers[card.chip as keyof typeof answers],
+        );
+      }
+    }
+  });
+
+  it('reads a done answer over writes that were not sent by the ledger, as the card does', (): void => {
+    expect(finishedAnswerOf(PIP_DECLINED_OUTPUT)).toBe('not-done');
+  });
+
+  it('reads output recorded before the answer by its own words, and as done when they say nothing', (): void => {
+    expect(finishedAnswerOf({})).toBe('done');
+    expect(finishedAnswerOf(undefined)).toBe('done');
+    // The 17 September recording's Looker item, completed before the answer existed.
+    expect(
+      finishedAnswerOf({
+        draft:
+          'The documented refresh could not be completed. I could not confirm the approved 74%.',
+        actions: [],
+      }),
+    ).toBe('not-done');
   });
 });
