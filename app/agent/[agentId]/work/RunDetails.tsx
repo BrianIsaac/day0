@@ -17,6 +17,7 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
+import { withheldInWords } from '@/work/withheld-words';
 import {
   outcomeUnknownDetail,
   type GivenAnswer,
@@ -410,22 +411,26 @@ export function RefusedClosingDetails({ refused }: { refused: RefusedClosingRow 
 /**
  * The actions an audit withheld after its one repair, behind a disclosure
  * under the run. Read-only: none of them reached a surface, the rest of the
- * response went on, and the row keeps each with the reason it was turned
- * away so the manager can read what the agent wrote against why.
+ * response went on, and each says what was not sent and why in a manager's
+ * words (RM22 (a)); the row keeps the check's own reason, which the record's
+ * payload and the export carry.
  */
 export function WithheldActionsDetails({
   withheld,
+  employeeName = 'the employee',
 }: {
   withheld: WithheldActionRow[] | undefined;
+  employeeName?: string;
 }) {
   if (!withheld || withheld.length === 0) return null;
   const waiting = withheld.filter((row) => isWithheldForAnswer(row.reason));
   if (waiting.length > 0 && waiting.length < withheld.length) {
     return (
       <>
-        <WithheldActionsDetails withheld={waiting} />
+        <WithheldActionsDetails withheld={waiting} employeeName={employeeName} />
         <WithheldActionsDetails
           withheld={withheld.filter((row) => !isWithheldForAnswer(row.reason))}
+          employeeName={employeeName}
         />
       </>
     );
@@ -447,7 +452,9 @@ export function WithheldActionsDetails({
               <span className="font-mono text-[13px] text-[var(--color-muted)]">
                 {describeAction(row.action)}
               </span>
-              <p className="text-[13px] text-[var(--color-warn)] break-words">{row.reason}</p>
+              <p className="text-[13px] text-[var(--color-warn)] break-words">
+                {forAnswer ? row.reason : withheldInWords(row, employeeName)}
+              </p>
               <ActionPayload action={row.action} />
             </li>
           ))}

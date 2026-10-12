@@ -454,6 +454,7 @@ export function WorkItemCard({
       failed={failed}
       unknown={namedUnknown}
       title={item.title}
+      employeeName={employeeName}
     />
   );
   const ticketNow =
