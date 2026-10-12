@@ -19,7 +19,13 @@ import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
-import { ListingChangedError, type UnreadPage } from '../src/docs/readers/batch';
+import {
+  ListingChangedError,
+  type KeptPage,
+  type StoredMark,
+  type StoredRevisions,
+  type UnreadPage,
+} from '../src/docs/readers/batch';
 import {
   intakeScopeValues,
   restatedScope,
@@ -43,7 +49,9 @@ import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/doc
 import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { MeasuringPlan } from './docRelations';
-import type { StatusPhasePage } from './docStatus';
+import type { PagesOwed } from './docRelationsRemeasure';
+import type { StoredForRevision } from './docPages';
+import type { MarkerToJudge, StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -310,6 +318,8 @@ async function persistPage(
     ref: page.ref,
     ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
     ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+    // A revision the reader could not read this time keeps the stored one (W15-R30).
+    ...(page.revisionUnread === true ? { keepRevision: true } : {}),
   };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
@@ -407,7 +417,8 @@ async function keptUnchangedPage(
     page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
     credentialRefs,
     saidOtherwise:
-      stored.nativeStatus !== page.nativeStatus || stored.sourceRevision !== page.sourceRevision,
+      stored.nativeStatus !== page.nativeStatus ||
+      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision),
   };
 }
 
@@ -424,7 +435,7 @@ async function keptUnchangedPage(
 async function keptUnreadPages(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  unread: readonly UnreadPage[],
+  unread: readonly Pick<UnreadPage, 'ref'>[],
 ): Promise<{ refs: string[]; credentialRefs: string[] }> {
   if (unread.length === 0) return { refs: [], credentialRefs: [] };
   const stored = await ctx.runQuery(internal.docPages.storedPageRefs, {
@@ -432,17 +443,59 @@ async function keptUnreadPages(
     refs: unread.map((page): string => page.ref),
   });
   const credentialRefs: string[] = [];
-  for (const page of unread) {
+  for (const ref of stored) {
     const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
       userId: source.userId,
       sourceId: source._id,
-      pageRef: page.ref,
+      pageRef: ref,
     });
     for (const row of rows) {
       if (typeof row.source !== 'string') credentialRefs.push(row.source.ref);
     }
   }
   return { refs: stored, credentialRefs };
+}
+
+/**
+ * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
+ * for the source's readers from its stored text, as a page kept by its hash is, and, where its
+ * listing now says another status than the one stored, that is recorded (`recordRead`) with its
+ * revision as stored. Its refs and stored credentials are added to the batch's by the caller.
+ *
+ * @returns The refs of the pages kept.
+ */
+async function keptByRevision(
+  ctx: ActionCtx,
+  source: Doc<'docSources'>,
+  agents: Doc<'agents'>[],
+  syncRunId: Id<'docSyncRuns'>,
+  kept: readonly KeptPage[],
+  stored: ReadonlyMap<string, StoredForRevision>,
+): Promise<Array<{ ref: string }>> {
+  const pages: DocPage[] = [];
+  for (const entry of kept) {
+    const row = stored.get(entry.ref);
+    if (row === undefined) continue;
+    if (row.nativeStatus !== entry.nativeStatus) {
+      await ctx.runMutation(internal.docStatus.recordRead, {
+        sourceId: source._id,
+        syncRunId,
+        ref: row.ref,
+        ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
+        keepRevision: true,
+      });
+    }
+    pages.push({
+      sourceId: source._id,
+      ref: row.ref,
+      title: row.title,
+      ...(row.url !== undefined ? { url: row.url } : {}),
+      markdown: row.markdown,
+      updatedAt: row.updatedAt,
+    });
+  }
+  for (const agent of agents) await mirrorPages(ctx, agent._id, source, pages, syncRunId);
+  return pages.map((page) => ({ ref: page.ref }));
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
@@ -565,11 +618,38 @@ export const syncBatch = internalAction({
         });
         credentialUnavailable = false;
       }
+      // The reader contract by revision (X-13): a listed page stored at the revision its listing
+      // gives is kept with no body read. A page whose stored text holds a value the owner stored
+      // since it was redacted is not offered, so it is read and redacted again.
+      const storedByRevision = new Map<string, StoredForRevision>();
+      const storedRevisions: StoredRevisions = async (refs) => {
+        const rows: StoredForRevision[] = await ctx.runQuery(internal.docPages.storedForRevision, {
+          sourceId: source._id,
+          refs: [...refs],
+        });
+        const revisions = new Map<string, StoredMark>();
+        for (const row of rows) {
+          if (
+            knownValueSpans(row.markdown, known).length > 0 ||
+            knownValueSpans(row.title, known).length > 0
+          ) {
+            continue;
+          }
+          storedByRevision.set(row.ref, row);
+          revisions.set(row.ref, {
+            revision: row.sourceRevision,
+            title: row.title,
+            ...(row.url !== undefined ? { url: row.url } : {}),
+          });
+        }
+        return revisions;
+      };
       const batch = await readerFor(source.kind).listPageBatch(
         source as DocSourceRecord,
         secret,
         args.cursor,
         SYNC_BATCH_SIZE,
+        storedRevisions,
       );
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
@@ -580,7 +660,9 @@ export const syncBatch = internalAction({
       // Asked before the batch is stored, which stamps each stored page with the listing too.
       const relisted = await ctx.runQuery(internal.docSources.relistedRefs, {
         runId: args.runId,
-        refs: [...batch.pages, ...batch.unread].map((page): string => page.ref),
+        refs: [...batch.pages, ...batch.unread, ...(batch.kept ?? [])].map(
+          (page): string => page.ref,
+        ),
       });
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
@@ -605,7 +687,22 @@ export const syncBatch = internalAction({
         ),
         ...persisted.unread,
       ];
-      const kept = await keptUnreadPages(ctx, source, unread);
+      // A source that refused the walk of its archived pages keeps those an earlier walk archived:
+      // unlisted, they would be pruned as gone (W15-R30).
+      const archived = batch.archivedWalkRefused
+        ? (await ctx.runQuery(internal.docPages.archivedPageRefs, { sourceId: source._id })).map(
+            (ref) => ({ ref }),
+          )
+        : [];
+      const byRevision = await keptByRevision(
+        ctx,
+        source,
+        agents,
+        args.runId,
+        batch.kept ?? [],
+        storedByRevision,
+      );
+      const kept = await keptUnreadPages(ctx, source, [...unread, ...archived, ...byRevision]);
       if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
         throw new Error('Documentation reader repeated its continuation cursor.');
       }
@@ -617,12 +714,15 @@ export const syncBatch = internalAction({
         nextCursor,
         refs: [...persisted.refs, ...kept.refs],
         credentialRefs: [...persisted.credentialRefs, ...kept.credentialRefs],
-        pageCount: persisted.pages,
+        pageCount: persisted.pages + byRevision.length,
         redactionCount: persisted.redactions,
         unread,
         relisted,
       });
-      const counts = { pages: persisted.pages, redactions: persisted.redactions };
+      const counts = {
+        pages: persisted.pages + byRevision.length,
+        redactions: persisted.redactions,
+      };
       if (!recorded) return { ok: false, ...counts, complete: true };
       if (nextCursor === FINISHING_CURSOR) {
         return await finishGeneration(ctx, source, args.runId, { phase: 'pages', cursor: null });
@@ -841,12 +941,16 @@ async function walkFinishingPhase(
 
 /**
  * Walk the status phase to its end: every page the generation keeps is restated a bounded page
- * per transaction (`docStatus.restatePages`), and between pages the model is asked about each
- * page whose marker lines no stored judgement stands for, one call a page, at most
- * `MARKER_JUDGEMENTS_PER_SYNC` a finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20;
- * the rest are asked at the next sync). A judgement the model could not give leaves the page as
- * it was and is logged: a marker is never why a sync fails, and a vocabulary hit alone decides
- * nothing.
+ * per transaction (`docStatus.restatePages`), a page whose new status its walk page had no room
+ * to copy onto its blocks in a transaction of its own (`docStatus.restateDeferred`), and then
+ * the model is asked about each page whose marker lines no stored judgement stands for, one call
+ * a page, the pages asked least recently
+ * first (`docPages.judgedAttemptAt`; never asked, first), at most `MARKER_JUDGEMENTS_PER_SYNC` a
+ * finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20; the rest are asked at the next
+ * sync). Every attempt is kept on its page, answered or not, so pages whose judgement always fails
+ * take their turn behind the rest rather than every sync's whole budget (W15-R22). A judgement
+ * the model could not give leaves the page as it was and is logged: a marker is never why a sync
+ * fails, and a vocabulary hit alone decides nothing.
  *
  * @returns The run's cursor after the phase (the scopes phase's start), or null when the run
  *   moved on from under the finish.
@@ -862,8 +966,7 @@ async function walkStatusPhase(
 ): Promise<{ checkpoint: string } | null> {
   let checkpoint = start.checkpoint;
   let from = start.from;
-  let judged = 0;
-  let judging = 0;
+  const toJudge: MarkerToJudge[] = [];
   for (let walked = 1; ; walked += 1) {
     const page: StatusPhasePage | null = await ctx.runMutation(internal.docStatus.restatePages, {
       sourceId: start.sourceId,
@@ -874,31 +977,56 @@ async function walkStatusPhase(
     });
     if (page === null) return null;
     checkpoint = page.checkpoint;
-    for (const marker of page.toJudge) {
-      if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
-      judged += 1;
-      const asked = Date.now();
-      try {
-        const status = await judgeMarker(marker);
-        await ctx.runMutation(internal.docStatus.recordMarker, {
-          sourceId: start.sourceId,
-          syncRunId: start.runId,
-          ref: marker.ref,
-          quote: marker.quote,
-          status,
-        });
-      } catch (error) {
-        log.warn('documentation marker not judged: the page keeps its status', {
-          sourceId: start.sourceId,
-          ref: marker.ref,
-          reason: safeSyncError(error),
-        });
-      }
-      judging += Date.now() - asked;
+    toJudge.push(...page.toJudge);
+    // A page whose blocks the walk page had no room to restate, restated on its own (W15-R24).
+    for (const ref of page.toRestate) {
+      await ctx.runMutation(internal.docStatus.restateDeferred, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref,
+      });
     }
-    if (page.done) return { checkpoint };
+    if (page.done) break;
     from = page.from;
   }
+  const leastRecentlyTried = toJudge
+    .map((marker, order) => ({ marker, order }))
+    .sort(
+      (left, right) =>
+        (left.marker.attemptedAt ?? -1) - (right.marker.attemptedAt ?? -1) ||
+        left.order - right.order,
+    )
+    .map(({ marker }) => marker);
+  let judged = 0;
+  let judging = 0;
+  for (const marker of leastRecentlyTried) {
+    if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
+    judged += 1;
+    const asked = Date.now();
+    try {
+      const status = await judgeMarker(marker);
+      await ctx.runMutation(internal.docStatus.recordMarker, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref: marker.ref,
+        quote: marker.quote,
+        status,
+      });
+    } catch (error) {
+      log.warn('documentation marker not judged: the page keeps its status', {
+        sourceId: start.sourceId,
+        ref: marker.ref,
+        reason: safeSyncError(error),
+      });
+      await ctx.runMutation(internal.docStatus.recordJudgementAttempt, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref: marker.ref,
+      });
+    }
+    judging += Date.now() - asked;
+  }
+  return { checkpoint };
 }
 
 /**
@@ -997,8 +1125,96 @@ export const proposeRelations = internalAction({
       runId,
       owed: null,
     });
-    return { measured, proposed };
+    return await remeasure(ctx, { sourceId, runId, measured, proposed });
   },
+});
+
+/**
+ * Measure the source's stored pages the `docs-relations-remeasure` pass marked owed (RM19 (a),
+ * `convex/docRelationsRemeasure.ts`), once the sync's own pages are measured: a bounded read of
+ * pages at a time from the place the mark keeps, the place written back after each read, the mark
+ * cleared at the end. The cap on new proposals a sync stops it where it is reached, the read it
+ * stopped in owed again from its start, for the next sync's measuring; a step that has measured
+ * its share hands on to the next (`remeasureRelations`). A step finishes the read it is in, so it
+ * may measure up to a read's pages past its share; a page whose blocks two reads hold, or that a
+ * hand-on or the cap repeats, is measured twice, and a pair is proposed once.
+ *
+ * @returns How many pages the measuring measured, its own and these, and the sync's proposals.
+ */
+async function remeasure(
+  ctx: ActionCtx,
+  step: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly measured: number;
+    readonly proposed: number;
+  },
+): Promise<{ measured: number; proposed: number }> {
+  const { sourceId, runId } = step;
+  let { measured, proposed } = step;
+  const seen = new Set<string>();
+  for (;;) {
+    if (measured >= RELATION_PAGES_PER_STEP) {
+      await ctx.scheduler.runAfter(0, internal.docSyncActions.remeasureRelations, {
+        sourceId,
+        runId,
+        proposed,
+      });
+      return { measured, proposed };
+    }
+    const owed: PagesOwed | null = await ctx.runQuery(internal.docRelationsRemeasure.pagesOwed, {
+      sourceId,
+      runId,
+    });
+    if (owed === null) return { measured, proposed };
+    for (const ref of owed.refs) {
+      if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
+        await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
+          sourceId,
+          runId,
+          owed: { cursor: owed.cursor },
+        });
+        return { measured, proposed };
+      }
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      measured += 1;
+      try {
+        proposed += await ctx.runMutation(internal.docRelations.measurePage, {
+          sourceId,
+          syncRunId: runId,
+          ref,
+          room: RELATION_PROPOSALS_PER_SYNC - proposed,
+        });
+      } catch (error) {
+        log.warn('documentation page not measured for relations', {
+          sourceId,
+          ref,
+          reason: safeSyncError(error),
+        });
+      }
+    }
+    await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
+      sourceId,
+      runId,
+      owed: owed.next === null ? null : { cursor: owed.next },
+    });
+    if (owed.next === null) return { measured, proposed };
+  }
+}
+
+/**
+ * The next step of a remeasure (`remeasure`): scheduled by a step that measured its share, with
+ * the proposals the sync has written so far. Internal.
+ */
+export const remeasureRelations = internalAction({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    proposed: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> =>
+    await remeasure(ctx, { ...args, measured: 0 }),
 });
 
 /**

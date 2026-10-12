@@ -1816,8 +1816,9 @@ function outboundHost(url: string | undefined): string | undefined {
  * Args:
  *   values: Resolved values.
  *   connections: The organisation's connections, when the deployment was asked.
- *   architecture: The machine the backend image is built on, which decides the Ubuntu
- *     archive its build fetches git from; this machine's when not given.
+ *   architecture: The platform the backend image is built for (the Docker daemon's,
+ *     `daemonArchitecture`), which decides the Ubuntu archive its build fetches git from; this
+ *     machine's when not given.
  *
  * Returns:
  *   One row per host, first seen first.
@@ -1878,7 +1879,7 @@ export function egressHosts(
     );
     add(
       MICROSOFT_CLOUDS.china.graph,
-      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.cn)',
     );
     add(
       'www.yuque.com',
@@ -2000,6 +2001,21 @@ export function composeImages(
 }
 
 /**
+ * The architecture the backend image is built for, from the Docker daemon's own line
+ * (`docker info --format '{{.ServerVersion}} {{.Architecture}}'`), in Node's names: the daemon,
+ * not this machine, builds the image, and a laptop may drive another platform's daemon (W15-R39).
+ * Nothing when the daemon did not answer or names another architecture.
+ *
+ * @param docker - The daemon's line, as `toolVersions` reads it.
+ */
+export function daemonArchitecture(docker: string | undefined): string | undefined {
+  const architecture = docker?.trim().split(/\s+/)[1]?.toLowerCase();
+  if (architecture === 'aarch64' || architecture === 'arm64') return 'arm64';
+  if (architecture === 'x86_64' || architecture === 'amd64') return 'x64';
+  return undefined;
+}
+
+/**
  * Assemble the support report from what the checks found. Each section keeps
  * its title and status and drops its lines, which quote addresses and names
  * from the env file; the only thing the file contributes is the hostnames in
@@ -2034,7 +2050,11 @@ export function setupReport(inputs: {
     versions: inputs.versions,
     images: [...inputs.images],
     digests: inputs.digests,
-    egress: egressHosts(inputs.values, inputs.connections),
+    egress: egressHosts(
+      inputs.values,
+      inputs.connections,
+      daemonArchitecture(inputs.versions.docker) ?? process.arch,
+    ),
     sections: inputs.sections.map(({ title, status }) => ({ title, status })),
     ...(inputs.signIn === undefined
       ? {}

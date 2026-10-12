@@ -93,8 +93,11 @@ export function RelationCard({
       title={
         <>
           These two look like versions of the same runbook
-          {/* Said, not shown: two such cards are two regions, each named by its older page. */}
-          <span className="sr-only">: “{to.title}”</span>
+          {/* Said, not shown: two such cards are two regions, each named by its pages and their
+              sources, since titles repeat across sources (W15-R51). */}
+          <span className="sr-only">
+            : “{to.title}” ({to.source}) and “{from.title}” ({from.source})
+          </span>
         </>
       }
       tone="warn"

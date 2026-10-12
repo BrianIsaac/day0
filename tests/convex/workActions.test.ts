@@ -5466,7 +5466,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
       state: 'skipped',
       verdict: {
         decision: 'skip',
-        reason: 'out-of-scope: no charter or current documented-system overlap',
+        // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+        reason:
+          'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
       },
     });
 
@@ -10929,6 +10931,100 @@ describe('the documentation selection at the work loop’s sites (14-R)', (): vo
       'Documentation the plan followed has since been changed or removed ("a passage the plan was drafted from")',
     );
     expect(recorded.dependentRuns).toBe(0);
+  });
+
+  it('checks a plan that cites nothing by the hashes its selection kept on the item: a block rewritten in place fails it (W15-R17)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId, runId, blockIds } = await closingItem(harness);
+    // The selection kept the standing block with its hash then; the block was rewritten since,
+    // keeping its id, and the employee's newest selection events name nothing of the item.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        selectedBlocks: [{ id: blockIds.standing, hash: 'hash-when-selected' }],
+      });
+    });
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const failed = await readItem(harness, workItemId);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(
+      'Documentation the plan followed has since been changed or removed',
+    );
+    expect(recorded.dependentRuns).toBe(0);
+  });
+
+  it('keeps the blocks the plan site selected on the item, each with its hash (W15-R17)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const seeded = await seed(harness, 'real', ['linear:read']);
+    const sourceId = await harness.run(async (ctx) => {
+      const agent = await ctx.db.get(seeded.agentId);
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: agent!.userId!,
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'audit-note.md',
+        title: 'Close-summary audit note',
+        markdown: '# Close-summary audit note\n\nAdd the audit note to the close summary.',
+        updatedAt: 3,
+      });
+      // The employee's mirror of the page, which the selection reads from.
+      await ctx.db.insert('mockDocs', {
+        agentId: seeded.agentId,
+        slug: 'source-audit-note-md',
+        title: 'Close-summary audit note',
+        body: '# Close-summary audit note\n\nAdd the audit note to the close summary.',
+        category: 'how-to-guide',
+        sourceId,
+        sourceRef: 'audit-note.md',
+        updatedAt: 3,
+      });
+      // The item's own words, so the plan site's selection picks the block.
+      await replacePageBlocks(ctx, {
+        userId: agent!.userId!,
+        sourceId,
+        pageRef: 'audit-note.md',
+        generation,
+        markdown: '# Close-summary audit note\n\nAdd the audit note to the close summary.',
+      });
+      return sourceId;
+    });
+    // Claimed and not yet planned, as the work loop hands an item to its planner.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(seeded.workItemId, { state: 'claimed', plan: undefined });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.draftPlan, {
+      workItemId: seeded.workItemId,
+    });
+    const blocks = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docBlocks')
+          .withIndex('by_source_page', (q) =>
+            q.eq('sourceId', sourceId).eq('pageRef', 'audit-note.md'),
+          )
+          .collect(),
+    );
+    expect(blocks.length).toBeGreaterThan(0);
+    expect((await readItem(harness, seeded.workItemId)).selectedBlocks).toEqual(
+      blocks.map((block) => ({ id: block._id, hash: block.hash })),
+    );
   });
 
   it('refuses the first phase before any write when a cited block was rewritten after approval', async (): Promise<void> => {

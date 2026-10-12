@@ -9,6 +9,7 @@ import {
   CHECK_STALE_MS,
   EMPLOYEES_CHECKED,
   type AgreementRowRefusalReason,
+  type AgreementScope,
   type AgreementSourceType,
   type AgreementStatus,
 } from './agreement-vocabulary';
@@ -19,6 +20,12 @@ export interface AgreementView {
   /** The one employee it binds; absent for every employee of the owner. */
   readonly agentId?: Id<'agents'>;
   readonly statement: string;
+  /** Which work it applies to; a keep for one employee compares it with the words (W15-R37). */
+  readonly scope: AgreementScope;
+  /** The surface slug of a `surface` scope, the operation of an `operation` one. */
+  readonly scopeRef?: string;
+  /** The person of a `person` scope. */
+  readonly personId?: Id<'people'>;
   readonly status: AgreementStatus;
   readonly sourceType: AgreementSourceType;
   /** The corrections a promotion came from. */
@@ -36,6 +43,12 @@ export interface AgreementView {
      */
     readonly checkable?: boolean;
   };
+  /**
+   * An agreement for every employee whose check against this employee's amended charter could not
+   * be had (RM28 (b)): when it was last checked, and whether it can be checked now (the owner has
+   * no more employees than the check reads). It stays in effect meanwhile.
+   */
+  readonly checkOwed?: { readonly since: number; readonly checkable: boolean };
 }
 
 /** The Agreements card's title. */
@@ -157,14 +170,15 @@ export function keptForOneLine(name: string): string {
  * checked it against the employee's charter, which was approved while the owner had more employees
  * than the check reads, or at a time the check could not be had. It stays in effect for the
  * others, which the row says. While the owner is past the bound the row says the bound; once the
- * check can be had it says when Day0 checks it, and the row offers {@link CHECK_HOLD_NOW}.
+ * check can be had it says when Day0 checks it (the stalled-step sweep checks a hold within half an
+ * hour, a stored plan sooner: W15-R37), and the row offers {@link CHECK_HOLD_NOW}.
  *
  * @param name - The employee's name.
  * @param checkable - Whether the owner has no more employees than the check reads.
  */
 export function uncheckedForEmployee(name: string, checkable: boolean): string {
   return checkable
-    ? `Not in effect for ${name} yet: Day0 has not checked it against ${name}'s charter. It checks when ${name} next drafts a plan, or now with Check now. It stays in effect for your other employees.`
+    ? `Not in effect for ${name} yet: Day0 has not checked it against ${name}'s charter. It checks within half an hour, or now with Check now. It stays in effect for your other employees.`
     : `Not in effect for ${name}: Day0 has not checked it against ${name}'s charter, and it checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer. It stays in effect for your other employees.`;
 }
 
@@ -178,6 +192,54 @@ export const CHECK_HOLD_NOW = 'Check now';
  */
 export function checkingHoldLine(name: string): string {
   return `Day0 is checking it against ${name}'s charter.`;
+}
+
+/**
+ * What Check now, or Try again, answers (W15-R37): the check runs now, or it is held until the
+ * pause of the employee's work, or of the deployment's, ends.
+ */
+export interface RecheckOutcome {
+  readonly ok: true;
+  readonly when: 'now' | 'after-pause';
+}
+
+/**
+ * The live region once {@link CHECK_HOLD_NOW} or Try again is pressed while the work is paused
+ * (W15-R37; wording draft): the check is held, not under way, and its retries span about a quarter
+ * of an hour, so after a long pause the manager presses again (the second pass).
+ *
+ * @param name - The employee's name.
+ */
+export function checkHeldForPauseLine(name: string): string {
+  return `The work is paused, so the check waits: Day0 tries it against ${name}'s charter after the pause, and if the pause runs long, press Check now again then.`;
+}
+
+/**
+ * The live region once Check now or Try again is answered: the line for a check under way, or, when
+ * a pause holds it, {@link checkHeldForPauseLine}.
+ *
+ * @param outcome - What the backend answered.
+ * @param underWay - The line for a check that runs now.
+ * @param name - The employee's name.
+ */
+export function recheckLine(outcome: RecheckOutcome, underWay: string, name: string): string {
+  return outcome.when === 'after-pause' ? checkHeldForPauseLine(name) : underWay;
+}
+
+/**
+ * The line on an agreement for every employee whose check against the employee's amended charter
+ * is owed (RM28 (b); wording draft, "Not checked since {date}; Check now"): since when, that it
+ * stays in effect, and, past the employees the check reads, why nothing can check it; within the
+ * bound the row offers {@link CHECK_HOLD_NOW}.
+ *
+ * @param name - The employee's name.
+ * @param since - When it was last checked, as the page writes a time.
+ * @param checkable - Whether the owner has no more employees than the check reads.
+ */
+export function checkOwedLine(name: string, since: string, checkable: boolean): string {
+  return checkable
+    ? `Not checked since ${since} against ${name}'s amended charter. It stays in effect meanwhile.`
+    : `Not checked since ${since} against ${name}'s amended charter: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer. It stays in effect meanwhile.`;
 }
 
 /** The refusal of a hold's check while the owner has more employees than the check reads. */

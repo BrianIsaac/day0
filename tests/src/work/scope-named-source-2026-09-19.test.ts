@@ -108,8 +108,9 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
 
     const reask = model.calls[1]!.user;
     expect(reask).toContain(K_REASON);
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the card's labels, not the field keys.
     expect(reask).toContain('Work the tickets in Linear, team REVOPS, project Q3 close.');
-    expect(reask).toContain('willNotDo clause');
+    expect(reask).toContain('Will not do clause');
     expect(reask).toContain('system');
     expect(reask.startsWith(model.calls[0]!.user)).toBe(true);
   });

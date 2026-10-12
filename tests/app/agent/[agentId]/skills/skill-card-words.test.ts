@@ -4,6 +4,7 @@ import {
   registeredSourceChip,
   attemptLine,
   attemptsSpentSentence,
+  checkInWords,
   givenUpOutcome,
   namesInWords,
   recheckStartedOutcome,
@@ -130,6 +131,52 @@ describe('where a registered skill came from (the real-Linear walk, m2)', (): vo
   it('says whose version an adopted skill runs', (): void => {
     expect(adoptedFromWords({ version: 2, authorName: 'Priya' })).toBe(
       'version 2, adopted from Priya',
+    );
+  });
+});
+
+describe('why a draft did not pass its check, in a manager’s words (W19-8)', (): void => {
+  // Nell's "Write a new one instead" on the v0.19.0 walk: attempt 1 and attempt 2, their logs.
+  const UNDECLARED =
+    "the authored skill is not a reusable procedure: SKILL.md uses `<closed-state>` without declaring it under `## Inputs`; declare it there as a line starting with `<closed-state>`, as in: - `<record-id>`: the candidate's identifier on the surface the work came from (the `Refs:` line or the candidate id).";
+  const SMOKE =
+    'verification in Daytona failed - smoke test exited 1. ran in Daytona (ec1cf0ac-a3b1-4ef5-8ad8-0e4e15c080e6)';
+
+  it('says what the check found and what Retry does, with no checker terms', (): void => {
+    expect(checkInWords(UNDECLARED, 'Nell')).toBe(
+      'The draft uses <closed-state> without listing it as one of its inputs, so it would not run for the next item like this one. Retry hands Nell the reason.',
+    );
+    expect(checkInWords(SMOKE, 'Nell')).toBe(
+      'Its smoke test failed when it ran in the sandbox. Retry hands Nell the failure to fix.',
+    );
+    for (const said of [checkInWords(UNDECLARED, 'Nell'), checkInWords(SMOKE, 'Nell')]) {
+      expect(said).not.toMatch(/SKILL\.md|## Inputs|exited 1|Daytona|`/);
+    }
+  });
+
+  it('says a syntax refusal and a one-item draft in words, and leaves a reason already in words', (): void => {
+    expect(
+      checkInWords('the smoke test does not parse at line 4, column 2: `assert x ==`', 'Nell'),
+    ).toBe('Its smoke test is not valid at line 4. Retry hands Nell the error to fix.');
+    expect(
+      checkInWords(
+        'the authored skill is not a reusable procedure: it repeats one item values',
+        'Nell',
+      ),
+    ).toBe(
+      'The draft is written for one item rather than as a procedure for any item like it. Retry hands Nell the reason.',
+    );
+    // An exit 0 that showed nothing is no failed run (the second pass).
+    expect(
+      checkInWords(
+        'verification in Daytona failed - smoke test exited 0 but printed nothing, so the run produced no verification signal',
+        'Nell',
+      ),
+    ).toBe(
+      'Its smoke test ran in the sandbox but did not show the skill following its inputs. Retry hands Nell the reason.',
+    );
+    expect(checkInWords('The sandbox component is not running.', 'Nell')).toBe(
+      'The sandbox component is not running.',
     );
   });
 });

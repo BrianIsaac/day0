@@ -13,6 +13,12 @@ import {
   QUILL_COMMENT,
   ROOK_COMMENT,
 } from '../../fixtures/work/work-done-corpora';
+import {
+  PIP_DOCS_DRAFT_DM,
+  PIP_SAME_SET,
+  PIP_SAME_SET_DRAFT,
+  PIP_TICKET_SUMMARY,
+} from '../../fixtures/work/pip-same-set-report-2026-10-11';
 
 const recorded = vi.hoisted(() => ({
   calls: [] as Array<{ user: string }>,
@@ -31,6 +37,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  CHARTER_CLAUSE_RULE,
   dependentExecuteSchemaForProcedureContract,
   executeSchemaForProcedureContract,
   executorInstructions,
@@ -492,5 +499,182 @@ describe('a real run held to its answer', (): void => {
       'I could not reconcile the three October closed-won deals',
     );
     expect(output.actions).toHaveLength(2);
+  });
+});
+
+describe("Pip's true comment on the v0.19.0 walk (RM22 (a), W19-2)", (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  const pipReply = {
+    draft: PIP_SAME_SET_DRAFT,
+    notes: '',
+    needsDependentPhase: false,
+    workDone: 'done',
+    workDoneWhy: 'The reply is posted in the thread, and the ticket is commented and closed.',
+    actions: PIP_SAME_SET,
+    procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
+  };
+
+  it('takes the set as written, with one call, and withholds neither the comment nor the DM', async (): Promise<void> => {
+    recorded.outputs.push(pipReply, pipReply);
+    const corrections: string[] = [];
+    const output = await runSkill({
+      skill,
+      plan,
+      candidate: { ...ticket, contentSummary: PIP_TICKET_SUMMARY },
+      charter,
+      mockEnv,
+      onAuditCorrection: (_removed, reason): void => {
+        corrections.push(reason);
+      },
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions.map((action) => action.tool)).toEqual([
+      'slack.postMessage',
+      'ticket.update',
+      'slack.postMessage',
+    ]);
+    expect(output.withheldActions ?? []).toEqual([]);
+    expect(corrections).toEqual([]);
+  });
+});
+
+describe('the hosted office messages name records as a manager does (W19-7, the v0.19.0 walk)', (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('writes Nell’s DM and its draft with the page named, never by reference', async (): Promise<void> => {
+    // Nell's docs item, `A-Nell-docs-full.txt`: its one write was this DM.
+    const said =
+      'Prep for the Monday queue run is done: I have read the IT access and passwords page (docs-fixture/it-access).';
+    recorded.outputs.push({
+      draft: said,
+      notes: 'Read docs-fixture/it-access.',
+      needsDependentPhase: false,
+      workDone: 'done',
+      workDoneWhy: 'The page is read.',
+      actions: [
+        {
+          tool: 'slack.postMessage',
+          args: { channelSlug: 'dm-manager', threadKey: null, body: said },
+          reports: null,
+        },
+      ],
+      procedureTrails: [
+        { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not a ticket.' },
+      ],
+    });
+    const docsItem: WorkCandidate = {
+      ...ticket,
+      sourceCategory: 'inbox',
+      sourceSystem: 'docs',
+      externalId: 'docs-it-access',
+      contentRefs: ['docs-fixture/it-access'],
+    };
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(JSON.stringify(output)).not.toMatch(/docs-fixture\/|channel:\/\//);
+    expect(output.actions[0]?.args.body).toBe(
+      'Prep for the Monday queue run is done: I have read the IT access and passwords page.',
+    );
+    expect(output.notes).toBe('Read the it access page.');
+  });
+
+  it('tells the mock executor to name records as the manager would', (): void => {
+    expect(
+      executorInstructions({
+        mode: 'mock',
+        autonomousActions: false,
+        skillBody: '# skill',
+        surfaces: [],
+        mockEnv,
+        now: 0,
+      }),
+    ).toContain(
+      '  - In every message, the draft and the notes, name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...',
+    );
+  });
+});
+
+describe("a mock message that says it waits for the manager's approval (W19-4, the v0.19.0 walk)", (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  const docsItem: WorkCandidate = {
+    ...ticket,
+    sourceCategory: 'inbox',
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    contentRefs: ['docs-fixture/billing-replies', 'channel://office-asks#thread-double-charge'],
+  };
+  const reply = (action: MockAction) => ({
+    draft: 'Answered Hana.',
+    notes: '',
+    needsDependentPhase: false,
+    workDone: 'done',
+    workDoneWhy: 'Hana has the answer.',
+    actions: [{ ...action, args: { threadKey: null, ...action.args } }],
+    procedureTrails: [
+      { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not a ticket.' },
+    ],
+  });
+
+  it('sends Pip’s draft DM back once, and withholds it when the run writes it as a draft again', async (): Promise<void> => {
+    recorded.outputs.push(reply(PIP_DOCS_DRAFT_DM), reply(PIP_DOCS_DRAFT_DM));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(2);
+    expect(
+      correctionOf(recorded.calls[1]!.user, '--- Required action-set correction ---'),
+    ).toContain(
+      'action 0 (slack.postMessage) says "Draft reply to Hana, held for your approval: Hi Hana, here is exactly what the Customer billing replies doc says our first reply to a duplicate charge should say."',
+    );
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions?.map((row) => row.action.tool)).toEqual(['slack.postMessage']);
+  });
+
+  it('reads an escalation that holds something else for the manager as no draft (the second pass)', async (): Promise<void> => {
+    const escalation: MockAction = {
+      tool: 'slack.postMessage',
+      args: {
+        channelSlug: 'dm-manager',
+        body: 'I have not issued the refund: it waits for your approval, as the billing page says.',
+      },
+      reports: null as unknown as number[],
+    };
+    recorded.outputs.push(reply(escalation));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions).toHaveLength(1);
+  });
+
+  it('takes the answer posted in Hana’s thread as it is, with one call', async (): Promise<void> => {
+    const answer: MockAction = {
+      tool: 'slack.postMessage',
+      args: {
+        channelSlug: 'office-asks',
+        threadKey: 'thread-double-charge',
+        body: 'Hi Hana, the billing replies page says to thank the customer and name the invoice.',
+      },
+      reports: null as unknown as number[],
+    };
+    recorded.outputs.push(reply(answer));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions).toHaveLength(1);
+  });
+});
+
+describe('the closing phase names the charter clause by its label (W15-R16)', (): void => {
+  it('reads "Will not do", "Escalates when" and "Will do" as the charter card prints them', (): void => {
+    expect(CHARTER_CLAUSE_RULE).toContain(
+      'a clause under "Will not do:" or "Escalates when:" that blocks or withholds it, or the "Will do:" clause that puts it in the role',
+    );
+    expect(CHARTER_CLAUSE_RULE).not.toMatch(/will-not-do clause|escalation trigger/);
   });
 });

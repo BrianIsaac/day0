@@ -31,6 +31,7 @@ import {
   adoptedFromWords,
   attemptLine,
   attemptsSpentSentence,
+  checkInWords,
   givenUpOutcome,
   recheckSentence,
   recheckStartedOutcome,
@@ -130,6 +131,38 @@ function parkedLine(
 ): string {
   if (!retryVerifiesSavedDraft(skill)) return skill.verificationLog ?? skill.description;
   return `The check did not run: ${stalledWords(stalledReason(skill.verificationLog)) ?? 'Day0 could not start the check'}.`;
+}
+
+/**
+ * The check's own words under a verdict the card says in a manager's words (W19-8), behind a
+ * disclosure: what Retry feeds back, for a manager who wants the detail. Nothing when the verdict
+ * was already in words.
+ */
+function CheckSaid({
+  skill,
+  log,
+  employee,
+}: {
+  skill: string;
+  log: string | undefined;
+  employee: string;
+}) {
+  if (log === undefined || checkInWords(log, employee) === log) return null;
+  return (
+    <details className="mt-1 text-[13px] text-[var(--color-muted)]">
+      <summary className="inline-flex min-h-11 cursor-pointer items-center">
+        What the check said
+      </summary>
+      <SkillStatusLine skill={skill} text={log} />
+    </details>
+  );
+}
+
+/** An authoring run's failure line, its reason in a manager's words after the skill's name. */
+function failureInWords(failure: string, employee: string): string {
+  const split = failure.indexOf(': ');
+  if (split < 0) return checkInWords(failure, employee);
+  return `${failure.slice(0, split)}: ${checkInWords(failure.slice(split + 2), employee)}`;
 }
 
 /** The day a skill registered, in the employee's zone. */
@@ -337,7 +370,7 @@ export function RegisteredSkillsPanel({
         <div role="status" aria-live="polite" aria-atomic="true">
           {authoringFailure ? (
             <p className="mb-3 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn)]/10 px-3 py-2 text-[13px] text-[var(--color-fg)]">
-              Authoring did not finish: {authoringFailure}
+              Authoring did not finish: {failureInWords(authoringFailure, employee)}
             </p>
           ) : authoringHeld ? (
             <p className="mb-3 text-[13px] text-[var(--color-fg-2)]">{authoringHeld}</p>
@@ -513,8 +546,17 @@ export function RegisteredSkillsPanel({
                             ? heldRowLine(authoringHold)
                             : s.authoringRunId
                               ? 'a run stopped without reporting · Retry takes the skill over'
-                              : parkedLine(s)
+                              : checkInWords(parkedLine(s), employee)
                       }
+                    />
+                    <CheckSaid
+                      skill={s.name}
+                      log={
+                        holdsLiveAuthoringClaim(s, now) || held || s.authoringRunId
+                          ? undefined
+                          : parkedLine(s)
+                      }
+                      employee={employee}
                     />
                     <SkillInputs body={s.body || s.refusedBody || ''} />
                     {held ? null : (

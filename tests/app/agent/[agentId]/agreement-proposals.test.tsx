@@ -31,6 +31,7 @@ const proposal: AgreementView = {
   _id: 'wa1' as Id<'workingAgreements'>,
   agentId: 'a1' as Id<'agents'>,
   statement: 'Comment on the ticket and let the account team email the customer.',
+  scope: 'global',
   status: 'proposed',
   sourceType: 'correction-promotion',
   correctionIds: ['c1' as Id<'corrections'>, 'c2' as Id<'corrections'>],
@@ -86,6 +87,7 @@ function proposals(rows: readonly AgreementView[], calls: string[] = []): Return
       }}
       onRecheck={async (id) => {
         calls.push(`recheck ${id}`);
+        return { ok: true, when: 'now' } as const;
       }}
     />,
   );

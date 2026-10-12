@@ -366,8 +366,9 @@ describe('the support report', (): void => {
     expect(purposeOf('login.chinacloudapi.cn')).toBe(
       "a SharePoint documentation source on the cloud 21Vianet operates: the app registration's sign-in, when one is linked",
     );
+    // Re-taken for W15-R30: the row named no host a 21Vianet file is downloaded from.
     expect(purposeOf('microsoftgraph.chinacloudapi.cn')).toBe(
-      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.cn)',
     );
     expect(purposeOf('www.yuque.com')).toBe(
       "a Yuque documentation source, when one is linked (a space's own <space>.yuque.com instead, where the repository is on one)",
@@ -497,6 +498,31 @@ describe('the support report', (): void => {
         .map((row) => row.host);
     expect(hosts('x64')).toEqual(['archive.ubuntu.com', 'security.ubuntu.com']);
     expect(hosts('arm64')).toEqual(['ports.ubuntu.com']);
+  });
+
+  it("names the archive of the Docker daemon's platform in the report, not this machine's (W15-R39)", (): void => {
+    const purpose =
+      "the backend image's build at setup and upgrade (git's packages, over http on port 80)";
+    const archives = (docker: string | undefined): string[] =>
+      setupReport({
+        values: {},
+        sections: [],
+        versions: { node: 'v22.23.2', docker },
+        images: [],
+        digests: {},
+        generatedAt: '2026-10-12T00:00:00.000Z',
+      })
+        .egress.filter((row) => row.purpose === purpose)
+        .map((row) => row.host);
+    // `docker info --format '{{.ServerVersion}} {{.Architecture}}'`, as the report reads it.
+    expect(archives('29.8.0 aarch64')).toEqual(['ports.ubuntu.com']);
+    expect(archives('29.8.0 x86_64')).toEqual(['archive.ubuntu.com', 'security.ubuntu.com']);
+    // No daemon answered: this machine's architecture, as before.
+    expect(archives(undefined)).toEqual(
+      process.arch === 'arm64'
+        ? ['ports.ubuntu.com']
+        : ['archive.ubuntu.com', 'security.ubuntu.com'],
+    );
   });
 
   it('reads the pinned image of every service from a compose file', (): void => {

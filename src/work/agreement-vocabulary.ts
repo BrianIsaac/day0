@@ -108,6 +108,20 @@ export const CHECK_STALE_MS =
   CHECK_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0) + 5 * 60_000;
 
 /**
+ * The most agreements one run of a charter's check reads with the model before it hands the rest to
+ * the next run (W15-R34): one model call each, in turn, so a run stays well inside the time an
+ * action may take.
+ */
+export const CHECK_BATCH = 5;
+
+/**
+ * Past the longest a charter's check may run (Convex stops an action at ten minutes): the watch a
+ * run keeps on itself fires after it, so a run that dies, at its time limit or otherwise, is taken
+ * as one the model could not answer and leaves its record (W15-R34).
+ */
+export const CHECK_OUTLIVED_MS = 11 * 60_000;
+
+/**
  * How many employees' charters the check of an agreement for every employee reads: an owner with
  * more is refused such an agreement (W13-R28).
  */

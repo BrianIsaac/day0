@@ -13,6 +13,7 @@ import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
+import { skipClause } from '@/work/skip-reasons';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -698,7 +699,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       : `not taken: ${text(name) ?? 'another employee'} settled ${text(settled.ticket) ?? 'the ticket it names'} with a comment${on ? ` on ${on}` : ''}`;
   },
   'work.evaluated': (payload) => evaluatedWords(payload.decision),
-  'work.skipped': (payload) => `skipped${because(payload.reason)}`,
+  'work.skipped': (payload) =>
+    `skipped${because(typeof payload.reason === 'string' ? skipClause(payload.reason) : payload.reason)}`,
   'work.scope-judgement-unavailable': (payload) =>
     `scope judgement unavailable${because(payload.cause)} · the item waits and is judged again`,
   'work.evaluation-parked': (payload) =>
@@ -740,6 +742,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'
       : 'working agreement retired',
+  'agreement.check-owed':
+    'working agreement for every employee not checked against the amended charter: it stays in effect, the check owed',
+  'agreement.checked':
+    'working agreement for every employee checked against the charter: it stays in effect',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>

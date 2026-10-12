@@ -25,6 +25,7 @@ import {
   openQuestionStopReason,
   withheldForAnswerReason,
 } from '../../../../../src/work/obligations';
+import { PIP_WITHHELD_ROWS } from '../../../../fixtures/work/pip-same-set-report-2026-10-11';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -168,6 +169,7 @@ describe('actions an audit withheld', (): void => {
   it('shows each withheld action with its reason and payload, and nothing when there is none', (): void => {
     const markup = renderToStaticMarkup(
       <WithheldActionsDetails
+        employeeName="Wren"
         withheld={[
           {
             action: {
@@ -187,10 +189,30 @@ describe('actions an audit withheld', (): void => {
       />,
     );
     expect(markup).toContain('Withheld by the evidence check · 1 action · never sent');
-    expect(markup).toContain('asserted a fact the ledger');
+    // Re-taken for RM22 (a), 12 October 2026: the card says why in a manager's words; the checker's
+    // reason stays on the row for the record and the export.
+    expect(markup).not.toContain('asserted a fact the ledger');
+    expect(markup).toContain(
+      'Not sent: this post says “REVOPS-5 audit comment posted with the three checks”, and nothing Wren read or did shows it.',
+    );
     expect(markup).toContain('REVOPS-5 audit comment posted with the three checks.');
     expect(renderToStaticMarkup(<WithheldActionsDetails withheld={[]} />)).toBe('');
     expect(renderToStaticMarkup(<WithheldActionsDetails withheld={undefined} />)).toBe('');
+  });
+
+  it("says what Pip's card held back and why in a manager's words, never the checker's (RM22 (a), W19-2)", (): void => {
+    const markup = renderToStaticMarkup(
+      <WithheldActionsDetails employeeName="Pip" withheld={PIP_WITHHELD_ROWS} />,
+    );
+    expect(markup).toContain(
+      'Not sent: this comment reports other writes of this run, and Day0 could not tell which',
+    );
+    expect(markup).toContain(
+      'Not sent: this message to you reports another write of this run that was held back, so it would have said something untrue.',
+    );
+    for (const internal of ['`reports`', 'action 1 (ticket.update)', 'reports [0]', '[]']) {
+      expect(markup).not.toContain(internal);
+    }
   });
 
   it("sets writes that wait on the manager's answer apart from the evidence check's, and says how to answer", (): void => {

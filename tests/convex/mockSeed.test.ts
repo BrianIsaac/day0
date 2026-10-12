@@ -190,3 +190,41 @@ describe('the seeded mock office', (): void => {
     });
   });
 });
+
+describe('the seeded Slack guide teaches no draft held for approval (W15-R15, W19-4)', (): void => {
+  it('says an answer goes where it was asked, as it will read once posted, with nothing framed for review', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: 'manager@day0.local',
+          name: 'Pip',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const guide = await harness.run(async (ctx) =>
+      (await ctx.db.query('mockDocs').collect()).find((row) => row.slug === 'how-to-post-slack'),
+    );
+    const body = guide?.body ?? '';
+    // The v0.19.0 walk: Pip's answer for Hana went to the manager's DM as "Draft reply to Hana,
+    // held for your approval", "per the cold-start posture" this guide described.
+    for (const taught of [
+      'Draft for review',
+      'once approved',
+      'Cold-start posture',
+      'agent-draft',
+      'for Manager review',
+      'see + edit before forwarding',
+    ]) {
+      expect(body, taught).not.toContain(taught);
+    }
+    expect(body).toContain('post the answer in that thread with its `threadKey`');
+    expect(body).toContain(
+      'Then send the manager a one-line recap in `dm-manager` of what was done: it reports the work, it is never the answer in place of the post, and never a draft for the manager to forward.',
+    );
+    expect(body).toContain('`office-asks`');
+  });
+});

@@ -126,6 +126,20 @@ export async function restatePage(
   },
 ): Promise<StatusChange | null> {
   const { source, page, now } = args;
+  const { decided, supersededBy } = await statusDecision(ctx, source, page);
+  return await writeStatus(ctx, { source, page, decided, supersededBy, now });
+}
+
+/**
+ * What the rules make of a stored page's status now, and the page a superseded page gave way to,
+ * without writing either: `restatePage`'s decision, which the status phase reads first to know
+ * whether a page's blocks take a new status (W15-R24).
+ */
+async function statusDecision(
+  ctx: MutationCtx,
+  source: Doc<'docSources'>,
+  page: Doc<'docPages'>,
+): Promise<{ decided: DecidedStatus; supersededBy: PageName | undefined }> {
   const manager = page.statusSource === 'manager' ? pageStatusOf(page) : undefined;
   const marker = markerInForce(page.marker, markerCandidate(page.title, page.markdown));
   const successor = await confirmedSuccessor(ctx, page);
@@ -145,7 +159,7 @@ export async function restatePage(
         : decided.statusSource === 'relation'
           ? successor
           : undefined;
-  return await writeStatus(ctx, { source, page, decided, supersededBy, now });
+  return { decided, supersededBy };
 }
 
 /** A page's name within its owner's documentation. */
@@ -379,6 +393,11 @@ export const recordRead = internalMutation({
     ref: v.string(),
     nativeStatus: v.optional(pageStatusValidator),
     sourceRevision: v.optional(v.string()),
+    /**
+     * The reader read the page but not its revision, for a reason that passes: the revision the
+     * page was stored with stands, where none would clear it (W15-R30).
+     */
+    keepRevision: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const source = await ctx.db.get(args.sourceId);
@@ -388,7 +407,10 @@ export const recordRead = internalMutation({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null) return false;
-    const inputs = { nativeStatus: args.nativeStatus, sourceRevision: args.sourceRevision };
+    const inputs = {
+      nativeStatus: args.nativeStatus,
+      sourceRevision: args.keepRevision === true ? page.sourceRevision : args.sourceRevision,
+    };
     if (
       page.nativeStatus !== inputs.nativeStatus ||
       page.sourceRevision !== inputs.sourceRevision
@@ -408,9 +430,30 @@ export const recordRead = internalMutation({
  */
 const STATUS_PAGE_READ = { numItems: 50, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
+/**
+ * The most bytes of block rows one page of the status phase copies a new status onto (W15-R24):
+ * a page whose status changes reads and writes every block of it, so the pages a walk page may
+ * flip are bounded by what their blocks take as well as by the page rows its read takes. A page
+ * past the bound is restated in a transaction of its own (`restateDeferred`).
+ */
+const STATUS_FLIP_BYTES = 4 * 1024 * 1024;
+
+/**
+ * An upper bound on the bytes a page's block rows take: its text twice (each block's text and
+ * its search text) at three bytes a character, the most UTF-8 takes.
+ */
+function blockBytes(page: Pick<Doc<'docPages'>, 'markdown'>): number {
+  return 6 * page.markdown.length;
+}
+
 /** A page whose marker lines await a judgement: its ref and what the pre-filter found. */
 export interface MarkerToJudge extends MarkerCandidate {
   readonly ref: string;
+  /**
+   * When the model was last asked about the page, answered or not (`docPages.judgedAttemptAt`);
+   * absent for a page never asked since it was kept (W15-R22).
+   */
+  readonly attemptedAt?: number;
 }
 
 /** What one page of the status phase did, and where the finish stands after it. */
@@ -419,6 +462,11 @@ export interface StatusPhasePage {
   readonly changed: number;
   /** The pages whose marker lines no stored judgement stands for, for the sync to put to the model. */
   readonly toJudge: readonly MarkerToJudge[];
+  /**
+   * The refs of the pages whose status changes and whose blocks this page of the walk had no room
+   * to copy it onto (`STATUS_FLIP_BYTES`), for the sync to restate one a transaction (W15-R24).
+   */
+  readonly toRestate: readonly string[];
   /** Whether the walk is over, and the run's cursor now starts the scopes phase. */
   readonly done: boolean;
   /** Where the walk goes on from. */
@@ -473,7 +521,9 @@ export const restatePages = internalMutation({
       .paginate({ ...STATUS_PAGE_READ, cursor: args.from });
     const now = Date.now();
     const toJudge: MarkerToJudge[] = [];
+    const toRestate: string[] = [];
     const changes: Array<StatusChange | null> = [];
+    let flipped = 0;
     for (const stored of walked.page) {
       let page = stored;
       // A judgement that the page's lines are no marker has nothing left to be of once the page
@@ -487,8 +537,22 @@ export const restatePages = internalMutation({
         page = { ...stored, marker: undefined };
       }
       const ask = markerToJudge(page.marker, stored.title, stored.markdown);
-      if (ask !== undefined) toJudge.push({ ref: stored.ref, ...ask });
-      changes.push(await restatePage(ctx, { source, page, now }));
+      if (ask !== undefined) {
+        toJudge.push({
+          ref: stored.ref,
+          ...ask,
+          ...(stored.judgedAttemptAt !== undefined ? { attemptedAt: stored.judgedAttemptAt } : {}),
+        });
+      }
+      const { decided, supersededBy } = await statusDecision(ctx, source, page);
+      if (decided.status !== pageStatusOf(page)) {
+        if (flipped + blockBytes(page) > STATUS_FLIP_BYTES) {
+          toRestate.push(page.ref);
+          continue;
+        }
+        flipped += blockBytes(page);
+      }
+      changes.push(await writeStatus(ctx, { source, page, decided, supersededBy, now }));
     }
     await stampStatusChanges(ctx, source, changes, now);
     const position = finishingCursor(
@@ -501,10 +565,35 @@ export const restatePages = internalMutation({
     return {
       changed: changes.filter((change) => change !== null).length,
       toJudge,
+      toRestate,
       done: walked.isDone,
       from: walked.continueCursor,
       checkpoint: recorded ? position : args.checkpoint,
     };
+  },
+});
+
+/**
+ * Restate one page the status phase handed back for want of room in its walk page
+ * (`StatusPhasePage.toRestate`; W15-R24), in a transaction of its own, so the walk's bound holds
+ * however many of its pages change status. Internal; fenced on the source's running generation.
+ * A finish cut off between the walk page and these restates them at the next sync.
+ *
+ * @returns Whether the page was restated: false when it is gone or the generation moved on.
+ */
+export const restateDeferred = internalMutation({
+  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || source.activeSyncId !== args.syncRunId) return false;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
+      .unique();
+    if (page === null) return false;
+    const now = Date.now();
+    await stampStatusChanges(ctx, source, [await restatePage(ctx, { source, page, now })], now);
+    return true;
   },
 });
 
@@ -543,10 +632,31 @@ export const recordMarker = internalMutation({
       args.status === 'active' && markerCandidate(page.title, page.markdown) === undefined
         ? undefined
         : { status: args.status, quote: args.quote, judgedAt: now };
-    await ctx.db.patch(page._id, { marker });
+    await ctx.db.patch(page._id, { marker, judgedAttemptAt: now });
     const change = await restatePage(ctx, { source, page: { ...page, marker }, now });
     await stampStatusChanges(ctx, source, [change], now);
     return true;
+  },
+});
+
+/**
+ * Keep on a page that the model was asked about its marker lines and gave no judgement (a
+ * timeout, a reply that was not one), so the next sync asks the pages tried least recently first
+ * and a page whose judgement always fails does not spend every sync's budget before the pages
+ * behind it (W15-R22). Internal; the finishing sync calls it for each judgement that failed.
+ * Fenced on the source's running generation; changes no status.
+ */
+export const recordJudgementAttempt = internalMutation({
+  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || source.activeSyncId !== args.syncRunId) return null;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
+      .unique();
+    if (page !== null) await ctx.db.patch(page._id, { judgedAttemptAt: Date.now() });
+    return null;
   },
 });
 

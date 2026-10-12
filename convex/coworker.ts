@@ -15,17 +15,17 @@ import { appendEvent } from './eventLog';
 
 interface ResponderProfile {
   readonly responder: string;
-  readonly senderKind: 'manager' | 'teammate' | 'requester';
+  readonly senderKind: 'teammate' | 'requester';
   /** The colleague's replies, given the name of the employee they answer. */
   readonly replies: (employee: string) => readonly string[];
 }
 
+/**
+ * The office's colleagues by the channel they answer on. The manager's DM has none: the manager is
+ * the visitor reading it, and a canned "Thanks, seen." in their name put "Manager replied in
+ * #dm-manager." in the record where they wrote nothing (W19-8, the v0.19.0 walk).
+ */
 const PROFILES: Readonly<Record<string, ResponderProfile>> = {
-  'dm-manager': {
-    responder: 'Manager',
-    senderKind: 'manager',
-    replies: () => ['Thanks, seen.', 'Got it, thanks.'],
-  },
   'dm-priya': {
     responder: 'Priya',
     senderKind: 'teammate',

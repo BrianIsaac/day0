@@ -1,7 +1,6 @@
 import type { OneToOnePhase } from '@/agent/one-to-one-phase';
 import type { Ref } from 'react';
 import { Button } from '../../../components/Button';
-import type { ChangeOutcome } from '../../../components/use-change';
 import type { CharterSynthesisOutcome } from '../charter-synthesis';
 
 /** Where the room's own post of the transcript stands. */
@@ -64,16 +63,19 @@ export function draftingWords(
 
 /**
  * The line that names what happens after the one-to-one and how long it usually takes, or, when
- * the draft failed, why, with the ways on. It is drawn here and said by the room's own status
- * region, which is on the page before the words change (`draftingWords`); it takes focus when the
- * control that led to it has left the page.
+ * the draft failed, why, with the ways on. Its words are its own live region, mounted (empty and
+ * visually hidden) while the one-to-one is still open, so a screen reader says the line as it
+ * appears and the page carries it once (the v0.19.0 walk's finding 8: a second, hidden region
+ * repeated it). It takes focus when the control that led to it has left the page.
  *
+ * @param open - Whether the one-to-one is over, so the line is drawn; closed, the region waits empty.
  * @param onHoldAgain - Offered only once the session has failed for good.
  */
 export function DraftingNotice({
   name,
   phase,
   post,
+  open = true,
   onDraftAgain,
   onHoldAgain,
   focusRef,
@@ -81,23 +83,39 @@ export function DraftingNotice({
   name: string;
   phase: OneToOnePhase;
   post: SynthesisPost;
+  open?: boolean;
   onDraftAgain: () => void;
   onHoldAgain: () => void;
   focusRef?: Ref<HTMLDivElement>;
 }) {
-  const words = draftingWords(name, phase, post);
-  if (words.failed) {
-    return (
-      <div
-        ref={focusRef}
-        tabIndex={-1}
-        data-drafting="failed"
-        className="grid gap-3 rounded-lg border border-[var(--color-warn-line)] outline-none bg-[var(--color-warn-soft)] px-3.5 py-3 text-[15px]"
-      >
-        <p>
-          <span className="text-[var(--color-warn)]">{words.lead}</span>{' '}
-          <span className="text-[var(--color-fg-2)]">{words.detail}</span>
-        </p>
+  const words = open ? draftingWords(name, phase, post) : null;
+  const failed = words?.failed === true;
+  const box =
+    words === null
+      ? undefined
+      : failed
+        ? 'grid gap-3 rounded-lg border border-[var(--color-warn-line)] outline-none bg-[var(--color-warn-soft)] px-3.5 py-3 text-[15px]'
+        : 'rounded-lg border border-[var(--color-accent-line)] outline-none bg-[var(--color-accent-soft)] px-3.5 py-3 text-[15px] text-[var(--color-accent)]';
+  return (
+    <div
+      ref={focusRef}
+      tabIndex={words === null ? undefined : -1}
+      data-drafting={words === null ? undefined : failed ? 'failed' : 'drafting'}
+      className={box}
+    >
+      <p role="status" aria-live="polite" aria-atomic="true" className="empty:sr-only">
+        {words === null ? null : failed ? (
+          <>
+            <span className="text-[var(--color-warn)]">{words.lead}</span>{' '}
+            <span className="text-[var(--color-fg-2)]">{words.detail}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-[var(--color-fg)]">{words.lead}</span> {words.detail}
+          </>
+        )}
+      </p>
+      {failed ? (
         <div className="flex flex-wrap gap-2">
           <Button variant="retry" onClick={onDraftAgain} disabled={post.kind === 'posting'}>
             Draft again
@@ -106,22 +124,7 @@ export function DraftingNotice({
             <Button onClick={onHoldAgain}>Hold the one-to-one again</Button>
           ) : null}
         </div>
-      </div>
-    );
-  }
-  return (
-    <div
-      ref={focusRef}
-      tabIndex={-1}
-      data-drafting="drafting"
-      className="rounded-lg border border-[var(--color-accent-line)] outline-none bg-[var(--color-accent-soft)] px-3.5 py-3 text-[15px] text-[var(--color-accent)]"
-    >
-      <span className="text-[var(--color-fg)]">{words.lead}</span> {words.detail}
+      ) : null}
     </div>
   );
-}
-
-/** What the room's status region says while the one-to-one is over: the drafting line's words. */
-export function draftingOutcome(words: DraftingWords): ChangeOutcome {
-  return { tone: words.failed ? 'refused' : 'done', text: `${words.lead} ${words.detail}` };
 }

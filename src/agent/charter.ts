@@ -2,12 +2,15 @@ import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import { SYSTEM_CLASSES, type SystemClass } from './system-classes';
+import { askedQuestion } from '../work/charter-answers';
 import {
   CLAUSE_FIELDS,
   CONSTRAINT_KINDS,
   deriveConstraints,
   normaliseConstraints,
   withoutProvenanceSuffixes,
+  withRoutingRules,
+  withWillNotDoAsActs,
   type CharterConstraint,
   type StruckClause,
 } from './charter-constraints';
@@ -182,6 +185,7 @@ export const CHARTER_SYSTEM_PROMPT = [
   'List every product or service the manager names as a place where work is tracked or asks arrive, with the sentence they said it in.',
   'Return exactly one namedSystems row per product or service. Channels, DMs, pages, files, runbooks, queues, dashboards, tiles, views, sheets and tabs are locations inside a system, never separate systems.',
   'Merge aliases and duplicates: Slack is one row for every Slack channel and DM; a Looker pipeline tile is one Looker row; reading artefacts belong only in priorityReading.',
+  'A sentence that routes work through the manager ("through me", "go through me", "talk to me first", "ask me first", "check with me first", "run it by me") is a reporting-line rule: write an escalationTriggers clause that sends that work to the manager first, and list the rule as a reporting-line constraint quoting the sentence and binding that clause.',
   'Constraints: under constraints, list every rule the manager stated that limits which work you take or how you do it: a property a candidate must have (candidate-property), a system you must or must not touch (system-boundary), a person you report to or must not contact (reporting-line).',
   "For each, quote is the manager's own sentence, copied, and wording is the exact phrase or phrases in your proposedFunction, willDo, willNotDo or escalationTriggers that encode it. Leave constraints empty when the manager stated no such rule; never add one they did not state.",
   'For each constraint, binds lists the clauses the rule produced, by list and position: field is "proposedFunction", "willDo", "willNotDo" or "escalationTriggers", and index is the clause\'s position in that list, counting from 0 (always 0 for proposedFunction). Bind every clause that carries the rule, however you worded it; binds is empty only when no clause carries the rule.',
@@ -536,31 +540,40 @@ export function assemble(
   args: SynthesiseCharterArgs,
   createdAt: string,
 ): Charter {
-  // Stripped before the constraints are verified, so wording is matched
-  // against the clauses the manager will read.
-  const charter: Charter = withoutProvenanceSuffixes({
-    version: args.version,
-    source: 'day-1 manager 1:1',
-    whyThisHire: raw.whyThisHire,
-    proposedFunction: raw.proposedFunction,
-    evidence: ensureProvenance(raw.evidence),
-    shortTermGoals: goalsOf(raw.shortTermGoals),
-    proposedBoundaries: raw.proposedBoundaries,
-    namedCollaborators: raw.namedCollaborators,
-    namedSystems: normaliseNamedSystems(raw.namedSystems, args.office),
-    priorityReading: raw.priorityReading,
-    adjacentRoles: raw.adjacentRoles,
-    approvalChain: {
-      boss: raw.approvalChain.boss || args.bossLabel,
-      confidence: raw.approvalChain.confidence,
-    },
-    openQuestions: raw.openQuestions,
-    createdAt,
-  });
+  // Stripped, and the will-not-do clauses written as acts, before the constraints are verified,
+  // so wording is matched against the clauses the manager will read.
+  const charter: Charter = withWillNotDoAsActs(
+    withoutProvenanceSuffixes({
+      version: args.version,
+      source: 'day-1 manager 1:1',
+      whyThisHire: raw.whyThisHire,
+      proposedFunction: raw.proposedFunction,
+      evidence: ensureProvenance(raw.evidence),
+      shortTermGoals: goalsOf(raw.shortTermGoals),
+      proposedBoundaries: raw.proposedBoundaries,
+      namedCollaborators: raw.namedCollaborators,
+      namedSystems: normaliseNamedSystems(raw.namedSystems, args.office),
+      priorityReading: raw.priorityReading,
+      adjacentRoles: raw.adjacentRoles,
+      approvalChain: {
+        boss: raw.approvalChain.boss || args.bossLabel,
+        confidence: raw.approvalChain.confidence,
+      },
+      openQuestions: raw.openQuestions,
+      createdAt,
+    }),
+  );
   const listed = normaliseConstraints(raw.constraints ?? [], charter);
+  const routed = withRoutingRules(
+    charter,
+    args.answers,
+    listed,
+    (args.changeRequests ?? []).flatMap((request) => request.struck),
+  );
+  const ruled = [...listed, ...routed.rules];
   return {
-    ...charter,
-    constraints: [...listed, ...deriveConstraints(charter, args.answers, listed)],
+    ...routed.charter,
+    constraints: [...ruled, ...deriveConstraints(routed.charter, args.answers, ruled)],
   };
 }
 
@@ -723,7 +736,9 @@ export function renderCharter(c: Charter, date = new Date()): string {
     ...((c.answeredQuestions ?? []).length > 0
       ? [
           'ANSWERED QUESTIONS                                         [from manager, after approval]',
-          ...(c.answeredQuestions ?? []).map((q) => `  - ${q.question} Answer: ${q.answer}`),
+          ...(c.answeredQuestions ?? []).map(
+            (q) => `  - ${askedQuestion(q.question)} Answer: ${q.answer}`,
+          ),
           '',
         ]
       : []),

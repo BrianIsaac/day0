@@ -43,6 +43,14 @@ export interface NamedPage extends PageName {
 /** The blocks one search answers a source while a page's candidates are looked for. */
 const CANDIDATE_BLOCKS_PER_SOURCE = 4;
 
+/**
+ * The most of a page's own blocks its search in its own source passes over before the
+ * `CANDIDATE_BLOCKS_PER_SOURCE` it keeps: a page's own text answers its title and headings best,
+ * so in its own source its blocks took every place and a copy beside it was never measured
+ * (found on the 16-FD bed: the company folder's team copy of the tile runbook).
+ */
+const OWN_BLOCKS_PASSED = 16;
+
 /** The most pages a page's front matter may name that are looked up by name. */
 const NAMED_PAGES = 4;
 
@@ -59,8 +67,27 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
     .unique();
 }
 
-/** A stored page as the measures read it, with its blocks in document order. */
-export async function measured(ctx: QueryCtx, page: Doc<'docPages'>): Promise<MeasuredPage> {
+/**
+ * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
+ * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
+ * and its card says "last read".
+ */
+export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
+  'urls',
+  'mcp',
+  'git',
+]);
+
+/**
+ * A stored page as the measures read it, with its blocks in document order.
+ *
+ * @param source - The page's source: whether its reader gives an edit time (RM19 (a)).
+ */
+export async function measured(
+  ctx: QueryCtx,
+  page: Doc<'docPages'>,
+  source: Pick<Doc<'docSources'>, 'kind'>,
+): Promise<MeasuredPage> {
   const rows = await ctx.db
     .query('docBlocks')
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
@@ -71,6 +98,7 @@ export async function measured(ctx: QueryCtx, page: Doc<'docPages'>): Promise<Me
     title: page.title,
     markdown: page.markdown,
     updatedAt: page.updatedAt,
+    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
     blocks: rows.map(
       (row): MeasuredBlock => ({ hash: row.hash, headingPath: row.headingPath, text: row.text }),
     ),
@@ -113,19 +141,22 @@ export async function candidatesOf(
   );
   for (const text of queries) {
     const answers = await Promise.all(
-      owner.sources.map(
-        async (source) =>
-          await ctx.db
-            .query('docBlocks')
-            .withSearchIndex('by_text', (q) =>
-              q
-                .search('searchText', text)
-                .eq('userId', owner.userId)
-                .eq('sourceId', source._id)
-                .eq('status', 'active'),
-            )
-            .take(CANDIDATE_BLOCKS_PER_SOURCE),
-      ),
+      owner.sources.map(async (source) => {
+        const own = source._id === page.sourceId;
+        const rows = await ctx.db
+          .query('docBlocks')
+          .withSearchIndex('by_text', (q) =>
+            q
+              .search('searchText', text)
+              .eq('userId', owner.userId)
+              .eq('sourceId', source._id)
+              .eq('status', 'active'),
+          )
+          .take(CANDIDATE_BLOCKS_PER_SOURCE + (own ? OWN_BLOCKS_PASSED : 0));
+        return rows
+          .filter((row) => !own || row.pageRef !== page.ref)
+          .slice(0, CANDIDATE_BLOCKS_PER_SOURCE);
+      }),
     );
     for (const row of answers.flat()) hit({ sourceId: row.sourceId, ref: row.pageRef }, 1);
   }
@@ -157,6 +188,13 @@ export async function relationsBetween(
   ];
 }
 
+/** Whether a proposal's or a relation's evidence holds a page's front matter naming the other. */
+function namesSuccessor(relation: {
+  readonly evidence: ReadonlyArray<{ readonly measure: string }>;
+}): boolean {
+  return relation.evidence.some((entry) => entry.measure === 'names-successor');
+}
+
 /** The block hashes a conflict's evidence names. */
 export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>): string[] {
   return relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
@@ -164,7 +202,11 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
 
 /**
  * Whether a pair already holds the relation a proposal would write, so it is not proposed again:
- * versions of one document (a duplicate or a successor) once, whatever the manager decided; a
+ * versions of one document (a duplicate or a successor) once, whatever the manager decided, but
+ * for a duplicate nobody answered, which gives way to a successor the measures now find (RM19
+ * (a): a copy its source dated later, measured again by the remeasure, is deleted here and
+ * proposed as the successor), and for an answer of "Not the same" or "Keep both" given before a
+ * page's front matter named the other, which a successor so named is proposed over (W15-R22); a
  * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
  * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
  * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
@@ -177,7 +219,30 @@ export async function alreadyHeld(
   proposed: ProposedRelation,
 ): Promise<boolean> {
   if (proposed.kind !== 'possible_conflict') {
-    return existing.some((row) => row.kind !== 'possible_conflict');
+    let held = false;
+    for (const row of existing) {
+      if (row.kind === 'possible_conflict') continue;
+      if (
+        proposed.kind === 'possible_successor' &&
+        row.kind === 'possible_duplicate' &&
+        row.status === 'proposed'
+      ) {
+        await ctx.db.delete(row._id);
+        continue;
+      }
+      // A page's front matter that names the other since the manager answered is new word from
+      // its author: "Not the same" or "Keep both" given without it is asked again (W15-R22).
+      if (
+        namesSuccessor(proposed) &&
+        !namesSuccessor(row) &&
+        row.status !== 'proposed' &&
+        !(row.status === 'confirmed' && row.kind === 'possible_successor')
+      ) {
+        continue;
+      }
+      held = true;
+    }
+    return held;
   }
   const blocks = new Set(
     proposed.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [],

@@ -17,6 +17,7 @@ import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
+import { skipClause } from '@/work/skip-reasons';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -936,8 +937,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The skill ${text(p.name) ?? 'unnamed'} passed its check and can be called${
       typeof p.version === 'number' ? ` as version ${p.version}` : ''
     }`,
+  // What a re-check means for the work and what the manager can do (the v0.19.0 walk's finding
+  // 8): the skill keeps running (A13), and one of the library's offers Re-check now on its card.
   'skill.recheck-due': (p) =>
-    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}`,
+    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}. It keeps running meanwhile${
+      text(p.versionId) ? '; Re-check now on the Skills tab checks it' : ''
+    }`,
   'skill.adoption-offered': (p, subject) =>
     `${subject.name} was offered ${versionOfSkill(p, subject)} to adopt`,
   'skill.adopted': (p, subject) =>
@@ -1156,7 +1161,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       ? `${subject.name} evaluated ${itemOf(subject)}: ${decision?.replace(/-/g, ' ') ?? 'no verdict'}`
       : `${subject.name} judged ${itemOf(subject)} ${judged}`;
   },
-  'work.skipped': (p, subject) => `${subject.name} skipped ${itemOf(subject)}${because(p.reason)}`,
+  // The reason without its machine label, in the words the card says it in (W19-7).
+  'work.skipped': (p, subject) =>
+    `${subject.name} skipped ${itemOf(subject)}${because(
+      typeof p.reason === 'string' ? skipClause(p.reason) : p.reason,
+    )}`,
   'work.scope-judgement-unavailable': (p, subject) =>
     `The scope check on ${itemOf(subject)} could not be made${because(
       p.cause,
@@ -1215,6 +1224,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`
       : `${decider(subject)} retired a working agreement`,
+  'agreement.check-owed': (_, subject) =>
+    `Day0 could not check a working agreement for every employee against ${subject.name}'s amended charter: it stays in effect, and the check is owed`,
+  'agreement.checked': (_, subject) =>
+    `Day0 checked a working agreement for every employee against ${subject.name}'s charter: it stays in effect`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''

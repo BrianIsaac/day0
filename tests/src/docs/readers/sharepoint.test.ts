@@ -503,6 +503,20 @@ describe('the SharePoint documentation reader', (): void => {
     expect(requests[1].authorization).toBe('Bearer fixture-cn-token');
   });
 
+  it('follows an empty delta page’s nextLink to the delta link, so the files after it are read (W15-R30)', async (): Promise<void> => {
+    // Graph may answer a delta page with no entries and a nextLink: the walk ends only at the
+    // delta link. On the base it ended on the empty page, and the finish pruned the library.
+    const NEXT = `https://graph.microsoft.com/v1.0/sites/${SITE_ID}/drive/root/delta?token=fixture-delta-page-2`;
+    const { reader, requests } = readerOnTenant((request) =>
+      request.url.pathname.endsWith('/drive/root/delta') && !request.url.searchParams.has('token')
+        ? json(200, { value: [], '@odata.nextLink': NEXT })
+        : undefined,
+    );
+    const { pages } = await wholeSite(reader);
+    expect(pages.map((page) => page.ref)).toContain('file-01OPSZH');
+    expect(walked(requests).slice(0, 2)).toEqual(['files start', 'files fixture-delta-page-2']);
+  });
+
   it('never follows a link to another host with its token', async (): Promise<void> => {
     const { reader, requests } = readerOnTenant((request) =>
       request.url.pathname.endsWith('/drive/root/delta')

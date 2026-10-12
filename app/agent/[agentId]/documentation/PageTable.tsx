@@ -43,7 +43,7 @@ export function readStateLine(state: ReadState, zone: string | undefined): strin
 }
 
 /** One stored page as `docPages.listForSource` lists it. */
-type PageRow = FunctionReturnType<typeof api.docPages.listForSource>['page'][number];
+export type PageRow = FunctionReturnType<typeof api.docPages.listForSource>['page'][number];
 
 /** A page's status as its chip says it, and the chip's tone. */
 const STATUS_CHIP: Readonly<Record<PageRow['status'], { text: string; tone: Tone }>> = {
@@ -123,16 +123,16 @@ function PageControls({
   const picker = `successor-${page._id}`;
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <div className="grid gap-1">
+      <div className="grid min-w-0 gap-1">
         <label htmlFor={picker} className="text-xs text-[var(--color-muted)]">
           Mark “{page.title}” superseded by
         </label>
-        <span className="flex flex-wrap gap-2">
+        <span className="flex min-w-0 flex-wrap gap-2">
           <select
             id={picker}
             value={successor}
             onChange={(event) => setSuccessor(event.target.value as Id<'docPages'> | '')}
-            className={`${INPUT_CLASS} max-w-full`}
+            className={`${INPUT_CLASS} w-full min-w-0 sm:w-auto`}
           >
             <option value="">Choose a page</option>
             {others.map((other) => (
@@ -224,6 +224,127 @@ function PageControls({
 }
 
 /**
+ * A source's listed pages as the table draws them, each with its facts and, on a line of its own,
+ * its controls (`PageControls`); the page table's rows, apart from its read, so they can be drawn
+ * with pages given.
+ *
+ * @param pages - The pages listed.
+ * @param allNamed - Whether the newest sync named every page it could not read, so an unmarked
+ *   page was read.
+ * @param zone - The employee's zone.
+ * @param change - The table's change reporter, shared so one live region says every outcome.
+ */
+export function PageRows({
+  pages,
+  allNamed,
+  zone,
+  change,
+}: {
+  pages: readonly PageRow[];
+  allNamed: boolean;
+  zone?: string;
+  change: Change;
+}) {
+  return (
+    <table role="table" className="w-full text-left text-sm max-sm:block">
+      <thead role="rowgroup" className="max-sm:sr-only">
+        <tr
+          role="row"
+          className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]"
+        >
+          <th scope="col" role="columnheader" className="py-2.5 pr-3 font-medium">
+            Page
+          </th>
+          <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
+            Status
+          </th>
+          <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
+            Decided by
+          </th>
+          <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
+            As of
+          </th>
+          <th scope="col" role="columnheader" className="py-2.5 pl-3 font-medium">
+            Last sync
+          </th>
+        </tr>
+      </thead>
+      {pages.map((page) => (
+        // One group a page: its facts, then its controls on a line of their own.
+        <tbody
+          key={page._id}
+          role="rowgroup"
+          className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:gap-2 max-sm:py-3"
+        >
+          <tr role="row" className="max-sm:grid max-sm:gap-1">
+            <th
+              scope="row"
+              role="rowheader"
+              className="py-2.5 pr-3 text-left align-top font-normal max-sm:p-0"
+            >
+              {page.url ? (
+                <a href={page.url} target="_blank" rel="noreferrer" className="font-medium">
+                  {page.title}
+                </a>
+              ) : (
+                <span className="font-medium text-[var(--color-fg)]">{page.title}</span>
+              )}
+              <span className="block font-mono text-xs break-all text-[var(--color-muted)]">
+                {page.ref}
+              </span>
+              {page.supersededBy !== undefined ? (
+                <span className="block text-[13px] text-[var(--color-fg-2)]">
+                  Superseded by “{page.supersededBy}”
+                </span>
+              ) : null}
+            </th>
+            <td role="cell" className="px-3 py-2.5 align-top max-sm:p-0">
+              <Chip tone={statusChip(page).tone}>{statusChip(page).text}</Chip>
+            </td>
+            <td role="cell" className="px-3 py-2.5 align-top text-[var(--color-muted)] max-sm:p-0">
+              <span aria-hidden="true" className="text-xs text-[var(--color-muted)] sm:hidden">
+                Decided by{' '}
+              </span>
+              {decidedByWords(page, zone)}
+            </td>
+            <td
+              role="cell"
+              className="px-3 py-2.5 align-top whitespace-nowrap text-[var(--color-fg-2)] max-sm:p-0"
+            >
+              <span aria-hidden="true" className="text-xs text-[var(--color-muted)] sm:hidden">
+                As of{' '}
+              </span>
+              {clockTime(page.updatedAt, zone)}
+            </td>
+            <td role="cell" className="py-2.5 pl-3 align-top max-sm:p-0">
+              {page.unreadReason !== undefined ? (
+                <span className="grid justify-items-start gap-1">
+                  <Chip tone="warn">Earlier version</Chip>
+                  <span className="text-[13px] [overflow-wrap:anywhere] text-[var(--color-fg-2)]">
+                    Not read: {page.unreadReason}
+                  </span>
+                </span>
+              ) : allNamed ? (
+                <Chip tone="ok">Read</Chip>
+              ) : null}
+            </td>
+          </tr>
+          <tr role="row" className="max-sm:block">
+            <td role="cell" colSpan={5} className="pb-3 max-sm:block max-sm:p-0">
+              <PageControls
+                page={page}
+                others={pages.filter((other) => other._id !== page._id)}
+                change={change}
+              />
+            </td>
+          </tr>
+        </tbody>
+      ))}
+    </table>
+  );
+}
+
+/**
  * One source's stored pages (round two section 3.9): each page's title, linked to where it lives
  * when the source gives an address; its status and who or what decided it (A5); when the source
  * last had it; whether the newest sync read it; and, on a line of its own, the manager's controls
@@ -257,110 +378,7 @@ export function PageTable({ source, zone }: { source: LinkedSource; zone?: strin
         ) : results.length === 0 ? (
           <p className="text-sm text-[var(--color-muted)]">No page of this source is stored yet.</p>
         ) : (
-          <table role="table" className="w-full text-left text-sm max-sm:block">
-            <thead role="rowgroup" className="max-sm:sr-only">
-              <tr
-                role="row"
-                className="border-b border-[var(--color-border)] text-xs text-[var(--color-muted)]"
-              >
-                <th scope="col" role="columnheader" className="py-2.5 pr-3 font-medium">
-                  Page
-                </th>
-                <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
-                  Status
-                </th>
-                <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
-                  Decided by
-                </th>
-                <th scope="col" role="columnheader" className="px-3 py-2.5 font-medium">
-                  As of
-                </th>
-                <th scope="col" role="columnheader" className="py-2.5 pl-3 font-medium">
-                  Last sync
-                </th>
-              </tr>
-            </thead>
-            {results.map((page) => (
-              // One group a page: its facts, then its controls on a line of their own.
-              <tbody
-                key={page._id}
-                role="rowgroup"
-                className="border-b border-[var(--color-border)] last:border-b-0 max-sm:grid max-sm:gap-2 max-sm:py-3"
-              >
-                <tr role="row" className="max-sm:grid max-sm:gap-1">
-                  <th
-                    scope="row"
-                    role="rowheader"
-                    className="py-2.5 pr-3 text-left align-top font-normal max-sm:p-0"
-                  >
-                    {page.url ? (
-                      <a href={page.url} target="_blank" rel="noreferrer" className="font-medium">
-                        {page.title}
-                      </a>
-                    ) : (
-                      <span className="font-medium text-[var(--color-fg)]">{page.title}</span>
-                    )}
-                    <span className="block font-mono text-xs break-all text-[var(--color-muted)]">
-                      {page.ref}
-                    </span>
-                    {page.supersededBy !== undefined ? (
-                      <span className="block text-[13px] text-[var(--color-fg-2)]">
-                        Superseded by “{page.supersededBy}”
-                      </span>
-                    ) : null}
-                  </th>
-                  <td role="cell" className="px-3 py-2.5 align-top max-sm:p-0">
-                    <Chip tone={statusChip(page).tone}>{statusChip(page).text}</Chip>
-                  </td>
-                  <td
-                    role="cell"
-                    className="px-3 py-2.5 align-top text-[var(--color-muted)] max-sm:p-0"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="text-xs text-[var(--color-muted)] sm:hidden"
-                    >
-                      Decided by{' '}
-                    </span>
-                    {decidedByWords(page, zone)}
-                  </td>
-                  <td
-                    role="cell"
-                    className="px-3 py-2.5 align-top whitespace-nowrap text-[var(--color-fg-2)] max-sm:p-0"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="text-xs text-[var(--color-muted)] sm:hidden"
-                    >
-                      As of{' '}
-                    </span>
-                    {clockTime(page.updatedAt, zone)}
-                  </td>
-                  <td role="cell" className="py-2.5 pl-3 align-top max-sm:p-0">
-                    {page.unreadReason !== undefined ? (
-                      <span className="grid justify-items-start gap-1">
-                        <Chip tone="warn">Earlier version</Chip>
-                        <span className="text-[13px] text-[var(--color-fg-2)]">
-                          Not read: {page.unreadReason}
-                        </span>
-                      </span>
-                    ) : allNamed ? (
-                      <Chip tone="ok">Read</Chip>
-                    ) : null}
-                  </td>
-                </tr>
-                <tr role="row" className="max-sm:block">
-                  <td role="cell" colSpan={5} className="pb-3 max-sm:block max-sm:p-0">
-                    <PageControls
-                      page={page}
-                      others={results.filter((other) => other._id !== page._id)}
-                      change={change}
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            ))}
-          </table>
+          <PageRows pages={results} allNamed={allNamed} zone={zone} change={change} />
         )}
         {status === 'CanLoadMore' || status === 'LoadingMore' ? (
           <Button

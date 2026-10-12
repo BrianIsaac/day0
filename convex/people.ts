@@ -1680,11 +1680,26 @@ function sameResolution(
 }
 
 /**
+ * The resolution an item keeps from a poll's answer: the answer, unless it is `unknown` and the
+ * item already resolved to a person (W15-R36). A Take of a changed address retires the identities
+ * a lookup of the old address recorded until a lookup of the new one answers, so the poll between
+ * them finds nobody; who asked is still who asked, and the person-scoped agreements, the planner's
+ * From line and "Keep this note for later asks from ..." keep reading them.
+ */
+function keptResolution(
+  stored: PersonResolution<Id<'people'>> | undefined,
+  answer: PersonResolution<Id<'people'>>,
+): PersonResolution<Id<'people'>> {
+  return answer.kind === 'unknown' && stored?.kind === 'person' ? stored : answer;
+}
+
+/**
  * Internal, called by intake's seed once the listed item's row lands (`convex/intakeActions.ts`):
  * whom the item's requester and owner are in the owner's graph ({@link resolvePerson}, a lookup
  * and never an insert), written as `requesterPerson` and `ownerPerson` beside the strings, never
  * in place of them. Fenced as the seed is: nothing once a handover moved the employee to another
- * owner since the sweep read it. Writes only a field whose answer changed.
+ * owner since the sweep read it. Writes only a field whose answer changed, and never turns a
+ * person it resolved into nobody ({@link keptResolution}).
  *
  * @returns Whether it wrote the row.
  */
@@ -1714,9 +1729,13 @@ export const resolveItemPeople = internalMutation({
       .first();
     if (item === null) return false;
     const requesterPerson =
-      args.requester === undefined ? undefined : await resolveFirst(ctx, scope, args.requester);
+      args.requester === undefined
+        ? undefined
+        : keptResolution(item.requesterPerson, await resolveFirst(ctx, scope, args.requester));
     const ownerPerson =
-      args.owner === undefined ? undefined : await resolveFirst(ctx, scope, args.owner);
+      args.owner === undefined
+        ? undefined
+        : keptResolution(item.ownerPerson, await resolveFirst(ctx, scope, args.owner));
     const changes = {
       ...(requesterPerson === undefined || sameResolution(item.requesterPerson, requesterPerson)
         ? {}

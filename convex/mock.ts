@@ -325,17 +325,22 @@ export const upsertDoc = internalMutation({
       .query('mockDocs')
       .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', args.slug))
       .unique();
-    const payload = {
+    const content = {
       title: args.title,
       body: args.body,
       category: args.category,
       sourceId: args.sourceId,
       sourceRef: args.sourceRef,
       sourceUrl: args.sourceUrl,
-      updatedAt: Date.now(),
     };
+    const payload = { ...content, updatedAt: Date.now() };
     if (existing) {
-      await ctx.db.patch(existing._id, payload);
+      // A mirror that already holds the page is not written again: an unchanged sync wrote a row
+      // for every page and employee only to stamp the time (the 15-T pre-tag bed, 16-FD).
+      const same = (Object.keys(content) as Array<keyof typeof content>).every(
+        (field) => existing[field] === content[field],
+      );
+      if (!same) await ctx.db.patch(existing._id, payload);
       return existing._id;
     }
     return await ctx.db.insert('mockDocs', { agentId: args.agentId, slug: args.slug, ...payload });

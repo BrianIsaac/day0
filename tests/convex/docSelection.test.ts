@@ -996,3 +996,160 @@ describe('snapshotInternal and a selection outside real mode (W14-R26)', (): voi
     ).rejects.toThrow('more than 32 documents');
   });
 });
+
+describe('docSelection.plannedFromBlocks: the blocks a plan with no cites was drafted from (W15-R17)', (): void => {
+  /** The finance escalation page the review's reader 2 rewrote in place (`vt/d.test.ts`). */
+  const ESCALATION = (threshold: string): string =>
+    [
+      '# Finance escalation',
+      '',
+      '## Thresholds',
+      '',
+      `Escalate above ${threshold} USD to the finance lead.`,
+    ].join('\n');
+
+  /** An employee, the stored page, and an item of the employee's. */
+  async function drafted(harness: Harness) {
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    await storePage(harness, {
+      agentId,
+      ...handbook,
+      ref: 'escalation.md',
+      title: 'Finance escalation',
+      markdown: ESCALATION('5,000'),
+    });
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-12',
+          title: 'Escalate the variance',
+          contentSummary: 'A variance above the threshold needs the finance lead.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'plan-approved',
+        }),
+    );
+    const blocks = await pageBlocks(harness, handbook.sourceId, 'escalation.md');
+    return { agentId, handbook, workItemId, blocks };
+  }
+
+  it('fails the check of a block rewritten in place by the hash the item kept, where its id alone passes', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, handbook, workItemId, blocks } = await drafted(harness);
+    await harness.mutation(internal.docSelection.recordPlanSelection, {
+      workItemId,
+      blocks: blocks.map((block) => ({ id: block._id as string, hash: block.hash })),
+    });
+    // "Escalate above 5,000 USD" becomes "50,000 USD": the rows keep their ids.
+    await harness.run(async (ctx) => {
+      await replacePageBlocks(ctx, {
+        userId: 'owner',
+        sourceId: handbook.sourceId,
+        pageRef: 'escalation.md',
+        generation: handbook.runId,
+        markdown: ESCALATION('50,000'),
+      });
+    });
+    const after = await pageBlocks(harness, handbook.sourceId, 'escalation.md');
+    expect(after.map((block) => block._id)).toEqual(blocks.map((block) => block._id));
+    const planned = await harness.query(internal.docSelection.plannedFromBlocks, {
+      agentId,
+      workItemId,
+    });
+    expect(planned).toEqual(blocks.map((block) => ({ id: block._id, hash: block.hash })));
+    const gone = await harness.query(internal.docSelection.changedCitedBlocks, {
+      agentId,
+      blocks: planned,
+    });
+    expect(gone.map((entry) => entry.id)).toContain(
+      blocks.find((block) => block.text.includes('5,000'))?._id,
+    );
+  });
+
+  it('reads the item’s own selection however many items the employee selected for since', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, blocks } = await drafted(harness);
+    const record = blocks.map((block) => ({ id: block._id as string, hash: block.hash }));
+    await harness.mutation(internal.docSelection.recordPlanSelection, {
+      workItemId,
+      blocks: record,
+    });
+    // As v0.19.0 recorded it, and then seventy other items' selections after it.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: { workItemId, site: 'plan', blockIds: record.map((block) => block.id), chars: 40 },
+        createdAt: 1,
+      });
+      for (let index = 0; index < 70; index += 1) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.documentation-selected',
+          payload: { workItemId: `other-${index}`, site: 'plan', blockIds: [], chars: 0 },
+          createdAt: 2 + index,
+        });
+      }
+    });
+    expect(
+      await harness.query(internal.docSelection.plannedFromBlocks, { agentId, workItemId }),
+    ).toEqual(record);
+  });
+
+  it('reads an item selected before the record was kept by its selection’s event, by id', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, blocks } = await drafted(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: { workItemId, site: 'plan', blockIds: [blocks[0]._id], chars: 40 },
+        createdAt: 1,
+      });
+    });
+    expect(
+      await harness.query(internal.docSelection.plannedFromBlocks, { agentId, workItemId }),
+    ).toEqual([{ id: blocks[0]._id }]);
+  });
+
+  it('reads the event for an item whose kept selection holds no block, so its check is never vacuous (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, blocks } = await drafted(harness);
+    // The selection's blocks came without hashes, so none was kept on the item.
+    await harness.mutation(internal.docSelection.recordPlanSelection, {
+      workItemId,
+      blocks: [{ id: blocks[0]._id as string }],
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: { workItemId, site: 'plan', blockIds: [blocks[0]._id], chars: 40 },
+        createdAt: 1,
+      });
+    });
+    expect(
+      await harness.query(internal.docSelection.plannedFromBlocks, { agentId, workItemId }),
+    ).toEqual([{ id: blocks[0]._id }]);
+  });
+
+  it('keeps only blocks given with a hash, by a block’s id', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, blocks } = await drafted(harness);
+    await harness.mutation(internal.docSelection.recordPlanSelection, {
+      workItemId,
+      blocks: [
+        { id: blocks[0]._id as string, hash: blocks[0].hash },
+        { id: blocks[0]._id as string },
+        { id: 'not-a-block', hash: 'h' },
+      ],
+    });
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(item?.selectedBlocks).toEqual([{ id: blocks[0]._id, hash: blocks[0].hash }]);
+  });
+});

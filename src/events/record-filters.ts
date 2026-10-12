@@ -175,6 +175,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'agreement.activated': DECISIONS,
   'agreement.refused': REFUSED,
   'agreement.retired': DECISIONS,
+  'agreement.check-owed': NONE,
+  'agreement.checked': DECISIONS,
   'work.draft-resumed': NONE,
   'work.execution-resumed': NONE,
   'work.plan-held': NONE,

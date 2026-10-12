@@ -1221,6 +1221,40 @@ describe("a Slack ask naming a ticket a colleague settled (the wave 14 review's 
     }
   });
 
+  it('stays taken anyway past 50 later retries of the employee’s other work (W15-R16)', async (): Promise<void> => {
+    // The review's probe: "Take it anyway" rested on the newest 50 `work.retry` events, so a
+    // readmitted ask was skipped again once 50 later retries had pushed its own out of the read.
+    useSurfaceMode('real');
+    const t = convexTest(contractSchema(), allConvexModules());
+    const mateo = await seedEmployee(t, { name: 'Mateo' });
+    const aiko = await seedEmployee(t, { name: 'Aiko' });
+    await seedItem(t, mateo, { source: 'ticket', state: 'completed', output: SETTLED_OUTPUT });
+    const ask = await seedAsk(t, aiko, NAMING_ASK);
+    await t.mutation(internal.work.claimLoopStep, { workItemId: ask, step: 'evaluation' });
+    await t.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId: ask });
+    expect((await t.run(async (ctx) => await ctx.db.get(ask)))!.settledWaivedAt).toEqual(
+      expect.any(Number),
+    );
+    await t.run(async (ctx): Promise<void> => {
+      for (let retry = 0; retry < 51; retry += 1) {
+        await ctx.db.insert('events', {
+          agentId: aiko,
+          type: 'work.retry',
+          payload: { workItemId: `other-${retry}` },
+          createdAt: Date.now() + retry,
+        });
+      }
+    });
+
+    const again = await t.mutation(internal.work.claimLoopStep, {
+      workItemId: ask,
+      step: 'evaluation',
+    });
+
+    expect(again.claimed).toBe(true);
+    expect((await t.run(async (ctx) => await ctx.db.get(ask)))!.state).toBe('discovered');
+  });
+
   it('is evaluated once the manager takes it anyway with Retry', async (): Promise<void> => {
     useSurfaceMode('real');
     const t = convexTest(contractSchema(), allConvexModules());

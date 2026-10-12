@@ -24,6 +24,7 @@ import { ReportingElsewhere } from './ReportingElsewhere';
 import { OfficeWorld } from './OfficeWorld';
 import { RetiredNotice } from '../RetiredNotice';
 import { ResetCard } from './ResetCard';
+import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
 import type { Boss, NeedsYouInbox, RosterRow } from './types';
 
 /**
@@ -164,7 +165,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         </div>
         <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {showDeployForm ? <AfterDeploy /> : null}
-          <DocumentationCard sources={docSources?.length} />
+          <DocumentationCard sources={docSources?.length} mode={surfaceMode?.mode} />
           {/* Beside the month's figures, the one file they are recomputed from (16-F). */}
           {staffed ? <ExportCard /> : null}
         </aside>
@@ -175,7 +176,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           data-cards={arriving ? '' : undefined}
           className="min-w-0 xl:col-start-1 xl:row-start-2"
         >
-          <ResetCard mode={surfaceMode?.mode} />
+          <ResetCard mode={surfaceMode === undefined ? 'loading' : surfaceMode.mode} />
         </div>
       </div>
     </div>
@@ -226,8 +227,17 @@ function AfterDeploy() {
   );
 }
 
-/** The owner's documentation: how much is linked, and where it is managed. */
-function DocumentationCard({ sources }: { sources: number | undefined }) {
+/**
+ * The owner's documentation: how much is linked, and where it is managed; in the hosted office,
+ * what its employees read instead, and a link that views the seeded pages (RM26 (a)).
+ */
+function DocumentationCard({
+  sources,
+  mode,
+}: {
+  sources: number | undefined;
+  mode: 'mock' | 'real' | undefined;
+}) {
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       {/* The link's 44 px target (N14) takes the header's height; the padding makes up the rest. */}
@@ -237,15 +247,17 @@ function DocumentationCard({ sources }: { sources: number | undefined }) {
           href="/documentation"
           className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
         >
-          Manage
+          {mode === 'mock' ? 'View' : 'Manage'}
         </Link>
       </div>
       <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
-        {sources === undefined
-          ? 'Loading'
-          : sources === 0
-            ? 'No documentation linked yet. Your employees learn the team from what you link.'
-            : `${sources} ${sources === 1 ? 'source' : 'sources'} linked. Every employee reads them unless you leave one out at deploy.`}
+        {mode === 'mock'
+          ? MOCK_OFFICE_DOCUMENTATION
+          : sources === undefined || mode === undefined
+            ? 'Loading'
+            : sources === 0
+              ? 'No documentation linked yet. Your employees learn the team from what you link.'
+              : `${sources} ${sources === 1 ? 'source' : 'sources'} linked. Every employee reads them unless you leave one out at deploy.`}
       </p>
     </section>
   );

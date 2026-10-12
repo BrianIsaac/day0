@@ -172,6 +172,14 @@ function retryDone(mode: RetryMode, title: string): string {
   }
 }
 
+/** The states a row has finished in: nothing the manager decided on it is still to happen. */
+const FINISHED_STATES: ReadonlySet<Doc<'workItems'>['state']> = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+  'skipped',
+]);
+
 /**
  * One work item in its state, as round two section 3.7 draws it: the head (the state in the
  * manager's words, where it came from, the ask), then what the state is about (a skip citing
@@ -252,8 +260,24 @@ export function WorkItemCard({
   const change = useChange(cardRef);
   const deciding = change.busy;
   const [stopping, setStopping] = useState(false);
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
+  // The state an approval of held writes was made in: its "it applies now" is not said once the
+  // row has finished, where it would no longer be true (W19-8). Every other outcome stays, a
+  // cancellation's or a rejection's included, as does a refusal (the second pass).
+  const [appliedIn, setAppliedIn] = useState<Doc<'workItems'>['state'] | undefined>(undefined);
+  const decide = (
+    call: () => Promise<unknown> | void,
+    done: string,
+    refused: string,
+    applies = false,
+  ): void => {
+    setAppliedIn(applies ? item.state : undefined);
     change.run(call, { done, refused });
+  };
+  const outcomeOutlived =
+    appliedIn !== undefined &&
+    appliedIn !== item.state &&
+    FINISHED_STATES.has(item.state) &&
+    change.outcome?.tone === 'done';
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -458,6 +482,7 @@ export function WorkItemCard({
       failed={failed}
       unknown={namedUnknown}
       title={item.title}
+      employeeName={employeeName}
     />
   );
   const ticketNow =
@@ -617,6 +642,7 @@ export function WorkItemCard({
                     ? 'Approved 1 action: it applies now.'
                     : `Approved ${approvedIndexes.length} actions: they apply now.`,
                 'The actions were not approved.',
+                approvedIndexes.length > 0,
               )
             }
             onReject={(reason) =>
@@ -739,7 +765,7 @@ export function WorkItemCard({
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">
-        <StatusRegion outcome={change.outcome} />
+        <StatusRegion outcome={outcomeOutlived ? null : change.outcome} />
       </div>
     </article>
   );

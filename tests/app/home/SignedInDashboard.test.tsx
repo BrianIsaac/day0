@@ -325,6 +325,17 @@ describe('the signed-in home with nobody deployed', (): void => {
   it('keeps the documentation link', (): void => {
     expect(html()).toContain('href="/documentation"');
   });
+
+  it("says what the hosted office reads on the documentation card, in the Documentation page's sentence (RM26 (a), the v0.19.0 walk's finding 6)", (): void => {
+    const card = /<h2[^>]*>Documentation<\/h2>.*?<\/section>/s.exec(html())?.[0] ?? '';
+    expect(card).toContain(
+      'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+    );
+    expect(card).not.toContain('linked');
+    expect(card).not.toContain('No documentation linked yet');
+    // Nothing is managed there in the hosted office: the link views the seeded pages.
+    expect(card).toMatch(/<a [^>]*href="\/documentation"[^>]*>View<\/a>/);
+  });
 });
 
 describe("an MCP authorisation the home is sent back from unfinished (the wave 11 review's M2)", (): void => {
