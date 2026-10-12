@@ -279,7 +279,7 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
         onClose();
         swallowDoubleClickTail();
       }}
-      className={`fixed inset-0 z-50 bg-[#0a0a0b]/55 ${open ? '' : 'pointer-events-none'}`}
+      className={`fixed inset-0 z-50 bg-[var(--color-scrim)]/55 ${open ? '' : 'pointer-events-none'}`}
     >
       <div
         ref={panel}
@@ -309,7 +309,7 @@ function WholeWeek({ id, steps, anchor, open, card, onClose, onClosed }: WholeWe
         onTransitionCancel={(event: TransitionEvent<HTMLDivElement>): void => {
           if (!open && event.target === event.currentTarget) onClosed();
         }}
-        className="fixed right-0 left-0 mx-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-xl shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)] outline-none sm:w-[min(77rem,calc(100%-3rem))]"
+        className="fixed right-0 left-0 mx-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] overflow-y-auto rounded-xl shadow-(--shadow-raised) outline-none sm:w-[min(77rem,calc(100%-3rem))]"
       >
         <FirstWeekRail steps={steps} />
         {/* At the week's top right whether shown or not: hidden, it still has a box, and one at

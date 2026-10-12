@@ -401,7 +401,9 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
   ].filter((note): note is string => note !== null);
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+      {/* A column gap, and the count wrapping under the title, so the two never run together
+          on a phone (Q6). */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Company supervision</h2>
         <span className="text-xs text-[var(--color-muted)]">
           {count(company.employees, 'employee')}, one manager

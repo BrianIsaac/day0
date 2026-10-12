@@ -264,7 +264,7 @@ function AutonomyBadge({ autonomous }: AutonomyBadgeProps) {
       }
       className={`inline-block whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-medium ${
         autonomous
-          ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+          ? 'border-[var(--color-accent)]/40 bg-[var(--color-accent-fill)] text-[var(--color-accent)]'
           : 'border-[var(--color-border)] text-[var(--color-fg)]/70'
       }`}
     >

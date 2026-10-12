@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from 'playwright/test';
+import { THEMES, chooseTheme, expectDrawnIn } from './theme';
 import { RECORDED_RUN, elapsedLabel } from '../../src/demo/walkthrough';
 import { SPEEDS, atRest, readStop, type ReaderStop } from './pinned-scroll';
 
@@ -76,101 +77,123 @@ async function open(page: Page, path = '/walkthrough'): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
-for (const viewport of WIDTHS) {
-  test.describe(`the walkthrough's pinned frame at ${viewport.tag}`, () => {
-    test.use({
-      viewport: { width: viewport.width, height: viewport.height },
-      deviceScaleFactor: 1,
-      isMobile: viewport.mobile,
-      hasTouch: viewport.mobile,
-      colorScheme: 'dark',
-      reducedMotion: 'no-preference',
-    });
+for (const theme of THEMES)
+  for (const viewport of WIDTHS) {
+    test.describe(`the walkthrough's pinned frame at ${viewport.tag} in ${theme}`, () => {
+      test.use({
+        viewport: { width: viewport.width, height: viewport.height },
+        deviceScaleFactor: 1,
+        isMobile: viewport.mobile,
+        hasTouch: viewport.mobile,
+        colorScheme: theme,
+        reducedMotion: 'no-preference',
+      });
+      // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+      test.beforeEach(async ({ page }) => {
+        if (theme === 'light') await chooseTheme(page, 'light');
+      });
+      // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+      test.afterEach(async ({ page }) => {
+        await expectDrawnIn(page, theme);
+      });
 
-    for (const speed of SPEEDS) {
-      test(`shows the step's own capture and time at every reader's stop, scrolled ${speed.tag}`, async ({
-        page,
-      }) => {
-        test.setTimeout(240_000);
-        const errors = collectErrors(page);
-        await open(page);
+      // The frame's geometry is the theme's to leave alone, so light runs the fast pass only: the
+      // three speeds again doubled the job's longest part, and the walkthrough's slow pass ran past
+      // its budget beside its own dark run (16-T).
+      for (const speed of theme === 'dark' ? SPEEDS : SPEEDS.filter(({ tag }) => tag === 'fast')) {
+        test(`shows the step's own capture and time at every reader's stop, scrolled ${speed.tag}`, async ({
+          page,
+        }) => {
+          test.setTimeout(240_000);
+          const errors = collectErrors(page);
+          await open(page);
 
-        for (const stop of viewport.stops) {
-          await page.evaluate(() => scrollTo(0, 0));
-          await page.waitForTimeout(400);
-          for (const [direction, order] of [
-            ['down', STEPS],
-            ['up', [...STEPS].reverse()],
-          ] as const) {
-            for (const step of order) {
-              const seen = await readStop(page, step, stop, speed.px, direction);
-              const shown = await clock(page);
-              const result: StopResult = {
-                width: viewport.tag,
-                speed: speed.tag,
-                stop,
-                direction,
-                step,
-                scrollY: seen.scrollY,
-                visible: seen.visible,
-                active: seen.active,
-                sequence: seen.sequence,
-                clock: shown,
-                pass:
-                  seen.visible.length === 1 &&
-                  seen.visible[0] === step &&
-                  seen.active === step &&
-                  seen.monotonic &&
-                  shown === expectedClock(step),
-              };
-              results.push(result);
-              expect.soft(result, `${stop} ${direction} to step ${step}`).toMatchObject({
-                visible: [step],
-                active: step,
-                clock: expectedClock(step),
-              });
-              expect
-                .soft(
-                  seen.monotonic,
-                  `the active step moved against the scroll: ${seen.sequence.join(' > ')}`,
-                )
-                .toBe(true);
+          for (const stop of viewport.stops) {
+            await page.evaluate(() => scrollTo(0, 0));
+            await page.waitForTimeout(400);
+            for (const [direction, order] of [
+              ['down', STEPS],
+              ['up', [...STEPS].reverse()],
+            ] as const) {
+              for (const step of order) {
+                const seen = await readStop(page, step, stop, speed.px, direction);
+                const shown = await clock(page);
+                const result: StopResult = {
+                  width: viewport.tag,
+                  speed: speed.tag,
+                  stop,
+                  direction,
+                  step,
+                  scrollY: seen.scrollY,
+                  visible: seen.visible,
+                  active: seen.active,
+                  sequence: seen.sequence,
+                  clock: shown,
+                  pass:
+                    seen.visible.length === 1 &&
+                    seen.visible[0] === step &&
+                    seen.active === step &&
+                    seen.monotonic &&
+                    shown === expectedClock(step),
+                };
+                results.push(result);
+                expect.soft(result, `${stop} ${direction} to step ${step}`).toMatchObject({
+                  visible: [step],
+                  active: step,
+                  clock: expectedClock(step),
+                });
+                expect
+                  .soft(
+                    seen.monotonic,
+                    `the active step moved against the scroll: ${seen.sequence.join(' > ')}`,
+                  )
+                  .toBe(true);
+              }
             }
           }
+          expect(errors).toEqual([]);
+        });
+      }
+
+      test('lands a link to a step on that step', async ({ page }) => {
+        const errors = collectErrors(page);
+        for (const step of [2, 8, 15]) {
+          await open(page, `/walkthrough#step-${step}`);
+          const rest = await atRest(page);
+          expect(rest, `#step-${step}`).toMatchObject({ visible: [step], active: step });
         }
         expect(errors).toEqual([]);
       });
-    }
+    });
+  }
 
-    test('lands a link to a step on that step', async ({ page }) => {
-      const errors = collectErrors(page);
-      for (const step of [2, 8, 15]) {
-        await open(page, `/walkthrough#step-${step}`);
-        const rest = await atRest(page);
-        expect(rest, `#step-${step}`).toMatchObject({ visible: [step], active: step });
-      }
-      expect(errors).toEqual([]);
+for (const theme of THEMES) {
+  test.describe(`the walkthrough on a phone in ${theme}`, () => {
+    test.use({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      colorScheme: theme,
+    });
+    // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+    test.beforeEach(async ({ page }) => {
+      if (theme === 'light') await chooseTheme(page, 'light');
+    });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
+    });
+
+    test('fits the screen, with nothing scrolling sideways', async ({ page }) => {
+      await page.goto('/walkthrough');
+      const widths = await page.evaluate(() => ({
+        page: document.documentElement.scrollWidth,
+        screen: innerWidth,
+      }));
+      expect(widths).toEqual({ page: 390, screen: 390 });
     });
   });
 }
-
-test.describe('the walkthrough on a phone', () => {
-  test.use({
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
-    colorScheme: 'dark',
-  });
-
-  test('fits the screen, with nothing scrolling sideways', async ({ page }) => {
-    await page.goto('/walkthrough');
-    const widths = await page.evaluate(() => ({
-      page: document.documentElement.scrollWidth,
-      screen: innerWidth,
-    }));
-    expect(widths).toEqual({ page: 390, screen: 390 });
-  });
-});
 
 test.describe('the walkthrough and the sign-in page as pointer targets', () => {
   for (const viewport of [
@@ -208,28 +231,38 @@ test.describe('the walkthrough and the sign-in page as pointer targets', () => {
   }
 });
 
-test.describe('the walkthrough under reduced motion', () => {
-  test.use({
-    viewport: { width: 1440, height: 900 },
-    colorScheme: 'dark',
-    reducedMotion: 'reduce',
-  });
-
-  test('lands the clock at once and swaps the capture by opacity alone', async ({ page }) => {
-    await open(page);
-    await page.evaluate(() =>
-      document.querySelector('[data-step="16"]')?.scrollIntoView({ block: 'center' }),
-    );
-    await page.waitForTimeout(250);
-    expect(await clock(page)).toBe(elapsedLabel(RECORDED_RUN.steps[15]!.elapsedSeconds!));
-    const swap = await page.evaluate(() => {
-      const frame = document.querySelector('[data-frame]');
-      const style = frame ? getComputedStyle(frame) : null;
-      return { property: style?.transitionProperty, transform: style?.transform };
+for (const theme of THEMES) {
+  test.describe(`the walkthrough under reduced motion in ${theme}`, () => {
+    test.use({
+      viewport: { width: 1440, height: 900 },
+      colorScheme: theme,
+      reducedMotion: 'reduce',
     });
-    expect(swap).toEqual({ property: 'opacity', transform: 'none' });
+    // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+    test.beforeEach(async ({ page }) => {
+      if (theme === 'light') await chooseTheme(page, 'light');
+    });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
+    });
+
+    test('lands the clock at once and swaps the capture by opacity alone', async ({ page }) => {
+      await open(page);
+      await page.evaluate(() =>
+        document.querySelector('[data-step="16"]')?.scrollIntoView({ block: 'center' }),
+      );
+      await page.waitForTimeout(250);
+      expect(await clock(page)).toBe(elapsedLabel(RECORDED_RUN.steps[15]!.elapsedSeconds!));
+      const swap = await page.evaluate(() => {
+        const frame = document.querySelector('[data-frame]');
+        const style = frame ? getComputedStyle(frame) : null;
+        return { property: style?.transitionProperty, transform: style?.transform };
+      });
+      expect(swap).toEqual({ property: 'opacity', transform: 'none' });
+    });
   });
-});
+}
 
 test.describe('the old address', () => {
   test('redirects /demo to the walkthrough permanently, for a signed-out visitor', async ({

@@ -64,7 +64,7 @@ export function SpreadsheetTab({ agentId }: { agentId: Id<'agents'> }) {
               }}
               className={`min-h-11 rounded-lg px-3 py-1 text-sm ${
                 s.slug === activeSlug
-                  ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
+                  ? 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]'
                   : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]'
               }`}
             >

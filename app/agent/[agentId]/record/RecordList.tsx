@@ -140,7 +140,7 @@ export function RecordFilters({ selected, onSelect }: RecordFiltersProps) {
             onClick={() => onSelect(chip.view)}
             className={`inline-flex min-h-11 items-center rounded-full border px-3.5 text-[13px] transition-colors motion-reduce:transition-none ${
               pressed
-                ? 'border-[var(--color-accent-line)] bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                ? 'border-[var(--color-accent-line)] bg-[var(--color-accent-fill)] text-[var(--color-accent)]'
                 : 'border-[var(--color-border)] text-[var(--color-fg-2)] hover:border-[var(--color-border-2)] hover:text-[var(--color-fg)]'
             }`}
           >
