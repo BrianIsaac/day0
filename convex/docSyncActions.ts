@@ -311,6 +311,8 @@ async function persistPage(
     ref: page.ref,
     ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
     ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+    // A revision the reader could not read this time keeps the stored one (W15-R30).
+    ...(page.revisionUnread === true ? { keepRevision: true } : {}),
   };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
@@ -408,7 +410,8 @@ async function keptUnchangedPage(
     page: { ...page, title: stored.title, url: stored.url, markdown: stored.markdown },
     credentialRefs,
     saidOtherwise:
-      stored.nativeStatus !== page.nativeStatus || stored.sourceRevision !== page.sourceRevision,
+      stored.nativeStatus !== page.nativeStatus ||
+      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision),
   };
 }
 

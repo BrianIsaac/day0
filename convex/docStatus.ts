@@ -337,6 +337,11 @@ export const recordRead = internalMutation({
     ref: v.string(),
     nativeStatus: v.optional(pageStatusValidator),
     sourceRevision: v.optional(v.string()),
+    /**
+     * The reader read the page but not its revision, for a reason that passes: the revision the
+     * page was stored with stands, where none would clear it (W15-R30).
+     */
+    keepRevision: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const source = await ctx.db.get(args.sourceId);
@@ -346,7 +351,10 @@ export const recordRead = internalMutation({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null) return false;
-    const inputs = { nativeStatus: args.nativeStatus, sourceRevision: args.sourceRevision };
+    const inputs = {
+      nativeStatus: args.nativeStatus,
+      sourceRevision: args.keepRevision === true ? page.sourceRevision : args.sourceRevision,
+    };
     if (
       page.nativeStatus !== inputs.nativeStatus ||
       page.sourceRevision !== inputs.sourceRevision

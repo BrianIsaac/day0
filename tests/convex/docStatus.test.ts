@@ -279,6 +279,26 @@ describe('recordRead: what a page’s source says of it, beside its hash', (): v
     });
   });
 
+  it('keeps the revision a page was stored with when its reader could not read it this time (W15-R30)', async (): Promise<void> => {
+    // Feishu's revision call met a transient, and the sync then cleared a known revision.
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'doc.md', sourceRevision: '12' });
+    await harness.mutation(internal.docStatus.recordRead, {
+      sourceId: source.sourceId,
+      syncRunId: source.runId,
+      ref: 'doc.md',
+      keepRevision: true,
+    });
+    expect((await pageOf(harness, pageId)).sourceRevision).toBe('12');
+    await harness.mutation(internal.docStatus.recordRead, {
+      sourceId: source.sourceId,
+      syncRunId: source.runId,
+      ref: 'doc.md',
+    });
+    expect((await pageOf(harness, pageId)).sourceRevision).toBeUndefined();
+  });
+
   it('writes nothing for a generation that is no longer the source’s running one, or a page not stored', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
