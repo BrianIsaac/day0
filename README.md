@@ -948,7 +948,7 @@ The schema contains 48 tables: 29 carry per-agent or agent-owned runtime state, 
 |---|---|
 | `agents` | One row per deployed agent; lifecycle state |
 | `charters` | Versioned charters with approval state, the constraints the manager confirmed or struck, and the version each amendment supersedes |
-| `managerQuestions` | One record per open charter question asked, with the plan or candidate that touched it and the answer that amended the charter |
+| `managerQuestions` | One record per question asked of the manager: an open charter question, with the plan or candidate that touched it and the answer that amended the charter, and from wave 16 a question a plan's documentation conflict or a reorientation card asks, which may let the plan's other steps run while it waits, answered on the dashboard, with the plan's approval or in its Slack request |
 | `workspace` | 8-file workspace storage |
 | `credentials` | Owner-scoped encrypted values, locations and OAuth grants with source, use and revocation metadata; a row the organisation holds is stored under a reserved key no signed-in owner has |
 | `docSources` | Linked MCP, folder, git and URL documentation locations with sync/discovery status |

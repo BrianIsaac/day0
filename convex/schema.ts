@@ -45,6 +45,7 @@ import {
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
 import { CONSTRAINT_KINDS } from '../src/agent/charter-constraints';
+import { MANAGER_QUESTION_TYPES } from '../src/agent/manager-questions';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import {
   AGREEMENT_PROPOSAL_ACTIONS,
@@ -1762,8 +1763,10 @@ export default defineSchema({
 
   /** One question for the manager per (agent, question key): an open
    * question of the charter, asked once at the first plan approval whose plan
-   * or candidate touched it. The answer becomes a charter amendment. The
-   * record shape is `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
+   * or candidate touched it, whose answer becomes a charter amendment; and from
+   * wave 16 (`type`) a question a plan's conflict or a reorientation card asks,
+   * whose answer decides what it is about. The record shape is
+   * `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
   managerQuestions: defineTable({
     agentId: v.id('agents'),
     /** Stable across charter versions: the normalised question text. */
@@ -1778,18 +1781,33 @@ export default defineSchema({
     workItemId: v.id('workItems'),
     /** The charter version whose open question this was. */
     charterId: v.id('charters'),
+    /**
+     * Whether the plan waits for the answer (wave 16, 16-K for 16-O). Absent reads as blocking, as
+     * every question before wave 16 was (`isBlockingQuestion`, `src/agent/manager-questions.ts`);
+     * a conflict's question is not (RM20): the steps it does not touch run meanwhile.
+     */
+    blocking: v.optional(v.boolean()),
+    /** What the question is about (16-K); absent reads as `charter` (`questionTypeOf`). */
+    type: v.optional(literals(MANAGER_QUESTION_TYPES)),
+    /** The confirmed conflict a `retrieval` question asks about; its answer decides the relation. */
+    relationId: v.optional(v.id('docRelations')),
+    /** The reorientation card the question was asked from. */
+    reorientationId: v.optional(v.id('reorientations')),
     answer: v.optional(
       v.object({
         text: v.string(),
         answeredAt: v.number(),
-        via: v.union(v.literal('dashboard'), v.literal('plan-approval')),
+        /** Typed on the dashboard, given with a plan approval, or in the plan's Slack request (RM20). */
+        via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('slack')),
         amendedCharterId: v.optional(v.id('charters')),
       }),
     ),
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_key', ['agentId', 'key'])
-    .index('by_work_item', ['workItemId']),
+    .index('by_work_item', ['workItemId'])
+    /** The questions about one relation: its answer's write-back, and the relation's decision. */
+    .index('by_relation', ['relationId']),
 
   /**
    * A reorientation card (wave 16, 16-K for 16-O; the wave file's sections 1 and 5.1): the
