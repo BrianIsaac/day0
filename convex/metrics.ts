@@ -1330,11 +1330,19 @@ export function figuresForCurrentManager(
   return { ...whole, decisions: summariseDecisions(decisionTotals(held.events, held.workItems)) };
 }
 
+/** The events that start a manager's wait on a decision, which a decision made later is timed from. */
+const WAIT_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
+  'work.decision-requesting',
+  'work.plan-drafted',
+  'work.actions-pending',
+]);
+
 /**
  * One employee's records of one day in its zone (N12): the events logged from that day's
- * midnight to the next, and its work rows as they read before it, their ledgers read only from
- * the day's events and a decision kept only when it was made that day, as a closed span is read
- * ({@link recordsWithinTenure}).
+ * midnight to the next, and the earlier asks of the decisions made that day, so a plan asked
+ * yesterday and approved today counts once, today, and its wait from the ask. The work rows are
+ * read as a closed span reads them ({@link recordsWithinTenure}): their ledgers only from the
+ * day's events, and their own decision records not at all, which the events already carry.
  *
  * @param records - The employee's records, already cut to the reader's spans.
  * @param day - The day, `YYYY-MM-DD`.
@@ -1343,19 +1351,34 @@ export function figuresForCurrentManager(
 export function recordsOfDay(records: EmployeeRecords, day: string, zone: string): EmployeeRecords {
   const from = dayStart(day, zone);
   const until = dayStart(addDays(day, 1), zone);
-  const within = (at: number): boolean => at >= from && at < until;
+  const ofDay = records.events.filter(
+    (event) => event.createdAt >= from && event.createdAt < until,
+  );
+  const decidedOnDay = new Set(
+    ofDay.flatMap((event) => {
+      const result = decisionResult(event);
+      return result === undefined ? [] : [result.workItemId];
+    }),
+  );
+  const asks = records.events.filter((event) => {
+    const workItemId = asString(asRecord(event.payload)?.workItemId);
+    return (
+      event.createdAt < from &&
+      isEventType(event.type) &&
+      WAIT_EVENTS.has(event.type) &&
+      workItemId !== undefined &&
+      decidedOnDay.has(workItemId)
+    );
+  });
   return {
     ...records,
-    events: records.events.filter((event) => within(event.createdAt)),
+    events: [...asks, ...ofDay],
     workItems: records.workItems.map(
       (item): Doc<'workItems'> => ({
         ...item,
         output: undefined,
+        decision: undefined,
         manualEstimateMinutes: undefined,
-        decision:
-          item.decision?.decidedAt !== undefined && within(item.decision.decidedAt)
-            ? item.decision
-            : undefined,
       }),
     ),
     charters: [],

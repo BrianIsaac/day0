@@ -2572,6 +2572,64 @@ describe('today in the employee’s zone (16-F)', (): void => {
     expect(metrics.decisions).toMatchObject({ approved: 2, rejected: 1 });
   });
 
+  it('counts a decision asked yesterday and made today once, its row’s own record included (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'Asia/Singapore',
+        createdAt: 1,
+      });
+      const asked = Date.parse('2026-10-11T13:00:00Z'); // 21:00 on 11 October in Singapore
+      const decided = Date.parse('2026-10-12T01:00:00Z'); // 09:00 on 12 October there
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-9',
+        title: 'Close the month',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'plan-approved',
+        decision: {
+          id: 'd-1',
+          kind: 'plan',
+          requestedAt: asked,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          decidedAt: decided,
+          outcome: 'approved',
+          decidedVia: 'channel',
+        },
+        observedAt: asked,
+        createdAt: asked,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-requesting',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-1' },
+        createdAt: asked,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.plan-approved',
+        payload: { workItemId, decidedVia: 'channel', decisionId: 'd-1' },
+        createdAt: decided,
+      });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-12' });
+
+    expect(metrics.today?.decisions).toMatchObject({ approved: 1, rejected: 0 });
+  });
+
   it('answers no day’s figures when none is asked, and refuses a day that is not one', async (): Promise<void> => {
     const { harness, agentId } = await singaporeEmployee();
     const owner = harness.withIdentity(managerIdentity());
