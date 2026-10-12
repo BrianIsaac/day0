@@ -388,8 +388,12 @@ describe("the RFC 7009 call after the administrator revoked the connection (the 
       },
     });
     await endAndDrain(harness, { agentId, surfaceId }, [second], 'disconnect');
+    // The ledger's lines only: a revocation that failed for good opens a reorientation card after
+    // its line (wave 16, 16-O), so the record's last event is no longer the line.
     const lines = await harness.run(async (ctx) =>
-      (await ctx.db.query('events').collect()).map((event) => event.payload as { reason?: string }),
+      (await ctx.db.query('events').collect())
+        .filter((event) => event.type === 'credential.revoked-at-source')
+        .map((event) => event.payload as { reason?: string }),
     );
     expect(lines.at(-1)?.reason).toBe(
       'Day0 refused the revocation endpoint: A revocation endpoint must be an https address.',

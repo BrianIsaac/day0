@@ -128,6 +128,27 @@ describe('NeedsYouView', () => {
     expect(html).toContain('href="/agent/agent-1/reorientation"');
   });
 
+  it('lists an open reorientation card above and says so where it said none was open (16-O)', () => {
+    backend.queries = {
+      'work:needsYouForAgent': {
+        total: 1,
+        entries: [
+          entry('reorientation', 'reorientation:r1', 1, {
+            subject: '“Escalation paths” was superseded',
+            reorientationId: 'r1',
+            risk: 'low',
+          }),
+        ],
+      },
+      'work:listForAgent': [],
+    };
+    const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
+    expect(html).toContain('Something its charter assumed has changed');
+    expect(html).toContain('href="/agent/agent-1/reorientation#card-r1">Review</a>');
+    expect(html).toContain('A reorientation card is open, above.');
+    expect(html).not.toContain('No reorientation card is open.');
+  });
+
   it('names the newest five things set aside, and how many more wait on the Work tab', () => {
     backend.queries = {
       'work:needsYouForAgent': { total: 0, entries: [] },

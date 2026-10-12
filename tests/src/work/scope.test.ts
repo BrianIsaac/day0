@@ -214,6 +214,32 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(model.calls.map((call) => call.agent)).toEqual(['day0-scope-judgement']);
   });
 
+  it('names the willNotDo clause an out-of-scope skip quoted on the judgement and the verdict (16-O)', async (): Promise<void> => {
+    model.answer = {
+      inScope: false,
+      fit: true,
+      reason: 'The tracker is a revenue record, which the role does not update.',
+      exclusion: {
+        kind: 'will-not-do',
+        quote: 'update the Q4 Revenue Tracker or any revenue record',
+      },
+    };
+    const judgements: ScopeJudgement[] = [];
+    const verdict = await evaluateCandidate(
+      r6Card,
+      context('real'),
+      { ...noSkill, findMatchingSkill: async (): Promise<null> => null },
+      { onScopeJudgement: (judgement): void => void judgements.push(judgement) },
+    );
+    const clause = 'Do not update the Q4 Revenue Tracker or any revenue record.';
+    expect(verdict).toEqual({
+      decision: 'skip',
+      reason: 'out-of-scope: The tracker is a revenue record, which the role does not update.',
+      clause,
+    });
+    expect(judgements).toEqual([expect.objectContaining({ admitted: false, clause })]);
+  });
+
   it('hands the model the boundaries, the adjacent roles and the request, and nothing about the lexical rule', (): void => {
     const prompt = charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: '' });
     // Re-taken for W15-R16, 12 October 2026: the clauses by the labels the charter card reads,

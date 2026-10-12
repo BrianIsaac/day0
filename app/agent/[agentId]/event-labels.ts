@@ -160,6 +160,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
   'approved-by-predecessor': 'approved by your predecessor; approve it again',
   'documentation-conflict': 'two pages disagree; decide on the Documentation tab',
+  'reorientation-pending': 'held until you decide the reorientation card',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */
@@ -752,7 +753,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-held': (payload) =>
     payload.reason === 'documentation-conflict' && text(payload.heading)
       ? `plan held for you: two pages disagree about "${payload.heading}"; decide on the Documentation tab`
-      : `plan held for you: ${planHeldWords(payload.reason)}`,
+      : payload.reason === 'reorientation-pending' && text(payload.summary)
+        ? `plan held until you decide the reorientation card: ${payload.summary}`
+        : `plan held for you: ${planHeldWords(payload.reason)}`,
   'work.plan-approved': (payload) =>
     payload.by === 'autonomous'
       ? 'plan approved under autonomous actions'
@@ -839,6 +842,22 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `sending the manager a digest of ${counted(payload.count, 'note') ?? 'notes'}`,
   'work.manager-digest-failed': (payload) =>
     `manager digest not delivered${because(payload.reason)}`,
+  'reorientation.opened': (payload) =>
+    `${payload.joined === true ? 'joined the reorientation card' : 'reorientation card opened'}${
+      text(payload.summary) ? `: ${payload.summary}` : ''
+    }`,
+  'reorientation.proposed': (payload) =>
+    `${payload.kind === 'none' ? 'reorientation card proposes nothing needs to change' : 'reorientation card proposes a change'}${
+      payload.by === 'discussion' ? ' after the discussion' : ''
+    }`,
+  'reorientation.approved': (payload) =>
+    `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
+  'reorientation.dismissed': 'reorientation card dismissed; nothing changed',
+  'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
+  'manager.question-asked': (payload) =>
+    `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,
+  'reorientation.reopened': (payload) =>
+    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };
 
 /**

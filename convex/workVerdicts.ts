@@ -17,6 +17,7 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { missingSurfaceResolvedBy } from '../src/surfaces/identity';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openRepeatedSkipCard } from './reorientationPatterns';
 import {
   type ParkedVerdict,
   REEVALUATION_BATCH,
@@ -578,13 +579,20 @@ export async function applyVerdict(
     });
   }
   if (nextState === 'skipped') {
-    // A skip ends the item: its terminal event, as every terminal transition writes one.
+    // A skip ends the item: its terminal event, as every terminal transition writes one. An
+    // out-of-scope skip names the willNotDo clause it quoted, which a repeated skip counts (16-O).
+    const clause = typeof effective.clause === 'string' ? effective.clause : undefined;
     await appendEvent(ctx, {
       agentId: row.agentId,
       type: 'work.skipped',
-      payload: { workItemId, ...(skipReason ? { reason: skipReason } : {}) },
+      payload: {
+        workItemId,
+        ...(skipReason ? { reason: skipReason } : {}),
+        ...(clause !== undefined ? { clause } : {}),
+      },
       createdAt: Date.now(),
     });
+    if (clause !== undefined) await openRepeatedSkipCard(ctx, row.agentId, clause, Date.now());
   }
   if (readmission) {
     await logSatisfiedRequeue(

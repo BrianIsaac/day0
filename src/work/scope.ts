@@ -76,6 +76,11 @@ export type ScopeJudgement =
       basis: 'no-overlap' | 'charter-judgement' | 'quality-fit';
       /** The skip reason the queue shows, prefixed by the kind of refusal. */
       reason: string;
+      /**
+       * The willNotDo clause the judgement quoted as its exclusion, as the charter writes it, when
+       * it quoted one: what a repeated skip's reorientation card counts (wave 16, 16-O).
+       */
+      clause?: string;
     }
   | {
       admitted: false;
@@ -663,10 +668,15 @@ export async function judgeScope(
   }
 
   if (!judgement.inScope && !ctx.scopeWaived) {
+    const clause =
+      judgement.exclusion.kind === 'will-not-do'
+        ? quotedWillNotDo(ctx.charter, judgement.exclusion.quote)
+        : undefined;
     return {
       admitted: false,
       basis: 'charter-judgement',
       reason: `${OUT_OF_SCOPE_SKIP_PREFIX}${reason}`,
+      ...(clause !== undefined ? { clause } : {}),
     };
   }
   if (!judgement.fit && fitCounts) {

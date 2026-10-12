@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  conflictConfirmedReason,
   goneCitesReason,
   isGoneCitesReason,
   resolvedPlanCites,
@@ -196,9 +197,45 @@ describe('resolvedPlanCites and a cite two pages disagree on (15-A)', (): void =
       ]);
     }
   });
+
+  it('keeps the tag of a label printed twice when only the later passage is disputed (W15-R18, the second input)', (): void => {
+    const twice = {
+      citations: [
+        {
+          label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+          blocks: [{ id: 'b0', hash: 'h0' }],
+        },
+        ...selection.citations,
+      ],
+    };
+    expect(
+      resolvedPlanCites([['Handbook/runbooks/pipeline-runbook.md#Thresholds']], 1, twice),
+    ).toEqual([
+      {
+        step: 1,
+        label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+        blocks: [
+          { id: 'b0', hash: 'h0' },
+          { id: 'b1', hash: 'h1' },
+        ],
+        conflict,
+      },
+    ]);
+  });
 });
 
 describe('isGoneCitesReason', (): void => {
+  it('reads a conflict confirmed since the approval as one, so Retry drafts the plan again (D-4 (b))', (): void => {
+    const reason = conflictConfirmedReason('Thresholds', [
+      { title: 'Finance escalation', source: 'Finance wiki' },
+      { title: 'Pipeline runbook', source: 'Handbook' },
+    ]);
+    expect(reason).toBe(
+      'Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(isGoneCitesReason(reason)).toBe(true);
+  });
+
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
     expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);
     expect(isGoneCitesReason('the Linear MCP timed out')).toBe(false);

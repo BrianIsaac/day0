@@ -1,39 +1,165 @@
 'use client';
 
 import Link from 'next/link';
+import { useRef, useState } from 'react';
+import { useMutation, useQuery } from 'convex/react';
+import { api } from '@convex/_generated/api';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
+import { Field, INPUT_CLASS } from '../../../components/Field';
+import { StatusRegion } from '../../../components/StatusRegion';
+import { useAgentZone, useNow } from '../../../components/time';
+import { useChange } from '../../../components/use-change';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
+import { ReorientationCard } from './ReorientationCard';
+
+/** The longest description of a change of role a card takes. */
+const SUMMARY_LIMIT = 300;
 
 /**
- * The reorientation page, under the Needs you tab (`/agent/<id>/reorientation`): where a card
- * opens when something the charter relies on (a page, a person, a connection) changes. No trigger
- * opens one yet (A11). What real mode does re-check on its own is said, with where the manager
- * changes the charter meanwhile.
+ * The card the manager opens by hand when the employee's role or goals change (section 3's last
+ * row): one sentence of what changed, and the employee proposes the clause to change.
+ */
+function OpenByHand({ name }: { name: string }) {
+  const { agent } = useEmployee();
+  const open = useMutation(api.reorientationDecisions.openByHand);
+  const [summary, setSummary] = useState('');
+  const cardRef = useRef<HTMLElement>(null);
+  const change = useChange(cardRef);
+  const trimmed = summary.replace(/\s+/g, ' ').trim();
+  return (
+    <Card title="When the role changes" focusRef={cardRef}>
+      <form
+        className="grid gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          change.run(() => open({ agentId: agent._id, summary: trimmed }), {
+            done: `A card is open. ${name} is working out what to propose.`,
+            refused: 'No card was opened.',
+            after: () => setSummary(''),
+          });
+        }}
+      >
+        <Field
+          label={`What changed about ${name}'s role or goals`}
+          hint={`${name} proposes the clause to change; nothing changes until you approve it.`}
+        >
+          {(control) => (
+            <input
+              {...control}
+              type="text"
+              value={summary}
+              maxLength={SUMMARY_LIMIT}
+              onChange={(event) => setSummary(event.target.value)}
+              className={`${INPUT_CLASS} w-full`}
+            />
+          )}
+        </Field>
+        <div>
+          <Button type="submit" disabled={change.busy || trimmed === ''}>
+            Open a card
+          </Button>
+        </div>
+        <StatusRegion outcome={change.outcome} />
+      </form>
+    </Card>
+  );
+}
+
+/**
+ * Why the cards exist, beside them (the prototype's aside): every trigger opens a card, only
+ * Approve changes anything, a low-risk card never holds work, at most a few a day.
+ */
+function WhyCards() {
+  return (
+    <Card title="Why these cards exist">
+      <p className="text-[13px] text-[var(--color-fg-2)]">
+        A document, a person or a connection the charter relies on changed. Every trigger opens a
+        card; only Approve changes anything; a low-risk card never holds work; at most a few a day.
+      </p>
+    </Card>
+  );
+}
+
+/**
+ * The reorientation page, under the Needs you tab (`/agent/<id>/reorientation`; wave 16, 16-O):
+ * the employee's cards, the ones waiting on the manager first, each with its evidence, what it
+ * reaches, what the employee proposes and the decisions; the decided ones after with what their
+ * decision did. With none open it says what opens one (section 7), and the manager can open one
+ * for a change of role.
  */
 export function ReorientationView() {
   const { agent, surfaceMode, arriving } = useEmployee();
+  const zone = useAgentZone();
+  const now = useNow();
+  const views = useQuery(api.reorientationDecisions.listForAgent, { agentId: agent._id });
   const charter = <Link href={employeeTabHref(agent._id, 'charter')}>Charter tab</Link>;
-  const surfaces = <Link href={employeeTabHref(agent._id, 'surfaces')}>Surfaces tab</Link>;
+  const standing = (views ?? []).filter(
+    (view) => view.card.status !== 'applied' && view.card.status !== 'dismissed',
+  );
+  const decided = (views ?? []).filter(
+    (view) => view.card.status === 'applied' || view.card.status === 'dismissed',
+  );
   return (
-    <Columns arriving={arriving} aside={<EmployeeRail />}>
-      <Card title="No reorientation card is open">
-        {surfaceMode === 'real' ? (
-          <p className="text-sm text-[var(--color-fg-2)]">
-            After each documentation sync, {agent.name} checks again for the systems it could not
-            find, and a connection whose scope the documentation changed waits for your approval
-            again on the {surfaces}. A change to what its charter relies on opens no card here yet:
-            when you know one has happened, amend the charter on the {charter}.
-          </p>
-        ) : (
-          <p className="text-sm text-[var(--color-fg-2)]">
-            The hosted office&apos;s pages do not change, so nothing here reopens. When you want{' '}
-            {agent.name} to work differently, amend the charter on the {charter}.
-          </p>
-        )}
-      </Card>
+    <Columns
+      arriving={arriving}
+      aside={
+        <>
+          <EmployeeRail />
+          <WhyCards />
+        </>
+      }
+    >
+      {views === undefined ? (
+        <p role="status" className="text-sm text-[var(--color-muted)]">
+          Loading the reorientation cards
+        </p>
+      ) : standing.length === 0 ? (
+        <Card title="No reorientation card is open">
+          {surfaceMode === 'real' ? (
+            <p className="text-sm text-[var(--color-fg-2)]">
+              A card opens when a person, a page, a skill or an access {agent.name} relies on
+              changes. Meanwhile you can amend the charter on the {charter}.
+            </p>
+          ) : (
+            <p className="text-sm text-[var(--color-fg-2)]">
+              The hosted office&apos;s pages do not change, so a card opens here when {agent.name}{' '}
+              is handed over to you, or when you open one below. You can amend the charter on the{' '}
+              {charter}.
+            </p>
+          )}
+        </Card>
+      ) : (
+        standing.map((view) => (
+          <ReorientationCard
+            key={view.card._id}
+            view={view}
+            name={agent.name}
+            zone={zone}
+            now={now}
+          />
+        ))
+      )}
+      {views !== undefined ? <OpenByHand name={agent.name} /> : null}
+      {decided.length > 0 ? (
+        <section aria-labelledby="decided-cards" className="grid gap-3">
+          <h2 id="decided-cards" className="text-sm font-semibold text-[var(--color-muted)]">
+            Decided
+          </h2>
+          {decided.map((view) => (
+            <ReorientationCard
+              key={view.card._id}
+              view={view}
+              name={agent.name}
+              zone={zone}
+              now={now}
+            />
+          ))}
+        </section>
+      ) : null}
     </Columns>
   );
 }

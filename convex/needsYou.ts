@@ -17,6 +17,7 @@ import {
 import { SCOPE_JUDGEMENT_UNAVAILABLE } from '../src/work/types';
 import { isRevocationTrialRow } from './revocationEvaluation';
 import { agentZone } from '../src/lib/zone';
+import { isBlockingQuestion } from '../src/agent/manager-questions';
 import { accessEnded } from '../src/work/surface-access';
 import { eventsOfType } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
@@ -127,6 +128,16 @@ export const needsYouEntryValidator = v.union(
     transferId: v.id('managerTransfers'),
     fromAddress: v.string(),
     expiresAt: v.number(),
+  }),
+  /**
+   * A reorientation card still undecided (wave 16, 16-O; the tenth kind): something the
+   * employee's charter assumed has changed, and only the manager's Approve changes anything.
+   */
+  v.object({
+    kind: v.literal('reorientation'),
+    ...needsYouBaseFields,
+    reorientationId: v.id('reorientations'),
+    risk: v.union(v.literal('low'), v.literal('medium'), v.literal('high')),
   }),
 );
 
@@ -453,6 +464,7 @@ export async function needsYouOfEmployee(
     parkedEntered,
     stoppedEntered,
     surfaceEntered,
+    cards,
   ] = await Promise.all([
     oneToOneWaitsOnManager(agent) ? oneToOneWaitingSince(ctx, agent) : null,
     Promise.all(
@@ -463,7 +475,11 @@ export async function needsYouOfEmployee(
               .query('managerQuestions')
               .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
               .take(NEEDS_YOU_QUESTION_READ_LIMIT)
-          ).filter((question) => question.answer === undefined).length,
+          )
+            // A conflict's question beside the plan never holds it (RM20 (a)): the entry counts the
+            // charter's questions, which do.
+            .filter((question) => question.answer === undefined && isBlockingQuestion(question))
+            .length,
       ),
     ),
     enteredAtByRow(
@@ -486,6 +502,7 @@ export async function needsYouOfEmployee(
       waiting.stopped.filter(unstamped),
     ),
     enteredAtByRow(ctx, agent._id, ['surface.proposed'], waiting.proposed),
+    undecidedCards(ctx, agent._id),
   ]);
 
   const zone = agentZone(agent);
@@ -575,7 +592,33 @@ export async function needsYouOfEmployee(
       surfaceId: surface._id,
       ready: 'connect' as const,
     })),
+    ...cards.map((card) => ({
+      kind: 'reorientation' as const,
+      ...base(`reorientation:${card._id}`, card.triggerSummary, exact(card.createdAt)),
+      reorientationId: card._id,
+      risk: card.risk,
+    })),
   ];
+}
+
+/** The undecided reorientation cards one inbox read takes for an employee (C6 keeps them few). */
+const NEEDS_YOU_CARD_READ = 20;
+
+/** An employee's reorientation cards waiting on the manager: open, or being talked through. */
+async function undecidedCards(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+): Promise<Doc<'reorientations'>[]> {
+  const byStatus = await Promise.all(
+    (['open', 'discussing'] as const).map(
+      async (status) =>
+        await ctx.db
+          .query('reorientations')
+          .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
+          .take(NEEDS_YOU_CARD_READ),
+    ),
+  );
+  return byStatus.flat();
 }
 
 /** The inbox's one order: the longest wait first, ties by key so the order is stable. */

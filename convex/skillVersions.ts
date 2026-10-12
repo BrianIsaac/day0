@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openCard } from './reorientation';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
@@ -249,7 +250,7 @@ export async function stampRecheckDue(
     // leaves the chip; the first reason stays the card's.
     await ctx.db.patch(skillId, { recheckDueAt: now });
   }
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.recheck-due',
     payload: {
@@ -259,6 +260,20 @@ export async function stampRecheckDue(
       ...(row.versionId !== undefined ? { versionId: row.versionId } : {}),
     },
     createdAt: now,
+  });
+  await openCard(ctx, {
+    agentId: row.agentId,
+    trigger: 'skill-recheck-due',
+    triggerKey: eventId,
+    summary: `The skill “${row.name}” is due a re-check: ${reason}`,
+    evidence: {
+      eventIds: [eventId],
+      skillIds: [skillId],
+      skillVersionIds: row.versionId !== undefined ? [row.versionId] : [],
+      pageRefs: stamp.page !== undefined ? [stamp.page] : [],
+    },
+    reach: { kind: 'skills', skillIds: [skillId] },
+    now,
   });
   return fresh;
 }

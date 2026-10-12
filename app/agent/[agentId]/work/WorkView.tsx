@@ -39,6 +39,11 @@ export function WorkView() {
   );
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
+  // A plan's conflict question beside it (RM20 (a)): real mode only, as documentation conflicts are.
+  const conflictQuestions = useQuery(
+    api.managerQuestions.conflictsForAgent,
+    real ? { agentId } : 'skip',
+  );
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   // A card waiting on a skill whose draft failed its check says so and links to its Retry (D3).
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
@@ -95,6 +100,7 @@ export function WorkView() {
         agentId={agentId}
         workItems={workItems ?? []}
         openQuestions={openQuestions ?? []}
+        conflictQuestions={conflictQuestions ?? []}
         surfaces={surfaces}
         registeredSkillCount={(registeredSkills ?? []).length}
         charterApproved={!!charter?.approved}

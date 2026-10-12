@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { citedConflictOf, decisionsOffered } from '../../convex/docConflicts';
+import { conflictsUnderPlan, decisionsOffered } from '../../convex/docConflicts';
 import type { SelectionRequest } from '../../src/docs/select';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { fieldsOf } from './fakes/reorientation';
 import {
   asManager,
   eventsOf,
@@ -64,8 +65,8 @@ describe('decisionsOffered: the answers a relation’s card offers as the relati
   });
 });
 
-describe('citedConflictOf: the conflict a drafted plan rests on', (): void => {
-  it('reads none from a plan with no cites, or whose disputed cite names no stored relation', async (): Promise<void> => {
+describe('conflictsUnderPlan: the conflicts a drafted plan rests on (16-O; W15-R18)', (): void => {
+  it('reads none from a plan with no cites and no recorded selection, or whose disputed cite names no stored relation', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const plans: unknown[] = [
       null,
@@ -75,10 +76,36 @@ describe('citedConflictOf: the conflict a drafted plan rests on', (): void => {
       { cites: [{}] },
       { cites: [{ conflict: { relationId: 'not-an-id', heading: 'Thresholds', pages: [] } }] },
     ];
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
     for (const plan of plans) {
-      // A run's undefined comes back as null.
-      const conflict = await harness.run(async (ctx) => (await citedConflictOf(ctx, plan)) ?? null);
-      expect(conflict, JSON.stringify(plan)).toBeNull();
+      const conflicts = await harness.run(async (ctx) => {
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-1',
+          title: 'Escalate the variance',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          observedAt: 1,
+          createdAt: 1,
+          state: 'plan-pending',
+          plan,
+        });
+        const row = await ctx.db.get(workItemId);
+        const agent = await ctx.db.get(agentId);
+        return row && agent ? await conflictsUnderPlan(ctx, row, agent) : null;
+      });
+      expect(conflicts, JSON.stringify(plan)).toEqual([]);
     }
   });
 });
@@ -229,17 +256,13 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
   });
 
-  it('holds a plan that cites the disputed passage for the manager, naming the two pages and the heading, and lets it go once both hold', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, relationId } = await disagreement(harness);
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'disagree',
-    });
-    const { citations } = await selection(harness, agentId);
-    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
-    const workItemId = await harness.run(
+  /** A plan-pending item of the employee's, with the plan given. */
+  async function planned(
+    harness: Harness,
+    agentId: Id<'agents'>,
+    plan: Record<string, unknown>,
+  ): Promise<Id<'workItems'>> {
+    return await harness.run(
       async (ctx) =>
         await ctx.db.insert('workItems', {
           agentId,
@@ -259,36 +282,550 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
             riskNotes: '',
             reversibility: 'A message.',
             estimatedMinutes: 5,
-            cites: [{ step: 1, ...disputed }],
+            ...plan,
           },
         }),
     );
-    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
-      approved: false,
+  }
+
+  /** The questions asked beside an item's plan. */
+  async function questionsOf(harness: Harness, workItemId: Id<'workItems'>) {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('managerQuestions').collect()).filter(
+        (question) => question.workItemId === workItemId,
+      ),
+    );
+  }
+
+  const ASKED =
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.';
+
+  it('asks one non-blocking question beside a plan that cites the disputed passage, and lets the plan go on (D-4 (c), RM20 (a))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
     });
-    expect(await eventsOf(harness, agentId, 'work.plan-held')).toEqual([
-      {
-        workItemId,
-        reason: 'documentation-conflict',
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, { cites: [{ step: 1, ...disputed }] });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: true,
+    });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({
+        question: ASKED,
+        blocking: false,
+        type: 'retrieval',
         relationId,
-        heading: 'Thresholds',
+        workItemId,
+      }),
+    ]);
+    expect(await eventsOf(harness, agentId, 'work.plan-held')).toEqual([]);
+    expect(await eventsOf(harness, agentId, 'manager.question-asked')).toEqual([
+      expect.objectContaining({ question: ASKED, type: 'retrieval', blocking: false, relationId }),
+    ]);
+    // Asked once: the sweep's next look asks nothing more.
+    await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+    expect(await questionsOf(harness, workItemId)).toHaveLength(1);
+  });
+
+  it('asks from the recorded selection when the plan cites nothing (W15-R18, the first input)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, {});
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: {
+          workItemId,
+          site: 'plan',
+          blockIds: disputed.blocks.map((block) => block.id),
+          chars: 100,
+        },
+        createdAt: 2,
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
+  it('asks about every conflict between pages the employee reads when the plan read the whole mirror (W15-R18, the third input)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, {});
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 2,
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
+  it('asks beside a plan whose cite of the disputed passage carries no tag, the conflict confirmed after it was drafted (the second pass’s minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    // The planner drafted from the passage before the conflict was confirmed: its cite has no tag.
+    const { citations } = await selection(harness, agentId);
+    const untagged = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const cite = Object.fromEntries(Object.entries(untagged).filter(([key]) => key !== 'conflict'));
+    const workItemId = await planned(harness, agentId, { cites: [{ step: 1, ...cite }] });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
+  it('finds a conflict confirmed since approval under a plan that read the whole mirror (the second pass’s D-4 (b) minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    const workItemId = await planned(harness, agentId, {});
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'plan-approved' });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 2,
+      });
+    });
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    expect(
+      await harness.query(internal.managerQuestions.conflictConfirmedSince, { workItemId }),
+    ).toMatchObject({ heading: 'Thresholds' });
+  });
+
+  it('asks beside a drafted plan citing either page once the manager confirms the conflict after it (section 3’s conflict row)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const workItemId = await planned(harness, agentId, {
+      cites: [
+        {
+          step: 1,
+          label: 'Finance wiki/escalation.md#Finance escalation > Thresholds',
+          sourceId: relation.from.sourceId,
+          pageRef: relation.from.ref,
+          blocks: [],
+        },
+      ],
+    });
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId, blocking: false }),
+    ]);
+  });
+
+  /** Ask the question beside a plan citing the disputed passage, sent as a Slack request. */
+  async function askedInRequest(harness: Harness) {
+    const { agentId, relationId, ...pages } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    const surfaceId = await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'team-chat',
+        displayName: 'Team chat',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        providerIdentityId: 'U0DAY0BOT',
+        credentialLanded: true,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, { cites: [{ step: 1, ...disputed }] });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+          ts: '1787770800.000100',
+        },
+      });
+    });
+    return { agentId, relationId, surfaceId, workItemId, pages };
+  }
+
+  it('decides the relation from the answer in the plan’s Slack request, after the approval too (RM20 (a))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered', notified: true });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    expect(relation.status).toBe('confirmed');
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.find((page) => page.title === 'Finance escalation')?.status).toBe('superseded');
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({
+        answer: expect.objectContaining({ text: 'Pipeline runbook is right', via: 'slack' }),
+      }),
+    ]);
+    // The acknowledgement says what Retry does with the steps that waited (the second pass's m7).
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notice.text).toBe(
+      'Recorded: Pipeline runbook is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
+    );
+    // A second answer finds nothing waiting, and says so.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000001.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'no open question' });
+  });
+
+  it('closes another plan’s question on the same conflict as answered where the answer came from (the walk’s W-4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const [first] = await questionsOf(harness, workItemId);
+    const other = await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      const otherItem = await ctx.db.insert('workItems', {
+        ...fieldsOf(row!),
+        decision: undefined,
+        externalId: 'REVOPS-13',
+      });
+      return await ctx.db.insert('managerQuestions', {
+        agentId: first.agentId,
+        key: first.key,
+        question: first.question,
+        context: first.context,
+        askedAt: first.askedAt,
+        workItemId: otherItem,
+        charterId: first.charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId,
+      });
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000000.000100',
+      reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(other)))?.answer).toMatchObject({
+      text: 'Pipeline runbook is right',
+      via: 'slack',
+    });
+  });
+
+  it('keeps reading the DM while a question waits, however long ago its plan was approved (the second pass’s M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, workItemId } = await askedInRequest(harness);
+    // The manager approved the plan two hours ago; the question beside it is still open.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        decision: { ...row!.decision!, decidedAt: Date.now() - 2 * 60 * 60 * 1000 },
+      });
+    });
+    expect((await harness.query(internal.work.openDecisions, { surfaceId })).noticeOwed).toBe(true);
+  });
+
+  it('answers a code a redraft replaced with the replaced notice, not as unknown (the second pass’s M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, workItemId } = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.insert('replacedDecisionRequests', {
+        agentId,
+        workItemId,
+        decisionId: 'ab3xyz',
+        replacedBy: 'cd4xyz',
+        kind: 'plan',
+        surfaceSlug: 'team-chat',
+        channel: 'D0MANAGER',
+        ts: row!.decision!.ts,
+        replacedAt: Date.now(),
+      });
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, id: 'cd4xyz' } });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: 'cd4xyz' });
+  });
+
+  it('answers the first question whose conflict still stands, passing over one that no longer does (the second pass’s m3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const [stale] = await questionsOf(harness, workItemId);
+    // A second conflict on the same pages stands; the first question's relation no longer does.
+    const live = await harness.run(async (ctx) => {
+      const relation = await ctx.db.get(relationId);
+      const liveRelation = await ctx.db.insert('docRelations', fieldsOf(relation!));
+      await ctx.db.patch(relationId, { status: 'proposed' });
+      return await ctx.db.insert('managerQuestions', {
+        agentId: stale.agentId,
+        key: `conflict:${liveRelation}`,
+        question: stale.question,
+        context: stale.context,
+        askedAt: stale.askedAt + 1,
+        workItemId,
+        charterId: stale.charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId: liveRelation,
+      });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(live)))?.answer).toMatchObject({
+      text: 'Pipeline runbook is right',
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(stale._id)))?.answer).toBeUndefined();
+  });
+
+  it('answers a reply once, so a poll that delivers it again answers no second question (the second pass’s minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const reply = {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000000.000100',
+      reply: { verb: 'answer' as const, id: 'ab3xyz', choice: 'to' as const },
+    };
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, reply),
+    ).resolves.toMatchObject({ status: 'answered' });
+    // A second conflict asked beside the same plan meanwhile.
+    const [first] = await questionsOf(harness, workItemId);
+    const second = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerQuestions', {
+          agentId: first.agentId,
+          key: 'conflict:another',
+          question: 'Two pages disagree under “Owners”.',
+          context: first.context,
+          askedAt: first.askedAt,
+          workItemId,
+          charterId: first.charterId,
+          blocking: false,
+          type: 'retrieval',
+          relationId,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, reply),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'already answered' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(second)))?.answer).toBeUndefined();
+  });
+
+  it('closes the question when the conflict is settled on the Documentation tab, so nothing waits on it (second pass B1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'both-hold',
+    });
+    const [question] = await questionsOf(harness, workItemId);
+    expect(question.answer).toMatchObject({ text: 'Both hold', via: 'dashboard' });
+    expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
+      [],
+    );
+  });
+
+  it('opens no card about the page its own answer superseded (second pass M4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
+    const [question] = await questionsOf(harness, workItemId);
+    // The answer that supersedes the very page the plan cites.
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const cited = await harness.run(
+      async (ctx) =>
+        ((await ctx.db.get(workItemId))?.plan as { cites: Array<{ pageRef?: string }> }).cites[0]
+          .pageRef,
+    );
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: relation.from.ref === cited ? 'to' : 'from',
+    });
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.find((page) => page.ref === cited)?.status).toBe('superseded');
+    const cards = await harness.run(async (ctx) =>
+      (await ctx.db.query('reorientations').collect()).filter((card) => card.agentId === agentId),
+    );
+    expect(cards).toEqual([]);
+  });
+
+  it('decides the relation from the answer on the plan’s card, and refuses a second answer', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
+    const [question] = await questionsOf(harness, workItemId);
+    expect(
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId }),
+    ).toEqual([
+      {
+        _id: question._id,
+        workItemId,
+        question: ASKED,
         pages: [
           { title: 'Finance escalation', source: 'Finance wiki' },
           { title: 'Pipeline runbook', source: 'Handbook' },
         ],
       },
     ]);
-    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
-      'plan-pending',
+    await expect(
+      asManager(harness).mutation(api.managerQuestions.answerConflict, {
+        questionId: question._id,
+        choice: 'both',
+      }),
+    ).resolves.toEqual({ text: 'Both hold' });
+    expect((await relations(harness)).find((row) => row._id === relationId)?.status).toBe(
+      'dismissed',
     );
-    // "Both hold": nothing disputes the passage any more, and the sweep's next look approves it.
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'both-hold',
-    });
+    await expect(
+      asManager(harness).mutation(api.managerQuestions.answerConflict, {
+        questionId: question._id,
+        choice: 'from',
+      }),
+    ).rejects.toThrow('That question has already been answered.');
     expect(
-      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
-    ).toEqual({ approved: true });
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId }),
+    ).toEqual([]);
   });
 
   it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {

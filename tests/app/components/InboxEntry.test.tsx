@@ -163,6 +163,43 @@ describe('the ninth kind: an employee to take on', (): void => {
   });
 });
 
+describe('the tenth kind: a reorientation card (16-O; section 7)', (): void => {
+  const card = {
+    ...base,
+    kind: 'reorientation',
+    key: 'reorientation:r1',
+    subject: '“Escalation paths” was superseded',
+    waitingSince: minutes(10),
+    reorientationId: 'r1',
+    risk: 'low',
+  } as unknown as InboxItem;
+
+  it('says something its charter assumed has changed, about what changed, and offers a review', (): void => {
+    expect(inboxEntryWords(card)).toEqual({
+      ask: 'something its charter assumed has changed',
+      about: '“Escalation paths” was superseded.',
+      control: 'Review',
+    });
+    expect(inboxEntryHref(card)).toBe('/agent/synthetic-mira/reorientation#card-r1');
+  });
+
+  it('leads with the employee’s name on the home, as the draft says it', (): void => {
+    expect(renderToStaticMarkup(<InboxEntry entry={card} now={NOW} named />)).toContain(
+      'Mira · something its charter assumed has changed',
+    );
+  });
+
+  it('ends a summary that ends in its own full stop with one (the second pass’s m2)', (): void => {
+    const withStop = {
+      ...card,
+      subject: 'The skill “close-summary” was withdrawn: it closes the wrong tickets.',
+    } as unknown as InboxItem;
+    expect(inboxEntryWords(withStop).about).toBe(
+      'The skill “close-summary” was withdrawn: it closes the wrong tickets.',
+    );
+  });
+});
+
 describe('InboxEntry', (): void => {
   it('opens with the ask as a sentence on the employee page, and after the name on the home', (): void => {
     expect(renderToStaticMarkup(<InboxEntry entry={held} now={NOW} />)).toContain(

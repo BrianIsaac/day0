@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
+import { openCard } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
 import { RUNBOOKS_A_SCAN, type ChangedRunbook } from './skillVersions';
@@ -167,6 +168,38 @@ interface PageName {
   readonly ref: string;
 }
 
+/** How a card says what became of a page that is no longer current. */
+const NO_LONGER_CURRENT: Readonly<Record<Exclude<PageStatus, 'active'>, string>> = {
+  superseded: 'superseded',
+  archived: 'archived',
+  draft: 'marked a draft',
+};
+
+/**
+ * What a reader's card says of a page that stopped being current (wave 16, 16-O; section 3's page
+ * row): superseded, with its successor's title when stored, archived or made a draft. Undefined
+ * for a page made current again, which opens no card.
+ */
+async function noLongerCurrentSummary(
+  ctx: MutationCtx,
+  page: Doc<'docPages'>,
+  to: PageStatus,
+  supersededBy: PageName | undefined,
+): Promise<string | undefined> {
+  if (to === 'active') return undefined;
+  const named = to === 'superseded' ? supersededBy : undefined;
+  const successor =
+    named === undefined
+      ? null
+      : await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
+          .first();
+  return `“${page.title}” was ${NO_LONGER_CURRENT[to]}${
+    successor !== null ? ` by “${successor.title}”` : ''
+  }`;
+}
+
 /**
  * Write a decided status on a page's row when it differs, and set off what a change of status
  * sets off: the blocks, each reading employee's record and parked work.
@@ -184,6 +217,11 @@ async function writeStatus(
     readonly supersededBy: PageName | undefined;
     readonly manager?: { readonly decidedBy: string | undefined; readonly decidedAt: number };
     readonly now: number;
+    /**
+     * False when the change is a relation's own answer (16-O): the plans citing the page are the
+     * relation's to settle (its question, or the run's stop), so no card opens about it.
+     */
+    readonly opensCard?: boolean;
   },
 ): Promise<StatusChange | null> {
   const { source, page, decided, supersededBy, now } = args;
@@ -209,8 +247,13 @@ async function writeStatus(
     pageRef: page.ref,
     status: decided.status,
   });
+  const cardSummary =
+    args.opensCard !== false
+      ? await noLongerCurrentSummary(ctx, page, decided.status, supersededBy)
+      : undefined;
+  const pageRef = { sourceId: page.sourceId, ref: page.ref };
   for (const agent of await readersOf(ctx, source)) {
-    await appendEvent(ctx, {
+    const eventId = await appendEvent(ctx, {
       agentId: agent._id,
       type: 'documentation.page-status-changed',
       payload: {
@@ -224,6 +267,19 @@ async function writeStatus(
       },
       createdAt: now,
     });
+    // A card for a reader whose open plan cites the page; a page no open plan cites opens none
+    // here, and the skills that read it are stamped for a re-check, which opens its own.
+    if (cardSummary !== undefined) {
+      await openCard(ctx, {
+        agentId: agent._id,
+        trigger: 'page-status-changed',
+        triggerKey: eventId,
+        summary: cardSummary,
+        evidence: { eventIds: [eventId], pageRefs: [pageRef] },
+        reach: { kind: 'citing', pageRefs: [pageRef] },
+        now,
+      });
+    }
     // Out-of-scope skips read the documentation the employee has; a page that left it, or came
     // back, may change the verdict. Keyed by the status, so the same change re-admits once.
     await reevaluatePendingInTransaction(ctx, {
@@ -630,6 +686,8 @@ export async function decideByHand(
     readonly supersededBy: PageName | undefined;
     readonly decidedBy: string | undefined;
     readonly now: number;
+    /** False for a relation's own answer, which opens no reorientation card (16-O). */
+    readonly opensCard?: boolean;
   },
 ): Promise<void> {
   const change = await writeStatus(ctx, {
@@ -639,6 +697,7 @@ export async function decideByHand(
     supersededBy: args.supersededBy,
     manager: { decidedBy: args.decidedBy, decidedAt: args.now },
     now: args.now,
+    ...(args.opensCard === false ? { opensCard: false } : {}),
   });
   await stampStatusChanges(ctx, args.source, [change], args.now);
 }
@@ -728,20 +787,33 @@ export const clearPageStatus = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await getCallerOrThrow(ctx);
     const { page, source } = await ownedPage(ctx, caller.ownerKey, args.pageId);
-    if (page.statusSource !== 'manager') return null;
-    const undecided = {
-      statusSource: undefined,
-      decidedBy: undefined,
-      decidedAt: undefined,
-      supersededBy: undefined,
-    };
-    await ctx.db.patch(page._id, undecided);
-    const now = Date.now();
-    const change = await restatePage(ctx, { source, page: { ...page, ...undecided }, now });
-    await stampStatusChanges(ctx, source, [change], now);
+    await clearPageStatusInTransaction(ctx, source, page);
     return null;
   },
 });
+
+/**
+ * Hand a page back to its source's own status in the caller's transaction ({@link
+ * clearPageStatus}; a reorientation card's Approve, 16-O); nothing for a page the manager did not
+ * decide.
+ */
+export async function clearPageStatusInTransaction(
+  ctx: MutationCtx,
+  source: Doc<'docSources'>,
+  page: Doc<'docPages'>,
+): Promise<void> {
+  if (page.statusSource !== 'manager') return;
+  const undecided = {
+    statusSource: undefined,
+    decidedBy: undefined,
+    decidedAt: undefined,
+    supersededBy: undefined,
+  };
+  await ctx.db.patch(page._id, undecided);
+  const now = Date.now();
+  const change = await restatePage(ctx, { source, page: { ...page, ...undecided }, now });
+  await stampStatusChanges(ctx, source, [change], now);
+}
 
 /**
  * Say how far a documentation source is trusted: official, team or personal (the tab's Trust

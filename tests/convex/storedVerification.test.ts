@@ -3,6 +3,7 @@
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
+import type { ScriptedCall } from './fakes/mastra';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import type { SkillSandboxRun } from '../../src/lib/skill-sandbox';
@@ -29,7 +30,12 @@ const { schemaChecked } = await vi.hoisted(async () => await import('./fakes/mas
 
 vi.mock('../../src/lib/mastra', () => ({
   makeAgent: (name: string): { name: string } => ({ name }),
-  agentJson: schemaChecked(async (args: { user: string }): Promise<unknown> => {
+  agentJson: schemaChecked(async (args: ScriptedCall): Promise<unknown> => {
+    // A new version stamps the older holders for a re-check, which opens a reorientation card and
+    // schedules its judgement (16-O): that call is not the authoring this queue answers.
+    if (args.agent.name === 'day0-reorientation-proposal') {
+      throw new Error('no reorientation judgement in this test');
+    }
     recorded.prompts.push(args.user);
     const next = recorded.outputs.shift();
     if (!next) throw new Error('no authored output queued');

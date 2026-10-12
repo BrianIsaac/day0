@@ -4,6 +4,7 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -23,12 +24,14 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
+  citeConflictOf,
   confirmedConflicts,
   decisionsOffered,
   standingConflictOf,
   standingWithPages,
   type RelationDecision,
 } from './docConflicts';
+import { askConflictQuestion, openWorkCiting } from './reorientation';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -328,101 +331,189 @@ export const decide = mutation({
     const relation = await ctx.db.get(args.relationId);
     if (relation === null) throw new ConvexError('That relation is no longer stored.');
     if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
-    const [from, to, fromSource, toSource] = await Promise.all([
-      pageAt(ctx, relation.from),
-      pageAt(ctx, relation.to),
-      ctx.db.get(relation.from.sourceId),
-      ctx.db.get(relation.to.sourceId),
-    ]);
-    const equalTrust =
-      from === null ||
-      to === null ||
-      fromSource === null ||
-      toSource === null ||
-      authorityOf(from, fromSource) === authorityOf(to, toSource);
-    if (!decisionsOffered(relation, equalTrust).includes(args.decision)) {
-      throw new ConvexError(DECISION_NOT_OFFERED);
+    return await decideRelationInTransaction(ctx, relation, args.decision, {
+      decidedBy: verifiedAddressOf(caller),
+      via: 'dashboard',
+    });
+  },
+});
+
+/**
+ * Answer a relation in the caller's transaction ({@link decide}; a conflict's question answered
+ * beside a plan, on the card or in the plan's Slack request, 16-O): what `decide` writes and sets
+ * off, with the manager's verified address when there is one, and where the answer came from,
+ * which the relation's other open questions are closed as answered by (the walk's W-4).
+ *
+ * @throws ConvexError as {@link decide} refuses.
+ */
+export async function decideRelationInTransaction(
+  ctx: MutationCtx,
+  relation: Doc<'docRelations'>,
+  decision: RelationDecision,
+  by: { readonly decidedBy: string | undefined; readonly via: 'dashboard' | 'slack' },
+): Promise<SupersedeOutcome | null> {
+  const { decidedBy } = by;
+  const [from, to, fromSource, toSource] = await Promise.all([
+    pageAt(ctx, relation.from),
+    pageAt(ctx, relation.to),
+    ctx.db.get(relation.from.sourceId),
+    ctx.db.get(relation.to.sourceId),
+  ]);
+  const equalTrust =
+    from === null ||
+    to === null ||
+    fromSource === null ||
+    toSource === null ||
+    authorityOf(from, fromSource) === authorityOf(to, toSource);
+  if (!decisionsOffered(relation, equalTrust).includes(decision)) {
+    throw new ConvexError(DECISION_NOT_OFFERED);
+  }
+  // A confirmed conflict takes its answers only while it stands (W15-R6): once one page was
+  // named right, a second answer from a card drawn before would supersede the other page too.
+  if (
+    relation.kind === 'possible_conflict' &&
+    relation.status === 'confirmed' &&
+    (await standingConflictOf(ctx, relation)) === undefined
+  ) {
+    throw new ConvexError(DECISION_NOT_OFFERED);
+  }
+  // The page an answer makes stand in for the other must be current itself.
+  const successor =
+    decision === 'supersedes' || decision === 'from-is-right'
+      ? from
+      : decision === 'to-is-right'
+        ? to
+        : null;
+  if (successor !== null && pageStatusOf(successor) !== 'active') {
+    throw new ConvexError(SUCCESSOR_NOT_CURRENT);
+  }
+  const now = Date.now();
+  const answer = decided(decision);
+  // The kind the relation has after the answer: an answer that changes it keeps the proposed
+  // kind on the row, and "Undo" restores it (W15-R22).
+  const kind =
+    decision === 'undo' ? (relation.proposedKind ?? relation.kind) : (answer.kind ?? relation.kind);
+  await ctx.db.patch(
+    relation._id,
+    decision === 'undo'
+      ? { ...answer, kind, proposedKind: undefined, decidedBy: undefined, decidedAt: undefined }
+      : {
+          ...answer,
+          ...(kind !== relation.kind
+            ? { proposedKind: relation.proposedKind ?? relation.kind }
+            : {}),
+          ...(decidedBy !== undefined ? { decidedBy } : {}),
+          decidedAt: now,
+        },
+  );
+  if (from === null || to === null || fromSource === null || toSource === null) return null;
+  // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
+  if (
+    decision === 'supersedes' ||
+    (decision === 'undo' && relation.kind === 'possible_successor')
+  ) {
+    const change = await restatePage(ctx, { source: toSource, page: to, now });
+    await stampStatusChanges(ctx, toSource, [change], now);
+  } else if (decision === 'from-is-right' || decision === 'to-is-right') {
+    const [right, wrong, wrongSource] =
+      decision === 'from-is-right' ? [from, to, toSource] : [to, from, fromSource];
+    await decideByHand(ctx, {
+      source: wrongSource,
+      page: wrong,
+      status: 'superseded',
+      supersededBy: { sourceId: right.sourceId, ref: right.ref },
+      decidedBy,
+      now,
+      opensCard: false,
+    });
+  }
+  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
+    await appendEvent(ctx, {
+      agentId: agent._id,
+      type: 'documentation.relation-decided',
+      payload: {
+        relationId: relation._id,
+        kind,
+        decision: decision,
+        from: named(from, fromSource),
+        to: named(to, toSource),
+      },
+      createdAt: now,
+    });
+  }
+  // A conflict confirmed asks which page is right beside every drafted plan citing either page
+  // (section 3's conflict row: a question, never a card; D-4 (c)); a conflict settled here answers
+  // the questions asked about it, so nothing waits on them (the second pass's B1).
+  if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (relation.kind === 'possible_conflict') {
+    const settled =
+      decision === 'from-is-right'
+        ? `${from.title} is right`
+        : decision === 'to-is-right'
+          ? `${to.title} is right`
+          : decision === 'both-hold'
+            ? 'Both hold'
+            : undefined;
+    if (settled !== undefined) {
+      await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
     }
-    // A confirmed conflict takes its answers only while it stands (W15-R6): once one page was
-    // named right, a second answer from a card drawn before would supersede the other page too.
-    if (
-      relation.kind === 'possible_conflict' &&
-      relation.status === 'confirmed' &&
-      (await standingConflictOf(ctx, relation)) === undefined
-    ) {
-      throw new ConvexError(DECISION_NOT_OFFERED);
-    }
-    // The page an answer makes stand in for the other must be current itself.
-    const successor =
-      args.decision === 'supersedes' || args.decision === 'from-is-right'
-        ? from
-        : args.decision === 'to-is-right'
-          ? to
-          : null;
-    if (successor !== null && pageStatusOf(successor) !== 'active') {
-      throw new ConvexError(SUCCESSOR_NOT_CURRENT);
-    }
-    const now = Date.now();
-    const decidedBy = verifiedAddressOf(caller);
-    const answer = decided(args.decision);
-    // The kind the relation has after the answer: an answer that changes it keeps the proposed
-    // kind on the row, and "Undo" restores it (W15-R22).
-    const kind =
-      args.decision === 'undo'
-        ? (relation.proposedKind ?? relation.kind)
-        : (answer.kind ?? relation.kind);
-    await ctx.db.patch(
-      relation._id,
-      args.decision === 'undo'
-        ? { ...answer, kind, proposedKind: undefined, decidedBy: undefined, decidedAt: undefined }
-        : {
-            ...answer,
-            ...(kind !== relation.kind
-              ? { proposedKind: relation.proposedKind ?? relation.kind }
-              : {}),
-            ...(decidedBy !== undefined ? { decidedBy } : {}),
-            decidedAt: now,
-          },
-    );
-    if (from === null || to === null || fromSource === null || toSource === null) return null;
-    // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
-    if (
-      args.decision === 'supersedes' ||
-      (args.decision === 'undo' && relation.kind === 'possible_successor')
-    ) {
-      const change = await restatePage(ctx, { source: toSource, page: to, now });
-      await stampStatusChanges(ctx, toSource, [change], now);
-    } else if (args.decision === 'from-is-right' || args.decision === 'to-is-right') {
-      const [right, wrong, wrongSource] =
-        args.decision === 'from-is-right' ? [from, to, toSource] : [to, from, fromSource];
-      await decideByHand(ctx, {
-        source: wrongSource,
-        page: wrong,
-        status: 'superseded',
-        supersededBy: { sourceId: right.sourceId, ref: right.ref },
-        decidedBy,
+  }
+  if (decision !== 'supersedes') return null;
+  const older = (await ctx.db.get(to._id)) ?? to;
+  return { older: pageStatusOf(older), by: statusSourceOf(older) };
+}
+
+/** The questions about one relation one settling reads: one a work item, few items a relation. */
+const QUESTIONS_SETTLED_READ = 500;
+
+/**
+ * Answer every open question about a conflict the manager settled, in the card's words and by the
+ * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O).
+ */
+async function closeConflictQuestions(
+  ctx: MutationCtx,
+  relationId: Id<'docRelations'>,
+  answer: { readonly text: string; readonly via: 'dashboard' | 'slack' },
+  now: number,
+): Promise<void> {
+  const questions = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_relation', (q) => q.eq('relationId', relationId))
+    .take(QUESTIONS_SETTLED_READ);
+  for (const question of questions) {
+    if (question.answer !== undefined) continue;
+    await ctx.db.patch(question._id, {
+      answer: { text: answer.text, answeredAt: now, via: answer.via },
+    });
+  }
+}
+
+/** Ask a confirmed conflict's question beside each reader's drafted plan that cites either page. */
+async function askAtConfirmation(
+  ctx: MutationCtx,
+  relation: Doc<'docRelations'>,
+  now: number,
+): Promise<void> {
+  const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
+  if (standing === undefined) return;
+  const conflict = citeConflictOf(standing);
+  const [fromSource, toSource] = await Promise.all([
+    ctx.db.get(relation.from.sourceId),
+    ctx.db.get(relation.to.sourceId),
+  ]);
+  if (fromSource === null || toSource === null) return;
+  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
+    for (const workItemId of await openWorkCiting(ctx, agent._id, [relation.from, relation.to])) {
+      const row = await ctx.db.get(workItemId);
+      if (row?.state !== 'plan-pending') continue;
+      await askConflictQuestion(ctx, {
+        row,
+        conflict: { relationId: relation._id, heading: conflict.heading, pages: conflict.pages },
         now,
       });
     }
-    for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-      await appendEvent(ctx, {
-        agentId: agent._id,
-        type: 'documentation.relation-decided',
-        payload: {
-          relationId: relation._id,
-          kind,
-          decision: args.decision,
-          from: named(from, fromSource),
-          to: named(to, toSource),
-        },
-        createdAt: now,
-      });
-    }
-    if (args.decision !== 'supersedes') return null;
-    const older = (await ctx.db.get(to._id)) ?? to;
-    return { older: pageStatusOf(older), by: statusSourceOf(older) };
-  },
-});
+  }
+}
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
 type CardPage = NamedPage & {

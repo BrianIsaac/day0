@@ -137,6 +137,25 @@ export interface PilotFigure {
 }
 
 /**
+ * The reorientation figure in words (16-O): the cards and what was decided on them, then the
+ * charter answers as before, so a release that had no cards still reads the same line.
+ */
+export function reorientationWords(reorientation: PilotFigures['reorientation']): string {
+  // A backend older than 0.20.0 counts no cards (mid-redeploy): its line is the answers alone.
+  const cards = reorientation.cards ?? { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
+  const opened =
+    cards.opened === 0
+      ? undefined
+      : `${count(cards.opened, 'card')}: ${cards.approved} approved, ${cards.dismissed} dismissed, ${cards.deferred} deferred`;
+  const answers =
+    reorientation.answered === 0
+      ? undefined
+      : `${reorientation.amended} of ${count(reorientation.answered, 'charter answer')} amended it`;
+  if (opened === undefined && answers === undefined) return 'not yet';
+  return [opened, answers].filter((words) => words !== undefined).join('; ');
+}
+
+/**
  * Decision A9's five pilot figures, each recomputable from an exported
  * trace (`metrics:recompute`). Hours saved is the manager's own estimate
  * summed over finished work: an internal gauge, never a headline (N11).
@@ -178,13 +197,11 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   },
   {
     label: 'Reorientation',
-    unit: 'answers that changed the charter',
+    unit: 'cards decided, and answers that changed the charter',
+    wide: true,
     definition:
-      'The charter questions the manager answered, and how many of the answers amended it.',
-    value: ({ reorientation }) =>
-      reorientation.answered === 0
-        ? 'not yet'
-        : `${reorientation.amended} of ${count(reorientation.answered, 'answer')}`,
+      'The reorientation cards opened when something an employee relies on changed, and what you decided on them; beside them, the charter questions you answered and how many of the answers amended the charter.',
+    value: ({ reorientation }) => reorientationWords(reorientation),
   },
   {
     label: 'Hours saved',

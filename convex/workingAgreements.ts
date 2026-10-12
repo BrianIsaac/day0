@@ -1810,27 +1810,49 @@ export const edit = mutation({
   },
   handler: async (ctx, args): Promise<{ agreementId: Id<'workingAgreements'> }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
-    if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
-    if (args.statement.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
-      throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
-    }
-    const statement = agreementStatement(redactTokenShapes(args.statement));
-    if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
-    await refuseWhileChangeWaits(ctx, agreement);
-    const now = Date.now();
-    const agreementId = await keepReplacement(
-      ctx,
-      replacementOf(agreement, {
-        agentId: agreement.agentId,
-        statement,
-        via: 'agreements-card',
-        now,
-      }),
-      args.agentId,
-    );
+    const agreementId = await editAgreementInTransaction(ctx, agreement, {
+      agentId: args.agentId,
+      statement: args.statement,
+      via: 'agreements-card',
+    });
     return { agreementId };
   },
 });
+
+/**
+ * Edit an active agreement in the caller's transaction ({@link edit}; a reorientation card's
+ * Approve, 16-O): the new statement replaces it once its check passes.
+ *
+ * @throws ConvexError when the agreement is not active, the statement is empty or too long, or a
+ *   change already waits on its check.
+ */
+export async function editAgreementInTransaction(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  change: {
+    readonly agentId: Id<'agents'>;
+    readonly statement: string;
+    readonly via: AgreementApprovedVia;
+  },
+): Promise<Id<'workingAgreements'>> {
+  if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
+  if (change.statement.replace(/\s+/g, ' ').trim().length > AGREEMENT_STATEMENT_LIMIT) {
+    throw new ConvexError(AGREEMENT_STATEMENT_TOO_LONG);
+  }
+  const statement = agreementStatement(redactTokenShapes(change.statement));
+  if (statement === '') throw new ConvexError(AGREEMENT_STATEMENT_EMPTY);
+  await refuseWhileChangeWaits(ctx, agreement);
+  return await keepReplacement(
+    ctx,
+    replacementOf(agreement, {
+      agentId: agreement.agentId,
+      statement,
+      via: change.via,
+      now: Date.now(),
+    }),
+    change.agentId,
+  );
+}
 
 /**
  * Set a proposal aside ("Not now"), withdraw a keep still waiting on its check, or dismiss a
@@ -1842,25 +1864,54 @@ export const dismiss = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
-    const open = agreement.status === 'proposed' || agreement.status === 'refused';
-    // A hold for one employee is not a refusal to set aside: dismissed, the agreement for every
-    // employee would bind that employee unchecked (the second pass on W14-R15).
-    const held = agreement.refusal?.reason === 'unchecked-for-employee';
-    if (!open || held) throw new ConvexError(AGREEMENT_MOVED_ON);
-    await ctx.db.patch(agreement._id, { status: 'dismissed' });
-    await appendEvent(ctx, {
-      agentId: args.agentId,
-      type: 'agreement.retired',
-      payload: {
-        agreementId: agreement._id,
-        everyEmployee: agreement.agentId === undefined,
-        how: 'dismissed',
-      },
-      createdAt: Date.now(),
-    });
+    await dismissAgreementInTransaction(ctx, agreement, args.agentId);
     return { ok: true };
   },
 });
+
+/**
+ * Set a proposal or a refusal aside in the caller's transaction ({@link dismiss}; a reorientation
+ * card's Approve, 16-O).
+ *
+ * @throws ConvexError when the agreement is neither proposed nor refused, or is a hold.
+ */
+export async function dismissAgreementInTransaction(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  const open = agreement.status === 'proposed' || agreement.status === 'refused';
+  // A hold for one employee is not a refusal to set aside: dismissed, the agreement for every
+  // employee would bind that employee unchecked (the second pass on W14-R15).
+  const held = agreement.refusal?.reason === 'unchecked-for-employee';
+  if (!open || held) throw new ConvexError(AGREEMENT_MOVED_ON);
+  await ctx.db.patch(agreement._id, { status: 'dismissed' });
+  await appendEvent(ctx, {
+    agentId,
+    type: 'agreement.retired',
+    payload: {
+      agreementId: agreement._id,
+      everyEmployee: agreement.agentId === undefined,
+      how: 'dismissed',
+    },
+    createdAt: Date.now(),
+  });
+}
+
+/**
+ * Try the check of a kept agreement again, in the caller's transaction (a reorientation card's
+ * Approve, 16-O), as {@link recheck} does for one waiting on its check.
+ *
+ * @throws ConvexError when the agreement is not waiting on its check.
+ */
+export async function recheckAgreementInTransaction(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
+  await scheduleCheck(ctx, agreement._id, agentId);
+}
 
 /**
  * Try the check of a kept agreement again from a card (W13-R30): one whose check could not be had,
@@ -1944,21 +1995,35 @@ export const retire = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
   handler: async (ctx, args): Promise<{ ok: true }> => {
     const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
-    if (agreement.status === 'retired') return { ok: true };
-    if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
-    const now = Date.now();
-    await ctx.db.patch(agreement._id, { status: 'retired', effectiveUntil: now });
-    await retireSourceCorrections(ctx, agreement, now);
-    await appendEvent(ctx, {
-      agentId: args.agentId,
-      type: 'agreement.retired',
-      payload: {
-        agreementId: agreement._id,
-        everyEmployee: agreement.agentId === undefined,
-        how: 'retired',
-      },
-      createdAt: now,
-    });
+    await retireAgreementInTransaction(ctx, agreement, args.agentId);
     return { ok: true };
   },
 });
+
+/**
+ * Retire an active agreement in the caller's transaction ({@link retire}; a reorientation card's
+ * Approve, 16-O), idempotent for one already retired.
+ *
+ * @throws ConvexError when the agreement is neither active nor retired.
+ */
+export async function retireAgreementInTransaction(
+  ctx: MutationCtx,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  if (agreement.status === 'retired') return;
+  if (agreement.status !== 'active') throw new ConvexError(AGREEMENT_MOVED_ON);
+  const now = Date.now();
+  await ctx.db.patch(agreement._id, { status: 'retired', effectiveUntil: now });
+  await retireSourceCorrections(ctx, agreement, now);
+  await appendEvent(ctx, {
+    agentId,
+    type: 'agreement.retired',
+    payload: {
+      agreementId: agreement._id,
+      everyEmployee: agreement.agentId === undefined,
+      how: 'retired',
+    },
+    createdAt: now,
+  });
+}

@@ -6,14 +6,13 @@ import {
   AGENT_EVENT_TYPES,
   CONNECTION_EVENT_TYPES,
   EVENT_TYPES,
-  REORIENTATION_EVENT_TYPES,
   isConnectionEventType,
   isEventOf,
   isEventType,
   type AmendmentVia,
   type CharterQuestionAnsweredPayload,
+  type EventPayloads,
   type PlanHeldForReorientation,
-  type ReorientationEventPayloads,
   type ReorientationNamed,
 } from '../../../src/events/contract';
 import type { Id } from '../../../convex/_generated/dataModel';
@@ -182,17 +181,18 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
 });
 
 describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): void => {
-  it('names the six reorientation events and the typed question, none yet listed, since no writer writes them before 16-O', (): void => {
-    expect(REORIENTATION_EVENT_TYPES).toEqual([
+  it('lists the six reorientation events and the typed question, each with its writer (16-O)', (): void => {
+    for (const type of [
       'reorientation.opened',
       'reorientation.proposed',
+      'reorientation.reopened',
       'reorientation.approved',
       'reorientation.dismissed',
       'reorientation.deferred',
-      'reorientation.reopened',
       'manager.question-asked',
-    ]);
-    for (const type of REORIENTATION_EVENT_TYPES) expect(isEventType(type), type).toBe(false);
+    ]) {
+      expect(isEventType(type), type).toBe(true);
+    }
   });
 
   it('types the seventh hold reason, the seven payloads, an amendment by reorientation and a charter answer by its two ways', (): void => {
@@ -207,17 +207,11 @@ describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): v
       Id<'reorientations'>
     >();
     expectTypeOf<
-      ReorientationEventPayloads['manager.question-asked']['type']
+      EventPayloads['manager.question-asked']['type']
     >().toEqualTypeOf<ManagerQuestionType>();
     // A proposal an event records is never the pending one.
-    expectTypeOf<'pending'>().not.toMatchTypeOf<
-      ReorientationEventPayloads['reorientation.proposed']['kind']
-    >();
-    expectTypeOf<'none'>().toMatchTypeOf<
-      ReorientationEventPayloads['reorientation.approved']['kind']
-    >();
-    expectTypeOf<
-      ReorientationEventPayloads['reorientation.dismissed']
-    >().toEqualTypeOf<ReorientationNamed>();
+    expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
+    expectTypeOf<'none'>().toMatchTypeOf<EventPayloads['reorientation.approved']['kind']>();
+    expectTypeOf<EventPayloads['reorientation.dismissed']>().toEqualTypeOf<ReorientationNamed>();
   });
 });

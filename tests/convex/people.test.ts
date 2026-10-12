@@ -938,6 +938,14 @@ describe("the people graph in the employee's record", (): void => {
           type: 'escalation-contact',
         },
       },
+      // An escalation contact's change opens a reorientation card (wave 16, 16-O; section 3).
+      {
+        type: 'reorientation.opened',
+        payload: expect.objectContaining({
+          trigger: 'relationship-changed',
+          summary: 'Aman Rao is now its escalation contact',
+        }),
+      },
       {
         type: 'relationship.changed',
         payload: {

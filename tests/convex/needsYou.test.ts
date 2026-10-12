@@ -127,6 +127,90 @@ describe('needsYouOfEmployee', (): void => {
     ]);
   });
 
+  it('lists an undecided reorientation card, dated by its opening, and leaves a conflict’s question out of the plan’s count (16-O)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agent = await seedEmployee(harness);
+    const plan = await seedItem(harness, agent._id, {
+      state: 'plan-pending',
+      title: 'Draft the renewal note',
+      waitingSince: 100,
+    });
+    const card = await harness.run(async (ctx) => {
+      const charterId = await ctx.db.insert('charters', {
+        agentId: agent._id,
+        version: '0.1',
+        approved: true,
+        approvedAt: 1,
+        body: {},
+        createdAt: 1,
+      });
+      await ctx.db.insert('managerQuestions', {
+        agentId: agent._id,
+        key: 'conflict:r1',
+        question: 'Two pages disagree.',
+        context: { touchedBy: 'plan', text: 'Thresholds', words: [] },
+        askedAt: 1,
+        workItemId: plan,
+        charterId,
+        blocking: false,
+        type: 'retrieval',
+      });
+      const fields = {
+        agentId: agent._id,
+        userId: 'owner',
+        trigger: 'skill-recheck-due' as const,
+        triggerSummary: 'A skill is due a re-check',
+        evidence: {
+          eventIds: [],
+          pageRefs: [],
+          relationIds: [],
+          correctionIds: [],
+          relationshipIds: [],
+          skillIds: [],
+          skillVersionIds: [],
+        },
+        affected: {
+          charterClauses: [],
+          agreements: [],
+          relationships: [],
+          skills: [],
+          surfaces: [],
+          workItems: [],
+        },
+        proposed: { kind: 'pending' as const },
+        risk: 'low' as const,
+        blockingWork: [],
+        day: '2026-09-26',
+      };
+      await ctx.db.insert('reorientations', {
+        ...fields,
+        triggerKey: 'decided',
+        status: 'dismissed',
+        createdAt: 50,
+      });
+      return await ctx.db.insert('reorientations', {
+        ...fields,
+        triggerKey: 'open',
+        status: 'open',
+        createdAt: 150,
+      });
+    });
+
+    const entries = await harness.run(async (ctx) => await needsYouOfEmployee(ctx, agent, 300));
+
+    expect(entries).toEqual([
+      expect.objectContaining({ kind: 'plan', workItemId: plan, questions: 0 }),
+      expect.objectContaining({
+        kind: 'reorientation',
+        key: `reorientation:${card}`,
+        subject: 'A skill is due a re-check',
+        waitingSince: 150,
+        reorientationId: card,
+        risk: 'low',
+      }),
+    ]);
+  });
+
   it("lists a deployed employee's one-to-one, waiting since its insert when no deploy was recorded", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agent = await seedEmployee(harness, 'deployed');

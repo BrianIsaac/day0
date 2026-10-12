@@ -10,6 +10,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { purgeCredential } from './credentials';
 import { appendConnectionEvent } from './connectionEvents';
+import { openCardsOnSurfaces } from './reorientation';
 import { ORGANISATION_HOLDER } from '../src/lib/organisation-key';
 import type { OrganisationConnectionKind } from '../src/surfaces/access-identity';
 import { readLinearAnswer, linearTokenRevocation } from '../src/surfaces/revokers/linear';
@@ -432,6 +433,9 @@ export const revokeSharedAtLinear = internalAction({
   },
 });
 
+/** The cards on one connection a failed shared revocation reads for its employees' cards. */
+const SHARED_FAILURE_CARDS_READ = 1_000;
+
 /**
  * Write the shared token's revocation at Linear on the connection's ledger and delete its value.
  * Internal, for {@link revokeSharedAtLinear}.
@@ -453,7 +457,7 @@ export const finishSharedRevocation = internalMutation({
     }
     const connection = await ctx.db.get(args.organisationConnectionId);
     if (connection === null) return null;
-    await appendConnectionEvent(ctx, {
+    const lineId = await appendConnectionEvent(ctx, {
       organisationConnectionId: connection._id,
       type: 'organisation.revoked-at-source',
       payload: {
@@ -467,6 +471,28 @@ export const finishSharedRevocation = internalMutation({
       },
       createdAt: now,
     });
+    // The organisation's shared token still works at the vendor: every employee whose card ran on
+    // the connection gets a card (section 3's revocation row).
+    if (args.outcome === 'failed') {
+      const cards = await ctx.db
+        .query('surfaces')
+        .withIndex('by_organisation_connection', (q) =>
+          q.eq('organisationConnectionId', connection._id),
+        )
+        .take(SHARED_FAILURE_CARDS_READ);
+      await openCardsOnSurfaces(
+        ctx,
+        cards.map((card) => card._id),
+        {
+          trigger: 'revocation-failed',
+          triggerKey: lineId,
+          summary: `Day0 could not end the organisation's shared ${connection.displayName} token at ${connection.system}${
+            args.reason !== undefined ? `: ${args.reason.slice(0, REASON_LIMIT)}` : ''
+          }`,
+          now,
+        },
+      );
+    }
     return null;
   },
 });

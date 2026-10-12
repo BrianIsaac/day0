@@ -285,7 +285,12 @@ describe('agent evaluation metrics', (): void => {
           medianToCompletionMs: 649_999,
           p90ToCompletionMs: 649_999,
         },
-        reorientation: { answered: 0, amended: 0, rate: null },
+        reorientation: {
+          cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+          answered: 0,
+          amended: 0,
+          rate: null,
+        },
         hoursSaved: { estimatedItems: 0, hours: null },
         // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
@@ -889,7 +894,12 @@ describe('supervision figures for a company of employees', (): void => {
           medianToCompletionMs: null,
           p90ToCompletionMs: null,
         },
-        reorientation: { answered: 0, amended: 0, rate: null },
+        reorientation: {
+          cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+          answered: 0,
+          amended: 0,
+          rate: null,
+        },
         hoursSaved: { estimatedItems: 0, hours: null },
         // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
@@ -2411,10 +2421,56 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
         medianToCompletionMs: 90_000,
         p90ToCompletionMs: 120_000,
       },
-      reorientation: { answered: 2, amended: 1, rate: 0.5 },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 2,
+        amended: 1,
+        rate: 0.5,
+      },
       hoursSaved: { estimatedItems: 2, hours: 1.5 },
       // Re-pinned for W14-R6: no selection ran, so no recall is shown.
       retrieval: { tokens: null, recall: null },
+    });
+  });
+
+  it('counts the reorientation cards opened, approved, dismissed and deferred, a joined trigger once, beside the answered line (16-O; A9)', (): void => {
+    const card = (type: string, at: number, fields: Record<string, unknown> = {}) =>
+      event(type, { reorientationId: 'r1', summary: 'A skill is due a re-check', ...fields }, at);
+    const events = [
+      card('reorientation.opened', 1_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k1',
+        risk: 'low',
+      }),
+      card('reorientation.opened', 2_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k2',
+        risk: 'low',
+        joined: true,
+      }),
+      card('reorientation.opened', 3_000, {
+        reorientationId: 'r2',
+        trigger: 'access-ended',
+        triggerKey: 'k3',
+        risk: 'low',
+      }),
+      card('reorientation.opened', 3_500, {
+        reorientationId: 'r3',
+        trigger: 'access-revoked',
+        triggerKey: 'k4',
+        risk: 'high',
+      }),
+      card('reorientation.deferred', 4_000, { revisitAt: 9_000 }),
+      card('reorientation.reopened', 9_000, { revisitAt: 9_000 }),
+      card('reorientation.approved', 10_000, { kind: 'none', result: 'nothing needed to change' }),
+      card('reorientation.dismissed', 11_000, { reorientationId: 'r2' }),
+      event('charter.question-answered', { questionId: 'q1', amended: true }, 12_000),
+    ];
+    expect(computeAgentMetrics(events, [], []).pilot.reorientation).toEqual({
+      cards: { opened: 3, approved: 1, dismissed: 1, deferred: 1 },
+      answered: 1,
+      amended: 1,
+      rate: 1,
     });
   });
 

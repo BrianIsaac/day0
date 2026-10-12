@@ -53,6 +53,7 @@ import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { type ItemPlan, type PlanAgreement, PlanSection } from './PlanSection';
+import { ConflictQuestion, type ConflictQuestionRow } from './ConflictQuestion';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
@@ -194,6 +195,7 @@ export function WorkItemCard({
   employeeName = 'the employee',
   managerKey,
   questions = [],
+  conflicts = [],
   corrections = [],
   agreements = [],
   autonomyChanges = [],
@@ -220,6 +222,8 @@ export function WorkItemCard({
   managerKey?: string;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
+  /** The questions this item's plan's conflicts ask beside it and nobody answered (RM20 (a)). */
+  conflicts?: readonly ConflictQuestionRow[];
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
   /** The employee's working agreements, for the line saying this plan applied one (W13-R29). */
@@ -572,6 +576,9 @@ export function WorkItemCard({
           agreements={agreements}
         />
       ) : null}
+      {conflicts.map((question) => (
+        <ConflictQuestion key={question._id} question={question} />
+      ))}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm
           key={item._id}

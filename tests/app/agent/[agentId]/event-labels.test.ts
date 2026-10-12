@@ -19,6 +19,15 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('says a card that proposes nothing in the record’s order (the second pass’s m8)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.proposed',
+        payload: { reorientationId: 'r1', summary: 'x', kind: 'none', by: 'judgement' },
+      }),
+    ).toBe('reorientation card proposes nothing needs to change');
+  });
+
   it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
     const holder = { name: 'Mateo', title: 'Post the September close status note' };
     expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(

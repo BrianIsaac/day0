@@ -471,7 +471,12 @@ const completeMetrics: AgentMetrics = {
       medianToCompletionMs: null,
       p90ToCompletionMs: null,
     },
-    reorientation: { answered: 0, amended: 0, rate: null },
+    reorientation: {
+      cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+      answered: 0,
+      amended: 0,
+      rate: null,
+    },
     hoursSaved: { estimatedItems: 0, hours: null },
     retrieval: { tokens: null, recall: null },
   },

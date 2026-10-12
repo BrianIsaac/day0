@@ -97,8 +97,18 @@ export interface PilotFigures {
     medianToCompletionMs: number | null;
     p90ToCompletionMs: number | null;
   };
-  /** The charter questions the manager answered, and how many of the answers changed the charter. */
-  reorientation: { answered: number; amended: number; rate: number | null };
+  /**
+   * The reorientation cards (16-O; A9): opened (a trigger that joined an open card is not counted
+   * again), approved, dismissed and deferred; and, kept beside them for comparison with earlier
+   * releases, the charter questions the manager answered and how many of the answers changed it.
+   * `cards` is absent from a backend older than 0.20.0, which a page can meet mid-redeploy.
+   */
+  reorientation: {
+    cards?: { opened: number; approved: number; dismissed: number; deferred: number };
+    answered: number;
+    amended: number;
+    rate: number | null;
+  };
   /** N11: the manager's optional estimates over completed items. An internal gauge, never a claim. */
   hoursSaved: { estimatedItems: number; hours: number | null };
   /**

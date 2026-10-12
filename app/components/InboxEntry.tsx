@@ -4,6 +4,7 @@ import { useId } from 'react';
 import type { FunctionReturnType } from 'convex/server';
 import type { api } from '@convex/_generated/api';
 import { deploymentZone } from '@/lib/zone';
+import { sentenceOf } from '@/agent/reorientation-words';
 import { clockTime } from './time';
 import { ButtonLink } from './Button';
 import { reviewHref } from '../home/transfer-link';
@@ -131,6 +132,13 @@ export function inboxEntryWords(entry: InboxItem): InboxEntryWords {
         control: 'Review',
       };
     }
+    // The section 7 draft (RM24): the card's own line names what changed.
+    case 'reorientation':
+      return {
+        ask: 'something its charter assumed has changed',
+        about: sentenceOf(entry.subject),
+        control: 'Review',
+      };
   }
 }
 
@@ -160,6 +168,8 @@ export function inboxEntryHref(entry: InboxItem): string {
     case 'transfer':
       // The employee's page refuses a caller who does not own it yet; the home opens the dialog.
       return reviewHref(entry.transferId);
+    case 'reorientation':
+      return `${page}/reorientation#card-${entry.reorientationId}`;
   }
 }
 

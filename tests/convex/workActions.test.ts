@@ -148,6 +148,14 @@ import {
   log1RefusedClosing,
 } from '../fixtures/work/full-run-3-2026-09-19-log-1';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import {
+  asManager,
+  measure,
+  relations,
+  twoThatDisagree,
+  type Harness as RelationsHarness,
+} from './fakes/doc-relations';
+import { conflictBlocks } from '../../convex/docRelationProposals';
 // Re-pinned for W12-R9: the reason is worded for the manager now; the constant holds it.
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 
@@ -7238,6 +7246,23 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     return await readItem(harness, workItemId);
   }
 
+  /** Author and apply the closing phase of a row Retry resumed at it. */
+  async function runClosingAgain(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+  ): Promise<Doc<'workItems'>> {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId)
+      throw new Error(`execution run missing: ${prepared.state} ${prepared.skipReason ?? ''}`);
+    if (prepared.state === 'executing') {
+      await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    }
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    return await readItem(harness, workItemId);
+  }
+
   function phaseOne(): ExecutionOutput {
     return {
       draft: 'Reading the close step tickets, then locating #finance-close.',
@@ -7272,6 +7297,269 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     expect(done.state).toBe('completed');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics.actions).toMatchObject({ refused: 0 });
+  });
+
+  it('refuses the closing phase while a reorientation card holds the row, and resumes it on Retry once the card is decided (16-O, O-3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const cardId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('reorientations', {
+          agentId,
+          userId: 'owner',
+          trigger: 'access-revoked',
+          triggerKey: 'event-1',
+          triggerSummary: 'its access “linear:write” was revoked',
+          evidence: {
+            eventIds: [],
+            pageRefs: [],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: [],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [],
+            agreements: [],
+            relationships: [],
+            skills: [],
+            surfaces: [],
+            workItems: [workItemId],
+          },
+          proposed: { kind: 'none', rationale: 'Nothing to change.' },
+          risk: 'high',
+          blockingWork: [workItemId],
+          status: 'open',
+          day: '2026-09-19',
+          createdAt: 1,
+        }),
+    );
+    const firstRun = (await readItem(harness, workItemId)).executionRunId;
+    if (!firstRun) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, {
+      workItemId,
+      runId: firstRun,
+    });
+
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('failed');
+    expect(held.skipReason).toMatch(/^stopped: /);
+    expect(held.skipReason).toContain(
+      'stopped before its closing steps: a reorientation card is still open (its access “linear:write” was revoked). Decide it, then Retry.',
+    );
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+
+    // Decided as the manager decides it, on the card (the second pass: not by a patch).
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: cardId });
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    const resumed = await readItem(harness, workItemId);
+    expect((resumed.output as { resumedClosing?: boolean }).resumedClosing).toBe(true);
+    const done = await runClosingAgain(harness, workItemId);
+    expect(done.state).toBe('completed');
+  });
+
+  /** A confirmed conflict between two equally trusted pages of the owner's, and its relation. */
+  async function confirmedConflict(harness: Harness): Promise<Doc<'docRelations'>> {
+    const pages = await twoThatDisagree(harness as unknown as RelationsHarness);
+    await measure(harness as unknown as RelationsHarness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness as unknown as RelationsHarness)).find(
+      (row) => row.kind === 'possible_conflict',
+    )!;
+    await asManager(harness as unknown as RelationsHarness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    return relation;
+  }
+
+  /** The plan's step 2 cites the disputed blocks of a relation, with the tag when given. */
+  async function citeDisputed(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+    relation: Doc<'docRelations'>,
+    tagged: boolean,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const hashes = new Set(conflictBlocks(relation));
+      const blocks = (await ctx.db.query('docBlocks').collect()).filter((block) =>
+        hashes.has(block.hash),
+      );
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        plan: {
+          ...(row?.plan as object),
+          cites: [
+            {
+              step: 2,
+              label: 'Finance wiki/escalation.md#Finance escalation > Thresholds',
+              blocks: blocks.map((block) => ({ id: block._id, hash: block.hash })),
+              ...(tagged
+                ? {
+                    conflict: {
+                      relationId: relation._id,
+                      heading: 'Thresholds',
+                      pages: [
+                        { title: 'Finance escalation', source: 'Finance wiki' },
+                        { title: 'Pipeline runbook', source: 'Handbook' },
+                      ],
+                    },
+                  }
+                : {}),
+            },
+          ],
+        } as never,
+      });
+    });
+  }
+
+  it('runs the untouched steps and withholds the writes of the steps a conflict’s open question holds (16-O; RM20 (a))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    const relation = await confirmedConflict(harness);
+    await citeDisputed(harness, workItemId, relation, true);
+    const question =
+      'Two pages disagree under “Thresholds”: Finance escalation (Finance wiki) and Pipeline runbook (Handbook). Which is right?';
+    await harness.run(async (ctx) => {
+      const charterId = await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        createdAt: 1,
+      });
+      await ctx.db.insert('managerQuestions', {
+        agentId,
+        key: `conflict:${relation._id}`,
+        question,
+        context: { touchedBy: 'plan', text: 'Thresholds', words: [] },
+        askedAt: 1,
+        workItemId,
+        charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId: relation._id,
+      });
+    });
+
+    const stopped = await runBothPhases(harness, workItemId);
+
+    // The reads ran; the closing set's Linear writes (steps 2 and 3 write Linear) waited.
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+    expect(recorded.mcp.filter((call) => call.tool === 'save_issue')).toEqual([]);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toContain(question);
+    expect(stopped.skipReason).toContain("to the manager's answer");
+  });
+
+  it('stops a run whose plan relies on a conflict confirmed since its approval, naming the two pages (16-O; D-4 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    const relation = await confirmedConflict(harness);
+    await citeDisputed(harness, workItemId, relation, false);
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(
+      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('stops a run that read the whole mirror for a conflict confirmed since its approval (the second pass’s D-4 (b) minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    await confirmedConflict(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 2,
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(
+      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(recorded.mcp).toEqual([]);
+  });
+
+  it('stops the closing phase when the conflict is confirmed between the two phases (16-O; D-4 (b))', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    const pages = await twoThatDisagree(harness as unknown as RelationsHarness);
+    await measure(harness as unknown as RelationsHarness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness as unknown as RelationsHarness)).find(
+      (row) => row.kind === 'possible_conflict',
+    )!;
+    await citeDisputed(harness, workItemId, relation, false);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    await asManager(harness as unknown as RelationsHarness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(
+      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
   });
 
   it('drops the read when the gate refuses it at the apply, says so on the ledger, and goes on', async (): Promise<void> => {

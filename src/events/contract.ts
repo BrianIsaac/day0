@@ -1377,6 +1377,8 @@ export interface WorkEvaluatedPayload extends WorkItemNamed {
 /** The payload of `work.skipped`. */
 export interface WorkSkippedPayload extends WorkItemNamed {
   readonly reason?: string;
+  /** The willNotDo clause an out-of-scope skip quoted, as the charter writes it (16-O). */
+  readonly clause?: string;
 }
 
 /** The payload of `work.scope-judgement-unavailable`. */
@@ -1581,10 +1583,8 @@ export interface PlanHeldForConflict extends WorkItemNamed {
 
 /**
  * `work.plan-held` for a plan whose row an undecided reorientation card holds, the seventh reason
- * (wave 16, 16-K for 16-O): a medium or high risk card names the row in its `blockingWork`, so the
- * switch does not run the plan until the card is decided. Declared here and joined to
- * {@link WorkPlanHeldPayload} by 16-O with its renderers (`event-labels.ts`'s and
- * `record-words.ts`'s held-reason maps take an entry for every member).
+ * (wave 16, 16-K for 16-O): a high-risk card names the row in its `blockingWork`, so the switch
+ * does not run the plan until the card is approved or dismissed (`decidePlan`).
  */
 export interface PlanHeldForReorientation extends WorkItemNamed {
   readonly reason: 'reorientation-pending';
@@ -1600,7 +1600,8 @@ export type WorkPlanHeldPayload =
   | PlanHeldObligationsFailedOpen
   | PlanHeldDraftedWithout
   | PlanHeldApprovedByPredecessor
-  | PlanHeldForConflict;
+  | PlanHeldForConflict
+  | PlanHeldForReorientation;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1991,23 +1992,6 @@ export interface ManagerQuestionAskedPayload {
 }
 
 /**
- * The wave 16 event types and their payloads (16-K for 16-O and 16-D), declared by the schema
- * step and not yet in {@link EventPayloads}: a listed type no writer writes fails the contract's
- * test, and the record's three maps (`RECORD_FILTER_OF`, `record-words.ts`'s `WORDS`,
- * `event-labels.ts`'s `LABELS`) take an entry for every listed type. 16-O moves each into
- * `EventPayloads` and `EVENT_TYPES` in the commit that writes and renders it.
- */
-export interface ReorientationEventPayloads {
-  'reorientation.opened': ReorientationOpenedPayload;
-  'reorientation.proposed': ReorientationProposedPayload;
-  'reorientation.approved': ReorientationApprovedPayload;
-  'reorientation.dismissed': ReorientationDismissedPayload;
-  'reorientation.deferred': ReorientationDeferredPayload;
-  'reorientation.reopened': ReorientationReopenedPayload;
-  'manager.question-asked': ManagerQuestionAskedPayload;
-}
-
-/**
  * Every event type and its payload. The keys are the contract's types; the
  * tuple below lists the same keys at run time.
  */
@@ -2205,6 +2189,13 @@ export interface EventPayloads {
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
   'work.manager-digest-failed': WorkManagerDigestFailedPayload;
+  'reorientation.opened': ReorientationOpenedPayload;
+  'reorientation.proposed': ReorientationProposedPayload;
+  'reorientation.reopened': ReorientationReopenedPayload;
+  'reorientation.approved': ReorientationApprovedPayload;
+  'reorientation.dismissed': ReorientationDismissedPayload;
+  'reorientation.deferred': ReorientationDeferredPayload;
+  'manager.question-asked': ManagerQuestionAskedPayload;
 }
 
 /** One event type of the contract. */
@@ -2219,17 +2210,6 @@ function everyKey<Of extends string>() {
     tuple: Tuple & ([Of] extends [Tuple[number]] ? unknown : never),
   ): Tuple => tuple;
 }
-
-/** The wave 16 event types not yet written (see {@link ReorientationEventPayloads}), at run time. */
-export const REORIENTATION_EVENT_TYPES = everyKey<keyof ReorientationEventPayloads>()([
-  'reorientation.opened',
-  'reorientation.proposed',
-  'reorientation.approved',
-  'reorientation.dismissed',
-  'reorientation.deferred',
-  'reorientation.reopened',
-  'manager.question-asked',
-]);
 
 /** Every event type Day0 writes, at run time. */
 export const EVENT_TYPES = everyKey<EventType>()([
@@ -2426,6 +2406,13 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.manager-note-failed',
   'work.manager-digest-sending',
   'work.manager-digest-failed',
+  'reorientation.opened',
+  'reorientation.proposed',
+  'reorientation.reopened',
+  'reorientation.approved',
+  'reorientation.dismissed',
+  'reorientation.deferred',
+  'manager.question-asked',
 ]);
 
 const LISTED: ReadonlySet<string> = new Set(EVENT_TYPES);

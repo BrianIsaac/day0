@@ -7,6 +7,9 @@ import {
   pageAt,
   type NamedPage,
 } from './docRelationProposals';
+import { eventsOfType } from './eventLog';
+import { agentReadsSource } from '../src/docs/agent-sources';
+import { isEventOf } from '../src/events/contract';
 import { pageStatusOf, sourceAuthorityOf, type SourceAuthority } from '../src/docs/authority';
 import type { CiteConflict, PlanCite } from '../src/work/types';
 
@@ -172,33 +175,156 @@ export function citeConflictOf(conflict: StandingConflict): CiteConflict {
   };
 }
 
-/**
- * The conflict a drafted plan rests on, if one still stands: the first of its cites that was
- * disputed when the plan was drafted (`PlanCite.conflict`) and whose relation is still a
- * confirmed conflict between two active pages of equal trust. Read at the plan's decision, and
- * again at each later look, so a conflict the manager settled since holds nothing.
- *
- * @param ctx - The deciding mutation's context.
- * @param plan - The work item's plan, as stored.
- */
-export async function citedConflictOf(
-  ctx: QueryCtx,
-  plan: unknown,
-): Promise<CiteConflict | undefined> {
+/** The selections of an employee one read looks through for a plan's own (as `docSelection`'s). */
+const PLAN_SELECTIONS_READ = 64;
+
+/** The blocks of one selection a conflict read takes: the selection's own bound. */
+const SELECTED_BLOCKS_READ = 512;
+
+/** The plan cites' conflicts that still stand, each relation once. */
+async function standingCitedConflicts(ctx: QueryCtx, plan: unknown): Promise<CiteConflict[]> {
   const cites =
     typeof plan === 'object' && plan !== null && 'cites' in plan && Array.isArray(plan.cites)
       ? (plan.cites as ReadonlyArray<Pick<PlanCite, 'conflict'>>)
       : [];
-  const relationIds = [
-    ...new Set(cites.flatMap((cite) => (cite.conflict ? [cite.conflict.relationId] : []))),
-  ];
-  for (const id of relationIds) {
+  const found: CiteConflict[] = [];
+  for (const id of new Set(
+    cites.flatMap((cite) => (cite.conflict ? [cite.conflict.relationId] : [])),
+  )) {
     const relationId = ctx.db.normalizeId('docRelations', id);
     const standing =
       relationId === null ? undefined : await standingConflictOf(ctx, await ctx.db.get(relationId));
-    if (standing !== undefined) return citeConflictOf(standing);
+    if (standing !== undefined) found.push(citeConflictOf(standing));
+  }
+  return found;
+}
+
+/** The blocks the planner was shown for one item, as its selection recorded them, or undefined. */
+async function selectedBlocks(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+): Promise<string[] | undefined> {
+  const recent = await eventsOfType(ctx, row.agentId, 'work.documentation-selected')
+    .order('desc')
+    .take(PLAN_SELECTIONS_READ);
+  for (const event of recent) {
+    if (!isEventOf(event, 'work.documentation-selected')) continue;
+    if (event.payload.workItemId === row._id && event.payload.site === 'plan') {
+      return [...event.payload.blockIds];
+    }
   }
   return undefined;
+}
+
+/** Whether the plan's selection could not be made, so the planner read the whole mirror. */
+async function selectionFellBack(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+): Promise<boolean> {
+  const recent = await eventsOfType(ctx, row.agentId, 'work.documentation-selection-failed')
+    .order('desc')
+    .take(PLAN_SELECTIONS_READ);
+  return recent.some(
+    (event) =>
+      isEventOf(event, 'work.documentation-selection-failed') &&
+      event.payload.workItemId === row._id &&
+      event.payload.site === 'plan',
+  );
+}
+
+/**
+ * The hashes of the blocks a plan relies on: its cited blocks, or, where it cites nothing, the
+ * blocks its recorded selection showed the planner; undefined when it cites nothing and no
+ * selection was recorded.
+ */
+async function planBlockHashes(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+): Promise<Set<string> | undefined> {
+  const cites = (row.plan as { cites?: ReadonlyArray<Pick<PlanCite, 'blocks'>> } | null | undefined)
+    ?.cites;
+  const hashes = new Set<string>();
+  if (Array.isArray(cites) && cites.length > 0) {
+    for (const cite of cites) {
+      for (const block of cite.blocks ?? []) if (block.hash !== undefined) hashes.add(block.hash);
+    }
+    return hashes;
+  }
+  const selected = await selectedBlocks(ctx, row);
+  if (selected === undefined) return undefined;
+  for (const id of selected.slice(0, SELECTED_BLOCKS_READ)) {
+    const blockId = ctx.db.normalizeId('docBlocks', id);
+    const block = blockId === null ? null : await ctx.db.get(blockId);
+    if (block !== null) hashes.add(block.hash);
+  }
+  return hashes;
+}
+
+/**
+ * Every conflict that stands on the blocks a plan relies on, whatever its cites were tagged when it
+ * was drafted, each relation once (W15-R18's inputs, by block): its cited blocks; where it cites
+ * nothing, the blocks its selection recorded; and where the selection could not be made and the
+ * planner read the whole mirror, every conflict between two pages the employee reads. What a run
+ * reads before it writes (D-4 (b)), and what a drafted plan's question asks about beside its own
+ * tagged cites.
+ *
+ * @param ctx - The query context.
+ * @param row - The work item, its plan as stored.
+ * @param agent - The employee, for its owner and the sources it reads.
+ */
+export async function conflictsOnPlanBlocks(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+  agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'>,
+): Promise<CiteConflict[]> {
+  if (agent.userId === undefined) return [];
+  const hashes = await planBlockHashes(ctx, row);
+  if (hashes !== undefined) {
+    const byRelation = new Map<string, CiteConflict>();
+    for (const conflict of (await standingConflictsOn(ctx, agent.userId, hashes)).values()) {
+      byRelation.set(conflict.relationId, citeConflictOf(conflict));
+    }
+    return [...byRelation.values()];
+  }
+  if (!(await selectionFellBack(ctx, row))) return [];
+  const found: CiteConflict[] = [];
+  for (const relation of await confirmedConflicts(ctx, agent.userId)) {
+    const standing = await standingConflictOf(ctx, relation);
+    if (
+      standing !== undefined &&
+      agentReadsSource(agent, relation.from.sourceId) &&
+      agentReadsSource(agent, relation.to.sourceId)
+    ) {
+      found.push(citeConflictOf(standing));
+    }
+  }
+  return found;
+}
+
+/**
+ * Every conflict that stands under a drafted plan, each relation once (W15-R18's three inputs,
+ * D-4 (c)): the plan's own cites that carried a `conflict` tag, and every conflict on the blocks
+ * it relies on ({@link conflictsOnPlanBlocks}), so a conflict confirmed after the plan was drafted
+ * is asked too. What a drafted plan's question asks about (`work.decidePlan`). It replaces wave
+ * 15's `citedConflictOf`, which read the first tagged cite only, for a hold of the whole plan.
+ *
+ * @param ctx - The deciding mutation's context.
+ * @param row - The work item, its plan as stored.
+ * @param agent - The employee, for its owner and the sources it reads.
+ */
+export async function conflictsUnderPlan(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan'>,
+  agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'>,
+): Promise<CiteConflict[]> {
+  const byRelation = new Map<string, CiteConflict>();
+  for (const conflict of [
+    ...(await standingCitedConflicts(ctx, row.plan)),
+    ...(await conflictsOnPlanBlocks(ctx, row, agent)),
+  ]) {
+    if (!byRelation.has(conflict.relationId)) byRelation.set(conflict.relationId, conflict);
+  }
+  return [...byRelation.values()];
 }
 
 /** What the manager may answer a relation's card. */

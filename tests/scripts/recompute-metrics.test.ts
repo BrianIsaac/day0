@@ -417,6 +417,46 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     expect(recomputed.source).toMatchObject({ kind: 'traces' });
   });
 
+  it('recomputes the reorientation cards from the traces as metrics:forOwner counts them (16-O; A9)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await harness.run(async (ctx): Promise<void> => {
+      const priya = (await ctx.db.query('agents').collect()).find(
+        (agent) => agent.name === 'Priya',
+      );
+      if (priya === undefined) throw new Error('Priya is not seeded');
+      const card = (type: string, at: number, fields: Record<string, unknown>) =>
+        ctx.db.insert('events', {
+          agentId: priya._id,
+          type,
+          payload: { reorientationId: 'r1', summary: 'A skill is due a re-check', ...fields },
+          createdAt: at,
+        });
+      await card('reorientation.opened', 5_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k1',
+        risk: 'low',
+      });
+      await card('reorientation.opened', 5_100, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k2',
+        risk: 'low',
+        joined: true,
+      });
+      await card('reorientation.approved', 6_000, {
+        kind: 'none',
+        result: 'nothing needed to change',
+      });
+    });
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    expect(live.company.pilot.reorientation.cards).toEqual({
+      opened: 1,
+      approved: 1,
+      dismissed: 0,
+      deferred: 0,
+    });
+    expect(recomputeFromTraces(await exportedTraces(harness)).figures).toEqual(live);
+  });
+
   it('reproduces metrics:forOwner for both managers after a handover, from the traces, each within the spans they held the employee (the v0.12.0 walk)', async (): Promise<void> => {
     const harness = await companyBackend();
     await handOverMateo(harness);
@@ -604,7 +644,12 @@ describe('the 17 September recording, as a tracked trace', (): void => {
         medianToCompletionMs: 379_271,
         p90ToCompletionMs: 382_466,
       },
-      reorientation: { answered: 0, amended: 0, rate: null },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      },
       hoursSaved: { estimatedItems: 0, hours: null },
       // The 16 September recording predates the selection (wave 14, 14-R): no item read one, so
       // the recompute shows no recall, as the backend does (re-pinned for W14-R6).

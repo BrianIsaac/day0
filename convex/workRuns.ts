@@ -17,6 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
+import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
   failInTransaction,
@@ -631,6 +632,9 @@ export const setCompleted = internalMutation({
         },
         createdAt: Date.now(),
       });
+      if (withheld.some((held) => refusedScopeOf(held.reason) !== undefined)) {
+        await openRepeatedRefusalCards(ctx, row.agentId, Date.now());
+      }
     }
     await scheduleNextStep(ctx, { ...row, state: 'completed' });
     await settleHandoverAfterRun(ctx, row.agentId);

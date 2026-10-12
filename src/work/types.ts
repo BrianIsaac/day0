@@ -71,7 +71,12 @@ export interface SkillShape {
 export type WorkVerdict =
   | { decision: 'claim'; value: number; risk: number; requiredPermissions: string[] }
   | { decision: 'queue'; reason: string; openClaims: number }
-  | { decision: 'skip'; reason: string }
+  | {
+      decision: 'skip';
+      reason: string;
+      /** The willNotDo clause an out-of-scope skip quoted, as the charter writes it (16-O). */
+      clause?: string;
+    }
   | { decision: 'defer'; reason: string; missingPermissions: string[] }
   | {
       decision: 'needs-skill';

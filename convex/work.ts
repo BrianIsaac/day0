@@ -26,7 +26,9 @@ import { incomingTransfersOf } from './managerTransfers';
 import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
-import { citedConflictOf } from './docConflicts';
+import { conflictsUnderPlan } from './docConflicts';
+import { conflictAnswerOwedOn } from './managerQuestions';
+import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
   claimLoopStepInTransaction,
@@ -1559,9 +1561,12 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * stand unchecked, and the gates the switch trusts read exactly those
  * (E-70 D4). So does a plan drafted without its ticket or thread
  * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
- * So does a plan that cites a passage a confirmed conflict stands on
- * (`reason: 'documentation-conflict'`, wave 15): two equally trusted pages
- * disagree there and the manager has not said which is right.
+ * A plan over a passage a confirmed conflict stands on no longer waits
+ * (wave 15's `documentation-conflict`, replaced in wave 16 by D-4 (c)): it
+ * asks which page is right beside the plan and goes on. And, first and
+ * whatever the switch says, a plan a high-risk reorientation card names
+ * (`reason: 'reorientation-pending'`, wave 16): it waits for the card's Approve
+ * or Dismiss, which ask this decision again.
  * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
@@ -1571,6 +1576,42 @@ export const decidePlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'plan-pending') return { approved: false };
+    // A plan over a passage two equally trusted pages disagree on asks which is right, in its own
+    // request, and goes on (D-4 (c), RM20 (a)): the steps that rely on it wait at the apply.
+    // Asked in either position of the switch, once per row and conflict.
+    const employee = await ctx.db.get(row.agentId);
+    if (employee !== null) {
+      for (const conflict of await conflictsUnderPlan(ctx, row, employee)) {
+        const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
+        if (relationId === null) continue;
+        await askConflictQuestion(ctx, {
+          row,
+          conflict: { relationId, heading: conflict.heading, pages: conflict.pages },
+          now: Date.now(),
+        });
+      }
+    }
+    // A high-risk reorientation card names the row (the seventh reason, wave 16, 16-O): the plan
+    // waits for the card's Approve or Dismiss whatever the switch says, and the record says so in
+    // either position of the switch. Read again at every look, so a decided card holds nothing.
+    const card = await heldByReorientation(ctx, row);
+    if (card !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'reorientation-pending',
+            reorientationId: card._id,
+            summary: card.triggerSummary,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
     const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
       await scheduleDecisionRequest(ctx, row, 'plan');
@@ -1628,29 +1669,6 @@ export const decidePlan = internalMutation({
             reason: 'drafted-without-record',
             surfaceSlug: without.surfaceSlug,
             cause: without.cause,
-          },
-          createdAt: Date.now(),
-        });
-      }
-      await scheduleDecisionRequest(ctx, row, 'plan');
-      return { approved: false };
-    }
-    // A plan that follows a passage two equally trusted pages disagree on waits for the manager,
-    // who confirmed the conflict and has not yet said which page is right (15-A, the sixth
-    // reason). Read again at every look, so a conflict settled since holds nothing.
-    const conflict = await citedConflictOf(ctx, row.plan);
-    if (conflict !== undefined) {
-      const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
-      if (!args.recovery && relationId !== null) {
-        await appendEvent(ctx, {
-          agentId: row.agentId,
-          type: 'work.plan-held',
-          payload: {
-            workItemId: args.workItemId,
-            reason: 'documentation-conflict',
-            relationId,
-            heading: conflict.heading,
-            pages: [...conflict.pages],
           },
           createdAt: Date.now(),
         });
@@ -1982,7 +2000,8 @@ export const openDecisions = internalQuery({
     return {
       requests,
       batches,
-      noticeOwed: decidedLately.length > 0,
+      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
+      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
       ...(threads.length > 0 ? { threads } : {}),
     };
   },

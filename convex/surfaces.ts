@@ -44,6 +44,7 @@ import { agentReadsSource } from '../src/docs/agent-sources';
 import { isManagerLookupFailure } from '../src/surfaces/manager-lookup';
 import { latestRejoins, type LastRejoin } from './channelRejoins';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openCard, surfaceReach } from './reorientation';
 import { endAccessAtSource } from './sourceRevocation';
 import { purgeAppLevelToken } from './credentials';
 import { typedCodeReachOf } from './slackMessagesTab';
@@ -2264,7 +2265,7 @@ async function endAccessInTransaction(
   });
   // The end date is on the event so the upgrade can tell this release's end
   // of a proposal-started clock from an end the older code recorded.
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId: surface.agentId,
     type: 'surface.expired',
     payload: {
@@ -2273,6 +2274,15 @@ async function endAccessInTransaction(
       ...(ended.held.length > 0 ? { revokedAtSource: true } : {}),
     },
     createdAt: now,
+  });
+  await openCard(ctx, {
+    agentId: surface.agentId,
+    trigger: 'access-ended',
+    triggerKey: eventId,
+    summary: `Its access to ${surface.displayName} ended`,
+    evidence: { eventIds: [eventId] },
+    affected: await surfaceReach(ctx, surface),
+    now,
   });
 }
 

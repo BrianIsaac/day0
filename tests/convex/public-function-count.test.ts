@@ -24,9 +24,12 @@ interface RegisteredFunction {
  * wave 14's `personChanges:take`, `personChanges:dismiss` and `workingAgreements:recheck`; 215
  * with 15-A's `docStatus:setPageStatus`, `docStatus:clearPageStatus`,
  * `docStatus:setSourceAuthority`, `docRelations:decide` and `docRelations:listOpen`; 217 with
- * wave 16's `exportActions:exportForOwner` and `exportActions:exportOwnerPage`, 16-F).
+ * wave 16's `exportActions:exportForOwner` and `exportActions:exportOwnerPage`, 16-F; 222 with
+ * 16-O's `reorientationDecisions:approve`, `:dismiss`, `:defer`, `:openByHand` and
+ * `:listForAgent`; 223 with 16-O's `managerQuestions:answerConflict`; 224 with 16-O's
+ * `managerQuestions:conflictsForAgent`).
  */
-const PINNED_COUNT = 217;
+const PINNED_COUNT = 224;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 

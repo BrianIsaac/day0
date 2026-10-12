@@ -100,7 +100,7 @@ const PAGES: Readonly<Record<string, Page>> = {
   reorientation: tab(
     'reorientation',
     () => createElement(ReorientationView),
-    'No reorientation card is open',
+    'charter assumed has changed',
   ),
 };
 

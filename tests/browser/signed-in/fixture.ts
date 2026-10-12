@@ -299,6 +299,79 @@ export function employeePage(): Record<string, unknown> {
       }),
     ],
     'managerQuestions:openForAgent': [],
+    // The card and the plan's question (16-O), so the floor measures both in each theme.
+    'managerQuestions:conflictsForAgent': [
+      {
+        _id: 'q-conflict',
+        workItemId: 'w-plan',
+        question:
+          'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
+        pages: [
+          { title: 'Finance escalation', source: 'Finance wiki' },
+          { title: 'Pipeline runbook', source: 'Handbook' },
+        ],
+      },
+    ],
+    'reorientationDecisions:listForAgent': [
+      {
+        card: {
+          _id: 'card-1',
+          _creationTime: minutes(30),
+          agentId,
+          userId: 'owner',
+          trigger: 'relationship-changed',
+          triggerKey: 'event-1',
+          triggerSummary: 'Aman Rao, its approver, changed',
+          evidence: {
+            eventIds: [],
+            pageRefs: [],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: ['edge-1'],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [
+              { field: 'escalationTriggers', index: 0, text: 'Escalate deck numbers.' },
+            ],
+            agreements: [],
+            relationships: ['edge-1'],
+            skills: [],
+            surfaces: [],
+            workItems: ['w-plan'],
+          },
+          proposed: {
+            kind: 'charter-change',
+            changes: [
+              {
+                kind: 'edit-clause',
+                field: 'escalationTriggers',
+                index: 0,
+                text: 'Escalate deck numbers to Aman first.',
+              },
+            ],
+            rationale: 'Aman approves deck numbers now.',
+            before: 'Escalate deck numbers.',
+            after: 'Escalate deck numbers to Aman first.',
+          },
+          risk: 'high',
+          blockingWork: ['w-plan'],
+          status: 'open',
+          day: '2026-10-12',
+          createdAt: minutes(30),
+        },
+        workItems: [
+          { _id: 'w-plan', title: 'Close REVOPS-9 with the close summary', state: 'plan-pending' },
+        ],
+        pages: [],
+        skills: [],
+        agreements: [],
+        people: [{ _id: 'edge-1', words: 'Aman Rao, its approver' }],
+        held: { plans: 1, runs: 0 },
+        charterVersion: '0.1',
+      },
+    ],
     'skills:proposed': [
       {
         _id: 'skill-p',

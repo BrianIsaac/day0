@@ -41,6 +41,7 @@ beforeEach((): void => {
 });
 
 afterEach((): void => {
+  vi.useRealTimers();
   restoreSurfaceMode();
   vi.unstubAllEnvs();
 });
@@ -194,6 +195,9 @@ describe('a kept identity its new manager has not approved again (the review’s
   });
 
   it('is ended at the vendor once the wait has passed, and the card waits like a cut one', async (): Promise<void> => {
+    // The end schedules the vendor's revocation and the reorientation card's judgement: run here,
+    // so neither logs after the file's environment has closed.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
     const harness = await realHarness();
     const seeded = await seedKept(harness);
     const now = MOVED_AT + KEPT_IDENTITY_WAIT_MS;
@@ -213,6 +217,7 @@ describe('a kept identity its new manager has not approved again (the review’s
         sourceRevocation: { state: 'pending', end: 'transfer' },
       });
     }
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
   });
 
   it('leaves a proposed card holding a key Day0 did not obtain alone', async (): Promise<void> => {
@@ -242,7 +247,7 @@ describe('a kept identity its new manager has not approved again (the review’s
   });
 
   it('is ended by the hourly sweep, which pages through every proposed card', async (): Promise<void> => {
-    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] });
     vi.setSystemTime(MOVED_AT + KEPT_IDENTITY_WAIT_MS + 1);
     try {
       const harness = await realHarness();
@@ -253,6 +258,7 @@ describe('a kept identity its new manager has not approved again (the review’s
 
       expect(swept).toMatchObject({ keptEnded: 1 });
       expect((await rows(harness, seeded)).surface?.credentialId).toBeUndefined();
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
     } finally {
       vi.useRealTimers();
     }

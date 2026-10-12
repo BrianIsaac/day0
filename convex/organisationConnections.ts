@@ -13,6 +13,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendConnectionEvent } from './connectionEvents';
+import { openCardsOnSurfaces } from './reorientation';
 import { purgeCredential } from './credentials';
 import { endOrganisationSecrets } from './organisationSecrets';
 import { activeConnectionFor } from './organisationConnectionReads';
@@ -888,8 +889,12 @@ export async function revokeConnection(
     now,
   );
   await ctx.db.patch(connection._id, { status: 'revoked', statusReason: reason, revokedAt: now });
-  await endCardsOnConnection(ctx, { organisationConnectionId: connection._id, reason, now });
-  await appendConnectionEvent(ctx, {
+  const ended = await endCardsOnConnection(ctx, {
+    organisationConnectionId: connection._id,
+    reason,
+    now,
+  });
+  const lineId = await appendConnectionEvent(ctx, {
     organisationConnectionId: connection._id,
     type: 'organisation.connection-revoked',
     payload: {
@@ -901,6 +906,12 @@ export async function revokeConnection(
     },
     ...actorOf(registrar),
     createdAt: now,
+  });
+  await openCardsOnSurfaces(ctx, ended, {
+    trigger: 'connection-revoked',
+    triggerKey: lineId,
+    summary: `The organisation's ${connection.displayName} connection was revoked: ${reason}`,
+    now,
   });
 }
 
