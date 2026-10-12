@@ -4,7 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
-import { openCard, openWorkCiting } from './reorientation';
+import { openCard } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
 import { RUNBOOKS_A_SCAN, type ChangedRunbook } from './skillVersions';
@@ -162,26 +162,18 @@ const NO_LONGER_CURRENT: Readonly<Record<Exclude<PageStatus, 'active'>, string>>
 };
 
 /**
- * Open a reorientation card for a reader whose open plan cites a page that stopped being current
- * (wave 16, 16-O; section 3's page row): superseded, archived or made a draft. A page no open plan
- * cites opens none here; the skills that read it are stamped for a re-check, which opens its own.
+ * What a reader's card says of a page that stopped being current (wave 16, 16-O; section 3's page
+ * row): superseded, with its successor's title when stored, archived or made a draft. Undefined
+ * for a page made current again, which opens no card.
  */
-async function openCardUnderPlan(
+async function noLongerCurrentSummary(
   ctx: MutationCtx,
-  change: {
-    readonly agent: Doc<'agents'>;
-    readonly page: Doc<'docPages'>;
-    readonly to: PageStatus;
-    readonly supersededBy: PageName | undefined;
-    readonly eventId: Id<'events'>;
-    readonly now: number;
-  },
-): Promise<void> {
-  if (change.to === 'active') return;
-  const pageRef = { sourceId: change.page.sourceId, ref: change.page.ref };
-  const cited = await openWorkCiting(ctx, change.agent._id, [pageRef]);
-  if (cited.length === 0) return;
-  const named = change.to === 'superseded' ? change.supersededBy : undefined;
+  page: Doc<'docPages'>,
+  to: PageStatus,
+  supersededBy: PageName | undefined,
+): Promise<string | undefined> {
+  if (to === 'active') return undefined;
+  const named = to === 'superseded' ? supersededBy : undefined;
   const successor =
     named === undefined
       ? null
@@ -189,17 +181,9 @@ async function openCardUnderPlan(
           .query('docPages')
           .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
           .first();
-  await openCard(ctx, {
-    agentId: change.agent._id,
-    trigger: 'page-status-changed',
-    triggerKey: change.eventId,
-    summary: `“${change.page.title}” was ${NO_LONGER_CURRENT[change.to]}${
-      successor !== null ? ` by “${successor.title}”` : ''
-    }`,
-    evidence: { eventIds: [change.eventId], pageRefs: [pageRef] },
-    affected: { workItems: cited },
-    now: change.now,
-  });
+  return `“${page.title}” was ${NO_LONGER_CURRENT[to]}${
+    successor !== null ? ` by “${successor.title}”` : ''
+  }`;
 }
 
 /**
@@ -249,6 +233,11 @@ async function writeStatus(
     pageRef: page.ref,
     status: decided.status,
   });
+  const cardSummary =
+    args.opensCard !== false
+      ? await noLongerCurrentSummary(ctx, page, decided.status, supersededBy)
+      : undefined;
+  const pageRef = { sourceId: page.sourceId, ref: page.ref };
   for (const agent of await readersOf(ctx, source)) {
     const eventId = await appendEvent(ctx, {
       agentId: agent._id,
@@ -264,8 +253,18 @@ async function writeStatus(
       },
       createdAt: now,
     });
-    if (args.opensCard !== false) {
-      await openCardUnderPlan(ctx, { agent, page, to: decided.status, supersededBy, eventId, now });
+    // A card for a reader whose open plan cites the page; a page no open plan cites opens none
+    // here, and the skills that read it are stamped for a re-check, which opens its own.
+    if (cardSummary !== undefined) {
+      await openCard(ctx, {
+        agentId: agent._id,
+        trigger: 'page-status-changed',
+        triggerKey: eventId,
+        summary: cardSummary,
+        evidence: { eventIds: [eventId], pageRefs: [pageRef] },
+        reach: { kind: 'citing', pageRefs: [pageRef] },
+        now,
+      });
     }
     // Out-of-scope skips read the documentation the employee has; a page that left it, or came
     // back, may change the verdict. Keyed by the status, so the same change re-admits once.

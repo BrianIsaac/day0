@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { v, type Infer } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -8,7 +8,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, eventsOfType } from './eventLog';
-import { reorientationTalkProposalValidator } from './schema';
+import schema, { reorientationTalkProposalValidator } from './schema';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
@@ -113,9 +113,94 @@ export interface CardTrigger {
   readonly summary: string;
   readonly evidence?: Partial<CardEvidence>;
   readonly affected?: Partial<CardAffected>;
+  /** What of the employee's work and connections the change reaches, read where the card opens. */
+  readonly reach?: CardReach;
   /** A write scope is involved, so the card is high risk whatever else it reaches. */
   readonly writeScope?: boolean;
   readonly now?: number;
+}
+
+/**
+ * What of one employee's work and connections a change reaches, read where its card opens rather
+ * than by the writer (the second pass's M5): every open item, the open items whose plans cite a
+ * page (none cited, no card), what a set of skills reaches, or what a set of connected systems
+ * reaches.
+ */
+const cardReachValidator = v.union(
+  v.object({ kind: v.literal('open-work') }),
+  v.object({
+    kind: v.literal('citing'),
+    pageRefs: v.array(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
+  }),
+  v.object({ kind: v.literal('skills'), skillIds: v.array(v.id('skills')) }),
+  v.object({ kind: v.literal('surfaces'), surfaceIds: v.array(v.id('surfaces')) }),
+);
+
+/** {@link cardReachValidator}'s type. */
+export type CardReach = Infer<typeof cardReachValidator>;
+
+const cardFields = schema.tables.reorientations.validator.fields;
+
+/** A card left to a transaction of its own, whole: its lists as the card would store them. */
+const laterCardValidator = v.object({
+  agentId: v.id('agents'),
+  trigger: cardFields.trigger,
+  triggerKey: v.string(),
+  summary: v.string(),
+  evidence: cardFields.evidence,
+  affected: cardFields.affected,
+  reach: v.optional(cardReachValidator),
+  writeScope: v.optional(v.boolean()),
+  now: v.number(),
+});
+
+/**
+ * How many cards one transaction opens or joins; a change reaching more employees leaves each
+ * further card to a scheduled transaction of its own (the second pass's M5), so a writer that
+ * fans out (an approver for everyone, an organisation's connection, a page's readers, a skill's
+ * holders) stays within Convex's per-transaction reads however many employees it reaches.
+ */
+export const INLINE_CARDS_PER_TRANSACTION = 8;
+
+/** The cards each transaction has opened or joined so far, by its database handle. */
+const cardsThisTransaction = new WeakMap<object, number>();
+
+/** Whether this transaction may open one more card itself, counting it when it may. */
+function takeInlineCard(ctx: MutationCtx): boolean {
+  const taken = cardsThisTransaction.get(ctx.db) ?? 0;
+  if (taken >= INLINE_CARDS_PER_TRANSACTION) return false;
+  cardsThisTransaction.set(ctx.db, taken + 1);
+  return true;
+}
+
+/** What a change's reach comes to for one employee, or null when it reaches nothing to open on. */
+async function reachOf(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  reach: CardReach,
+): Promise<Partial<CardAffected> | null> {
+  switch (reach.kind) {
+    case 'open-work':
+      return { workItems: (await openWorkOf(ctx, agentId)).map((row) => row._id) };
+    case 'citing': {
+      const cited = await openWorkCiting(ctx, agentId, reach.pageRefs);
+      return cited.length === 0 ? null : { workItems: cited };
+    }
+    case 'skills':
+      return await skillReach(ctx, agentId, reach.skillIds);
+    case 'surfaces': {
+      const reached: Array<Partial<CardAffected>> = [];
+      for (const id of reach.surfaceIds) {
+        const surface = await ctx.db.get(id);
+        if (surface !== null) reached.push(await surfaceReach(ctx, surface));
+      }
+      return {
+        surfaces: reached.flatMap((one) => one.surfaces ?? []),
+        skills: reached.flatMap((one) => one.skills ?? []),
+        workItems: reached.flatMap((one) => one.workItems ?? []),
+      };
+    }
+  }
 }
 
 /** The list's values once each, by a key, at most `CARD_LIST_LIMIT` of them. */
@@ -255,14 +340,40 @@ function carries(card: Doc<'reorientations'>, triggerKey: string): boolean {
  */
 export async function openCard(
   ctx: MutationCtx,
-  input: CardTrigger,
+  reported: CardTrigger,
 ): Promise<Id<'reorientations'> | null> {
-  const agent = await ctx.db.get(input.agentId);
+  const now = reported.now ?? Date.now();
+  if (!takeInlineCard(ctx)) {
+    await ctx.scheduler.runAfter(0, internal.reorientation.openCardLater, {
+      card: {
+        agentId: reported.agentId,
+        trigger: reported.trigger,
+        triggerKey: reported.triggerKey,
+        summary: reported.summary,
+        evidence: joinedEvidence(NO_EVIDENCE, reported.evidence),
+        affected: joinedAffected(NOTHING_AFFECTED, reported.affected),
+        ...(reported.reach !== undefined ? { reach: reported.reach } : {}),
+        ...(reported.writeScope !== undefined ? { writeScope: reported.writeScope } : {}),
+        now,
+      },
+    });
+    return null;
+  }
+  const agent = await ctx.db.get(reported.agentId);
   if (agent === null || agent.userId === undefined) return null;
   if (await approvingNow(ctx, agent._id)) return null;
   const standing = await standingCards(ctx, agent._id);
-  if (standing.some((card) => carries(card, input.triggerKey))) return null;
-  const now = input.now ?? Date.now();
+  if (standing.some((card) => carries(card, reported.triggerKey))) return null;
+  const reached =
+    reported.reach !== undefined ? await reachOf(ctx, agent._id, reported.reach) : undefined;
+  if (reached === null) return null;
+  const input: CardTrigger =
+    reached === undefined
+      ? reported
+      : {
+          ...reported,
+          affected: joinedAffected(joinedAffected(NOTHING_AFFECTED, reported.affected), reached),
+        };
   const day = dayKey(now, agentZone(agent));
   const today = await ctx.db
     .query('reorientations')
@@ -307,6 +418,17 @@ export async function openCard(
   await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, { reorientationId });
   return reorientationId;
 }
+
+/**
+ * Open a card a fanned-out change left to a transaction of its own (M5). Internal; scheduled by
+ * `openCard` past `INLINE_CARDS_PER_TRANSACTION` in one transaction.
+ */
+export const openCardLater = internalMutation({
+  args: { card: laterCardValidator },
+  handler: async (ctx, args): Promise<void> => {
+    await openCard(ctx, args.card);
+  },
+});
 
 /** Join a change to the card of its kind standing that day: its lists grow, its risk can rise. */
 async function joinCard(
@@ -620,17 +742,10 @@ export async function openCardsOnSurfaces(
       byAgent.set(surface.agentId, [...(byAgent.get(surface.agentId) ?? []), surface]);
   }
   for (const [agentId, surfaces] of byAgent) {
-    const reached = await Promise.all(
-      surfaces.map(async (surface) => await surfaceReach(ctx, surface)),
-    );
     await openCard(ctx, {
       ...change,
       agentId,
-      affected: {
-        surfaces: reached.flatMap((reach) => reach.surfaces ?? []),
-        skills: reached.flatMap((reach) => reach.skills ?? []),
-        workItems: reached.flatMap((reach) => reach.workItems ?? []),
-      },
+      reach: { kind: 'surfaces', surfaceIds: surfaces.map((surface) => surface._id) },
     });
   }
 }

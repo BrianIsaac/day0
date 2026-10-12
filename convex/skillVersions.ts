@@ -10,7 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
-import { openCard, skillReach } from './reorientation';
+import { openCard } from './reorientation';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
@@ -272,7 +272,7 @@ export async function stampRecheckDue(
       skillVersionIds: row.versionId !== undefined ? [row.versionId] : [],
       pageRefs: stamp.page !== undefined ? [stamp.page] : [],
     },
-    affected: await skillReach(ctx, row.agentId, [skillId]),
+    reach: { kind: 'skills', skillIds: [skillId] },
     now,
   });
   return fresh;

@@ -11,7 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
-import { openCard, skillReach } from './reorientation';
+import { openCard } from './reorientation';
 import { assertNotBeingHandedOver } from './handoverFence';
 import {
   holdersOf,
@@ -651,7 +651,7 @@ async function withdrawVersion(
         skillIds: [holder.skillId],
         skillVersionIds: [version._id],
       },
-      affected: await skillReach(ctx, holder.agentId, [holder.skillId]),
+      reach: { kind: 'skills', skillIds: [holder.skillId] },
       now,
     });
   }

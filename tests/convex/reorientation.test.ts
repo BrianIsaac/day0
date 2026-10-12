@@ -5,7 +5,9 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   CARD_LIST_LIMIT,
+  INLINE_CARDS_PER_TRANSACTION,
   heldByReorientation,
+  openCard,
   moveCardsToOwner,
   riskOf,
 } from '../../convex/reorientation';
@@ -256,6 +258,51 @@ describe('openCard: a card for a change under an employee', (): void => {
     const card = await cardOf(harness, cardId!);
     expect(card.evidence.pageRefs).toHaveLength(CARD_LIST_LIMIT);
     expect(card.evidence.pageRefs[0].ref).toBe('page-0.md');
+  });
+});
+
+describe('a change reaching many employees (the second pass’s M5)', (): void => {
+  it('opens the first cards in the writer’s transaction and each further one in a transaction of its own, reading its work there', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const reached = INLINE_CARDS_PER_TRANSACTION + 4;
+    const agents: Id<'agents'>[] = [];
+    for (let at = 0; at < reached; at += 1) {
+      const agentId = await seedEmployee(harness, { name: `Employee ${at}` });
+      await seedWork(harness, agentId, 'plan-pending');
+      agents.push(agentId);
+    }
+    // One change, as an approver's edge for everyone reaches every employee of the owner.
+    await harness.run(async (ctx) => {
+      for (const agentId of agents) {
+        await openCard(ctx, {
+          agentId,
+          trigger: 'relationship-changed',
+          triggerKey: 'edge-change-1',
+          summary: 'Priya, its approver, changed',
+          reach: { kind: 'open-work' },
+          now: MORNING_UTC,
+        });
+      }
+    });
+    const opened = async (): Promise<number> =>
+      (await harness.run(async (ctx) => await ctx.db.query('reorientations').collect())).length;
+    expect(await opened()).toBe(INLINE_CARDS_PER_TRANSACTION);
+    const later = await harness.run(
+      async (ctx) =>
+        await ctx.db.system
+          .query('_scheduled_functions')
+          .filter((q) => q.eq(q.field('name'), 'reorientation:openCardLater'))
+          .collect(),
+    );
+    expect(later).toHaveLength(4);
+    for (const job of later) {
+      await harness.mutation(internal.reorientation.openCardLater, job.args[0] as { card: never });
+    }
+    const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(cards).toHaveLength(reached);
+    // Each card read its employee's open work where it opened.
+    expect(cards.every((card) => card.affected.workItems.length === 1)).toBe(true);
+    expect(new Set(cards.map((card) => card.agentId)).size).toBe(reached);
   });
 });
 

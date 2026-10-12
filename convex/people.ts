@@ -18,7 +18,7 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
-import { openCard, openWorkOf, ownerAgents, personAgreements } from './reorientation';
+import { openCard, ownerAgents, personAgreements } from './reorientation';
 import {
   EVIDENCE_SHOWN,
   GRAPH_READ_LIMIT,
@@ -757,11 +757,8 @@ async function openEdgeCards(
         eventIds: agentId === change.agentId ? [change.eventId] : [],
         relationshipIds: [edge._id],
       },
-      affected: {
-        relationships: [edge._id],
-        agreements,
-        workItems: (await openWorkOf(ctx, agentId)).map((row) => row._id),
-      },
+      affected: { relationships: [edge._id], agreements },
+      reach: { kind: 'open-work' },
       now: change.now,
     });
   }
