@@ -60,6 +60,8 @@ export type ProposalCandidate =
       readonly page: PageRef;
       readonly title: string;
       readonly status: PageStatus;
+      /** The manager set its status, so it can be handed back to its source; absent, it is the source's. */
+      readonly setByManager?: boolean;
       /** The page the evidence names as its successor, when it names one. */
       readonly supersededBy?: { readonly page: PageRef; readonly title: string };
     }
@@ -175,8 +177,8 @@ function actionsOf(candidate: ProposalCandidate): string {
 
 /**
  * The statuses a page candidate may be proposed: never the one it has (the walk's W-1: a card
- * proposed marking superseded the page the manager had just marked so), and superseded only where
- * a successor is named.
+ * proposed marking superseded the page the manager had just marked so), superseded only where a
+ * successor is named, and clear only where the manager set the status (the second pass's M2).
  */
 function pageActionsOf(
   candidate: Extract<ProposalCandidate, { kind: 'page' }>,
@@ -184,7 +186,8 @@ function pageActionsOf(
   return PAGE_STATUS_PROPOSALS.filter(
     (status) =>
       status !== candidate.status &&
-      (status !== 'superseded' || candidate.supersededBy !== undefined),
+      (status !== 'superseded' || candidate.supersededBy !== undefined) &&
+      (status !== 'clear' || candidate.setByManager === true),
   );
 }
 

@@ -971,6 +971,7 @@ async function candidatesOf(
       page: { sourceId: page.sourceId, ref: page.ref },
       title: page.title,
       status: page.status ?? 'active',
+      setByManager: page.statusSource === 'manager',
       ...(successor !== null
         ? {
             supersededBy: {

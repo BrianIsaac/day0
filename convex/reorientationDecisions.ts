@@ -236,6 +236,8 @@ async function applyPageStatus(
     throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
   }
   if (proposed.status === 'clear') {
+    // Only a status the manager set is handed back; the source's own has nothing to clear (M2).
+    if (page.statusSource !== 'manager') throw new ConvexError(CARD_ACTION_REFUSALS.moved);
     await clearPageStatusInTransaction(ctx, source, page);
     return { result: approvedResultWords.page('clear', page.title) };
   }

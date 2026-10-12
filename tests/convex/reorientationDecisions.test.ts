@@ -348,6 +348,44 @@ describe('approve: the proposal applied through its target', (): void => {
     });
   });
 
+  it('refuses to hand back to its source a page whose status is already its source’s (the second pass’s M2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const sourceId = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: OWNER_SUBJECT,
+        kind: 'folder',
+        label: 'Company handbook',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 1,
+        status: 'archived',
+        statusSource: 'source-native',
+      });
+      return sourceId;
+    });
+    const card = await proposedCard(harness, agentId, {
+      kind: 'page-status',
+      page: { sourceId, ref: 'runbook.md' },
+      status: 'clear',
+      rationale: 'Let the source decide.',
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card,
+      }),
+    ).rejects.toThrow('What this card proposes to change has moved on since: dismiss it.');
+    expect((await cardOf(harness, card)).status).toBe('open');
+  });
+
   it('grants and revokes a scope', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

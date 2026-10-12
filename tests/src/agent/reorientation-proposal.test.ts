@@ -66,7 +66,7 @@ describe('proposalPrompt', (): void => {
     expect(prompt).toContain('- Work affected: “Answer the ask”, plan-approved');
     expect(prompt).toContain('1. Charter clause (Will do): “Triage tier-2 asks” [edit-clause]');
     expect(prompt).toContain(
-      '4. Page “Escalation paths”, now active; its successor is “Escalation paths, version 2” [page-status: superseded, archived, draft, clear]',
+      '4. Page “Escalation paths”, now active; its successor is “Escalation paths, version 2” [page-status: superseded, archived, draft]',
     );
     expect(prompt).toContain('5. Access “linear:write”, not held [scope: grant]');
   });
@@ -179,6 +179,21 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
     }
   });
 
+  it('offers to hand a page back to its source only where the manager set its status (the second pass’s M2)', (): void => {
+    const bySource: ProposalCandidate[] = [
+      { kind: 'page', page, title: 'Escalation paths', status: 'archived', setByManager: false },
+    ];
+    expect((): unknown =>
+      proposalOf(reply({ change: 'page-status', candidate: 1, action: 'clear' }), bySource),
+    ).toThrow('is not one of active, draft');
+    const byManager: ProposalCandidate[] = [
+      { kind: 'page', page, title: 'Escalation paths', status: 'archived', setByManager: true },
+    ];
+    expect(
+      proposalOf(reply({ change: 'page-status', candidate: 1, action: 'clear' }), byManager),
+    ).toMatchObject({ kind: 'page-status', status: 'clear' });
+  });
+
   it('offers a page no status it already has (the walk’s W-1)', (): void => {
     const superseded: ProposalCandidate[] = [
       {
@@ -186,6 +201,7 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
         page,
         title: 'Escalation paths',
         status: 'superseded',
+        setByManager: true,
         supersededBy: { page, title: 'Escalation paths, version 2' },
       },
     ];
@@ -210,7 +226,7 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
     ];
     expect((): unknown =>
       proposalOf(reply({ change: 'page-status', candidate: 1, action: 'superseded' }), lone),
-    ).toThrow('is not one of archived, draft, clear');
+    ).toThrow('is not one of archived, draft');
   });
 
   it('bounds a rationale and an edit to six hundred characters', (): void => {
