@@ -519,17 +519,58 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       });
     });
     const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    // The plan cites the passage under the heading the pages disagree on, as a planner's cite
+    // carries its blocks; since W16-R9 the confirmation asks the plans whose own decision would.
+    const label = 'Finance wiki/escalation.md#Finance escalation > Thresholds';
+    const { citations } = await selection(harness, agentId);
+    const cited = citations.find((citation) => citation.label === label)!;
     const workItemId = await planned(harness, agentId, {
       cites: [
         {
           step: 1,
-          label: 'Finance wiki/escalation.md#Finance escalation > Thresholds',
+          label,
           sourceId: relation.from.sourceId,
           pageRef: relation.from.ref,
-          blocks: [],
+          blocks: cited.blocks.map((block) => ({ id: block.id, hash: block.hash! })),
         },
       ],
     });
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId, blocking: false }),
+    ]);
+  });
+
+  it('asks beside a pending plan that cites nothing, from its kept selection, once the manager confirms the conflict after it (W16-R9)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    // Drafted from a selection holding both pages, before the conflict was confirmed: no cites.
+    const { citations } = await selection(harness, agentId);
+    const workItemId = await planned(harness, agentId, {});
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        selectedBlocks: citations.flatMap((citation) =>
+          citation.blocks.map((block) => ({ id: block.id as Id<'docBlocks'>, hash: block.hash! })),
+        ),
+      });
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
+      'plan-pending',
+    );
     await asManager(harness).mutation(api.docRelations.decide, {
       relationId,
       decision: 'disagree',

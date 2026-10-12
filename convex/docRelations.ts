@@ -24,14 +24,14 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
-  citeConflictOf,
   confirmedConflicts,
+  conflictsUnderPlan,
   decisionsOffered,
   standingConflictOf,
   standingWithPages,
   type RelationDecision,
 } from './docConflicts';
-import { askConflictQuestion, openWorkCiting } from './reorientation';
+import { askConflictQuestion } from './reorientation';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -502,7 +502,16 @@ async function closeConflictQuestions(
   }
 }
 
-/** Ask a confirmed conflict's question beside each reader's drafted plan that cites either page. */
+/** The drafted plans of one reader a confirmation looks through for the conflict's question. */
+const PENDING_PLANS_READ = 100;
+
+/**
+ * Ask a confirmed conflict's question beside each reader's drafted plan that rests on it, read as
+ * the plan's own decision reads it (`conflictsUnderPlan`): by its cites, or where it cites nothing
+ * by its kept selection (W16-R9). Matching the plans that cite either page missed a plan that cites
+ * nothing, which was then asked nothing and stopped after its approval; and it asked a plan citing
+ * another passage of either page, which its decision does not.
+ */
 async function askAtConfirmation(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
@@ -510,19 +519,24 @@ async function askAtConfirmation(
 ): Promise<void> {
   const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
   if (standing === undefined) return;
-  const conflict = citeConflictOf(standing);
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
     ctx.db.get(relation.to.sourceId),
   ]);
   if (fromSource === null || toSource === null) return;
   for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-    for (const workItemId of await openWorkCiting(ctx, agent._id, [relation.from, relation.to])) {
-      const row = await ctx.db.get(workItemId);
-      if (row?.state !== 'plan-pending') continue;
+    const drafted = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
+      .take(PENDING_PLANS_READ);
+    for (const row of drafted) {
+      const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
+        (under) => under.relationId === relation._id,
+      );
+      if (conflict === undefined) continue;
       await askConflictQuestion(ctx, {
         row,
-        conflict: { relationId: relation._id, heading: conflict.heading, pages: conflict.pages },
+        conflict: { ...conflict, relationId: relation._id },
         now,
       });
     }
