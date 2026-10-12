@@ -3,13 +3,12 @@ import { mutation, query, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { amendCharterInTransaction } from './charters';
-import type { AmendmentVia } from '../src/events/contract';
+import type { CharterAnswerVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
 import {
   managerOpenQuestions,
   questionKey,
   sharedContentWords,
-  type AnswerVia,
 } from '../src/agent/manager-questions';
 import { appendEvent } from './eventLog';
 
@@ -115,9 +114,7 @@ export async function askOpenQuestionsAtPlan(
  *   ctx: Mutation context.
  *   record: The question, as read in this transaction.
  *   text: The manager's answer.
- *   via: How the answer arrived: a way that both answers a question and amends a charter
- *     (the dashboard or a plan approval; a reorientation amends without a question, and a
- *     Slack answer decides what its question is about, 16-O).
+ *   via: How the answer arrived: the dashboard or a plan approval (`CharterAnswerVia`).
  *
  * Returns:
  *   The charter version the answer landed in, or null when none was needed.
@@ -126,7 +123,7 @@ export async function answerQuestionInTransaction(
   ctx: MutationCtx,
   record: Doc<'managerQuestions'>,
   text: string,
-  via: Extract<AmendmentVia, AnswerVia>,
+  via: CharterAnswerVia,
 ): Promise<{ amendedCharterId: Id<'charters'> | null }> {
   if (record.answer) throw new Error('that question has already been answered');
   const answer = text.replace(/\s+/g, ' ').trim();

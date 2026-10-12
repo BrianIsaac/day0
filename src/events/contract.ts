@@ -36,7 +36,7 @@ import type {
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
-import type { ManagerQuestionType } from '../agent/manager-questions';
+import type { AnswerVia, ManagerQuestionType } from '../agent/manager-questions';
 import type {
   ReorientationProposalKind,
   ReorientationRisk,
@@ -61,6 +61,13 @@ type SessionId = Id<'voiceSessions'>;
  * reorientation card's Approve (wave 16, 16-K for 16-O).
  */
 export type AmendmentVia = 'dashboard' | 'plan-approval' | 'reorientation';
+
+/**
+ * How a charter question's answer arrived: the ways that both answer a question and amend the
+ * charter (16-K). A reorientation amends without a question, and a Slack answer decides what its
+ * question is about rather than the charter (RM20, 16-O).
+ */
+export type CharterAnswerVia = Extract<AmendmentVia, AnswerVia>;
 
 /** Where the manager decided a plan or a held set. */
 export type DecidedVia = 'dashboard' | 'channel';
@@ -424,7 +431,7 @@ export interface CharterQuestionAskedPayload {
  */
 export interface CharterQuestionAnsweredPayload {
   readonly questionId?: Id<'managerQuestions'>;
-  readonly via: AmendmentVia;
+  readonly via: CharterAnswerVia;
   readonly amended: boolean;
   readonly charterId?: CharterId;
 }
@@ -1900,7 +1907,7 @@ export interface WorkManagerDigestFailedPayload {
 }
 
 /** A reorientation event's card, by its id and its trigger summary. */
-interface ReorientationNamed {
+export interface ReorientationNamed {
   readonly reorientationId: Id<'reorientations'>;
   /** The card's trigger summary when the event was written, so the record reads it alone. */
   readonly summary: string;
