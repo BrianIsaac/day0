@@ -2987,7 +2987,7 @@ describe('the block backfill, retired at 0.20.0 (N10, 16-K; K-2)', (): void => {
       limitedHarness().mutation(internal.migrations.runMigrationPage, {
         name: 'docs-backfill-blocks' as never,
       }),
-    ).rejects.toThrow(/docs-backfill-blocks|validat/i);
+    ).rejects.toThrow(/Validator error.*"docs-backfill-blocks"/s);
   });
 
   it("runs every pass and stamps the newest release over a 0.19.0 deployment's finished row of it, kept as its record", async (): Promise<void> => {

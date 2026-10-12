@@ -954,8 +954,8 @@ const MIGRATION_PAGES: Readonly<
 };
 
 /**
- * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the block
- * backfill is, since each patch writes its block again; a CJK block's text and search text can
+ * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the 0.18.0 block
+ * backfill was, since each patch writes its block again; a CJK block's text and search text can
  * reach about 16 KB (`SEARCH_BLOCKS_LIMIT`, `convex/docBlocks.ts`), so the byte bound ends a page
  * of such blocks at about 256.
  */
@@ -977,20 +977,23 @@ async function stampBlockStatus(ctx: MutationCtx, cursor: string | null): Promis
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
-/** Sources one page of the remeasure pass reads: an owner links a handful, each read whole. */
-const REMEASURE_SOURCES_READ = 100;
+/**
+ * Sources one page of the remeasure pass reads: an owner links a handful, and each row is small,
+ * bounded by bytes as well as rows as the other passes are.
+ */
+const REMEASURE_SOURCES_READ = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /**
  * One page of the relations remeasure pass (16-K; RM19 (a), K-3): every source that stores a page
  * is marked owed the measure from its start (`relationsRemeasure`, a null cursor), which 16-FD's
  * measure reads and clears; the pass measures nothing. A source with no stored page owes nothing
  * (its pages are measured as a sync stores them), and one already marked keeps the place its
- * measure reached, so a second run changes nothing.
+ * measure reached, so a second run changes nothing. Once the measure clears a mark, an absent
+ * `relationsRemeasure` reads the same as one never set: the pass runs once on a deployment (a
+ * finished migration is never run again), so nothing marks the source a second time.
  */
 async function markRemeasureOwed(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db
-    .query('docSources')
-    .paginate({ numItems: REMEASURE_SOURCES_READ, cursor });
+  const page = await ctx.db.query('docSources').paginate({ ...REMEASURE_SOURCES_READ, cursor });
   let changed = 0;
   for (const source of page.page) {
     if (source.relationsRemeasure !== undefined) continue;

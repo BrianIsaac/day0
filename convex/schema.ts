@@ -872,8 +872,8 @@ export default defineSchema({
     /** The page's `docPages.ref`. */
     pageRef: v.string(),
     /**
-     * The sync run that scheduled the split that wrote the block (the backfill's: the source's last
-     * completed run), not the last writer: a re-split keeps an unchanged block's row, and its
+     * The sync run that scheduled the split that wrote the block (for a block the 0.18.0 backfill
+     * wrote, the source's last completed run then), not the last writer: a re-split keeps an unchanged block's row, and its
      * generation with it (`replacePageBlocks`). Read through `by_source_generation` since wave 15
      * (15-A): the pages a run stored or changed are the pages whose blocks carry it
      * (`docRelations.pagesWrittenBy`), which is what a finishing sync measures for relations.
@@ -1940,7 +1940,7 @@ export default defineSchema({
   })
     /** A card's conversations: the room opens the one still active. */
     .index('by_reorientation', ['reorientationId'])
-    /** An employee's conversations, which its reset deletes (K-6). */
+    /** An employee's conversations, which its reset deletes (16-K's decision K-6). */
     .index('by_agent', ['agentId']),
 
   /**
