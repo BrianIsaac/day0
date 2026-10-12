@@ -165,6 +165,24 @@ describe('the Confluence Data Center documentation reader', (): void => {
     expect(pages.map((page) => page.ref)).toEqual(['4587521', '4587522', '4587524']);
   });
 
+  it('says the walk of its archived pages was refused, so the pages an earlier walk archived stand (W15-R30)', async (): Promise<void> => {
+    // The review: a 4xx on that walk ended it, and the finish pruned the pages archived before.
+    const { reader } = readerOnServer((request) =>
+      request.url.searchParams.get('status') === 'archived'
+        ? json(403, { statusCode: 403, message: 'Forbidden' })
+        : undefined,
+    );
+    const said: boolean[] = [];
+    let cursor: string | undefined;
+    do {
+      const batch = await reader.listPageBatch(space, TOKEN, cursor, 3);
+      said.push(batch.archivedWalkRefused === true);
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    expect(said.at(-1)).toBe(true);
+    expect(said.slice(0, -1).every((each) => !each)).toBe(true);
+  });
+
   it('names a page the server gives no storage body for unread, and keeps two Chinese titles apart', async (): Promise<void> => {
     const { reader } = readerOnServer();
     const { pages, unread } = await wholeSpace(reader);

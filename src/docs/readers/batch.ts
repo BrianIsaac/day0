@@ -10,6 +10,7 @@
 
 import { shortHash } from '../../lib/short-hash';
 import { TransientProviderError, transportFailureKind } from '../../lib/transport-error';
+import type { PageStatus } from '../authority';
 import type { DocPage, DocPageBatch, DocSourceReader, DocSourceRecord } from '../types';
 
 /**
@@ -27,9 +28,47 @@ export interface UnreadPage {
   readonly kind?: UnreadKind;
 }
 
+/** What the sync holds of a stored page, for a reader to tell whether its listing changed it. */
+export interface StoredMark {
+  /** The revision it was stored with (`docPages.sourceRevision`). */
+  readonly revision: string;
+  /** Its stored title. */
+  readonly title: string;
+  /** Its stored address, where it has one. */
+  readonly url?: string;
+}
+
+/**
+ * The reader contract by revision (X-13; wave 16, 16-FD): for listed pages, what each was stored
+ * with, by ref. A reader whose listing gives each page's revision asks it before it reads any
+ * body, and keeps a page whose listing says the stored revision, title and address without
+ * reading its body (`ReadPageBatch.kept`); a ref the sync does not answer (not stored, no
+ * revision, or a page it would not keep as stored) is read as before.
+ */
+export type StoredRevisions = (refs: readonly string[]) => Promise<ReadonlyMap<string, StoredMark>>;
+
+/** A listed page kept as stored by its revision, its body unread (X-13). */
+export interface KeptPage {
+  readonly ref: string;
+  /** What the listing says of the page's status now; absent, it says nothing. */
+  readonly nativeStatus?: PageStatus;
+}
+
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */
 export interface ReadPageBatch extends DocPageBatch {
   readonly unread: readonly UnreadPage[];
+  /**
+   * The listed pages whose revision is the one they were stored with, kept as stored with no
+   * body read (X-13). Bounded by the listing page, not by the batch's limit, which counts the
+   * pages read and unread only.
+   */
+  readonly kept?: readonly KeptPage[];
+  /**
+   * Set when the source refused the walk of its archived or deleted pages (a 4xx on it): the
+   * pages an earlier walk archived are not listed, and stand as stored rather than being pruned
+   * as gone (W15-R30).
+   */
+  readonly archivedWalkRefused?: boolean;
 }
 
 /** A documentation reader whose batches name the pages they could not read. */
@@ -39,6 +78,8 @@ export interface DocumentationReader extends DocSourceReader {
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
+    /** The sync's stored revisions, for a reader that keeps an unchanged page by its own (X-13). */
+    stored?: StoredRevisions,
   ): Promise<ReadPageBatch>;
 }
 

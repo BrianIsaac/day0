@@ -385,6 +385,56 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await standingOf(harness, conflict._id)).toBeNull();
   });
 
+  it('restores the kind the measures proposed when an answer that changed it is taken back (W15-R22)', async (): Promise<void> => {
+    // The review: a duplicate answered "supersedes" and undone came back a successor, with the
+    // successor's words on its card; a successor answered "Keep both", a duplicate.
+    const harness = convexTest(schema, allConvexModules());
+    const wiki = await syncingSource(harness, 'Team wiki');
+    const copies = await syncingSource(harness, 'Copies');
+    const text = '# Close checklist\n\nTick each line before the close.';
+    await storedPage(harness, wiki, { ref: 'close.md', title: 'Close checklist', markdown: text });
+    await storedPage(harness, copies, {
+      ref: 'close-copy.md',
+      title: 'My close notes',
+      markdown: text.replace('# Close checklist', '# My close notes'),
+      updatedAt: 2,
+    });
+    const { official } = await twoVersions(harness);
+    await measure(harness, copies, 'close-copy.md');
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const rows = await relations(harness);
+    const duplicate = rows.find((row) => row.kind === 'possible_duplicate')!;
+    const successor = rows.find((row) => row.kind === 'possible_successor')!;
+    const decide = async (
+      relationId: Id<'docRelations'>,
+      decision: 'supersedes' | 'keep-both' | 'undo',
+    ): Promise<unknown> =>
+      await asManager(harness).mutation(api.docRelations.decide, { relationId, decision });
+    const row = async (relationId: Id<'docRelations'>) =>
+      (await relations(harness)).find((each) => each._id === relationId)!;
+    await decide(duplicate._id, 'supersedes');
+    expect([(await row(duplicate._id)).kind, (await row(duplicate._id)).proposedKind]).toEqual([
+      'possible_successor',
+      'possible_duplicate',
+    ]);
+    await decide(duplicate._id, 'undo');
+    expect([(await row(duplicate._id)).kind, (await row(duplicate._id)).proposedKind]).toEqual([
+      'possible_duplicate',
+      undefined,
+    ]);
+    await decide(successor._id, 'keep-both');
+    await decide(successor._id, 'undo');
+    expect([(await row(successor._id)).kind, (await row(successor._id)).status]).toEqual([
+      'possible_successor',
+      'proposed',
+    ]);
+    // An answer that kept the kind writes none, and its undo changes no kind.
+    await decide(successor._id, 'supersedes');
+    expect((await row(successor._id)).proposedKind).toBeUndefined();
+    await decide(successor._id, 'undo');
+    expect((await row(successor._id)).kind).toBe('possible_successor');
+  });
+
   it('is the owner’s alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { official } = await twoVersions(harness);
@@ -507,6 +557,48 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_successor', 'Pipeline runbook'],
     ]);
   });
+
+  it('draws a confirmed conflict before the proposals spend the read on their pages (W15-R22)', async (): Promise<void> => {
+    // The review: three proposals of 740,000-character pages spent the 8 MiB the cards may read,
+    // and the confirmed conflict behind them, which holds plans, drew no card.
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [conflict] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: conflict._id,
+      decision: 'disagree',
+    });
+    const body = `# Long\n\n${'x'.repeat(740_000)}`;
+    for (let pair = 0; pair < 3; pair += 1) {
+      await harness.run(async (ctx) => {
+        for (const side of ['a', 'b']) {
+          await ctx.db.insert('docPages', {
+            sourceId: handbook.sourceId,
+            ref: `long-${pair}-${side}.md`,
+            title: `Long ${pair} ${side}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: handbook.sourceId, ref: `long-${pair}-b.md` },
+          to: { sourceId: handbook.sourceId, ref: `long-${pair}-a.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 100 }],
+          status: 'proposed',
+          createdAt: 10 + pair,
+        });
+      });
+    }
+    const drawn = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(drawn.map((card) => [card.kind, card.status])).toContainEqual([
+      'possible_conflict',
+      'confirmed',
+    ]);
+    expect(drawn.length).toBeGreaterThan(1);
+  }, 30_000);
 
   it('draws cards only while their pages fit one read, and the rest once those are answered', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

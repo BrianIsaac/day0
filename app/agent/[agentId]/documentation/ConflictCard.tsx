@@ -79,9 +79,10 @@ export function ConflictCard({
       title={
         <>
           {confirmed ? 'Two pages disagree' : 'These two pages may disagree'}
-          {/* Said, not shown: two such cards are two regions, each named by its pages. */}
+          {/* Said, not shown: two such cards are two regions, each named by its pages and their
+              sources, since titles repeat across sources (W15-R51). */}
           <span className="sr-only">
-            : “{from.title}” and “{to.title}”
+            : “{from.title}” ({from.source}) and “{to.title}” ({to.source})
           </span>
         </>
       }

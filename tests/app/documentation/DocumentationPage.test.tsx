@@ -9,7 +9,8 @@ import { focusedName, mount, press, said } from '../../fixtures/dom/press';
 
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
-  mode: 'real' as 'real' | 'mock',
+  /** The deployment's surface mode; `loading` while `config.surfaceMode` has not answered. */
+  mode: 'real' as 'real' | 'mock' | 'loading',
   /** Mutations that reject, by function name, with the text they reject with. */
   refusals: {} as Record<string, string>,
 }));
@@ -24,8 +25,11 @@ vi.mock('convex/react', () => ({
     },
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode')
-      return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    if (name === 'config:surfaceMode') {
+      return state.mode === 'loading'
+        ? undefined
+        : { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    }
     if (name === 'docSources:listMine') return state.sources;
     return [];
   },
@@ -52,6 +56,26 @@ beforeEach((): void => {
 
 it('leaves the one main landmark to the layout', (): void => {
   expect(renderToStaticMarkup(<DocumentationPage />)).not.toMatch(/<main[\s>]/);
+});
+
+it('says what the hosted office reads in its one sentence, and nothing of a mock or of linking (RM26 (a))', (): void => {
+  // The v0.19.0 walk's finding 6: the chip "mock", "Demo docs (seeded)" and "Linking is a
+  // local-run feature. The hosted mock uses its disclosed synthetic pages."
+  state.mode = 'mock';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).toContain(
+    'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+  );
+  for (const said of ['>mock<', 'Demo docs', 'hosted mock', 'Link read-only locations']) {
+    expect(html).not.toContain(said);
+  }
+});
+
+it('says neither office’s words while the mode is still loading (the second pass)', (): void => {
+  state.mode = 'loading';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).not.toContain('hosted office');
+  expect(html).not.toContain('Link a documentation location');
 });
 
 it('keeps the hosted mock documentation page unchanged', (): void => {

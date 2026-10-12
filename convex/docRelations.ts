@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
+  KINDS_WITHOUT_EDIT_TIME,
   alreadyHeld,
   candidatesOf,
   disagreementOf,
@@ -112,7 +113,7 @@ export const measurePage = internalMutation({
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
-    const self = await measured(ctx, page);
+    const self = await measured(ctx, page, source);
     const now = Date.now();
     let proposed = 0;
     for (const candidate of await candidatesOf(
@@ -125,7 +126,7 @@ export const measurePage = internalMutation({
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
-      const relation = measureRelation(self, await measured(ctx, other));
+      const relation = measureRelation(self, await measured(ctx, other, otherSource));
       if (relation === undefined) continue;
       if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
       const [from, to] = relation.from === self.key ? [page, other] : [other, page];
@@ -363,12 +364,22 @@ export const decide = mutation({
     }
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
+    const answer = decided(args.decision);
+    // The kind the relation has after the answer: an answer that changes it keeps the proposed
+    // kind on the row, and "Undo" restores it (W15-R22).
+    const kind =
+      args.decision === 'undo'
+        ? (relation.proposedKind ?? relation.kind)
+        : (answer.kind ?? relation.kind);
     await ctx.db.patch(
       relation._id,
       args.decision === 'undo'
-        ? { ...decided(args.decision), decidedBy: undefined, decidedAt: undefined }
+        ? { ...answer, kind, proposedKind: undefined, decidedBy: undefined, decidedAt: undefined }
         : {
-            ...decided(args.decision),
+            ...answer,
+            ...(kind !== relation.kind
+              ? { proposedKind: relation.proposedKind ?? relation.kind }
+              : {}),
             ...(decidedBy !== undefined ? { decidedBy } : {}),
             decidedAt: now,
           },
@@ -399,7 +410,7 @@ export const decide = mutation({
         type: 'documentation.relation-decided',
         payload: {
           relationId: relation._id,
-          kind: decided(args.decision).kind ?? relation.kind,
+          kind,
           decision: args.decision,
           from: named(from, fromSource),
           to: named(to, toSource),
@@ -424,9 +435,6 @@ type CardPage = NamedPage & {
   readonly edited: boolean;
   readonly authority: SourceAuthority;
 };
-
-/** The kinds of source whose reader gives no edit time: a page's time is when it was read. */
-const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set(['urls', 'mcp']);
 
 /** A stored page as a relation's card draws it. */
 function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
@@ -478,9 +486,9 @@ function rowBytes(page: Doc<'docPages'> | null): number {
 /**
  * The relations the manager has still to answer: every proposed relation, and every confirmed
  * conflict that stands, newest first, at most `RELATION_CARDS_READ` of each and
- * `CARD_PAGES_BYTES` of their pages a read. Public; the caller's own. A relation one of whose
- * pages is gone or no longer current is not drawn (its source's unlink deletes it; a page that
- * came back draws it again). The confirmed conflicts are the ones the selection reads
+ * `CARD_PAGES_BYTES` of their pages a read, the confirmed conflicts read first (W15-R22).
+ * Public; the caller's own. A relation one of whose pages is gone or no longer current is not
+ * drawn (its source's unlink deletes it; a page that came back draws it again). The confirmed conflicts are the ones the selection reads
  * (`confirmedConflicts`), so a conflict that holds a plan has its card. Writes nothing.
  */
 export const listOpen = query({
@@ -497,8 +505,30 @@ export const listOpen = query({
         .take(PROPOSALS_READ),
       confirmedConflicts(ctx, caller.ownerKey),
     ]);
-    const cards: RelationCardRow[] = [];
     let bytes = 0;
+    // The confirmed conflicts first: they hold plans, so the proposals' pages never spend the
+    // read before them (W15-R22). The tab still draws the proposals above them.
+    const conflictCards: RelationCardRow[] = [];
+    for (const relation of confirmed) {
+      if (conflictCards.length >= RELATION_CARDS_READ) break;
+      // Its blocks first, then its two pages, each read once and counted once.
+      const standing = await standingWithPages(ctx, relation);
+      if (standing === undefined) continue;
+      bytes += rowBytes(standing.from) + rowBytes(standing.to);
+      if (bytes > CARD_PAGES_BYTES) return conflictCards;
+      const { conflict } = standing;
+      conflictCards.push({
+        _id: relation._id,
+        kind: relation.kind,
+        status: 'confirmed',
+        from: cardPage(standing.from, standing.fromSource),
+        to: cardPage(standing.to, standing.toSource),
+        evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
+        disagreement: { heading: conflict.heading, figures: conflict.figures },
+        offered: [...decisionsOffered(relation)],
+      });
+    }
+    const cards: RelationCardRow[] = [];
     for (const relation of proposed) {
       if (cards.length >= RELATION_CARDS_READ) break;
       // By a small row first: a proposal whose page a block says is no longer current is passed
@@ -519,7 +549,7 @@ export const listOpen = query({
         ctx.db.get(relation.to.sourceId),
       ]);
       bytes += rowBytes(from) + rowBytes(to);
-      if (bytes > CARD_PAGES_BYTES) return cards;
+      if (bytes > CARD_PAGES_BYTES) break;
       if (from === null || to === null || fromSource === null || toSource === null) continue;
       if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') continue;
       cards.push({
@@ -538,26 +568,6 @@ export const listOpen = query({
         ],
       });
     }
-    const proposedCards = cards.length;
-    for (const relation of confirmed) {
-      if (cards.length >= proposedCards + RELATION_CARDS_READ) break;
-      // Its blocks first, then its two pages, each read once and counted once.
-      const standing = await standingWithPages(ctx, relation);
-      if (standing === undefined) continue;
-      bytes += rowBytes(standing.from) + rowBytes(standing.to);
-      if (bytes > CARD_PAGES_BYTES) return cards;
-      const { conflict } = standing;
-      cards.push({
-        _id: relation._id,
-        kind: relation.kind,
-        status: 'confirmed',
-        from: cardPage(standing.from, standing.fromSource),
-        to: cardPage(standing.to, standing.toSource),
-        evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-        disagreement: { heading: conflict.heading, figures: conflict.figures },
-        offered: [...decisionsOffered(relation)],
-      });
-    }
-    return cards;
+    return [...cards, ...conflictCards];
   },
 });

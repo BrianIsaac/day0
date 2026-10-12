@@ -1,5 +1,5 @@
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
@@ -54,6 +54,65 @@ describe('mock documentation mirrors', (): void => {
       slackChannels: [],
       tweets: [],
       tickets: [],
+    });
+  });
+});
+
+describe('a mirror an unchanged sync writes again (the 15-T pre-tag bed)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('writes nothing for a page whose mirror already holds it, and writes a page that changed', async (): Promise<void> => {
+    // The pre-tag bed: a sync that changed no page wrote 7,803 mirror rows, one for each of its
+    // 153 pages and 51 employees, each only to stamp the time.
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const harness = convexTest(schema, allConvexModules());
+    const ids = await harness.run(async (ctx) => ({
+      sourceId: await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Team folder',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+      agentId: await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'mirror test',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      }),
+    }));
+    const mirror = {
+      agentId: ids.agentId,
+      slug: 'source-onboarding',
+      title: 'Onboarding',
+      body: '# Onboarding',
+      category: 'team-doc' as const,
+      sourceId: ids.sourceId,
+      sourceRef: 'onboarding.md',
+    };
+    const docId = await harness.mutation(internal.mock.upsertDoc, mirror);
+    const row = async () => await harness.run(async (ctx) => await ctx.db.get(docId!));
+    vi.setSystemTime(2_000);
+    await harness.mutation(internal.mock.upsertDoc, mirror);
+    expect((await row())?.updatedAt).toBe(1_000);
+    await harness.mutation(internal.mock.upsertDoc, { ...mirror, body: '# Onboarding, revised' });
+    expect(await row()).toMatchObject({ body: '# Onboarding, revised', updatedAt: 2_000 });
+    // A field the page carries that the row lacks is a change: the address it gained.
+    vi.setSystemTime(3_000);
+    await harness.mutation(internal.mock.upsertDoc, {
+      ...mirror,
+      body: '# Onboarding, revised',
+      sourceUrl: 'https://example.com/onboarding',
+    });
+    expect(await row()).toMatchObject({
+      sourceUrl: 'https://example.com/onboarding',
+      updatedAt: 3_000,
     });
   });
 });

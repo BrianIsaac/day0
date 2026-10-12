@@ -366,8 +366,9 @@ describe('the support report', (): void => {
     expect(purposeOf('login.chinacloudapi.cn')).toBe(
       "a SharePoint documentation source on the cloud 21Vianet operates: the app registration's sign-in, when one is linked",
     );
+    // Re-taken for W15-R30: the row named no host a 21Vianet file is downloaded from.
     expect(purposeOf('microsoftgraph.chinacloudapi.cn')).toBe(
-      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.cn)',
     );
     expect(purposeOf('www.yuque.com')).toBe(
       "a Yuque documentation source, when one is linked (a space's own <space>.yuque.com instead, where the repository is on one)",

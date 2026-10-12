@@ -4153,7 +4153,7 @@ async function refuseGoneCites(
   const blocks: Array<{ id: string; hash?: string }> =
     cites.length > 0
       ? cites.flatMap((cite) => cite.blocks)
-      : (await ctx.runQuery(internal.docSelection.plannedFromBlocks, item)).map((id) => ({ id }));
+      : await ctx.runQuery(internal.docSelection.plannedFromBlocks, item);
   if (blocks.length === 0) return;
   const parts: Array<typeof blocks> = [];
   for (let start = 0; start < blocks.length; start += CITE_CHECK_BATCH) {
@@ -4276,6 +4276,18 @@ async function siteSnapshot(
         chars: snapshot.documentation.chars,
       },
     });
+    // The plan's blocks with their hashes, on the item, for the gone-cite check (W15-R17).
+    if (snapshot.documentation.site === 'plan') {
+      await ctx.runMutation(internal.docSelection.recordPlanSelection, {
+        workItemId: input.workItemId,
+        blocks: snapshot.documentation.citations.flatMap((citation) =>
+          citation.blocks.map((block) => ({
+            id: block.id,
+            ...(block.hash !== undefined ? { hash: block.hash } : {}),
+          })),
+        ),
+      });
+    }
   }
   return snapshot;
 }

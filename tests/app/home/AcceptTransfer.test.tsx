@@ -22,9 +22,13 @@ const backend = vi.hoisted(() => ({
   subscriptions: [] as unknown[],
   /** The state the acceptance answers with: moved at once, or waiting for the runs. */
   acceptState: 'accepted' as 'accepted' | 'accepting',
+  /** The deployment's surface mode, as `config.surfaceMode` answers it. */
+  mode: 'real' as 'real' | 'mock',
 }));
 
 vi.mock('convex/react', () => ({
+  useQuery: (query: FunctionReference<'query'>): unknown =>
+    getFunctionName(query) === 'config:surfaceMode' ? { mode: backend.mode } : undefined,
   useQueries: (queries: Record<string, { query: FunctionReference<'query'>; args: unknown }>) => {
     backend.subscriptions.push(queries);
     return Object.fromEntries(
@@ -178,6 +182,7 @@ describe('AcceptTransfer', () => {
     backend.hold = undefined;
     backend.subscriptions = [];
     backend.acceptState = 'accepted';
+    backend.mode = 'real';
     route.search = '';
     route.replaced = [];
   });
@@ -292,6 +297,18 @@ describe('AcceptTransfer', () => {
     expect(dialog().textContent).toContain(
       'You have linked no documentation, so it reads none of yours yet.',
     );
+  });
+
+  it('says what the hosted office reads in the documentation line, in its one sentence (RM26 (a))', () => {
+    // The v0.19.0 walk's finding 6: "You have linked no documentation, so it reads none of yours
+    // yet." in an office where nothing can be linked.
+    backend.mode = 'mock';
+    backend.preview = { ...PREVIEW, documentation: [] };
+    mount(<AcceptTransfer />);
+    expect(dialog().textContent).toContain(
+      'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+    );
+    expect(dialog().textContent).not.toContain('You have linked no documentation');
   });
 
   it('says the runs the move waits for and the fifteen minutes (D18)', () => {
