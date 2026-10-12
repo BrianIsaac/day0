@@ -283,7 +283,9 @@ describe('the Agreements card', (): void => {
       "Check “Name the vessel in every customer comment.” against Priya's charter now",
     );
     expect(said(view.container)).toEqual([
-      "Day0 checks it against Priya's charter once Priya's work resumes.",
+      // The second pass: the check is tried for a quarter of an hour, so a longer pause needs a
+      // press after it; the line says so rather than promising the check at the resume.
+      "The work is paused, so the check waits: Day0 tries it against Priya's charter after the pause, and if the pause runs long, press Check now again then.",
     ]);
     view.unmount();
   });

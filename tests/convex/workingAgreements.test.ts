@@ -2187,6 +2187,26 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(await plannerReads(harness, hired, 'LOG-9')).toEqual([agreementId]);
   }, 60_000);
 
+  it('holds a new hire’s agreements in one settle that reads its holds once, not once an agreement (the second pass)', async (): Promise<void> => {
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 200 },
+    });
+    await seedEmployee(harness);
+    const ids: Id<'workingAgreements'>[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      ids.push(await agreementSince(harness, `Name vessel ${index} in every comment.`, 2 + index));
+    }
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
+      agentId: hired,
+      agreementIds: ids,
+      tried: false,
+    });
+    expect((await agreementsOf(harness)).filter((row) => row.agentId === hired)).toHaveLength(30);
+  }, 60_000);
+
   it('checks at most a batch of agreements an action and hands the rest to the next (W15-R34)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedEmployee(harness);

@@ -1109,22 +1109,30 @@ export const holdForEmployee = internalMutation({
   },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.agreementId);
-    if (!row) return null;
-    await holdInTransaction(ctx, row, args.agentId, args.tried);
+    if (!row || !(await stillTheOwners(ctx, row, args.agentId))) return null;
+    await holdInTransaction(ctx, row, args.agentId, {
+      tried: args.tried,
+      held: await heldForEmployee(ctx, row.userId, args.agentId),
+    });
     return null;
   },
 });
 
-/** The body of {@link holdForEmployee}, in the caller's transaction. */
+/**
+ * The body of {@link holdForEmployee}, in the caller's transaction, for an employee the caller has
+ * found is still the agreement's owner's. `held` is the employee's holds, read once by the caller
+ * and kept current here, so a settle of many agreements reads them once (the second pass: once an
+ * agreement, a first charter with two hundred agreements read past the transaction's limit).
+ */
 async function holdInTransaction(
   ctx: MutationCtx,
   row: Doc<'workingAgreements'>,
   agentId: Id<'agents'>,
-  tried: boolean,
+  hold: { readonly tried: boolean; readonly held: Set<Id<'workingAgreements'>> },
 ): Promise<void> {
-  if (row.status !== 'active' || row.agentId !== undefined) return;
-  if (!(await stillTheOwners(ctx, row, agentId))) return;
-  if ((await heldForEmployee(ctx, row.userId, agentId)).has(row._id)) return;
+  const { tried, held } = hold;
+  if (row.status !== 'active' || row.agentId !== undefined || held.has(row._id)) return;
+  held.add(row._id);
   const now = Date.now();
   const reason = 'unchecked-for-employee';
   const heldId = await ctx.db.insert('workingAgreements', {
@@ -1243,18 +1251,24 @@ export const settleUncheckable = internalMutation({
     tried: v.boolean(),
   },
   handler: async (ctx, args): Promise<null> => {
+    const agent = await ctx.db.get(args.agentId);
+    const userId = agent ? employeeOwnerScope(agent) : undefined;
+    if (userId === undefined) return null;
     const established = await hasEarlierApprovedCharter(ctx, args.agentId);
     const owed = established ? await owedChecksOf(ctx, args.agentId) : new Map<string, number>();
+    const held = established
+      ? new Set<Id<'workingAgreements'>>()
+      : await heldForEmployee(ctx, userId, args.agentId);
     const now = Date.now();
     for (const agreementId of args.agreementIds) {
       const row = await ctx.db.get(agreementId);
-      if (!row) continue;
+      // An employee let go, or handed to another owner, is no longer this agreement's (W15-R37).
+      if (!row || row.userId !== userId) continue;
       if (!established) {
-        await holdInTransaction(ctx, row, args.agentId, args.tried);
+        await holdInTransaction(ctx, row, args.agentId, { tried: args.tried, held });
         continue;
       }
       if (row.status !== 'active' || row.agentId !== undefined || owed.has(row._id)) continue;
-      if (!(await stillTheOwners(ctx, row, args.agentId))) continue;
       await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'agreement.check-owed',

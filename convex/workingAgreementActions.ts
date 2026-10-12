@@ -414,10 +414,12 @@ export const checkForCharter = internalAction({
           agentId: args.agentId,
         });
       }
+      // The new watch first, then the old one ended: no moment is left unwatched (the second
+      // pass).
+      const next = await watchOver(ctx, args, [...unavailable, ...asked.slice(at + 1)]);
       await endWatch(ctx, watch);
-      watch = await watchOver(ctx, args, [...unavailable, ...asked.slice(at + 1)]);
+      watch = next;
     }
-    await endWatch(ctx, watch);
     if (rest.length > 0) {
       await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
         agentId: args.agentId,
@@ -425,20 +427,21 @@ export const checkForCharter = internalAction({
         agreementIds: rest,
       });
     }
-    if (unavailable.length === 0) return;
     const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
-    if (delay !== undefined) {
+    if (unavailable.length > 0 && delay !== undefined) {
       await ctx.scheduler.runAfter(delay, internal.workingAgreementActions.checkForCharter, {
         agentId: args.agentId,
         attempt: args.attempt + 1,
         agreementIds: unavailable,
       });
-      return;
+    } else if (unavailable.length > 0) {
+      await ctx.runMutation(internal.workingAgreements.settleUncheckable, {
+        agentId: args.agentId,
+        agreementIds: unavailable,
+        tried: !paused,
+      });
     }
-    await ctx.runMutation(internal.workingAgreements.settleUncheckable, {
-      agentId: args.agentId,
-      agreementIds: unavailable,
-      tried: !paused,
-    });
+    // Ended only once what follows the run is scheduled or written.
+    await endWatch(ctx, watch);
   },
 });

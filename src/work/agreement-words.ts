@@ -205,12 +205,13 @@ export interface RecheckOutcome {
 
 /**
  * The live region once {@link CHECK_HOLD_NOW} or Try again is pressed while the work is paused
- * (W15-R37; wording draft): the check is held, not under way.
+ * (W15-R37; wording draft): the check is held, not under way, and its retries span about a quarter
+ * of an hour, so after a long pause the manager presses again (the second pass).
  *
  * @param name - The employee's name.
  */
 export function checkHeldForPauseLine(name: string): string {
-  return `Day0 checks it against ${name}'s charter once ${name}'s work resumes.`;
+  return `The work is paused, so the check waits: Day0 tries it against ${name}'s charter after the pause, and if the pause runs long, press Check now again then.`;
 }
 
 /**
