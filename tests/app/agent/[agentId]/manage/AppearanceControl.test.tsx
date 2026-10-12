@@ -41,7 +41,9 @@ afterEach((): void => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.localStorage.clear();
-  document.documentElement.removeAttribute(THEME_ATTRIBUTE);
+  // A sentinel rather than no attribute: an earlier test's head script still watches the root and
+  // draws the theme again the moment the attribute is removed.
+  document.documentElement.setAttribute(THEME_ATTRIBUTE, 'unset');
 });
 
 describe('AppearanceControl (16-T, the Manage tab’s Appearance card)', (): void => {

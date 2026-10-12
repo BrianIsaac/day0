@@ -89,8 +89,8 @@ export function storedThemePreference(): ThemePreference {
 /**
  * The root layout's inline head script: it applies the stored choice before the first paint,
  * which no static page's server can, and keeps applying it for the page's life: when Follow
- * system's scheme changes, when the Appearance card announces a choice, and when another tab
- * stores one. It writes the theme onto `<html>` and the chrome's colour onto the layout's
+ * system's scheme changes, when the Appearance card announces a choice, when another tab stores
+ * one, and when a client render of the root clears the attribute. It writes the theme onto `<html>` and the chrome's colour onto the layout's
  * `theme-color` meta, adding one only if the layout's has not been parsed yet. It is
  * `readThemePreference` and `resolveTheme` in the page's own words, over the same values.
  */
@@ -123,6 +123,14 @@ export const THEME_HINT_SCRIPT = `(function () {
     for (const meta of metas) meta.setAttribute('content', colours[theme]);
   }
   apply();
+  // A root React renders again on the client (a hydration it gives up on) drops the attributes
+  // written here; the theme is drawn again rather than falling back to the dark set.
+  new MutationObserver(function () {
+    if (document.documentElement.getAttribute(${JSON.stringify(THEME_ATTRIBUTE)}) === null) apply();
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: [${JSON.stringify(THEME_ATTRIBUTE)}],
+  });
   system.addEventListener('change', apply);
   window.addEventListener(${JSON.stringify(THEME_CHANGE_EVENT)}, function (event) {
     announced = event.detail;

@@ -73,7 +73,9 @@ afterEach((): void => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   window.localStorage.clear();
-  document.documentElement.removeAttribute(THEME_ATTRIBUTE);
+  // A sentinel rather than no attribute: an earlier test's head script still watches the root and
+  // draws the theme again the moment the attribute is removed.
+  document.documentElement.setAttribute(THEME_ATTRIBUTE, 'unset');
   document.head.replaceChildren();
 });
 
@@ -161,6 +163,17 @@ describe('the head theme script (the preference applied before first paint)', ()
     window.localStorage.setItem(THEME_STORAGE_KEY, 'dark');
     window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY }));
     expect(theme()).toBe('dark');
+  });
+
+  it('draws the theme again when React clears the root’s attributes, as a hydration it gives up on does', async (): Promise<void> => {
+    // The browser job saw it: a root rendered again on the client drops the attributes the head's
+    // scripts wrote, and the page fell back to the dark set under a stored Light.
+    systemScheme(false);
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    runThemeScript();
+    document.documentElement.removeAttribute(THEME_ATTRIBUTE);
+    await Promise.resolve();
+    expect(theme()).toBe('light');
   });
 
   it('retargets the chrome colour the layout rendered rather than adding a second', (): void => {
