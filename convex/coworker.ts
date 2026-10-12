@@ -15,17 +15,15 @@ import { appendEvent } from './eventLog';
 
 interface ResponderProfile {
   readonly responder: string;
-  readonly senderKind: 'manager' | 'teammate' | 'requester';
+  readonly senderKind: 'teammate' | 'requester';
   /** The colleague's replies, given the name of the employee they answer. */
   readonly replies: (employee: string) => readonly string[];
 }
 
+// No profile answers the manager's own DM: the manager is the person reading the office, and a
+// canned reply there put words in their name that they never wrote, recorded as "Manager replied
+// in #dm-manager." (the v0.19.0 walk's finding 8).
 const PROFILES: Readonly<Record<string, ResponderProfile>> = {
-  'dm-manager': {
-    responder: 'Manager',
-    senderKind: 'manager',
-    replies: () => ['Thanks, seen.', 'Got it, thanks.'],
-  },
   'dm-priya': {
     responder: 'Priya',
     senderKind: 'teammate',

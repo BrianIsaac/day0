@@ -58,7 +58,9 @@ const ASKS_FOR_ACTION =
   /\b(hold|please|make sure|add|pin|send|forward|before|push back|sign-off|caveat|tweak)\b/i;
 
 describe('coworker replies in the mock office', (): void => {
-  it.each(['dm-manager', 'dm-priya', 'dm-aman', 'revops-asks', 'revops'])(
+  // Re-pinned for the v0.19.0 walk's finding 8 (16-FX): the manager's own DM has no colleague to
+  // answer it (the case below).
+  it.each(['dm-priya', 'dm-aman', 'revops-asks', 'revops'])(
     'acknowledges a message on %s without asking Day0 for anything',
     async (channelSlug): Promise<void> => {
       const harness = convexTest(schema, allConvexModules());
@@ -115,6 +117,25 @@ describe('coworker replies in the mock office', (): void => {
           .collect(),
     );
     expect(events).toEqual([]);
+  });
+
+  it("writes no reply on the manager's own DM, where the manager is the visitor and wrote nothing (the v0.19.0 walk's finding 8)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    await harness.mutation(internal.coworker.replyToAgentMessage, {
+      agentId,
+      channelSlug: 'dm-manager',
+      originalBody: 'Draft reply to Hana, for your approval.',
+    });
+    expect(await officeMessages(harness, agentId)).toEqual([]);
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(events.map((event) => event.type)).not.toContain('coworker.replied');
   });
 
   it('thanks the employee by its own name, never as Day0 (walk m5)', async (): Promise<void> => {
