@@ -249,7 +249,7 @@ export function SourceTable({
                   key={column}
                   scope="col"
                   role="columnheader"
-                  className="px-3 py-2.5 font-medium first:pl-0"
+                  className="px-3 py-2.5 font-medium whitespace-nowrap first:pl-0"
                 >
                   {column}
                 </th>

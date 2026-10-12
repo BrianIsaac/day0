@@ -52,3 +52,42 @@ test.describe('the Documentation tab at 390 with six sources (W15-R50)', () => {
     expect(reading.scrollWidth).toBeLessThanOrEqual(390);
   });
 });
+
+test.describe('the Documentation tab at 1440 with six sources (found on the 16-FD bed)', () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test('keeps each column header of the sources on one line beside six sources (found on the 16-FD bed)', async ({
+    page,
+  }, testInfo) => {
+    // The bed's six sources: "Read by Priya" broke over three lines beside the long locators.
+    test.skip(testInfo.project.name !== 'desktop', 'measured once, under the desktop project');
+    await page.goto('/setup');
+    const heights = await page.evaluate((html: string) => {
+      document.body.replaceChildren();
+      const column = document.createElement('main');
+      // The main column of the tab's two at 1440: two thirds of the page's 1280 less the gap.
+      column.style.cssText = 'padding:24px 16px;width:837px';
+      column.innerHTML = html;
+      document.body.append(column);
+      return [
+        ...column.querySelectorAll<HTMLElement>(
+          '[aria-label="Linked documentation"] th[scope="col"]',
+        ),
+      ].map((cell) => ({
+        text: cell.textContent ?? '',
+        lines: Math.round(
+          cell.getBoundingClientRect().height /
+            Number.parseFloat(getComputedStyle(cell).lineHeight || '16'),
+        ),
+      }));
+    }, MARKUP);
+    expect(heights.map((cell) => cell.text)).toEqual([
+      'Source',
+      'Trust',
+      'Pages',
+      'Status',
+      'Read by Priya',
+    ]);
+    for (const cell of heights) expect(cell.lines, cell.text).toBeLessThanOrEqual(2);
+  });
+});
