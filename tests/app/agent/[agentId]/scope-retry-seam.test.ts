@@ -151,7 +151,8 @@ describe(
         state: 'skipped',
         verdict: {
           decision: 'skip',
-          reason: `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap`,
+          // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+          reason: `${OUT_OF_SCOPE_SKIP_PREFIX}nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to`,
         },
       });
 

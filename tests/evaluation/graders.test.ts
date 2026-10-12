@@ -15,6 +15,7 @@ import {
 } from '../../evaluation/graders';
 import { permissionDeferralReason } from '../../src/work/deferral-reason';
 import { NO_OVERLAP_REASON } from '../../src/work/scope';
+import { NO_OVERLAP_REASON_BEFORE_0_20 } from '../../src/work/skip-reasons';
 import { OUT_OF_SCOPE_SKIP_PREFIX } from '../../src/work/types';
 
 const ORDINARY_AGENT_NOTE =
@@ -1119,6 +1120,19 @@ describe('the reason check reads only what the agent wrote', (): void => {
         expect(reasonCheck(grade), `${task.id} ${JSON.stringify(workItem)}`).toMatchObject({
           passed: false,
         });
+      }
+    }
+  });
+
+  it('reads the lexical sentence v0.19.0 stored as the product’s, as the new one (RM21 (c))', async (): Promise<void> => {
+    for (const task of await outOfScope()) {
+      for (const skipReason of [NO_OVERLAP_REASON, NO_OVERLAP_REASON_BEFORE_0_20]) {
+        const grade = gradeEvaluationTask(
+          task,
+          'day0',
+          emptySnapshot({ workItem: { id: 'work-1', state: 'skipped', skipReason } }),
+        );
+        expect(reasonCheck(grade), `${task.id} ${skipReason}`).toMatchObject({ passed: false });
       }
     }
   });

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { NO_OVERLAP_REASON } from '../src/work/scope';
+import { NO_OVERLAP_REASON_BEFORE_0_20 } from '../src/work/skip-reasons';
 import { STOPPED_PREFIX } from '../src/work/stop';
 import {
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
@@ -437,7 +438,13 @@ const PRODUCT_REASON_LABELS: readonly string[] = [
   CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
 ].map((label) => label.trimEnd());
 
-const FIXED_REASONS: ReadonlySet<string> = new Set([NO_OVERLAP_REASON, ...HARNESS_WRITTEN_REASONS]);
+// The lexical rule's sentence as v0.19.0 stored it stays fixed, so a stored result re-read reads
+// it as the product's, as it was graded (RM21 (c) moved the words, not what they are).
+const FIXED_REASONS: ReadonlySet<string> = new Set([
+  NO_OVERLAP_REASON,
+  NO_OVERLAP_REASON_BEFORE_0_20,
+  ...HARNESS_WRITTEN_REASONS,
+]);
 
 /**
  * What the product itself writes on a skipped or deferred row, beside its
@@ -447,6 +454,7 @@ const FIXED_REASONS: ReadonlySet<string> = new Set([NO_OVERLAP_REASON, ...HARNES
 const PRODUCT_WRITTEN_TEXT: readonly string[] = [
   ...PRODUCT_REASON_LABELS,
   NO_OVERLAP_REASON,
+  NO_OVERLAP_REASON_BEFORE_0_20,
   'awaiting-permission',
   'missingPermissions',
 ];

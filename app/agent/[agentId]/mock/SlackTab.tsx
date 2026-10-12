@@ -146,7 +146,7 @@ function ChannelGroup({
               aria-current={c.slug === activeSlug ? 'true' : undefined}
               className={`min-h-11 rounded-lg px-2.5 py-1 text-left @lg:w-full ${
                 c.slug === activeSlug
-                  ? 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]'
+                  ? 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]'
                   : 'text-[var(--color-fg-2)] hover:bg-[var(--color-inset)] hover:text-[var(--color-fg)]'
               }`}
             >

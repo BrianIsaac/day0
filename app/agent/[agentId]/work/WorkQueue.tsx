@@ -20,6 +20,7 @@ import {
   QUEUE_FILTERS,
   QUEUE_FILTER_NAMES,
   type QueueFilter,
+  partlyDoneCount,
   queueFilterOf,
 } from '@/work/state-display';
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
@@ -80,14 +81,18 @@ export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
 /**
  * The Work tab's filters (`agent-work.html`): All, Needs you, In progress, Done and Skipped, each
  * with its count, one pressed at a time. A filter that holds nothing is still offered, so the
- * row never shifts under the pointer.
+ * row never shifts under the pointer. Done keeps every finished row and says how many of them are
+ * partly done beside its count (RM23 (a)), so no count calls partly done work done.
  */
 export function QueueFilters({
   counts,
+  partly,
   selected,
   onSelect,
 }: {
   counts: Readonly<Record<QueueFilter, number>>;
+  /** How many of the rows under Done finished partly done. */
+  partly: number;
   selected: QueueFilter;
   onSelect: (filter: QueueFilter) => void;
 }) {
@@ -102,6 +107,9 @@ export function QueueFilters({
           onClick={() => onSelect(filter)}
         >
           {QUEUE_FILTER_NAMES[filter]} <span className="tabular-nums">{counts[filter]}</span>
+          {filter === 'done' && partly > 0 ? (
+            <span className="tabular-nums font-normal"> · {partly} partly</span>
+          ) : null}
         </Button>
       ))}
     </div>
@@ -305,6 +313,7 @@ export function WorkQueue({
     for (const item of items) tally[queueFilterOf(item, needsYou)] += 1;
     return tally;
   }, [items, needsYou]);
+  const partly = useMemo(() => partlyDoneCount(items, needsYou), [items, needsYou]);
   const shown =
     filter === 'all' ? items : items.filter((item) => queueFilterOf(item, needsYou) === filter);
   const queue = useRef<HTMLElement>(null);
@@ -389,7 +398,7 @@ export function WorkQueue({
           <EmptyQueue agentId={agentId} charterApproved={charterApproved} />
         ) : (
           <>
-            <QueueFilters counts={counts} selected={filter} onSelect={setFilter} />
+            <QueueFilters counts={counts} partly={partly} selected={filter} onSelect={setFilter} />
             <PendingDecisionsPanel
               members={pendingDecisionMembers(items)}
               surfaces={surfaces}

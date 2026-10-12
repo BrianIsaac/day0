@@ -671,7 +671,10 @@ describe('retrying a skipped item', (): void => {
     );
     expect(markup).not.toContain('without the quality-fit filter');
     // The skip in words, and the sentence that scope and skill are judged apart (R6).
-    expect(markup).toContain('Skipped.</span> No charter or current documented-system overlap.');
+    // Re-taken for RM21 (c), 12 October 2026: a row v0.19.0 stored reads in today's plain words.
+    expect(markup).toContain(
+      'Skipped.</span> Nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to.',
+    );
     expect(markup).not.toContain('out-of-scope:');
     expect(markup).toContain('is judged separately from whether the employee has a skill for it');
   });

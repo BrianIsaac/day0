@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dark } from '@clerk/themes';
 import { describe, expect, it } from 'vitest';
+import { THEME_CSS, lightToken, token } from '../fixtures/theme-contrast';
 import {
   DAY0_MARK_URL,
   clerkAppearance,
@@ -45,8 +45,27 @@ const RETIRED_VARIABLES = [
 ];
 
 describe('the Clerk appearance', () => {
-  it("builds on Clerk's dark theme, so every surface it does not name is dark too", () => {
-    expect(clerkAppearance.theme).toBe(dark);
+  // Re-pinned (16-T, T-1): the appearance built on Clerk's dark theme while the product had one
+  // scheme. Clerk's default theme follows the page's `color-scheme`, which each token set declares,
+  // so Light, Dark and Follow system reach Clerk with no switch in script and no redraw.
+  it("builds on Clerk's default theme, which follows the colour-scheme each token set declares (T-1)", () => {
+    expect(clerkAppearance).not.toHaveProperty('theme');
+    expect(THEME_CSS).toMatch(/color-scheme:\s*dark;/);
+    expect(THEME_CSS).toMatch(/color-scheme:\s*light;/);
+  });
+
+  it('points every colour at a product token, so each theme reaches every Clerk surface', () => {
+    const colours = Object.entries(clerkAppearance.variables).filter(([name]) =>
+      name.startsWith('color'),
+    );
+    expect(colours.length).toBe(14);
+    for (const [name, value] of colours) {
+      const tokenName = /^var\(--color-([a-z0-9-]+)\)$/.exec(value)?.[1];
+      expect(tokenName, name).toBeDefined();
+      // Declared in both sets, so the variable resolves in either theme.
+      expect(token(tokenName ?? ''), name).toMatch(/^#/);
+      expect(lightToken(tokenName ?? ''), name).toMatch(/^#/);
+    }
   });
 
   it('names no variable Clerk 7 no longer reads', () => {
@@ -54,23 +73,27 @@ describe('the Clerk appearance', () => {
       expect(clerkAppearance.variables).not.toHaveProperty(name);
   });
 
+  // Re-pinned (16-T): the same pairs as the dark hex values they replace, now by token name.
   it("gives the widget's text, muted text, inputs and primary button the product's tokens", () => {
     expect(clerkAppearance.variables).toMatchObject({
-      colorBackground: '#18181b',
-      colorForeground: '#f4f4f5',
-      colorMutedForeground: '#a1a1aa',
-      colorInput: '#0a0a0b',
-      colorInputForeground: '#f4f4f5',
-      colorPrimary: '#22d3ee',
-      colorPrimaryForeground: '#0a0a0b',
-      colorDanger: '#ef4444',
-      colorSuccess: '#34d399',
-      colorWarning: '#f59e0b',
+      colorBackground: 'var(--color-card)',
+      colorForeground: 'var(--color-fg)',
+      colorMutedForeground: 'var(--color-muted)',
+      colorInput: 'var(--color-bg)',
+      colorInputForeground: 'var(--color-fg)',
+      colorPrimary: 'var(--color-accent)',
+      colorPrimaryForeground: 'var(--color-bg)',
+      colorRing: 'var(--color-accent)',
+      colorDanger: 'var(--color-danger)',
+      colorSuccess: 'var(--color-ok)',
+      colorWarning: 'var(--color-warn)',
+      colorModalBackdrop: 'var(--color-scrim)',
+      colorShadow: 'var(--color-shadow)',
     });
   });
 
-  it('keeps the neutral light and leaves the borders to it, so the social button and divider show', () => {
-    expect(clerkAppearance.variables.colorNeutral).toBe('#f4f4f5');
+  it('takes the neutral from the text and leaves the borders to it, so the social button and divider show in either theme', () => {
+    expect(clerkAppearance.variables.colorNeutral).toBe('var(--color-fg)');
     expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
   });
 
@@ -86,10 +109,8 @@ describe('the Clerk appearance', () => {
   });
 
   it('draws the mark above the card on every step of the sign-in and sign-up flows, the code steps among them (the v0.11.0 walk)', () => {
-    expect(clerkSignInAppearance).toMatchObject({
-      theme: clerkAppearance.theme,
-      variables: clerkAppearance.variables,
-    });
+    expect(clerkSignInAppearance).toMatchObject({ variables: clerkAppearance.variables });
+    expect(clerkSignInAppearance).not.toHaveProperty('theme');
     expect(clerkSignInAppearance.options).toEqual({
       logoImageUrl: '/day0-mark.svg',
       logoPlacement: 'outside',
@@ -111,14 +132,22 @@ describe('the Clerk appearance', () => {
     );
   });
 
-  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour", () => {
+  // Re-pinned (16-T): the mark drew the dark set's accent and card only. Chrome answers an
+  // image's `prefers-color-scheme` from the colour-scheme of the page that draws it (probed on
+  // Chromium 1248, 12 October 2026), so the mark takes each set's values from the scheme the page
+  // is in, whichever way the viewer chose it.
+  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour, in each theme", () => {
     const mark = checkoutFile('public/day0-mark.svg');
     expect(rects(mark)).toEqual(rects(checkoutFile('app/icon.svg')));
     expect(mark).toMatch(/viewBox="0 0 16 16"/);
-    expect(mark.match(/fill="#22d3ee"/g)).toHaveLength(2);
-    expect(
-      mark.match(new RegExp(`fill="${clerkAppearance.variables.colorBackground}"`, 'g')),
-    ).toHaveLength(2);
+    const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
+    const [dark, light] = style.split('@media (prefers-color-scheme: light)');
+    expect(dark).toContain(`.head { fill: ${token('accent')}; }`);
+    expect(dark).toContain(`.eye { fill: ${token('card')}; }`);
+    expect(light).toContain(`.head { fill: ${lightToken('accent')}; }`);
+    expect(light).toContain(`.eye { fill: ${lightToken('card')}; }`);
+    expect(mark.match(/class="head"/g)).toHaveLength(2);
+    expect(mark.match(/class="eye"/g)).toHaveLength(2);
   });
 });
 

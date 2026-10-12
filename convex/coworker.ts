@@ -20,9 +20,11 @@ interface ResponderProfile {
   readonly replies: (employee: string) => readonly string[];
 }
 
-// No profile answers the manager's own DM: the manager is the person reading the office, and a
-// canned reply there put words in their name that they never wrote, recorded as "Manager replied
-// in #dm-manager." (the v0.19.0 walk's finding 8).
+/**
+ * The office's colleagues by the channel they answer on. The manager's DM has none: the manager is
+ * the visitor reading it, and a canned "Thanks, seen." in their name put "Manager replied in
+ * #dm-manager." in the record where they wrote nothing (W19-8, the v0.19.0 walk).
+ */
 const PROFILES: Readonly<Record<string, ResponderProfile>> = {
   'dm-priya': {
     responder: 'Priya',

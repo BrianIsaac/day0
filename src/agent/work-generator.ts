@@ -4,7 +4,12 @@ import { log } from '../lib/logger';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import type { Charter } from './charter';
 import { filedOnTicketQueue, TICKET_QUEUE_FILING, TICKET_REF_PREFIX } from '../work/office-tickets';
-import { NO_OPEN_ASK_FOR_ROLE, otherRolesAskThreads } from '../work/office-asks';
+import {
+  NO_OPEN_ASK_FOR_ROLE,
+  NO_TEAM_ASK_FOR_ROLE,
+  OFFICE_ASKS_CHANNEL,
+  otherRolesAskThreads,
+} from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
 
@@ -52,16 +57,16 @@ export const WORK_GEN_SYSTEM = [
   '',
   'Generate exactly 4 items, in this order, with this purpose:',
   '',
-  '1. Read-and-answer item: sourceSystem MUST be "docs". A question the agent answers by reading internal team docs (the agent has a builtin "see-internal-docs" skill). Pick a topic that fits the role described in the charter and a doc slug that actually exists in the snapshot.',
+  '1. Read-and-answer item: sourceSystem MUST be "docs". A question the agent answers by reading internal team docs (the agent has a builtin "see-internal-docs" skill). Pick a topic that fits the role described in the charter and a doc slug that actually exists in the snapshot. When the question was asked in a thread the snapshot shows, its contentRefs name that thread too ("channel://<slug>#<thread>"), so the answer goes back where it was asked.',
   '',
   '2. Action item: a new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket". The task requires the role\'s write action on that ticket (work it, comment on it and close it). This will trigger the propose-new-skill flow.',
   'Every ask of the action ticket is one the office lets the role finish in this one run: each fact it needs is in the snapshot, named as the snapshot names it (a row, a message or a document), and its contentRefs name those records; the work is a write in the office (a row appended to a tab, a message posted, a comment on the ticket), and the ticket closes once that is written. It never asks for a record, figure, reply or system the snapshot does not show, for anything done outside the office (buying, repairing, calling, meeting), or a draft to review before it closes: the manager approves every write before it lands.',
   '',
   '3. Beyond-the-office item: a second new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket", as a colleague would file it. Its ask needs one record or system the snapshot does not show (one the charter or the team docs name), as such tickets arrive in any office; the ticket never says the office lacks anything.',
   '',
-  'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s willDo as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
+  'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s will-do clauses as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
   '',
-  '4. Out-of-scope item: sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its willDo leaves out or its willNotDo excludes, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
+  '4. Out-of-scope item: sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its will-do clauses leave out or its will-not-do clauses exclude, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
   '',
   'Discipline:',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
@@ -137,6 +142,43 @@ export const workGenSchema = z.object({
 /** One drafted item as the model returns it, its purpose included. */
 type DraftedWorkItem = z.infer<typeof workGenSchema>['items'][number];
 
+/**
+ * The threads the role is shown an ask in, by the asker's name: where a read-and-answer item from
+ * that person goes back to (W19-4). The first thread of each asker, in the snapshot's order.
+ */
+function askThreadsBySender(
+  env: MockSurfaceSnapshot,
+  otherRoles: ReadonlySet<string>,
+): ReadonlyMap<string, string> {
+  const threads = new Map<string, string>();
+  for (const channel of env.slackChannels) {
+    for (const message of channel.recentMessages) {
+      if (!message.threadKey) continue;
+      const thread = `${channel.slug}#${message.threadKey}`;
+      if (otherRoles.has(thread) || threads.has(message.sender)) continue;
+      threads.set(message.sender, `channel://${thread}`);
+    }
+  }
+  return threads;
+}
+
+/**
+ * A read-and-answer item from someone who asks in a thread the role is shown, given that thread
+ * when it names none (W19-4): on the v0.19.0 walk Pip's answer for Hana's docs question had no
+ * thread to go back to, went to the manager's DM as a draft "held for your approval", and Hana
+ * never had it. Any other item is returned as drafted.
+ */
+function withAskThread(
+  item: DraftedWorkItem,
+  threads: ReadonlyMap<string, string>,
+): DraftedWorkItem {
+  if (item.purpose !== 'read-and-answer') return item;
+  if (item.contentRefs.some((ref) => ref.startsWith('channel://'))) return item;
+  // "Hana (Support)" is Hana: the asker by the first word of the label.
+  const thread = threads.get(item.requesterLabel.trim().split(/[\s(,]/)[0] ?? '');
+  return thread ? { ...item, contentRefs: [...item.contentRefs, thread] } : item;
+}
+
 /** One generated work item as the office seeds it; its purpose stays with the generator. */
 export type GeneratedWorkItem = Omit<DraftedWorkItem, 'purpose'>;
 
@@ -156,8 +198,8 @@ function shown(text: string): string {
  */
 function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
-  // The company-wide asks of other roles are left out, as the office's seeded tickets are: they
-  // are another role's work (finding 2 of the v0.17.0 redeploy; `src/work/office-asks.ts`).
+  // The pooled asks of other roles are left out, as the office's seeded tickets are: they are
+  // another role's work (finding 2 of the v0.17.0 redeploy, W19-3; `src/work/office-asks.ts`).
   const otherRoles = otherRolesAskThreads(charterWords(charter), charter.proposedFunction);
   if (env.slackChannels.length) {
     lines.push('Slack channels and DMs:');
@@ -168,9 +210,8 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
         .slice(-MESSAGES_SHOWN);
       // Every message left out was another role's ask: the channel is where asks arrive, not empty.
       if (messages.length === 0) {
-        lines.push(
-          c.recentMessages.length > 0 ? `      ${NO_OPEN_ASK_FOR_ROLE}` : '      (no messages)',
-        );
+        const none = c.slug === OFFICE_ASKS_CHANNEL ? NO_OPEN_ASK_FOR_ROLE : NO_TEAM_ASK_FOR_ROLE;
+        lines.push(c.recentMessages.length > 0 ? `      ${none}` : '      (no messages)');
       }
       for (const m of messages) {
         const thread = m.threadKey ? ` [thread ${m.threadKey}]` : '';
@@ -388,6 +429,10 @@ export async function generateWorkItemsFromCharter(
     'Generate the 4 day-one work items now.',
   ].join('\n');
   const records = officeRecords(mockEnv);
+  const threads = askThreadsBySender(
+    mockEnv,
+    otherRolesAskThreads(charterWords(charter), charter.proposedFunction),
+  );
   const deadline = Date.now() + GENERATION_BUDGET_MS;
   const ask = async (user: string): Promise<z.infer<typeof workGenSchema>> =>
     await agentJson<z.infer<typeof workGenSchema>>({
@@ -402,7 +447,9 @@ export async function generateWorkItemsFromCharter(
   let budgetRanOut = false;
   for (; attempts < GENERATION_ATTEMPTS; attempts += 1) {
     const reading = readDraft(draft.items, charter, records);
-    if (readsAsIntended(reading)) return seeded(draft.items);
+    if (readsAsIntended(reading)) {
+      return seeded(draft.items.map((item) => withAskThread(item, threads)));
+    }
     const again = await askedAgain(() => ask(`${brief}\n\n${askAgain(reading)}`), attempts);
     if (again === undefined) {
       budgetRanOut = true;
@@ -448,7 +495,12 @@ export async function generateWorkItemsFromCharter(
     });
   }
   const leftOut = new Set(reading.asTheRole.map((one) => one.item));
-  return seeded(draft.items.filter((item) => !leftOut.has(item)).map(onTheTicketQueue));
+  return seeded(
+    draft.items
+      .filter((item) => !leftOut.has(item))
+      .map(onTheTicketQueue)
+      .map((item) => withAskThread(item, threads)),
+  );
 }
 
 /**

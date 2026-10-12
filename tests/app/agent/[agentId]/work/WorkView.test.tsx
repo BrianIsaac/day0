@@ -56,7 +56,8 @@ describe('WorkView', () => {
     backend.queries = { 'work:listForAgent': [], 'corrections:listForAgent': [] };
     const mock = renderToStaticMarkup(asEmployee(<WorkView />));
     expect(mock).toContain('Work queue');
-    expect(mock).toContain('>So far</h2>');
+    // Re-pinned for 16-F: the rail's figures are today's.
+    expect(mock).toContain('>Today</h2>');
     expect(mock).not.toMatch(/correction/i);
     const real = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
     expect(real).toMatch(/correction/i);

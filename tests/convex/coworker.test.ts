@@ -58,8 +58,7 @@ const ASKS_FOR_ACTION =
   /\b(hold|please|make sure|add|pin|send|forward|before|push back|sign-off|caveat|tweak)\b/i;
 
 describe('coworker replies in the mock office', (): void => {
-  // Re-pinned for the v0.19.0 walk's finding 8 (16-FX): the manager's own DM has no colleague to
-  // answer it (the case below).
+  // Re-taken for W19-8, 12 October 2026: the manager's own DM is answered by nobody (below).
   it.each(['dm-priya', 'dm-aman', 'revops-asks', 'revops'])(
     'acknowledges a message on %s without asking Day0 for anything',
     async (channelSlug): Promise<void> => {
@@ -85,6 +84,33 @@ describe('coworker replies in the mock office', (): void => {
       }
     },
   );
+
+  it('writes nothing in the manager’s DM, where the manager is the one who reads (W19-8)', async (): Promise<void> => {
+    // The v0.19.0 walk's record (`A-Lark-record.txt`): "Manager replied in #dm-manager." seven times
+    // across three employees, where the visitor, the manager, wrote nothing.
+    // A completion report, and a draft held for approval (16-FX's case of the same finding).
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    for (const originalBody of [
+      'Done: the three closed-won deals are in the tracker.',
+      'Draft reply to Hana, for your approval.',
+    ]) {
+      await harness.mutation(internal.coworker.replyToAgentMessage, {
+        agentId,
+        channelSlug: 'dm-manager',
+        originalBody,
+      });
+    }
+    expect(await officeMessages(harness, agentId)).toEqual([]);
+    const events = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(events).toEqual([]);
+  });
 
   it('gives the same reply to the same message every time', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -117,25 +143,6 @@ describe('coworker replies in the mock office', (): void => {
           .collect(),
     );
     expect(events).toEqual([]);
-  });
-
-  it("writes no reply on the manager's own DM, where the manager is the visitor and wrote nothing (the v0.19.0 walk's finding 8)", async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const agentId = await seedAgent(harness);
-    await harness.mutation(internal.coworker.replyToAgentMessage, {
-      agentId,
-      channelSlug: 'dm-manager',
-      originalBody: 'Draft reply to Hana, for your approval.',
-    });
-    expect(await officeMessages(harness, agentId)).toEqual([]);
-    const events = await harness.run(
-      async (ctx) =>
-        await ctx.db
-          .query('events')
-          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-          .collect(),
-    );
-    expect(events.map((event) => event.type)).not.toContain('coworker.replied');
   });
 
   it('thanks the employee by its own name, never as Day0 (walk m5)', async (): Promise<void> => {

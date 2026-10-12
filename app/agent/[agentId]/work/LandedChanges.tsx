@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties, ReactNode } from 'react';
-import { HELD_NOT_APPROVED } from '@/surfaces/policy';
+import { HELD_NOT_APPROVED, WITHHELD_REPORTED_WRITE_NOT_LANDED } from '@/surfaces/policy';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
 import { NOT_SENT_AFTER_STOP_REASON } from '@/work/reconciliation';
 import { Lead, Note } from './ItemParts';
@@ -183,6 +183,9 @@ export function notSentWords(reason: string | undefined): string {
   if (reason?.startsWith(MANAGER_REJECTION_PREFIX)) return 'rejected with the run; never sent';
   // A row a stopped apply never reached (W12-R11): said once, plainly.
   if (reason === NOT_SENT_AFTER_STOP_REASON) return 'not sent: the run stopped before it went out';
+  // A message held back with the write it reports, in a manager's words (RM22 (a)).
+  if (reason === WITHHELD_REPORTED_WRITE_NOT_LANDED)
+    return 'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue';
   return `held${reason ? `: ${reason}` : ''}; never sent`;
 }
 

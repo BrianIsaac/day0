@@ -5458,7 +5458,9 @@ describe('the autonomous-actions switch through the gate', (): void => {
       state: 'skipped',
       verdict: {
         decision: 'skip',
-        reason: 'out-of-scope: no charter or current documented-system overlap',
+        // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+        reason:
+          'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
       },
     });
 

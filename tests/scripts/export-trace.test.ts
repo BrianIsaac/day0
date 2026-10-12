@@ -3,7 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runExportTrace, type ConvexRun } from '../../scripts/export-trace';
-import { isAgentTrace, type TraceHead, type TracePage } from '../../src/export/trace';
+import {
+  isAgentTrace,
+  OWNER_SECTIONS,
+  ownerSectionAfter,
+  readOwnerExport,
+  type OwnerSection,
+  type TraceHead,
+  type TracePage,
+} from '../../src/export/trace';
 
 const HEAD: TraceHead = {
   manifest: {
@@ -116,5 +124,61 @@ describe('exporting one agent’s trace to a file', (): void => {
       await runExportTrace(['agent-1', '--out', '/tmp/never-written.json'], io, refusing),
     ).toBe(2);
     expect(errors[1]).toBe('Export failed: exportActions:exportForAgent failed: forbidden');
+  });
+});
+
+describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
+  it('reads the owner’s rows, then each employee’s trace, and writes the one file', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    const out = join(directory, 'owner.json');
+    const calls: Array<{ name: string; args: Record<string, unknown>; subject: string }> = [];
+    const employee = fakeDeployment(calls);
+    const deployment: ConvexRun = (name, args, subject) => {
+      if (name === 'exportActions:exportForOwner') {
+        calls.push({ name, args, subject });
+        return {
+          manifest: {
+            format: 'day0-owner-export',
+            version: 8,
+            exportedAt: HEAD.manifest.exportedAt,
+            exportedOn: '2026-09-27',
+            zone: 'UTC',
+            release: '0.20.0',
+            commit: 'abc12345',
+            pageRows: 100,
+            ownerKey: 'dev-no-auth|local-boss',
+          },
+          employees: [{ id: 'agent-1', name: 'Priya' }],
+          setAside: [],
+          omittedAgents: 0,
+          next: { section: OWNER_SECTIONS[0], cursor: null },
+        };
+      }
+      if (name === 'exportActions:exportOwnerPage') {
+        calls.push({ name, args, subject });
+        const section = args.section as OwnerSection;
+        const following = ownerSectionAfter(section);
+        return {
+          section,
+          rows: section === 'docSources' ? [{ _id: 's1', label: 'Handbook' }] : [],
+          next: following === undefined ? null : { section: following, cursor: null },
+        };
+      }
+      return employee(name, args, subject);
+    };
+    const logged: string[] = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: (line) => logged.push(line), error: () => undefined },
+      deployment,
+    );
+    expect(code).toBe(0);
+    const file = readOwnerExport(JSON.parse(readFileSync(out, 'utf8')));
+    expect(file?.manifest.counts).toMatchObject({ docSources: 1, employees: 1 });
+    expect(file?.employees[0]?.sections.events).toHaveLength(3);
+    expect(calls.filter((call) => call.name === 'exportActions:exportOwnerPage')).toHaveLength(
+      OWNER_SECTIONS.length,
+    );
+    expect(logged[0]).toContain('the owner export, exported 2026-09-27 (UTC) at release 0.20.0');
   });
 });

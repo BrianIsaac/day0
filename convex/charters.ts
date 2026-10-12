@@ -10,6 +10,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsCharter } from './ownership';
+import { charterChangeValidator } from './schema';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { writeFileImpl } from './workspace';
 import { declareCharterSystem, retireCharterSystem, scheduleOrientationFor } from './surfaces';
@@ -21,7 +22,6 @@ import {
   type CharterChange,
 } from '../src/agent/charter-amendment';
 import {
-  CONSTRAINT_KINDS,
   STRIKE_CHANGES_NOTHING,
   clauseChanges,
   strikeOutcome,
@@ -33,7 +33,6 @@ import {
   toolsFromCharter,
   userFromManager,
 } from '../src/agent/charter-workspace';
-import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
 import { scheduleCharterCheck } from './workingAgreements';
@@ -438,59 +437,6 @@ export const approve = mutation({
     return { ok: true };
   },
 });
-
-const listClauseField = v.union(
-  v.literal('willDo'),
-  v.literal('willNotDo'),
-  v.literal('escalationTriggers'),
-);
-
-const literals = <T extends string>(values: readonly T[]) =>
-  v.union(...(values.map((value) => v.literal(value)) as [ReturnType<typeof v.literal<T>>]));
-
-/** One typed change to an approved charter; see `src/agent/charter-amendment.ts`. */
-export const charterChangeValidator = v.union(
-  v.object({ kind: v.literal('edit-function'), text: v.string() }),
-  v.object({
-    kind: v.literal('edit-clause'),
-    field: listClauseField,
-    index: v.number(),
-    text: v.string(),
-  }),
-  v.object({ kind: v.literal('answer-question'), question: v.string(), answer: v.string() }),
-  v.object({
-    kind: v.literal('add-constraint'),
-    constraint: v.object({
-      kind: literals(CONSTRAINT_KINDS),
-      quote: v.string(),
-      clause: listClauseField,
-    }),
-  }),
-  v.object({ kind: v.literal('strike-constraint'), index: v.number() }),
-  v.object({
-    kind: v.literal('add-system'),
-    system: v.object({
-      name: v.string(),
-      class: literals(SYSTEM_CLASSES),
-      whereMentioned: v.string(),
-    }),
-  }),
-  v.object({ kind: v.literal('remove-system'), name: v.string() }),
-  v.object({
-    kind: v.literal('edit-adjacent-role'),
-    index: v.number(),
-    role: v.object({ who: v.string(), staysOutOfTheirLaneBy: v.string() }),
-  }),
-  v.object({
-    kind: v.literal('edit-collaborator'),
-    index: v.number(),
-    collaborator: v.object({
-      name: v.string(),
-      topic: v.string(),
-      introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
-    }),
-  }),
-);
 
 /**
  * Amend the agent's approved charter: one new version, one event, the

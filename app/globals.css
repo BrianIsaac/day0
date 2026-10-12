@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 
-@theme {
+/* The colour tokens, two sets (16-T, wave 16 section 5.5). Dark is the default and the identity:
+   the page carries it until the head's script writes `data-theme` (`app/session-hint.ts`), and a
+   dark island keeps it. The pixel office keeps it in either theme (RM11 (a)): its panel declares the
+   dark set itself, so the page's light set never reaches the nameplates inside it. Each set says
+   its `color-scheme`, which the browser's own controls and Clerk's default theme follow (T-1).
+   Plain custom properties, not Tailwind's `@theme`: every surface reads them as `var(--color-*)`,
+   and a theme block can be declared on `:root` only. */
+:root,
+[data-theme='dark'],
+.day0-pixel-office {
+  color-scheme: dark;
   --color-bg: #0a0a0b;
   --color-fg: #f4f4f5;
   --color-muted: #a1a1aa;
@@ -24,10 +34,56 @@
   --color-ok-line: #396754;
   --color-danger-soft: #281d1f;
   --color-danger-line: #733937;
+  /* The accent's chip fill, under accent text (a state chip, a pressed filter): the accent mixed
+     into what is behind it. */
+  --color-accent-fill: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  /* The accent's bright point: the orbit's packets on the landing, lighter than the accent in the
+     dark set and the icon's darker step in the light one, so it reads on either page. */
+  --color-glint: #a5f3fc;
+  /* What dims the page under a dialog (each scrim sets its own alpha), and the colour a raised
+     surface's shadow is cast in; the raised shadow itself is the prototype's `--shadow-2`. */
+  --color-scrim: #0a0a0b;
+  --color-shadow: #000000;
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -16px rgb(0 0 0 / 0.8);
   /* The line under a link: the accent mixed into transparent, as the focus ring is, so it keeps
      3:1 or more on every surface a link sits on (3.4:1 on a tone's fill, 3.8:1 on a card). The
-     underline is the one cue that a link in a sentence is a link (WCAG 1.4.11). */
+     underline is the one cue that a link in a sentence is a link (WCAG 1.4.11). Declared in each
+     set, so it mixes that set's accent. */
   --color-link-line: color-mix(in oklab, var(--color-accent) 55%, transparent);
+}
+
+/* The prototype's light set (`agent-needs-you-light.html`): the same hues at the depth the icon
+   already uses on light chrome. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-bg: #fafafa;
+  --color-fg: #18181b;
+  --color-muted: #52525b;
+  --color-accent: #0e7490;
+  --color-warn: #92400e;
+  --color-danger: #991b1b;
+  --color-ok: #065f46;
+  --color-card: #ffffff;
+  --color-border: #e4e4e7;
+  --color-fg-2: #3f3f46;
+  --color-border-2: #d4d4d8;
+  --color-inset: #f4f4f5;
+  --color-accent-soft: #e4eef1;
+  --color-accent-line: #98b7c4;
+  --color-warn-soft: #f3e7e2;
+  --color-warn-line: #c7a293;
+  --color-ok-soft: #e2ebe7;
+  --color-ok-line: #92ada3;
+  --color-danger-soft: #f9edec;
+  --color-danger-line: #cd9893;
+  /* Opaque: the 15% mix put the accent's text at 4.34:1 on a light card. */
+  --color-accent-fill: var(--color-accent-soft);
+  --color-glint: #0891b2;
+  --color-scrim: #18181b;
+  --color-shadow: #18181b;
+  --shadow-raised: 0 1px 2px rgb(24 24 27 / 0.05), 0 16px 40px -16px rgb(24 24 27 / 0.25);
+  /* More of the accent than the dark set takes: at 55% the line was 2.3:1 on the light page. */
+  --color-link-line: color-mix(in oklab, var(--color-accent) 80%, transparent);
 }
 
 html,

@@ -1,3 +1,4 @@
+import { NO_OVERLAP_REASON } from '../../../../../src/work/scope';
 import { describe, expect, it } from 'vitest';
 import { EVENT_TYPES } from '../../../../../src/events/contract';
 import { recordWords } from '../../../../../app/agent/[agentId]/record/record-words';
@@ -138,6 +139,38 @@ describe('recordWords', (): void => {
         { name: 'Mira', item: 'Refresh pipeline coverage view' },
       ),
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
+  });
+
+  it('says a lexical skip in plain words, with no machine label (RM21 (c), W19-7)', (): void => {
+    // The v0.19.0 walk's row `A-Lark-record.txt`: the reason as v0.19.0 stored it, and as now.
+    for (const reason of [
+      'out-of-scope: no charter or current documented-system overlap',
+      NO_OVERLAP_REASON,
+    ]) {
+      const line = recordWords(
+        { type: 'work.skipped', payload: { reason } },
+        { name: 'Lark', item: 'Reply to the customer mention on social media' },
+      );
+      expect(line).toMatch(/^Lark skipped “Reply to the customer mention on social media”: /);
+      expect(line).not.toContain('out-of-scope');
+      expect(line).not.toContain('documented-system');
+    }
+    expect(
+      recordWords(
+        { type: 'work.skipped', payload: { reason: NO_OVERLAP_REASON } },
+        { name: 'Lark', item: 'Reply to the customer mention on social media' },
+      ),
+    ).toBe(
+      'Lark skipped “Reply to the customer mention on social media”: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to.',
+    );
+    expect(
+      recordWords(
+        { type: 'work.skipped', payload: { reason: 'quality-fit-fail: busywork for the role' } },
+        { name: 'Lark', item: 'Tidy the tracker colours' },
+      ),
+    ).toBe(
+      'Lark skipped “Tidy the tracker colours”: judged not worth doing as it stands: busywork for the role.',
+    );
   });
 
   it('says each step of a handover request by who asked, the address it names and the employee', (): void => {

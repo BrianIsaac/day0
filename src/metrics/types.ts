@@ -56,6 +56,19 @@ export interface AgentMetrics {
   auditTrail: { complete: number; total: number; fraction: number | null };
   /** A9's five pilot figures. */
   pilot: PilotFigures;
+  /**
+   * The decisions and actions of one day in the employee's zone, its "Today" (16-F): present when
+   * the page asked for its day (`metrics.forAgent` with `day`), absent otherwise.
+   */
+  today?: TodayFigures;
+}
+
+/** One day's decisions and actions in the employee's zone, for the page's "Today". */
+export interface TodayFigures {
+  /** The day, `YYYY-MM-DD`, in the employee's zone. */
+  day: string;
+  decisions: AgentMetrics['decisions'];
+  actions: AgentMetrics['actions'];
 }
 
 /**
@@ -70,12 +83,17 @@ export interface PilotFigures {
   skillReuse: { runs: number; reused: number; adopted: number; rate: number | null };
   /**
    * From the ask (`observedAt`: the provider's own time when intake had one)
-   * to the item's first terminal event, and to its first completion.
+   * to the item's first terminal event, and to its first completion where its run answered that
+   * the work was done; the items whose first completion answered partly done are counted beside
+   * (RM23 (a)), and every completion is among the ended.
    */
   cycleTime: {
     ended: number;
     medianToEndMs: number | null;
+    /** The items whose first completion answered done. */
     completed: number;
+    /** The items whose first completion answered partly done. */
+    partlyDone: number;
     medianToCompletionMs: number | null;
     p90ToCompletionMs: number | null;
   };

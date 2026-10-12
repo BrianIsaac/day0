@@ -39,6 +39,12 @@ import {
   QUILL,
   SARA_ASK,
 } from '../../fixtures/agent/office-roles-2026-10-07';
+import {
+  LARK_W19,
+  NELL_W19,
+  PIP_W19,
+  PRIYA_ASK,
+} from '../../fixtures/agent/office-roles-2026-10-11';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -651,5 +657,130 @@ describe("the office's asks a role is shown (finding 2 of the v0.17.0 redeploy, 
       slackChannels: [{ ...OFFICE_ASKS.slackChannels[0], recentMessages: [] }],
     } as never);
     expect(prompts.at(-1) ?? '').toContain('      (no messages)');
+  });
+});
+
+describe("the revenue team's ask a role is shown (W19-3, the v0.19.0 walk)", (): void => {
+  /** The office as the walk's employees saw it: Priya's ask in #revops-asks, Hana's in #office-asks. */
+  const WALKED = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'revops-asks',
+        displayName: '#revops-asks',
+        kind: 'channel',
+        recentMessages: [
+          { sender: 'Priya', threadKey: 'thread-pipeline-coverage', body: PRIYA_ASK },
+        ],
+      },
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+      },
+    ],
+  };
+
+  it.each([
+    ['Nell, the IT helpdesk triager', NELL_W19, false],
+    ['Pip, the support triage coordinator', PIP_W19, false],
+    ['Lark, the revenue operations coordinator', LARK_W19, true],
+  ] as const)('shows %s Priya’s ask only if it is its role’s', async (_who, charter, shown) => {
+    await generateWorkItemsFromCharter(charter, WALKED as never);
+    const prompt = prompts.at(-1) ?? '';
+    if (shown) expect(prompt).toContain(PRIYA_ASK);
+    else {
+      expect(prompt).not.toContain(PRIYA_ASK);
+      expect(prompt).toContain(
+        '  - slug "revops-asks" (channel, displayed as "#revops-asks")\n      (no ask for this role is open here)',
+      );
+    }
+  });
+});
+
+describe('a read-and-answer item names the thread its asker asks in (W19-4, the v0.19.0 walk)', (): void => {
+  /** Pip's office: Hana's ask in #office-asks and the billing replies page. */
+  const PIPS_OFFICE = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+      },
+    ],
+    teamDocs: [{ slug: 'billing-replies', title: 'Customer billing replies', body: '# Replies' }],
+  };
+  /** Pip's docs item as the walk's row `A-Pip-docs-full.txt` shows it: Hana's, no thread. */
+  const HANAS_DOCS_ASK = {
+    ...drafted(
+      'read-and-answer',
+      'What does the billing doc say about duplicate charge replies',
+      'Hana asked: "Before I send anything to Northwind, can you read the billing doc and tell me exactly what our first reply to a duplicate charge should say?" Please read the customer billing replies doc and summarise the guidance.',
+    ),
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    contentRefs: ['docs-fixture/billing-replies'],
+    requesterLabel: 'Hana',
+  };
+  const PIP_ACTION = {
+    ...ACTION,
+    title: 'Log the Northwind support ask on the ticket queue',
+    contentSummary: 'Hana: "Please log the support ask."',
+    contentRefs: ['docs-fixture/billing-replies'],
+  };
+  const PIP_BEYOND = { ...BEYOND, contentSummary: 'Hana filed: "Check the support CRM export."' };
+  const PIP_OUT = PLAIN_OUT_OF_SCOPE;
+
+  it('gives Hana’s docs ask her thread, so the answer goes back where she asks', async (): Promise<void> => {
+    drafts.push([HANAS_DOCS_ASK, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const items = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(items.find((item) => item.externalId === 'docs-billing-replies')?.contentRefs).toEqual([
+      'docs-fixture/billing-replies',
+      'channel://office-asks#thread-double-charge',
+    ]);
+  });
+
+  it('gives no thread to an asker with no ask of the role’s, and keeps a thread the draft named', async (): Promise<void> => {
+    const nells = { ...HANAS_DOCS_ASK, requesterLabel: 'Kofi' };
+    const named = {
+      ...HANAS_DOCS_ASK,
+      externalId: 'docs-named',
+      contentRefs: ['channel://office-asks#thread-double-charge'],
+    };
+    drafts.push([nells, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const [first] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(first?.contentRefs).toEqual(['docs-fixture/billing-replies']);
+    drafts.push([named, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const [second] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(second?.contentRefs).toEqual(['channel://office-asks#thread-double-charge']);
+  });
+
+  it('reads the asker by the first word of a label such as "Hana (Support)" (the second pass)', async (): Promise<void> => {
+    drafts.push([
+      { ...HANAS_DOCS_ASK, requesterLabel: 'Hana (Support)' },
+      PIP_ACTION,
+      PIP_BEYOND,
+      PIP_OUT,
+    ]);
+    const [first] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(first?.contentRefs).toContain('channel://office-asks#thread-double-charge');
+  });
+
+  it('asks the generator to name the thread itself', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      'When the question was asked in a thread the snapshot shows, its contentRefs name that thread too ("channel://<slug>#<thread>"), so the answer goes back where it was asked.',
+    );
+  });
+});
+
+describe("the generator's words for the charter's clauses (W15-R16)", (): void => {
+  it('names the clauses in words, never by the charter’s field keys', (): void => {
+    expect(WORK_GEN_SYSTEM).not.toMatch(/willDo|willNotDo/);
+    expect(WORK_GEN_SYSTEM).toContain(
+      'one its will-do clauses leave out or its will-not-do clauses exclude',
+    );
   });
 });
