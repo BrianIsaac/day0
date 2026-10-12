@@ -453,6 +453,60 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
   });
 
+  it('reads the whole mirror when a redraft’s selection failed after an earlier draft’s was kept (W16-R11, probes P2 and P3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, {});
+    // The first draft was selected from the third page alone; the redraft's selection failed, so
+    // its planner read the whole mirror, both disputed pages among it.
+    const holidays = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('docBlocks').collect()).find((block) =>
+          block.pageRef.includes('holiday'),
+        ) ?? null,
+    );
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: {
+          workItemId,
+          site: 'plan',
+          blockIds: holidays === null ? [] : [holidays._id],
+          chars: 10,
+        },
+        createdAt: 2,
+      });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 3,
+      });
+      // The failure clears the kept list as it is recorded (`recordPlanSelection` with none).
+      await ctx.db.patch(workItemId, { selectedBlocks: [] });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
   it('asks beside a plan whose cite of the disputed passage carries no tag, the conflict confirmed after it was drafted (the second pass’s minor)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

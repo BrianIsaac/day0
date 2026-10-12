@@ -14,8 +14,7 @@ import {
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
-import { citeConflictOf, standingConflictsOn } from './docConflicts';
-import { eventsOfType } from './eventLog';
+import { citeConflictOf, planSelectionOf, standingConflictsOn } from './docConflicts';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
@@ -24,7 +23,6 @@ import {
   sourceAuthorityOf,
   type PageStatus,
 } from '../src/docs/authority';
-import { isEventOf } from '../src/events/contract';
 import type { CiteConflict } from '../src/work/types';
 import {
   DOCUMENTATION_SITES,
@@ -476,9 +474,6 @@ export const changedCitedBlocks = internalQuery({
   },
 });
 
-/** The most of an employee's selection records read to find one item's. */
-const SELECTIONS_READ = 64;
-
 /**
  * Keep the blocks an item's plan was selected from on the item, each with its hash then
  * (`workItems.selectedBlocks`; wave 16, 16-FD; W15-R17): a block rewritten in place keeps its id,
@@ -524,15 +519,11 @@ export const plannedFromBlocks = internalQuery({
     if (item?.selectedBlocks !== undefined && item.selectedBlocks.length > 0) {
       return item.selectedBlocks.map((block) => ({ id: block.id, hash: block.hash }));
     }
-    const recent = await eventsOfType(ctx, args.agentId, 'work.documentation-selected')
-      .order('desc')
-      .take(SELECTIONS_READ);
-    for (const event of recent) {
-      if (!isEventOf(event, 'work.documentation-selected')) continue;
-      if (event.payload.workItemId === args.workItemId && event.payload.site === 'plan') {
-        return event.payload.blockIds.map((id: string) => ({ id }));
-      }
-    }
-    return [];
+    // A redraft whose selection failed read the whole mirror: an earlier draft's record names
+    // nothing it was drafted from (W16-R11).
+    const selection = await planSelectionOf(ctx, { _id: args.workItemId, agentId: args.agentId });
+    return selection === undefined || selection === 'fell-back'
+      ? []
+      : selection.blockIds.map((id) => ({ id }));
   },
 });

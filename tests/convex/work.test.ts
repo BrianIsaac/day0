@@ -2868,6 +2868,55 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     });
   });
 
+  it('clears the kept selection of a plan Retry drafts again, so the redraft’s own stands (W16-R11)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'cancelled');
+    await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      const block = await ctx.db.insert('docBlocks', {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 0,
+        headingPath: ['Runbook'],
+        text: 'Read the ticket.',
+        searchText: 'Runbook\nRead the ticket.',
+        kind: 'text',
+        hash: 'first-draft',
+        chars: 16,
+      });
+      await ctx.db.patch(workItemId, {
+        skipReason: 'plan cancelled by the manager: not like this',
+        selectedBlocks: [{ id: block, hash: 'first-draft' }],
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const retried = await readItem(harness, workItemId);
+    expect(retried.plan).toBeUndefined();
+    expect(retried.selectedBlocks).toBeUndefined();
+  });
+
   it('never reads a note on a stop held for a documentation conflict as its answer (W16-R8)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

@@ -3250,9 +3250,10 @@ describe('the relations remeasure pass (16-K; RM19 (a), K-3)', (): void => {
     return sourceId;
   };
 
-  it('is registered at 0.20.0, last, the newest release any migration names', (): void => {
+  // Re-pinned at 0.20.0 (16-PT): the selection pass (W16-R11) follows it in the same release.
+  it('is registered at 0.20.0, the newest release any migration names', (): void => {
     expect(MIGRATIONS['docs-relations-remeasure'].release).toBe('0.20.0');
-    expect(MIGRATION_NAMES.at(-1)).toBe('docs-relations-remeasure');
+    expect(MIGRATION_NAMES).toContain('docs-relations-remeasure');
     expect(NEWEST_MIGRATION_RELEASE).toBe('0.20.0');
   });
 
@@ -3312,5 +3313,162 @@ describe('the relations remeasure pass (16-K; RM19 (a), K-3)', (): void => {
     expect(
       status.migrations.find((entry) => entry.name === 'docs-relations-remeasure'),
     ).toMatchObject({ read: 0, changed: 0, completedAt: expect.any(Number) });
+  });
+});
+
+describe('the kept selection pass (16-PT; W16-R11)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** A work item of an employee, as a v0.19.0 deployment held it. */
+  const item = async (
+    harness: Harness,
+    agentId: Id<'agents'>,
+    externalId: string,
+    fields: Partial<Doc<'workItems'>> = {},
+  ): Promise<Id<'workItems'>> =>
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId,
+          title: `Ticket ${externalId}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'plan-pending',
+          plan: { summary: 'Post the note.', steps: ['Post the note'] },
+          observedAt: 1,
+          createdAt: 1,
+          ...fields,
+        }),
+    );
+
+  /** A plan-site selection record of v0.19.0's shape: block ids only. */
+  const selected = async (
+    harness: Harness,
+    agentId: Id<'agents'>,
+    workItemId: Id<'workItems'>,
+    blockIds: readonly string[],
+  ): Promise<void> => {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: { workItemId, site: 'plan', blockIds: [...blockIds], chars: 100 },
+        createdAt: 2,
+      });
+    });
+  };
+
+  it('is registered at 0.20.0', (): void => {
+    expect(MIGRATIONS['work-selected-blocks'].release).toBe('0.20.0');
+    expect(MIGRATION_NAMES).toContain('work-selected-blocks');
+  });
+
+  it('keeps on each open cite-less plan the blocks its newest plan selection named, at their hashes now, however many selections followed; and it is safe to run twice', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const sourceId = await source(harness, 'owner');
+    await completedRun(harness, sourceId);
+    await storedPage(harness, {
+      sourceId,
+      ref: 'limits.md',
+      markdown: '# Limits\n\n## Comment length\n\nAt most 120 words.\n\n## Hand-off\n\nThree days.',
+    });
+    await harness.run(async (ctx) => {
+      const owner = await ctx.db.get(sourceId);
+      await replacePageBlocks(ctx, {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'limits.md',
+        generation: owner!.lastCompletedSyncId!,
+        markdown:
+          '# Limits\n\n## Comment length\n\nAt most 120 words.\n\n## Hand-off\n\nThree days.',
+      });
+    });
+    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
+    expect(blocks.length).toBeGreaterThan(1);
+    // The reader's probe P1: a cite-less plan drafted at 0.19.0, its record followed by 70 others.
+    const owed = await item(harness, agentId, 'REVOPS-2');
+    await selected(harness, agentId, owed, [blocks[0]._id]);
+    // A later redraft's record wins over the first draft's.
+    await selected(
+      harness,
+      agentId,
+      owed,
+      blocks.map((block) => block._id),
+    );
+    for (let index = 0; index < 70; index += 1) {
+      await selected(
+        harness,
+        agentId,
+        await item(harness, agentId, `OTHER-${index}`, { state: 'completed' }),
+        [blocks[0]._id],
+      );
+    }
+    const kept = await item(harness, agentId, 'REVOPS-3', {
+      selectedBlocks: [{ id: blocks[0]._id, hash: 'kept-at-drafting' }],
+    });
+    const cited = await item(harness, agentId, 'REVOPS-4', {
+      plan: {
+        summary: 'Post it.',
+        steps: ['Post it'],
+        cites: [{ step: 1, label: 'x', blocks: [] }],
+      },
+    });
+    const lost = await item(harness, agentId, 'REVOPS-5');
+    // A block rewritten in place after the selection: its hash now is what the check compares.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(blocks[0]._id, { hash: 'rewritten-in-place' });
+    });
+
+    await runAll(harness);
+
+    const read = async (id: Id<'workItems'>) =>
+      await harness.run(async (ctx) => (await ctx.db.get(id))?.selectedBlocks ?? 'absent');
+    expect(await read(owed)).toEqual(
+      blocks.map((block, index) => ({
+        id: block._id,
+        hash: index === 0 ? 'rewritten-in-place' : block.hash,
+      })),
+    );
+    expect(await read(kept)).toEqual([{ id: blocks[0]._id, hash: 'kept-at-drafting' }]);
+    expect(await read(cited)).toBe('absent');
+    // No record left to read: an empty list, which reads as none, so the pass never comes back.
+    expect(await read(lost)).toEqual([]);
+    const row = async () =>
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (entry) => entry.name === 'work-selected-blocks',
+      );
+    expect(await row()).toMatchObject({ release: '0.20.0', changed: 2 });
+    await harness.run(async (ctx) => {
+      const done = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'work-selected-blocks'))
+        .unique();
+      if (done !== null) await ctx.db.delete(done._id);
+    });
+    await runAll(harness);
+    expect(await row()).toMatchObject({ changed: 0 });
+  });
+
+  it('reads nothing in mock mode, where no selection is made', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    const owed = await item(harness, agentId, 'OFFICE-1');
+    await runAll(harness);
+    expect(
+      await harness.run(async (ctx) => (await ctx.db.get(owed))?.selectedBlocks ?? 'absent'),
+    ).toBe('absent');
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.find((entry) => entry.name === 'work-selected-blocks')).toMatchObject({
+      read: 0,
+      changed: 0,
+    });
   });
 });
