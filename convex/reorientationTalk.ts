@@ -26,7 +26,7 @@ import {
 import {
   TALK_NOTHING_SAID,
   decideTalkTurn,
-  talkQuotes,
+  managerQuotes,
   talkRefusal,
   type TalkOutcome,
 } from '../src/agent/reorientation-talk';
@@ -266,8 +266,8 @@ interface Ending {
 /**
  * End the talk in a proposal on the card, which never applies it: the outcome is read against
  * the card's candidates (`proposalOf`), its quotes kept only where they are the manager's own
- * words (`talkQuotes`), and the card's proposal replaced, the card back at `open`, with
- * `reorientation.proposed` by the discussion. A proposal written here stands against a judgement
+ * words (`managerQuotes`, the floor under the route's own guard), and the card's proposal
+ * replaced, the card back at `open`, with `reorientation.proposed` by the discussion. A proposal written here stands against a judgement
  * still in flight, whose write takes only a pending card (`reorientation.writeProposal`).
  *
  * @returns Null once it is written, or the refusal the room shows; nothing is written then.
@@ -304,7 +304,7 @@ async function endInProposal(ctx: MutationCtx, ending: Ending): Promise<string |
   await ctx.db.patch(talk._id, {
     turns: [...turns],
     state: 'finished',
-    outcome: { proposed, quotes: talkQuotes(outcome.quotes, turns) },
+    outcome: { proposed, quotes: managerQuotes(outcome.quotes, turns) },
     endedAt: now,
     replyDraft: undefined,
   });

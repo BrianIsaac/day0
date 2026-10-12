@@ -20,6 +20,7 @@ import { languageModel } from '@/lib/openai';
 import { streamCallOptions } from '@/lib/stream-settings';
 import { repliesIn, uiMessagesOf } from '@/agent/one-to-one-conversation';
 import { reorientationTalkBodyOf } from '@/agent/chat-turn-body';
+import { talkQuotes } from '@/agent/reorientation-talk-evidence';
 import {
   TALK_ANSWER_NOT_KEPT,
   keptTalkAnswer,
@@ -163,7 +164,7 @@ export async function POST(req: Request): Promise<Response> {
       conversation: taken.conversation,
       candidatesKey: taken.candidatesKey,
       after: last?.id ?? '',
-      outcome: { reply: outcome.reply, quotes: [...outcome.quotes] },
+      outcome: { reply: outcome.reply, quotes: talkQuotes(outcome.quotes, taken.turns) },
     });
     return ended.ended
       ? Response.json({ ended: true })
@@ -179,7 +180,16 @@ export async function POST(req: Request): Promise<Response> {
         answer: { answering: taken.answering, id: answer.id, text: answer.text },
         ...(answer.outcome === undefined
           ? {}
-          : { outcome: { reply: answer.outcome.reply, quotes: [...answer.outcome.quotes] } }),
+          : {
+              outcome: {
+                reply: answer.outcome.reply,
+                // The answer that offered the quotes is the employee's too.
+                quotes: talkQuotes(answer.outcome.quotes, [
+                  ...taken.turns,
+                  { id: answer.id, speaker: 'employee', text: answer.text, at: Date.now() },
+                ]),
+              },
+            }),
       });
       return kept.kept ? null : kept.refusal;
     } catch (err: unknown) {

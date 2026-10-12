@@ -11,7 +11,7 @@ import {
   TALK_ANSWER_NOT_KEPT,
   decideTalkTurn,
   keptTalkAnswer,
-  talkQuotes,
+  managerQuotes,
   talkRefusal,
   type KeepTalkAnswer,
   type TalkAnswer,
@@ -139,10 +139,10 @@ describe('a talk turn', (): void => {
   });
 });
 
-describe('the evidence a talk puts on the card', (): void => {
+describe('the evidence the store keeps: the manager’s own words only (managerQuotes)', (): void => {
   it('keeps the manager’s own words', (): void => {
     expect(
-      talkQuotes(
+      managerQuotes(
         ['send committee-deck drafts to Priya first, then to me', 'Everything else comes to me.'],
         TALK,
       ),
@@ -154,7 +154,7 @@ describe('the evidence a talk puts on the card', (): void => {
 
   it('never keeps an agent-quoted phrase', (): void => {
     expect(
-      talkQuotes(
+      managerQuotes(
         [
           'Priya now approves committee-deck numbers. Should tier-2 drafts about them go to her first?',
         ],
@@ -164,7 +164,7 @@ describe('the evidence a talk puts on the card', (): void => {
   });
 
   it('keeps nothing the manager did not say', (): void => {
-    expect(talkQuotes(['Priya owns every tier-2 draft from now on.'], TALK)).toEqual([]);
+    expect(managerQuotes(['Priya owns every tier-2 draft from now on.'], TALK)).toEqual([]);
   });
 
   it('keeps an employee’s phrase the manager said too, as the manager’s', (): void => {
@@ -173,17 +173,17 @@ describe('the evidence a talk puts on the card', (): void => {
       turn('e2', 'employee', 'Committee-deck drafts go to Priya first.'),
       turn('m2', 'manager', 'Right: committee-deck drafts go to Priya first.'),
     ];
-    expect(talkQuotes(['committee-deck drafts go to Priya first'], echoed)).toEqual([
+    expect(managerQuotes(['committee-deck drafts go to Priya first'], echoed)).toEqual([
       'committee-deck drafts go to Priya first',
     ]);
   });
 
   it('keeps each quote once, trimmed, and at most a few', (): void => {
     const many = Array.from({ length: QUOTES_LIMIT + 2 }, () => '  Everything else comes to me. ');
-    expect(talkQuotes([...many, 'Yes'], TALK)).toEqual(['Everything else comes to me.', 'Yes']);
+    expect(managerQuotes([...many, 'Yes'], TALK)).toEqual(['Everything else comes to me.', 'Yes']);
     const words = TALK[1].text.split(' ');
     const distinct = words.map((_, index) => words.slice(index).join(' '));
-    expect(talkQuotes(distinct, TALK)).toHaveLength(QUOTES_LIMIT);
+    expect(managerQuotes(distinct, TALK)).toHaveLength(QUOTES_LIMIT);
   });
 });
 

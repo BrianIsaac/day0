@@ -1,6 +1,5 @@
 import type { UIMessageChunk } from 'ai';
 import { z } from 'zod';
-import { withoutAgentQuotedEvidence, type Charter } from './charter';
 import {
   MOVED_ON_REFUSAL,
   REPLY_MAX_CHARS,
@@ -125,49 +124,22 @@ function runsIn(needle: readonly string[], haystack: readonly string[]): boolean
   return false;
 }
 
-/** A charter that carries nothing but the quotes, so the charter's own quote guard reads them. */
-function quoteCarrier(quotes: readonly string[]): Charter {
-  return {
-    version: '0.0',
-    source: 'reorientation-talk',
-    whyThisHire: '',
-    proposedFunction: '',
-    evidence: quotes.map((text) => ({ text, source: 'manager, reorientation talk' })),
-    shortTermGoals: { day30: '', day60: '', day90: '' },
-    proposedBoundaries: { willDo: [], willNotDo: [], escalationTriggers: [] },
-    namedCollaborators: [],
-    namedSystems: [],
-    priorityReading: [],
-    adjacentRoles: [],
-    approvalChain: { boss: '', confidence: 'low' },
-    openQuestions: [],
-    createdAt: '',
-  };
-}
-
 /**
- * The words a talk's proposal rests on: the quotes the employee offered, with the manager's turns
- * as the only evidence. Each is dropped by the charter's own guard when it quotes the employee
- * rather than the manager (`withoutAgentQuotedEvidence`, six words the employee said and the
- * manager never did), and kept only when the manager's own words run through it unbroken; an
- * employee's phrase the manager said too is the manager's. Trimmed, each kept once, at most
- * `QUOTES_LIMIT`.
+ * The words a talk's proposal rests on, with the manager's turns as the only evidence: a quote is
+ * kept only where the manager's own words run through it unbroken, so a phrase only the employee
+ * said never stands (an employee's phrase the manager said too is the manager's). Trimmed, each
+ * kept once, at most `QUOTES_LIMIT`. The store's floor (`convex/reorientationTalk.ts`), which a
+ * direct caller of its public mutations meets too; the route first passes the quotes through the
+ * charter's own guard (`talkQuotes`, `src/agent/reorientation-talk-evidence.ts`), which the
+ * Convex runtime cannot bundle.
  *
  * @param quotes - What the `reorientationComplete` call offered.
  * @param turns - The talk as it stands.
  */
-export function talkQuotes(quotes: readonly string[], turns: readonly OneToOneTurn[]): string[] {
-  const offered = [
-    ...new Set(quotes.map((quote) => quote.replace(/\s+/g, ' ').trim()).filter(Boolean)),
-  ].filter((quote) => quote.length <= REPLY_MAX_CHARS);
-  const manager = turns.filter((kept) => kept.speaker === 'manager').map((kept) => kept.text);
-  const employee = turns.filter((kept) => kept.speaker === 'employee').map((kept) => kept.text);
-  const guarded = withoutAgentQuotedEvidence(quoteCarrier(offered), {
-    agent: employee,
-    manager,
-  }).charter.evidence.map((item) => item.text);
-  const said = manager.map(wordsOf);
-  return guarded
+export function managerQuotes(quotes: readonly string[], turns: readonly OneToOneTurn[]): string[] {
+  const said = turns.filter((kept) => kept.speaker === 'manager').map((kept) => wordsOf(kept.text));
+  return [...new Set(quotes.map((quote) => quote.replace(/\s+/g, ' ').trim()).filter(Boolean))]
+    .filter((quote) => quote.length <= REPLY_MAX_CHARS)
     .filter((quote) => said.some((words) => runsIn(wordsOf(quote), words)))
     .slice(0, QUOTES_LIMIT);
 }
