@@ -323,6 +323,7 @@ export const checkForCharter = internalAction({
         await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
           agreementId: agreement._id,
           agentId: args.agentId,
+          tried: false,
         });
       }
       return;
@@ -385,6 +386,7 @@ export const checkForCharter = internalAction({
       await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
         agreementId,
         agentId: args.agentId,
+        tried: !paused,
       });
     }
   },

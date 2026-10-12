@@ -742,8 +742,18 @@ describe('keeping an agreement on a card', (): void => {
     expect(await read(first, 'LOG-1')).toEqual([agreementId]);
     expect(await read(hired, 'LOG-2')).toEqual([]);
     const events = await eventsOf(harness, 'agreement.refused');
+    // Re-pinned for W15-R37: the hold's refusal names the agreement for every employee, as its
+    // lift does, and the hold beside it, where it named the hold alone.
     expect(events.map((event) => [event.agentId, event.payload])).toEqual([
-      [hired, { agreementId: held?._id, everyEmployee: true, reason: 'unchecked-for-employee' }],
+      [
+        hired,
+        {
+          agreementId,
+          everyEmployee: true,
+          reason: 'unchecked-for-employee',
+          holdId: held?._id,
+        },
+      ],
     ]);
     const listed = await harness
       .withIdentity(OWNER)
@@ -1477,6 +1487,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await harness.mutation(internal.workingAgreements.holdForEmployee, {
       agreementId,
       agentId: hired,
+      tried: false,
     });
     for (let start = 0; start < 300; start += 100) {
       await harness.run(async (ctx) => {
@@ -1719,12 +1730,10 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(await plannerReads(harness, hired, 'LOG-9')).toEqual([]);
 
     // The pause ends with no resume of this employee's own (the deployment's jobs were paused):
-    // only the stalled-step sweep runs. A hold tried lately is left for the next sweep.
+    // only the stalled-step sweep runs. Re-pinned for W15-R37: no check tried the hold (the pause
+    // asked no model), so the first sweep checks it, where the hold carried the pause's time as
+    // its try and waited a stale window more; the sweep after it, inside the window, adds none.
     await harness.run(async (ctx) => await ctx.db.patch(hired, { pausedAt: undefined }));
-    await harness.mutation(internal.work.resumeStalledSteps, {});
-    await drain(harness);
-    expect(recorded.model).toEqual([]);
-    vi.setSystemTime(Date.now() + CHECK_STALE_MS + 1);
     await harness.mutation(internal.work.resumeStalledSteps, {});
     await harness.mutation(internal.work.resumeStalledSteps, {});
     await drain(harness);
@@ -1958,6 +1967,102 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
       [agreementId, 'active'],
     ]);
     expect(await plannerReads(harness, amended, 'LOG-9')).toEqual([agreementId]);
+  });
+
+  it("writes nothing for an employee let go while its check ran: no hold, no refusal for everyone, no event (W15-R37, reader 5's R5-B)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedEmployee(harness);
+    const ines = await seedEmployee(harness, { name: 'Ines' });
+    const agreementId = await everyEmployeeAgreement(harness);
+    await letGo(harness, ines);
+    await harness.mutation(internal.workingAgreements.holdForEmployee, {
+      agreementId,
+      agentId: ines,
+      tried: true,
+    });
+    await harness.mutation(internal.workingAgreements.settleCharterCheck, {
+      agreementId,
+      agentId: ines,
+      refusal: { reason: 'widens-scope' },
+    });
+    await harness.mutation(internal.workingAgreements.liftHold, { agreementId, agentId: ines });
+    expect((await agreementsOf(harness)).map((row) => [row._id, row.status])).toEqual([
+      [agreementId, 'active'],
+    ]);
+    expect(await harness.run(async (ctx) => await ctx.db.query('events').collect())).toEqual([]);
+  });
+
+  it('schedules one check of an employee’s holds a stale window, however many plans it stores (W15-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { last, hired } = await heldOffice(harness);
+    await letGo(harness, last);
+    recorded.refusalDown = true;
+    await planApplying(harness, hired, 'LOG-3', []);
+    await planApplying(harness, hired, 'LOG-4', []);
+    await planApplying(harness, hired, 'LOG-5', []);
+    const firstTries = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter(
+      (job) =>
+        job.name === 'workingAgreementActions:checkForCharter' &&
+        job.state.kind !== 'canceled' &&
+        (job.args[0] as { attempt: number }).attempt === 0,
+    );
+    // The first stored plan checks the hold, which no check had tried (the hire's charter came
+    // past the bound); the two after it, inside the stale window, add none.
+    expect(firstTries).toHaveLength(1);
+  }, 60_000);
+
+  it('names the agreement for every employee in the hold’s refusal, as its lift does, with the hold beside it (W15-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { last, hired, agreementId, holdId } = await heldOffice(harness);
+    await letGo(harness, last);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workingAgreements.recheck, { agreementId: holdId, agentId: hired });
+    await drain(harness);
+    const pair = [
+      ...(await eventsOf(harness, 'agreement.refused')),
+      ...(await eventsOf(harness, 'agreement.activated')),
+    ].filter((event) => event.agentId === hired);
+    expect(pair.map((event) => [event.type, event.payload])).toEqual([
+      [
+        'agreement.refused',
+        { agreementId, everyEmployee: true, reason: 'unchecked-for-employee', holdId },
+      ],
+      [
+        'agreement.activated',
+        { agreementId, everyEmployee: true, approvedVia: 'promotion-card', afterHold: true },
+      ],
+    ]);
+  }, 60_000);
+
+  it('answers Check now while the employee is paused with the check held for the pause, not as checking (W15-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { last, hired, holdId } = await heldOffice(harness);
+    await letGo(harness, last);
+    await harness.run(async (ctx) => await ctx.db.patch(hired, { pausedAt: 1 }));
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.workingAgreements.recheck, { agreementId: holdId, agentId: hired }),
+    ).toEqual({ ok: true, when: 'after-pause' });
+    await harness.run(async (ctx) => await ctx.db.patch(hired, { pausedAt: undefined }));
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.workingAgreements.recheck, { agreementId: holdId, agentId: hired }),
+    ).toEqual({ ok: true, when: 'now' });
+  }, 60_000);
+
+  it('gives a card each agreement’s scope, which a keep for one employee compares (W15-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await everyEmployeeAgreement(harness);
+    const listed = await harness
+      .withIdentity(OWNER)
+      .query(api.workingAgreements.listForAgent, { agentId });
+    expect(listed.map((row) => row.scope)).toEqual(['global']);
   });
 
   it('sets aside a hold whose agreement is in effect for nobody any more, and schedules no check for it (second pass)', async (): Promise<void> => {

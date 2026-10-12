@@ -12,6 +12,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
 import { appendEvent } from './eventLog';
 import { confirmedPersonOf, itemPersonIds } from './itemPeople';
+import { cronsPauseReason } from '../src/lib/crons-pause';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { surfaceSlug } from '../src/surfaces/slug';
@@ -26,7 +27,9 @@ import {
   awaitingManager,
   HOLD_PAST_THE_CHECK,
   type AgreementView,
+  type RecheckOutcome,
 } from '../src/work/agreement-words';
+import { stepHoldReason } from '../src/work/pause';
 import type { ExecutionPlan } from '../src/work/types';
 import {
   AGREEMENT_KEEP_REFUSAL_REASONS,
@@ -610,19 +613,17 @@ export async function scheduleProposalsAfterPlan(
 /**
  * Schedule the check that lifts an employee's holds (W14-R15's lift): each agreement for every
  * employee held for it is checked against its charter once the owner has no more employees than
- * the check reads. Nothing for an employee with no hold, or while the owner is past the bound (no
- * model is asked). Called where the employee's plan is stored; a charter's approval and a resume
- * check every agreement for every employee anyway (`scheduleCharterCheck`). Real mode only.
+ * the check reads. Nothing for an employee with no hold, while the owner is past the bound (no
+ * model is asked), or for a hold tried within `CHECK_STALE_MS`, whose check and retries are still
+ * under way: every stored plan scheduled a four-attempt check of its own (W15-R37). Called where
+ * the employee's plan is stored; a charter's approval and a resume check every agreement for
+ * every employee anyway (`scheduleCharterCheck`). Real mode only.
  *
  * @param ctx - Mutation context.
  * @param agentId - The employee.
  */
 async function scheduleHoldChecks(ctx: MutationCtx, agentId: Id<'agents'>): Promise<void> {
-  if (SURFACE_MODE !== 'real') return;
-  const agent = await ctx.db.get(agentId);
-  const userId = agent ? employeeOwnerScope(agent) : undefined;
-  if (userId === undefined) return;
-  await scheduleCheckOfHolds(ctx, agentId, await holdsOf(ctx, userId, agentId), Date.now());
+  await scheduleDueHoldChecks(ctx, agentId, Date.now());
 }
 
 /**
@@ -658,11 +659,13 @@ async function scheduleCheckOfHolds(
 }
 
 /**
- * For the stalled-step sweep (`workLoop.resumeAgentStepsInTransaction`): schedule the check of an
- * employee's holds not tried within `CHECK_STALE_MS`, so a hold written while the work was paused
- * is lifted after the pause ends, whether or not the employee itself was resumed (the pause of a
- * whole deployment resumes none by name: 14-FX's recorded gap). One check a stale window, however
- * often the sweep runs. Real mode only.
+ * For the stalled-step sweep (`workLoop.resumeAgentStepsInTransaction`) and a stored plan: schedule
+ * the check of an employee's holds not tried within `CHECK_STALE_MS`, so a hold written while the
+ * work was paused is lifted after the pause ends, whether or not the employee itself was resumed
+ * (the pause of a whole deployment resumes none by name: 14-FX's recorded gap). A hold no check
+ * has tried (written past the bound or under a pause, `judgedAt` 0) is due at once, so the sweep
+ * lifts it within one turn of the owner coming back to the bound. One check a stale window,
+ * however often the sweep runs or plans are stored. Real mode only.
  *
  * @param ctx - The sweep's mutation context.
  * @param agentId - The employee.
@@ -1023,8 +1026,8 @@ export const charterCheckInputs = internalQuery({
  * Internal: refuse an active agreement for every employee that a newly approved charter's check
  * refused (13-W's gap), on its row, with the clause or the reason: it stops binding every employee
  * from now, as a keep refused against that charter would never have started. Nothing for a row no
- * longer active or no longer for every employee. Writes `agreement.refused` on the employee whose
- * charter was approved.
+ * longer active or no longer for every employee, or for an employee the owner no longer has.
+ * Writes `agreement.refused` on the employee whose charter was approved.
  */
 export const settleCharterCheck = internalMutation({
   args: {
@@ -1035,6 +1038,8 @@ export const settleCharterCheck = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.agreementId);
     if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    // A charter of an employee let go while its check ran ends nothing for the others (W15-R37).
+    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
     const now = Date.now();
     await ctx.db.patch(row._id, {
       status: 'refused',
@@ -1054,6 +1059,21 @@ export const settleCharterCheck = internalMutation({
   },
 });
 
+/**
+ * Whether an employee is still one of the agreement's owner's (W15-R37): a check scheduled before
+ * the employee was let go, or handed to another owner, writes nothing for it, where it left a hold
+ * row and two `agreement.refused` events for a deleted employee, and its charter's verdict ended
+ * the agreement for every other employee.
+ */
+async function stillTheOwners(
+  ctx: Pick<QueryCtx, 'db'>,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<boolean> {
+  const agent = await ctx.db.get(agentId);
+  return agent !== null && employeeOwnerScope(agent) === agreement.userId;
+}
+
 /** One employee's hold of one agreement for every employee, if it stands. */
 async function holdOf(
   ctx: Pick<QueryCtx, 'db'>,
@@ -1072,14 +1092,21 @@ async function holdOf(
  * where it left the agreement binding unchecked). The agreement stays in effect for every other
  * employee, and this employee's own refused row, which names it, takes it out of what this
  * employee's planner and runs read, until a check that can be had lifts it (`liftHold`). Nothing
- * for a row no longer active or no longer for every employee, or one already held for the
- * employee. Writes `agreement.refused` on the employee.
+ * for a row no longer active or no longer for every employee, one already held for the employee,
+ * or an employee the owner no longer has. Writes `agreement.refused` on the employee, naming the
+ * agreement and the hold.
  */
 export const holdForEmployee = internalMutation({
-  args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
+  args: {
+    agreementId: v.id('workingAgreements'),
+    agentId: v.id('agents'),
+    /** Whether a check was tried: false past the bound or under a pause, where no model was asked. */
+    tried: v.boolean(),
+  },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.agreementId);
     if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
     if ((await heldForEmployee(ctx, row.userId, args.agentId)).has(row._id)) return null;
     const now = Date.now();
     const reason = 'unchecked-for-employee';
@@ -1093,15 +1120,19 @@ export const holdForEmployee = internalMutation({
       ...(row.personId !== undefined ? { personId: row.personId } : {}),
       sourceType: row.sourceType,
       status: 'refused',
-      refusal: { reason, judgedAt: now },
+      // When a check last tried it: 0 for one no check has tried, which the sweep and the next
+      // stored plan check at once (`scheduleDueHoldChecks`).
+      refusal: { reason, judgedAt: args.tried ? now : 0 },
       supersedes: row._id,
       createdAt: now,
       appliedTo: [],
     });
+    // Named by the agreement for every employee, as the lift's `agreement.activated` is, so the
+    // two pair; the hold's own row beside it (W15-R37).
     await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'agreement.refused',
-      payload: { agreementId: heldId, everyEmployee: true, reason },
+      payload: { agreementId: row._id, everyEmployee: true, reason, holdId: heldId },
       createdAt: now,
     });
     return null;
@@ -1119,6 +1150,7 @@ export const liftHold = internalMutation({
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.agreementId);
     if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
     const hold = await holdOf(ctx, row, args.agentId);
     if (hold === undefined) return null;
     const now = Date.now();
@@ -1343,6 +1375,9 @@ function cardViewOf(row: Doc<'workingAgreements'>, checkable = false): Agreement
     _id: row._id,
     ...(row.agentId !== undefined ? { agentId: row.agentId } : {}),
     statement: row.statement,
+    scope: row.scope,
+    ...(row.scopeRef !== undefined ? { scopeRef: row.scopeRef } : {}),
+    ...(row.personId !== undefined ? { personId: row.personId } : {}),
     status: row.status,
     sourceType: row.sourceType,
     ...(row.correctionIds !== undefined ? { correctionIds: row.correctionIds } : {}),
@@ -1650,12 +1685,16 @@ export const dismiss = mutation({
  * whose card says so once it is stale; or check an agreement for every employee held for the
  * card's employee against its charter (W14-R15's lift), refused while the owner has more employees
  * than the check reads. Public, guarded by `assertOwnsAgreement` first and the card's employee
- * after; refused for one neither waiting on its check nor a hold. Schedules the check.
+ * after; refused for one neither waiting on its check nor a hold. Schedules the check, and says
+ * whether it runs now or once a pause of the employee's work ends.
  */
 export const recheck = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<{ ok: true }> => {
-    const { agreement } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+  handler: async (ctx, args): Promise<RecheckOutcome> => {
+    const { agreement, agent } = await ownedOnCard(ctx, args.agreementId, args.agentId);
+    // A pause holds the check it schedules (W13-R45): the card says so rather than "checking"
+    // (W15-R37).
+    const when = stepHoldReason(agent, cronsPauseReason()) === undefined ? 'now' : 'after-pause';
     const hold =
       agreement.status === 'refused' && agreement.refusal?.reason === 'unchecked-for-employee';
     if (hold && agreement.supersedes !== undefined) {
@@ -1665,11 +1704,11 @@ export const recheck = mutation({
         attempt: 0,
         agreementIds: [agreement.supersedes],
       });
-      return { ok: true };
+      return { ok: true, when };
     }
     if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
     await scheduleCheck(ctx, agreement._id, args.agentId);
-    return { ok: true };
+    return { ok: true, when };
   },
 });
 

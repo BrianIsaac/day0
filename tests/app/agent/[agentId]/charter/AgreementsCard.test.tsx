@@ -22,6 +22,7 @@ const own: AgreementView = {
   _id: 'wa1' as Id<'workingAgreements'>,
   agentId: 'a1' as Id<'agents'>,
   statement: 'Name the carrier and the new date in every delay notice.',
+  scope: 'global',
   status: 'active',
   sourceType: 'correction-promotion',
   correctionIds: ['c1' as Id<'corrections'>, 'c2' as Id<'corrections'>],
@@ -72,7 +73,11 @@ afterEach((): void => {
   document.body.replaceChildren();
 });
 
-function card(rows: readonly AgreementView[], calls: string[] = []): ReturnType<typeof mount> {
+function card(
+  rows: readonly AgreementView[],
+  calls: string[] = [],
+  when: 'now' | 'after-pause' = 'now',
+): ReturnType<typeof mount> {
   return mount(
     <AgentZoneContext.Provider value="UTC">
       <AgreementsCard
@@ -96,6 +101,7 @@ function card(rows: readonly AgreementView[], calls: string[] = []): ReturnType<
         }}
         onRecheck={async (id) => {
           calls.push(`recheck ${id}`);
+          return { ok: true, when } as const;
         }}
       />
     </AgentZoneContext.Provider>,
@@ -222,8 +228,9 @@ describe('the Agreements card', (): void => {
     };
     const calls: string[] = [];
     const view = card([held], calls);
+    // Re-pinned for W15-R37: the sweep checks a hold within half an hour, which the line omitted.
     expect(view.container.textContent).toContain(
-      "Not in effect for Priya yet: Day0 has not checked it against Priya's charter. It checks when Priya next drafts a plan, or now with Check now. It stays in effect for your other employees.",
+      "Not in effect for Priya yet: Day0 has not checked it against Priya's charter. It checks within half an hour, or now with Check now. It stays in effect for your other employees.",
     );
     await press(
       view.container,
@@ -260,6 +267,45 @@ describe('the Agreements card', (): void => {
     expect(kept.container.querySelector('[aria-label^="Keep for Priya"]')).toBeNull();
     expect(kept.container.querySelector('[aria-label^="Dismiss the refused"]')).not.toBeNull();
     kept.unmount();
+  });
+
+  it('says a Check now a pause holds is held until the work resumes, not under way (W15-R37)', async (): Promise<void> => {
+    const held: AgreementView = {
+      ...refused,
+      _id: 'wa6' as Id<'workingAgreements'>,
+      statement: 'Name the vessel in every customer comment.',
+      sourceType: 'correction-promotion',
+      refusal: { reason: 'unchecked-for-employee', checkable: true },
+    };
+    const view = card([held], [], 'after-pause');
+    await press(
+      view.container,
+      "Check “Name the vessel in every customer comment.” against Priya's charter now",
+    );
+    expect(said(view.container)).toEqual([
+      "Day0 checks it against Priya's charter once Priya's work resumes.",
+    ]);
+    view.unmount();
+  });
+
+  it('offers the keep for this employee when its own agreement in the same words is for other work (W15-R37)', (): void => {
+    const tooMany: AgreementView = {
+      ...refused,
+      _id: 'wa7' as Id<'workingAgreements'>,
+      agentId: undefined,
+      statement: 'Quote the carrier reference.',
+      refusal: { reason: 'every-employee-too-many' },
+    };
+    const linearOnly: AgreementView = {
+      ...own,
+      _id: 'wa8' as Id<'workingAgreements'>,
+      statement: 'Quote the carrier reference.',
+      scope: 'surface',
+      scopeRef: 'linear',
+    };
+    const view = card([tooMany, linearOnly]);
+    expect(view.container.querySelector('[aria-label^="Keep for Priya"]')).not.toBeNull();
+    view.unmount();
   });
 
   it('says a check that could not be had once it is stale, and offers Try again (W13-R30)', async (): Promise<void> => {

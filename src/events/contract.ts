@@ -1463,6 +1463,12 @@ export interface AgreementRefusedPayload extends AgreementNamed {
   readonly reason: AgreementRowRefusalReason;
   /** The `willNotDo` clause it contradicts, word for word. */
   readonly clause?: string;
+  /**
+   * A hold (`unchecked-for-employee`): the employee's own refused row that holds the agreement
+   * named, which the lift's `agreement.activated` names too (W15-R37). A hold written before
+   * v0.20.0 named its own row as `agreementId` and carries no `holdId`.
+   */
+  readonly holdId?: Id<'workingAgreements'>;
 }
 
 /** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
