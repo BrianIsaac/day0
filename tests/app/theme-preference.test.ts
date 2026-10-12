@@ -187,6 +187,35 @@ describe('the head theme script (the preference applied before first paint)', ()
     expect(chrome()).toEqual([THEME_COLOURS.light]);
   });
 
+  it('draws a stored choice in a browser with no matchMedia, Follow system as dark', (): void => {
+    vi.stubGlobal('matchMedia', undefined);
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    expect(runThemeScript()).toBe('light');
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'system');
+    expect(runThemeScript()).toBe('dark');
+  });
+
+  it('follows the system through the older listener where the query has no addEventListener, and still takes the card’s choice', (): void => {
+    const listeners = new Set<() => void>();
+    let light = false;
+    // Safari before 14: a MediaQueryList with addListener only.
+    vi.stubGlobal('matchMedia', () => ({
+      get matches(): boolean {
+        return light;
+      },
+      addListener: (listener: () => void): void => {
+        listeners.add(listener);
+      },
+    }));
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'system');
+    expect(runThemeScript()).toBe('dark');
+    light = true;
+    for (const listener of listeners) listener();
+    expect(theme()).toBe('light');
+    storeThemePreference('dark');
+    expect(theme()).toBe('dark');
+  });
+
   it('draws dark when the browser refuses storage, and never throws', (): void => {
     systemScheme(true);
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {

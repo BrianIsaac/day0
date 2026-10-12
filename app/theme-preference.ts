@@ -98,7 +98,10 @@ export const THEME_HINT_SCRIPT = `(function () {
   const preferences = ${JSON.stringify(THEME_PREFERENCES)};
   const colours = ${JSON.stringify(THEME_COLOURS)};
   const key = ${JSON.stringify(THEME_STORAGE_KEY)};
-  const system = window.matchMedia(${JSON.stringify(SYSTEM_LIGHT_QUERY)});
+  const system =
+    typeof window.matchMedia === 'function'
+      ? window.matchMedia(${JSON.stringify(SYSTEM_LIGHT_QUERY)})
+      : null;
   let announced = null;
   function stored() {
     if (announced !== null) return announced;
@@ -111,7 +114,8 @@ export const THEME_HINT_SCRIPT = `(function () {
   function apply() {
     const value = stored();
     const preference = preferences.indexOf(value) >= 0 ? value : 'dark';
-    const theme = preference === 'system' ? (system.matches ? 'light' : 'dark') : preference;
+    const systemLight = system !== null && system.matches;
+    const theme = preference === 'system' ? (systemLight ? 'light' : 'dark') : preference;
     document.documentElement.setAttribute(${JSON.stringify(THEME_ATTRIBUTE)}, theme);
     let metas = document.querySelectorAll('meta[name="theme-color"]');
     if (metas.length === 0) {
@@ -131,7 +135,6 @@ export const THEME_HINT_SCRIPT = `(function () {
     attributes: true,
     attributeFilter: [${JSON.stringify(THEME_ATTRIBUTE)}],
   });
-  system.addEventListener('change', apply);
   window.addEventListener(${JSON.stringify(THEME_CHANGE_EVENT)}, function (event) {
     announced = event.detail;
     apply();
@@ -141,4 +144,11 @@ export const THEME_HINT_SCRIPT = `(function () {
     announced = null;
     apply();
   });
+  // Last, so a browser whose query lacks both listeners still takes every choice above; Safari
+  // before 14 has only the older addListener.
+  if (system !== null && typeof system.addEventListener === 'function') {
+    system.addEventListener('change', apply);
+  } else if (system !== null && typeof system.addListener === 'function') {
+    system.addListener(apply);
+  }
 })();`;
