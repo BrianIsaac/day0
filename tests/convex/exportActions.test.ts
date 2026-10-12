@@ -397,8 +397,8 @@ describe('the owner export (wave 16, 16-F)', (): void => {
 
     expect(JSON.stringify(file)).not.toContain(a.pageText);
     const [first] = file.owner.docPages;
+    // Re-pinned by W16-R18: a page's ref and address leave the file; its row id names it.
     expect(first).toMatchObject({
-      ref: 'refunds.md',
       title: 'Alpha refunds page',
       status: 'superseded',
       statusSource: 'manager',
@@ -413,6 +413,68 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     expect(file.owner.docRelations[0]).toMatchObject({ decidedAt: 4 });
     expect(file.owner.docSources[0]).not.toHaveProperty('locator');
     expect(file.owner.docSources[0]).toMatchObject({ label: 'Alpha handbook', kind: 'folder' });
+  });
+
+  it('leaves out every page’s address and ref, naming pages and relation ends by the page’s row (W16-R18)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness, 'owner-a', 'Alpha');
+    // Reader 5's red.ts: for a list of URLs the ref is the address itself, query string and all.
+    const token = 'sig=AbCdEf0123456789xyz&e=Q9vG2k';
+    const address = `https://docs.example.com/guide?${token}`;
+    await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner-a',
+        label: 'Guides',
+        kind: 'urls',
+        locator: address,
+        status: 'synced',
+        createdAt: 2,
+        updatedAt: 2,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: address,
+        url: address,
+        title: 'Guide',
+        markdown: 'Text.',
+        updatedAt: 1,
+        status: 'superseded',
+        supersededBy: { sourceId, ref: `${address}&v=2` },
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: `${address}&v=2`,
+        url: `${address}&v=2`,
+        title: 'Guide, version 2',
+        markdown: 'Text.',
+        updatedAt: 2,
+      });
+      await ctx.db.insert('docRelations', {
+        userId: 'owner-a',
+        from: { sourceId, ref: `${address}&v=2` },
+        to: { sourceId, ref: address },
+        kind: 'possible_successor',
+        evidence: [{ measure: 'title-version', value: 1 }],
+        status: 'confirmed',
+        createdAt: 3,
+      });
+    });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+
+    expect(JSON.stringify(file)).not.toContain('sig=AbCdEf0123456789xyz');
+    for (const page of file.owner.docPages) {
+      expect(page).not.toHaveProperty('ref');
+      expect(page).not.toHaveProperty('url');
+    }
+    const guide = file.owner.docPages.find((page) => page.title === 'Guide')!;
+    const second = file.owner.docPages.find((page) => page.title === 'Guide, version 2')!;
+    expect(guide.supersededBy).toEqual({ sourceId: guide.sourceId, page: second._id });
+    const successor = file.owner.docRelations.find(
+      (relation) => relation.kind === 'possible_successor',
+    )!;
+    expect(successor.from).toEqual({ sourceId: second.sourceId, page: second._id });
+    expect(successor.to).toEqual({ sourceId: guide.sourceId, page: guide._id });
   });
 
   it('carries the people graph once, among the owner’s rows, and fills it back into each trace', async (): Promise<void> => {

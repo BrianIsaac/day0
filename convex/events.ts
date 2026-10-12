@@ -23,6 +23,8 @@ import {
   TRACE_VERSION,
   type OwnerDeparture,
   type OwnerDocPage,
+  type OwnerDocRelation,
+  type OwnerPageRef,
   type OwnerDocSource,
   type OwnerExportHead,
   type OwnerPage,
@@ -794,15 +796,61 @@ function withoutKeys<Row extends object>(row: Row, keys: ReadonlySet<string>): P
 /** The field of a relation the owner export never carries: the address of who decided it. */
 const RELATION_FIELDS_LEFT_OUT = new Set(['decidedBy']);
 
-/** The fields of a stored page the owner export never carries: its text and what is read off it. */
-const PAGE_FIELDS_LEFT_OUT = new Set(['markdown', 'contentHash', 'marker', 'decidedBy']);
+/**
+ * The fields of a stored page the owner export never carries: its text and what is read off it,
+ * and its locators, the ref and the address (W16-R18), which for a list of URLs is the address
+ * with any query-string credential; the page that superseded it is named by its row instead.
+ */
+const PAGE_FIELDS_LEFT_OUT = new Set([
+  'markdown',
+  'contentHash',
+  'marker',
+  'decidedBy',
+  'ref',
+  'url',
+  'supersededBy',
+]);
 
-/** One stored page without its text, its keyed hash, a marker's words or who decided it. */
-function pageWithoutText(page: Doc<'docPages'>): OwnerDocPage {
+/** A page named by its source and ref, as the file names it: by its stored row (W16-R18). */
+async function ownerPageRef(
+  ctx: QueryCtx,
+  named: { readonly sourceId: Id<'docSources'>; readonly ref: string },
+): Promise<OwnerPageRef> {
+  const page = await ctx.db
+    .query('docPages')
+    .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
+    .first();
+  return { sourceId: named.sourceId, ...(page !== null ? { page: page._id } : {}) };
+}
+
+/** One stored page without its text, its keyed hash, a marker's words, who decided it or its ref. */
+async function pageWithoutText(ctx: QueryCtx, page: Doc<'docPages'>): Promise<OwnerDocPage> {
   const kept = withoutKeys(page, PAGE_FIELDS_LEFT_OUT) as OwnerDocPage;
-  return page.marker === undefined
-    ? kept
-    : { ...kept, marker: { status: page.marker.status, judgedAt: page.marker.judgedAt } };
+  return {
+    ...kept,
+    ...(page.marker !== undefined
+      ? { marker: { status: page.marker.status, judgedAt: page.marker.judgedAt } }
+      : {}),
+    ...(page.supersededBy !== undefined
+      ? { supersededBy: await ownerPageRef(ctx, page.supersededBy) }
+      : {}),
+  };
+}
+
+/** One relation without who decided it, its ends named by their pages' rows (W16-R18). */
+async function relationWithoutRefs(
+  ctx: QueryCtx,
+  relation: Doc<'docRelations'>,
+): Promise<OwnerDocRelation> {
+  const kept = withoutKeys(relation, RELATION_FIELDS_LEFT_OUT) as Omit<
+    Doc<'docRelations'>,
+    'decidedBy'
+  >;
+  return {
+    ...kept,
+    from: await ownerPageRef(ctx, relation.from),
+    to: await ownerPageRef(ctx, relation.to),
+  };
 }
 
 /** The owner's first source linked after a moment, in the order the owner linked them. */
@@ -856,7 +904,7 @@ async function ownerPagesPage(
           cursor: following === source ? page.continueCursor : null,
         };
   return {
-    rows: page.page.map(pageWithoutText),
+    rows: await Promise.all(page.page.map(async (row) => await pageWithoutText(ctx, row))),
     next: next === null ? null : JSON.stringify(next),
   };
 }
@@ -932,14 +980,18 @@ const OWNER_SECTION_PAGES: Readonly<
     ),
   docPages: async (ctx, ownerKey, options) => await ownerPagesPage(ctx, ownerKey, options.cursor),
   // Who decided a relation is the manager's address, left out as a page's is.
-  docRelations: async (ctx, ownerKey, options) =>
-    asOwnerPage(
-      await ctx.db
-        .query('docRelations')
-        .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
-        .paginate(options),
-      (relation) => [withoutKeys(relation, RELATION_FIELDS_LEFT_OUT)],
-    ),
+  docRelations: async (ctx, ownerKey, options) => {
+    const page = await ctx.db
+      .query('docRelations')
+      .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
+      .paginate(options);
+    return {
+      rows: await Promise.all(
+        page.page.map(async (relation) => await relationWithoutRefs(ctx, relation)),
+      ),
+      next: page.isDone ? null : page.continueCursor,
+    };
+  },
   skillVersions: async (ctx, ownerKey, options) =>
     asOwnerPage(
       await ctx.db
