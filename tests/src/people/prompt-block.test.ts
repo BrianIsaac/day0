@@ -531,6 +531,8 @@ describe("the People block's remaining shapes (W15-R38, reader 5's p2 tokens)", 
       'batch 1234567812345678 run',
       'amounts 1000 2000 3000',
       'scope a::b',
+      // Round amounts after a small number are figures, not a number with its country code.
+      'Budget 100 2000 3000',
     ]) {
       expect(withoutIdentities(words), words).toBe(words);
     }

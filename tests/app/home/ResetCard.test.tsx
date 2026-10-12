@@ -74,6 +74,9 @@ describe('ResetCard', (): void => {
     const view = mount(<ResetCard mode="mock" />);
     expect(view.container.textContent).not.toContain('Also unlink');
     expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
+    // Nor while the mode is still being read, so the hosted office never shows it for a moment.
+    const loading = mount(<ResetCard mode="loading" />);
+    expect(loading.container.querySelector('input[type="checkbox"]')).toBeNull();
     const local = mount(<ResetCard mode="real" />);
     expect(local.container.textContent).toContain('Also unlink your documentation sources');
     // Nor does the line above it point at a box the card does not draw.

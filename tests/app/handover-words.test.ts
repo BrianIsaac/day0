@@ -20,6 +20,7 @@ import {
   runsInFlightLine,
   takeOnLead,
   takesOnLines,
+  accessWords,
   zonedStamp,
 } from '../../app/handover-words';
 import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../src/agent/manager-transfer';
@@ -353,6 +354,12 @@ describe('the acceptance dialog (plan 7.3)', () => {
       'its access: messages to you; reading the docs, Slack, social mentions and the spreadsheet; reading and writing tickets',
     );
     expect(lines.join(' ')).not.toMatch(/\b\w+:(?:read|write|message)\b/);
+  });
+
+  it('names a verb it has no word for in its own -ing form (the second pass)', () => {
+    expect(accessWords(['slack:read', 'slack:post', 'notion:comment'])).toBe(
+      'reading and posting on Slack; commenting on Notion',
+    );
   });
 
   it('lists what does not come with the employee', () => {

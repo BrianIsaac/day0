@@ -734,7 +734,7 @@ describe('the compose file is pinned to digests', (): void => {
     // left one) was trusted by its name here, where the setup compares layers; the bed has no such
     // comparison, so it says what it cannot tell and stops.
     expect(builtImagesRefusal(images, present, () => undefined)).toBe(
-      'the bed cannot start: unlabelled: backend (day0-convex-backend:git carries no base label, so this checkout cannot tell which base it was built from); build it with `pnpm backend:build`',
+      'the bed cannot start: unlabelled: backend (day0-convex-backend:git carries no base label Docker could read, so this checkout cannot tell which base it was built from); build it with `pnpm backend:build`',
     );
     expect(imagesPreflightItem(images, present, () => undefined)).toMatchObject({
       status: 'gap',

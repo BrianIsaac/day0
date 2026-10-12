@@ -193,7 +193,7 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
  * focused first; what the deletion came to is said on the card and focus comes back to the
  * button, or to the card once nothing is left for the button to take.
  */
-export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
+export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' | 'loading' } = {}) {
   const stored = useQuery(api.reset.holdings);
   // The hosted office draws no unlink choice, so nothing the card says points at one (RM26 (a)).
   const holdings =
@@ -219,14 +219,16 @@ export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
     <Card title="Your data" tone="danger" focusRef={card}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm text-[var(--color-muted)]">{whatItDeletes(mode)}</p>
+          <p className="text-sm text-[var(--color-muted)]">
+            {whatItDeletes(mode === 'loading' ? undefined : mode)}
+          </p>
           <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
             {holdings
               ? heldNow(holdings, alsoUnlinkDocumentation)
               : 'Checking what is stored for you…'}
           </p>
           {/* The hosted office links no documentation and stores no credential (RM26 (a)). */}
-          {mode === 'mock' ? null : (
+          {mode === 'mock' || mode === 'loading' ? null : (
             <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
               <input
                 type="checkbox"

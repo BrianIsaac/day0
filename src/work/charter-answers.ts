@@ -1,7 +1,10 @@
 import type { Charter } from '../agent/charter';
 
 /** A sentence's closing mark, in either script: a full stop, a question or exclamation mark, a colon. */
-const CLOSED = /[.?!:\u3002\uff1f\uff01\uff1a]$/u;
+const CLOSED = /[.?!:\u2026\u3002\uff1f\uff01\uff1a]$/u;
+
+/** What may follow a sentence's mark: a closing bracket or quote. */
+const CLOSERS = /[)\]"'\u2019\u201d]+$/u;
 
 /**
  * A question the manager answered, closed by a question mark where it was left unpunctuated, so
@@ -9,7 +12,7 @@ const CLOSED = /[.?!:\u3002\uff1f\uff01\uff1a]$/u;
  */
 export function askedQuestion(question: string): string {
   const trimmed = question.trim();
-  return trimmed === '' || CLOSED.test(trimmed) ? trimmed : `${trimmed}?`;
+  return trimmed === '' || CLOSED.test(trimmed.replace(CLOSERS, '')) ? trimmed : `${trimmed}?`;
 }
 
 /**

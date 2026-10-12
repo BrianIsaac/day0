@@ -173,7 +173,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           data-cards={arriving ? '' : undefined}
           className="min-w-0 xl:col-start-1 xl:row-start-2"
         >
-          <ResetCard mode={surfaceMode?.mode} />
+          <ResetCard mode={surfaceMode === undefined ? 'loading' : surfaceMode.mode} />
         </div>
       </div>
     </div>

@@ -131,7 +131,9 @@ function formPairs(text: string): string[] | undefined {
   if (!pairs.every((pair) => FORM_PAIR.test(pair))) return undefined;
   if (pairs.length > 1) return pairs;
   // A lone pair is a form only with a value of one word: "Status=Done today" is a sentence that
-  // holds an equals sign (W15-R39), where "text=hello world" beside "channel=C1" is a field.
+  // holds an equals sign (W15-R39), where "text=hello world" beside "channel=C1" is a field. The
+  // cost, taken knowingly: a one-field form of words ("text=Deploy finished", its channel in the
+  // query) goes as text, and Slack refuses it; an action writes the channel in the body.
   const lone = pairs[0] ?? '';
   return lone.endsWith('=') || /\s/.test(lone) ? undefined : pairs;
 }

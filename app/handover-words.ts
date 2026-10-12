@@ -465,7 +465,9 @@ export function accessWords(scopes: readonly string[]): string {
   }
   const groups = new Map<string, string[]>();
   for (const [system, verbs] of verbsBySystem) {
-    const doing = listed(verbs.map((verb) => SCOPE_VERB_WORDS[verb] ?? `${verb} on`));
+    // A verb with no word of its own reads in its -ing form, and its system after "on".
+    const known = verbs.every((verb) => SCOPE_VERB_WORDS[verb] !== undefined);
+    const doing = `${listed(verbs.map((verb) => SCOPE_VERB_WORDS[verb] ?? `${verb.replace(/e$/, '')}ing`))}${known ? '' : ' on'}`;
     groups.set(doing, [...(groups.get(doing) ?? []), scopeSystemWords(system)]);
   }
   const phrases = [

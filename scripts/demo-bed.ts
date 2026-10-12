@@ -749,7 +749,7 @@ function staleBuiltImage(
   const labelled = builtBase(image.builtAs);
   if (labelled === undefined) {
     return (
-      `unlabelled: ${image.service} (${image.builtAs} carries no base label, so this checkout ` +
+      `unlabelled: ${image.service} (${image.builtAs} carries no base label Docker could read, so this checkout ` +
       'cannot tell which base it was built from); build it with `pnpm backend:build` before ' +
       'travelling, not at the venue'
     );

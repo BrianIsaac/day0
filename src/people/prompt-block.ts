@@ -202,7 +202,9 @@ function isSpacedNumber(run: string, digits: number): boolean {
     const pair = [local[2] ?? '', local[3] ?? ''];
     return (
       !pair.every((group) => YEAR_SHAPE.test(group)) &&
-      !pair.every((group) => CLOCK_SHAPE.test(group))
+      !pair.every((group) => CLOCK_SHAPE.test(group)) &&
+      // Round figures ("100 2000 3000") are amounts in prose (the second pass).
+      !pair.every((group) => group.endsWith('00'))
     );
   }
   return run.startsWith('0') && digits >= 10 && digits <= 11 && groups.length <= 3;

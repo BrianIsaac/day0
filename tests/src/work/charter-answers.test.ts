@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { answeredQuestionLines } from '../../../src/work/charter-answers';
+import { answeredQuestionLines, askedQuestion } from '../../../src/work/charter-answers';
+
+describe('askedQuestion', (): void => {
+  it('reads the mark before a closing bracket or quote, and keeps an ellipsis (the second pass)', (): void => {
+    expect(askedQuestion('Which carrier (for Asia)')).toBe('Which carrier (for Asia)?');
+    expect(askedQuestion('Is it “final?”')).toBe('Is it “final?”');
+    expect(askedQuestion('And the rest…')).toBe('And the rest…');
+  });
+});
 
 describe('answeredQuestionLines', (): void => {
   it('closes a question the manager left unpunctuated before its answer (W15-R39)', (): void => {
