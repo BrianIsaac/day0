@@ -484,7 +484,7 @@ describe('the cycle time counts done answers, partly done named beside (RM23 (a)
           p90ToCompletionMs: 1_212_000,
         }),
       ),
-    ).toBe('18 min 1 s / 20 min 12 s (4 done, 5 partly done)');
+    ).toBe('18 min 1 s / 20 min 12 s (4\u00a0done, 5\u00a0partly done)');
   });
 
   it('says partly done work where none was done, and nothing of it where there is none', (): void => {
@@ -499,7 +499,7 @@ describe('the cycle time counts done answers, partly done named beside (RM23 (a)
           p90ToCompletionMs: null,
         }),
       ),
-    ).toBe('none done; 2 items ended after 1 min (2 partly done)');
+    ).toBe('none done; 2 items ended after 1 min (2\u00a0partly done)');
     expect(
       cycle?.value(
         figures({
@@ -511,7 +511,7 @@ describe('the cycle time counts done answers, partly done named beside (RM23 (a)
           p90ToCompletionMs: 60_000,
         }),
       ),
-    ).toBe('1 min / 1 min (1 done)');
+    ).toBe('1 min / 1 min (1\u00a0done)');
   });
 
   it('defines the cycle time over the items whose run answered done', (): void => {

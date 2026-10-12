@@ -162,16 +162,17 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
     // One reading, the run's answer (RM23 (a)): partly done work is named beside the done, never
     // counted in it. A figure pushed before the field has no partly done to name.
     value: ({ cycleTime }) => {
+      // A count keeps its word on its line: at 390 "(1" broke from "done)" (the 16-F bed).
       const partly = cycleTime.partlyDone ?? 0;
       if (cycleTime.completed === 0) {
         if (cycleTime.ended === 0) return 'not yet';
         const ended = `none done; ${count(cycleTime.ended, 'item')} ended after ${formatMetricDuration(cycleTime.medianToEndMs)}`;
-        return partly > 0 ? `${ended} (${partly} partly done)` : ended;
+        return partly > 0 ? `${ended} (${partly}\u00a0partly done)` : ended;
       }
       const done =
         partly > 0
-          ? `${cycleTime.completed} done, ${partly} partly done`
-          : `${cycleTime.completed} done`;
+          ? `${cycleTime.completed}\u00a0done, ${partly}\u00a0partly done`
+          : `${cycleTime.completed}\u00a0done`;
       return `${formatMetricDuration(cycleTime.medianToCompletionMs)} / ${formatMetricDuration(cycleTime.p90ToCompletionMs)} (${done})`;
     },
   },

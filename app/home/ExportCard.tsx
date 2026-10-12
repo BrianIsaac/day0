@@ -62,8 +62,9 @@ export function ExportCard() {
         return { fileName, employees: file.employees.length, rows };
       },
       {
+        // An owner who keeps nothing of their own yet has no rows to name (the 16-F bed).
         done: ({ fileName, employees, rows }) =>
-          `Exported ${counted(employees, 'employee')} and ${counted(rows, 'row')} of yours to ${fileName}, redacted as the export's policy says.`,
+          `Exported ${counted(employees, 'employee')}${rows > 0 ? ` and ${counted(rows, 'row')} of yours` : ''} to ${fileName}, redacted as the export's policy says.`,
         refused: 'The export did not finish; nothing was saved.',
       },
     );

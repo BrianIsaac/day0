@@ -115,6 +115,22 @@ describe('the home’s export card (wave 16, 16-F)', (): void => {
     view.unmount();
   });
 
+  it('names no rows of the owner’s own when it keeps none yet (the bed’s first export)', async (): Promise<void> => {
+    const pages = backend.results['exportActions:exportOwnerPage']!;
+    backend.results['exportActions:exportOwnerPage'] = (args) => ({
+      ...(pages(args) as object),
+      rows: [],
+    });
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+    await vi.waitFor((): void => {
+      expect(said(view.container)).toEqual([
+        "Exported 1 employee to day0-owner-export-2026-10-12.json, redacted as the export's policy says.",
+      ]);
+    });
+    view.unmount();
+  });
+
   it('says the refusal and saves nothing when an action refuses', async (): Promise<void> => {
     backend.refusal = 'Sign in to export.';
     const view = mount(<ExportCard />);
