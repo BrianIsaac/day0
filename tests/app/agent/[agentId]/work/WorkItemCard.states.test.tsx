@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { act } from 'react';
+import { act, type ReactElement } from 'react';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
@@ -46,6 +46,35 @@ afterEach((): void => {
  * draw it (`loop: false` for the mock gate), with every decision recorded by name.
  * `refuse` names a decision that is refused with the sentence given.
  */
+/** The card's tree for one item, as `card` mounts it, so a test can render the item moved on. */
+function cardTree(
+  item: Doc<'workItems'>,
+  record: (name: string) => (arg?: unknown) => Promise<void>,
+): ReactElement {
+  return (
+    <AgentZoneContext value={ZONE}>
+      <WorkItemCard
+        item={item}
+        surfaces={SURFACES}
+        autonomousActions={false}
+        employeeName={EMPLOYEE}
+        questions={[]}
+        onApprovePlan={record('approvePlan')}
+        onCancelPlan={record('cancelPlan')}
+        onRetryFailed={record('retry')}
+        onReconcileFailed={record('reconcile')}
+        onApproveActions={record('approveActions')}
+        onRejectActions={record('rejectActions')}
+        onResendDecision={record('resend')}
+        onDismiss={record('dismiss')}
+        onStop={async (): Promise<StopRunAnswer> => ({ ok: true })}
+        onCloseWithoutRetry={record('closeWithoutRetry')}
+        servedByLoop
+      />
+    </AgentZoneContext>
+  );
+}
+
 function card(
   item: Doc<'workItems'>,
   options: {
@@ -361,6 +390,18 @@ describe('write held for you (work-held.html, work-held-withheld.html)', (): voi
     expect(view.calls).toEqual([['approveActions', [0]]]);
     expect(said(view.container)).toEqual(['Approved 1 action: it applies now.']);
     expect(focusedName()).toBe('Approve selected (1)');
+  });
+
+  it("says the approved actions apply now only until they have, then nothing (the v0.19.0 walk's finding 8)", async (): Promise<void> => {
+    const record = () => async (): Promise<void> => undefined;
+    const view = mount(cardTree(DRAWN.held, record));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    // The apply lands: the same item, finished.
+    act((): void => view.root.render(cardTree({ ...DRAWN.landed, _id: DRAWN.held._id }, record)));
+    expect(said(view.container)).toEqual([]);
+    expect(view.container.textContent).not.toContain('apply now');
+    view.unmount();
   });
 
   it('offers no Approve selected once every held write is withheld, Reject being how nothing is sent (D5)', async (): Promise<void> => {

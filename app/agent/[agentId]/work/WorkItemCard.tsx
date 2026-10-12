@@ -250,6 +250,15 @@ export function WorkItemCard({
   const [stopping, setStopping] = useState(false);
   const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
     change.run(call, { done, refused });
+  // The approval of held actions says they apply now; once the item has left the held set, they
+  // have, and the line is no longer true (the v0.19.0 walk's finding 8: every finished card kept it).
+  const [applyingLine, setApplyingLine] = useState<string | null>(null);
+  const outcome =
+    applyingLine !== null &&
+    change.outcome?.text === applyingLine &&
+    item.state !== 'actions-pending'
+      ? null
+      : change.outcome;
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -599,19 +608,22 @@ export function WorkItemCard({
             closing={output.needsDependentPhase === true}
             gate={gate}
             closeAgainstWords={closeAgainstWordsOf(output)}
-            onApprove={(approvedIndexes) =>
+            onApprove={(approvedIndexes) => {
+              const applying =
+                approvedIndexes.length === 1
+                  ? 'Approved 1 action: it applies now.'
+                  : `Approved ${approvedIndexes.length} actions: they apply now.`;
+              setApplyingLine(approvedIndexes.length === 0 ? null : applying);
               decide(
                 () => onApproveActions(approvedIndexes),
                 approvedIndexes.length === 0
                   ? decidedEarlier.length > 0
                     ? `Finished without the ticket close: nothing more is sent on ${item.title}, and the close stays withheld.`
                     : `Approved with nothing selected: ${item.title} lands nothing.`
-                  : approvedIndexes.length === 1
-                    ? 'Approved 1 action: it applies now.'
-                    : `Approved ${approvedIndexes.length} actions: they apply now.`,
+                  : applying,
                 'The actions were not approved.',
-              )
-            }
+              );
+            }}
             onReject={(reason) =>
               decide(
                 () => onRejectActions(reason),
@@ -732,7 +744,7 @@ export function WorkItemCard({
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">
-        <StatusRegion outcome={change.outcome} />
+        <StatusRegion outcome={outcome} />
       </div>
     </article>
   );
