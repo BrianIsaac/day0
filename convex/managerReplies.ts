@@ -319,6 +319,15 @@ async function answerFromChannel(
   },
 ) {
   const { row, decision } = request;
+  // A reply is answered once: its acknowledgement is keyed by the message, so a poll that delivers
+  // the same message again finds it and answers no second question.
+  const answered = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_surface_message', (q) =>
+      q.eq('surfaceId', surface._id).eq('messageTs', args.messageTs),
+    )
+    .unique();
+  if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
   const [question] = await openConflictQuestions(ctx, row._id);
   const notice = async (text: string) =>
     await queueManagerReplyNotice(ctx, {

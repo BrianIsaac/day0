@@ -532,6 +532,43 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).resolves.toMatchObject({ status: 'ignored', reason: 'no open question' });
   });
 
+  it('answers a reply once, so a poll that delivers it again answers no second question (the second pass’s minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const reply = {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000000.000100',
+      reply: { verb: 'answer' as const, id: 'ab3xyz', choice: 'to' as const },
+    };
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, reply),
+    ).resolves.toMatchObject({ status: 'answered' });
+    // A second conflict asked beside the same plan meanwhile.
+    const [first] = await questionsOf(harness, workItemId);
+    const second = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerQuestions', {
+          agentId: first.agentId,
+          key: 'conflict:another',
+          question: 'Two pages disagree under “Owners”.',
+          context: first.context,
+          askedAt: first.askedAt,
+          workItemId,
+          charterId: first.charterId,
+          blocking: false,
+          type: 'retrieval',
+          relationId,
+        }),
+    );
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, reply),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'already answered' });
+    expect((await harness.run(async (ctx) => await ctx.db.get(second)))?.answer).toBeUndefined();
+  });
+
   it('closes the question when the conflict is settled on the Documentation tab, so nothing waits on it (second pass B1)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
