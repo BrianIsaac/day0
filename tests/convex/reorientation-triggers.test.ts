@@ -103,6 +103,11 @@ describe('access revoked: the manager revokes a scope (permission.revoked)', ():
     const [card] = await cardsOf(harness, agentId);
     expect(card.affected.skills).toEqual([skillId]);
     expect(card.blockingWork).toEqual([running]);
+    // The judgement is offered no grant of what the manager just revoked (the second pass's minor).
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    expect(read?.input.candidates.filter((candidate) => candidate.kind === 'scope')).toEqual([]);
   });
 });
 

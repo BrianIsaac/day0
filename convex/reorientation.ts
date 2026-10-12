@@ -880,20 +880,13 @@ export function carriesReportingLine(
   );
 }
 
-/** The scopes a card is about: a revoked scope's event, or a repeated refusal's counted scope. */
-async function scopesOf(ctx: QueryCtx, card: Doc<'reorientations'>): Promise<string[]> {
-  const scopes = new Set<string>();
-  if (card.trigger === 'repeated-refusal' && card.triggerKey.startsWith(REFUSAL_KEY_PREFIX)) {
-    scopes.add(card.triggerKey.slice(REFUSAL_KEY_PREFIX.length));
-  }
-  for (const id of card.evidence.eventIds) {
-    const event = await ctx.db.get(id);
-    if (event?.type === 'permission.revoked') {
-      const scope = (event.payload as { scope?: unknown }).scope;
-      if (typeof scope === 'string') scopes.add(scope);
-    }
-  }
-  return [...scopes];
+/** The scope a card offers the judgement: a repeated refusal's counted scope. */
+function scopesOf(card: Doc<'reorientations'>): string[] {
+  // A revoked scope is not offered: its only action would grant back what the manager just
+  // revoked, one click from Approve (the second pass's minor).
+  return card.trigger === 'repeated-refusal' && card.triggerKey.startsWith(REFUSAL_KEY_PREFIX)
+    ? [card.triggerKey.slice(REFUSAL_KEY_PREFIX.length)]
+    : [];
 }
 
 /** How a repeated refusal's key opens: the scope follows it. */
@@ -1197,7 +1190,7 @@ async function candidatesOf(
         : {}),
     });
   }
-  for (const scope of await scopesOf(ctx, card)) {
+  for (const scope of scopesOf(card)) {
     candidates.push({ kind: 'scope', scope, held: await holdsScope(ctx, card.agentId, scope) });
   }
   for (const id of unique([card.affected.skills, card.evidence.skillIds], idKey)) {
