@@ -145,13 +145,6 @@ function documentationSelectedLabel(payload: Read<'work.documentation-selected'>
   return `documentation${siteWords}${amount}`;
 }
 
-/**
- * The feed's words for every event type the contract lists.
- *
- * Keyed by the contract's union, so a type the contract gains without a label
- * here fails the typecheck (review m37): the feed never falls back to a raw
- * type string for an event Day0 writes today.
- */
 /** Why a held plan waits, in the manager's words, by the hold's reason. */
 const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: string } = {
   'skip-overruled': 'you waived the skip',
@@ -346,6 +339,13 @@ function revokedAtSourceLabel(payload: Read<'credential.revoked-at-source'>): st
   }
 }
 
+/**
+ * The feed's words for every event type the contract lists.
+ *
+ * Keyed by the contract's union, so a type the contract gains without a label
+ * here fails the typecheck (review m37): the feed never falls back to a raw
+ * type string for an event Day0 writes today.
+ */
 const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'agent.deployed': (payload) =>
     `deployed, reporting to ${text(payload.bossEmail) ?? 'the manager'}${

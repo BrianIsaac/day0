@@ -579,8 +579,9 @@ function rowBytes(page: Doc<'docPages'> | null): number {
  * conflict that stands, newest first, at most `RELATION_CARDS_READ` of each and
  * `CARD_PAGES_BYTES` of their pages a read, the confirmed conflicts read first (W15-R22).
  * Public; the caller's own. A relation one of whose pages is gone or no longer current is not
- * drawn (its source's unlink deletes it; a page that came back draws it again). The confirmed conflicts are the ones the selection reads
- * (`confirmedConflicts`), so a conflict that holds a plan has its card. Writes nothing.
+ * drawn (its source's unlink deletes it; a page that came back draws it again). The confirmed
+ * conflicts are the ones the selection reads (`confirmedConflicts`), so a conflict a plan's
+ * question asks about has its card. Writes nothing.
  */
 export const listOpen = query({
   args: {},

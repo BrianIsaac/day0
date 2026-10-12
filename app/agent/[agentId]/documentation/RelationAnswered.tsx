@@ -15,7 +15,7 @@ export interface AnsweredRelation {
   /** What the answer did, in the card's words. */
   readonly text: string;
   /**
-   * Whether the answer is taken back from here (`docRelations.decisionsOffered`): every answer
+   * Whether the answer is taken back from here (`docConflicts.decisionsOffered`): every answer
    * but a conflict's "{A} is right", which the superseded page's own row takes back.
    */
   readonly undo: boolean;

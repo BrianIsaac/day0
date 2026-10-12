@@ -227,7 +227,7 @@ export interface SelectionInput {
   readonly always?: readonly string[];
   /**
    * The stored blocks a confirmed conflict stands on, by block hash, with what each is disputed
-   * by (`docRelations.standingConflictsOn`): the cite line of such a block is printed
+   * by (`docConflicts.standingConflictsOn`): the cite line of such a block is printed
    * `[conflict]`.
    */
   readonly conflicts?: ConflictsByHash;

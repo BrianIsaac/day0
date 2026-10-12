@@ -354,10 +354,11 @@ function newestTraceOfEach(traces: readonly AgentTrace[]): AgentTrace[] {
 }
 
 /**
- * Read the command line's inputs: one or more trace files, or one snapshot export.
+ * Read the command line's inputs: one or more trace files or owner exports, or one snapshot
+ * export.
  *
- * @throws Error when a JSON file is not a trace of a version this reads, or
- *   traces and a snapshot are mixed.
+ * @throws Error when a JSON file is neither a trace nor an owner export of a version this reads,
+ *   or traces and a snapshot are mixed.
  */
 export function recompute(
   paths: readonly string[],

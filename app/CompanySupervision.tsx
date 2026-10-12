@@ -524,5 +524,5 @@ export function CompanySupervision() {
   // Drawn once the mode is known, so the retrieval column never changes its words under the
   // reader (the second pass's finding 10): the mode decides whether it says why it is empty.
   if (!figures || figures.employees.length === 0 || surface === undefined) return null;
-  return <CompanySupervisionCard figures={figures} mode={surface?.mode} />;
+  return <CompanySupervisionCard figures={figures} mode={surface.mode} />;
 }

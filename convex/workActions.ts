@@ -4222,10 +4222,13 @@ async function planGrounding(
  * approved, so the step no longer rests on what the team has written down. Checked before the
  * first phase writes and again before the closing phase authors. Real mode only. A plan whose
  * planner cited nothing is checked against the blocks it was drafted from, as its selection
- * recorded them, so the check is never vacuous (W14-R25); one with neither passes.
+ * recorded them, so the check is never vacuous (W14-R25). A plan whose blocks all stand, or that
+ * names none, is then checked for a conflict confirmed on them since its approval
+ * ({@link refuseConfirmedSince}, D-4 (b), wave 16).
  *
  * @param item - The employee running the plan and the item it is for.
- * @throws Error naming the cites that no longer stand, and what superseded the first.
+ * @throws Error naming the cites that no longer stand, and what superseded the first; or
+ *   `ConflictConfirmedError` naming the two pages a conflict confirmed since stands between.
  */
 async function refuseGoneCites(
   ctx: ActionCtx,
