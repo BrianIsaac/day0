@@ -16,9 +16,11 @@ import {
  * The proposals a finishing sync writes (wave 15, 15-A; split out of `convex/docRelations.ts` by
  * wave 16's 16-s, decision D-8): a stored page as the measures read it, the owner's other pages
  * it may relate to, whether a pair already holds the relation a proposal would write, what a
- * conflict's two pages say under the blocks its evidence names, and the runs whose pages a
- * completed sync measures. The registered functions that call these (`measurePage`,
- * `generationsToMeasure`, `measuringPlan`) stay in `convex/docRelations.ts` under their paths.
+ * conflict's two pages say under the blocks its evidence names, the runs whose pages a completed
+ * sync measures, and the proposals a page its source dropped leaves behind (`forgetProposalsOf`,
+ * called by `docSources.prunePages`). The registered functions that call the rest
+ * (`measurePage`, `generationsToMeasure`, `measuringPlan`) stay in `convex/docRelations.ts` under
+ * their paths.
  *
  * This module sits below `convex/docRelations.ts` and `convex/docConflicts.ts`, and imports
  * nothing of `docSources` or of anything that reaches `work`.
