@@ -1978,12 +1978,9 @@ export interface ManagerQuestionAskedPayload {
  * `EventPayloads` and `EVENT_TYPES` in the commit that writes and renders it.
  */
 export interface ReorientationEventPayloads {
-  'reorientation.opened': ReorientationOpenedPayload;
-  'reorientation.proposed': ReorientationProposedPayload;
   'reorientation.approved': ReorientationApprovedPayload;
   'reorientation.dismissed': ReorientationDismissedPayload;
   'reorientation.deferred': ReorientationDeferredPayload;
-  'reorientation.reopened': ReorientationReopenedPayload;
   'manager.question-asked': ManagerQuestionAskedPayload;
 }
 
@@ -2183,6 +2180,9 @@ export interface EventPayloads {
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
   'work.manager-digest-failed': WorkManagerDigestFailedPayload;
+  'reorientation.opened': ReorientationOpenedPayload;
+  'reorientation.proposed': ReorientationProposedPayload;
+  'reorientation.reopened': ReorientationReopenedPayload;
 }
 
 /** One event type of the contract. */
@@ -2200,12 +2200,9 @@ function everyKey<Of extends string>() {
 
 /** The wave 16 event types not yet written (see {@link ReorientationEventPayloads}), at run time. */
 export const REORIENTATION_EVENT_TYPES = everyKey<keyof ReorientationEventPayloads>()([
-  'reorientation.opened',
-  'reorientation.proposed',
   'reorientation.approved',
   'reorientation.dismissed',
   'reorientation.deferred',
-  'reorientation.reopened',
   'manager.question-asked',
 ]);
 
@@ -2402,6 +2399,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.manager-note-failed',
   'work.manager-digest-sending',
   'work.manager-digest-failed',
+  'reorientation.opened',
+  'reorientation.proposed',
+  'reorientation.reopened',
 ]);
 
 const LISTED: ReadonlySet<string> = new Set(EVENT_TYPES);

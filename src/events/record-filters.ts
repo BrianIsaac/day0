@@ -219,6 +219,9 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.manager-note-failed': WRITES,
   'work.manager-digest-sending': WRITES,
   'work.manager-digest-failed': WRITES,
+  'reorientation.opened': CHARTER,
+  'reorientation.proposed': CHARTER,
+  'reorientation.reopened': CHARTER,
 };
 
 /**

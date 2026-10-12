@@ -833,6 +833,16 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `sending the manager a digest of ${counted(payload.count, 'note') ?? 'notes'}`,
   'work.manager-digest-failed': (payload) =>
     `manager digest not delivered${because(payload.reason)}`,
+  'reorientation.opened': (payload) =>
+    `${payload.joined === true ? 'joined the reorientation card' : 'reorientation card opened'}${
+      text(payload.summary) ? `: ${payload.summary}` : ''
+    }`,
+  'reorientation.proposed': (payload) =>
+    `${payload.kind === 'none' ? 'nothing needs to change, the card proposes' : 'reorientation card proposes a change'}${
+      payload.by === 'discussion' ? ' after the discussion' : ''
+    }`,
+  'reorientation.reopened': (payload) =>
+    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };
 
 /**

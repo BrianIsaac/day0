@@ -84,6 +84,8 @@ import type * as planApproval from '../planApproval.js';
 import type * as planRedraft from '../planRedraft.js';
 import type * as probeActions from '../probeActions.js';
 import type * as refreshLease from '../refreshLease.js';
+import type * as reorientation from '../reorientation.js';
+import type * as reorientationActions from '../reorientationActions.js';
 import type * as reset from '../reset.js';
 import type * as retirements from '../retirements.js';
 import type * as revocationEvaluation from '../revocationEvaluation.js';
@@ -218,6 +220,8 @@ declare const fullApi: ApiFromModules<{
   planRedraft: typeof planRedraft;
   probeActions: typeof probeActions;
   refreshLease: typeof refreshLease;
+  reorientation: typeof reorientation;
+  reorientationActions: typeof reorientationActions;
   reset: typeof reset;
   retirements: typeof retirements;
   revocationEvaluation: typeof revocationEvaluation;

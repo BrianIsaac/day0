@@ -162,6 +162,11 @@ function decidedFrom(via: unknown, dms: string): string {
   return '';
 }
 
+/** `: summary` for a reorientation card's line when the event carries its summary. */
+function cardAbout(summary: unknown): string {
+  return typeof summary === 'string' && summary.trim() !== '' ? `: ${summary.trim()}` : '';
+}
+
 /** The work item an event is about, quoted, or a plain stand-in when it names none. */
 function itemOf(subject: RecordSubject): string {
   return subject.item ? `“${subject.item}”` : 'a work item';
@@ -1384,6 +1389,16 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} is sending ${addressee(subject)} a digest of ${counted(p.count, 'note') ?? 'notes'}`,
   'work.manager-digest-failed': (p, subject) =>
     `A digest to ${addressee(subject)} was not delivered${because(p.reason)}`,
+  'reorientation.opened': (p, subject) =>
+    p.joined === true
+      ? `A further change joined ${subject.name}'s reorientation card${cardAbout(p.summary)}`
+      : `Something ${subject.name}'s charter assumed changed, and a reorientation card opened${cardAbout(p.summary)}`,
+  'reorientation.proposed': (p, subject) =>
+    `${p.kind === 'none' ? `${subject.name} found nothing needs to change` : `${subject.name} proposed a change`} on the reorientation card${
+      p.by === 'discussion' ? ` after talking it through with ${addressee(subject)}` : ''
+    }${cardAbout(p.summary)}`,
+  'reorientation.reopened': (p) =>
+    `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */

@@ -12,6 +12,7 @@ import {
   isEventType,
   type AmendmentVia,
   type CharterQuestionAnsweredPayload,
+  type EventPayloads,
   type PlanHeldForReorientation,
   type ReorientationEventPayloads,
   type ReorientationNamed,
@@ -182,17 +183,24 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
 });
 
 describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): void => {
-  it('names the six reorientation events and the typed question, none yet listed, since no writer writes them before 16-O', (): void => {
+  it('names the reorientation events and the typed question not yet written, none of them listed', (): void => {
     expect(REORIENTATION_EVENT_TYPES).toEqual([
-      'reorientation.opened',
-      'reorientation.proposed',
       'reorientation.approved',
       'reorientation.dismissed',
       'reorientation.deferred',
-      'reorientation.reopened',
       'manager.question-asked',
     ]);
     for (const type of REORIENTATION_EVENT_TYPES) expect(isEventType(type), type).toBe(false);
+  });
+
+  it('lists a card’s opening, its proposal and its reopening, each with its writer (16-O)', (): void => {
+    for (const type of [
+      'reorientation.opened',
+      'reorientation.proposed',
+      'reorientation.reopened',
+    ]) {
+      expect(isEventType(type), type).toBe(true);
+    }
   });
 
   it('types the seventh hold reason, the seven payloads, an amendment by reorientation and a charter answer by its two ways', (): void => {
@@ -210,9 +218,7 @@ describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): v
       ReorientationEventPayloads['manager.question-asked']['type']
     >().toEqualTypeOf<ManagerQuestionType>();
     // A proposal an event records is never the pending one.
-    expectTypeOf<'pending'>().not.toMatchTypeOf<
-      ReorientationEventPayloads['reorientation.proposed']['kind']
-    >();
+    expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
     expectTypeOf<'none'>().toMatchTypeOf<
       ReorientationEventPayloads['reorientation.approved']['kind']
     >();
