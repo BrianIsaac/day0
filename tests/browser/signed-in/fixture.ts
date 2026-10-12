@@ -31,6 +31,8 @@ const plan = {
   steps: ['Comment with the close summary.', 'Close the ticket.'],
   expectedOutputType: 'ticket-update',
   riskNotes: 'Check the owner first.',
+  estimatedMinutes: 10,
+  reversibility: 'reversible: the comment can be deleted and the ticket reopened',
 };
 
 function item(id: string, title: string, fields: Record<string, unknown>): Record<string, unknown> {
@@ -413,6 +415,7 @@ export function employeePage(): Record<string, unknown> {
       },
     ],
     'events:autonomyChanges': [],
+    'managerTransfers:earlierManagers': [],
     'agents:permissionScopes': [
       { scope: 'linear:write', active: true, source: 'deploy' },
       { scope: 'slack:write', active: false, source: 'manager' },
