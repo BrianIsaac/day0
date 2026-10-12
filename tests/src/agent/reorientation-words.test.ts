@@ -112,3 +112,25 @@ describe('a conflict’s two pages named apart (W16-R12)', (): void => {
     expect(new Set(names).size).toBe(3);
   });
 });
+
+describe('the conflict question says what it holds (W16-R10)', (): void => {
+  const pages = [
+    { title: 'Close comment limits', source: 'Revops folder' },
+    { title: 'Close comment limits', source: 'Policies folder' },
+  ] as const;
+
+  it('names the surfaces whose writes wait, since every write to them waits, not only the held step’s', (): void => {
+    expect(conflictQuestionText('Priya', 'Comment length', pages, ['Linear'])).toBe(
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Priya runs the other steps now and holds its writes to Linear until you answer and Retry.',
+    );
+    expect(conflictQuestionText('Priya', 'Comment length', pages, ['Linear', 'Slack'])).toContain(
+      'holds its writes to Linear and Slack until you answer and Retry.',
+    );
+  });
+
+  it('says every write waits when the plan declares no writes to tell them apart', (): void => {
+    expect(conflictQuestionText('Priya', 'Comment length', pages, 'every')).toContain(
+      'Which is right? Priya holds every write of the plan until you answer and Retry.',
+    );
+  });
+});

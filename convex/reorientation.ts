@@ -13,6 +13,8 @@ import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 import { PLAN_CANCELLED_REASON } from '../src/work/stop';
+import { conflictSteps, heldWriteSurfaces } from '../src/work/conflict-hold';
+import type { ExecutionPlan } from '../src/work/types';
 import {
   REORIENTATION_BLOCKING_LIMIT,
   UNDECIDED_REORIENTATION_STATUSES,
@@ -815,6 +817,37 @@ export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
 }
 
 /**
+ * What a conflict's hold would withhold of a plan, in the manager's words (W16-R10): the display
+ * names of the surfaces its held steps write, or `every` where the plan declares no writes.
+ */
+async function heldSurfaceNames(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  relationId: Id<'docRelations'>,
+): Promise<string[] | 'every'> {
+  const plan = row.plan as ExecutionPlan | undefined;
+  const relation = await ctx.db.get(relationId);
+  if (plan === undefined || !Array.isArray(plan.steps) || relation === null) return [];
+  // The blocks the two pages disagree in, as `docRelationProposals.conflictBlocks` reads them.
+  const blocks =
+    relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
+  const held = heldWriteSurfaces(plan, conflictSteps(plan, { relationId, blocks }));
+  if (held === 'every' || held.length === 0) return held;
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .take(SURFACES_NAMED_READ);
+  return held.map(
+    (slug) =>
+      surfaces.find((surface) => surface.slug.toLowerCase() === slug.toLowerCase())?.displayName ??
+      slug,
+  );
+}
+
+/** The employee's surfaces a question reads for their names. */
+const SURFACES_NAMED_READ = 100;
+
+/**
  * Ask, beside a plan, which of two pages is right (RM20 (a); D-4 (c)): one non-blocking
  * `retrieval` question about the relation, on the plan's own row, which its request and its card
  * carry; asked once per row and relation. The steps that rely on the passage wait for the answer
@@ -839,7 +872,12 @@ export async function askConflictQuestion(
     approvedCharter(ctx, row.agentId),
   ]);
   if (agent === null || charter === undefined) return null;
-  const question = conflictQuestionText(agent.name, conflict.heading, conflict.pages);
+  const question = conflictQuestionText(
+    agent.name,
+    conflict.heading,
+    conflict.pages,
+    await heldSurfaceNames(ctx, row, conflict.relationId),
+  );
   const questionId = await ctx.db.insert('managerQuestions', {
     agentId: row.agentId,
     key: conflictQuestionKey(conflict.relationId),

@@ -298,8 +298,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     );
   }
 
+  // Re-pinned by W16-R10: these plans declare no writes, so the hold withholds every write and
+  // the question says so.
   const ASKED =
-    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.';
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds every write of the plan until you answer and Retry.';
 
   it('asks one non-blocking question beside a plan that cites the disputed passage, and lets the plan go on (D-4 (c), RM20 (a))', async (): Promise<void> => {
     useSurfaceMode('real');
@@ -381,6 +383,56 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await questionsOf(harness, workItemId)).toEqual([
       expect.objectContaining({ question: ASKED, relationId }),
     ]);
+  });
+
+  it('names the surfaces whose writes the question holds, by their names, where the plan declares them (W16-R10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'finance-tracker',
+        displayName: 'Finance tracker',
+        class: 'kanban',
+        verdict: 'connected',
+        whereFound: [],
+        credentialLanded: true,
+        createdAt: 1,
+      });
+    });
+    const workItemId = await planned(harness, agentId, {
+      steps: ['Read the variance', 'Comment the threshold on the ticket'],
+      cites: [{ step: 2, ...disputed }],
+      obligations: {
+        steps: [
+          { kind: 'read', reads: ['finance-tracker'], writes: [] },
+          { kind: 'write', reads: [], writes: ['finance-tracker'] },
+        ],
+        transition: 'none',
+        transitionStep: null,
+        basis: 'judgement',
+      },
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    const [question] = await questionsOf(harness, workItemId);
+    expect(question.question).toBe(
+      'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds its writes to Finance tracker until you answer and Retry.',
+    );
   });
 
   it('asks from the selection kept on the item, with no selection record left to read (the joins: W15-R17 beside W15-R18)', async (): Promise<void> => {

@@ -103,20 +103,34 @@ export const CONFLICT_CHOICES = ['from', 'to', 'both'] as const;
 /** One answer to a conflict's question: the first page is right, the second, or both hold. */
 export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
 
+/** Surfaces named in a sentence: "Linear and Slack". */
+const SURFACE_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
+
 /**
  * The question a standing conflict under a drafted plan asks, in the plan's own request (RM20 (a);
  * section 7, flagged: the pages are lettered as the typed answer names them, a plan citing nothing
  * holds every step, and the held steps run on Retry after the answer): "Two pages disagree under
  * “{heading}”: A, {A} ({source}), and B, {B} ({source}). Which is right? {name} runs the other
- * steps now and holds the ones that may rely on this until you answer and Retry."
+ * steps now and holds the ones that may rely on this until you answer and Retry." Where the
+ * hold's surfaces are known it names them, "holds its writes to {surfaces}", or says every write
+ * where the plan declares none to tell apart (W16-R10).
  */
 export function conflictQuestionText(
   name: string,
   heading: string,
   pages: readonly [NamedPageWords, NamedPageWords],
+  holds?: readonly string[] | 'every',
 ): string {
   const [a, b] = pages;
-  return `Two pages disagree under “${heading}”: ${pageWords('A', a)}, and ${pageWords('B', b)}. Which is right? ${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+  // What the hold withholds is every write to a surface a held step writes (W16-R10), so the
+  // question names those surfaces, or says every write where the plan cannot tell them apart.
+  const held =
+    holds === 'every'
+      ? `${name} holds every write of the plan until you answer and Retry.`
+      : holds !== undefined && holds.length > 0
+        ? `${name} runs the other steps now and holds its writes to ${SURFACE_LIST.format(holds)} until you answer and Retry.`
+        : `${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+  return `Two pages disagree under “${heading}”: ${pageWords('A', a)}, and ${pageWords('B', b)}. Which is right? ${held}`;
 }
 
 /**

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { conflictHeldWrites, conflictSteps } from '../../../src/work/conflict-hold';
+import {
+  conflictHeldWrites,
+  conflictSteps,
+  heldWriteSurfaces,
+} from '../../../src/work/conflict-hold';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { ExecutionPlan, MockAction } from '../../../src/work/types';
 
@@ -107,5 +111,17 @@ describe('conflictHeldWrites: the writes of the held steps', (): void => {
     expect(
       conflictHeldWrites({ plan, actions: [read, comment], surfaces: SURFACES, steps: [] }),
     ).toEqual([]);
+  });
+});
+
+describe('heldWriteSurfaces: what the question says it holds (W16-R10)', (): void => {
+  it('names the surfaces the held steps write, each once in plan order, since every write to them waits', (): void => {
+    expect(heldWriteSurfaces(plan, [2])).toEqual(['linear']);
+    expect(heldWriteSurfaces(plan, [1])).toEqual([]);
+    expect(heldWriteSurfaces(plan, [])).toEqual([]);
+  });
+
+  it('says every write when the plan declares no obligations to tell its writes apart', (): void => {
+    expect(heldWriteSurfaces({ ...plan, obligations: undefined }, [2])).toBe('every');
   });
 });

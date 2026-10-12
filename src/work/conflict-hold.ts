@@ -68,3 +68,24 @@ export function conflictHeldWrites(args: {
     return step === undefined ? [] : [{ index, step }];
   });
 }
+
+/**
+ * The surfaces whose writes the held steps make the hold withhold, as the question says it (W16-R10):
+ * the hold withholds every write to a surface a held step declares it writes, a write of an
+ * untouched step to the same surface among them, so the question names the surfaces rather than
+ * claiming the other steps run whole. `every` when the plan declares no obligations to tell its
+ * writes apart, and none when no step is held or the held steps write nothing.
+ *
+ * @param plan - The plan, its declared obligations as stored.
+ * @param steps - The held steps (`conflictSteps`).
+ * @returns The surfaces' slugs, each once in plan order, or `every`.
+ */
+export function heldWriteSurfaces(
+  plan: Pick<ExecutionPlan, 'steps' | 'obligations'>,
+  steps: readonly number[],
+): string[] | 'every' {
+  if (steps.length === 0) return [];
+  const declared = planObligations(plan);
+  if (declared === undefined) return 'every';
+  return [...new Set(steps.flatMap((step) => declared.steps[step - 1]?.writes ?? []))];
+}
