@@ -432,6 +432,7 @@ describe('the talk’s route: Put this on the card', (): void => {
       const nothing = await loadRoute([() => generated(false)]);
       await nothing(talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }));
       const { rationale: _rationale, ...noRationale } = OUTCOME;
+      void _rationale;
       const refused = await loadRoute([
         () =>
           Response.json({
