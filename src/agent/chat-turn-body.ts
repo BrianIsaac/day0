@@ -1,4 +1,5 @@
 import { MAX_KEPT_TURNS, type SentReply, type TurnRequest } from './one-to-one-conversation';
+import type { TalkTurnRequest } from './reorientation-talk';
 
 /** A reply's id and words, when the value carries both. */
 function sentReplyOf(value: unknown): SentReply | undefined {
@@ -89,4 +90,37 @@ export function isOutdatedTurnBody(value: unknown): boolean {
   if (typeof request !== 'object' || request === null || 'replies' in request) return false;
   const kind = 'kind' in request ? request.kind : undefined;
   return (kind === 'reply' && 'id' in request) || (kind === 'ask-again' && 'reply' in request);
+}
+
+/**
+ * What a reorientation talk's room posts for one turn (16-D): the card whose talk it is and the
+ * turn itself. The room sends no history and names no talk; the card's talk keeps the
+ * conversation, and the employee speaks as itself, so no label is taken from the room.
+ */
+export interface ReorientationTalkBody {
+  readonly reorientationId: string;
+  readonly request: TalkTurnRequest;
+}
+
+/** A talk's turn: one of the one-to-one's three, or a finish, which may carry no reply. */
+function talkTurnRequestOf(value: unknown): TalkTurnRequest | undefined {
+  if (typeof value !== 'object' || value === null || !('kind' in value)) return undefined;
+  if (value.kind !== 'finish') return turnRequestOf(value);
+  const question = turnIdOrNull('question' in value ? value.question : undefined);
+  const replies = sentRepliesOf('replies' in value ? value.replies : undefined);
+  return question === undefined || replies === undefined
+    ? undefined
+    : { kind: 'finish', question, replies };
+}
+
+/**
+ * Read a reorientation talk turn's body, or nothing when it is not one: the sibling of
+ * `chatTurnBodyOf`, which reads the day-one one-to-one's and is unchanged.
+ */
+export function reorientationTalkBodyOf(value: unknown): ReorientationTalkBody | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const reorientationId = 'reorientationId' in value ? value.reorientationId : undefined;
+  const request = talkTurnRequestOf('request' in value ? value.request : undefined);
+  if (typeof reorientationId !== 'string' || reorientationId === '' || !request) return undefined;
+  return { reorientationId, request };
 }

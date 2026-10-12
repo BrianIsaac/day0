@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_KEPT_TURNS } from '../../../src/agent/one-to-one-conversation';
-import { chatTurnBodyOf, isOutdatedTurnBody } from '../../../src/agent/chat-turn-body';
+import {
+  chatTurnBodyOf,
+  isOutdatedTurnBody,
+  reorientationTalkBodyOf,
+} from '../../../src/agent/chat-turn-body';
 
 describe('a chat turn body', (): void => {
   it('reads the employee, the manager and each of the three turns', (): void => {
@@ -123,5 +127,59 @@ describe('a body from a room older than the route', (): void => {
     }
     expect(isOutdatedTurnBody(null)).toBe(false);
     expect(isOutdatedTurnBody('messages')).toBe(false);
+  });
+});
+
+describe('a reorientation talk turn body (16-D)', (): void => {
+  it('reads the card and each of the one-to-one’s three turns', (): void => {
+    expect(reorientationTalkBodyOf({ reorientationId: 'r1', request: { kind: 'open' } })).toEqual({
+      reorientationId: 'r1',
+      request: { kind: 'open' },
+    });
+    const replies = [{ id: 'm0', text: 'Yes, send committee-deck drafts to Priya first.' }];
+    expect(
+      reorientationTalkBodyOf({
+        reorientationId: 'r1',
+        request: { kind: 'reply', question: 'e0', replies },
+      }),
+    ).toEqual({ reorientationId: 'r1', request: { kind: 'reply', question: 'e0', replies } });
+    expect(
+      reorientationTalkBodyOf({
+        reorientationId: 'r1',
+        request: { kind: 'ask-again', question: 'e0', replies, discarding: 'e1' },
+      }),
+    ).toEqual({
+      reorientationId: 'r1',
+      request: { kind: 'ask-again', question: 'e0', replies, discarding: 'e1' },
+    });
+  });
+
+  it('reads a finish, with the replies it carries or with none', (): void => {
+    expect(
+      reorientationTalkBodyOf({
+        reorientationId: 'r1',
+        request: { kind: 'finish', question: 'e1', replies: [] },
+      }),
+    ).toEqual({ reorientationId: 'r1', request: { kind: 'finish', question: 'e1', replies: [] } });
+  });
+
+  it('is none for a body that names no card or carries no turn it takes', (): void => {
+    for (const malformed of [
+      { request: { kind: 'open' } },
+      { reorientationId: '', request: { kind: 'open' } },
+      { reorientationId: 'r1' },
+      { reorientationId: 'r1', request: { kind: 'finish', question: 'e1' } },
+      { reorientationId: 'r1', request: { kind: 'reply', question: 'e0', replies: [] } },
+      { reorientationId: 'r1', request: { kind: 'bogus' } },
+      { agentId: 'a1', bossLabel: 'Sam', request: { kind: 'open' } },
+    ]) {
+      expect(reorientationTalkBodyOf(malformed), JSON.stringify(malformed)).toBeUndefined();
+    }
+  });
+
+  it('leaves the day-one reader as it was: a finish is no turn of the one-to-one', (): void => {
+    expect(
+      chatTurnBodyOf({ agentId: 'a1', request: { kind: 'finish', question: 'e1', replies: [] } }),
+    ).toBeUndefined();
   });
 });

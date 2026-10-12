@@ -30,6 +30,7 @@ import {
   talkRefusal,
   type TalkOutcome,
 } from '../src/agent/reorientation-talk';
+import { talkSystemPrompt } from '../src/agent/reorientation-talk-prompts';
 import {
   REORIENTATION_TALK_STATES,
   UNDECIDED_REORIENTATION_STATUSES,
@@ -175,7 +176,10 @@ async function candidatesKeyOf(
   return input === null ? null : { input, key: JSON.stringify(input.candidates) };
 }
 
-/** What `takeTurn` hands the route: the talk, the turns to answer from, and the candidates' key. */
+/**
+ * What `takeTurn` hands the route: the talk, the turns to answer from, the candidates' key, and
+ * the employee's name and the talk's system prompt, built from the card as it stands.
+ */
 const takenValidator = v.union(
   v.object({
     taken: v.literal(true),
@@ -184,14 +188,17 @@ const takenValidator = v.union(
     turns: v.array(oneToOneTurnValidator),
     answering: v.union(v.string(), v.null()),
     candidatesKey: v.string(),
+    employeeName: v.string(),
+    system: v.string(),
   }),
   v.object({ taken: v.literal(false), refusal: v.string() }),
 );
 
 /**
  * Take a turn of the card's talk before it is put to the employee, and hand back the talk, the
- * turns the employee answers from (`decideTalkTurn`), the manager turn it answers and the key of
- * the candidates it may propose among. The first turn opens the card's one talk; every turn puts
+ * turns the employee answers from (`decideTalkTurn`), the manager turn it answers, the key of
+ * the candidates it may propose among and the system prompt it answers under
+ * (`talkSystemPrompt`). The first turn opens the card's one talk; every turn puts
  * the card at `discussing`, a talk that ended taken up again where it stopped.
  *
  * Public, owner-guarded (`assertOwnsAgent` through the card); called by the talk's route as the
@@ -241,6 +248,8 @@ export const takeTurn = mutation({
       turns: [...decision.turns],
       answering: decision.answering,
       candidatesKey: candidates.key,
+      employeeName: candidates.input.employeeName,
+      system: talkSystemPrompt(candidates.input, card.proposed),
     };
   },
 });

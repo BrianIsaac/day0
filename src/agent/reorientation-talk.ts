@@ -14,6 +14,7 @@ import {
   type TurnRequest,
 } from './one-to-one-conversation';
 import { proposalReplySchema, type ProposalReply } from './reorientation-proposal';
+import { REORIENTATION_COMPLETE_TOOL } from './reorientation-talk-prompts';
 import { errorMessage } from '../lib/errors';
 import { log } from '../lib/logger';
 
@@ -174,12 +175,19 @@ export function talkQuotes(quotes: readonly string[], turns: readonly OneToOneTu
     .slice(0, QUOTES_LIMIT);
 }
 
-/** The `reorientationComplete` call's input: the proposal, its evidence and a closing line. */
-export const talkOutcomeSchema = proposalReplySchema.extend({
-  /** The manager's own words the proposal rests on, copied exactly from the manager's replies. */
-  quotes: z.array(z.string()),
-  /** One or two sentences to the manager saying what goes on the card. */
-  closingLine: z.string(),
+/**
+ * The `reorientationComplete` call's input: the judgement's flat proposal reply
+ * (`proposalReplySchema`, nulls and all, so a strict schema mode takes it), the manager's words it
+ * rests on and a closing line, each field described as the tool tells the model.
+ */
+export const talkOutcomeSchema = z.object({
+  change: proposalReplySchema.shape.change.describe(REORIENTATION_COMPLETE_TOOL.change),
+  candidate: proposalReplySchema.shape.candidate.describe(REORIENTATION_COMPLETE_TOOL.candidate),
+  action: proposalReplySchema.shape.action.describe(REORIENTATION_COMPLETE_TOOL.action),
+  text: proposalReplySchema.shape.text.describe(REORIENTATION_COMPLETE_TOOL.text),
+  rationale: proposalReplySchema.shape.rationale.describe(REORIENTATION_COMPLETE_TOOL.rationale),
+  quotes: z.array(z.string()).describe(REORIENTATION_COMPLETE_TOOL.quotes),
+  closingLine: z.string().describe(REORIENTATION_COMPLETE_TOOL.closingLine),
 });
 
 /** What a talk ends in, as the route hands it to the store: the reply and its quotes. */
@@ -218,6 +226,16 @@ function outcomeOf(input: unknown): { outcome: TalkOutcome; closingLine: string 
   if (!parsed.success) return undefined;
   const { quotes, closingLine, ...reply } = parsed.data;
   return { outcome: { reply, quotes }, closingLine: closingLine.trim() };
+}
+
+/**
+ * The outcome the first `reorientationComplete` call among a model's tool calls carried, when it
+ * is in the tool's shape: what Put this on the card asked for.
+ */
+export function talkOutcomeOfCalls(
+  calls: ReadonlyArray<{ readonly toolName: string; readonly input: unknown }>,
+): TalkOutcome | undefined {
+  return outcomeOf(calls.find((call) => call.toolName === REORIENTATION_COMPLETE)?.input)?.outcome;
 }
 
 /**

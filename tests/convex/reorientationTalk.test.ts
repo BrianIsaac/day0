@@ -72,6 +72,8 @@ async function take(
       answering: string | null;
       candidatesKey: string;
       turns: Doc<'reorientationTalks'>['turns'];
+      employeeName: string;
+      system: string;
     }
   | { taken: false; refusal: string }
 > {
@@ -159,7 +161,12 @@ async function talkOf(bed: Bed): Promise<Doc<'reorientationTalks'>> {
 describe('opening a talk', (): void => {
   it('puts the card at discussing and keeps the opening on a talk of its own', async (): Promise<void> => {
     const bed = await openedCard();
-    await opened(bed);
+    const turn = await opened(bed);
+    expect(turn).toMatchObject({ employeeName: 'Mira' });
+    expect(turn.system).toContain('What changed: Priya now approves committee-deck numbers');
+    expect(turn.system).toContain(
+      '3. Charter clause (Escalates when): “Surface tier-2 answer drafts to the manager for review” [edit-clause]',
+    );
     expect((await cardOf(bed.harness, bed.cardId)).status).toBe('discussing');
     expect(await talkOf(bed)).toMatchObject({
       agentId: bed.agentId,

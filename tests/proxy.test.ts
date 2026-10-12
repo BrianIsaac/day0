@@ -104,6 +104,10 @@ describe('the no-auth proxy gate', (): void => {
     expect(await status('/api/dev-auth/token')).toBe(403);
   });
 
+  it('keeps the Discuss talk’s route behind the unlock key: it spends the owner’s key', async (): Promise<void> => {
+    expect(await status('/api/reorientation/chat')).toBe(403);
+  });
+
   it('refuses a page without the unlock key', async (): Promise<void> => {
     expect(await status('/agent/j57agent')).toBe(403);
   });
