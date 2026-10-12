@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { replacePageBlocks } from '../../convex/docBlocks';
-import { MIGRATION_NAMES, MIGRATIONS, passedOverNote } from '../../convex/migrations';
+import { MIGRATION_NAMES, MIGRATIONS } from '../../convex/migrations';
 import { RETIRED_DECLARATIONS, RETIRING_DECLARATIONS } from '../../scripts/releases';
 import { NEWEST_MIGRATION_RELEASE } from '../../src/lib/release';
 import { isOfferable } from '../../src/work/skill-library';
@@ -2974,303 +2974,65 @@ async function storedPage(
   });
 }
 
-/** Five nested 200-character Han headings over 1,400 sections of their own, each with a line of text. */
-function nestedHanPage(seed: number): string {
-  const han = (length: number, offset: number): string =>
-    Array.from({ length }, (_unused, index) =>
-      String.fromCodePoint(0x4e00 + ((index * 7 + offset * 13) % 2_000)),
-    ).join('');
-  const outer = [1, 2, 3, 4, 5].map((level) => `${'#'.repeat(level)} ${han(200, seed + level)}`);
-  const sections = Array.from(
-    { length: 1_400 },
-    (_unused, index) => `###### ${han(200, seed + index)}\n\n${han(4, index)}`,
-  );
-  return [...outer, ...sections].join('\n\n');
-}
-
-describe('the block backfill (14-I)', (): void => {
-  // Re-pinned at 0.19.0: the newest release a migration names is document authority's (15-K).
-  it('is registered at 0.18.0 after the wave 13 passes', (): void => {
-    expect(MIGRATIONS['docs-backfill-blocks'].release).toBe('0.18.0');
-    // Re-pinned at 0.19.0: the 0.17.0 pass it followed left the list (15-K).
-    expect(MIGRATION_NAMES.indexOf('docs-backfill-blocks')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('work-decision-closed'),
-    );
+describe('the block backfill, retired at 0.20.0 (N10, 16-K; K-2)', (): void => {
+  it('leaves the list with its page and its pass-over: 0.18.0 split every stored page, and every page a sync stores since is split as it is stored', async (): Promise<void> => {
+    expect(MIGRATION_NAMES).not.toContain('docs-backfill-blocks');
+    expect(Object.keys(MIGRATIONS)).not.toContain('docs-backfill-blocks');
+    // Its pass-over and its note went with it: nothing but the pass read either.
+    const migrations = await import('../../convex/migrations');
+    expect(migrations).not.toHaveProperty('passOverBlockPage');
+    expect(migrations).not.toHaveProperty('passedOverNote');
+    await expect(
+      limitedHarness().mutation(internal.migrations.runMigrationPage, {
+        name: 'docs-backfill-blocks' as never,
+      }),
+    ).rejects.toThrow(/docs-backfill-blocks|validat/i);
   });
 
-  it('leaves a page that is not current with its status on every block (15-A)', async (): Promise<void> => {
-    // The second pass's minor 7: the block writer patches a kept block whose status differs from
-    // the page's, and the backfill passed no status, so a run over a superseded page made its
-    // blocks active again and the search found them.
+  it("runs every pass and stamps the newest release over a 0.19.0 deployment's finished row of it, kept as its record", async (): Promise<void> => {
     const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    await harness.run(async (ctx) => {
-      const runId = await ctx.db.insert('docSyncRuns', {
-        sourceId,
-        listing: 1,
-        credentialRefs: [],
-        pageCount: 1,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: 2,
-      });
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
-      const markdown =
-        '# Old runbook\n\nPress Refresh once.\n\n## Thresholds\n\nEscalate above 5,000.';
-      await ctx.db.insert('docPages', {
-        sourceId,
-        ref: 'old.md',
-        title: 'Old runbook',
-        markdown,
-        updatedAt: 3,
-        status: 'superseded',
-        statusSource: 'manager',
-      });
-      await replacePageBlocks(ctx, {
-        userId: 'owner',
-        sourceId,
-        pageRef: 'old.md',
-        generation: runId,
-        markdown,
-        status: 'superseded',
-      });
-    });
-    for (;;) {
-      const progress = await harness.mutation(internal.migrations.runMigrationPage, {
-        name: 'docs-backfill-blocks',
-      });
-      if (progress.completedAt !== undefined) break;
-    }
-    const statuses = await harness.run(async (ctx) =>
-      (await ctx.db.query('docBlocks').collect()).map((block) => block.status),
-    );
-    expect(statuses).toEqual(['superseded', 'superseded']);
-  });
-
-  it('splits every stored page as stored, redacting nothing and asking no component, and is safe to run twice', async (): Promise<void> => {
-    // Nothing may be redacted: every request the pass made would land here and fail it.
-    const reached: string[] = [];
-    vi.stubGlobal('fetch', async (input: RequestInfo | URL): Promise<Response> => {
-      reached.push(String(input));
-      throw new Error('the backfill must not call out');
-    });
-    const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    const { runId, olderSource } = await harness.run(async (ctx) => {
-      const runId = await ctx.db.insert('docSyncRuns', {
-        sourceId,
-        listing: 1,
-        credentialRefs: [],
-        pageCount: 3,
-        redactionCount: 1,
-        state: 'completed',
-        createdAt: 2,
-      });
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
-      const page = (ref: string, markdown: string) => ({
-        sourceId,
-        ref,
-        title: ref,
-        markdown,
-        updatedAt: 3,
-      });
-      await ctx.db.insert(
-        'docPages',
-        page('refresh.md', '# Refresh\n\nToken: <credential: linear service token, stored>'),
-      );
-      await ctx.db.insert(
-        'docPages',
-        page('看板.md', '# 看板\n\n请刷新管道看板然后在频道里发布结果'),
-      );
-      await ctx.db.insert('docPages', page('empty.md', '# Only a heading'));
-      // A source whose first sync is still running holds pages too; its running run stands for them.
-      const olderSource = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Older',
-        kind: 'folder',
-        locator: 'older',
-        status: 'linking',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const running = await ctx.db.insert('docSyncRuns', {
-        sourceId: olderSource,
-        listing: 1,
-        credentialRefs: [],
-        pageCount: 1,
-        redactionCount: 0,
-        state: 'running',
-        createdAt: 4,
-      });
-      await ctx.db.patch(olderSource, { activeSyncId: running });
-      await ctx.db.insert('docPages', {
-        sourceId: olderSource,
-        ref: 'a.md',
-        title: 'A',
-        markdown: '# A\n\nAlpha.',
-        updatedAt: 4,
-      });
-      return { runId, olderSource };
-    });
-
-    await runAll(harness);
-
-    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
-    expect(
-      blocks
-        .filter((block) => block.sourceId === sourceId)
-        .map((block) => [block.pageRef, block.text, block.generation, block.userId]),
-    ).toEqual(
-      expect.arrayContaining([
-        ['refresh.md', 'Token: <credential: linear service token, stored>', runId, 'owner'],
-        ['看板.md', '请刷新管道看板然后在频道里发布结果', runId, 'owner'],
-      ]),
-    );
-    expect(blocks).toHaveLength(3);
-    expect(blocks.find((block) => block.sourceId === olderSource)?.text).toBe('Alpha.');
-    expect(blocks.find((block) => block.pageRef === '看板.md')?.searchText).toContain(
-      '管道 道看 看板',
-    );
-    expect(reached).toEqual([]);
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'docs-backfill-blocks')).toMatchObject({
-      release: '0.18.0',
-      read: 4,
-      changed: 3,
-    });
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'docs-backfill-blocks'))
-        .unique();
-      if (row !== null) await ctx.db.delete(row._id);
-    });
-    // One stored page a call since W14-R1, so the second run takes four calls to finish.
-    let second = await harness.mutation(internal.migrations.runMigrationPage, {
-      name: 'docs-backfill-blocks',
-    });
-    while (second.completedAt === undefined) {
-      second = await harness.mutation(internal.migrations.runMigrationPage, {
-        name: 'docs-backfill-blocks',
-      });
-    }
-    expect(second).toMatchObject({ read: 4, changed: 0, completedAt: expect.any(Number) });
-    expect(await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect())).toEqual(
-      blocks,
-    );
-    vi.unstubAllGlobals();
-  });
-
-  it("splits pages dense with blocks inside a transaction's write and read limits, twice (second pass)", async (): Promise<void> => {
-    const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    // Each page is 1,400 one-line sections: 1,400 blocks, near the bound a page may split into.
-    const dense = Array.from(
-      { length: 1_400 },
-      (_unused, index) => `## ${index}\n\nx${index}`,
-    ).join('\n\n');
-    await harness.run(async (ctx) => {
-      const runId = await ctx.db.insert('docSyncRuns', {
-        sourceId,
-        listing: 1,
-        credentialRefs: [],
-        pageCount: 12,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: 2,
-      });
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId });
-      for (let index = 0; index < 12; index += 1) {
-        await ctx.db.insert('docPages', {
-          sourceId,
-          ref: `dense-${index}.md`,
-          title: `Dense ${index}`,
-          markdown: dense,
-          updatedAt: 3,
-        });
-      }
-    });
-    await runAll(harness);
-    const count = async (): Promise<number> =>
-      await harness.run(async (ctx) => (await ctx.db.query('docBlocks').collect()).length);
-    expect(await count()).toBe(12 * 1_400);
-    await harness.run(async (ctx) => {
-      const row = await ctx.db
-        .query('migrations')
-        .withIndex('by_name', (q) => q.eq('name', 'docs-backfill-blocks'))
-        .unique();
-      if (row !== null) await ctx.db.delete(row._id);
-    });
-    await runAll(harness);
-    expect(await count()).toBe(12 * 1_400);
-  }, 120_000);
-
-  it("splits pages of long nested CJK headings inside a transaction's limits (W14-R1)", async (): Promise<void> => {
-    const harness = limitedHarness();
-    const sourceId = await source(harness, 'owner');
-    const runId = await completedRun(harness, sourceId);
-    // Reader 1's probe: five nested 200-character Han headings over 1,400 more of their own, so
-    // every block's path held 1,200 characters, twice, with its bigrams: past 16 MiB of rows a page.
-    for (const ref of ['nested-a.md', 'nested-b.md']) {
-      await storedPage(harness, { sourceId, ref, markdown: nestedHanPage(ref.length) });
-    }
-    await runAll(harness);
-    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
-    expect(blocks).toHaveLength(2 * 1_400);
-    expect(blocks.every((block) => block.generation === runId)).toBe(true);
-    expect(Math.max(...blocks.map((block) => block.headingPath.join('').length))).toBe(300);
-  }, 120_000);
-
-  it('records a page it cannot split in the pass’s note and goes on to the next (W14-R1)', async (): Promise<void> => {
-    // A tighter write limit than the backend's stands in for a page whose rows pass it.
-    const harness = convexTest({
-      schema,
-      modules: allConvexModules(),
-      transactionLimits: { bytesWritten: 1024 * 1024 },
-    });
     const sourceId = await source(harness, 'owner');
     await completedRun(harness, sourceId);
-    await storedPage(harness, { sourceId, ref: 'before.md', markdown: '# Before\n\nRead first.' });
-    await storedPage(harness, {
-      sourceId,
-      ref: 'too-large.md',
-      markdown: Array.from(
-        { length: 300 },
-        (_unused, index) => `## 第${index}节\n\n${'管道看板'.repeat(100)}`,
-      ).join('\n\n'),
+    await storedPage(harness, { sourceId, ref: 'a.md', markdown: '# A\n\nAlpha.' });
+    await harness.run(async (ctx) => {
+      // As 0.19.0 left it: the backfill finished at its setup, with a page it passed over named.
+      await ctx.db.insert('migrations', {
+        name: 'docs-backfill-blocks',
+        release: '0.18.0',
+        read: 13,
+        changed: 12,
+        startedAt: 1,
+        completedAt: 2,
+        note: '1 page could not be split into sections for the documentation search, so the search does not find it: a.md.',
+      });
     });
-    await storedPage(harness, { sourceId, ref: 'after.md', markdown: '# After\n\nRead on.' });
+    const before = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
     await runAll(harness);
-    const blocks = await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect());
-    expect([...new Set(blocks.map((block) => block.pageRef))].sort()).toEqual([
-      'after.md',
-      'before.md',
-    ]);
-    const status = await harness.query(internal.migrations.status, {});
-    const row = status.migrations.find((entry) => entry.name === 'docs-backfill-blocks');
-    expect(row).toMatchObject({ read: 3, changed: 2, completedAt: expect.any(Number) });
-    expect(row?.note).toBe(
-      '1 page could not be split into sections for the documentation search, so the search does not find it: too-large.md.',
+    await expect(
+      harness.mutation(internal.migrations.recordRelease, { release: NEWEST_MIGRATION_RELEASE }),
+    ).resolves.toMatchObject({ release: NEWEST_MIGRATION_RELEASE });
+    const kept = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('migrations')
+          .withIndex('by_name', (q) => q.eq('name', 'docs-backfill-blocks'))
+          .unique(),
     );
-  }, 120_000);
-
-  it('counts every page it passed over and names the first ten (W14-R1)', (): void => {
-    let note: string | undefined;
-    for (let index = 0; index < 12; index += 1) note = passedOverNote(note, `p${index}.md`);
-    expect(note).toBe(
-      '12 pages could not be split into sections for the documentation search, so the search does not find them: p0.md, p1.md, p2.md, p3.md, p4.md, p5.md, p6.md, p7.md, p8.md, p9.md and 2 more.',
-    );
-  });
-
-  it('reads nothing on a deployment that stores no page, as the hosted mock deployment does', async (): Promise<void> => {
-    const harness = limitedHarness();
-    await agent(harness, { userId: 'owner' });
-    await runAll(harness);
-    const status = await harness.query(internal.migrations.status, {});
-    expect(status.migrations.find((row) => row.name === 'docs-backfill-blocks')).toMatchObject({
-      read: 0,
-      changed: 0,
+    expect(kept).toMatchObject({
+      release: '0.18.0',
+      read: 13,
+      changed: 12,
+      completedAt: 2,
+      note: '1 page could not be split into sections for the documentation search, so the search does not find it: a.md.',
     });
+    // Nothing splits a stored page at the upgrade any more: its pages and their blocks are as
+    // they were.
+    expect(await harness.run(async (ctx) => await ctx.db.query('docPages').collect())).toEqual(
+      before,
+    );
+    expect(await harness.run(async (ctx) => await ctx.db.query('docBlocks').collect())).toEqual([]);
+    const status = await harness.query(internal.migrations.status, {});
+    expect(status.migrations.map((row) => row.name)).not.toContain('docs-backfill-blocks');
   });
 });
 
@@ -3293,30 +3055,37 @@ describe('the block status pass (15-K; K-1)', (): void => {
   };
 
   /**
-   * Split the stored pages as 0.18.0 left their blocks: by the block backfill, run to its end,
-   * then with the status taken off each block again. Re-pinned by 15-A: the block writer now
-   * carries its page's status (`replacePageBlocks`), so the tip's own split cannot store a block
-   * the way 0.18.0 did, and the pass's input has to be made by hand.
+   * Split the stored pages as 0.18.0 left their blocks: each page as stored, under its source's
+   * owner and last completed sync, then with the status taken off each block again. Re-pinned by
+   * 15-A (the block writer carries its page's status, so the tip's own split cannot store a block
+   * the way 0.18.0 did) and by 16-K (the block backfill that split them left the list at 0.20.0,
+   * so the pages are split here through the writer it called).
    */
   const splitAsBefore019 = async (harness: Harness): Promise<void> => {
-    for (;;) {
-      const progress = await harness.mutation(internal.migrations.runMigrationPage, {
-        name: 'docs-backfill-blocks',
-      });
-      if (progress.completedAt !== undefined) break;
-    }
     await harness.run(async (ctx) => {
+      for (const page of await ctx.db.query('docPages').collect()) {
+        const owner = await ctx.db.get(page.sourceId);
+        if (owner?.lastCompletedSyncId === undefined) continue;
+        await replacePageBlocks(ctx, {
+          userId: owner.userId,
+          sourceId: page.sourceId,
+          pageRef: page.ref,
+          generation: owner.lastCompletedSyncId,
+          markdown: page.markdown,
+        });
+      }
       for (const block of await ctx.db.query('docBlocks').collect()) {
         await ctx.db.patch(block._id, { status: undefined });
       }
     });
   };
 
-  it('is registered at 0.19.0 after the block backfill, the newest release any migration names', (): void => {
+  // Re-pinned at 0.20.0 (16-K): the block backfill it followed left the list, and the newest
+  // release a migration names is the remeasure pass's.
+  it('is registered at 0.19.0, last of its release', (): void => {
     expect(MIGRATIONS['docs-blocks-status'].release).toBe('0.19.0');
-    expect(NEWEST_MIGRATION_RELEASE).toBe('0.19.0');
-    expect(MIGRATION_NAMES.indexOf('docs-blocks-status')).toBeGreaterThan(
-      MIGRATION_NAMES.indexOf('docs-backfill-blocks'),
+    expect(MIGRATION_NAMES.filter((name) => MIGRATIONS[name].release === '0.19.0').at(-1)).toBe(
+      'docs-blocks-status',
     );
   });
 

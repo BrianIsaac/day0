@@ -860,8 +860,8 @@ export default defineSchema({
    * split at headings after redaction by `splitPage` (`src/docs/blocks.ts`), so a block holds
    * nothing its page does not. Real mode only, as `docPages` is (R3: mock mode reads the whole
    * mirror). Written by `docBlocks.splitStoredPage`, which `upsertPage` schedules for each page
-   * it writes, and by the `docs-backfill-blocks` pass (both through `replacePageBlocks`,
-   * `convex/docBlocks.ts`); pruned with its page (`prunePages`, scheduling
+   * it writes, through `replacePageBlocks` (`convex/docBlocks.ts`; the 0.18.0 backfill that split
+   * the pages stored before it left the migration list at 0.20.0); pruned with its page (`prunePages`, scheduling
    * `docBlocks.prunePageBlocks`) and its source (`deleteSourceRows`). Read by
    * `docBlocks.searchBlocks` (14-R's selection), `docBlocks.unchangedPage` and by id.
    */

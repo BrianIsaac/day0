@@ -20,7 +20,7 @@
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
@@ -48,11 +48,8 @@ import { keepTicketListing, WORK_LISTED_EVENT } from './ticketListings';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
-import { replacePageBlocks } from './docBlocks';
-import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
-import { pageStatusOf } from '../src/docs/authority';
 import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
@@ -69,8 +66,10 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
  * with the kept-identity sweep's reason-word fallback (14-I);
  * `surfaces-messages-tab` (0.17.0) left at 0.19.0, its reader reading the
  * card alone since 13-FS, and `people-not-their-addresses` (0.18.0) with the
- * marker's reader, every reader reading the field since 14-FX (15-K). A
- * deployment's finished row of a migration that left stays as its record.
+ * marker's reader, every reader reading the field since 14-FX (15-K);
+ * `docs-backfill-blocks` (0.18.0) left at 0.20.0, every page a sync stores
+ * having been split as it is stored since 14-I (16-K; K-2). A deployment's
+ * finished row of a migration that left stays as its record.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
@@ -99,7 +98,6 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'work-decision-closed',
-  'docs-backfill-blocks',
   'docs-blocks-status',
 ] as const;
 
@@ -171,13 +169,6 @@ const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
  * 0.17.0 (`RETIRED_DECLARATIONS`).
  */
 const SUPERVISION_RELEASE = '0.16.0';
-
-/**
- * The release of retrieval (wave 14): the blocks the documentation search reads, split from every
- * page stored before it (14-I). Its people pass, which lifted the field wave 13 kept as evidence,
- * left at 0.19.0.
- */
-const RETRIEVAL_RELEASE = '0.18.0';
 
 /**
  * The release of document authority (wave 15): the status every block of the documentation
@@ -318,11 +309,6 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     release: SUPERVISION_RELEASE,
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
-  },
-  'docs-backfill-blocks': {
-    release: RETRIEVAL_RELEASE,
-    does: 'splits the stored, already redacted Markdown of every documentation page into the blocks the search index reads, under its source’s owner and the source’s last completed sync (its running one, or its newest, for a source that never completed); it asks nothing of the redaction component and changes no page; a page whose blocks already match is left, a page of a removed source is passed over, and mock mode stores no page',
-    thenRemoves: 'nothing: every page a sync writes from this release is split as it is stored',
   },
   'docs-blocks-status': {
     release: DOCUMENT_AUTHORITY_RELEASE,
@@ -950,111 +936,8 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
-  'docs-backfill-blocks': backfillBlocks,
   'docs-blocks-status': stampBlockStatus,
 };
-
-/**
- * Stored pages one page of the block backfill reads: one, so a page of the pass writes one stored
- * page's blocks at most, which its bounded heading paths keep under a transaction's 16 MiB however
- * the page is cut (W14-R1: four pages a transaction let two pages of long nested headings write
- * past it, and the pass then failed on every call).
- */
-const BLOCK_BACKFILL_READ = { numItems: 1, maximumBytesRead: 1024 * 1024 } as const;
-
-/** The pages a pass-over note names before it counts the rest. */
-const PASSED_OVER_NAMED = 10;
-
-/**
- * The block backfill's note with one more page it could not split (W14-R1), read back from the
- * note it already holds: the count, then the first pages by ref.
- */
-export function passedOverNote(previous: string | undefined, ref: string): string {
-  const held = /^(\d+) pages? could not be split[^:]*: (.*?)(?: and \d+ more)?\.$/.exec(
-    previous ?? '',
-  );
-  const count = (held === null ? 0 : Number(held[1])) + 1;
-  const named = held === null ? [] : held[2].split(', ');
-  const listed = named.length < PASSED_OVER_NAMED ? [...named, ref] : named;
-  const more = count - listed.length;
-  return `${count} ${count === 1 ? 'page' : 'pages'} could not be split into sections for the documentation search, so the search does not find ${count === 1 ? 'it' : 'them'}: ${listed.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`;
-}
-
-/**
- * Pass over the stored page the block backfill stands at, which it could not split, and record it
- * in the pass's note (W14-R1). Internal; `runPending` calls it when that page's run fails twice, so
- * the pass goes on to the next page and the passes after it still run. The page keeps its
- * Markdown and is split again when a sync next stores it.
- */
-export const passOverBlockPage = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<MigrationProgress> => {
-    const name = 'docs-backfill-blocks';
-    const row = await migrationRow(ctx, name);
-    if (row?.completedAt !== undefined) return { ...progressOf(name, row), finishedEarlier: true };
-    const page = await ctx.db
-      .query('docPages')
-      .paginate({ ...BLOCK_BACKFILL_READ, cursor: row?.cursor ?? null });
-    const [stored] = page.page;
-    return await recordPage(ctx, name, row, {
-      read: page.page.length,
-      changed: 0,
-      cursor: page.continueCursor,
-      isDone: page.isDone,
-      ...(stored === undefined ? {} : { note: passedOverNote(row?.note, stored.ref) }),
-    });
-  },
-});
-
-/** Whose blocks a source's pages are, and the run they are filed under; null for a gone source. */
-async function blockOwnerOf(
-  ctx: MutationCtx,
-  sourceId: Id<'docSources'>,
-): Promise<{ userId: string; generation: Id<'docSyncRuns'> } | null> {
-  const source = await ctx.db.get(sourceId);
-  if (source === null) return null;
-  const generation =
-    source.lastCompletedSyncId ??
-    source.activeSyncId ??
-    (
-      await ctx.db
-        .query('docSyncRuns')
-        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
-        .order('desc')
-        .first()
-    )?._id;
-  return generation === undefined ? null : { userId: source.userId, generation };
-}
-
-/**
- * One page of the block backfill (14-I): split each stored page's Markdown, as stored, into its
- * blocks. The Markdown was redacted when the sync stored it, so nothing is redacted again; a page
- * whose blocks already match changes nothing, so a second run changes nothing. Each block is
- * written under its page's status, so a run over a page that is no longer current leaves it out
- * of the search as it was.
- */
-async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('docPages').paginate({ ...BLOCK_BACKFILL_READ, cursor });
-  const owners = new Map<Id<'docSources'>, Awaited<ReturnType<typeof blockOwnerOf>>>();
-  let changed = 0;
-  for (const stored of page.page) {
-    if (!owners.has(stored.sourceId)) {
-      owners.set(stored.sourceId, await blockOwnerOf(ctx, stored.sourceId));
-    }
-    const owner = owners.get(stored.sourceId);
-    if (owner === null || owner === undefined) continue;
-    const written = await replacePageBlocks(ctx, {
-      ...owner,
-      sourceId: stored.sourceId,
-      pageRef: stored.ref,
-      markdown: stored.markdown,
-      // The page's own status: the writer patches a kept block that says otherwise (15-A).
-      status: pageStatusOf(stored),
-    });
-    if (written > 0) changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
 
 /**
  * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the block
@@ -1207,7 +1090,6 @@ export const recordActionPage = internalMutation({
  * and record where it reached.
  */
 async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<MigrationProgress> {
-  if (name === 'docs-backfill-blocks') return await runBlockBackfillPage(ctx);
   if (!isActionMigration(name)) {
     return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
   }
@@ -1219,28 +1101,6 @@ async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<Migrati
     fromCursor: start.cursor,
     page,
   });
-}
-
-/**
- * Run the block backfill's next page, tried twice; a page that fails both is passed over and named
- * in the pass's note (W14-R1), so one page the backend will not write never stops the upgrade.
- */
-async function runBlockBackfillPage(ctx: ActionCtx): Promise<MigrationProgress> {
-  const name = 'docs-backfill-blocks';
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
-    } catch (error) {
-      // Each failure is logged with its reason, so a fault that is not the page's own (a bug, a
-      // backend restart) is seen in the log beside the page it passed over.
-      log.warn('migration page failed', {
-        migration: name,
-        attempt,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return await ctx.runMutation(internal.migrations.passOverBlockPage, {});
 }
 
 /**

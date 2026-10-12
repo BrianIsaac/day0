@@ -24,7 +24,8 @@ import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/author
  *
  * Writers: `replacePageBlocks`, through `splitStoredPage`, which `docSources.upsertPage`
  * schedules for each page it writes (it splits the page as stored when it runs, so it converges
- * on the newest write), and directly in the `docs-backfill-blocks` pass;
+ * on the newest write) (the 0.18.0 `docs-backfill-blocks` pass that also called it left the
+ * migration list at 0.20.0);
  * `copyPageStatusToBlocks`, for a page whose status changed and whose text did not (wave 15,
  * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`,
  * scheduled by `docSources.prunePages` for a page a finish removed; and
