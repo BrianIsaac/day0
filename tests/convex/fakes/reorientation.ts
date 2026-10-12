@@ -105,6 +105,15 @@ export async function openTestCard(
   return await harness.run(async (ctx) => await openCard(ctx, trigger));
 }
 
+/** A stored row's fields without its id and creation time, to insert again as a copy. */
+export function fieldsOf<T extends { readonly _id: unknown; readonly _creationTime: number }>(
+  row: T,
+): Omit<T, '_id' | '_creationTime'> {
+  return Object.fromEntries(
+    Object.entries(row).filter(([key]) => key !== '_id' && key !== '_creationTime'),
+  ) as Omit<T, '_id' | '_creationTime'>;
+}
+
 /** What the judgement read of a card, as its write carries it (`proposalBasis`). */
 export async function basisOf(
   harness: Harness,

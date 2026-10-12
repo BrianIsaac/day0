@@ -68,8 +68,11 @@ export const OPEN_WORK_STATES = [
 /** The rows one state of an employee's open work is read to, for the affected set. */
 const OPEN_WORK_READ = 100;
 
-/** The cards of one standing a read takes: an employee has few undecided cards (C6). */
-const UNDECIDED_CARDS_READ = 50;
+/**
+ * The cards of one standing a read takes: an employee has few undecided cards (C6). The hold and
+ * the employee's card list read the same number, so a card that holds work is always listed.
+ */
+export const STANDING_CARDS_READ = 50;
 
 /** The standings a card still waits in, deferred among them: it holds and a trigger joins it. */
 const STANDING_STATUSES = [
@@ -303,7 +306,7 @@ async function standingCards(
           .query('reorientations')
           .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
           .order('desc')
-          .take(UNDECIDED_CARDS_READ),
+          .take(STANDING_CARDS_READ),
     ),
   );
   return byStatus.flat();
@@ -505,8 +508,19 @@ export function heldStageOf(
       return (row.output as { phase?: string } | undefined)?.phase === 'dependent'
         ? undefined
         : 'run';
-    default:
+    case 'discovered':
+    case 'claimed':
+    case 'completed':
+    case 'cancelled':
+    case 'failed':
+    case 'skipped':
+    case 'deferred':
+    case 'needs-skill':
       return undefined;
+    default: {
+      const unknown: never = row.state;
+      throw new Error(`unhandled work item state ${String(unknown)}`);
+    }
   }
 }
 
@@ -1107,7 +1121,8 @@ export const recordProposalFailure = internalMutation({
 
 /**
  * Open again every deferred card whose date has come (A21), up to a bound a run: the Defer sweep,
- * run hourly through `crons.runScheduledJob`. Internal. Writes `reorientation.reopened`.
+ * run every fifteen minutes through `crons.runScheduledJob`. Internal. Writes
+ * `reorientation.reopened`.
  */
 export const reopenDeferred = internalMutation({
   args: {},

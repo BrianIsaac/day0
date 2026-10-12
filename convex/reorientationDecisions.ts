@@ -19,7 +19,13 @@ import {
   retireSkillInTransaction,
   withdrawSkillInTransaction,
 } from './skillControls';
-import { charterClausesWhere, heldStageOf, markApproving, openCard } from './reorientation';
+import {
+  STANDING_CARDS_READ,
+  charterClausesWhere,
+  heldStageOf,
+  markApproving,
+  openCard,
+} from './reorientation';
 import {
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
@@ -104,11 +110,16 @@ async function applyProposal(
       return { result: approvedResultWords.none };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
+      // The charter's own refusals (no approved charter now, a clause gone, nothing left to change)
+      // are each the charter no longer taking the change: said in the card's words (m15).
       const amended = await amendCharterInTransaction(ctx, {
         agentId: card.agentId,
         changes: proposed.changes,
         via: 'reorientation',
         reason: `reorientation: ${card.triggerSummary}`,
+      }).catch((error: unknown) => {
+        if (error instanceof ConvexError) throw error;
+        throw new ConvexError(CARD_ACTION_REFUSALS.moved);
       });
       return { result: approvedResultWords.charter(amended.version), charterId: amended.charterId };
     }
@@ -351,7 +362,7 @@ export const defer = mutation({
     const { card } = await decidableCard(ctx, args.reorientationId);
     const now = Date.now();
     const revisitAt = args.revisitAt ?? now + DEFER_DAYS * DAY_MS;
-    if (revisitAt <= now || revisitAt > now + 365 * DAY_MS) {
+    if (!Number.isFinite(revisitAt) || revisitAt <= now || revisitAt > now + 365 * DAY_MS) {
       throw new ConvexError(CARD_ACTION_REFUSALS.date);
     }
     await ctx.db.patch(card._id, { status: 'deferred', revisitAt });
@@ -407,7 +418,7 @@ export const listForAgent = query({
         .order('desc')
         .take(take);
     const standing = (
-      await Promise.all(DECIDABLE.map(async (status) => await read(status, DECIDED_CARDS_SHOWN)))
+      await Promise.all(DECIDABLE.map(async (status) => await read(status, STANDING_CARDS_READ)))
     ).flat();
     const decided = (
       await Promise.all([

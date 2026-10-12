@@ -8,6 +8,7 @@ import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
 import {
   basisOf,
   cardOf,
+  fieldsOf,
   cardsOf,
   eventTypesOf,
   openTestCard,
@@ -386,6 +387,27 @@ describe('approve: the proposal applied through its target', (): void => {
     expect((await cardOf(harness, card)).status).toBe('open');
   });
 
+  it('says a charter change the charter no longer takes in the card’s words (the second pass’s m15)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const card = await proposedCard(harness, agentId, {
+      kind: 'charter-change',
+      changes: [{ kind: 'edit-clause', field: 'willDo', index: 0, text: 'Triage every ask.' }],
+      rationale: 'The role widened.',
+    });
+    // The charter went back to a draft awaiting approval since the proposal.
+    await harness.run(async (ctx) => {
+      const [charter] = await ctx.db.query('charters').collect();
+      await ctx.db.patch(charter._id, { approved: false });
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card,
+      }),
+    ).rejects.toThrow('What this card proposes to change has moved on since: dismiss it.');
+    expect((await cardOf(harness, card)).status).toBe('open');
+  });
+
   it('grants and revokes a scope', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -433,9 +455,8 @@ describe('approve: the proposal applied through its target', (): void => {
     await harness.run(async (ctx) => {
       const [card] = await ctx.db.query('reorientations').collect();
       for (let at = 0; at < 51; at += 1) {
-        const { _id: _old, _creationTime: _time, ...fields } = card;
         await ctx.db.insert('reorientations', {
-          ...fields,
+          ...fieldsOf(card),
           triggerKey: `decided-${at}`,
           status: 'applied',
           decidedAt: 1,
@@ -751,6 +772,19 @@ describe('dismiss and defer: nothing changes', (): void => {
     expect((await eventTypesOf(harness, agentId)).at(-1)).toBe('reorientation.dismissed');
   });
 
+  it('refuses a date that is not a number (the second pass’s m1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const card = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Nothing.' });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.defer, {
+        reorientationId: card,
+        revisitAt: Number.NaN,
+      }),
+    ).rejects.toThrow('Pick a date after today and within a year.');
+    expect((await cardOf(harness, card)).status).toBe('open');
+  });
+
   it('defers a card a week by default, refuses a past date, and the sweep opens it again on its date', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -909,6 +943,24 @@ describe('openByHand and listForAgent', (): void => {
         .withIdentity(managerIdentity('stranger'))
         .query(api.reorientationDecisions.listForAgent, { agentId }),
     ).rejects.toThrow();
+  });
+
+  it('lists every standing card the hold reads, not only the newest twenty (the second pass’s m11)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let day = 0; day < 25; day += 1) {
+      await openTestCard(harness, {
+        agentId,
+        trigger: 'access-ended',
+        triggerKey: `ended-${day}`,
+        summary: `Access ended, day ${day}`,
+        now: Date.UTC(2026, 8, 1 + day, 12),
+      });
+    }
+    const views = await harness
+      .withIdentity(OWNER)
+      .query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(views.filter((view) => view.card.status === 'open')).toHaveLength(25);
   });
 
   it('counts what a standing card holds as the hold stops it, and nothing on a decided card (second pass M3)', async (): Promise<void> => {
