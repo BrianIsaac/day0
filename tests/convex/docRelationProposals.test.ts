@@ -515,6 +515,21 @@ describe('forgetProposalsOf: the proposals a page its source dropped leaves behi
     expect(await relations(harness)).toEqual([]);
   });
 
+  it('keeps the proposals that name only pages its source still has', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { wiki, official } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [relation] = await relations(harness);
+    await harness.run(async (ctx) => await forgetProposalsOf(ctx, wiki.sourceId, ['other.md']));
+    await harness.run(
+      async (ctx) =>
+        await forgetProposalsOf(ctx, official.sourceId, ['runbooks/pipeline-runbook.md']),
+    );
+    expect(await relations(harness)).toEqual([
+      expect.objectContaining({ _id: relation._id, status: 'proposed' }),
+    ]);
+  });
+
   it('keeps a relation the manager answered, which is their answer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { wiki, official } = await twoVersions(harness);
