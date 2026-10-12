@@ -4,6 +4,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { appendEvent } from './eventLog';
+import { closeTalkOfCard } from './reorientationTalk';
 import { amendCharterInTransaction } from './charters';
 import {
   dismissAgreementInTransaction,
@@ -275,9 +276,9 @@ async function applyPageStatus(
 /**
  * Approve a card: apply its proposal through the target's own transaction helper (a charter
  * amendment with `via: 'reorientation'`, an agreement's, an edge's, a page's status, a scope or a
- * skill), close the card `applied` with what it did, and release the work it held. Public, guarded
- * by the card's employee's owner. Writes the target's own rows and events, the card's outcome and
- * `reorientation.approved`.
+ * skill), close the card `applied` with what it did and its talk with it, and release the work it
+ * held. Public, guarded by the card's employee's owner. Writes the target's own rows and events,
+ * the card's outcome, its talk's close and `reorientation.approved`.
  *
  * @throws ConvexError when the card is gone or decided, nothing is proposed yet, or the target
  *   refuses (gone, moved on, a successor not current).
@@ -299,6 +300,7 @@ export const approve = mutation({
       ...(decidedBy !== undefined ? { decidedBy } : {}),
     });
     const applied = await applyProposal(ctx, card, card.proposed);
+    await closeTalkOfCard(ctx, card._id);
     await ctx.db.patch(card._id, {
       outcome: {
         summary: applied.result,
@@ -323,8 +325,9 @@ export const approve = mutation({
 });
 
 /**
- * Dismiss a card: it closes and nothing changes; the work it held goes on. Public, guarded by the
- * card's employee's owner. Writes the card's standing and `reorientation.dismissed`.
+ * Dismiss a card: it closes, its talk with it, and nothing changes; the work it held goes on.
+ * Public, guarded by the card's employee's owner. Writes the card's standing, its talk's close and
+ * `reorientation.dismissed`.
  */
 export const dismiss = mutation({
   args: { reorientationId: v.id('reorientations') },
@@ -338,6 +341,7 @@ export const dismiss = mutation({
       ...(decidedBy !== undefined ? { decidedBy } : {}),
       outcome: { summary: approvedResultWords.dismissed },
     });
+    await closeTalkOfCard(ctx, card._id);
     await appendEvent(ctx, {
       agentId: card.agentId,
       type: 'reorientation.dismissed',
