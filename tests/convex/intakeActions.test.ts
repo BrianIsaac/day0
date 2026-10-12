@@ -5190,6 +5190,55 @@ describe('the credential intake reads comes from the token store (11-AT)', (): v
   });
 });
 
+describe('the runtime’s withdraw against the real validators (W16-R13, D-11)', (): void => {
+  it('withdraws a ticket that left the queue whose issue names a creator, the people lookups left out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: 'Priya',
+          userId: 'owner',
+          state: 'active',
+          createdAt: 1,
+        }),
+    );
+    const candidate = {
+      agentId,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      externalId: 'REVOPS-5',
+      title: 'Post the close audit note',
+      contentSummary: 'The audit note for the September close.',
+      contentRefs: ['https://linear.app/day0/issue/REVOPS-5'],
+      requester: 'Sam',
+      observedAt: 1,
+      // What `linearCandidate` attaches whenever the issue names a creator or an assignee.
+      people: {
+        requester: [{ provider: 'linear' as const, externalId: 'user-sam', displayName: 'Sam' }],
+      },
+    };
+    await harness.action(async (ctx): Promise<void> => {
+      await convexRuntime(ctx).seed(candidate, 'owner');
+    });
+    // 16-J's W12c: the validator refused "Object contains extra field `people`".
+    await harness.action(async (ctx): Promise<void> => {
+      await convexRuntime(ctx).withdraw(
+        { ...candidate, leftQueue: 'the ticket is completed' },
+        'owner',
+      );
+    });
+    const rows = await harness.run(async (ctx) => await ctx.db.query('workItems').collect());
+    expect(rows).toEqual([
+      expect.objectContaining({
+        externalId: 'REVOPS-5',
+        state: 'cancelled',
+        skipReason: 'withdrawn from the queue on the tracker: the ticket is completed',
+      }),
+    ]);
+  });
+});
+
 describe("a Slack ask's asker, by name where the card allows users.info (the second pre-tag's recorded item)", (): void => {
   afterEach((): void => {
     vi.unstubAllGlobals();
