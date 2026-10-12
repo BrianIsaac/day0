@@ -53,6 +53,7 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
 import { appendEvent } from './eventLog';
+import { isWriteScope, openCard, scopeReach } from './reorientation';
 import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence';
 import schema from './schema';
 import { ROSTER_SCAN_LIMIT, rosterOf, rosterRowValidator, type RosterRow } from './roster';
@@ -532,7 +533,7 @@ export const revokeScope = mutation({
     const revokedAt = Date.now();
     for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
     const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
-    await appendEvent(ctx, {
+    const eventId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'permission.revoked',
       payload: {
@@ -541,6 +542,16 @@ export const revokeScope = mutation({
         ...(reason ? { reason } : {}),
       },
       createdAt: revokedAt,
+    });
+    await openCard(ctx, {
+      agentId: args.agentId,
+      trigger: 'access-revoked',
+      triggerKey: eventId,
+      summary: `Its access “${args.scope}” was revoked`,
+      evidence: { eventIds: [eventId] },
+      affected: await scopeReach(ctx, args.agentId, args.scope),
+      writeScope: isWriteScope(args.scope),
+      now: revokedAt,
     });
     return { revoked: active.length };
   },

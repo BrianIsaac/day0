@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
+import { openCard, openWorkCiting } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
 import { RUNBOOKS_A_SCAN, type ChangedRunbook } from './skillVersions';
@@ -153,6 +154,54 @@ interface PageName {
   readonly ref: string;
 }
 
+/** How a card says what became of a page that is no longer current. */
+const NO_LONGER_CURRENT: Readonly<Record<Exclude<PageStatus, 'active'>, string>> = {
+  superseded: 'superseded',
+  archived: 'archived',
+  draft: 'marked a draft',
+};
+
+/**
+ * Open a reorientation card for a reader whose open plan cites a page that stopped being current
+ * (wave 16, 16-O; section 3's page row): superseded, archived or made a draft. A page no open plan
+ * cites opens none here; the skills that read it are stamped for a re-check, which opens its own.
+ */
+async function openCardUnderPlan(
+  ctx: MutationCtx,
+  change: {
+    readonly agent: Doc<'agents'>;
+    readonly page: Doc<'docPages'>;
+    readonly to: PageStatus;
+    readonly supersededBy: PageName | undefined;
+    readonly eventId: Id<'events'>;
+    readonly now: number;
+  },
+): Promise<void> {
+  if (change.to === 'active') return;
+  const pageRef = { sourceId: change.page.sourceId, ref: change.page.ref };
+  const cited = await openWorkCiting(ctx, change.agent._id, [pageRef]);
+  if (cited.length === 0) return;
+  const named = change.to === 'superseded' ? change.supersededBy : undefined;
+  const successor =
+    named === undefined
+      ? null
+      : await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
+          .first();
+  await openCard(ctx, {
+    agentId: change.agent._id,
+    trigger: 'page-status-changed',
+    triggerKey: change.eventId,
+    summary: `“${change.page.title}” was ${NO_LONGER_CURRENT[change.to]}${
+      successor !== null ? ` by “${successor.title}”` : ''
+    }`,
+    evidence: { eventIds: [change.eventId], pageRefs: [pageRef] },
+    affected: { workItems: cited },
+    now: change.now,
+  });
+}
+
 /**
  * Write a decided status on a page's row when it differs, and set off what a change of status
  * sets off: the blocks, each reading employee's record and parked work.
@@ -196,7 +245,7 @@ async function writeStatus(
     status: decided.status,
   });
   for (const agent of await readersOf(ctx, source)) {
-    await appendEvent(ctx, {
+    const eventId = await appendEvent(ctx, {
       agentId: agent._id,
       type: 'documentation.page-status-changed',
       payload: {
@@ -210,6 +259,7 @@ async function writeStatus(
       },
       createdAt: now,
     });
+    await openCardUnderPlan(ctx, { agent, page, to: decided.status, supersededBy, eventId, now });
     // Out-of-scope skips read the documentation the employee has; a page that left it, or came
     // back, may change the verdict. Keyed by the status, so the same change re-admits once.
     await reevaluatePendingInTransaction(ctx, {

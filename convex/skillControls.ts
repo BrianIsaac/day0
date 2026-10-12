@@ -11,6 +11,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openCard, skillReach } from './reorientation';
 import { assertNotBeingHandedOver } from './handoverFence';
 import {
   holdersOf,
@@ -597,7 +598,7 @@ async function withdrawVersion(
     holders.push({ skillId: holder._id, agentId: holder.agentId, agentName: employee.name });
   }
   await endAdoptionsOf(ctx, version, now);
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'skill.revoked',
     payload: {
@@ -610,6 +611,21 @@ async function withdrawVersion(
     },
     createdAt: now,
   });
+  for (const holder of holders) {
+    await openCard(ctx, {
+      agentId: holder.agentId,
+      trigger: 'skill-withdrawn',
+      triggerKey: eventId,
+      summary: `The skill “${row.name}” was withdrawn: ${reason}`,
+      evidence: {
+        eventIds: holder.agentId === row.agentId ? [eventId] : [],
+        skillIds: [holder.skillId],
+        skillVersionIds: [version._id],
+      },
+      affected: await skillReach(ctx, holder.agentId, [holder.skillId]),
+      now,
+    });
+  }
   return { holders: holders.length, returnedItems, stoppedRuns };
 }
 

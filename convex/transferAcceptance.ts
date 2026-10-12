@@ -13,6 +13,12 @@ import { assertNamedInTransfer } from './ownership';
 import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
 import { appendEvent, eventsOfType } from './eventLog';
 import {
+  carriesReportingLine,
+  charterClausesWhere,
+  moveCardsToOwner,
+  openCard,
+} from './reorientation';
+import {
   assertKeepable,
   boundariesOf,
   cancelJobsFor,
@@ -369,7 +375,7 @@ async function recordMove(
   now: number,
 ): Promise<void> {
   await ctx.db.patch(transfer._id, { state: 'accepted', outcome });
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId,
     type: 'manager.transferred',
     payload: {
@@ -389,6 +395,18 @@ async function recordMove(
       charterDiscarded: outcome.charterDiscarded,
     },
     createdAt: now,
+  });
+  // A card's owner key is a copy of the employee's (16-K's F2): the cards opened before the move
+  // follow the employee, and the new manager's first view has the card about the rules it carries.
+  await moveCardsToOwner(ctx, agentId, transfer.toOwnerKey);
+  await openCard(ctx, {
+    agentId,
+    trigger: 'manager-changed',
+    triggerKey: eventId,
+    summary: `${transfer.fromAddress} handed ${transfer.agentName} over to you`,
+    evidence: { eventIds: [eventId] },
+    affected: { charterClauses: await charterClausesWhere(ctx, agentId, carriesReportingLine) },
+    now,
   });
 }
 

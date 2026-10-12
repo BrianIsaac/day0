@@ -424,6 +424,68 @@ export async function openWorkUsingSkills(
     .map((row) => row._id);
 }
 
+/** The registered skills one read of an employee's library takes, for the affected set. */
+const SKILLS_READ = 100;
+
+/** Whether a scope lets the employee write, so a change to it is high risk (5.2). */
+export function isWriteScope(scope: string): boolean {
+  return /:(write|admin)$/.test(scope);
+}
+
+/** What a change to some of an employee's skills reaches: the skills and the open work running them. */
+export async function skillReach(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  skillIds: readonly Id<'skills'>[],
+): Promise<Partial<CardAffected>> {
+  return { skills: [...skillIds], workItems: await openWorkUsingSkills(ctx, agentId, skillIds) };
+}
+
+/** An employee's registered skills. */
+async function registeredSkills(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Doc<'skills'>[]> {
+  return await ctx.db
+    .query('skills')
+    .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'registered'))
+    .take(SKILLS_READ);
+}
+
+/**
+ * What a revoked scope reaches: the employee's systems it was for, the registered skills that need
+ * it and the open work running them.
+ */
+export async function scopeReach(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  scope: string,
+): Promise<Partial<CardAffected>> {
+  const system = scope.split(':')[0];
+  const [skills, surfaces] = await Promise.all([
+    registeredSkills(ctx, agentId),
+    ctx.db
+      .query('surfaces')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .take(SKILLS_READ),
+  ]);
+  const needing = skills
+    .filter((skill) => (skill.requiredScopes ?? []).includes(scope))
+    .map((skill) => skill._id);
+  return {
+    ...(await skillReach(ctx, agentId, needing)),
+    surfaces: surfaces.filter((surface) => surface.slug === system).map((surface) => surface._id),
+  };
+}
+
+/** What an ended access reaches: the system, the registered skills that write it and their open work. */
+export async function surfaceReach(
+  ctx: QueryCtx,
+  surface: Pick<Doc<'surfaces'>, '_id' | 'agentId' | 'slug'>,
+): Promise<Partial<CardAffected>> {
+  const writing = (await registeredSkills(ctx, surface.agentId))
+    .filter((skill) => skill.targetSurface === surface.slug)
+    .map((skill) => skill._id);
+  return { ...(await skillReach(ctx, surface.agentId, writing)), surfaces: [surface._id] };
+}
+
 /** The employee's charter as approved last, or undefined. */
 async function approvedCharter(
   ctx: QueryCtx,

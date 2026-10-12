@@ -623,6 +623,8 @@ describe('agent surface grants', (): void => {
           reason: 'Trial containment.',
         },
       ],
+      // The revocation opens a reorientation card (wave 16, 16-O; section 3's access row).
+      ['reorientation.opened', expect.objectContaining({ trigger: 'access-revoked', risk: 'low' })],
       ['permission.granted', { scope: 'linear:read', source: 'manager' }],
     ]);
   });

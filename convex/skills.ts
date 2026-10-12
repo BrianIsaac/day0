@@ -18,6 +18,7 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { grantScopeInTransaction } from './agents';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
+import { openCard, skillReach } from './reorientation';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { skillOwnerKeyOf, STORED_COPY_CLEARED } from './skillVersions';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
@@ -622,12 +623,28 @@ export const failAuthoringRun = internalMutation({
       ...RELEASED,
     });
     for (const type of ['skill.failed', args.eventType] as const) {
-      await appendEvent(ctx, {
+      const eventId = await appendEvent(ctx, {
         agentId: row.agentId,
         type,
         payload: { skillId: args.skillId, name: row.name, reason },
         createdAt: Date.now(),
       });
+      // A skill that was registered and failed its stored verification is one the employee relied
+      // on and has lost (section 3's re-check row); a first authoring that fails opens no card.
+      if (type === 'skill.verification-failed' && row.registeredAt !== undefined) {
+        await openCard(ctx, {
+          agentId: row.agentId,
+          trigger: 'skill-recheck-failed',
+          triggerKey: eventId,
+          summary: `The skill “${row.name}” failed its re-check: ${reason}`,
+          evidence: {
+            eventIds: [eventId],
+            skillIds: [args.skillId],
+            skillVersionIds: row.versionId !== undefined ? [row.versionId] : [],
+          },
+          affected: await skillReach(ctx, row.agentId, [args.skillId]),
+        });
+      }
     }
     await requeueWaitingWork(ctx, row, { decision: 'needs-skill', reason });
     return { recorded: true };
