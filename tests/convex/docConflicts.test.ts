@@ -5,6 +5,7 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { conflictsUnderPlan, decisionsOffered } from '../../convex/docConflicts';
 import type { SelectionRequest } from '../../src/docs/select';
+import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
@@ -709,6 +710,44 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       text: 'B, Pipeline runbook (Handbook) is right',
       via: 'slack',
     });
+  });
+
+  it('drafts the plan again on the first Retry once the answer superseded a page it cites (W16-R25, W3h)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    const [cite] = (item!.plan as { cites: Array<{ sourceId?: string; pageRef?: string }> }).cites;
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const citesFrom =
+      cite.sourceId === relation.from.sourceId && cite.pageRef === relation.from.ref;
+    const [question] = await questionsOf(harness, workItemId);
+    // The run stopped at the hold with the conflict's question open (16-J's REVOPS-5).
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: `stopped: ${openQuestionStopReason({ question: question.question, steps: [1] })}`,
+        output: {
+          draft: '',
+          notes: '',
+          actions: [],
+          applied: [],
+          openQuestion: { question: question.question, steps: [1], relationId },
+        },
+      });
+    });
+    // The manager says the other page is right, so the page the plan cites is superseded.
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: citesFrom ? 'to' : 'from',
+    });
+    await expect(
+      asManager(harness).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+    const retried = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(retried?.plan).toBeUndefined();
+    expect(await eventsOf(harness, retried!.agentId, 'work.plan-redraft')).toHaveLength(1);
   });
 
   it('keeps reading the DM while a question waits, however long ago its plan was approved (the second pass’s M1)', async (): Promise<void> => {

@@ -144,11 +144,47 @@ function redraftedOutput(row: Doc<'workItems'>): Record<string, unknown> | undef
   };
 }
 
+/** The questions of one item a retry reads for an answered conflict. */
+const ITEM_QUESTIONS_READ = 50;
+
+/**
+ * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
+ * cites is no longer current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on
+ * resuming and stop again on its gone cite, so the first Retry drafts the plan again.
+ */
+async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
+  const cites =
+    (row.plan as { cites?: ReadonlyArray<{ sourceId?: string; pageRef?: string }> } | undefined)
+      ?.cites ?? [];
+  if (cites.length === 0) return false;
+  const questions = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+    .take(ITEM_QUESTIONS_READ);
+  for (const question of questions) {
+    if (question.relationId === undefined || question.answer === undefined) continue;
+    const relation = await ctx.db.get(question.relationId);
+    if (relation === null) continue;
+    for (const end of [relation.from, relation.to]) {
+      if (!cites.some((cite) => cite.sourceId === end.sourceId && cite.pageRef === end.ref)) {
+        continue;
+      }
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', end.sourceId).eq('ref', end.ref))
+        .first();
+      if (page === null || (page.status ?? 'active') !== 'active') return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as
  * feedback for the next run. A plan the manager declined, or one whose cited documentation has
  * since changed (recorded as `work.plan-redraft`, with the run's reason), is drafted again rather
- * than run as it stood.
+ * than run as it stood; so is one whose stop on a conflict's question was answered by superseding
+ * a page it cites (W16-R25).
  */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
@@ -184,7 +220,10 @@ export const retryFailed = mutation({
       row.state === 'failed' &&
       row.plan !== undefined &&
       failure !== undefined &&
-      isGoneCitesReason(failure);
+      (isGoneCitesReason(failure) ||
+        (isOpenQuestionStop(failure) &&
+          isConflictQuestion(row.output) &&
+          (await answerSupersededCite(ctx, row))));
     // A cancelled plan is one the manager turned down: Retry drafts a new plan
     // that goes back to them, and never runs the rejected one.
     const redraft = (row.state === 'cancelled' && row.plan !== undefined) || citesChanged;
