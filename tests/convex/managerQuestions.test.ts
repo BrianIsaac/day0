@@ -15,6 +15,8 @@ import {
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
+import { insertMinimalRow } from './schema-fixtures';
+import { isBlockingQuestion, questionTypeOf } from '../../src/agent/manager-questions';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -189,6 +191,143 @@ describe('the question record', (): void => {
       return (await ctx.db.get(id))?.answer?.via;
     });
     expect(kept).toBe('dashboard');
+  });
+});
+
+describe('the question record from wave 16 (16-K, N10: additive and optional)', (): void => {
+  /** A question asked at a plan, with the fields a test gives it. */
+  const question = (
+    agentId: Id<'agents'>,
+    charterId: Id<'charters'>,
+    workItemId: Id<'workItems'>,
+    fields: Partial<Doc<'managerQuestions'>> = {},
+  ) => ({
+    agentId,
+    key: 'which refund page is right',
+    question: 'Two pages disagree under "Refunds". Which is right?',
+    context: { touchedBy: 'plan' as const, text: 'Refund the invoice.', words: ['refund'] },
+    askedAt: 4,
+    workItemId,
+    charterId,
+    ...fields,
+  });
+
+  it('reads a question with no `blocking` as blocking and of the charter, as every question before wave 16 was', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('managerQuestions', question(agentId, charterId, workItemId));
+    });
+    const [older] = await harness
+      .withIdentity(OWNER)
+      .query(api.managerQuestions.forWorkItem, { workItemId });
+    expect(older).not.toHaveProperty('blocking');
+    expect(older).not.toHaveProperty('type');
+    expect(isBlockingQuestion(older!)).toBe(true);
+    expect(questionTypeOf(older!)).toBe('charter');
+  });
+
+  it('stores a non-blocking retrieval question about one relation and its card, read back by the relation', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    const read = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const relationId = await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId, ref: 'refunds.md' },
+        to: { sourceId, ref: 'refunds-2026.md' },
+        kind: 'possible_conflict',
+        evidence: [],
+        status: 'confirmed',
+        createdAt: 1,
+      });
+      const questionId = await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, {
+          blocking: false,
+          type: 'retrieval',
+          relationId,
+        }),
+      );
+      return {
+        questionId,
+        byRelation: (
+          await ctx.db
+            .query('managerQuestions')
+            .withIndex('by_relation', (q) => q.eq('relationId', relationId))
+            .collect()
+        ).map((row) => row._id),
+      };
+    });
+    const [asked] = await harness
+      .withIdentity(OWNER)
+      .query(api.managerQuestions.forWorkItem, { workItemId });
+    expect(read.byRelation).toEqual([read.questionId]);
+    expect(isBlockingQuestion(asked!)).toBe(false);
+    expect(questionTypeOf(asked!)).toBe('retrieval');
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'managerQuestions',
+          question(agentId, charterId, workItemId, {
+            type: 'gossip' as Doc<'managerQuestions'>['type'],
+          }),
+        );
+      }),
+    ).rejects.toThrow(/type|validat/i);
+  });
+
+  it("stores an answer given in the plan's Slack request and reads it back (RM20)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    await harness.run(async (ctx) => {
+      await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, {
+          blocking: false,
+          type: 'retrieval',
+          answer: { text: 'The 2026 page is right.', answeredAt: 5, via: 'slack' },
+        }),
+      );
+    });
+    const [answered] = await harness
+      .withIdentity(OWNER)
+      .query(api.managerQuestions.forWorkItem, { workItemId });
+    expect(answered?.answer).toEqual({
+      text: 'The 2026 page is right.',
+      answeredAt: 5,
+      via: 'slack',
+    });
+  });
+
+  it('ties a question to the reorientation card it was asked from', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    const read = await harness.run(async (ctx) => {
+      const reorientationId = (await insertMinimalRow(
+        ctx as never,
+        'reorientations',
+        agentId,
+      )) as Id<'reorientations'>;
+      const id = await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, { type: 'org', reorientationId }),
+      );
+      return { reorientationId, row: await ctx.db.get(id) };
+    });
+    expect(read.row).toMatchObject({ type: 'org', reorientationId: read.reorientationId });
   });
 });
 

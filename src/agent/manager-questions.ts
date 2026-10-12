@@ -13,8 +13,28 @@ import type { Charter } from './charter';
 /** Which side of the plan approval touched the question. */
 export type QuestionTouchedBy = 'plan' | 'candidate';
 
-/** How an answer arrived: typed on the dashboard, or given with a plan approval. */
-export type AnswerVia = 'dashboard' | 'plan-approval';
+/**
+ * How an answer arrived: typed on the dashboard, given with a plan approval, or given in the
+ * plan's own Slack request (wave 16, RM20).
+ */
+export type AnswerVia = 'dashboard' | 'plan-approval' | 'slack';
+
+/**
+ * What a question is about (wave 16, 16-K): an open question of the charter, the only kind asked
+ * before wave 16; which of two disagreeing pages is right (`retrieval`, with its relation); whom
+ * a person string means (`org`); and a policy, a tool or a preference a reorientation card asks.
+ */
+export const MANAGER_QUESTION_TYPES = [
+  'charter',
+  'retrieval',
+  'org',
+  'policy',
+  'tool',
+  'preference',
+] as const;
+
+/** One of {@link MANAGER_QUESTION_TYPES}. */
+export type ManagerQuestionType = (typeof MANAGER_QUESTION_TYPES)[number];
 
 export interface ManagerQuestionContext {
   touchedBy: QuestionTouchedBy;
@@ -43,7 +63,31 @@ export interface ManagerQuestionRecord {
   workItemId: string;
   /** The charter version whose open question this was. */
   charterId: string;
+  /** Whether the plan waits for the answer; absent reads as blocking ({@link isBlockingQuestion}). */
+  blocking?: boolean;
+  /** What it is about; absent reads as `charter` ({@link questionTypeOf}). */
+  type?: ManagerQuestionType;
+  /** The relation a `retrieval` question asks about. */
+  relationId?: string;
+  /** The reorientation card it was asked from. */
+  reorientationId?: string;
   answer?: ManagerQuestionAnswer;
+}
+
+/**
+ * Whether a question holds its plan until it is answered. A question written before wave 16 has
+ * no `blocking` and held its plan, so absent reads as blocking; a non-blocking one (a conflict's
+ * question, RM20) lets the steps it does not touch run.
+ */
+export function isBlockingQuestion(question: { readonly blocking?: boolean }): boolean {
+  return question.blocking !== false;
+}
+
+/** What a question is about: absent reads as `charter`, the one kind asked before wave 16. */
+export function questionTypeOf(question: {
+  readonly type?: ManagerQuestionType;
+}): ManagerQuestionType {
+  return question.type ?? 'charter';
 }
 
 /**

@@ -6,6 +6,7 @@ import schema from '../../convex/schema';
 import type { GenericMutationCtx, WithoutSystemFields } from 'convex/server';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { insertMinimalRow } from './schema-fixtures';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -2996,5 +2997,455 @@ describe('the pre-tag schema lines of wave 15 (15-T: additive and optional)', ()
       });
       await ctx.db.patch(sourceId, { relationsOwed: { generations: [runId], cursor: null } });
     });
+  });
+});
+
+describe('the wave 16 schema step (16-K, N10: additive and optional)', (): void => {
+  /** A table's indexes as the push declares them: each name with its fields. */
+  const indexesOf = (table: keyof typeof schema.tables): Record<string, readonly string[]> =>
+    Object.fromEntries(
+      schema.tables[table][' indexes']().map((index) => [index.indexDescriptor, index.fields]),
+    );
+
+  /** A card as a trigger's writer opens it, with the fields a test gives it. */
+  const card = (
+    agentId: Id<'agents'>,
+    fields: Partial<WithoutSystemFields<Doc<'reorientations'>>> = {},
+  ): WithoutSystemFields<Doc<'reorientations'>> => ({
+    agentId,
+    userId: 'owner',
+    trigger: 'relationship-changed',
+    triggerKey: 'event:relationship.changed:1',
+    triggerSummary: 'Hana Mori now approves refunds in place of Ken Ito',
+    evidence: {
+      eventIds: [],
+      pageRefs: [],
+      relationIds: [],
+      correctionIds: [],
+      relationshipIds: [],
+      skillIds: [],
+      skillVersionIds: [],
+    },
+    affected: {
+      charterClauses: [],
+      agreements: [],
+      relationships: [],
+      skills: [],
+      surfaces: [],
+      workItems: [],
+    },
+    proposed: { kind: 'pending' },
+    risk: 'low',
+    blockingWork: [],
+    status: 'open',
+    day: '2026-10-12',
+    createdAt: 1,
+    ...fields,
+  });
+
+  /** An employee of the owner's. */
+  const insertAgent = async (ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> =>
+    await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Mira',
+      userId: 'owner',
+      state: 'deployed',
+      createdAt: 1,
+    });
+
+  it("opens a card with its trigger, evidence, affected set and pending proposal, read by employee and standing, by day and trigger, by revisit date and by owner's standing", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const sourceId = (await insertMinimalRow(
+        ctx as never,
+        'docSources',
+        agentId,
+      )) as Id<'docSources'>;
+      const workItemId = (await insertMinimalRow(
+        ctx as never,
+        'workItems',
+        agentId,
+      )) as Id<'workItems'>;
+      const opened = await ctx.db.insert(
+        'reorientations',
+        card(agentId, {
+          trigger: 'page-status-changed',
+          triggerKey: 'event:documentation.page-status-changed:7',
+          evidence: {
+            eventIds: [],
+            pageRefs: [{ sourceId, ref: 'refunds.md' }],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: [],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [{ field: 'willDo', index: 0, text: 'Refund invoices under $500' }],
+            agreements: [],
+            relationships: [],
+            skills: [],
+            surfaces: [],
+            workItems: [workItemId],
+          },
+          risk: 'high',
+          blockingWork: [workItemId],
+        }),
+      );
+      const deferred = await ctx.db.insert(
+        'reorientations',
+        card(agentId, { status: 'deferred', revisitAt: 7 * 86_400_000, day: '2026-10-11' }),
+      );
+      const ids = async (rows: Promise<Doc<'reorientations'>[]>) =>
+        (await rows).map((row) => row._id);
+      return {
+        opened,
+        deferred,
+        row: await ctx.db.get(opened),
+        open: await ids(
+          ctx.db
+            .query('reorientations')
+            .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', 'open'))
+            .collect(),
+        ),
+        today: await ids(
+          ctx.db
+            .query('reorientations')
+            .withIndex('by_agent_day_trigger', (q) =>
+              q.eq('agentId', agentId).eq('day', '2026-10-12').eq('trigger', 'page-status-changed'),
+            )
+            .collect(),
+        ),
+        due: await ids(
+          ctx.db
+            .query('reorientations')
+            .withIndex('by_status_revisit', (q) =>
+              q.eq('status', 'deferred').lte('revisitAt', 8 * 86_400_000),
+            )
+            .collect(),
+        ),
+        owners: await ids(
+          ctx.db
+            .query('reorientations')
+            .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'open'))
+            .collect(),
+        ),
+      };
+    });
+    expect(read.row).toMatchObject({ proposed: { kind: 'pending' }, risk: 'high' });
+    expect(read.row).not.toHaveProperty('revisitAt');
+    expect(read.row).not.toHaveProperty('outcome');
+    expect(read.row).not.toHaveProperty('decidedAt');
+    expect(read.open).toEqual([read.opened]);
+    expect(read.today).toEqual([read.opened]);
+    expect(read.due).toEqual([read.deferred]);
+    expect(read.owners).toEqual([read.opened]);
+    expect(indexesOf('reorientations')).toEqual({
+      by_agent_status: ['agentId', 'status'],
+      by_agent_day_trigger: ['agentId', 'day', 'trigger'],
+      by_status_revisit: ['status', 'revisitAt'],
+      by_user_status: ['userId', 'status'],
+    });
+  });
+
+  it('stores each proposal a judgement may write, naming the target Approve applies it through, and the outcome of a decided card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const row = async <
+        Table extends 'docSources' | 'charters' | 'workingAgreements' | 'relationships' | 'skills',
+      >(
+        table: Table,
+      ): Promise<Id<Table>> => (await insertMinimalRow(ctx as never, table, agentId)) as Id<Table>;
+      const sourceId = await row('docSources');
+      const charterId = await row('charters');
+      const proposals: Doc<'reorientations'>['proposed'][] = [
+        { kind: 'pending' },
+        { kind: 'pending', failedAt: 2, failure: 'The model did not answer in time.' },
+        { kind: 'none', rationale: 'The new approver signs off the same refunds.' },
+        {
+          kind: 'charter-change',
+          changes: [
+            {
+              kind: 'edit-clause',
+              field: 'escalationTriggers',
+              index: 0,
+              text: 'Refunds over $500 go to Hana Mori',
+            },
+          ],
+          rationale: 'Ken Ito no longer approves refunds.',
+          before: 'Refunds over $500 go to Ken Ito',
+          after: 'Refunds over $500 go to Hana Mori',
+        },
+        {
+          kind: 'agreement',
+          agreementId: await row('workingAgreements'),
+          action: 'edit',
+          statement: 'Send refunds over $500 to Hana Mori first.',
+          rationale: 'The agreement names the old approver.',
+        },
+        {
+          kind: 'relationship',
+          relationshipId: await row('relationships'),
+          action: 'edit',
+          type: 'approval-authority',
+          scope: 'refunds',
+          rationale: 'Hana Mori approves refunds now.',
+        },
+        {
+          kind: 'page-status',
+          page: { sourceId, ref: 'refunds.md' },
+          status: 'superseded',
+          supersededBy: { sourceId, ref: 'refunds-v2.md' },
+          rationale: 'The October page replaces it.',
+        },
+        { kind: 'scope', scope: 'linear:write', action: 'revoke', rationale: 'No longer needed.' },
+        {
+          kind: 'skill-action',
+          skillId: await row('skills'),
+          action: 'recheck',
+          rationale: 'Its runbook was superseded.',
+        },
+      ];
+      const stored: string[] = [];
+      for (const proposed of proposals) {
+        const id = await ctx.db.insert('reorientations', card(agentId, { proposed }));
+        stored.push((await ctx.db.get(id))?.proposed.kind ?? '');
+      }
+      const decided = await ctx.db.insert(
+        'reorientations',
+        card(agentId, {
+          status: 'applied',
+          outcome: { summary: 'Charter version 0.3 written.', charterId },
+          decidedAt: 3,
+          decidedBy: MANAGER_ADDRESS,
+        }),
+      );
+      return { stored, decided: await ctx.db.get(decided) };
+    });
+    expect(read.stored).toEqual([
+      'pending',
+      'pending',
+      'none',
+      'charter-change',
+      'agreement',
+      'relationship',
+      'page-status',
+      'scope',
+      'skill-action',
+    ]);
+    expect(read.decided).toMatchObject({
+      status: 'applied',
+      outcome: { summary: 'Charter version 0.3 written.' },
+      decidedAt: 3,
+      decidedBy: MANAGER_ADDRESS,
+    });
+  });
+
+  it('keeps a Discuss conversation in its own table, turn by turn with the draft, read by its card and by employee, and ends it in a proposal (RM10 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const reorientationId = await ctx.db.insert('reorientations', card(agentId));
+      const talkId = await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId,
+        state: 'active',
+        turns: [
+          { id: 't1', speaker: 'employee', text: 'Should Hana approve refunds now?', at: 1 },
+          { id: 't2', speaker: 'manager', text: 'Yes, from today.', at: 2 },
+        ],
+        replyDraft: 'And only over $500',
+        conversation: 1,
+        startedAt: 1,
+      });
+      const fresh = await ctx.db.get(talkId);
+      await ctx.db.patch(talkId, {
+        state: 'finished',
+        outcome: {
+          proposed: { kind: 'none', rationale: 'Hana approves the same refunds.' },
+          quotes: ['Yes, from today.'],
+        },
+        endedAt: 3,
+      });
+      return {
+        fresh,
+        finished: await ctx.db.get(talkId),
+        byCard: (
+          await ctx.db
+            .query('reorientationTalks')
+            .withIndex('by_reorientation', (q) => q.eq('reorientationId', reorientationId))
+            .collect()
+        ).map((row) => row._id),
+        byAgent: (
+          await ctx.db
+            .query('reorientationTalks')
+            .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+            .collect()
+        ).map((row) => row._id),
+        talkId,
+      };
+    });
+    expect(read.fresh).not.toHaveProperty('outcome');
+    expect(read.fresh).not.toHaveProperty('endedAt');
+    expect(read.finished).toMatchObject({
+      state: 'finished',
+      outcome: { proposed: { kind: 'none' }, quotes: ['Yes, from today.'] },
+    });
+    expect(read.byCard).toEqual([read.talkId]);
+    expect(read.byAgent).toEqual([read.talkId]);
+    expect(indexesOf('reorientationTalks')).toEqual({
+      by_reorientation: ['reorientationId'],
+      by_agent: ['agentId'],
+    });
+    // A talk is never a one-to-one session: the session keeps no kind (RM10 (a)).
+    expect(Object.keys(schema.tables.voiceSessions.validator.fields)).not.toContain('kind');
+  });
+
+  it('refuses a talk state the vocabulary does not have, and a talk outcome that is still pending', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertTalk = async (
+      fields: Partial<WithoutSystemFields<Doc<'reorientationTalks'>>>,
+    ): Promise<void> => {
+      await harness.run(async (ctx) => {
+        const agentId = await insertAgent(ctx);
+        await ctx.db.insert('reorientationTalks', {
+          agentId,
+          reorientationId: await ctx.db.insert('reorientations', card(agentId)),
+          state: 'active',
+          turns: [],
+          conversation: 0,
+          startedAt: 1,
+          ...fields,
+        });
+      });
+    };
+    await insertTalk({});
+    await expect(
+      insertTalk({ state: 'synthesising' as Doc<'reorientationTalks'>['state'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertTalk({
+        state: 'finished',
+        outcome: {
+          proposed: { kind: 'pending' },
+          quotes: [],
+        } as unknown as Doc<'reorientationTalks'>['outcome'],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("gives the fix units' rows their fields: a work item its selected blocks and settled waiver, a relation the kind it was proposed as, a page its judgement's last try, a source its owed remeasure; older rows keep none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const sourceId = (await insertMinimalRow(
+        ctx as never,
+        'docSources',
+        agentId,
+      )) as Id<'docSources'>;
+      const pageId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const relationId = (await insertMinimalRow(
+        ctx as never,
+        'docRelations',
+        agentId,
+      )) as Id<'docRelations'>;
+      const workItemId = (await insertMinimalRow(
+        ctx as never,
+        'workItems',
+        agentId,
+      )) as Id<'workItems'>;
+      const blockId = (await insertMinimalRow(
+        ctx as never,
+        'docBlocks',
+        agentId,
+      )) as Id<'docBlocks'>;
+      const older = {
+        source: await ctx.db.get(sourceId),
+        page: await ctx.db.get(pageId),
+        relation: await ctx.db.get(relationId),
+        item: await ctx.db.get(workItemId),
+      };
+      // W15-R17: the selection's blocks with their hashes on the item; W15-R16: Take it anyway
+      // on a settled skip stamped on the row.
+      await ctx.db.patch(workItemId, {
+        selectedBlocks: [{ id: blockId, hash: 'b'.repeat(64) }],
+        settledWaivedAt: 5,
+      });
+      // W15-R22: Undo restores the kind the relation was proposed as; the judgement asks the
+      // least recently tried page first.
+      await ctx.db.patch(relationId, { proposedKind: 'possible_successor' });
+      await ctx.db.patch(pageId, { judgedAttemptAt: 6 });
+      // RM19 (a), K-3: the measure owed over the existing library, from its start.
+      await ctx.db.patch(sourceId, { relationsRemeasure: { cursor: null } });
+      return {
+        older,
+        source: await ctx.db.get(sourceId),
+        page: await ctx.db.get(pageId),
+        relation: await ctx.db.get(relationId),
+        item: await ctx.db.get(workItemId),
+        blockId,
+      };
+    });
+    expect(read.older.source).not.toHaveProperty('relationsRemeasure');
+    expect(read.older.page).not.toHaveProperty('judgedAttemptAt');
+    expect(read.older.relation).not.toHaveProperty('proposedKind');
+    expect(read.older.item).not.toHaveProperty('selectedBlocks');
+    expect(read.older.item).not.toHaveProperty('settledWaivedAt');
+    expect(read.item).toMatchObject({
+      selectedBlocks: [{ id: read.blockId, hash: 'b'.repeat(64) }],
+      settledWaivedAt: 5,
+    });
+    expect(read.relation).toMatchObject({ proposedKind: 'possible_successor' });
+    expect(read.page).toMatchObject({ judgedAttemptAt: 6 });
+    expect(read.source).toMatchObject({ relationsRemeasure: { cursor: null } });
+  });
+
+  it('refuses a proposed kind the relation vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const relationId = (await insertMinimalRow(
+          ctx as never,
+          'docRelations',
+          await insertAgent(ctx),
+        )) as Id<'docRelations'>;
+        await ctx.db.patch(relationId, {
+          proposedKind: 'possible_merge' as Doc<'docRelations'>['proposedKind'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('refuses a trigger, a risk, a standing, a proposal kind or an action the vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const insertCard = async (fields: Partial<WithoutSystemFields<Doc<'reorientations'>>>) =>
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('reorientations', card(await insertAgent(ctx), fields));
+      });
+    await insertCard({});
+    await expect(
+      insertCard({ trigger: 'conflict-confirmed' as Doc<'reorientations'>['trigger'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertCard({ risk: 'critical' as Doc<'reorientations'>['risk'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertCard({ status: 'approved' as Doc<'reorientations'>['status'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertCard({ proposed: { kind: 'merge' } as unknown as Doc<'reorientations'>['proposed'] }),
+    ).rejects.toThrow();
+    await expect(
+      insertCard({
+        proposed: {
+          kind: 'scope',
+          scope: 'linear:write',
+          action: 'widen',
+          rationale: 'x',
+        } as unknown as Doc<'reorientations'>['proposed'],
+      }),
+    ).rejects.toThrow();
   });
 });
