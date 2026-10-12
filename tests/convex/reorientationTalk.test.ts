@@ -74,6 +74,7 @@ async function take(
       turns: Doc<'reorientationTalks'>['turns'];
       employeeName: string;
       system: string;
+      unkept: number;
     }
   | { taken: false; refusal: string }
 > {
@@ -372,6 +373,136 @@ describe('the conversation ends in a proposal on the card and applies nothing', 
     });
     expect((await cardOf(bed.harness, bed.cardId)).status).toBe('discussing');
     expect(await talkOf(bed)).toMatchObject({ state: 'active' });
+  });
+});
+
+describe('the second pass’s findings (16-D)', (): void => {
+  it('keeps a deferred card deferred through a talk, its date and all, the proposal replaced (M2)', async (): Promise<void> => {
+    const bed = await openedCard();
+    const { revisitAt } = await bed.owner.mutation(api.reorientationDecisions.defer, {
+      reorientationId: bed.cardId,
+    });
+    await opened(bed);
+    expect(await cardOf(bed.harness, bed.cardId)).toMatchObject({ status: 'deferred', revisitAt });
+    await answered(bed, outcome());
+    expect(await cardOf(bed.harness, bed.cardId)).toMatchObject({
+      status: 'deferred',
+      revisitAt,
+      proposed: { kind: 'charter-change' },
+    });
+  });
+
+  it('keeps a card deferred while its talk was under way deferred when the talk ends (M2)', async (): Promise<void> => {
+    const bed = await openedCard();
+    await opened(bed);
+    expect((await cardOf(bed.harness, bed.cardId)).status).toBe('discussing');
+    await bed.owner.mutation(api.reorientationDecisions.defer, { reorientationId: bed.cardId });
+    await answered(bed, outcome());
+    expect((await cardOf(bed.harness, bed.cardId)).status).toBe('deferred');
+  });
+
+  it('finishes from the kept turns when the reply a finish carries no longer fits, and says it was not kept (M3)', async (): Promise<void> => {
+    const bed = await openedCard();
+    await opened(bed);
+    let question = 'e0';
+    for (let index = 0; ; index += 1) {
+      const turn = await take(bed, {
+        kind: 'reply',
+        question,
+        replies: [{ id: `m${index}`, text: `Reply ${index}.` }],
+      });
+      if (!turn.taken) break;
+      question = `e${index + 1}`;
+      await bed.owner.mutation(api.reorientationTalk.recordAnswer, {
+        talkId: turn.talkId,
+        conversation: 0,
+        candidatesKey: turn.candidatesKey,
+        answer: { answering: turn.answering, id: question, text: `Answer ${index}.` },
+      });
+    }
+    const finish = await take(bed, {
+      kind: 'finish',
+      question,
+      replies: [{ id: 'm-late', text: 'One more.' }],
+    });
+    expect(finish).toMatchObject({ taken: true, unkept: 1 });
+    expect((await talkOf(bed)).turns).toHaveLength(MAX_KEPT_TURNS - 1);
+  });
+
+  it('leaves a finished talk and its card as they are when Put this on the card is asked again (m4)', async (): Promise<void> => {
+    const bed = await openedCard();
+    await opened(bed);
+    await answered(bed, outcome());
+    await expect(take(bed, { kind: 'finish', question: 'e1', replies: [] })).resolves.toEqual({
+      taken: false,
+      refusal: 'This talk is already on the card. Reply to take it up again.',
+    });
+    expect((await cardOf(bed.harness, bed.cardId)).status).toBe('open');
+    expect((await talkOf(bed)).state).toBe('finished');
+  });
+
+  it('takes a finished talk up again on a reply, setting its outcome aside (m4)', async (): Promise<void> => {
+    const bed = await openedCard();
+    await opened(bed);
+    await answered(bed, outcome());
+    await taken(bed, {
+      kind: 'reply',
+      question: 'e1',
+      replies: [{ id: 'm1', text: 'Actually, copy me as well.' }],
+    });
+    const talk = await talkOf(bed);
+    expect(talk.state).toBe('active');
+    expect(talk.outcome).toBeUndefined();
+    expect(talk.endedAt).toBeUndefined();
+  });
+
+  it('keeps a quote in a script without spaces between words, and the manager’s accents (m6)', async (): Promise<void> => {
+    const bed = await openedCard();
+    const turn = await taken(bed, { kind: 'open' });
+    await bed.owner.mutation(api.reorientationTalk.recordAnswer, {
+      talkId: turn.talkId,
+      conversation: 0,
+      candidatesKey: turn.candidatesKey,
+      answer: { answering: null, id: 'e0', text: 'Who approves committee-deck numbers now?' },
+    });
+    const reply = await taken(bed, {
+      kind: 'reply',
+      question: 'e0',
+      replies: [{ id: 'm0', text: '委员会的数字先给普丽娅审批。 Señora Priya décide.' }],
+    });
+    await bed.owner.mutation(api.reorientationTalk.recordAnswer, {
+      talkId: reply.talkId,
+      conversation: 0,
+      candidatesKey: reply.candidatesKey,
+      answer: { answering: 'm0', id: 'e1', text: 'Noted.' },
+      outcome: outcome(['先给普丽娅审批', 'Señora Priya décide']),
+    });
+    expect((await talkOf(bed)).outcome?.quotes).toEqual(['先给普丽娅审批', 'Señora Priya décide']);
+  });
+
+  it('draws a decided card’s talk as closed, with no reply being typed (m8)', async (): Promise<void> => {
+    const bed = await openedCard();
+    const turn = await opened(bed);
+    await bed.owner.mutation(api.reorientationTalk.keepReplyDraft, {
+      talkId: turn.talkId,
+      conversation: 0,
+      text: 'Half a reply',
+      after: null,
+    });
+    await bed.owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: bed.cardId });
+    const view = await bed.owner.query(api.reorientationTalk.forCard, {
+      reorientationId: bed.cardId,
+    });
+    expect(view?.talk?.state).toBe('closed');
+    expect(view?.talk?.replyDraft).toBeUndefined();
+  });
+
+  it('reads a card whose employee is gone as no card (m11)', async (): Promise<void> => {
+    const bed = await openedCard();
+    await bed.harness.run(async (ctx) => await ctx.db.delete(bed.agentId));
+    await expect(
+      bed.owner.query(api.reorientationTalk.forCard, { reorientationId: bed.cardId }),
+    ).resolves.toBeNull();
   });
 });
 

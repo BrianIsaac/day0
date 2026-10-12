@@ -125,6 +125,25 @@ describe('a talk turn', (): void => {
     });
   });
 
+  it('finishes from the kept turns when the reply it carries no longer fits, naming the reply set aside', (): void => {
+    const long = Array.from({ length: MAX_KEPT_TURNS - 1 }, (_, index) =>
+      turn(`t${index}`, index % 2 === 0 ? 'employee' : 'manager', `Turn ${index}.`),
+    );
+    expect(
+      decideTalkTurn(
+        long,
+        { kind: 'finish', question: 't38', replies: [{ id: 'm39', text: 'One more.' }] },
+        5,
+      ),
+    ).toEqual({
+      ok: true,
+      turns: long,
+      answering: null,
+      replied: false,
+      unkept: [{ id: 'm39', text: 'One more.' }],
+    });
+  });
+
   it('finishes a talk at the 40-turn bound, which keeps no turn of its own', (): void => {
     const full = Array.from({ length: MAX_KEPT_TURNS }, (_, index) =>
       turn(`t${index}`, index % 2 === 0 ? 'employee' : 'manager', `Turn ${index}.`),
@@ -176,6 +195,19 @@ describe('the evidence the store keeps: the manager’s own words only (managerQ
     expect(managerQuotes(['committee-deck drafts go to Priya first'], echoed)).toEqual([
       'committee-deck drafts go to Priya first',
     ]);
+  });
+
+  it('reads every script’s words: accents, and a script with no spaces between its words', (): void => {
+    const said = [
+      ...TALK,
+      turn('m2', 'manager', '委员会的数字先给普丽娅审批。 Señora Priya décide.'),
+    ];
+    expect(managerQuotes(['先给普丽娅审批', 'señora priya DÉCIDE', 'Señora Priya'], said)).toEqual([
+      '先给普丽娅审批',
+      'señora priya DÉCIDE',
+      'Señora Priya',
+    ]);
+    expect(managerQuotes(['普丽娅不审批', 'Priya décide tout'], said)).toEqual([]);
   });
 
   it('keeps each quote once, trimmed, and at most a few', (): void => {

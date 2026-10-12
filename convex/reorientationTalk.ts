@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { mutation, query, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
 import { appendEvent } from './eventLog';
 import { proposalInputOf } from './reorientation';
 import {
@@ -62,11 +62,18 @@ const CARD_DECIDED = 'The card was decided, so the talk about it is closed.';
 /** Said to a room whose card is gone, or whose employee is. */
 const CARD_GONE = 'This card is gone.';
 
-/** Said to a room writing to a conversation the talk has set aside. */
+/**
+ * Said to a room writing to a conversation the talk has set aside. No talk sets one aside yet (a
+ * talk has no restart, K-11); the stamp is checked as the one-to-one checks its own, so a restart
+ * added later refuses a write from before it.
+ */
 const STARTED_AGAIN = 'The talk started again in another window. Reload to carry on.';
 
 /** Said when the candidates a turn was drawn from are not the card's now. */
 const CARD_CHANGED = 'The card changed while you talked. Ask again.';
+
+/** Said to Put this on the card asked again of a talk already on the card. */
+const ALREADY_ON_CARD = 'This talk is already on the card. Reply to take it up again.';
 
 /** Said when an outcome names what the card does not hold, or an action it does not take. */
 const OUTCOME_REFUSED = 'The proposal named something this card cannot change. Ask again.';
@@ -146,7 +153,11 @@ async function ownedTalk(
 /** Close a talk whose card was decided under it. */
 async function closeTalk(ctx: MutationCtx, talk: Doc<'reorientationTalks'>): Promise<void> {
   if (talk.state === 'closed') return;
-  await ctx.db.patch(talk._id, { state: 'closed', endedAt: Date.now(), replyDraft: undefined });
+  await ctx.db.patch(talk._id, {
+    state: 'closed',
+    endedAt: talk.endedAt ?? Date.now(),
+    replyDraft: undefined,
+  });
 }
 
 /** The card's one talk, if it has one. */
@@ -190,6 +201,8 @@ const takenValidator = v.union(
     candidatesKey: v.string(),
     employeeName: v.string(),
     system: v.string(),
+    /** For a finish, how many of the replies it carried the talk had no room to keep. */
+    unkept: v.number(),
   }),
   v.object({ taken: v.literal(false), refusal: v.string() }),
 );
@@ -224,6 +237,12 @@ export const takeTurn = mutation({
     const current = talk?.turns ?? [];
     const decision = decideTalkTurn(current, args.request, now);
     if (!decision.ok) return { taken: false as const, refusal: decision.refusal };
+    // A finish that keeps nothing new leaves the talk and its card as they are: a talk already on
+    // the card is not asked for its outcome again (the second pass's m4).
+    const settles = args.request.kind === 'finish' && !decision.replied;
+    if (settles && talk?.state === 'finished') {
+      return { taken: false as const, refusal: ALREADY_ON_CARD };
+    }
     const talkId =
       talk?._id ??
       (await ctx.db.insert('reorientationTalks', {
@@ -234,13 +253,19 @@ export const takeTurn = mutation({
         conversation: 0,
         startedAt: now,
       }));
-    await ctx.db.patch(talkId, {
-      state: 'active',
-      ...(decision.turns !== current ? { turns: [...decision.turns] } : {}),
-      // A reply kept is no longer the reply being typed.
-      ...(decision.replied ? { replyDraft: undefined } : {}),
-    });
-    if (card.status !== 'discussing') await ctx.db.patch(card._id, { status: 'discussing' });
+    if (!settles) {
+      await ctx.db.patch(talkId, {
+        state: 'active',
+        ...(decision.turns !== current ? { turns: [...decision.turns] } : {}),
+        // A reply kept is no longer the reply being typed.
+        ...(decision.replied ? { replyDraft: undefined } : {}),
+        // A talk taken up again has not ended; the card keeps the proposal it ended in.
+        ...(talk?.state === 'finished' ? { outcome: undefined, endedAt: undefined } : {}),
+      });
+      // A deferred card keeps its date through a talk (the second pass's M2); only an open one is
+      // put at discussing.
+      if (card.status === 'open') await ctx.db.patch(card._id, { status: 'discussing' });
+    }
     return {
       taken: true as const,
       talkId,
@@ -250,6 +275,7 @@ export const takeTurn = mutation({
       candidatesKey: candidates.key,
       employeeName: candidates.input.employeeName,
       system: talkSystemPrompt(candidates.input, card.proposed),
+      unkept: decision.unkept?.length ?? 0,
     };
   },
 });
@@ -289,7 +315,11 @@ async function endInProposal(ctx: MutationCtx, ending: Ending): Promise<string |
     return OUTCOME_REFUSED;
   }
   const now = Date.now();
-  await ctx.db.patch(card._id, { proposed, status: 'open' });
+  // A card being talked through is open again; a deferred one keeps its date (the second pass's M2).
+  await ctx.db.patch(card._id, {
+    proposed,
+    ...(card.status === 'discussing' ? { status: 'open' as const } : {}),
+  });
   await appendEvent(ctx, {
     agentId: card.agentId,
     type: 'reorientation.proposed',
@@ -415,10 +445,11 @@ export const finish = mutation({
 });
 
 /**
- * Keep the reply the manager is typing, so a room closed mid-reply reopens with it. Bounded as a
- * reply is; an empty field clears it. Nothing is kept once the talk is over, for a conversation it
- * has set aside, or once a reply after `after` (the last reply the talk had kept when the room
- * wrote) has been kept.
+ * Keep the reply the manager is typing, so a room closed mid-reply reopens with it, a talk already
+ * on the card included, since a reply takes it up again. Bounded as a reply is; an empty field
+ * clears it. Nothing is kept once the card is decided, for a conversation the talk has set aside,
+ * or once a reply after `after` (the last reply the talk had kept when the room wrote) has been
+ * kept.
  *
  * Public, owner-guarded (`assertOwnsAgent` through the talk). Writes the talk's `replyDraft`.
  */
@@ -432,7 +463,7 @@ export const keepReplyDraft = mutation({
   returns: v.object({ kept: v.boolean() }),
   handler: async (ctx, args) => {
     const owned = await ownedTalk(ctx, args.talkId, args.conversation);
-    if (!owned.ok || owned.talk.state === 'closed') return { kept: false };
+    if (!owned.ok) return { kept: false };
     const lastReply = owned.talk.turns.findLast((turn) => turn.speaker === 'manager');
     if ((lastReply?.id ?? null) !== args.after) return { kept: false };
     const text = args.text.slice(0, REPLY_MAX_CHARS);
@@ -483,7 +514,10 @@ export const forCard = query({
     if (reorientationId === null) return null;
     const card = await ctx.db.get(reorientationId);
     if (card === null) return null;
-    await assertOwnsAgent(ctx, card.agentId);
+    // A stale link to a card whose employee is gone reads as no card (the second pass's m11).
+    if ((await ownedAgentOrNull(ctx, card.agentId)) === null) return null;
+    // A decided card's talk is closed with it, whether or not a write has closed the row yet.
+    const decided = !TALKABLE_STATUSES.includes(card.status);
     const talk = await ctx.db
       .query('reorientationTalks')
       .withIndex('by_reorientation', (q) => q.eq('reorientationId', card._id))
@@ -499,9 +533,9 @@ export const forCard = query({
           ? null
           : {
               _id: talk._id,
-              state: talk.state,
+              state: decided ? ('closed' as const) : talk.state,
               turns: talk.turns,
-              ...(talk.replyDraft === undefined ? {} : { replyDraft: talk.replyDraft }),
+              ...(talk.replyDraft === undefined || decided ? {} : { replyDraft: talk.replyDraft }),
               conversation: talk.conversation,
               ...(talk.outcome === undefined ? {} : { outcome: talk.outcome }),
             },

@@ -166,6 +166,11 @@ export function TalkRoom({
                 {name} put a new proposal on the card. Nothing changes until you approve it there.
               </p>
             ) : null}
+            {talk.note ? (
+              <p role="status" className="text-sm text-[var(--color-fg-2)]">
+                {talk.note}
+              </p>
+            ) : null}
             {talk.finishFailure ? (
               <p role="alert" className="text-sm text-[var(--color-warn)]">
                 {talk.finishFailure.replace(/\.$/, '')}.
@@ -242,7 +247,13 @@ export function TalkView({ reorientationId }: { reorientationId: string }) {
         </>
       }
     >
-      <TalkRoom reorientationId={reorientationId} agentId={agent._id} name={agent.name} />
+      {/* Keyed by the card: another card's talk is a room of its own, never this one's state. */}
+      <TalkRoom
+        key={reorientationId}
+        reorientationId={reorientationId}
+        agentId={agent._id}
+        name={agent.name}
+      />
     </Columns>
   );
 }

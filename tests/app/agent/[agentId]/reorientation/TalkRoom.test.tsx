@@ -2,9 +2,13 @@
 
 import type { UIMessageChunk } from 'ai';
 import { getFunctionName } from 'convex/server';
-import { act } from 'react';
+import { StrictMode, act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { decideAnswer, type OneToOneTurn } from '../../../../../src/agent/one-to-one-conversation';
+import {
+  MAX_KEPT_TURNS,
+  decideAnswer,
+  type OneToOneTurn,
+} from '../../../../../src/agent/one-to-one-conversation';
 import { lastKeptReply } from '../../../../../src/agent/one-to-one-room';
 import {
   decideTalkTurn,
@@ -131,7 +135,8 @@ async function route(request: TalkTurnRequest): Promise<Response> {
     backend.talk.state = 'finished';
     backend.status = 'open';
     backend.proposedKind = 'charter-change';
-    return Response.json(finishAnswer);
+    const unkept = taken.unkept?.length ?? 0;
+    return Response.json({ ...finishAnswer, ...(unkept > 0 ? { unkept } : {}) });
   }
   const chunks = answers.shift() ?? spoken('none', '');
   const start = chunks[0];
@@ -379,6 +384,95 @@ describe('the Discuss room', (): void => {
     expect(posted).toEqual([]);
     expect(view.container.textContent).toContain('This card is gone.');
     expect(view.container.querySelector('a[href="/agent/agent-1/reorientation"]')).not.toBeNull();
+    view.unmount();
+  });
+
+  it('offers no second Put this on the card once the talk is on the card (the second pass’s m4)', async (): Promise<void> => {
+    backend.status = 'discussing';
+    backend.talk = {
+      state: 'active',
+      turns: [
+        kept('e0', 'employee', 'Should committee-deck drafts go to Priya first?'),
+        kept('m0', 'manager', 'Yes.'),
+        kept('e1', 'employee', 'Shall I put that on the card?'),
+      ],
+    };
+    const view = room();
+    await streamed();
+    await press(view.container, 'Put this on the card');
+    await streamed();
+    const finish = [...view.container.querySelectorAll('button')].find(
+      (control) => control.textContent === 'Put this on the card',
+    );
+    expect(finish?.disabled).toBe(true);
+    view.unmount();
+  });
+
+  it('puts a reply the talk had no room for back in the composer, and says so (the second pass’s M3)', async (): Promise<void> => {
+    const turns = Array.from({ length: MAX_KEPT_TURNS - 1 }, (_, index) =>
+      kept(`t${index}`, index % 2 === 0 ? 'employee' : 'manager', `Turn ${index}.`),
+    );
+    backend.status = 'discussing';
+    backend.talk = { state: 'active', turns };
+    const view = room();
+    await streamed();
+    await typeInto(view.container.querySelector('textarea')!, 'One more thing.');
+    await press(view.container, 'Send');
+    await streamed();
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
+      'The talk is as long as it can be',
+    );
+    await press(view.container, 'Put this on the card');
+    await streamed();
+    expect(posted.at(-1)?.request).toEqual({
+      kind: 'finish',
+      question: 't38',
+      replies: [{ id: expect.any(String), text: 'One more thing.' }],
+    });
+    expect(view.container.textContent).toContain(
+      'Mira put a new proposal on the card. Nothing changes until you approve it there.',
+    );
+    expect(view.container.textContent).toContain(
+      'The talk was as long as it can be, so your last reply was not kept. It is back in your reply.',
+    );
+    expect(view.container.querySelector('textarea')?.value).toBe('One more thing.');
+    expect(logOf(view)).not.toContain('One more thing.');
+    view.unmount();
+  });
+
+  it('opens the talk once under Strict Mode, the card already read (the second pass’s m10)', async (): Promise<void> => {
+    answers = [spoken('e0', 'Should committee-deck drafts go to Priya first?')];
+    const view = mount(
+      <StrictMode>
+        <TalkRoom reorientationId="card-1" agentId={'agent-1' as Id<'agents'>} name="Mira" />
+      </StrictMode>,
+    );
+    await streamed();
+    expect(posted.map((body) => body.request)).toEqual([{ kind: 'open' }]);
+    view.unmount();
+  });
+
+  it('draws the talk again when another window set aside the answer this room drew (the second pass’s m9)', async (): Promise<void> => {
+    backend.status = 'discussing';
+    backend.talk = {
+      state: 'active',
+      turns: [
+        kept('e0', 'employee', 'Should committee-deck drafts go to Priya first?'),
+        kept('m0', 'manager', 'Yes.'),
+        kept('e1', 'employee', 'And everything else to you?'),
+      ],
+    };
+    const view = room();
+    await streamed();
+    // Another window asked again: its new answer has not come, and the answer drawn here is gone.
+    backend.talk = { ...backend.talk, turns: backend.talk.turns.slice(0, 2) };
+    act((): void =>
+      view.root.render(
+        <TalkRoom reorientationId="card-1" agentId={'agent-1' as Id<'agents'>} name="Mira" />,
+      ),
+    );
+    await streamed();
+    expect(logOf(view)).not.toContain('And everything else to you?');
     view.unmount();
   });
 });

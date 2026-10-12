@@ -46,6 +46,9 @@ const TALK_MAX_OUTPUT_TOKENS = 2000;
 /** One turn's body: a card id and the replies since the last question, at most 4,000 characters each. */
 const TALK_TURN_BODY_LIMIT_BYTES = 64 * 1024;
 
+/** Said when the outcome was asked for and the store could not be reached to keep it. */
+const FINISH_NOT_KEPT = 'Day0 could not put this on the card. Nothing you said is lost.';
+
 /** The priming turn the talk is asked from: it stands in for the manager and is never kept or drawn. */
 const PRIMING_TURN: UIMessage = {
   id: 'talk-opening',
@@ -158,17 +161,25 @@ export async function POST(req: Request): Promise<Response> {
         { status: 503 },
       );
     }
-    const last = taken.turns.at(-1);
-    const ended = await client.mutation(api.reorientationTalk.finish, {
-      talkId: taken.talkId,
-      conversation: taken.conversation,
-      candidatesKey: taken.candidatesKey,
-      after: last?.id ?? '',
-      outcome: { reply: outcome.reply, quotes: talkQuotes(outcome.quotes, taken.turns) },
-    });
-    return ended.ended
-      ? Response.json({ ended: true })
-      : Response.json({ error: ended.refusal }, { status: 409 });
+    let ended: FunctionReturnType<typeof api.reorientationTalk.finish>;
+    try {
+      ended = await client.mutation(api.reorientationTalk.finish, {
+        talkId: taken.talkId,
+        conversation: taken.conversation,
+        candidatesKey: taken.candidatesKey,
+        after: taken.turns.at(-1)?.id ?? '',
+        outcome: { reply: outcome.reply, quotes: talkQuotes(outcome.quotes, taken.turns) },
+      });
+    } catch (err: unknown) {
+      if (err instanceof ConvexError) {
+        return Response.json({ error: String(err.data) }, { status: 409 });
+      }
+      log.warn('reorientation talk: the outcome was not kept', { reason: errorMessage(err) });
+      return Response.json({ error: FINISH_NOT_KEPT }, { status: 503 });
+    }
+    if (!ended.ended) return Response.json({ error: ended.refusal }, { status: 409 });
+    // A reply the talk had no room to keep goes back to the manager's composer.
+    return Response.json({ ended: true, ...(taken.unkept > 0 ? { unkept: taken.unkept } : {}) });
   }
 
   const keep: KeepTalkAnswer = async (answer) => {

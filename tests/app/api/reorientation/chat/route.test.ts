@@ -26,6 +26,10 @@ const talk = vi.hoisted(() => ({
   /** What `recordAnswer` or `finish` answers instead of writing, when set. */
   keepRefusal: undefined as string | undefined,
   outcome: undefined as unknown,
+  /** Whether `finish` throws as a store that could not be reached does. */
+  finishThrows: false,
+  /** The replies a finish's `takeTurn` says it could not keep. */
+  unkept: 0,
   calls: [] as { name: string; args: Record<string, unknown> }[],
 }));
 
@@ -53,6 +57,7 @@ vi.mock('convex/browser', async () => {
             candidatesKey: 'key-1',
             employeeName: 'Mira',
             system: 'THE TALK SYSTEM PROMPT',
+            unkept: talk.unkept,
           };
         }
         if (name === 'reorientationTalk:recordAnswer') {
@@ -65,6 +70,7 @@ vi.mock('convex/browser', async () => {
           return { kept: true, ended: args.outcome !== undefined };
         }
         if (name === 'reorientationTalk:finish') {
+          if (talk.finishThrows) throw new Error('fetch failed');
           if (talk.keepRefusal) return { ended: false, refusal: talk.keepRefusal };
           talk.outcome = args.outcome;
           return { ended: true };
@@ -83,6 +89,8 @@ beforeEach((): void => {
   talk.refusal = undefined;
   talk.keepRefusal = undefined;
   talk.outcome = undefined;
+  talk.finishThrows = false;
+  talk.unkept = 0;
   talk.calls = [];
 });
 
@@ -391,6 +399,29 @@ describe('the talk’s route: Put this on the card', (): void => {
       error: 'Mira put nothing on the card. Try again.',
     });
     expect(talk.calls.map((call) => call.name)).toEqual(['reorientationTalk:takeTurn']);
+  });
+
+  it('says a store that could not be reached as a 503, not a bare failure (the second pass’s m5)', async (): Promise<void> => {
+    afterOpening();
+    talk.finishThrows = true;
+    const POST = await loadRoute([() => generated(true)]);
+    const response = await POST(
+      talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }),
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Day0 could not put this on the card. Nothing you said is lost.',
+    });
+  });
+
+  it('says how many replies a finish could not keep', async (): Promise<void> => {
+    afterOpening();
+    talk.unkept = 1;
+    const POST = await loadRoute([() => generated(true)]);
+    const response = await POST(
+      talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }),
+    );
+    await expect(response.json()).resolves.toEqual({ ended: true, unkept: 1 });
   });
 
   it('says the talk’s refusal of the outcome', async (): Promise<void> => {
