@@ -2465,8 +2465,10 @@ describe("the preambles' words against what the run is asked for and what the ap
   it('has the mock planner plan each write as the step that makes it, never a step that waits for approval', (): void => {
     const instruction = actionModeInstruction(false, 'mock');
     expect(instruction).not.toContain('waits for your approval');
+    // Re-taken for W15-R15 and W19-4, 12 October 2026: the sentence goes on to forbid a step
+    // worded as a draft or as framed for the manager's approval.
     expect(instruction).toContain(
-      'Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval.',
+      "Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval.",
     );
   });
 });

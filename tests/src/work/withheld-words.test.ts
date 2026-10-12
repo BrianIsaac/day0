@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { withheldWithClaimedWriteReason } from '../../../src/work/claim-key';
 import { reportsFindings, unsupportedClaimFindings } from '../../../src/work/evidence-claims';
-import { withReportsOfWithheld } from '../../../src/work/execute-skill';
+import { approvalTenseFindings, withReportsOfWithheld } from '../../../src/work/execute-skill';
 import { withheldForAnswerReason } from '../../../src/work/obligations';
 import type { MockAction } from '../../../src/work/types';
 import { withheldInWords, writeNoun } from '../../../src/work/withheld-words';
 import { closingAgainstFactReason } from '../../../src/work/work-done';
 import {
   PIP_COMMENT_AND_CLOSE,
+  PIP_DOCS_DRAFT_DM,
   PIP_MANAGER_DM,
   PIP_REPLY_POST,
   PIP_WITHHELD_ROWS,
@@ -92,6 +93,13 @@ describe('withheldInWords: what a withheld write says to a manager (RM22 (a))', 
     );
     expect(words(PIP_MANAGER_DM, withheldWithClaimedWriteReason('held by REVOPS-9'))).toContain(
       'another work item holds what a write beside this message to you changes',
+    );
+  });
+
+  it("reads Pip's draft DM, withheld for its approval tense, in a manager's words (W19-4)", (): void => {
+    const [finding] = approvalTenseFindings([PIP_DOCS_DRAFT_DM]);
+    expect(words(PIP_DOCS_DRAFT_DM, finding!.issue)).toBe(
+      'Not sent: this message to you says it is a draft waiting for your approval, and nothing holds it once it lands, so whoever asked would never have had the answer. Retry writes it again where it was asked.',
     );
   });
 

@@ -698,3 +698,69 @@ describe("the revenue team's ask a role is shown (W19-3, the v0.19.0 walk)", ():
     }
   });
 });
+
+describe('a read-and-answer item names the thread its asker asks in (W19-4, the v0.19.0 walk)', (): void => {
+  /** Pip's office: Hana's ask in #office-asks and the billing replies page. */
+  const PIPS_OFFICE = {
+    ...OFFICE,
+    slackChannels: [
+      {
+        slug: 'office-asks',
+        displayName: '#office-asks',
+        kind: 'channel',
+        recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+      },
+    ],
+    teamDocs: [{ slug: 'billing-replies', title: 'Customer billing replies', body: '# Replies' }],
+  };
+  /** Pip's docs item as the walk's row `A-Pip-docs-full.txt` shows it: Hana's, no thread. */
+  const HANAS_DOCS_ASK = {
+    ...drafted(
+      'read-and-answer',
+      'What does the billing doc say about duplicate charge replies',
+      'Hana asked: "Before I send anything to Northwind, can you read the billing doc and tell me exactly what our first reply to a duplicate charge should say?" Please read the customer billing replies doc and summarise the guidance.',
+    ),
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    contentRefs: ['docs-fixture/billing-replies'],
+    requesterLabel: 'Hana',
+  };
+  const PIP_ACTION = {
+    ...ACTION,
+    title: 'Log the Northwind support ask on the ticket queue',
+    contentSummary: 'Hana: "Please log the support ask."',
+    contentRefs: ['docs-fixture/billing-replies'],
+  };
+  const PIP_BEYOND = { ...BEYOND, contentSummary: 'Hana filed: "Check the support CRM export."' };
+  const PIP_OUT = PLAIN_OUT_OF_SCOPE;
+
+  it('gives Hana’s docs ask her thread, so the answer goes back where she asks', async (): Promise<void> => {
+    drafts.push([HANAS_DOCS_ASK, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const items = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(items.find((item) => item.externalId === 'docs-billing-replies')?.contentRefs).toEqual([
+      'docs-fixture/billing-replies',
+      'channel://office-asks#thread-double-charge',
+    ]);
+  });
+
+  it('gives no thread to an asker with no ask of the role’s, and keeps a thread the draft named', async (): Promise<void> => {
+    const nells = { ...HANAS_DOCS_ASK, requesterLabel: 'Kofi' };
+    const named = {
+      ...HANAS_DOCS_ASK,
+      externalId: 'docs-named',
+      contentRefs: ['channel://office-asks#thread-double-charge'],
+    };
+    drafts.push([nells, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const [first] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(first?.contentRefs).toEqual(['docs-fixture/billing-replies']);
+    drafts.push([named, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const [second] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(second?.contentRefs).toEqual(['channel://office-asks#thread-double-charge']);
+  });
+
+  it('asks the generator to name the thread itself', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      'When the question was asked in a thread the snapshot shows, its contentRefs name that thread too ("channel://<slug>#<thread>"), so the answer goes back where it was asked.',
+    );
+  });
+});

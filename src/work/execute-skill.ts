@@ -62,6 +62,7 @@ import {
   reportsFindings,
   isChatMessage,
   itemEvidence,
+  messageTexts,
   unsupportedClaimFindings,
   unsupportedClaimIssues,
   type ClaimEvidence,
@@ -1363,6 +1364,39 @@ function closingAgainstFactIssues(output: CorrectableOutput & WorkDoneFields): s
         `${closingAgainstFactReason(fact, state)}: a run that did not do all of the work leaves the ticket open, so leave the state change out and say in the comment what is left`,
       ]
     : [];
+}
+
+/**
+ * Words that say a message is a draft that waits for the manager, which no mock message is: every
+ * write of a mock set is approved before it lands and is read once it has (W19-4).
+ */
+const APPROVAL_TENSE =
+  /\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bfor your (?:approval|review|sign-off)\b|\bonce (?:you )?approved?\b|\bdraft for review\b/i;
+
+/** The tripwire's words, which the card reads as an approval-tense message (`withheldInWords`). */
+export const APPROVAL_TENSE_ISSUE =
+  'every write of this set is approved before it lands and is read once it has landed, so a message never says it is a draft or waits for approval';
+
+/**
+ * The tripwire on a mock message whose words frame it as a draft held for the manager (W19-4):
+ * on the v0.19.0 walk Pip's answer for Hana went to the manager's DM as "Draft reply to Hana, held
+ * for your approval: ...", the item finished, and Hana never had it. The executor's action-mode
+ * line forbids it; this reads it. One finding per message, naming its first such sentence.
+ */
+export function approvalTenseFindings(actions: readonly MockAction[]): ClaimFinding[] {
+  return actions.flatMap((action, index): ClaimFinding[] => {
+    if (isSurfaceTool(action.tool)) return [];
+    const said = messageTexts(action)
+      .flatMap((text) => text.split(/(?<=[.!?])\s+/))
+      .find((sentence) => APPROVAL_TENSE.test(sentence));
+    if (said === undefined) return [];
+    return [
+      {
+        index,
+        issue: `action ${index} (${action.tool}) says "${said.trim()}": ${APPROVAL_TENSE_ISSUE}; post an answer where it was asked, and word every message as it will stand once it lands`,
+      },
+    ];
+  });
 }
 
 /** The repair turn's line when the tripwire trips; see `doneAgainstWords`. */
@@ -3153,7 +3187,7 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   const issues = [
     ...mockActionContractIssues(output, candidate, plan, procedureContract),
     ...doneAgainstWordsIssues(output),
-    ...reportsFindings(output.actions).map((finding) => finding.issue),
+    ...mockMessageFindings(output.actions).map((finding) => finding.issue),
   ];
   if (issues.length === 0) return inPlainWords(output);
 
@@ -3192,8 +3226,13 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   }
   // After the one repair a message whose declaration still disagrees with its words is withheld
   // with the reason, as real mode withholds it, and the rest of the set goes on.
-  const agreed = await withholdUnsupported(repaired, reportsFindings, args.onAuditCorrection);
+  const agreed = await withholdUnsupported(repaired, mockMessageFindings, args.onAuditCorrection);
   return inPlainWords(await heldAgainstWords(agreed, args.onAuditCorrection));
+}
+
+/** What a mock set's messages are held to: their declared reports, and no approval tense (W19-4). */
+function mockMessageFindings(actions: readonly MockAction[]): ClaimFinding[] {
+  return [...reportsFindings(actions), ...approvalTenseFindings(actions)];
 }
 
 /** A mock run's draft and notes with every hosted office reference named as its record (W19-7). */

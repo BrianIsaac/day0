@@ -14,6 +14,7 @@ import {
   ROOK_COMMENT,
 } from '../../fixtures/work/work-done-corpora';
 import {
+  PIP_DOCS_DRAFT_DM,
   PIP_SAME_SET,
   PIP_SAME_SET_DRAFT,
   PIP_TICKET_SUMMARY,
@@ -595,5 +596,60 @@ describe('the hosted office messages name records as a manager does (W19-7, the 
     ).toContain(
       '  - In every message, the draft and the notes, name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...',
     );
+  });
+});
+
+describe("a mock message that says it waits for the manager's approval (W19-4, the v0.19.0 walk)", (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  const docsItem: WorkCandidate = {
+    ...ticket,
+    sourceCategory: 'inbox',
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    contentRefs: ['docs-fixture/billing-replies', 'channel://office-asks#thread-double-charge'],
+  };
+  const reply = (action: MockAction) => ({
+    draft: 'Answered Hana.',
+    notes: '',
+    needsDependentPhase: false,
+    workDone: 'done',
+    workDoneWhy: 'Hana has the answer.',
+    actions: [{ ...action, args: { threadKey: null, ...action.args } }],
+    procedureTrails: [
+      { trailId: 'trail-1', actionIndex: null, inapplicabilityReason: 'Not a ticket.' },
+    ],
+  });
+
+  it('sends Pip’s draft DM back once, and withholds it when the run writes it as a draft again', async (): Promise<void> => {
+    recorded.outputs.push(reply(PIP_DOCS_DRAFT_DM), reply(PIP_DOCS_DRAFT_DM));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(2);
+    expect(
+      correctionOf(recorded.calls[1]!.user, '--- Required action-set correction ---'),
+    ).toContain(
+      'action 0 (slack.postMessage) says "Draft reply to Hana, held for your approval: Hi Hana, here is exactly what the Customer billing replies doc says our first reply to a duplicate charge should say."',
+    );
+    expect(output.actions).toEqual([]);
+    expect(output.withheldActions?.map((row) => row.action.tool)).toEqual(['slack.postMessage']);
+  });
+
+  it('takes the answer posted in Hana’s thread as it is, with one call', async (): Promise<void> => {
+    const answer: MockAction = {
+      tool: 'slack.postMessage',
+      args: {
+        channelSlug: 'office-asks',
+        threadKey: 'thread-double-charge',
+        body: 'Hi Hana, the billing replies page says to thank the customer and name the invoice.',
+      },
+      reports: null as unknown as number[],
+    };
+    recorded.outputs.push(reply(answer));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions).toHaveLength(1);
   });
 });

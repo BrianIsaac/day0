@@ -39,6 +39,7 @@ type HoldKind =
   | { readonly kind: 'orphaned-close' }
   | { readonly kind: 'close-against-answer' }
   | { readonly kind: 'for-answer' }
+  | { readonly kind: 'approval-tense' }
   | { readonly kind: 'other' };
 
 /** The opening of a message's reason when the write it reports was itself withheld (`withReportsOfWithheld`). */
@@ -69,6 +70,8 @@ function holdOf(reason: string): HoldKind {
   ) {
     return { kind: 'which-writes' };
   }
+  if (reason.includes('so a message never says it is a draft or waits for approval'))
+    return { kind: 'approval-tense' };
   if (reason.startsWith('a ticket state change lands only after a landed audit comment'))
     return { kind: 'orphaned-close' };
   if (/^sets the ticket to .+ while workDone is "/.test(reason))
@@ -137,6 +140,8 @@ export function withheldInWords(
       return 'Not sent: a ticket change follows its comment, and the comment was held back. Retry writes both again.';
     case 'close-against-answer':
       return `Not sent: this ${noun} closes the ticket, while ${name} answered that the work was not all done. The ticket stays open.`;
+    case 'approval-tense':
+      return `Not sent: this ${noun} says it is a draft waiting for your approval, and nothing holds it once it lands, so whoever asked would never have had the answer. Retry writes it again where it was asked.`;
     case 'for-answer':
       return `Not sent: it waits on your answer to ${name}'s question.`;
     case 'other':

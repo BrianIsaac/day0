@@ -247,7 +247,7 @@ Set \`status: "done"\` only when your \`workDone\` is \`done\`; when it is \`par
     title: 'How to post to Slack (action guide)',
     body: `# How to post to Slack
 
-When you have a draft that should go to a Slack channel or DM thread, emit a \`slack.postMessage\` action.
+When a reply, a post or a message belongs in a Slack channel, a thread or a DM, emit a \`slack.postMessage\` action.
 
 ## Action shape
 
@@ -257,37 +257,36 @@ When you have a draft that should go to a Slack channel or DM thread, emit a \`s
   "args": {
     "channelSlug": "revops-asks",
     "threadKey": "thread-pipeline-coverage",
-    "body": "Draft for review: Enterprise pipeline coverage over the last 4 weeks…"
+    "body": "Hi Priya, enterprise pipeline coverage over the last four weeks is 3.1x, from the pipeline tab of the Q4 Revenue Tracker."
   }
 }
 \`\`\`
 
-- \`channelSlug\` is one of \`revops-asks\`, \`revops\`, \`dm-manager\`, \`dm-priya\`, \`dm-aman\`.
+- \`channelSlug\` is one of \`revops-asks\`, \`revops\`, \`office-asks\`, \`dm-manager\`, \`dm-priya\`, \`dm-aman\`.
 - \`threadKey\` is optional: supply it to keep the message threaded under an existing ask.
-- Cold-start posture: \`senderKind\` is set automatically to \`agent-draft\` so the manager can see + edit before forwarding.
+- The manager approves the set before anything in it lands, and a post lands as the employee's own: write it as it will read once posted, never as a draft for review or as waiting for approval.
 
 ## Discipline
 
 - One \`slack.postMessage\` action per logical message.
-- Address the recipient by their first name; reference the source ticket/doc inline.
+- Address the recipient by their first name; name the source ticket or page as a person would.
 - Never send to a channel that is not in the list above.
 
-## Closing the loop on a public-channel ask
+## Answering an ask where it was asked
 
-If the work item came from a public channel (e.g. the candidate body says "asked in #revops-asks") and you draft to \`dm-manager\`, you MUST also post a brief threaded ack to the originating channel so the asker knows it's in flight. Use the same \`threadKey\` named in the candidate body.
+When the work item came from a channel or a thread (the candidate names it, or says "asked in #office-asks"), post the answer in that thread with its \`threadKey\`, so the person who asked reads it there. Then send the manager a one-line recap in \`dm-manager\` of what was done: it reports the work, it is never the answer in place of the post, and never a draft for the manager to forward.
 
 \`\`\`json
 {
   "tool": "slack.postMessage",
   "args": {
-    "channelSlug": "revops-asks",
-    "threadKey": "thread-pipeline-coverage",
-    "body": "Drafting a tier-2 response for Manager review. Will post here once approved."
+    "channelSlug": "dm-manager",
+    "body": "Answered Priya's coverage ask in her #revops-asks thread: 3.1x over the last four weeks."
   }
 }
 \`\`\`
 
-That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM).
+Skip the recap when the answer itself went to \`dm-manager\` because the manager asked.
 `,
   },
   {

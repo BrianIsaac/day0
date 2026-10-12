@@ -67,3 +67,19 @@ export const PIP_WITHHELD_ROWS: WithheldAction[] = [
     reason: `withheld with a write it reports, which was withheld: ${PIP_COMMENT_REASON}`,
   },
 ];
+
+/*
+ * Pip's docs item on the same walk (W19-4; row `A-Pip-docs-full.txt`): Hana's question about the
+ * billing doc. Its one write was a DM to the manager; the row prints the DM's first 100
+ * characters and the draft whole, and the DM carried the draft's words, so the body is the draft.
+ */
+
+/** The DM Pip sent in place of an answer to Hana, word for word as its draft. */
+export const PIP_DOCS_DRAFT_DM: MockAction = {
+  tool: 'slack.postMessage',
+  args: {
+    channelSlug: 'dm-manager',
+    body: "Draft reply to Hana, held for your approval: Hi Hana, here is exactly what the Customer billing replies doc says our first reply to a duplicate charge should say. Thank the customer and name the invoice, then say that billing reviews duplicate charges within two business days and writes back with the outcome, and ask them to keep the payment receipt until then. The doc is explicit that we must never promise a refund, because refunds are billing's decision (Customer billing replies). So for Northwind on invoice INV-2207, the first reply names INV-2207, states the two-business-day review window, asks them to keep the payment receipt, and promises nothing beyond the review.",
+  },
+  reports: null as unknown as number[],
+};
