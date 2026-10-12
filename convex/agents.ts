@@ -523,39 +523,50 @@ export const revokeScope = mutation({
   },
   handler: async (ctx, args): Promise<{ revoked: number }> => {
     await assertOwnsAgent(ctx, args.agentId);
-    if (args.scope.trim() === '') throw new Error('permission scope must not be empty');
-    const grants = await ctx.db
-      .query('permissionGrants')
-      .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId).eq('scope', args.scope))
-      .collect();
-    const active = grants.filter((grant) => grant.revokedAt === undefined);
-    if (active.length === 0) return { revoked: 0 };
-    const revokedAt = Date.now();
-    for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
-    const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
-    const eventId = await appendEvent(ctx, {
-      agentId: args.agentId,
-      type: 'permission.revoked',
-      payload: {
-        scope: args.scope,
-        by: 'manager',
-        ...(reason ? { reason } : {}),
-      },
-      createdAt: revokedAt,
-    });
-    await openCard(ctx, {
-      agentId: args.agentId,
-      trigger: 'access-revoked',
-      triggerKey: eventId,
-      summary: `Its access “${args.scope}” was revoked`,
-      evidence: { eventIds: [eventId] },
-      affected: await scopeReach(ctx, args.agentId, args.scope),
-      writeScope: isWriteScope(args.scope),
-      now: revokedAt,
-    });
-    return { revoked: active.length };
+    return await revokeScopeInTransaction(ctx, args);
   },
 });
+
+/**
+ * Revoke every active copy of one scope in the caller's transaction ({@link revokeScope}; a
+ * reorientation card's Approve, 16-O), and open the card the revocation is (section 3).
+ */
+export async function revokeScopeInTransaction(
+  ctx: MutationCtx,
+  args: { readonly agentId: Id<'agents'>; readonly scope: string; readonly reason?: string },
+): Promise<{ revoked: number }> {
+  if (args.scope.trim() === '') throw new Error('permission scope must not be empty');
+  const grants = await ctx.db
+    .query('permissionGrants')
+    .withIndex('by_agent_scope', (q) => q.eq('agentId', args.agentId).eq('scope', args.scope))
+    .collect();
+  const active = grants.filter((grant) => grant.revokedAt === undefined);
+  if (active.length === 0) return { revoked: 0 };
+  const revokedAt = Date.now();
+  for (const grant of active) await ctx.db.patch(grant._id, { revokedAt });
+  const reason = args.reason?.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const eventId = await appendEvent(ctx, {
+    agentId: args.agentId,
+    type: 'permission.revoked',
+    payload: {
+      scope: args.scope,
+      by: 'manager',
+      ...(reason ? { reason } : {}),
+    },
+    createdAt: revokedAt,
+  });
+  await openCard(ctx, {
+    agentId: args.agentId,
+    trigger: 'access-revoked',
+    triggerKey: eventId,
+    summary: `Its access “${args.scope}” was revoked`,
+    evidence: { eventIds: [eventId] },
+    affected: await scopeReach(ctx, args.agentId, args.scope),
+    writeScope: isWriteScope(args.scope),
+    now: revokedAt,
+  });
+  return { revoked: active.length };
+}
 
 /** Active and revoked scopes, collapsed to the latest edge for the dashboard. */
 export const permissionScopes = query({

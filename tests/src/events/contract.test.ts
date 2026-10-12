@@ -184,20 +184,18 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
 
 describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): void => {
   it('names the reorientation events and the typed question not yet written, none of them listed', (): void => {
-    expect(REORIENTATION_EVENT_TYPES).toEqual([
-      'reorientation.approved',
-      'reorientation.dismissed',
-      'reorientation.deferred',
-      'manager.question-asked',
-    ]);
+    expect(REORIENTATION_EVENT_TYPES).toEqual(['manager.question-asked']);
     for (const type of REORIENTATION_EVENT_TYPES) expect(isEventType(type), type).toBe(false);
   });
 
-  it('lists a card’s opening, its proposal and its reopening, each with its writer (16-O)', (): void => {
+  it('lists a card’s opening, its proposal, its reopening and its three decisions, each with its writer (16-O)', (): void => {
     for (const type of [
       'reorientation.opened',
       'reorientation.proposed',
       'reorientation.reopened',
+      'reorientation.approved',
+      'reorientation.dismissed',
+      'reorientation.deferred',
     ]) {
       expect(isEventType(type), type).toBe(true);
     }
@@ -219,11 +217,7 @@ describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): v
     >().toEqualTypeOf<ManagerQuestionType>();
     // A proposal an event records is never the pending one.
     expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
-    expectTypeOf<'none'>().toMatchTypeOf<
-      ReorientationEventPayloads['reorientation.approved']['kind']
-    >();
-    expectTypeOf<
-      ReorientationEventPayloads['reorientation.dismissed']
-    >().toEqualTypeOf<ReorientationNamed>();
+    expectTypeOf<'none'>().toMatchTypeOf<EventPayloads['reorientation.approved']['kind']>();
+    expectTypeOf<EventPayloads['reorientation.dismissed']>().toEqualTypeOf<ReorientationNamed>();
   });
 });

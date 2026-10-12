@@ -27,6 +27,7 @@ import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
 import { citedConflictOf } from './docConflicts';
+import { heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
   claimLoopStepInTransaction,
@@ -1533,7 +1534,10 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
  * So does a plan that cites a passage a confirmed conflict stands on
  * (`reason: 'documentation-conflict'`, wave 15): two equally trusted pages
- * disagree there and the manager has not said which is right.
+ * disagree there and the manager has not said which is right. And, first and
+ * whatever the switch says, a plan a high-risk reorientation card names
+ * (`reason: 'reorientation-pending'`, wave 16): it waits for the card's Approve
+ * or Dismiss, which ask this decision again.
  * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
@@ -1543,6 +1547,27 @@ export const decidePlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'plan-pending') return { approved: false };
+    // A high-risk reorientation card names the row (the seventh reason, wave 16, 16-O): the plan
+    // waits for the card's Approve or Dismiss whatever the switch says, and the record says so in
+    // either position of the switch. Read again at every look, so a decided card holds nothing.
+    const card = await heldByReorientation(ctx, row);
+    if (card !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'reorientation-pending',
+            reorientationId: card._id,
+            summary: card.triggerSummary,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
     const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
       await scheduleDecisionRequest(ctx, row, 'plan');

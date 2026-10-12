@@ -21,6 +21,7 @@ const CANDIDATES: readonly ProposalCandidate[] = [
     kind: 'agreement',
     agreementId: 'agreement-1' as Id<'workingAgreements'>,
     statement: 'Cc Priya',
+    actions: ['keep', 'edit', 'retire'],
   },
   {
     kind: 'relationship',
@@ -158,7 +159,14 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
       [{ change: 'skill', candidate: null, action: 'recheck' }, 'which the card does not hold'],
       [{ change: 'skill', candidate: 1, action: 'recheck' }, 'is a charter-clause, not a skill'],
       [{ change: 'scope', candidate: 5, action: 'revoke' }, 'is not one of grant'],
-      [{ change: 'agreement', candidate: 2, action: 'activate' }, 'is not one of keep, edit'],
+      [
+        { change: 'agreement', candidate: 2, action: 'activate' },
+        'is not one of keep, edit, retire',
+      ],
+      [
+        { change: 'agreement', candidate: 2, action: 'dismiss' },
+        'is not one of keep, edit, retire',
+      ],
       [{ change: 'agreement', candidate: 2, action: 'edit', text: '  ' }, 'gives no statement'],
       [{ change: 'edit-clause', candidate: 1, text: 'Triage tier-2 asks' }, 'proposed unchanged'],
       [{ change: 'none', rationale: ' ' }, 'gives no rationale'],

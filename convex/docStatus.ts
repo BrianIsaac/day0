@@ -668,20 +668,33 @@ export const clearPageStatus = mutation({
   handler: async (ctx, args): Promise<null> => {
     const caller = await getCallerOrThrow(ctx);
     const { page, source } = await ownedPage(ctx, caller.ownerKey, args.pageId);
-    if (page.statusSource !== 'manager') return null;
-    const undecided = {
-      statusSource: undefined,
-      decidedBy: undefined,
-      decidedAt: undefined,
-      supersededBy: undefined,
-    };
-    await ctx.db.patch(page._id, undecided);
-    const now = Date.now();
-    const change = await restatePage(ctx, { source, page: { ...page, ...undecided }, now });
-    await stampStatusChanges(ctx, source, [change], now);
+    await clearPageStatusInTransaction(ctx, source, page);
     return null;
   },
 });
+
+/**
+ * Hand a page back to its source's own status in the caller's transaction ({@link
+ * clearPageStatus}; a reorientation card's Approve, 16-O); nothing for a page the manager did not
+ * decide.
+ */
+export async function clearPageStatusInTransaction(
+  ctx: MutationCtx,
+  source: Doc<'docSources'>,
+  page: Doc<'docPages'>,
+): Promise<void> {
+  if (page.statusSource !== 'manager') return;
+  const undecided = {
+    statusSource: undefined,
+    decidedBy: undefined,
+    decidedAt: undefined,
+    supersededBy: undefined,
+  };
+  await ctx.db.patch(page._id, undecided);
+  const now = Date.now();
+  const change = await restatePage(ctx, { source, page: { ...page, ...undecided }, now });
+  await stampStatusChanges(ctx, source, [change], now);
+}
 
 /**
  * Say how far a documentation source is trusted: official, team or personal (the tab's Trust

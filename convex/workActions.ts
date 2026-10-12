@@ -136,6 +136,7 @@ import {
   type SelectionRequest,
 } from '../src/docs/select';
 import { goneCitesReason, type GoneCite } from '../src/work/plan-cites';
+import { closingHeldReason } from '../src/agent/reorientation-words';
 import type { GoneBlock } from './docSelection';
 import {
   sameSkillShape,
@@ -2697,6 +2698,14 @@ export const authorDependentActions = internalAction({
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
       await refuseGoneCites(ctx, plan, { agentId: item.agentId, workItemId: item._id });
+      // A reorientation card standing over the row holds its closing phase, in both modes (O-3):
+      // the prerequisites stay landed and Retry resumes here once the card is decided.
+      const holding = await ctx.runQuery(internal.reorientation.holdingCard, {
+        workItemId: item._id,
+      });
+      if (holding !== null) {
+        throw new ClosingHeldByCard(closingHeldReason(agent.name, holding.summary));
+      }
       const mockEnv = await siteSnapshot(ctx, {
         agentId: item.agentId,
         workItemId: args.workItemId,
@@ -3073,11 +3082,13 @@ export const authorDependentActions = internalAction({
       };
     } catch (error) {
       const gateRefusal = error instanceof ClosingGateRefusal;
-      // The gate's reason is Day0's own sentences, whole; any other failure is
-      // a model or provider message and is scrubbed to one line like the rest.
-      const reason = gateRefusal
-        ? redactSecret(error.message, '', knownValues)
-        : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
+      const heldByCard = error instanceof ClosingHeldByCard;
+      // The gate's reason is Day0's own sentences, whole, as a card's hold is; any other failure
+      // is a model or provider message and is scrubbed to one line like the rest.
+      const reason =
+        gateRefusal || heldByCard
+          ? redactSecret(error.message, '', knownValues)
+          : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
       // A set the obligation gate refused after its one repair stops the run:
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
@@ -3089,7 +3100,7 @@ export const authorDependentActions = internalAction({
         ...(initial
           ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) }
           : {}),
-        ...(gateRefusal ? { stopped: true } : {}),
+        ...(gateRefusal || heldByCard ? { stopped: true } : {}),
       });
       return { ok: false, reason };
     }
@@ -4203,6 +4214,9 @@ const UNCITED_PASSAGE = 'a passage the plan was drafted from';
 
 /** A plan whose cited documentation is gone or changed: a failure of the item, not a retryable one. */
 class GoneCitesError extends Error {}
+
+/** A closing phase a reorientation card holds (O-3): a stop the manager ends by deciding the card. */
+class ClosingHeldByCard extends Error {}
 
 /** The cited blocks one check reads; the check's own bound is the search's 512. */
 const CITE_CHECK_BATCH = 256;

@@ -7236,6 +7236,23 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     return await readItem(harness, workItemId);
   }
 
+  /** Author and apply the closing phase of a row Retry resumed at it. */
+  async function runClosingAgain(
+    harness: Harness,
+    workItemId: Id<'workItems'>,
+  ): Promise<Doc<'workItems'>> {
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    const prepared = await readItem(harness, workItemId);
+    const runId = prepared.executionRunId;
+    if (!runId)
+      throw new Error(`execution run missing: ${prepared.state} ${prepared.skipReason ?? ''}`);
+    if (prepared.state === 'executing') {
+      await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    }
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    return await readItem(harness, workItemId);
+  }
+
   function phaseOne(): ExecutionOutput {
     return {
       draft: 'Reading the close step tickets, then locating #finance-close.',
@@ -7270,6 +7287,75 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     expect(done.state).toBe('completed');
     const metrics = await harness.withIdentity(OWNER).query(api.metrics.forAgent, { agentId });
     expect(metrics.actions).toMatchObject({ refused: 0 });
+  });
+
+  it('refuses the closing phase while a reorientation card holds the row, and resumes it on Retry once the card is decided (16-O, O-3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const cardId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('reorientations', {
+          agentId,
+          userId: 'owner',
+          trigger: 'access-revoked',
+          triggerKey: 'event-1',
+          triggerSummary: 'its access “linear:write” was revoked',
+          evidence: {
+            eventIds: [],
+            pageRefs: [],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: [],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [],
+            agreements: [],
+            relationships: [],
+            skills: [],
+            surfaces: [],
+            workItems: [workItemId],
+          },
+          proposed: { kind: 'none', rationale: 'Nothing to change.' },
+          risk: 'high',
+          blockingWork: [workItemId],
+          status: 'open',
+          day: '2026-09-19',
+          createdAt: 1,
+        }),
+    );
+    const firstRun = (await readItem(harness, workItemId)).executionRunId;
+    if (!firstRun) throw new Error('execution run missing');
+    await harness.action(internal.workActions.authorDependentActions, {
+      workItemId,
+      runId: firstRun,
+    });
+
+    const held = await readItem(harness, workItemId);
+    expect(held.state).toBe('failed');
+    expect(held.skipReason).toMatch(/^stopped: /);
+    expect(held.skipReason).toContain(
+      'stopped before its closing steps: the reorientation card about its access “linear:write” was revoked is still open. Decide it, then Retry.',
+    );
+    expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
+
+    await harness.run(async (ctx) => await ctx.db.patch(cardId, { status: 'dismissed' }));
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+    const resumed = await readItem(harness, workItemId);
+    expect((resumed.output as { resumedClosing?: boolean }).resumedClosing).toBe(true);
+    const done = await runClosingAgain(harness, workItemId);
+    expect(done.state).toBe('completed');
   });
 
   it('drops the read when the gate refuses it at the apply, says so on the ledger, and goes on', async (): Promise<void> => {

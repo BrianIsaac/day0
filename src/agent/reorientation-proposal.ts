@@ -12,11 +12,12 @@ import { z } from 'zod';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { PageStatus } from '../docs/authority';
 import type { RelationshipType } from '../people/vocabulary';
+import { awaitingCheck } from '../work/agreement-words';
 import {
-  AGREEMENT_PROPOSAL_ACTIONS,
   PAGE_STATUS_PROPOSALS,
   RELATIONSHIP_PROPOSAL_ACTIONS,
   SKILL_PROPOSAL_ACTIONS,
+  type AgreementProposalAction,
   type ReorientationTrigger,
 } from './reorientation-vocabulary';
 
@@ -44,6 +45,8 @@ export type ProposalCandidate =
       readonly kind: 'agreement';
       readonly agreementId: Id<'workingAgreements'>;
       readonly statement: string;
+      /** The actions the agreement takes as it stands. */
+      readonly actions: readonly AgreementProposalAction[];
     }
   | {
       readonly kind: 'relationship';
@@ -79,6 +82,21 @@ export interface ProposalInput {
   /** What the card rests on, one line each (the evidence's pages, people, skills and events). */
   readonly evidence: readonly string[];
   readonly candidates: readonly ProposalCandidate[];
+}
+
+/**
+ * The actions a card may propose for an agreement as it stands: keep, edit or retire an active
+ * one; recheck one waiting on its check; dismiss a proposal or a refusal that is not a hold.
+ */
+export function agreementActionsOf(
+  agreement: Pick<Doc<'workingAgreements'>, 'status' | 'approvedAt' | 'refusal'>,
+): AgreementProposalAction[] {
+  if (agreement.status === 'active') return ['keep', 'edit', 'retire'];
+  if (awaitingCheck(agreement)) return ['recheck'];
+  const held = agreement.refusal?.reason === 'unchecked-for-employee';
+  return (agreement.status === 'proposed' || agreement.status === 'refused') && !held
+    ? ['dismiss']
+    : [];
 }
 
 /** The changes the model may answer, one a candidate kind, or none. */
@@ -122,7 +140,7 @@ export const REORIENTATION_PROPOSAL_SYSTEM = [
   '',
   'Choose from the numbered candidates only. Each line says what it is and the actions it takes.',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',
-  '- `agreement`: `action` is keep, edit, recheck, retire or dismiss; `text` is the new statement for edit.',
+  '- `agreement`: `action` is one of the actions its line lists (keep, edit, retire, recheck or dismiss); `text` is the new statement for edit.',
   '- `relationship`: `action` is edit or retire; `text` is the new scope for edit.',
   '- `page-status`: `action` is the status the page should have: active, archived, draft, clear, or superseded where its line names a successor.',
   '- `scope`: `action` is revoke for a scope held, grant for one not held.',
@@ -139,7 +157,7 @@ function actionsOf(candidate: ProposalCandidate): string {
     case 'charter-clause':
       return 'edit-clause';
     case 'agreement':
-      return `agreement: ${AGREEMENT_PROPOSAL_ACTIONS.join(', ')}`;
+      return `agreement: ${candidate.actions.join(', ')}`;
     case 'relationship':
       return `relationship: ${RELATIONSHIP_PROPOSAL_ACTIONS.join(', ')}`;
     case 'page':
@@ -303,7 +321,7 @@ export function proposalOf(
     }
     case 'agreement': {
       const agreement = candidateOf(reply, candidates, 'agreement');
-      const action = actionIn(reply, AGREEMENT_PROPOSAL_ACTIONS);
+      const action = actionIn(reply, agreement.actions);
       return {
         kind: 'agreement',
         agreementId: agreement.agreementId,

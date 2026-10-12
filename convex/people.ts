@@ -855,33 +855,54 @@ export const editRelationship = mutation({
   },
   returns: v.id('relationships'),
   handler: async (ctx, args): Promise<Id<'relationships'>> => {
-    const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
+    const edge = await assertOwnsRelationship(ctx, args.relationshipId);
     await assertOwnsAgent(ctx, args.agentId);
-    // An employee's edge keeps to an employee's kinds; an edge for everyone keeps its kind.
-    const allowed: readonly RelationshipType[] =
-      edge.fromAgentId === undefined ? [edge.type] : EMPLOYEE_RELATIONSHIP_TYPES;
-    if (!allowed.includes(args.type)) throw new ConvexError(RELATIONSHIP_TYPE_FIXED);
-    const scope = typedScope(args.scope);
-    const now = Date.now();
-    await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
-    const relationshipId = await ctx.db.insert('relationships', {
-      userId: edge.userId,
-      ...(edge.fromAgentId === undefined ? {} : { fromAgentId: edge.fromAgentId }),
-      ...(edge.fromPersonId === undefined ? {} : { fromPersonId: edge.fromPersonId }),
-      toPersonId: edge.toPersonId,
-      type: args.type,
-      ...(scope === undefined ? {} : { scope }),
-      effectiveFrom: now,
-      status: 'active',
-      supersedes: edge._id,
-      source: 'manager',
-      confirmedAt: now,
-      createdAt: now,
-    });
-    await recordEdgeChange(ctx, args.agentId, relationshipId, 'edited', now);
-    return relationshipId;
+    return await editRelationshipInTransaction(ctx, edge, args);
   },
 });
+
+/**
+ * Edit an edge in force in the caller's transaction ({@link editRelationship}; a reorientation
+ * card's Approve, 16-O): it is superseded by a new edge with the new type and scope.
+ *
+ * @returns The edge that replaced it.
+ * @throws ConvexError when the edge no longer stands, the kind may not change so, or the scope is
+ *   too long.
+ */
+export async function editRelationshipInTransaction(
+  ctx: MutationCtx,
+  stored: Doc<'relationships'>,
+  change: {
+    readonly agentId: Id<'agents'>;
+    readonly type: RelationshipType;
+    readonly scope?: string;
+  },
+): Promise<Id<'relationships'>> {
+  const edge = standingEdge(stored);
+  // An employee's edge keeps to an employee's kinds; an edge for everyone keeps its kind.
+  const allowed: readonly RelationshipType[] =
+    edge.fromAgentId === undefined ? [edge.type] : EMPLOYEE_RELATIONSHIP_TYPES;
+  if (!allowed.includes(change.type)) throw new ConvexError(RELATIONSHIP_TYPE_FIXED);
+  const scope = typedScope(change.scope);
+  const now = Date.now();
+  await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
+  const relationshipId = await ctx.db.insert('relationships', {
+    userId: edge.userId,
+    ...(edge.fromAgentId === undefined ? {} : { fromAgentId: edge.fromAgentId }),
+    ...(edge.fromPersonId === undefined ? {} : { fromPersonId: edge.fromPersonId }),
+    toPersonId: edge.toPersonId,
+    type: change.type,
+    ...(scope === undefined ? {} : { scope }),
+    effectiveFrom: now,
+    status: 'active',
+    supersedes: edge._id,
+    source: 'manager',
+    confirmedAt: now,
+    createdAt: now,
+  });
+  await recordEdgeChange(ctx, change.agentId, relationshipId, 'edited', now);
+  return relationshipId;
+}
 
 /**
  * Public, owner-level (`assertOwnsRelationship` first, then `assertOwnsAgent`): the manager retires
@@ -891,14 +912,29 @@ export const retireRelationship = mutation({
   args: { relationshipId: v.id('relationships'), agentId: v.id('agents') },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
+    const edge = await assertOwnsRelationship(ctx, args.relationshipId);
     await assertOwnsAgent(ctx, args.agentId);
-    const now = Date.now();
-    await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now });
-    await recordEdgeChange(ctx, args.agentId, edge._id, 'retired', now);
+    await retireRelationshipInTransaction(ctx, edge, args.agentId);
     return null;
   },
 });
+
+/**
+ * Retire an edge in force in the caller's transaction ({@link retireRelationship}; a reorientation
+ * card's Approve, 16-O).
+ *
+ * @throws ConvexError when the edge no longer stands.
+ */
+export async function retireRelationshipInTransaction(
+  ctx: MutationCtx,
+  stored: Doc<'relationships'>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  const edge = standingEdge(stored);
+  const now = Date.now();
+  await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now });
+  await recordEdgeChange(ctx, agentId, edge._id, 'retired', now);
+}
 
 /** Whom a lookup resolved to, as `workItems.requesterPerson` stores it. */
 const resolutionValidator = v.union(

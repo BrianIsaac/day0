@@ -19,10 +19,11 @@ import {
   type ReorientationStatus,
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
-import type {
-  ClauseField,
-  ProposalCandidate,
-  ProposalInput,
+import {
+  agreementActionsOf,
+  type ClauseField,
+  type ProposalCandidate,
+  type ProposalInput,
 } from '../src/agent/reorientation-proposal';
 
 /*
@@ -220,6 +221,22 @@ async function standingCards(
   return byStatus.flat();
 }
 
+/**
+ * Whether one of the employee's cards is being approved in this transaction, so the change Approve
+ * applies opens no second card about itself on the same employee. Approve closes the card
+ * `applied` before its target runs and writes the card's outcome after (`reorientationDecisions`),
+ * so an applied card with no outcome is seen only inside that Approve's own transaction.
+ */
+async function approvingNow(ctx: QueryCtx, agentId: Id<'agents'>): Promise<boolean> {
+  return (
+    await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', 'applied'))
+      .order('desc')
+      .take(UNDECIDED_CARDS_READ)
+  ).some((card) => card.outcome === undefined);
+}
+
 /** Whether a card already carries a report: its own key, or a joined trigger's event. */
 function carries(card: Doc<'reorientations'>, triggerKey: string): boolean {
   return card.triggerKey === triggerKey || card.evidence.eventIds.some((id) => id === triggerKey);
@@ -241,6 +258,7 @@ export async function openCard(
 ): Promise<Id<'reorientations'> | null> {
   const agent = await ctx.db.get(input.agentId);
   if (agent === null || agent.userId === undefined) return null;
+  if (await approvingNow(ctx, agent._id)) return null;
   const standing = await standingCards(ctx, agent._id);
   if (standing.some((card) => carries(card, input.triggerKey))) return null;
   const now = input.now ?? Date.now();
@@ -339,6 +357,23 @@ export async function heldByReorientation(
     (card) => card.risk === 'high' && card.blockingWork.some((id) => id === row._id),
   );
 }
+
+/**
+ * The card holding a work item, for the closing phase's own check (O-3): its id and its summary,
+ * or null. Internal; read by `workActions.authorDependentActions` in both modes.
+ */
+export const holdingCard = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ reorientationId: Id<'reorientations'>; summary: string } | null> => {
+    const row = await ctx.db.get(args.workItemId);
+    if (row === null) return null;
+    const card = await heldByReorientation(ctx, row);
+    return card === undefined ? null : { reorientationId: card._id, summary: card.triggerSummary };
+  },
+});
 
 /**
  * Move an employee's cards to its new owner, in the handover's transaction (16-K's F2, option
@@ -872,7 +907,12 @@ async function candidatesOf(
   for (const id of card.affected.agreements) {
     const agreement = await ctx.db.get(id);
     if (agreement !== null) {
-      candidates.push({ kind: 'agreement', agreementId: id, statement: agreement.statement });
+      candidates.push({
+        kind: 'agreement',
+        agreementId: id,
+        statement: agreement.statement,
+        actions: agreementActionsOf(agreement),
+      });
     }
   }
   for (const id of unique([card.affected.relationships, card.evidence.relationshipIds], idKey)) {

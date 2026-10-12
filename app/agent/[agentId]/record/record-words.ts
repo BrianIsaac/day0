@@ -612,6 +612,8 @@ const PLAN_HELD_BECAUSE: {
       : 'their predecessor approved it, so it was to be approved again',
   'documentation-conflict': () =>
     'two pages disagree on a point it follows, to be decided on the Documentation tab',
+  'reorientation-pending': (subject) =>
+    `a reorientation card holds it until ${they(subject)} decide the card`,
 };
 
 /**
@@ -1222,13 +1224,15 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    p.reason === 'documentation-conflict' && text(p.heading)
-      ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
-      : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-          typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-            ? PLAN_HELD_BECAUSE[p.reason](subject)
-            : `it waits for ${their(subject)} decision`
-        }`,
+    p.reason === 'reorientation-pending' && text(p.summary)
+      ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
+      : p.reason === 'documentation-conflict' && text(p.heading)
+        ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+        : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+            typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+              ? PLAN_HELD_BECAUSE[p.reason](subject)
+              : `it waits for ${their(subject)} decision`
+          }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;
@@ -1397,6 +1401,14 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${p.kind === 'none' ? `${subject.name} found nothing needs to change` : `${subject.name} proposed a change`} on the reorientation card${
       p.by === 'discussion' ? ` after talking it through with ${addressee(subject)}` : ''
     }${cardAbout(p.summary)}`,
+  'reorientation.approved': (p, subject) =>
+    `${decider(subject)} approved the reorientation card${cardAbout(p.summary)}${
+      text(p.result) ? `, and ${text(p.result)}` : ''
+    }`,
+  'reorientation.dismissed': (p, subject) =>
+    `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
+  'reorientation.deferred': (p, subject) =>
+    `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
   'reorientation.reopened': (p) =>
     `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
 };

@@ -1563,10 +1563,8 @@ export interface PlanHeldForConflict extends WorkItemNamed {
 
 /**
  * `work.plan-held` for a plan whose row an undecided reorientation card holds, the seventh reason
- * (wave 16, 16-K for 16-O): a medium or high risk card names the row in its `blockingWork`, so the
- * switch does not run the plan until the card is decided. Declared here and joined to
- * {@link WorkPlanHeldPayload} by 16-O with its renderers (`event-labels.ts`'s and
- * `record-words.ts`'s held-reason maps take an entry for every member).
+ * (wave 16, 16-K for 16-O): a high-risk card names the row in its `blockingWork`, so the switch
+ * does not run the plan until the card is approved or dismissed (`decidePlan`).
  */
 export interface PlanHeldForReorientation extends WorkItemNamed {
   readonly reason: 'reorientation-pending';
@@ -1582,7 +1580,8 @@ export type WorkPlanHeldPayload =
   | PlanHeldObligationsFailedOpen
   | PlanHeldDraftedWithout
   | PlanHeldApprovedByPredecessor
-  | PlanHeldForConflict;
+  | PlanHeldForConflict
+  | PlanHeldForReorientation;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1980,9 +1979,6 @@ export interface ManagerQuestionAskedPayload {
  * `EventPayloads` and `EVENT_TYPES` in the commit that writes and renders it.
  */
 export interface ReorientationEventPayloads {
-  'reorientation.approved': ReorientationApprovedPayload;
-  'reorientation.dismissed': ReorientationDismissedPayload;
-  'reorientation.deferred': ReorientationDeferredPayload;
   'manager.question-asked': ManagerQuestionAskedPayload;
 }
 
@@ -2185,6 +2181,9 @@ export interface EventPayloads {
   'reorientation.opened': ReorientationOpenedPayload;
   'reorientation.proposed': ReorientationProposedPayload;
   'reorientation.reopened': ReorientationReopenedPayload;
+  'reorientation.approved': ReorientationApprovedPayload;
+  'reorientation.dismissed': ReorientationDismissedPayload;
+  'reorientation.deferred': ReorientationDeferredPayload;
 }
 
 /** One event type of the contract. */
@@ -2202,9 +2201,6 @@ function everyKey<Of extends string>() {
 
 /** The wave 16 event types not yet written (see {@link ReorientationEventPayloads}), at run time. */
 export const REORIENTATION_EVENT_TYPES = everyKey<keyof ReorientationEventPayloads>()([
-  'reorientation.approved',
-  'reorientation.dismissed',
-  'reorientation.deferred',
   'manager.question-asked',
 ]);
 
@@ -2404,6 +2400,9 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'reorientation.opened',
   'reorientation.proposed',
   'reorientation.reopened',
+  'reorientation.approved',
+  'reorientation.dismissed',
+  'reorientation.deferred',
 ]);
 
 const LISTED: ReadonlySet<string> = new Set(EVENT_TYPES);

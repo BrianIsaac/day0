@@ -526,12 +526,27 @@ export const retire = mutation({
   args: { skillId: v.id('skills'), reason: v.optional(v.string()) },
   handler: async (ctx, args): Promise<{ retired: true; returnedItems: number }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    const reason = controlReason(args.reason, RETIRED_BY_MANAGER);
-    assertCallableAuthored(row, 'retired');
-    const returned = await retireHolder(ctx, row, { reason, how: 'retired', now: Date.now() });
-    return { retired: true, returnedItems: returned.length };
+    return await retireSkillInTransaction(ctx, row, args.reason);
   },
 });
+
+/**
+ * Retire a callable skill an employee wrote, in the caller's transaction ({@link retire}; a
+ * reorientation card's Approve, 16-O).
+ *
+ * @throws ConvexError when the row is not a callable skill an employee wrote, or the reason is
+ *   too long.
+ */
+export async function retireSkillInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+  given: string | undefined,
+): Promise<{ retired: true; returnedItems: number }> {
+  const reason = controlReason(given, RETIRED_BY_MANAGER);
+  assertCallableAuthored(row, 'retired');
+  const returned = await retireHolder(ctx, row, { reason, how: 'retired', now: Date.now() });
+  return { retired: true, returnedItems: returned.length };
+}
 
 /**
  * Public, guarded by `assertOwnsSkill`: Withdraw for every employee (A12). The version the row
@@ -550,12 +565,26 @@ export const withdraw = mutation({
     args,
   ): Promise<{ withdrawn: true; holders: number; returnedItems: number; stoppedRuns: number }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    const reason = controlReason(args.reason, WITHDRAWN_BY_MANAGER);
-    assertCallableAuthored(row, 'withdrawn');
-    const withdrawn = await withdrawVersion(ctx, row, reason);
-    return { withdrawn: true, ...withdrawn };
+    return await withdrawSkillInTransaction(ctx, row, args.reason);
   },
 });
+
+/**
+ * Withdraw a callable skill's version from every employee of its owner, in the caller's
+ * transaction ({@link withdraw}; a reorientation card's Approve, 16-O).
+ *
+ * @throws ConvexError as {@link withdraw} refuses.
+ */
+export async function withdrawSkillInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+  given: string | undefined,
+): Promise<{ withdrawn: true; holders: number; returnedItems: number; stoppedRuns: number }> {
+  const reason = controlReason(given, WITHDRAWN_BY_MANAGER);
+  assertCallableAuthored(row, 'withdrawn');
+  const withdrawn = await withdrawVersion(ctx, row, reason);
+  return { withdrawn: true, ...withdrawn };
+}
 
 /**
  * Withdraw the version a callable row holds from every employee of its owner who runs it, in the
@@ -762,23 +791,36 @@ export const recheckNow = mutation({
   args: { skillId: v.id('skills') },
   handler: async (ctx, args): Promise<{ scheduled: true }> => {
     const row = await assertOwnsSkill(ctx, args.skillId);
-    assertCallableAuthored(row, 're-checked');
-    if (row.versionId === undefined) {
-      throw new ConvexError(
-        `${row.name} has no stored version to re-check; ask for a revision instead.`,
-      );
-    }
-    if (holdsLiveAuthoringClaim(row, Date.now())) {
-      throw new ConvexError(`A check of ${row.name} is already running.`);
-    }
-    const newer = await newerVersionToRecheck(ctx.db, row);
-    await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
-      skillId: row._id,
-      ...(newer !== undefined ? { versionId: newer } : {}),
-    });
-    return { scheduled: true };
+    return await recheckSkillInTransaction(ctx, row);
   },
 });
+
+/**
+ * Schedule a callable skill's re-check against its stored version, in the caller's transaction
+ * ({@link recheckNow}; a reorientation card's Approve, 16-O).
+ *
+ * @throws ConvexError when the row is not callable, has no stored version, or a check is running.
+ */
+export async function recheckSkillInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'skills'>,
+): Promise<{ scheduled: true }> {
+  assertCallableAuthored(row, 're-checked');
+  if (row.versionId === undefined) {
+    throw new ConvexError(
+      `${row.name} has no stored version to re-check; ask for a revision instead.`,
+    );
+  }
+  if (holdsLiveAuthoringClaim(row, Date.now())) {
+    throw new ConvexError(`A check of ${row.name} is already running.`);
+  }
+  const newer = await newerVersionToRecheck(ctx.db, row);
+  await ctx.scheduler.runAfter(0, internal.storedVerification.verifyStoredSkill, {
+    skillId: row._id,
+    ...(newer !== undefined ? { versionId: newer } : {}),
+  });
+  return { scheduled: true };
+}
 
 /**
  * Public, guarded by `assertOwnsSkill`: Give up on a skill that failed its check. The row goes to

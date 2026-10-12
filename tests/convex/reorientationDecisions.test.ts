@@ -1,0 +1,594 @@
+import { convexTest } from 'convex-test';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api, internal } from '../../convex/_generated/api';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
+import schema from '../../convex/schema';
+import { allConvexModules } from './all-modules';
+import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
+import {
+  cardOf,
+  cardsOf,
+  eventTypesOf,
+  openTestCard,
+  seedEmployee,
+  seedWork,
+  type Harness,
+} from './fakes/reorientation';
+
+/*
+ * A reorientation card's decisions (16-O; section 5.2): Approve applies the proposal through the
+ * target's own transaction helper and writes its event; Dismiss and Defer change nothing; a
+ * high-risk card holds its plans at the plan's decision and lets them go on Approve or Dismiss.
+ */
+
+const OWNER = managerIdentity();
+
+beforeEach((): void => {
+  vi.useFakeTimers();
+});
+afterEach((): void => {
+  vi.useRealTimers();
+});
+
+/** Open a card and put a proposal on it, as the judgement would. */
+async function proposedCard(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  proposed: Exclude<Doc<'reorientations'>['proposed'], { kind: 'pending' }>,
+  fields: Parameters<typeof openTestCard>[1] extends infer T ? Partial<T> : never = {},
+): Promise<Id<'reorientations'>> {
+  const cardId = await openTestCard(harness, {
+    agentId,
+    trigger: 'relationship-changed',
+    triggerKey: `event-${Math.round(Date.now())}-${proposed.kind}`,
+    summary: 'Priya, its approver, changed',
+    ...fields,
+  });
+  if (cardId === null) throw new Error('no card opened');
+  await harness.mutation(internal.reorientation.writeProposal, {
+    reorientationId: cardId,
+    proposed,
+  });
+  return cardId;
+}
+
+/** The events of one type on the employee's record, by payload. */
+async function payloadsOf(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  type: string,
+): Promise<unknown[]> {
+  return await harness.run(async (ctx) =>
+    (await ctx.db.query('events').collect())
+      .filter((event) => event.agentId === agentId && event.type === type)
+      .map((event) => event.payload),
+  );
+}
+
+describe('approve: the proposal applied through its target', (): void => {
+  it('amends the charter with via reorientation, and records what it did on the card', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const cardId = await proposedCard(harness, agentId, {
+      kind: 'charter-change',
+      changes: [
+        {
+          kind: 'edit-clause',
+          field: 'escalationTriggers',
+          index: 0,
+          text: 'Surface tier-2 drafts about committee-deck numbers to Priya first',
+        },
+      ],
+      rationale: 'Priya approves those now.',
+      before: 'Surface tier-2 answer drafts to the manager for review',
+      after: 'Surface tier-2 drafts about committee-deck numbers to Priya first',
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: cardId,
+      }),
+    ).resolves.toEqual({ result: 'the charter was amended to version 0.2' });
+    const card = await cardOf(harness, cardId);
+    expect(card).toMatchObject({
+      status: 'applied',
+      outcome: { summary: 'the charter was amended to version 0.2' },
+    });
+    expect(card.outcome?.charterId).toBeDefined();
+    expect(await payloadsOf(harness, agentId, 'charter.amended')).toEqual([
+      expect.objectContaining({ via: 'reorientation' }),
+    ]);
+    expect(await payloadsOf(harness, agentId, 'reorientation.approved')).toEqual([
+      expect.objectContaining({ kind: 'charter-change', charterId: card.outcome?.charterId }),
+    ]);
+  });
+
+  it('confirms a card that proposes nothing, changing nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const cardId = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Nothing.' });
+    const before = await harness.run(async (ctx) => await ctx.db.query('charters').collect());
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    expect(await harness.run(async (ctx) => await ctx.db.query('charters').collect())).toEqual(
+      before,
+    );
+    expect((await cardOf(harness, cardId)).outcome).toEqual({
+      summary: 'nothing needed to change',
+    });
+  });
+
+  it('retires an agreement, and edits another to a statement its check then takes', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreement = async (statement: string): Promise<Id<'workingAgreements'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('workingAgreements', {
+            userId: OWNER_SUBJECT,
+            agentId,
+            kind: 'preference',
+            statement,
+            scope: 'global',
+            sourceType: 'manager-card',
+            status: 'active',
+            approvedAt: 1,
+            createdAt: 1,
+            appliedTo: [],
+          }),
+      );
+    const retired = await agreement('Copy Priya on tier-2 answers.');
+    const edited = await agreement('Answer within a day.');
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'agreement',
+        agreementId: retired,
+        action: 'retire',
+        rationale: 'The correction says otherwise.',
+      }),
+    });
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'agreement',
+        agreementId: edited,
+        action: 'edit',
+        statement: 'Answer within two days.',
+        rationale: 'The manager allows longer.',
+      }),
+    });
+    const rows = await harness.run(
+      async (ctx) => await ctx.db.query('workingAgreements').collect(),
+    );
+    expect(rows.find((row) => row._id === retired)?.status).toBe('retired');
+    expect(rows.map((row) => row.statement)).toContain('Answer within two days.');
+  });
+
+  it('edits and retires an edge, opening no second card about itself on the employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { edge, other } = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Priya',
+        nameKey: 'priya',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const row = (type: 'escalation-contact' | 'collaborator') => ({
+        userId: OWNER_SUBJECT,
+        fromAgentId: agentId,
+        toPersonId: person,
+        type,
+        effectiveFrom: 1,
+        status: 'active' as const,
+        source: 'manager' as const,
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+      return {
+        edge: await ctx.db.insert('relationships', row('escalation-contact')),
+        other: await ctx.db.insert('relationships', row('collaborator')),
+      };
+    });
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'relationship',
+        relationshipId: edge,
+        action: 'edit',
+        type: 'escalation-contact',
+        scope: 'renewals only',
+        rationale: 'Priya covers renewals only now.',
+      }),
+    });
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'relationship',
+        relationshipId: other,
+        action: 'retire',
+        rationale: 'They no longer work together.',
+      }),
+    });
+    const edges = await harness.run(async (ctx) => await ctx.db.query('relationships').collect());
+    expect(edges.find((row) => row._id === edge)?.status).toBe('superseded');
+    expect(edges.find((row) => row.supersedes === edge)?.scope).toBe('renewals only');
+    expect(edges.find((row) => row._id === other)?.status).toBe('retired');
+    // The edge's own change opened no card about itself on the employee whose card it was.
+    expect((await cardsOf(harness, agentId)).map((card) => card.status)).toEqual([
+      'applied',
+      'applied',
+    ]);
+  });
+
+  it('sets a page superseded by its named successor, and hands another back to its source', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { sourceId, oldPage } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: OWNER_SUBJECT,
+        kind: 'folder',
+        label: 'Company handbook',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const page = (ref: string, title: string, fields: Partial<Doc<'docPages'>> = {}) => ({
+        sourceId,
+        ref,
+        title,
+        markdown: `# ${title}`,
+        updatedAt: 1,
+        ...fields,
+      });
+      const oldPage = await ctx.db.insert('docPages', page('runbook.md', 'Runbook'));
+      await ctx.db.insert('docPages', page('runbook-v2.md', 'Runbook, version 2'));
+      await ctx.db.insert(
+        'docPages',
+        page('glossary.md', 'Glossary', { status: 'archived', statusSource: 'manager' }),
+      );
+      return { sourceId, oldPage };
+    });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, {
+        reorientationId: await proposedCard(harness, agentId, {
+          kind: 'page-status',
+          page: { sourceId, ref: 'runbook.md' },
+          status: 'superseded',
+          supersededBy: { sourceId, ref: 'runbook-v2.md' },
+          rationale: 'Version 2 replaces it.',
+        }),
+      }),
+    ).resolves.toEqual({ result: '“Runbook” was marked superseded' });
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'page-status',
+        page: { sourceId, ref: 'glossary.md' },
+        status: 'clear',
+        rationale: 'The source says it is current.',
+      }),
+    });
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.find((page) => page._id === oldPage)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'manager',
+      supersededBy: { sourceId, ref: 'runbook-v2.md' },
+    });
+    // Handed back: the page reads its source's own status again, no longer the manager's.
+    expect(pages.find((page) => page.ref === 'glossary.md')).toMatchObject({
+      status: 'active',
+      statusSource: 'default',
+    });
+  });
+
+  it('grants and revokes a scope', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('permissionGrants', { agentId, scope: 'linear:write', createdAt: 1 });
+    });
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'scope',
+        scope: 'notion:read',
+        action: 'grant',
+        rationale: 'It needs the runbooks.',
+      }),
+    });
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'scope',
+        scope: 'linear:write',
+        action: 'revoke',
+        rationale: 'It should only read Linear now.',
+      }),
+    });
+    const grants = await harness.run(
+      async (ctx) => await ctx.db.query('permissionGrants').collect(),
+    );
+    expect(
+      grants.filter((grant) => grant.revokedAt === undefined).map((grant) => grant.scope),
+    ).toEqual(['notion:read']);
+  });
+
+  it('retires a skill, and schedules a re-check of another', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const skill = async (name: string, fields: Partial<Doc<'skills'>> = {}) =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('skills', {
+            agentId,
+            ownerKey: OWNER_SUBJECT,
+            name,
+            description: 'Ticket comment-and-close.',
+            body: '# Body',
+            sourceType: 'agent-authored',
+            state: 'registered',
+            registeredAt: 1,
+            createdAt: 1,
+            ...fields,
+          }),
+      );
+    const versionId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skillVersions', {
+          userId: OWNER_SUBJECT,
+          name: 'notion-append-note',
+          description: 'Append a note.',
+          surfaceClass: 'wiki',
+          operation: 'append',
+          version: 1,
+          body: '# Body',
+          smokeTest: 'print("ok")',
+          bodyHash: 'hash',
+          requiredScopes: [],
+          harnessTools: [],
+          authorAgentId: agentId,
+          authorName: 'Mira',
+          readRefs: [],
+          verifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const retired = await skill('kanban-comment-and-close');
+    const rechecked = await skill('notion-append-note', { versionId });
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'skill-action',
+        skillId: retired,
+        action: 'retire',
+        rationale: 'The page it read is gone.',
+      }),
+    });
+    await owner.mutation(api.reorientationDecisions.approve, {
+      reorientationId: await proposedCard(harness, agentId, {
+        kind: 'skill-action',
+        skillId: rechecked,
+        action: 'recheck',
+        rationale: 'Its page changed.',
+      }),
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(retired)))?.state).toBe('retired');
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('storedVerification:verifyStoredSkill');
+  });
+
+  it('refuses a card with nothing proposed yet, a decided card, and a stranger', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const pending = (await openTestCard(harness, {
+      agentId,
+      trigger: 'access-ended',
+      triggerKey: 'event-1',
+      summary: 'Its access to Linear ended',
+    }))!;
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, { reorientationId: pending }),
+    ).rejects.toThrow('Nothing is proposed on this card yet');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('stranger'))
+        .mutation(api.reorientationDecisions.dismiss, { reorientationId: pending }),
+    ).rejects.toThrow();
+    await owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: pending });
+    await expect(
+      owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: pending }),
+    ).rejects.toThrow('That card has already been decided.');
+  });
+});
+
+describe('dismiss and defer: nothing changes', (): void => {
+  it('dismisses a card, which changes nothing and says so', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const cardId = await proposedCard(harness, agentId, {
+      kind: 'charter-change',
+      changes: [{ kind: 'edit-function', text: 'Something else.' }],
+      rationale: 'Because.',
+    });
+    const charters = await harness.run(async (ctx) => await ctx.db.query('charters').collect());
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: cardId });
+    expect(await harness.run(async (ctx) => await ctx.db.query('charters').collect())).toEqual(
+      charters,
+    );
+    expect(await cardOf(harness, cardId)).toMatchObject({
+      status: 'dismissed',
+      outcome: { summary: 'nothing changed' },
+    });
+    expect((await eventTypesOf(harness, agentId)).at(-1)).toBe('reorientation.dismissed');
+  });
+
+  it('defers a card a week by default, refuses a past date, and the sweep opens it again on its date', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const cardId = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Nothing.' });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.defer, {
+        reorientationId: cardId,
+        revisitAt: Date.now() - 1,
+      }),
+    ).rejects.toThrow('Pick a date after today and within a year.');
+    const { revisitAt } = await owner.mutation(api.reorientationDecisions.defer, {
+      reorientationId: cardId,
+    });
+    expect(revisitAt).toBe(Date.now() + 7 * 86_400_000);
+    await harness.mutation(internal.reorientation.reopenDeferred, {});
+    expect((await cardOf(harness, cardId)).status).toBe('deferred');
+    vi.setSystemTime(revisitAt + 1);
+    await harness.mutation(internal.reorientation.reopenDeferred, {});
+    expect((await cardOf(harness, cardId)).status).toBe('open');
+  });
+});
+
+describe('the hold: the seventh reason at the plan’s decision', (): void => {
+  /** A plan-pending row of an employee whose switch is on. */
+  async function autonomous(harness: Harness): Promise<{
+    agentId: Id<'agents'>;
+    workItemId: Id<'workItems'>;
+  }> {
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const workItemId = await seedWork(harness, agentId, 'plan-pending', {
+      plan: { summary: 'Reply.', steps: ['Reply'] },
+    });
+    return { agentId, workItemId };
+  }
+
+  it('lets a plan a low-risk card reaches go on', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-1',
+      summary: 'A skill is due a re-check',
+    });
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: true,
+    });
+  });
+
+  it('holds a plan a high-risk card names, and lets it go on Approve', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'none', rationale: 'Nothing.' },
+      { affected: { workItems: [workItemId] } },
+    );
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: false,
+    });
+    expect(await payloadsOf(harness, agentId, 'work.plan-held')).toEqual([
+      {
+        workItemId,
+        reason: 'reorientation-pending',
+        reorientationId: cardId,
+        summary: 'Priya, its approver, changed',
+      },
+    ]);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    await harness.finishInProgressScheduledFunctions();
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(
+      scheduled.filter((job) => job.name === 'work:decidePlan').map((job) => job.args[0]),
+    ).toEqual([{ workItemId, recovery: true }]);
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: true,
+    });
+  });
+
+  it('lets the plan go on Dismiss, and keeps the hold while the card is deferred', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'none', rationale: 'Nothing.' },
+      { affected: { workItems: [workItemId] } },
+    );
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.reorientationDecisions.defer, { reorientationId: cardId });
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: false,
+    });
+    await owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: cardId });
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: true,
+    });
+  });
+});
+
+describe('openByHand and listForAgent', (): void => {
+  it('opens a card about a change of role, reaching the whole charter', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary: '   ' }),
+    ).rejects.toThrow('Say what changed in up to 300 characters.');
+    const { reorientationId } = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'Mira now covers renewals too',
+    });
+    const card = await cardOf(harness, reorientationId!);
+    expect(card).toMatchObject({ trigger: 'role-changed', risk: 'medium', status: 'open' });
+    expect(card.affected.charterClauses).toHaveLength(3);
+  });
+
+  it('lists the standing cards first, with the names their ids stand for, and only to the owner', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedWork(harness, agentId, 'plan-pending');
+    const decided = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Nothing.' });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: decided });
+    const standing = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'none', rationale: 'Nothing.' },
+      {
+        trigger: 'access-ended',
+        summary: 'Its access to Linear ended',
+        affected: { workItems: [workItemId] },
+      },
+    );
+    const views = await harness
+      .withIdentity(OWNER)
+      .query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(views.map((view) => view.card._id)).toEqual([standing, decided]);
+    expect(views[0].workItems).toEqual([
+      {
+        _id: workItemId,
+        title: 'Answer the tier-2 ask about the committee deck',
+        state: 'plan-pending',
+      },
+    ]);
+    expect(views[0].charterVersion).toBe('0.1');
+    await expect(
+      harness
+        .withIdentity(managerIdentity('stranger'))
+        .query(api.reorientationDecisions.listForAgent, { agentId }),
+    ).rejects.toThrow();
+  });
+});
