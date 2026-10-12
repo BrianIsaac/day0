@@ -243,6 +243,55 @@ describe('a reorientation card', (): void => {
     view.unmount();
   });
 
+  it('draws no Defer sentence on a deferred card, no empty Affected row, and one full stop after an edge’s new scope (the walk’s W-6, W-7, W-8)', async (): Promise<void> => {
+    const deferred = drawn(
+      withCard(
+        { status: 'deferred', revisitAt: Date.UTC(2026, 9, 3) },
+        { held: { plans: 0, runs: 0 } },
+      ),
+    );
+    expect(controls(deferred.container)).not.toContain('Defer a week');
+    expect(deferred.container.textContent).not.toContain('Defer revisits');
+    deferred.unmount();
+    const decided = drawn(
+      withCard(
+        {
+          status: 'dismissed',
+          decidedAt: OPENED,
+          outcome: { summary: 'nothing changed' },
+          affected: { ...BASE.card.affected, charterClauses: [], skills: [] },
+        },
+        { skills: [] },
+      ),
+    );
+    expect(decided.container.textContent).not.toContain('Affected');
+    decided.unmount();
+    const edge = drawn(
+      withCard(
+        {
+          proposed: {
+            kind: 'relationship',
+            relationshipId: 'edge-1' as Id<'relationships'>,
+            action: 'edit',
+            type: 'escalation-contact',
+            scope: 'variance escalations.',
+            rationale: 'Aman takes them now.',
+          },
+        },
+        {
+          people: [
+            { _id: 'edge-1' as Id<'relationships'>, words: 'Aman Rao, its escalation contact' },
+          ],
+        },
+      ),
+    );
+    expect(edge.container.textContent).toContain(
+      'Change: Aman Rao, its escalation contact, now for variance escalations.',
+    );
+    expect(edge.container.textContent).not.toContain('escalations..');
+    edge.unmount();
+  });
+
   it('says a running item is held only before its closing steps, and a decided card holds nothing (second pass M3)', async (): Promise<void> => {
     const running = drawn(
       withCard(

@@ -188,7 +188,8 @@ export function failedProposalWords(name: string): string {
 export function decisionWords(args: {
   readonly name: string;
   readonly approves: string;
-  readonly revisit: string;
+  /** The day Defer would revisit on; absent on a card already deferred, which offers no Defer. */
+  readonly revisit?: string;
   readonly charterVersion?: string;
   /** The card holds plans or runs, which a deferred card keeps holding (A21). */
   readonly holds?: boolean;
@@ -198,8 +199,10 @@ export function decisionWords(args: {
       ? `Dismiss closes the card and ${args.name} keeps working under version ${args.charterVersion}.`
       : 'Dismiss closes the card and nothing changes.';
   const defers =
-    args.holds === true
-      ? `Defer revisits on ${args.revisit} and keeps what the card holds held until then.`
-      : `Defer revisits on ${args.revisit} and changes nothing.`;
-  return `${args.approves} ${defers} ${keeps}`;
+    args.revisit === undefined
+      ? undefined
+      : args.holds === true
+        ? `Defer revisits on ${args.revisit} and keeps what the card holds held until then.`
+        : `Defer revisits on ${args.revisit} and changes nothing.`;
+  return [args.approves, defers, keeps].filter((part) => part !== undefined).join(' ');
 }

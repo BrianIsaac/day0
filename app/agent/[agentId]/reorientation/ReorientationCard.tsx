@@ -135,12 +135,13 @@ function ProposalBody({
       const edge = view.people.find((row) => row._id === proposed.relationshipId);
       return (
         <p>
-          {proposed.action === 'retire' ? 'Retire: ' : 'Change: '}
-          {edge?.words ?? 'a relationship'}
-          {proposed.action === 'edit' && proposed.scope !== undefined
-            ? `, now for ${proposed.scope}`
-            : ''}
-          .
+          {sentenceOf(
+            `${proposed.action === 'retire' ? 'Retire: ' : 'Change: '}${edge?.words ?? 'a relationship'}${
+              proposed.action === 'edit' && proposed.scope !== undefined
+                ? `, now for ${proposed.scope}`
+                : ''
+            }`,
+          )}
         </p>
       );
     }
@@ -257,8 +258,12 @@ export function ReorientationCard({
       <div className="grid gap-4 text-sm">
         <p className="text-[var(--color-fg-2)]">{sentenceOf(card.triggerSummary)}</p>
         <dl className="grid gap-1 sm:grid-cols-[8rem_1fr]">
-          <dt className="text-[var(--color-muted)]">Affected</dt>
-          <dd className="[overflow-wrap:anywhere]">{affected.join(' · ')}</dd>
+          {affected.length > 0 ? (
+            <>
+              <dt className="text-[var(--color-muted)]">Affected</dt>
+              <dd className="[overflow-wrap:anywhere]">{affected.join(' · ')}</dd>
+            </>
+          ) : null}
           {evidence.length > 0 ? (
             <>
               <dt className="text-[var(--color-muted)]">Evidence</dt>
@@ -346,7 +351,7 @@ export function ReorientationCard({
                   proposed.kind === 'pending'
                     ? 'Approve waits for the proposal.'
                     : approveWords(view, proposed),
-                revisit: revisitDay(now + WEEK_MS, zone),
+                ...(card.status !== 'deferred' ? { revisit: revisitDay(now + WEEK_MS, zone) } : {}),
                 holds: held.plans + held.runs > 0,
                 ...(view.charterVersion !== undefined
                   ? { charterVersion: view.charterVersion }
