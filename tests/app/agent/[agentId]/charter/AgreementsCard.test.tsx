@@ -308,6 +308,36 @@ describe('the Agreements card', (): void => {
     view.unmount();
   });
 
+  it('says an owed check on an agreement for every employee it keeps in effect, with Check now (RM28)', async (): Promise<void> => {
+    const owed: AgreementView = {
+      ...everyone,
+      checkOwed: { since: Date.UTC(2026, 9, 3, 9), checkable: true },
+    };
+    const calls: string[] = [];
+    const view = card([owed], calls);
+    expect(view.container.textContent).toContain(
+      "Not checked since 3 Oct 2026, 09:00 against Priya's amended charter. It stays in effect meanwhile.",
+    );
+    await press(
+      view.container,
+      "Check “Thread every reply under the ask.” against Priya's charter now",
+    );
+    expect(calls).toEqual(['recheck wa2']);
+    expect(said(view.container)).toEqual(["Day0 is checking it against Priya's charter."]);
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+    // Past the bound nothing can check it, so the line says the bound and offers no Check now.
+    const past = card([
+      { ...owed, checkOwed: { since: Date.UTC(2026, 9, 3, 9), checkable: false } },
+    ]);
+    expect(past.container.textContent).toContain(
+      "Not checked since 3 Oct 2026, 09:00 against Priya's amended charter: Day0 checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect meanwhile.",
+    );
+    expect(past.container.querySelector('[aria-label^="Check “"]')).toBeNull();
+    past.unmount();
+  });
+
   it('says a check that could not be had once it is stale, and offers Try again (W13-R30)', async (): Promise<void> => {
     vi.setSystemTime((checking.approvedAt ?? 0) + CHECK_STALE_MS + 1);
     const calls: string[] = [];

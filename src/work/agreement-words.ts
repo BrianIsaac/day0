@@ -43,6 +43,12 @@ export interface AgreementView {
      */
     readonly checkable?: boolean;
   };
+  /**
+   * An agreement for every employee whose check against this employee's amended charter could not
+   * be had (RM28 (b)): when it was last checked, and whether it can be checked now (the owner has
+   * no more employees than the check reads). It stays in effect meanwhile.
+   */
+  readonly checkOwed?: { readonly since: number; readonly checkable: boolean };
 }
 
 /** The Agreements card's title. */
@@ -217,6 +223,22 @@ export function checkHeldForPauseLine(name: string): string {
  */
 export function recheckLine(outcome: RecheckOutcome, underWay: string, name: string): string {
   return outcome.when === 'after-pause' ? checkHeldForPauseLine(name) : underWay;
+}
+
+/**
+ * The line on an agreement for every employee whose check against the employee's amended charter
+ * is owed (RM28 (b); wording draft, "Not checked since {date}; Check now"): since when, that it
+ * stays in effect, and, past the employees the check reads, why nothing can check it; within the
+ * bound the row offers {@link CHECK_HOLD_NOW}.
+ *
+ * @param name - The employee's name.
+ * @param since - When it was last checked, as the page writes a time.
+ * @param checkable - Whether the owner has no more employees than the check reads.
+ */
+export function checkOwedLine(name: string, since: string, checkable: boolean): string {
+  return checkable
+    ? `Not checked since ${since} against ${name}'s amended charter. It stays in effect meanwhile.`
+    : `Not checked since ${since} against ${name}'s amended charter: Day0 checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer. It stays in effect meanwhile.`;
 }
 
 /** The refusal of a hold's check while the owner has more employees than the check reads. */

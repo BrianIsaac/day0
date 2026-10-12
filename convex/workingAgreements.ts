@@ -10,7 +10,7 @@ import {
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { confirmedPersonOf, itemPersonIds } from './itemPeople';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -975,6 +975,8 @@ export interface CharterCheckInputs {
    * held until it is had.
    */
   readonly established: boolean;
+  /** The agreements whose check against this charter is owed (RM28 (b)): one allowed ends it. */
+  readonly owed: readonly Id<'workingAgreements'>[];
 }
 
 /**
@@ -1011,6 +1013,7 @@ export const charterCheckInputs = internalQuery({
         ? agreements
         : agreements.filter((row) => args.agreementIds?.includes(row._id) === true);
     if (charter === null || asked.length === 0) return null;
+    const owed = established ? await owedChecksOf(ctx, agent._id) : new Map<string, number>();
     return {
       userId,
       charter,
@@ -1018,6 +1021,7 @@ export const charterCheckInputs = internalQuery({
       pastTheCheck: past,
       held: [...held],
       established,
+      owed: asked.filter((row) => owed.has(row._id)).map((row) => row._id),
     };
   },
 });
@@ -1105,35 +1109,183 @@ export const holdForEmployee = internalMutation({
   },
   handler: async (ctx, args): Promise<null> => {
     const row = await ctx.db.get(args.agreementId);
-    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
-    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
-    if ((await heldForEmployee(ctx, row.userId, args.agentId)).has(row._id)) return null;
+    if (!row) return null;
+    await holdInTransaction(ctx, row, args.agentId, args.tried);
+    return null;
+  },
+});
+
+/** The body of {@link holdForEmployee}, in the caller's transaction. */
+async function holdInTransaction(
+  ctx: MutationCtx,
+  row: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+  tried: boolean,
+): Promise<void> {
+  if (row.status !== 'active' || row.agentId !== undefined) return;
+  if (!(await stillTheOwners(ctx, row, agentId))) return;
+  if ((await heldForEmployee(ctx, row.userId, agentId)).has(row._id)) return;
+  const now = Date.now();
+  const reason = 'unchecked-for-employee';
+  const heldId = await ctx.db.insert('workingAgreements', {
+    userId: row.userId,
+    agentId,
+    kind: row.kind,
+    statement: row.statement,
+    scope: row.scope,
+    ...(row.scopeRef !== undefined ? { scopeRef: row.scopeRef } : {}),
+    ...(row.personId !== undefined ? { personId: row.personId } : {}),
+    sourceType: row.sourceType,
+    status: 'refused',
+    // When a check last tried it: 0 for one no check has tried, which the sweep and the next
+    // stored plan check at once (`scheduleDueHoldChecks`).
+    refusal: { reason, judgedAt: tried ? now : 0 },
+    supersedes: row._id,
+    createdAt: now,
+    appliedTo: [],
+  });
+  // Named by the agreement for every employee, as the lift's `agreement.activated` is, so the two
+  // pair; the hold's own row beside it (W15-R37).
+  await appendEvent(ctx, {
+    agentId,
+    type: 'agreement.refused',
+    payload: { agreementId: row._id, everyEmployee: true, reason, holdId: heldId },
+    createdAt: now,
+  });
+}
+
+/** The newest events of each of the two types an employee's owed checks are read from. */
+const OWED_EVENTS_READ = 100;
+
+/** The agreement an event names, if its payload names one. */
+function agreementNamed(event: Doc<'events'>): string | undefined {
+  const payload: unknown = event.payload;
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const named = (payload as { agreementId?: unknown }).agreementId;
+  return typeof named === 'string' ? named : undefined;
+}
+
+/**
+ * The agreements for every employee whose check against an employee's charter is owed (RM28
+ * (b)), each with when it was last checked: a check of the employee's amended charter that could
+ * not be had wrote `agreement.check-owed`, and no `agreement.checked` came after it. Read from the
+ * employee's newest events of the two types, in the order they were written; no state of its own.
+ */
+async function owedChecksOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<Map<string, number>> {
+  const [owed, checked] = await Promise.all(
+    (['agreement.check-owed', 'agreement.checked'] as const).map(
+      async (type) => await eventsOfType(ctx, agentId, type).order('desc').take(OWED_EVENTS_READ),
+    ),
+  );
+  const lastChecked = new Map<string, number>();
+  for (const event of checked ?? []) {
+    const named = agreementNamed(event);
+    if (named !== undefined && !lastChecked.has(named)) lastChecked.set(named, event._creationTime);
+  }
+  const owing = new Map<string, number>();
+  const seen = new Set<string>();
+  for (const event of owed ?? []) {
+    const named = agreementNamed(event);
+    if (named === undefined || seen.has(named)) continue;
+    seen.add(named);
+    const since = (event.payload as { since?: unknown }).since;
+    if (event._creationTime > (lastChecked.get(named) ?? -1) && typeof since === 'number') {
+      owing.set(named, since);
+    }
+  }
+  return owing;
+}
+
+/**
+ * When an agreement for every employee was last checked against an employee's charter: as it took
+ * effect (its own check read every charter then), or at the approval of the charter the newest
+ * amends (whose check read every agreement then), or at a check of it since, whichever is latest.
+ */
+async function lastCheckedAt(
+  ctx: Pick<QueryCtx, 'db'>,
+  agreement: Doc<'workingAgreements'>,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  const [versions, checked] = await Promise.all([
+    ctx.db
+      .query('charters')
+      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+      .order('desc')
+      .take(CHARTER_VERSIONS),
+    eventsOfType(ctx, agentId, 'agreement.checked').order('desc').take(OWED_EVENTS_READ),
+  ]);
+  const amended = versions.filter((charter) => charter.approved)[1];
+  const lastCheck = checked.find((event) => agreementNamed(event) === agreement._id);
+  return Math.max(
+    agreement.effectiveFrom ?? agreement.approvedAt ?? agreement.createdAt,
+    amended?.approvedAt ?? amended?.createdAt ?? 0,
+    lastCheck?.createdAt ?? 0,
+  );
+}
+
+/**
+ * Internal: what an employee's charter check that could not be had leaves on record, for the
+ * agreements for every employee it did not check (W15-R34; RM28 (b)): after its last retry, when
+ * the run died (its watch, `CHECK_OUTLIVED_MS` on), past the bound, or under a pause. On a first
+ * charter each is held for the employee (`holdForEmployee`); on an amendment each stays in effect
+ * (D-2 (c)) and its check is owed: `agreement.check-owed` with when it was last checked, once, as
+ * long as no check has since been had, which the Agreements card says with Check now. Nothing for
+ * a row no longer in effect for every employee, or an employee the owner no longer has.
+ */
+export const settleUncheckable = internalMutation({
+  args: {
+    agentId: v.id('agents'),
+    agreementIds: v.array(v.id('workingAgreements')),
+    /** Whether a check was tried: false past the bound or under a pause, where no model was asked. */
+    tried: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const established = await hasEarlierApprovedCharter(ctx, args.agentId);
+    const owed = established ? await owedChecksOf(ctx, args.agentId) : new Map<string, number>();
     const now = Date.now();
-    const reason = 'unchecked-for-employee';
-    const heldId = await ctx.db.insert('workingAgreements', {
-      userId: row.userId,
-      agentId: args.agentId,
-      kind: row.kind,
-      statement: row.statement,
-      scope: row.scope,
-      ...(row.scopeRef !== undefined ? { scopeRef: row.scopeRef } : {}),
-      ...(row.personId !== undefined ? { personId: row.personId } : {}),
-      sourceType: row.sourceType,
-      status: 'refused',
-      // When a check last tried it: 0 for one no check has tried, which the sweep and the next
-      // stored plan check at once (`scheduleDueHoldChecks`).
-      refusal: { reason, judgedAt: args.tried ? now : 0 },
-      supersedes: row._id,
-      createdAt: now,
-      appliedTo: [],
-    });
-    // Named by the agreement for every employee, as the lift's `agreement.activated` is, so the
-    // two pair; the hold's own row beside it (W15-R37).
+    for (const agreementId of args.agreementIds) {
+      const row = await ctx.db.get(agreementId);
+      if (!row) continue;
+      if (!established) {
+        await holdInTransaction(ctx, row, args.agentId, args.tried);
+        continue;
+      }
+      if (row.status !== 'active' || row.agentId !== undefined || owed.has(row._id)) continue;
+      if (!(await stillTheOwners(ctx, row, args.agentId))) continue;
+      await appendEvent(ctx, {
+        agentId: args.agentId,
+        type: 'agreement.check-owed',
+        payload: {
+          agreementId: row._id,
+          everyEmployee: true,
+          since: await lastCheckedAt(ctx, row, args.agentId),
+        },
+        createdAt: now,
+      });
+    }
+    return null;
+  },
+});
+
+/**
+ * Internal: a check of an employee's amended charter allowed an agreement for every employee whose
+ * check was owed (RM28 (b)): `agreement.checked` ends the owed check, and the card's line with it.
+ * Nothing when none was owed, so an ordinary pass writes no event.
+ */
+export const recordChecked = internalMutation({
+  args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.agreementId);
+    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if (!(await owedChecksOf(ctx, args.agentId)).has(row._id)) return null;
     await appendEvent(ctx, {
       agentId: args.agentId,
-      type: 'agreement.refused',
-      payload: { agreementId: row._id, everyEmployee: true, reason, holdId: heldId },
-      createdAt: now,
+      type: 'agreement.checked',
+      payload: { agreementId: row._id, everyEmployee: true },
+      createdAt: Date.now(),
     });
     return null;
   },
@@ -1370,7 +1522,11 @@ export async function activeAgreementsOf(
  * An agreement as the cards read it: what they draw, and not the items it was applied to, which
  * change with every plan stored.
  */
-function cardViewOf(row: Doc<'workingAgreements'>, checkable = false): AgreementView {
+function cardViewOf(
+  row: Doc<'workingAgreements'>,
+  checkable = false,
+  checkOwed?: AgreementView['checkOwed'],
+): AgreementView {
   return {
     _id: row._id,
     ...(row.agentId !== undefined ? { agentId: row.agentId } : {}),
@@ -1393,6 +1549,7 @@ function cardViewOf(row: Doc<'workingAgreements'>, checkable = false): Agreement
           },
         }
       : {}),
+    ...(checkOwed !== undefined ? { checkOwed } : {}),
   };
 }
 
@@ -1401,8 +1558,9 @@ function cardViewOf(row: Doc<'workingAgreements'>, checkable = false): Agreement
  * and waiting on their check, and without a proposal whose every-employee copy waits on its
  * check), active and refused, newest first. A hold of an agreement for every employee says
  * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
- * check reads), and one whose agreement is in effect for nobody any more is left out. Public,
- * guarded by `assertOwnsAgent`; writes nothing.
+ * check reads), and one whose agreement is in effect for nobody any more is left out; an
+ * agreement for every employee whose check against this employee's amended charter is owed says
+ * since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`; writes nothing.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -1422,14 +1580,24 @@ export const listForAgent = query({
       rows.flatMap((row) => (awaitingCheck(row) && row.supersedes ? [row.supersedes] : [])),
     );
     const holds = rows.filter((row) => row.refusal?.reason === 'unchecked-for-employee');
-    const [checkable, moot] = await Promise.all([
-      holds.length === 0 ? false : pastTheCheck(ctx, userId).then((past) => !past),
+    const everyEmployee = rows.some((row) => row.status === 'active' && row.agentId === undefined);
+    const [checkable, moot, owed] = await Promise.all([
+      holds.length === 0 && !everyEmployee
+        ? false
+        : pastTheCheck(ctx, userId).then((past) => !past),
       mootHolds(ctx, holds),
+      everyEmployee ? owedChecksOf(ctx, agent._id) : new Map<string, number>(),
     ]);
+    // An agreement for every employee whose check against this employee's amended charter is
+    // owed says so, with Check now while the owner is within the bound (RM28 (b)).
+    const owedOf = (row: Doc<'workingAgreements'>): AgreementView['checkOwed'] => {
+      const since = row.status === 'active' ? owed.get(row._id) : undefined;
+      return since === undefined ? undefined : { since, checkable };
+    };
     return rows
       .filter((row) => !(awaitingManager(row) && copied.has(row._id)) && !moot.has(row._id))
       .sort((left, right) => right.createdAt - left.createdAt)
-      .map((row) => cardViewOf(row, checkable && holds.includes(row)));
+      .map((row) => cardViewOf(row, checkable && holds.includes(row), owedOf(row)));
   },
 });
 
@@ -1684,9 +1852,11 @@ export const dismiss = mutation({
  * Try the check of a kept agreement again from a card (W13-R30): one whose check could not be had,
  * whose card says so once it is stale; or check an agreement for every employee held for the
  * card's employee against its charter (W14-R15's lift), refused while the owner has more employees
- * than the check reads. Public, guarded by `assertOwnsAgreement` first and the card's employee
- * after; refused for one neither waiting on its check nor a hold. Schedules the check, and says
- * whether it runs now or once a pause of the employee's work ends.
+ * than the check reads; or check an agreement for every employee whose check against the card's
+ * employee's amended charter is owed (RM28 (b)), refused past the bound too. Public, guarded by
+ * `assertOwnsAgreement` first and the card's employee after; refused for one neither waiting on
+ * its check, a hold nor owed a check. Schedules the check, and says whether it runs now or once a
+ * pause of the employee's work ends.
  */
 export const recheck = mutation({
   args: { agreementId: v.id('workingAgreements'), agentId: v.id('agents') },
@@ -1703,6 +1873,19 @@ export const recheck = mutation({
         agentId: args.agentId,
         attempt: 0,
         agreementIds: [agreement.supersedes],
+      });
+      return { ok: true, when };
+    }
+    const owed =
+      agreement.status === 'active' &&
+      agreement.agentId === undefined &&
+      (await owedChecksOf(ctx, args.agentId)).has(agreement._id);
+    if (owed) {
+      if (await pastTheCheck(ctx, agreement.userId)) throw new ConvexError(HOLD_PAST_THE_CHECK);
+      await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+        agentId: args.agentId,
+        attempt: 0,
+        agreementIds: [agreement._id],
       });
       return { ok: true, when };
     }

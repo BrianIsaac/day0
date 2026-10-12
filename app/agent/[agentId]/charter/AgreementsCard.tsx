@@ -12,6 +12,7 @@ import {
   CHECK_HOLD_NOW,
   checkingHoldLine,
   checkingLine,
+  checkOwedLine,
   checkStale,
   checkUnavailableLine,
   CHECKING_AGAIN,
@@ -123,7 +124,9 @@ function editControlOf(
  * employee (A10); an agreement kept here waiting on its check; a refusal of what was kept here,
  * with Dismiss, and, for a keep for every employee refused past the bound, Keep for this employee
  * alone; a hold of an agreement for every employee, with Check now once it can be checked
- * (W14-R15); and a proposal, which is decided on the Work tab. Real mode only, as agreements are.
+ * (W14-R15); an agreement for every employee whose check against the employee's amended charter is
+ * owed, which stays in effect, with Check now (RM28 (b)); and a proposal, which is decided on the
+ * Work tab. Real mode only, as agreements are.
  *
  * @param props - The agreements, the employee's name, the Work tab, and the calls.
  */
@@ -207,6 +210,15 @@ export function AgreementsCard({
                   </>
                 ) : null}
               </p>
+              {row.checkOwed !== undefined ? (
+                <p className="mt-1 text-[13px] text-[var(--color-fg-2)]">
+                  {checkOwedLine(
+                    employeeName,
+                    clockTime(row.checkOwed.since, zone),
+                    row.checkOwed.checkable,
+                  )}
+                </p>
+              ) : null}
               {editing === row._id ? (
                 <AgreementEditor
                   statement={row.statement}
@@ -249,6 +261,22 @@ export function AgreementsCard({
                   >
                     Retire
                   </Button>
+                  {row.checkOwed?.checkable === true ? (
+                    <Button
+                      size="small"
+                      disabled={change.busy}
+                      aria-label={`Check “${row.statement}” against ${employeeName}'s charter now`}
+                      onClick={() =>
+                        change.run(() => onRecheck(row._id), {
+                          done: (outcome) =>
+                            recheckLine(outcome, checkingHoldLine(employeeName), employeeName),
+                          refused: 'The check was not started.',
+                        })
+                      }
+                    >
+                      {CHECK_HOLD_NOW}
+                    </Button>
+                  ) : null}
                   {row.agentId !== undefined ? (
                     <Button
                       size="small"

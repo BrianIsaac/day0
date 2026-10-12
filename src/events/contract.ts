@@ -1471,6 +1471,20 @@ export interface AgreementRefusedPayload extends AgreementNamed {
   readonly holdId?: Id<'workingAgreements'>;
 }
 
+/**
+ * The payload of `agreement.check-owed` (RM28 (b)): an agreement for every employee stays in effect
+ * for an employee whose amended charter it could not be checked against (after the check's last
+ * retry, when the check died, or past the employees the check reads), and the check is owed.
+ * Written once until a check is had; the Agreements card says it with Check now.
+ */
+export interface AgreementCheckOwedPayload extends AgreementNamed {
+  /** When the agreement was last checked against this employee's charter. */
+  readonly since: number;
+}
+
+/** The payload of `agreement.checked`: a check that was owed was had and allowed it (RM28 (b)). */
+export type AgreementCheckedPayload = AgreementNamed;
+
 /** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
 export interface AgreementRetiredPayload extends AgreementNamed {
   readonly how: 'retired' | 'dismissed';
@@ -2034,6 +2048,8 @@ export interface EventPayloads {
   'agreement.activated': AgreementActivatedPayload;
   'agreement.refused': AgreementRefusedPayload;
   'agreement.retired': AgreementRetiredPayload;
+  'agreement.check-owed': AgreementCheckOwedPayload;
+  'agreement.checked': AgreementCheckedPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
   'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
@@ -2242,6 +2258,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'agreement.activated',
   'agreement.refused',
   'agreement.retired',
+  'agreement.check-owed',
+  'agreement.checked',
   'work.draft-resumed',
   'work.execution-resumed',
   'work.plan-held',

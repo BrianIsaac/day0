@@ -1208,6 +1208,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`
       : `${decider(subject)} retired a working agreement`,
+  'agreement.check-owed': (_, subject) =>
+    `Day0 could not check a working agreement for every employee against ${subject.name}'s amended charter: it stays in effect, and the check is owed`,
+  'agreement.checked': (_, subject) =>
+    `Day0 checked a working agreement for every employee against ${subject.name}'s charter: it stays in effect`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''

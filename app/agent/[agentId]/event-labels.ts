@@ -739,6 +739,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'
       : 'working agreement retired',
+  'agreement.check-owed':
+    'working agreement for every employee not checked against the amended charter: it stays in effect, the check owed',
+  'agreement.checked':
+    'working agreement for every employee checked against the charter: it stays in effect',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
