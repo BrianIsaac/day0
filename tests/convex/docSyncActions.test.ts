@@ -809,6 +809,38 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
     expect(markerModel.prompts).toHaveLength(6);
   }, 60_000);
 
+  it('asks the least recently tried page first, so judgements that always fail do not starve the pages behind them (W15-R22)', async (): Promise<void> => {
+    // The review's bed 1: a judgement that fails stores nothing, and the walk asked in page order,
+    // so six pages whose judgement always took its whole timeout spent every sync's budget.
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 7 }, (_unused, index) => [
+          `notes/idea-${index}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    markerModel.reply = (prompt: string): unknown => {
+      vi.setSystemTime(Date.now() + 60_000);
+      if (!prompt.includes('Body 6.')) throw new Error('the judgement timed out');
+      return { status: 'draft', quote: 'DRAFT' };
+    };
+    const asked = (): string[] =>
+      markerModel.prompts.map((prompt) => /Body (\d)\./.exec(prompt)?.[1] ?? '?');
+    await sync(harness, sourceId);
+    expect(asked()).toEqual(['0', '1', '2']);
+    await sync(harness, sourceId);
+    expect(asked().slice(3)).toEqual(['3', '4', '5']);
+    await sync(harness, sourceId);
+    expect(asked().slice(6, 7)).toEqual(['6']);
+    expect((await statuses(harness))['notes/idea-6.md']).toEqual(['draft', 'marker', 'draft']);
+    // Each attempt is kept on its page, answered or not.
+    const attempted = await harness.run(async (ctx) =>
+      (await ctx.db.query('docPages').collect()).map((page) => page.judgedAttemptAt),
+    );
+    expect(attempted.every((at) => typeof at === 'number')).toBe(true);
+  }, 60_000);
+
   it('asks about at most twenty pages a sync, and the rest at the next', async (): Promise<void> => {
     expect(MARKER_JUDGEMENTS_PER_SYNC).toBe(20);
     const { harness, sourceId } = await folderOf(

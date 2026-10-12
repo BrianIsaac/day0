@@ -44,7 +44,7 @@ import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/doc
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { MeasuringPlan } from './docRelations';
 import type { PagesOwed } from './docRelationsRemeasure';
-import type { StatusPhasePage } from './docStatus';
+import type { MarkerToJudge, StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
 
@@ -842,12 +842,14 @@ async function walkFinishingPhase(
 
 /**
  * Walk the status phase to its end: every page the generation keeps is restated a bounded page
- * per transaction (`docStatus.restatePages`), and between pages the model is asked about each
- * page whose marker lines no stored judgement stands for, one call a page, at most
- * `MARKER_JUDGEMENTS_PER_SYNC` a finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20;
- * the rest are asked at the next sync). A judgement the model could not give leaves the page as
- * it was and is logged: a marker is never why a sync fails, and a vocabulary hit alone decides
- * nothing.
+ * per transaction (`docStatus.restatePages`), and then the model is asked about each page whose
+ * marker lines no stored judgement stands for, one call a page, the pages asked least recently
+ * first (`docPages.judgedAttemptAt`; never asked, first), at most `MARKER_JUDGEMENTS_PER_SYNC` a
+ * finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20; the rest are asked at the next
+ * sync). Every attempt is kept on its page, answered or not, so pages whose judgement always fails
+ * take their turn behind the rest rather than every sync's whole budget (W15-R22). A judgement
+ * the model could not give leaves the page as it was and is logged: a marker is never why a sync
+ * fails, and a vocabulary hit alone decides nothing.
  *
  * @returns The run's cursor after the phase (the scopes phase's start), or null when the run
  *   moved on from under the finish.
@@ -863,8 +865,7 @@ async function walkStatusPhase(
 ): Promise<{ checkpoint: string } | null> {
   let checkpoint = start.checkpoint;
   let from = start.from;
-  let judged = 0;
-  let judging = 0;
+  const toJudge: MarkerToJudge[] = [];
   for (let walked = 1; ; walked += 1) {
     const page: StatusPhasePage | null = await ctx.runMutation(internal.docStatus.restatePages, {
       sourceId: start.sourceId,
@@ -875,31 +876,48 @@ async function walkStatusPhase(
     });
     if (page === null) return null;
     checkpoint = page.checkpoint;
-    for (const marker of page.toJudge) {
-      if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
-      judged += 1;
-      const asked = Date.now();
-      try {
-        const status = await judgeMarker(marker);
-        await ctx.runMutation(internal.docStatus.recordMarker, {
-          sourceId: start.sourceId,
-          syncRunId: start.runId,
-          ref: marker.ref,
-          quote: marker.quote,
-          status,
-        });
-      } catch (error) {
-        log.warn('documentation marker not judged: the page keeps its status', {
-          sourceId: start.sourceId,
-          ref: marker.ref,
-          reason: safeSyncError(error),
-        });
-      }
-      judging += Date.now() - asked;
-    }
-    if (page.done) return { checkpoint };
+    toJudge.push(...page.toJudge);
+    if (page.done) break;
     from = page.from;
   }
+  const leastRecentlyTried = toJudge
+    .map((marker, order) => ({ marker, order }))
+    .sort(
+      (left, right) =>
+        (left.marker.attemptedAt ?? -1) - (right.marker.attemptedAt ?? -1) ||
+        left.order - right.order,
+    )
+    .map(({ marker }) => marker);
+  let judged = 0;
+  let judging = 0;
+  for (const marker of leastRecentlyTried) {
+    if (judged >= MARKER_JUDGEMENTS_PER_SYNC || judging >= MARKER_JUDGING_BUDGET_MS) break;
+    judged += 1;
+    const asked = Date.now();
+    try {
+      const status = await judgeMarker(marker);
+      await ctx.runMutation(internal.docStatus.recordMarker, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref: marker.ref,
+        quote: marker.quote,
+        status,
+      });
+    } catch (error) {
+      log.warn('documentation marker not judged: the page keeps its status', {
+        sourceId: start.sourceId,
+        ref: marker.ref,
+        reason: safeSyncError(error),
+      });
+      await ctx.runMutation(internal.docStatus.recordJudgementAttempt, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref: marker.ref,
+      });
+    }
+    judging += Date.now() - asked;
+  }
+  return { checkpoint };
 }
 
 /**

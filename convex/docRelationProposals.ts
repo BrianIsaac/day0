@@ -172,6 +172,13 @@ export async function relationsBetween(
   ];
 }
 
+/** Whether a proposal's or a relation's evidence holds a page's front matter naming the other. */
+function namesSuccessor(relation: {
+  readonly evidence: ReadonlyArray<{ readonly measure: string }>;
+}): boolean {
+  return relation.evidence.some((entry) => entry.measure === 'names-successor');
+}
+
 /** The block hashes a conflict's evidence names. */
 export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>): string[] {
   return relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
@@ -182,8 +189,10 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * versions of one document (a duplicate or a successor) once, whatever the manager decided, but
  * for a duplicate nobody answered, which gives way to a successor the measures now find (RM19
  * (a): a copy its source dated later, measured again by the remeasure, is deleted here and
- * proposed as the successor); a conflict while one is open or confirmed and its blocks still
- * disagree, or was set aside over the same blocks. A conflict the manager set aside is proposed again only when the blocks that
+ * proposed as the successor), and for an answer of "Not the same" or "Keep both" given before a
+ * page's front matter named the other, which a successor so named is proposed over (W15-R22); a
+ * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
+ * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
  * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
  * left unanswered, it is a proposal nobody can answer, and is deleted here.
@@ -203,6 +212,16 @@ export async function alreadyHeld(
         row.status === 'proposed'
       ) {
         await ctx.db.delete(row._id);
+        continue;
+      }
+      // A page's front matter that names the other since the manager answered is new word from
+      // its author: "Not the same" or "Keep both" given without it is asked again (W15-R22).
+      if (
+        namesSuccessor(proposed) &&
+        !namesSuccessor(row) &&
+        row.status !== 'proposed' &&
+        !(row.status === 'confirmed' && row.kind === 'possible_successor')
+      ) {
         continue;
       }
       held = true;

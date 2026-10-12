@@ -90,6 +90,61 @@ describe('measurePage: the relations a finishing sync proposes', (): void => {
     expect(await relations(harness)).toHaveLength(1);
   });
 
+  it('proposes a successor over a pair answered "Not the same" or "Keep both" once a page’s front matter names the other (W15-R22)', async (): Promise<void> => {
+    for (const answer of ['not-the-same', 'keep-both'] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const wiki = await syncingSource(harness, 'Team wiki');
+      const official = await syncingSource(harness, 'Official runbooks');
+      await storedPage(harness, wiki, {
+        ref: 'runbooks/pipeline-runbook.md',
+        title: 'Pipeline runbook',
+        markdown: PIPELINE_V1,
+      });
+      const copy = PIPELINE_V1.replace('# Pipeline runbook', '# Tile refresh');
+      await storedPage(harness, official, {
+        ref: 'tile.md',
+        title: 'Tile refresh',
+        markdown: copy,
+      });
+      expect(await measure(harness, official, 'tile.md')).toBe(1);
+      const [answered] = await relations(harness);
+      expect(answered.kind).toBe('possible_duplicate');
+      await asManager(harness).mutation(api.docRelations.decide, {
+        relationId: answered._id,
+        decision: answer,
+      });
+      // Measured again as it stands, the answer holds.
+      expect(await measure(harness, official, 'tile.md')).toBe(0);
+      // The author then writes that the page supersedes the runbook.
+      await harness.run(async (ctx) => {
+        const page = await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', official.sourceId).eq('ref', 'tile.md'),
+          )
+          .unique();
+        const markdown = `---\nsupersedes: pipeline-runbook\n---\n${copy}`;
+        await ctx.db.patch(page!._id, { markdown });
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId: official.sourceId,
+          pageRef: 'tile.md',
+          generation: official.runId,
+          markdown,
+        });
+      });
+      expect(await measure(harness, official, 'tile.md')).toBe(1);
+      const rows = await relations(harness);
+      expect(rows.map((row) => [row.kind, row.status])).toEqual([
+        ['possible_duplicate', answer === 'keep-both' ? 'confirmed' : 'dismissed'],
+        ['possible_successor', 'proposed'],
+      ]);
+      expect(rows[1].evidence[0]).toEqual({ measure: 'names-successor', value: 1 });
+      // And once proposed, measured again it is not proposed twice.
+      expect(await measure(harness, official, 'tile.md')).toBe(0);
+    }
+  });
+
   it('proposes two pages that disagree on a figure as a conflict, and one the manager set aside again only once its blocks change', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { handbook, finance } = await twoThatDisagree(harness);

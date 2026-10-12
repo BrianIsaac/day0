@@ -355,6 +355,11 @@ const STATUS_PAGE_READ = { numItems: 50, maximumBytesRead: 4 * 1024 * 1024 } as 
 /** A page whose marker lines await a judgement: its ref and what the pre-filter found. */
 export interface MarkerToJudge extends MarkerCandidate {
   readonly ref: string;
+  /**
+   * When the model was last asked about the page, answered or not (`docPages.judgedAttemptAt`);
+   * absent for a page never asked since it was kept (W15-R22).
+   */
+  readonly attemptedAt?: number;
 }
 
 /** What one page of the status phase did, and where the finish stands after it. */
@@ -431,7 +436,13 @@ export const restatePages = internalMutation({
         page = { ...stored, marker: undefined };
       }
       const ask = markerToJudge(page.marker, stored.title, stored.markdown);
-      if (ask !== undefined) toJudge.push({ ref: stored.ref, ...ask });
+      if (ask !== undefined) {
+        toJudge.push({
+          ref: stored.ref,
+          ...ask,
+          ...(stored.judgedAttemptAt !== undefined ? { attemptedAt: stored.judgedAttemptAt } : {}),
+        });
+      }
       changes.push(await restatePage(ctx, { source, page, now }));
     }
     await stampStatusChanges(ctx, source, changes, now);
@@ -487,10 +498,31 @@ export const recordMarker = internalMutation({
       args.status === 'active' && markerCandidate(page.title, page.markdown) === undefined
         ? undefined
         : { status: args.status, quote: args.quote, judgedAt: now };
-    await ctx.db.patch(page._id, { marker });
+    await ctx.db.patch(page._id, { marker, judgedAttemptAt: now });
     const change = await restatePage(ctx, { source, page: { ...page, marker }, now });
     await stampStatusChanges(ctx, source, [change], now);
     return true;
+  },
+});
+
+/**
+ * Keep on a page that the model was asked about its marker lines and gave no judgement (a
+ * timeout, a reply that was not one), so the next sync asks the pages tried least recently first
+ * and a page whose judgement always fails does not spend every sync's budget before the pages
+ * behind it (W15-R22). Internal; the finishing sync calls it for each judgement that failed.
+ * Fenced on the source's running generation; changes no status.
+ */
+export const recordJudgementAttempt = internalMutation({
+  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || source.activeSyncId !== args.syncRunId) return null;
+    const page = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
+      .unique();
+    if (page !== null) await ctx.db.patch(page._id, { judgedAttemptAt: Date.now() });
+    return null;
   },
 });
 
