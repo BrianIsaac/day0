@@ -864,3 +864,47 @@ describe('the existing library measured once by the dated successor (RM19 (a), t
     expect(await owed(harness, library.sourceId)).toBeUndefined();
   }, 120_000);
 });
+
+describe('the candidates of a page in its own source (found on the 16-FD bed)', (): void => {
+  it('finds a copy in the same source though the page’s own blocks answer its search first', async (): Promise<void> => {
+    // The bed's company folder: a team copy of the tile runbook, edited three days later, drew no
+    // proposal. Its own blocks took the four places its source's search answers, so the runbook
+    // it copies was never measured against it.
+    const harness = convexTest(schema, allConvexModules());
+    const folder = await syncingSource(harness, 'Company folder');
+    const sections = ['Sign in', 'Refresh', 'Read back', 'Post', 'Discipline'].flatMap(
+      (heading) => [
+        '',
+        `## ${heading}`,
+        '',
+        `${heading} for the Looker pipeline tile refresh, as the runbook says.`,
+      ],
+    );
+    const runbook = ['# How to refresh the Looker pipeline tile', ...sections].join('\n');
+    const DAY = DATED_SUCCESSOR_GAP_MS;
+    // The copy is stored first, so its own blocks lead every search that matches it.
+    await storedPage(harness, folder, {
+      ref: 'revops/runbooks/tile-refresh-team-copy.md',
+      title: 'How to refresh the Looker pipeline tile, team copy',
+      markdown: runbook.replace(
+        '# How to refresh the Looker pipeline tile',
+        '# How to refresh the Looker pipeline tile, team copy',
+      ),
+      updatedAt: 8 * DAY,
+    });
+    await storedPage(harness, folder, {
+      ref: 'revops/runbooks/how-to-refresh-the-tile.md',
+      title: 'How to refresh the Looker pipeline tile',
+      markdown: runbook,
+      updatedAt: 5 * DAY,
+    });
+    expect(await measure(harness, folder, 'revops/runbooks/tile-refresh-team-copy.md')).toBe(1);
+    expect(await relations(harness)).toMatchObject([
+      {
+        kind: 'possible_successor',
+        from: { ref: 'revops/runbooks/tile-refresh-team-copy.md' },
+        to: { ref: 'revops/runbooks/how-to-refresh-the-tile.md' },
+      },
+    ]);
+  });
+});

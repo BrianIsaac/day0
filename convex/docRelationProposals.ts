@@ -43,6 +43,14 @@ export interface NamedPage extends PageName {
 /** The blocks one search answers a source while a page's candidates are looked for. */
 const CANDIDATE_BLOCKS_PER_SOURCE = 4;
 
+/**
+ * The most of a page's own blocks its search in its own source passes over before the
+ * `CANDIDATE_BLOCKS_PER_SOURCE` it keeps: a page's own text answers its title and headings best,
+ * so in its own source its blocks took every place and a copy beside it was never measured
+ * (found on the 16-FD bed: the company folder's team copy of the tile runbook).
+ */
+const OWN_BLOCKS_PASSED = 16;
+
 /** The most pages a page's front matter may name that are looked up by name. */
 const NAMED_PAGES = 4;
 
@@ -128,19 +136,22 @@ export async function candidatesOf(
   );
   for (const text of queries) {
     const answers = await Promise.all(
-      owner.sources.map(
-        async (source) =>
-          await ctx.db
-            .query('docBlocks')
-            .withSearchIndex('by_text', (q) =>
-              q
-                .search('searchText', text)
-                .eq('userId', owner.userId)
-                .eq('sourceId', source._id)
-                .eq('status', 'active'),
-            )
-            .take(CANDIDATE_BLOCKS_PER_SOURCE),
-      ),
+      owner.sources.map(async (source) => {
+        const own = source._id === page.sourceId;
+        const rows = await ctx.db
+          .query('docBlocks')
+          .withSearchIndex('by_text', (q) =>
+            q
+              .search('searchText', text)
+              .eq('userId', owner.userId)
+              .eq('sourceId', source._id)
+              .eq('status', 'active'),
+          )
+          .take(CANDIDATE_BLOCKS_PER_SOURCE + (own ? OWN_BLOCKS_PASSED : 0));
+        return rows
+          .filter((row) => !own || row.pageRef !== page.ref)
+          .slice(0, CANDIDATE_BLOCKS_PER_SOURCE);
+      }),
     );
     for (const row of answers.flat()) hit({ sourceId: row.sourceId, ref: row.pageRef }, 1);
   }
