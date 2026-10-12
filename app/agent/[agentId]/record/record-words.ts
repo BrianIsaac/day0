@@ -784,7 +784,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }${
       p.via === 'plan-approval'
         ? ` as ${addressee(subject)} approved a plan`
-        : ` by ${addressee(subject)}`
+        : p.via === 'reorientation'
+          ? ` as ${addressee(subject)} approved a reorientation card`
+          : ` by ${addressee(subject)}`
     }${because(p.reason)}`,
   'charter.request_changes': (p, subject) =>
     `${decider(subject)} sent the charter back for changes${because(p.notes)}`,
@@ -1390,11 +1392,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       sections ? ` from ${sections}` : ''
     }`;
   },
+  // The reason is the backend's own error (a selection past its reads): the row's detail keeps
+  // it, and the sentence says what happened instead (W15-R48).
   'work.documentation-selection-failed': (p, subject) => {
     const site = text(p.site);
     return `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(
       subject,
-    )} read every documentation page, since the pages it needed could not be selected${because(p.reason)}`;
+    )} read every documentation page, since the pages it needed could not be selected.`;
   },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(

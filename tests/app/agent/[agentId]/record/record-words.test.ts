@@ -1055,6 +1055,48 @@ describe('what an evaluation and a plan approval say in the record (walk m15)', 
   });
 });
 
+describe('a selection the backend could not finish, in the record (W15-R48, the joins)', (): void => {
+  it('says what was read instead and leaves the backend’s words to the row’s detail', (): void => {
+    // The review's case: the selection's query met Convex's limit, and the record printed it.
+    const line = recordWords(
+      {
+        type: 'work.documentation-selection-failed',
+        payload: {
+          workItemId: 'w1',
+          site: 'plan',
+          reason: 'Too many index ranges read in a single function execution (limit: 4096)',
+        },
+      },
+      subject,
+    );
+    expect(line).not.toContain('index ranges');
+    expect(line).toBe(
+      'The plan draft for “Draft response for new tier-two RevOps ask” read every documentation page, since the pages it needed could not be selected.',
+    );
+  });
+});
+
+describe('a charter amended from a reorientation card, in the record (the joins)', (): void => {
+  it('says the manager approved a card, then what the card was about', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'charter.amended',
+          payload: {
+            version: '0.2',
+            previousVersion: '0.1',
+            via: 'reorientation',
+            reason: 'Aman Rao now approves REVOPS plans',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Charter amended to version 0.2 from 0.1 as you approved a reorientation card: Aman Rao now approves REVOPS plans.',
+    );
+  });
+});
+
 describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
   /** An event older than the reader's tenure: the manager then was sam@company.com. */
   const earlier = {

@@ -582,7 +582,7 @@ export interface DocumentationRelationProposedPayload {
 export interface DocumentationRelationDecidedPayload {
   readonly relationId: Id<'docRelations'>;
   readonly kind: RelationKind;
-  /** The card's answer (`RELATION_DECISIONS`, `convex/docRelations.ts`). */
+  /** The card's answer (`RELATION_DECISIONS`, `convex/docConflicts.ts`). */
   readonly decision:
     | 'supersedes'
     | 'keep-both'

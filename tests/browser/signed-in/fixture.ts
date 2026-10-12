@@ -485,7 +485,16 @@ export function employeePage(): Record<string, unknown> {
       text: 'Charter 0.2, approved 10 Oct 2026: Own routine revenue operations work.',
       cut: false,
     },
-    'metrics:forAgent': dashboardMetrics(),
+    // The rail asks for the employee's day (16-F); the Record tab asks for the whole record.
+    'metrics:forAgent': (args: { readonly day?: string }) => {
+      const figures = dashboardMetrics();
+      return args.day === undefined
+        ? figures
+        : {
+            ...figures,
+            today: { day: args.day, decisions: figures.decisions, actions: figures.actions },
+          };
+    },
     'voice:latest': null,
     'config:surfaceMode': { mode: 'real', label: 'real mode' },
     'config:components': { browser: false },
@@ -506,9 +515,36 @@ export function employeePage(): Record<string, unknown> {
         lastVerifiedAt: minutes(5),
         whereFound: [],
         createdAt: 1,
+        // What `surfaces:listForAgent` adds to the row: whom the card acts as.
+        identity: { kind: 'own-app', planned: false },
       },
     ],
     'surfaces:installRedirectConfigured': false,
+    // The Surfaces tab draws its cards once the credentials and the organisation's connections
+    // answer, and the documentation card once its first page of pages does (the joins).
+    'credentials:summaryForOwner': [],
+    'organisationConnections:summaryForManager': { callerIsAdministrator: false, systems: [] },
+    'mock:listDocs': [
+      {
+        _id: 'doc-tile',
+        slug: 'source-runbooks-tile-md',
+        title: 'How to refresh the pipeline tile',
+        category: 'team-doc',
+        sourceId: 'source-wiki',
+      },
+    ],
+    'mock:getDoc': (args: { readonly slug?: string }) => ({
+      _id: 'doc-tile',
+      _creationTime: 1,
+      agentId,
+      slug: args.slug ?? 'source-runbooks-tile-md',
+      title: 'How to refresh the pipeline tile',
+      body: '# How to refresh the pipeline tile\n\nRefresh the Looker tile after the nightly load.',
+      category: 'team-doc',
+      sourceId: 'source-wiki',
+      sourceRef: 'runbooks/tile.md',
+      updatedAt: minutes(40),
+    }),
     'corrections:listForAgent': [
       {
         _id: 'c1',

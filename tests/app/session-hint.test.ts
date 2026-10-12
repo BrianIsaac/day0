@@ -48,7 +48,18 @@ function runHeadScript(): string | null {
   return document.documentElement.getAttribute(SESSION_HINT_ATTRIBUTE);
 }
 
+/** The observers the head script left watching `<html>`, so none outlives its test. */
+const observers: MutationObserver[] = [];
+const NativeObserver = globalThis.MutationObserver;
+globalThis.MutationObserver = class extends NativeObserver {
+  constructor(callback: MutationCallback) {
+    super(callback);
+    observers.push(this);
+  }
+};
+
 afterEach((): void => {
+  for (const observer of observers.splice(0)) observer.disconnect();
   clearCookies();
   document.documentElement.removeAttribute(SESSION_HINT_ATTRIBUTE);
   document.head.replaceChildren();
@@ -112,5 +123,17 @@ describe("the header's reservation rule", (): void => {
 
   it("holds the sign-in controls' room when the script has not run", (): void => {
     expect(drawn()).toEqual(['signed-out']);
+  });
+});
+
+describe('the head script after hydration', (): void => {
+  it('writes the hint again when React clears the root’s attributes, as a hydration it gives up on does (16-T’s F2)', async (): Promise<void> => {
+    // 16-T's browser job saw the theme's attribute dropped this way; the hint has the same
+    // exposure: the header's reserved slot would fall back to the signed-out controls.
+    document.cookie = '__client_uat_AbC12=1759100000; path=/';
+    expect(runHeadScript()).toBe('present');
+    document.documentElement.removeAttribute(SESSION_HINT_ATTRIBUTE);
+    await Promise.resolve();
+    expect(document.documentElement.getAttribute(SESSION_HINT_ATTRIBUTE)).toBe('present');
   });
 });

@@ -1110,6 +1110,57 @@ describe('the approval line once the approved writes have applied (W19-8)', (): 
     view.unmount();
   });
 
+  it('stops saying "they apply now" once the approved writes landed and the closing set waits on the manager (the joins: 16-FX beside 16-FW)', async (): Promise<void> => {
+    // 16-FX's case was the line kept once the approved writes had applied; 16-FW's fix reads a
+    // finished row, and an apply that lands its set and holds the closing one parks the row in
+    // `actions-pending` again, the state the approval was made in, with a new set to decide.
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const held = { ...DRAWN.held, waitingSince: 1_000 } as Doc<'workItems'>;
+    const output = DRAWN.held.output as { actions: unknown[] };
+    const closingHeld = {
+      ...held,
+      waitingSince: 2_000,
+      output: {
+        ...output,
+        applied: output.actions.map(() => ({ tool: 'http.request', ok: true, effect: 'Posted' })),
+        needsDependentPhase: true,
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(element(held));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void =>
+      view.root.render(element({ ...held, state: 'executing', applyPhase: 'approved' })),
+    );
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void => view.root.render(element(closingHeld)));
+    expect(view.container.textContent).not.toContain('apply now');
+    act((): void => view.root.render(element({ ...held, state: 'deferred' })));
+    expect(view.container.textContent).not.toContain('apply now');
+    view.unmount();
+  });
+
   it('keeps a rejection said once the row has finished: it is still true (the second pass)', async (): Promise<void> => {
     const element = (item: Doc<'workItems'>) => (
       <AgentZoneContext value={ZONE}>

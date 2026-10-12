@@ -561,6 +561,33 @@ describe('measuring a library of more pages than one step takes (W15-R5)', (): v
     await measureWalk(harness, await completedWalk(harness, first.sourceId));
     expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
   }, 120_000);
+
+  it('owes no run that wrote no block, however many capped syncs follow (the pre-tag bed, 16-FD to the joins)', async (): Promise<void> => {
+    // Wave 15's pre-tag bed: `relationsOwed.generations` gained a run id at every sync the cap
+    // stopped, though a sync that changed no page wrote no blocks to measure.
+    const harness = convexTest(schema, allConvexModules());
+    const first = await syncingSource(harness, 'Runbooks');
+    await storedPage(harness, first, {
+      ref: 'Alpha.md',
+      title: 'Alpha',
+      markdown: '# Alpha\n\nA.',
+    });
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(first.sourceId, {
+          relationsOwed: { generations: [first.runId], cursor: 'stopped-here' },
+        }),
+    );
+    for (let sync = 0; sync < 3; sync += 1) {
+      const walk = await completedWalk(harness, first.sourceId);
+      expect(
+        await harness.query(internal.docRelations.measuringPlan, {
+          sourceId: first.sourceId,
+          runId: walk.runId,
+        }),
+      ).toEqual({ generations: [first.runId], cursor: 'stopped-here' });
+    }
+  });
 });
 
 describe('forgetProposalsOf: the proposals a page its source dropped leaves behind', (): void => {

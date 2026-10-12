@@ -1579,9 +1579,9 @@ export const decidePlan = internalMutation({
     // A plan over a passage two equally trusted pages disagree on asks which is right, in its own
     // request, and goes on (D-4 (c), RM20 (a)): the steps that rely on it wait at the apply.
     // Asked in either position of the switch, once per row and conflict.
-    const employee = await ctx.db.get(row.agentId);
-    if (employee !== null) {
-      for (const conflict of await conflictsUnderPlan(ctx, row, employee)) {
+    const agent = await ctx.db.get(row.agentId);
+    if (agent !== null) {
+      for (const conflict of await conflictsUnderPlan(ctx, row, agent)) {
         const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
         if (relationId === null) continue;
         await askConflictQuestion(ctx, {
@@ -1612,7 +1612,6 @@ export const decidePlan = internalMutation({
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
-    const agent = await ctx.db.get(row.agentId);
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };

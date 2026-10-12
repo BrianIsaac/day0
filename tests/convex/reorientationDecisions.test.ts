@@ -97,8 +97,10 @@ describe('approve: the proposal applied through its target', (): void => {
       outcome: { summary: 'the charter was amended to version 0.2' },
     });
     expect(card.outcome?.charterId).toBeDefined();
+    // The card's own summary is the amendment's reason; `via` says it came from a card (the
+    // joins: the record read "by you: reorientation: ...").
     expect(await payloadsOf(harness, agentId, 'charter.amended')).toEqual([
-      expect.objectContaining({ via: 'reorientation' }),
+      expect.objectContaining({ via: 'reorientation', reason: card.triggerSummary }),
     ]);
     expect(await payloadsOf(harness, agentId, 'reorientation.approved')).toEqual([
       expect.objectContaining({ kind: 'charter-change', charterId: card.outcome?.charterId }),
@@ -770,6 +772,40 @@ describe('dismiss and defer: nothing changes', (): void => {
       outcome: { summary: 'nothing changed' },
     });
     expect((await eventTypesOf(harness, agentId)).at(-1)).toBe('reorientation.dismissed');
+  });
+
+  it('closes the card’s talk with Approve and with Dismiss, its reply being typed set aside (16-D’s m8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const talkOn = async (reorientationId: Id<'reorientations'>) =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('reorientationTalks', {
+            agentId,
+            reorientationId,
+            state: 'active',
+            turns: [],
+            replyDraft: 'And for the Friday note',
+            conversation: 0,
+            startedAt: 1,
+          }),
+      );
+    const talkOf = async (talkId: Id<'reorientationTalks'>) =>
+      await harness.run(async (ctx) => await ctx.db.get(talkId));
+    const approved = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Fine.' });
+    const approvedTalk = await talkOn(approved);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: approved });
+    expect(await talkOf(approvedTalk)).toMatchObject({ state: 'closed', endedAt: Date.now() });
+    expect((await talkOf(approvedTalk))?.replyDraft).toBeUndefined();
+    const dismissed = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Fine.' });
+    const dismissedTalk = await talkOn(dismissed);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: dismissed });
+    expect(await talkOf(dismissedTalk)).toMatchObject({ state: 'closed', endedAt: Date.now() });
+    expect((await talkOf(dismissedTalk))?.replyDraft).toBeUndefined();
   });
 
   it('refuses a date that is not a number (the second pass’s m1)', async (): Promise<void> => {

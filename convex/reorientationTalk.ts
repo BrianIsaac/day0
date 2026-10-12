@@ -160,6 +160,21 @@ async function closeTalk(ctx: MutationCtx, talk: Doc<'reorientationTalks'>): Pro
   });
 }
 
+/**
+ * Close the card's talk, if it has one, in the transaction that decides the card: Approve and
+ * Dismiss end what the talk was about, so its reply being typed goes with it (16-D's m8).
+ *
+ * @param ctx - The deciding mutation's context.
+ * @param reorientationId - The card being decided.
+ */
+export async function closeTalkOfCard(
+  ctx: MutationCtx,
+  reorientationId: Id<'reorientations'>,
+): Promise<void> {
+  const talk = await talkOfCard(ctx, reorientationId);
+  if (talk !== null) await closeTalk(ctx, talk);
+}
+
 /** The card's one talk, if it has one. */
 async function talkOfCard(
   ctx: MutationCtx,

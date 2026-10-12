@@ -1,10 +1,15 @@
 /** @vitest-environment jsdom */
 
 import { getFunctionName } from 'convex/server';
+import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 
-const backend = vi.hoisted(() => ({ calls: [] as Array<{ name: string; args: unknown }> }));
+const backend = vi.hoisted(() => ({
+  calls: [] as Array<{ name: string; args: unknown }>,
+  /** What a query answers, by function name; one left out stays loading. */
+  queries: {} as Record<string, unknown>,
+}));
 
 vi.mock('convex/react', () => ({
   useMutation:
@@ -18,14 +23,17 @@ vi.mock('convex/react', () => ({
       if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
       return null;
     },
-  useQuery: (): unknown => undefined,
+  useQuery: (reference: unknown, args: unknown): unknown =>
+    args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
 }));
 
 import {
   ReorientationCard,
   type CardView,
 } from '../../../../../app/agent/[agentId]/reorientation/ReorientationCard';
+import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { AgentZoneContext } from '../../../../../app/components/time';
+import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, press, said } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
@@ -116,6 +124,7 @@ function withCard(fields: Partial<CardView['card']>, view: Partial<CardView> = {
 
 beforeEach((): void => {
   backend.calls.length = 0;
+  backend.queries = {};
 });
 
 afterEach((): void => {
@@ -513,5 +522,53 @@ describe('a reorientation card', (): void => {
     const view = drawn(withCard({ status: 'applied', decidedAt: OPENED + 60_000 }));
     expect(view.container.querySelector('a[href$="/talk/card-1"]')).toBeNull();
     view.unmount();
+  });
+});
+
+describe('an address naming a card lands on it once the cards are drawn (16-D’s W-3)', (): void => {
+  it('brings the card into view and focus on a client-side arrival, and again when the hash changes', async (): Promise<void> => {
+    // The bed's probe: Back to the card and the inbox's Review navigate on the client, where the
+    // browser's own jump to the fragment finds no card yet: the card's top sat under the sticky
+    // header and focus stayed on the page.
+    const scrolled: string[] = [];
+    const scroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element): void {
+      scrolled.push(this.id);
+    };
+    try {
+      const second = withCard({ _id: 'card-2' as Id<'reorientations'> });
+      backend.queries['reorientationDecisions:listForAgent'] = [BASE, second];
+      window.location.hash = '#card-card-1';
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      await vi.waitFor((): void => {
+        expect(document.activeElement?.id).toBe('card-card-1');
+      });
+      expect(scrolled).toContain('card-card-1');
+      await act(async (): Promise<void> => {
+        window.location.hash = '#card-card-2';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      });
+      await vi.waitFor((): void => {
+        expect(document.activeElement?.id).toBe('card-card-2');
+      });
+      // jsdom fires its own hashchange beside the one dispatched here: where it lands is the point.
+      expect(scrolled.at(-1)).toBe('card-card-2');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+      Element.prototype.scrollIntoView = scroll;
+    }
+  });
+
+  it('draws the page and lands nowhere on a fragment that is not a valid escape (the second pass)', (): void => {
+    backend.queries['reorientationDecisions:listForAgent'] = [BASE];
+    window.location.hash = '#card-%E0%A4%A';
+    try {
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      expect(view.container.textContent).toContain('What Mira proposes');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
   });
 });
