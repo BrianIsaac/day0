@@ -86,6 +86,7 @@ function agentMetrics(overrides: {
         ended: 0,
         medianToEndMs: null,
         completed: 0,
+        partlyDone: 0,
         medianToCompletionMs: null,
         p90ToCompletionMs: null,
       },
@@ -301,6 +302,7 @@ describe('the company supervision card', (): void => {
                     ended: 3,
                     medianToEndMs: 60_000,
                     completed: 2,
+                    partlyDone: 0,
                     medianToCompletionMs: 67_000,
                     p90ToCompletionMs: 300_000,
                   },
@@ -414,6 +416,41 @@ describe('the retrieval figure (14-R)', (): void => {
   });
 });
 
+describe('the retrieval figure where no selection ran (RM25 (a), the v0.19.0 walk’s finding 5)', (): void => {
+  const SENTENCE =
+    'The hosted office’s employees read its few seeded pages whole, so nothing here is selected or graded. A linked library is selected from, and graded.';
+  const unselected: OwnerMetrics = {
+    ...FIGURES,
+    employees: FIGURES.employees.map((employee) => ({
+      ...employee,
+      metrics: {
+        ...employee.metrics,
+        pilot: { ...employee.metrics.pilot, retrieval: { tokens: null, recall: null } },
+      },
+    })),
+    company: {
+      ...FIGURES.company,
+      pilot: { ...FIGURES.company.pilot, retrieval: { tokens: null, recall: null } },
+    },
+  };
+
+  it('says why once on the hosted office, where every row read "no documentation counted yet"', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="mock" />);
+    expect(html).toContain(SENTENCE);
+    expect(html.split(SENTENCE)).toHaveLength(2);
+    expect(html).not.toContain('no documentation counted yet');
+    expect(rowOf(html.slice(html.indexOf('Pilot figures')), 'Company')).toContain('none selected');
+  });
+
+  it('keeps the rows’ own words where a library can be linked, or where a selection ran', (): void => {
+    const real = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="real" />);
+    expect(real).not.toContain(SENTENCE);
+    expect(real).toContain('no documentation counted yet');
+    const selected = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} mode="mock" />);
+    expect(selected).not.toContain(SENTENCE);
+  });
+});
+
 describe('the skill reuse figure (A14, 10-A)', (): void => {
   const [reuse] = PILOT_FIGURES;
   const figures = (skillReuse: PilotFigures['skillReuse']): PilotFigures => ({
@@ -435,6 +472,63 @@ describe('the skill reuse figure (A14, 10-A)', (): void => {
   it('defines the adopted runs as part of the reuse they are counted in', (): void => {
     expect(reuse?.definition).toBe(
       'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
+    );
+  });
+});
+
+describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
+  const cycle = PILOT_FIGURES[1];
+  const figures = (cycleTime: PilotFigures['cycleTime']): PilotFigures => ({
+    ...FIGURES.company.pilot,
+    cycleTime,
+  });
+
+  it('prints the walk’s company as four done with five partly done beside, not nine done', (): void => {
+    expect(cycle?.label).toBe('Cycle time');
+    expect(
+      cycle?.value(
+        figures({
+          ended: 12,
+          medianToEndMs: 60_000,
+          completed: 4,
+          partlyDone: 5,
+          medianToCompletionMs: 1_081_000,
+          p90ToCompletionMs: 1_212_000,
+        }),
+      ),
+    ).toBe('18 min 1 s / 20 min 12 s (4\u00a0done, 5\u00a0partly done)');
+  });
+
+  it('says partly done work where none was done, and nothing of it where there is none', (): void => {
+    expect(
+      cycle?.value(
+        figures({
+          ended: 2,
+          medianToEndMs: 60_000,
+          completed: 0,
+          partlyDone: 2,
+          medianToCompletionMs: null,
+          p90ToCompletionMs: null,
+        }),
+      ),
+    ).toBe('none done; 2 items ended after 1 min (2\u00a0partly done)');
+    expect(
+      cycle?.value(
+        figures({
+          ended: 1,
+          medianToEndMs: 60_000,
+          completed: 1,
+          partlyDone: 0,
+          medianToCompletionMs: 60_000,
+          p90ToCompletionMs: 60_000,
+        }),
+      ),
+    ).toBe('1 min / 1 min (1\u00a0done)');
+  });
+
+  it('defines the cycle time over the items whose run answered done', (): void => {
+    expect(cycle?.definition).toBe(
+      'From the ask (the provider’s own time when intake had one) to the item’s first completion, over the items whose run answered that the work was done. Items finished partly done are counted beside it.',
     );
   });
 });

@@ -28,10 +28,12 @@ import {
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
-import { notDoneStatements, runOwnWords } from '@/work/not-done';
+import { notDoneStatements } from '@/work/not-done';
 import {
   doneAgainstLedger,
+  finishedAnswerOf,
   landedClosings,
+  ownWordsOf,
   workDoneFactOf,
   workDoneFromLedger,
   type LandedClosing,
@@ -646,11 +648,7 @@ const UNFINISHED_SHOWN = 3;
  * @returns The clauses, in order; empty when the words say nothing of the kind.
  */
 export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
-  if (!output) return [];
-  const initial = output.initial?.actions ?? [];
-  return notDoneStatements(
-    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
-  ).slice(0, UNFINISHED_SHOWN);
+  return notDoneStatements(ownWordsOf(output)).slice(0, UNFINISHED_SHOWN);
 }
 
 /** A finished run's end as the record says it: the word its card leads with (13-FD). */
@@ -658,17 +656,16 @@ export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event
- * carries exactly as the card reads it ({@link notDoneOnCard}): "partly done" or "not done" when
- * the run said so, "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
+ * carries exactly as the card reads it ({@link notDoneOnCard}), through the one reading every
+ * count takes (`finishedAnswerOf`, RM23 (a)): "partly done" or "not done" when the run said so,
+ * "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
  * cards said "Partly done", the word the release reserves for the run's answer.
  *
  * @param output - The run's output as the event stores it.
  */
 export function finishedAs(output: unknown): FinishedAs {
-  const run = typeof output === 'object' && output !== null ? (output as RunOutput) : undefined;
-  const notDone = notDoneOnCard(run);
-  if (notDone === undefined) return 'done';
-  return notDone.answer === 'partial' ? 'partly done' : 'not done';
+  const answer = finishedAnswerOf(output);
+  return answer === 'done' ? 'done' : answer === 'partial' ? 'partly done' : 'not done';
 }
 
 /** What a finished run's card says was not done: the answer, whose it is, and the words it is said in. */

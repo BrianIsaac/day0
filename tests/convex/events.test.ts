@@ -453,8 +453,9 @@ describe('the paged trace export', (): void => {
       .action(api.exportActions.exportForAgent, { agentId });
     expect(head.manifest).toEqual({
       format: 'day0-trace',
-      // Version 7 adds the owner's people graph (wave 13, 13-P).
-      version: 7,
+      // Version 7 adds the owner's people graph (wave 13, 13-P); re-pinned for 16-F: version 8
+      // adds the employee's reorientation cards and talks.
+      version: 8,
       exportedAt: Date.UTC(2026, 8, 27, 17, 0),
       exportedOn: '2026-09-28',
       zone: 'Asia/Singapore',
@@ -594,6 +595,9 @@ describe('the paged trace export', (): void => {
       people: 0,
       personIdentities: 0,
       relationships: 0,
+      // Re-pinned for 16-F: version 8's reorientation cards and talks; this employee has none.
+      reorientations: 0,
+      reorientationTalks: 0,
       events: 2,
     });
     const serialised = JSON.stringify(trace);

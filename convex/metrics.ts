@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
 import {
@@ -11,17 +11,20 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceRecord } from '../src/surfaces/types';
 import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
+import { finishedAnswerOf } from '../src/work/work-done';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
 import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
+import { addDays, agentZone, dayStart } from '../src/lib/zone';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
   isWholeHistory,
   isWithinTenure,
   tenureWindowsOf,
+  WHOLE_HISTORY,
   type AcceptedHandover,
   type TenureWindow,
 } from '../src/metrics/tenure';
@@ -742,7 +745,10 @@ interface PilotTotals {
   /** Of the reused runs, those of a skill adopted from another employee (A14). */
   adopted: number;
   toEnd: number[];
+  /** From the ask to the first completion, of the items whose run answered done. */
   toCompletion: number[];
+  /** The items whose first completion answered partly done (RM23 (a)). */
+  partlyDone: number;
   answered: number;
   amended: number;
   estimatedItems: number;
@@ -811,6 +817,9 @@ function pilotTotals(
   let adopted = 0;
   const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
+  // Every item's first completion, whatever its run answered: a later one is not the first.
+  const completedOnce = new Set<string>();
+  let partlyDone = 0;
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
@@ -864,8 +873,13 @@ function pilotTotals(
     }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
       if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
-      if (isEventOf(event, 'work.completed') && !firstCompletion.has(workItemId)) {
-        firstCompletion.set(workItemId, event.createdAt);
+      if (isEventOf(event, 'work.completed') && !completedOnce.has(workItemId)) {
+        completedOnce.add(workItemId);
+        // One reading, the run's answer held to its ledger (RM23 (a)): only a done answer is a
+        // completion the cycle time measures; a partly done one is named beside it.
+        const answer = finishedAnswerOf(event.payload.output);
+        if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
+        else if (answer === 'partial') partlyDone += 1;
       }
       continue;
     }
@@ -892,6 +906,7 @@ function pilotTotals(
     adopted,
     toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
+    partlyDone,
     answered,
     amended,
     estimatedItems: estimates.length,
@@ -913,6 +928,7 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       ended: totals.toEnd.length,
       medianToEndMs: latencySummary(totals.toEnd).medianLatencyMs,
       completed: totals.toCompletion.length,
+      partlyDone: totals.partlyDone,
       medianToCompletionMs: completion.medianLatencyMs,
       p90ToCompletionMs: completion.p90LatencyMs,
     },
@@ -941,6 +957,7 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     adopted: rows.reduce((total, row) => total + row.adopted, 0),
     toEnd: rows.flatMap((row) => row.toEnd),
     toCompletion: rows.flatMap((row) => row.toCompletion),
+    partlyDone: rows.reduce((total, row) => total + row.partlyDone, 0),
     answered: rows.reduce((total, row) => total + row.answered, 0),
     amended: rows.reduce((total, row) => total + row.amended, 0),
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
@@ -1313,23 +1330,105 @@ export function figuresForCurrentManager(
   return { ...whole, decisions: summariseDecisions(decisionTotals(held.events, held.workItems)) };
 }
 
+/** The events that start a manager's wait on a decision, which a decision made later is timed from. */
+const WAIT_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
+  'work.decision-requesting',
+  'work.plan-drafted',
+  'work.actions-pending',
+]);
+
+/**
+ * One employee's records of one day in its zone (N12): the events logged from that day's
+ * midnight to the next, and the earlier asks of the decisions made that day, so a plan asked
+ * yesterday and approved today counts once, today, and its wait from the ask. The work rows are
+ * read as a closed span reads them ({@link recordsWithinTenure}): their ledgers only from the
+ * day's events, and their own decision records not at all, which the events already carry.
+ *
+ * @param records - The employee's records, already cut to the reader's spans.
+ * @param day - The day, `YYYY-MM-DD`.
+ * @param zone - The employee's zone.
+ */
+export function recordsOfDay(records: EmployeeRecords, day: string, zone: string): EmployeeRecords {
+  const from = dayStart(day, zone);
+  const until = dayStart(addDays(day, 1), zone);
+  const ofDay = records.events.filter(
+    (event) => event.createdAt >= from && event.createdAt < until,
+  );
+  const decidedOnDay = new Set(
+    ofDay.flatMap((event) => {
+      const result = decisionResult(event);
+      return result === undefined ? [] : [result.workItemId];
+    }),
+  );
+  const asks = records.events.filter((event) => {
+    const workItemId = asString(asRecord(event.payload)?.workItemId);
+    return (
+      event.createdAt < from &&
+      isEventType(event.type) &&
+      WAIT_EVENTS.has(event.type) &&
+      workItemId !== undefined &&
+      decidedOnDay.has(workItemId)
+    );
+  });
+  return {
+    ...records,
+    events: [...asks, ...ofDay],
+    workItems: records.workItems.map(
+      (item): Doc<'workItems'> => ({
+        ...item,
+        output: undefined,
+        decision: undefined,
+        manualEstimateMinutes: undefined,
+      }),
+    ),
+    charters: [],
+  };
+}
+
+/** A day as the page names it, `YYYY-MM-DD`, that is a day of the calendar. */
+function isDayKey(day: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && addDays(day, 0) === day;
+}
+
 /**
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
- * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}).
- * Writes nothing.
+ * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
+ * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
+ * employee's zone beside them, under `today`. Writes nothing.
  */
 export const forAgent = query({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), day: v.optional(v.string()) },
   handler: async (ctx, args): Promise<AgentMetrics> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    // The guard first: a caller it refuses learns nothing of the arguments (12-G).
+    const { day } = args;
+    if (day !== undefined && !isDayKey(day)) {
+      throw new ConvexError(`${day} is not a day; name it as YYYY-MM-DD`);
+    }
     const [records, transfers] = await Promise.all([
       readEmployeeRecords(ctx, agent),
       acceptedTransfersOf(ctx, agent._id),
     ]);
     // The guard has proved the caller owns the employee, so the row's owner is the reader.
-    return figuresForCurrentManager(records, handoversFromTransfers(transfers), agent.userId);
+    const handovers = handoversFromTransfers(transfers);
+    const figures = figuresForCurrentManager(records, handovers, agent.userId);
+    if (day === undefined) return figures;
+    // The day's decisions are the reader's as the whole record's are: within the spans it held
+    // the employee, or the whole record where the rows name no span of its own.
+    const held =
+      agent.userId === undefined ? [] : tenureWindowsOf(agent.userId, agent.userId, handovers);
+    const windows = held.length > 0 ? held : [WHOLE_HISTORY];
+    const ofDay = computeAgentMetrics(
+      ...recordsArgs(recordsOfDay(recordsWithinTenure(records, windows), day, agentZone(agent))),
+    );
+    return { ...figures, today: { day, decisions: ofDay.decisions, actions: ofDay.actions } };
   },
 });
+
+/** One employee's records as `computeAgentMetrics` takes them. */
+function recordsArgs(records: EmployeeRecords): Parameters<typeof computeAgentMetrics> {
+  return [records.events, records.workItems, records.charters, records.surfaces ?? []];
+}
 
 /**
  * One employee's records within the spans one owner held it (D12 (a)).
