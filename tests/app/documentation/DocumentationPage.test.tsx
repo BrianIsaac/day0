@@ -54,6 +54,19 @@ it('leaves the one main landmark to the layout', (): void => {
   expect(renderToStaticMarkup(<DocumentationPage />)).not.toMatch(/<main[\s>]/);
 });
 
+it('says what the hosted office reads in its one sentence, and nothing of a mock or of linking (RM26 (a))', (): void => {
+  // The v0.19.0 walk's finding 6: the chip "mock", "Demo docs (seeded)" and "Linking is a
+  // local-run feature. The hosted mock uses its disclosed synthetic pages."
+  state.mode = 'mock';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).toContain(
+    'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+  );
+  for (const said of ['>mock<', 'Demo docs', 'hosted mock', 'Link read-only locations']) {
+    expect(html).not.toContain(said);
+  }
+});
+
 it('keeps the hosted mock documentation page unchanged', (): void => {
   state.mode = 'mock';
   expect(renderToStaticMarkup(<DocumentationPage />)).toMatchSnapshot();
