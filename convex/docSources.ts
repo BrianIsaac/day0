@@ -23,7 +23,7 @@ import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
-import { forgetProposalsOf } from './docRelations';
+import { forgetProposalsOf } from './docRelationProposals';
 import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
