@@ -27,21 +27,31 @@ export const SESSION_HINT_ATTRIBUTE = 'data-session-hint';
  * The root layout's inline head script: it reads the session cookie before the first paint, which
  * no static page's server can, and writes the answer onto `<html>`, so the header's account slot
  * holds room for the control Clerk will mount from the first frame (`app/globals.css`). It is
- * `holdsClerkSession` in the page's own words, over the same pattern and the same rule.
+ * `holdsClerkSession` in the page's own words, over the same pattern and the same rule, and it
+ * writes the answer again if a render of the root clears it, as the theme's script does.
  */
 export const SESSION_HINT_SCRIPT = `(function () {
-  const pattern = new RegExp(${JSON.stringify(CLIENT_UAT)}, 'g');
-  let bare = false;
-  let suffixed = false;
-  let anySuffixed = false;
-  let match;
-  while ((match = pattern.exec(document.cookie)) !== null) {
-    const live = Number(match[2]) > 0;
-    if (match[1]) {
-      anySuffixed = true;
-      if (live) suffixed = true;
-    } else if (live) bare = true;
+  const attribute = ${JSON.stringify(SESSION_HINT_ATTRIBUTE)};
+  function write() {
+    const pattern = new RegExp(${JSON.stringify(CLIENT_UAT)}, 'g');
+    let bare = false;
+    let suffixed = false;
+    let anySuffixed = false;
+    let match;
+    while ((match = pattern.exec(document.cookie)) !== null) {
+      const live = Number(match[2]) > 0;
+      if (match[1]) {
+        anySuffixed = true;
+        if (live) suffixed = true;
+      } else if (live) bare = true;
+    }
+    const hint = (anySuffixed ? suffixed : bare) ? 'present' : 'none';
+    document.documentElement.setAttribute(attribute, hint);
   }
-  const hint = (anySuffixed ? suffixed : bare) ? 'present' : 'none';
-  document.documentElement.setAttribute(${JSON.stringify(SESSION_HINT_ATTRIBUTE)}, hint);
+  write();
+  // A root React renders again on the client (a hydration it gives up on) drops the attributes
+  // written here; the hint is written again rather than reading as no session (16-T's F2).
+  new MutationObserver(function () {
+    if (document.documentElement.getAttribute(attribute) === null) write();
+  }).observe(document.documentElement, { attributes: true, attributeFilter: [attribute] });
 })();`;

@@ -114,3 +114,15 @@ describe("the header's reservation rule", (): void => {
     expect(drawn()).toEqual(['signed-out']);
   });
 });
+
+describe('the head script after hydration', (): void => {
+  it('writes the hint again when React clears the root’s attributes, as a hydration it gives up on does (16-T’s F2)', async (): Promise<void> => {
+    // 16-T's browser job saw the theme's attribute dropped this way; the hint has the same
+    // exposure: the header's reserved slot would fall back to the signed-out controls.
+    document.cookie = '__client_uat_AbC12=1759100000; path=/';
+    expect(runHeadScript()).toBe('present');
+    document.documentElement.removeAttribute(SESSION_HINT_ATTRIBUTE);
+    await Promise.resolve();
+    expect(document.documentElement.getAttribute(SESSION_HINT_ATTRIBUTE)).toBe('present');
+  });
+});
