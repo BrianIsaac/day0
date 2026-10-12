@@ -432,6 +432,52 @@ describe('manager changed: a handover is accepted (manager.transferred)', (): vo
   });
 });
 
+describe('a handover card names a reporting-line rule drafted before rules were bound (W16-R21, W7a)', (): void => {
+  it('puts the rule’s own words on the card and before the judgement when it binds no clause', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const quote = 'Go through me for all of them for now, I’ll intro you.';
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      // The wave 6 draft's shape (bed 1, 16-J's W7a): no `binds`, empty `wording`.
+      await ctx.db.patch(charter!._id, {
+        body: {
+          ...(charter!.body as object),
+          constraints: [{ kind: 'reporting-line', quote, wording: [], origin: 'synthesis' }],
+        },
+      });
+    });
+    const transferId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Mira',
+          fromOwnerKey: OWNER_SUBJECT,
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: fixtureAddressOf('colleague'),
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+    const colleague = harness.withIdentity(managerIdentity('colleague'));
+    await colleague.mutation(api.transferAcceptance.accept, { transferId });
+    const [view] = await colleague.query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(view.card).toMatchObject({ trigger: 'manager-changed', status: 'open' });
+    expect(view.card.affected.charterClauses).toEqual([]);
+    expect(view.carriedRules).toEqual([quote]);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: view.card._id,
+    });
+    expect(read?.input.evidence).toContain(
+      `A reporting-line rule of the previous manager’s that the charter carries: “${quote}”`,
+    );
+  });
+});
+
 describe('a handover closes what the old manager was deciding (W16-R1, D-5 (a))', (): void => {
   it('closes the undecided cards and every talk with the words cleared, and shows the new manager nothing of the old graph', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

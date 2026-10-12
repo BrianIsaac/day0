@@ -872,7 +872,7 @@ export async function askConflictQuestion(
 const QUESTIONS_PER_RELATION_READ = 500;
 
 /** The employee's charter as approved last, or undefined. */
-async function approvedCharter(
+export async function approvedCharter(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'charters'> | undefined> {
@@ -929,6 +929,23 @@ export function carriesReportingLine(
       (rule.binds !== undefined
         ? rule.binds.some((bound) => bound.field === clause.field && bound.index === clause.index)
         : rule.wording.some((phrase) => clause.text.includes(phrase))),
+  );
+}
+
+/**
+ * The words of each reporting-line rule the charter carries that binds none of its clauses (W16-R21,
+ * W7a): a rule drafted before rules were bound has neither `binds` nor `wording`, so no clause
+ * carries it and a handover's card would name nothing of what the old manager's rule was.
+ */
+export function unboundReportingLines(body: Charter): string[] {
+  const clauses = clausesOf(body);
+  return (body.constraints ?? []).flatMap((rule) =>
+    rule.kind === 'reporting-line' &&
+    rule.struck !== true &&
+    rule.quote.trim() !== '' &&
+    !clauses.some((clause) => carriesReportingLine(clause, { ...body, constraints: [rule] }))
+      ? [rule.quote.trim()]
+      : [],
   );
 }
 
@@ -1058,6 +1075,16 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
       lines.push(`Correction on “${correction.itemTitle}”: ${correction.text}`);
   }
   lines.push(...(await countedEventLines(ctx, card)));
+  if (card.trigger === 'manager-changed') {
+    const charter = await approvedCharter(ctx, card.agentId);
+    for (const quote of charter === undefined
+      ? []
+      : unboundReportingLines(charter.body as Charter)) {
+      lines.push(
+        `A reporting-line rule of the previous manager’s that the charter carries: “${quote}”`,
+      );
+    }
+  }
   for (const id of card.affected.workItems.slice(0, 10)) {
     const row = await ctx.db.get(id);
     if (row !== null) lines.push(`Work affected: “${row.title}”, ${row.state}`);

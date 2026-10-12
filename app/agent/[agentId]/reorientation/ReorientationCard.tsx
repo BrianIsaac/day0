@@ -254,6 +254,8 @@ export function ReorientationCard({
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),
     ...view.people.map((edge) => edge.words),
+    // A rule drafted before rules were bound carries no clause, so its own words say it (W16-R21).
+    ...(view.carriedRules ?? []).map((quote) => `Its reporting-line rule: “${quote}”`),
   ];
   return (
     <Card

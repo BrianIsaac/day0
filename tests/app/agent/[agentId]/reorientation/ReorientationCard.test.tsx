@@ -485,6 +485,24 @@ describe('a reorientation card', (): void => {
     }
   });
 
+  it('names on a handover’s card the reporting-line rule that binds no clause (W16-R21, W7a)', async (): Promise<void> => {
+    const view = drawn(
+      withCard(
+        {
+          trigger: 'manager-changed',
+          triggerSummary: 'priya@acme.test handed Mira over to you',
+          evidence: { ...BASE.card.evidence, pageRefs: [] },
+        },
+        { pages: [], carriedRules: ['Go through me for all of them for now, I’ll intro you.'] },
+      ),
+    );
+    expect(view.container.textContent).toContain(
+      'Its reporting-line rule: “Go through me for all of them for now, I’ll intro you.”',
+    );
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('says a card closed by a handover was closed there, not dismissed (W16-R1, D-5 (a))', async (): Promise<void> => {
     const view = drawn(
       withCard({

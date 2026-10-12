@@ -26,7 +26,9 @@ import {
   heldStageOf,
   markApproving,
   openCard,
+  unboundReportingLines,
 } from './reorientation';
+import type { Charter } from '../src/agent/charter';
 import {
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
@@ -73,6 +75,11 @@ export interface CardView {
   readonly held: HeldCounts;
   /** The charter version an Approve of a charter change would amend, when there is one. */
   readonly charterVersion?: string;
+  /**
+   * On a handover's card, the words of each reporting-line rule the charter carries that binds no
+   * clause, so the card names what the old manager's rule was (W16-R21).
+   */
+  readonly carriedRules?: string[];
 }
 
 /** The card, owned by the caller, and still open to a decision. */
@@ -510,6 +517,9 @@ export const listForAgent = query({
         ),
         people,
         ...(charter?.approved ? { charterVersion: charter.version } : {}),
+        ...(card.trigger === 'manager-changed' && charter?.approved
+          ? { carriedRules: unboundReportingLines(charter.body as Charter) }
+          : {}),
       });
     }
     return views;
