@@ -100,6 +100,10 @@ async function expectSignedInPage(page: Page, html: string): Promise<void> {
 test('renders every signed-in page from the fixture', () => {
   expect(Object.keys(MARKUP)).toEqual([...PAGES]);
   for (const name of PAGES) expect(MARKUP[name]?.length, name).toBeGreaterThan(5_000);
+  // Nothing is left loading, so every card is measured: the rail's figures are the employee's day
+  // (16-F's "Today"), and the Surfaces tab waits on the credentials, the organisation's
+  // connections and the documentation's first page (the joins).
+  for (const name of PAGES) expect(MARKUP[name], name).not.toContain('Loading');
 });
 
 // The pages are checked at rest: their cards arrive with a fade, and a contrast measured part way
