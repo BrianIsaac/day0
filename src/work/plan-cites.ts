@@ -78,15 +78,30 @@ const GONE_AS: Readonly<Record<Exclude<PageStatus, 'active'>, string>> = {
   draft: 'marked a draft',
 };
 
+/** How a run's stop on a conflict confirmed since its plan was approved opens (D-4 (b)). */
+const CONFLICT_CONFIRMED_OPENING = 'Since you approved this plan, you confirmed that ';
+
 /**
  * Whether a run's failure is a gone cite's: the plan it ran on cites documentation that has
  * since changed, was removed or is no longer current, so only a new plan can go on (14-R's gone
- * cite, ruled 8 October 2026; a page's status, 15-A).
+ * cite, ruled 8 October 2026; a page's status, 15-A); or two pages it relies on were confirmed to
+ * disagree since it was approved (D-4 (b), wave 16).
  *
  * @param failure - The run's failure, without the stopped prefix (`stopDetail`).
  */
 export function isGoneCitesReason(failure: string): boolean {
-  return failure.startsWith(GONE_CITES_OPENING);
+  return failure.startsWith(GONE_CITES_OPENING) || failure.startsWith(CONFLICT_CONFIRMED_OPENING);
+}
+
+/**
+ * Why a run stopped on a conflict the manager confirmed after approving its plan (D-4 (b); the
+ * wave file's section 7, after "Stopped: "): Retry drafts the plan again, as for a gone cite.
+ */
+export function conflictConfirmedReason(
+  heading: string,
+  pages: readonly [CiteConflict['pages'][0], CiteConflict['pages'][1]],
+): string {
+  return `${CONFLICT_CONFIRMED_OPENING}${pages[0].title} and ${pages[1].title} disagree under “${heading}”. Retry drafts the plan again.`;
 }
 
 /** A cite that no longer stands: its words and, when its page is no longer current, why. */

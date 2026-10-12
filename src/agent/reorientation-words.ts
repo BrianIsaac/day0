@@ -117,15 +117,3 @@ export function conflictChoiceWords(
 export function conflictReplyLine(id: string): string {
   return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
 }
-
-/**
- * Why a run stopped on a conflict the manager confirmed after approving its plan (D-4 (b); section
- * 7): "Stopped: since you approved this plan, you confirmed that {A} and {B} disagree under
- * “{heading}”. Retry drafts the plan again."
- */
-export function conflictConfirmedStopReason(
-  heading: string,
-  pages: readonly [NamedPageWords, NamedPageWords],
-): string {
-  return `Since you approved this plan, you confirmed that ${pages[0].title} and ${pages[1].title} disagree under “${heading}”. Retry drafts the plan again.`;
-}

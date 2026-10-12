@@ -14,7 +14,9 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { amendCharterInTransaction } from './charters';
-import { citeConflictOf, standingConflictOf } from './docConflicts';
+import { citeConflictOf, conflictsOnPlanBlocks, standingConflictOf } from './docConflicts';
+import type { CiteConflictPage } from '../src/work/types';
+import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
 import {
   CONFLICT_CHOICES,
@@ -350,4 +352,60 @@ export const conflictQuestionsForRequest = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<string[]> =>
     (await openConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
+});
+
+/**
+ * What the apply holds for a plan's unanswered conflict questions (RM20 (a)): each question, its
+ * relation and the hashes of the blocks its pages disagree in, by which the plan's steps that rely
+ * on the passage are found. Internal; read by `workActions` before a set is gated.
+ */
+export const conflictHoldsFor = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Array<{ question: string; relationId: string; blocks: string[] }>> => {
+    const holds: Array<{ question: string; relationId: string; blocks: string[] }> = [];
+    for (const question of await openConflictQuestions(ctx, args.workItemId)) {
+      const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
+      if (relation === null) continue;
+      holds.push({
+        question: question.question,
+        relationId: relation._id,
+        blocks: [...conflictBlocks(relation)],
+      });
+    }
+    return holds;
+  },
+});
+
+/**
+ * The first conflict that stands on the blocks an approved plan relies on and that nobody asked
+ * about beside it (D-4 (b)): confirmed since the plan was approved, so the run stops with the two
+ * pages named and Retry drafts it again. The blocks are the plan's cited ones, or, where it cites
+ * nothing, those its selection recorded. Internal; read by `workActions.refuseGoneCites`.
+ */
+export const conflictConfirmedSince = internalQuery({
+  args: { workItemId: v.id('workItems') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ heading: string; pages: [CiteConflictPage, CiteConflictPage] } | null> => {
+    const row = await ctx.db.get(args.workItemId);
+    const agent = row === null ? null : await ctx.db.get(row.agentId);
+    if (row === null || agent?.userId === undefined) return null;
+    const asked = new Set(
+      (
+        await ctx.db
+          .query('managerQuestions')
+          .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+          .collect()
+      ).flatMap((question) => (question.relationId === undefined ? [] : [question.relationId])),
+    );
+    for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent.userId)) {
+      if (asked.has(conflict.relationId as Id<'docRelations'>)) continue;
+      return { heading: conflict.heading, pages: [conflict.pages[0], conflict.pages[1]] };
+    }
+    return null;
+  },
 });
