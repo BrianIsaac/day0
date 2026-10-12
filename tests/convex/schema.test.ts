@@ -3336,6 +3336,88 @@ describe('the wave 16 schema step (16-K, N10: additive and optional)', (): void 
     ).rejects.toThrow();
   });
 
+  it("gives the fix units' rows their fields: a work item its selected blocks and settled waiver, a relation the kind it was proposed as, a page its judgement's last try, a source its owed remeasure; older rows keep none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const sourceId = (await insertMinimalRow(
+        ctx as never,
+        'docSources',
+        agentId,
+      )) as Id<'docSources'>;
+      const pageId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const relationId = (await insertMinimalRow(
+        ctx as never,
+        'docRelations',
+        agentId,
+      )) as Id<'docRelations'>;
+      const workItemId = (await insertMinimalRow(
+        ctx as never,
+        'workItems',
+        agentId,
+      )) as Id<'workItems'>;
+      const blockId = (await insertMinimalRow(
+        ctx as never,
+        'docBlocks',
+        agentId,
+      )) as Id<'docBlocks'>;
+      const older = {
+        source: await ctx.db.get(sourceId),
+        page: await ctx.db.get(pageId),
+        relation: await ctx.db.get(relationId),
+        item: await ctx.db.get(workItemId),
+      };
+      // W15-R17: the selection's blocks with their hashes on the item; W15-R16: Take it anyway
+      // on a settled skip stamped on the row.
+      await ctx.db.patch(workItemId, {
+        selectedBlocks: [{ id: blockId, hash: 'b'.repeat(64) }],
+        settledWaivedAt: 5,
+      });
+      // W15-R22: Undo restores the kind the relation was proposed as; the judgement asks the
+      // least recently tried page first.
+      await ctx.db.patch(relationId, { proposedKind: 'possible_successor' });
+      await ctx.db.patch(pageId, { judgedAttemptAt: 6 });
+      // RM19 (a), K-3: the measure owed over the existing library, from its start.
+      await ctx.db.patch(sourceId, { relationsRemeasure: { cursor: null } });
+      return {
+        older,
+        source: await ctx.db.get(sourceId),
+        page: await ctx.db.get(pageId),
+        relation: await ctx.db.get(relationId),
+        item: await ctx.db.get(workItemId),
+        blockId,
+      };
+    });
+    expect(read.older.source).not.toHaveProperty('relationsRemeasure');
+    expect(read.older.page).not.toHaveProperty('judgedAttemptAt');
+    expect(read.older.relation).not.toHaveProperty('proposedKind');
+    expect(read.older.item).not.toHaveProperty('selectedBlocks');
+    expect(read.older.item).not.toHaveProperty('settledWaivedAt');
+    expect(read.item).toMatchObject({
+      selectedBlocks: [{ id: read.blockId, hash: 'b'.repeat(64) }],
+      settledWaivedAt: 5,
+    });
+    expect(read.relation).toMatchObject({ proposedKind: 'possible_successor' });
+    expect(read.page).toMatchObject({ judgedAttemptAt: 6 });
+    expect(read.source).toMatchObject({ relationsRemeasure: { cursor: null } });
+  });
+
+  it('refuses a proposed kind the relation vocabulary does not have', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.run(async (ctx) => {
+        const relationId = (await insertMinimalRow(
+          ctx as never,
+          'docRelations',
+          await insertAgent(ctx),
+        )) as Id<'docRelations'>;
+        await ctx.db.patch(relationId, {
+          proposedKind: 'possible_merge' as Doc<'docRelations'>['proposedKind'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
+
   it('refuses a trigger, a risk, a standing, a proposal kind or an action the vocabulary does not have', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const insertCard = async (fields: Partial<WithoutSystemFields<Doc<'reorientations'>>>) =>

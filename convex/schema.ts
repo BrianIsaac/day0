@@ -613,6 +613,13 @@ export default defineSchema({
         cursor: v.union(v.string(), v.null()),
       }),
     ),
+    /**
+     * The source's stored pages still to be measured once by the dated successor signal (wave 16,
+     * 16-K for 16-FD; RM19 (a), K-3): set on every source by the `docs-relations-remeasure` pass,
+     * with the place in the source's pages the measure has reached (null from its start), and
+     * cleared by the measure when it reaches the end. Absent when nothing is owed.
+     */
+    relationsRemeasure: v.optional(v.object({ cursor: v.union(v.string(), v.null()) })),
     /** The completed generation whose system candidates were reconciled. */
     lastDiscoverySyncId: v.optional(v.id('docSyncRuns')),
     discoveryFingerprint: v.optional(v.string()),
@@ -770,6 +777,12 @@ export default defineSchema({
      * the status it read, the words it read it from and when.
      */
     marker: v.optional(v.object({ status: pageStatus, quote: v.string(), judgedAt: v.number() })),
+    /**
+     * When the marker judgement last tried the page, whether or not it answered (wave 16, 16-K for
+     * 16-FD; W15-R22): the judgement asks the least recently tried page first, so a page it always
+     * fails on no longer starves the rest. Absent on a page never tried.
+     */
+    judgedAttemptAt: v.optional(v.number()),
     /** The manager's verified address, when the manager decided `status`. */
     decidedBy: v.optional(v.string()),
     /** When the manager decided `status`. */
@@ -805,6 +818,12 @@ export default defineSchema({
     from: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
     to: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
     kind: v.union(...RELATION_KINDS.map((kind) => v.literal(kind))),
+    /**
+     * The kind the measures proposed, kept when the manager's answer changed `kind` (wave 16, 16-K
+     * for 16-FD; W15-R22), so "Undo" restores it. Absent where the answer left the kind as
+     * proposed, and on a relation decided before it.
+     */
+    proposedKind: v.optional(v.union(...RELATION_KINDS.map((kind) => v.literal(kind)))),
     /**
      * What proposed it, measure by measure: a shared share of the text, a title that differs only
      * by a version, a figure that differs under one heading; with the blocks each read, by their
@@ -1452,6 +1471,19 @@ export default defineSchema({
      * plan gate still applies.
      */
     scopeWaivedAt: v.optional(v.number()),
+    /**
+     * When the manager chose "Take it anyway" on this item's settled skip (wave 16, 16-K for 16-FW;
+     * W15-R16): the waiver stamped on the row, as `scopeWaivedAt` is, so it never rests on the
+     * newest retries the employee's events happen to hold.
+     */
+    settledWaivedAt: v.optional(v.number()),
+    /**
+     * The documentation blocks the item's plan was selected from, each with its hash when
+     * selected (wave 16, 16-K for 16-FD; W15-R17): the gone-cite check reads the item's own
+     * record, never the newest selections of the employee's events. Absent on an item selected
+     * before it, and where no selection ran.
+     */
+    selectedBlocks: v.optional(v.array(v.object({ id: v.id('docBlocks'), hash: v.string() }))),
     /**
      * Real mode: the charter judgement that placed this row in scope, and the
      * approved charter it was made against. While that charter is the latest,
