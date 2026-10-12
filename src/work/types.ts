@@ -436,6 +436,12 @@ export interface OpenQuestion {
   question: string;
   /** The one-based plan steps that wait on the answer. */
   steps: number[];
+  /**
+   * The documentation conflict the question is, when the hold at the apply asked it (16-O): the
+   * manager answers it on the question itself, which decides the relation, so a note given with
+   * Retry is not its answer (W16-R8). Absent on a question the executor put.
+   */
+  relationId?: string;
 }
 
 /**

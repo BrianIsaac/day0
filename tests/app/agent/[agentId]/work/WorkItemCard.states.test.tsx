@@ -958,6 +958,28 @@ describe('the states round two does not page, pressed the same way', (): void =>
     ]);
   });
 
+  it('sends a stop held for a documentation conflict to its question, offering no Answer and retry (W16-R8)', async (): Promise<void> => {
+    const question =
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right?';
+    const view = card({
+      ...base,
+      state: 'failed',
+      skipReason: `stopped: ${openQuestionStopReason({ question, steps: [1] })}`,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [],
+        applied: [],
+        openQuestion: { question, steps: [1], relationId: 'relation-1' },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain(
+      'stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry:',
+    );
+    expect(view.text()).not.toContain('Answer and retry');
+    expect(() => field(view.container, `Your answer to: \u201c${question}\u201d`)).toThrow();
+  });
+
   it('drafts a new plan for a cancelled one from the note given', async (): Promise<void> => {
     const view = card({
       ...base,

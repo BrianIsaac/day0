@@ -43,7 +43,7 @@ import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { isOpenQuestionStop } from '../src/work/obligations';
+import { isConflictQuestion, isOpenQuestionStop } from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   type MockAction,
@@ -275,10 +275,12 @@ export const retryFailed = mutation({
               reason: feedback,
               at: Date.now(),
               kind: 'retry-note' as const,
-              // Only a note on a question stop answers the question (review D2).
+              // Only a note on a question stop answers the question (review D2), and never a
+              // documentation conflict's, which is answered on the question itself (W16-R8).
               ...(row.state === 'failed' &&
               row.skipReason !== undefined &&
-              isOpenQuestionStop(stopDetail(row.skipReason))
+              isOpenQuestionStop(stopDetail(row.skipReason)) &&
+              !isConflictQuestion(row.output)
                 ? { answersQuestion: true }
                 : {}),
             },

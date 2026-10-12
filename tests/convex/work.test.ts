@@ -2868,6 +2868,36 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     });
   });
 
+  it('never reads a note on a stop held for a documentation conflict as its answer (W16-R8)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    const question =
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right?';
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: `stopped: ${openQuestionStopReason({ question, steps: [1] })}`,
+        output: {
+          draft: '',
+          notes: '',
+          actions: [],
+          applied: [],
+          openQuestion: { question, steps: [1], relationId: 'relation-1' },
+        },
+      });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'The Revops page is right.' });
+
+    // The conflict is answered on its question, which decides the relation; a note decides
+    // nothing, so it is never told to the run as the answer.
+    const feedback = (await readItem(harness, workItemId)).managerFeedback;
+    expect(feedback).toMatchObject({ reason: 'The Revops page is right.', kind: 'retry-note' });
+    expect(feedback?.answersQuestion).toBeUndefined();
+  });
+
   it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

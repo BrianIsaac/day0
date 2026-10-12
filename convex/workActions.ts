@@ -1912,6 +1912,7 @@ async function withConflictsHeld<T extends QuestionableOutput>(
   return withheldForQuestion(output, [...writes.values()], {
     question: boundedQuestion(first.question),
     steps: [...steps].sort((a, b) => a - b),
+    relationId: first.relationId,
   });
 }
 
