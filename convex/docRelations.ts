@@ -330,19 +330,18 @@ export const decide = mutation({
     const relation = await ctx.db.get(args.relationId);
     if (relation === null) throw new ConvexError('That relation is no longer stored.');
     if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
-    return await decideRelationInTransaction(
-      ctx,
-      relation,
-      args.decision,
-      verifiedAddressOf(caller),
-    );
+    return await decideRelationInTransaction(ctx, relation, args.decision, {
+      decidedBy: verifiedAddressOf(caller),
+      via: 'dashboard',
+    });
   },
 });
 
 /**
  * Answer a relation in the caller's transaction ({@link decide}; a conflict's question answered
  * beside a plan, on the card or in the plan's Slack request, 16-O): what `decide` writes and sets
- * off, with the manager's verified address when there is one.
+ * off, with the manager's verified address when there is one, and where the answer came from,
+ * which the relation's other open questions are closed as answered by (the walk's W-4).
  *
  * @throws ConvexError as {@link decide} refuses.
  */
@@ -350,8 +349,9 @@ export async function decideRelationInTransaction(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
   decision: RelationDecision,
-  decidedBy: string | undefined,
+  by: { readonly decidedBy: string | undefined; readonly via: 'dashboard' | 'slack' },
 ): Promise<SupersedeOutcome | null> {
+  const { decidedBy } = by;
   const [from, to, fromSource, toSource] = await Promise.all([
     pageAt(ctx, relation.from),
     pageAt(ctx, relation.to),
@@ -445,7 +445,9 @@ export async function decideRelationInTransaction(
           : decision === 'both-hold'
             ? 'Both hold'
             : undefined;
-    if (settled !== undefined) await closeConflictQuestions(ctx, relation._id, settled, now);
+    if (settled !== undefined) {
+      await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
+    }
   }
   if (decision !== 'supersedes') return null;
   const older = (await ctx.db.get(to._id)) ?? to;
@@ -456,13 +458,13 @@ export async function decideRelationInTransaction(
 const QUESTIONS_SETTLED_READ = 500;
 
 /**
- * Answer every open question about a conflict the manager settled on its card, in the card's
- * words, so no plan's steps wait on a question nobody can answer any more (16-O).
+ * Answer every open question about a conflict the manager settled, in the card's words and by the
+ * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O).
  */
 async function closeConflictQuestions(
   ctx: MutationCtx,
   relationId: Id<'docRelations'>,
-  text: string,
+  answer: { readonly text: string; readonly via: 'dashboard' | 'slack' },
   now: number,
 ): Promise<void> {
   const questions = await ctx.db
@@ -471,7 +473,9 @@ async function closeConflictQuestions(
     .take(QUESTIONS_SETTLED_READ);
   for (const question of questions) {
     if (question.answer !== undefined) continue;
-    await ctx.db.patch(question._id, { answer: { text, answeredAt: now, via: 'dashboard' } });
+    await ctx.db.patch(question._id, {
+      answer: { text: answer.text, answeredAt: now, via: answer.via },
+    });
   }
 }
 

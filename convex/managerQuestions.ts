@@ -295,7 +295,10 @@ export async function answerConflictInTransaction(
         : `${answer.choice === 'from' ? 'The first page' : 'The second page'} is right`
       : conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
   if (relation !== null && standing !== undefined) {
-    await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], answer.decidedBy);
+    await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], {
+      decidedBy: answer.decidedBy,
+      via: answer.via,
+    });
   }
   await ctx.db.patch(question._id, {
     answer: { text, answeredAt: Date.now(), via: answer.via },

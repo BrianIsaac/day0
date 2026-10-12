@@ -584,6 +584,41 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).resolves.toMatchObject({ status: 'ignored', reason: 'no open question' });
   });
 
+  it('closes another plan’s question on the same conflict as answered where the answer came from (the walk’s W-4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const [first] = await questionsOf(harness, workItemId);
+    const other = await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      const { _id: _row, _creationTime: _time, decision: _decision, ...fields } = row!;
+      const otherItem = await ctx.db.insert('workItems', { ...fields, externalId: 'REVOPS-13' });
+      return await ctx.db.insert('managerQuestions', {
+        agentId: first.agentId,
+        key: first.key,
+        question: first.question,
+        context: first.context,
+        askedAt: first.askedAt,
+        workItemId: otherItem,
+        charterId: first.charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId,
+      });
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000000.000100',
+      reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+    });
+    expect((await harness.run(async (ctx) => await ctx.db.get(other)))?.answer).toMatchObject({
+      text: 'Pipeline runbook is right',
+      via: 'slack',
+    });
+  });
+
   it('answers a reply once, so a poll that delivers it again answers no second question (the second pass’s minor)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
