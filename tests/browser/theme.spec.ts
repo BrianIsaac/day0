@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { THEME_ATTRIBUTE } from '../../app/theme-preference';
-import { DRAWN_BACKGROUND, chooseTheme, expectDrawnIn } from './theme';
+import { chooseTheme, expectDrawnIn } from './theme';
 
 /**
  * The viewer's theme in a real Chromium, from the gate's own build (16-T): the stored choice is on
@@ -70,7 +70,22 @@ test("follows a change of the system's scheme while the page is open, under Foll
   );
   await page.emulateMedia({ colorScheme: 'dark' });
   await expectDrawnIn(page, 'dark');
-  expect(DRAWN_BACKGROUND.dark).toBe('rgb(10, 10, 11)');
+});
+
+test("colours the browser chrome with the light page through the layout's one theme-color", async ({
+  page,
+}) => {
+  await chooseTheme(page, 'light');
+  await page.goto('/setup', { waitUntil: 'load' });
+  await expectDrawnIn(page, 'light');
+  const chrome = page.locator('meta[name="theme-color"]');
+  await expect(chrome).toHaveCount(1);
+  await expect(chrome).toHaveAttribute('content', '#fafafa');
+  // A client navigation renders the layout's head again; the chrome stays the light page's.
+  await page.getByRole('link', { name: 'Walkthrough' }).first().click();
+  await page.waitForURL('**/walkthrough');
+  await expect(chrome).toHaveCount(1);
+  await expect(chrome).toHaveAttribute('content', '#fafafa');
 });
 
 test("keeps the pixel office's panel on the dark set in light (RM11 (a))", async ({ page }) => {

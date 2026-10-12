@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from 'playwright/test';
-import { THEMES, chooseTheme } from './theme';
+import { THEMES, chooseTheme, expectDrawnIn } from './theme';
 
 /**
  * The pinned how-it-works frame, proved the way UX round four proved its prototype
@@ -151,6 +151,10 @@ for (const theme of THEMES)
       test.beforeEach(async ({ page }) => {
         if (theme === 'light') await chooseTheme(page, 'light');
       });
+      // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+      test.afterEach(async ({ page }) => {
+        await expectDrawnIn(page, theme);
+      });
 
       // The frame's geometry is the theme's to leave alone, so light runs the fast pass only: the
       // three speeds again doubled the job's longest part, and the walkthrough's slow pass ran past
@@ -245,6 +249,10 @@ for (const theme of THEMES) {
     test.beforeEach(async ({ page }) => {
       if (theme === 'light') await chooseTheme(page, 'light');
     });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
+    });
 
     test('fits the screen, with nothing scrolling sideways', async ({ page }) => {
       await page.goto('/');
@@ -286,6 +294,10 @@ for (const theme of THEMES) {
     // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
     test.beforeEach(async ({ page }) => {
       if (theme === 'light') await chooseTheme(page, 'light');
+    });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
     });
 
     test('shows every card at once and swaps the frame by opacity alone', async ({ page }) => {

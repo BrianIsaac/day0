@@ -2,8 +2,8 @@
   <!-- The mark of app/icon.svg for Clerk's card (clerk-appearance.ts): the head in the accent, the
        eyes cut in the card's own colour, as the header's BrandMark cuts them in the page's. An
        image Clerk loads by URL cannot read the page's tokens, so the colours are the tokens'
-       values in each set; the browser answers the query from the colour-scheme of the page that
-       draws the image, so the mark follows the theme the viewer chose. -->
+       values in each set; Chromium answers the query from the colour-scheme of the page that draws
+       the image, so the mark follows the theme the viewer chose (Firefox and Safari not probed). -->
   <style>
     .head { fill: #22d3ee; }
     .eye { fill: #18181b; }

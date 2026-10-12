@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { axe, smallTargets } from './floor';
 import { beyondDebt, debtKeys, unmetDebt, type Debt } from './known-debt';
 import { THEMES, chooseTheme, expectDrawnIn } from './theme';
@@ -77,6 +77,24 @@ function expectOnlyKnownDebt(
   expect(unmetDebt(known, found), 'debt the page no longer carries').toEqual([]);
 }
 
+/**
+ * Hold a check to the signed-in page as it was mounted: its main the one landmark shown, and its
+ * text still the markup's, so nothing drawn since has replaced it.
+ */
+async function expectSignedInPage(page: Page, html: string): Promise<void> {
+  await expect(page.locator('main:visible')).toHaveCount(1);
+  const [drawn, mounted] = await page.evaluate((markup: string) => {
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    return [
+      document.querySelector('main[data-signed-in]')?.textContent ?? '',
+      template.content.textContent ?? '',
+    ];
+  }, html);
+  expect(drawn.length).toBeGreaterThan(0);
+  expect(drawn).toBe(mounted);
+}
+
 test('renders every signed-in page from the fixture', () => {
   expect(Object.keys(MARKUP)).toEqual([...PAGES]);
   for (const name of PAGES) expect(MARKUP[name]?.length, name).toBeGreaterThan(5_000);
@@ -100,10 +118,21 @@ for (const theme of THEMES)
           const main = document.querySelector('main');
           return main !== null && Object.keys(main).some((key) => key.startsWith('__reactFiber'));
         });
+        // The page's own main is hidden, not emptied, and the signed-in page goes into a main of
+        // its own after it, a node React does not own: a later commit of the page's tree has
+        // nothing of the markup to reconcile, and the page keeps one main landmark.
         await page.evaluate((html: string) => {
-          const main = document.querySelector('main');
-          if (!main) throw new Error('the page has no main');
-          main.innerHTML = html;
+          const own = document.querySelector('main');
+          if (!own) throw new Error('the page has no main');
+          const signedIn = document.createElement('main');
+          signedIn.className = own.className;
+          signedIn.tabIndex = -1;
+          signedIn.dataset.signedIn = '';
+          signedIn.innerHTML = html;
+          own.hidden = true;
+          own.removeAttribute('id');
+          signedIn.id = 'main';
+          own.after(signedIn);
         }, MARKUP[name] ?? '');
         await page.evaluate(async (): Promise<void> => {
           await document.fonts.ready;
@@ -114,10 +143,12 @@ for (const theme of THEMES)
       test('has no axe violation at the WCAG 2.2 AA tags, colour contrast among them', async ({
         page,
       }) => {
+        await expectSignedInPage(page, MARKUP[name] ?? '');
         expectOnlyKnownDebt(name, 'axe', await axe(page));
       });
 
       test('is no wider than the window', async ({ page }) => {
+        await expectSignedInPage(page, MARKUP[name] ?? '');
         const widths = await page.evaluate(() => ({
           page: document.documentElement.scrollWidth,
           window: document.documentElement.clientWidth,
@@ -126,6 +157,7 @@ for (const theme of THEMES)
       });
 
       test('gives every pointer target at least 44 by 44 CSS pixels', async ({ page }) => {
+        await expectSignedInPage(page, MARKUP[name] ?? '');
         expectOnlyKnownDebt(name, 'targets', await smallTargets(page));
       });
     });
