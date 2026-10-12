@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
