@@ -522,6 +522,36 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('draws a copy its source edited later as the successor, with both dates, the days between and the newer first in the answer (RM19 (a))', () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...RELATIONS[0],
+        from: {
+          ...RELATIONS[0].from,
+          title: 'Escalation paths for the close',
+          updatedAt: Date.UTC(2026, 8, 28, 16, 30),
+          edited: true,
+        },
+        to: { ...RELATIONS[0].to, edited: true },
+        evidence: [
+          { measure: 'shared-text', value: 96 },
+          { measure: 'edit-dates', value: 3 },
+        ],
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(view.container.textContent).toContain(
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths for the close” (How-to guides, edited 28 Sep 2026, 16:30) share 96 percent of their text, and the second was edited 3 days after the first.',
+    );
+    expect(
+      [...view.container.querySelectorAll('button')].map((button) => button.textContent),
+    ).toContain(
+      '“Escalation paths for the close” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    view.unmount();
+  });
+
   it('has no axe violation and gives every control a 44 px target with both tables and both cards populated', async () => {
     populated();
     backend.queries['docRelations:listOpen'] = RELATIONS;

@@ -9,6 +9,7 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
+  KINDS_WITHOUT_EDIT_TIME,
   alreadyHeld,
   candidatesOf,
   disagreementOf,
@@ -112,7 +113,7 @@ export const measurePage = internalMutation({
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
-    const self = await measured(ctx, page);
+    const self = await measured(ctx, page, source);
     const now = Date.now();
     let proposed = 0;
     for (const candidate of await candidatesOf(
@@ -125,7 +126,7 @@ export const measurePage = internalMutation({
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
-      const relation = measureRelation(self, await measured(ctx, other));
+      const relation = measureRelation(self, await measured(ctx, other, otherSource));
       if (relation === undefined) continue;
       if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
       const [from, to] = relation.from === self.key ? [page, other] : [other, page];
@@ -424,9 +425,6 @@ type CardPage = NamedPage & {
   readonly edited: boolean;
   readonly authority: SourceAuthority;
 };
-
-/** The kinds of source whose reader gives no edit time: a page's time is when it was read. */
-const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set(['urls', 'mcp']);
 
 /** A stored page as a relation's card draws it. */
 function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {

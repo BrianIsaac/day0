@@ -28,6 +28,7 @@ import type * as docConflicts from '../docConflicts.js';
 import type * as docPages from '../docPages.js';
 import type * as docRelationProposals from '../docRelationProposals.js';
 import type * as docRelations from '../docRelations.js';
+import type * as docRelationsRemeasure from '../docRelationsRemeasure.js';
 import type * as docSelection from '../docSelection.js';
 import type * as docSources from '../docSources.js';
 import type * as docStatus from '../docStatus.js';
@@ -162,6 +163,7 @@ declare const fullApi: ApiFromModules<{
   docPages: typeof docPages;
   docRelationProposals: typeof docRelationProposals;
   docRelations: typeof docRelations;
+  docRelationsRemeasure: typeof docRelationsRemeasure;
   docSelection: typeof docSelection;
   docSources: typeof docSources;
   docStatus: typeof docStatus;

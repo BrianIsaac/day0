@@ -59,8 +59,22 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
     .unique();
 }
 
-/** A stored page as the measures read it, with its blocks in document order. */
-export async function measured(ctx: QueryCtx, page: Doc<'docPages'>): Promise<MeasuredPage> {
+/** The kinds of source whose reader gives no edit time: a page's time is when it was read. */
+export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
+  'urls',
+  'mcp',
+]);
+
+/**
+ * A stored page as the measures read it, with its blocks in document order.
+ *
+ * @param source - The page's source: whether its reader gives an edit time (RM19 (a)).
+ */
+export async function measured(
+  ctx: QueryCtx,
+  page: Doc<'docPages'>,
+  source: Pick<Doc<'docSources'>, 'kind'>,
+): Promise<MeasuredPage> {
   const rows = await ctx.db
     .query('docBlocks')
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
@@ -71,6 +85,7 @@ export async function measured(ctx: QueryCtx, page: Doc<'docPages'>): Promise<Me
     title: page.title,
     markdown: page.markdown,
     updatedAt: page.updatedAt,
+    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
     blocks: rows.map(
       (row): MeasuredBlock => ({ hash: row.hash, headingPath: row.headingPath, text: row.text }),
     ),
@@ -164,9 +179,11 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
 
 /**
  * Whether a pair already holds the relation a proposal would write, so it is not proposed again:
- * versions of one document (a duplicate or a successor) once, whatever the manager decided; a
- * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
- * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
+ * versions of one document (a duplicate or a successor) once, whatever the manager decided, but
+ * for a duplicate nobody answered, which gives way to a successor the measures now find (RM19
+ * (a): a copy its source dated later, measured again by the remeasure, is deleted here and
+ * proposed as the successor); a conflict while one is open or confirmed and its blocks still
+ * disagree, or was set aside over the same blocks. A conflict the manager set aside is proposed again only when the blocks that
  * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
  * left unanswered, it is a proposal nobody can answer, and is deleted here.
@@ -177,7 +194,20 @@ export async function alreadyHeld(
   proposed: ProposedRelation,
 ): Promise<boolean> {
   if (proposed.kind !== 'possible_conflict') {
-    return existing.some((row) => row.kind !== 'possible_conflict');
+    let held = false;
+    for (const row of existing) {
+      if (row.kind === 'possible_conflict') continue;
+      if (
+        proposed.kind === 'possible_successor' &&
+        row.kind === 'possible_duplicate' &&
+        row.status === 'proposed'
+      ) {
+        await ctx.db.delete(row._id);
+        continue;
+      }
+      held = true;
+    }
+    return held;
   }
   const blocks = new Set(
     proposed.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [],

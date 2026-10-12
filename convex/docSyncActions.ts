@@ -43,6 +43,7 @@ import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/doc
 import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { MeasuringPlan } from './docRelations';
+import type { PagesOwed } from './docRelationsRemeasure';
 import type { StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -997,8 +998,94 @@ export const proposeRelations = internalAction({
       runId,
       owed: null,
     });
-    return { measured, proposed };
+    return await remeasure(ctx, { sourceId, runId, measured, proposed });
   },
+});
+
+/**
+ * Measure the source's stored pages the `docs-relations-remeasure` pass marked owed (RM19 (a),
+ * `convex/docRelationsRemeasure.ts`), once the sync's own pages are measured: a bounded read of
+ * pages at a time from the place the mark keeps, the place written back after each read, the mark
+ * cleared at the end. The cap on new proposals a sync stops it where it is reached, the read it
+ * stopped in owed again from its start, for the next sync's measuring; a step that has measured
+ * its share hands on to the next (`remeasureRelations`).
+ *
+ * @returns How many pages the measuring measured, its own and these, and the sync's proposals.
+ */
+async function remeasure(
+  ctx: ActionCtx,
+  step: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly measured: number;
+    readonly proposed: number;
+  },
+): Promise<{ measured: number; proposed: number }> {
+  const { sourceId, runId } = step;
+  let { measured, proposed } = step;
+  const seen = new Set<string>();
+  for (;;) {
+    if (measured >= RELATION_PAGES_PER_STEP) {
+      await ctx.scheduler.runAfter(0, internal.docSyncActions.remeasureRelations, {
+        sourceId,
+        runId,
+        proposed,
+      });
+      return { measured, proposed };
+    }
+    const owed: PagesOwed | null = await ctx.runQuery(internal.docRelationsRemeasure.pagesOwed, {
+      sourceId,
+      runId,
+    });
+    if (owed === null) return { measured, proposed };
+    for (const ref of owed.refs) {
+      if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
+        await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
+          sourceId,
+          runId,
+          owed: { cursor: owed.cursor },
+        });
+        return { measured, proposed };
+      }
+      if (seen.has(ref)) continue;
+      seen.add(ref);
+      measured += 1;
+      try {
+        proposed += await ctx.runMutation(internal.docRelations.measurePage, {
+          sourceId,
+          syncRunId: runId,
+          ref,
+          room: RELATION_PROPOSALS_PER_SYNC - proposed,
+        });
+      } catch (error) {
+        log.warn('documentation page not measured for relations', {
+          sourceId,
+          ref,
+          reason: safeSyncError(error),
+        });
+      }
+    }
+    await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
+      sourceId,
+      runId,
+      owed: owed.next === null ? null : { cursor: owed.next },
+    });
+    if (owed.next === null) return { measured, proposed };
+  }
+}
+
+/**
+ * The next step of a remeasure (`remeasure`): scheduled by a step that measured its share, with
+ * the proposals the sync has written so far. Internal.
+ */
+export const remeasureRelations = internalAction({
+  args: {
+    sourceId: v.id('docSources'),
+    runId: v.id('docSyncRuns'),
+    proposed: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> =>
+    await remeasure(ctx, { ...args, measured: 0 }),
 });
 
 /**

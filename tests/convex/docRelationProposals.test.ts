@@ -5,7 +5,11 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import { forgetProposalsOf } from '../../convex/docRelationProposals';
-import { RELATION_PROPOSALS_PER_SYNC } from '../../src/docs/relations';
+import {
+  DATED_SUCCESSOR_GAP_MS,
+  RELATION_PAGES_PER_STEP,
+  RELATION_PROPOSALS_PER_SYNC,
+} from '../../src/docs/relations';
 import { allConvexModules } from './all-modules';
 import {
   FINANCE,
@@ -550,4 +554,258 @@ describe('forgetProposalsOf: the proposals a page its source dropped leaves behi
       }),
     ]);
   });
+});
+
+describe('the dated successor between copies (RM19 (a))', (): void => {
+  const DAY = DATED_SUCCESSOR_GAP_MS;
+  /** The tile runbook as the company folder holds it, and a copy edited three days later. */
+  const RUNBOOK = [
+    '# How to refresh the Looker pipeline tile',
+    '',
+    'Use the looker-pipeline-tile surface for the pipeline coverage figure on the tile.',
+    '',
+    '## Action shapes',
+    '',
+    'Open the documented page, fill the login form, submit the login, then save the figure.',
+    '',
+    '## Discipline',
+    '',
+    'Keep navigation on the tile; a redirect to another origin is a refusal.',
+  ].join('\n');
+
+  /** The company folder's runbook and, in a second source, its copy, each with its own edit time. */
+  async function twoCopies(
+    harness: Harness,
+    copyKind: 'folder' | 'urls' = 'folder',
+  ): Promise<{ folder: Source; copies: Source }> {
+    const folder = await syncingSource(harness, 'Company folder');
+    const copies = await syncingSource(harness, 'Team copies');
+    await harness.run(async (ctx) => await ctx.db.patch(copies.sourceId, { kind: copyKind }));
+    await storedPage(harness, folder, {
+      ref: 'revops/runbooks/how-to-refresh-the-tile.md',
+      title: 'How to refresh the Looker pipeline tile',
+      markdown: RUNBOOK,
+      updatedAt: 10 * DAY,
+    });
+    await storedPage(harness, copies, {
+      ref: 'tile-refresh.md',
+      title: 'Refreshing the pipeline tile',
+      markdown: RUNBOOK.replace(
+        '# How to refresh the Looker pipeline tile',
+        '# Refreshing the pipeline tile',
+      ),
+      updatedAt: 13 * DAY,
+    });
+    return { folder, copies };
+  }
+
+  it('proposes the copy its source edited three days later as the successor, the days on its evidence and its event', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder, copies } = await twoCopies(harness);
+    const agentId = await employee(harness, 'Priya');
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    const [relation, ...rest] = await relations(harness);
+    expect(rest).toEqual([]);
+    expect(relation).toMatchObject({
+      kind: 'possible_successor',
+      status: 'proposed',
+      from: { sourceId: copies.sourceId, ref: 'tile-refresh.md' },
+      to: { sourceId: folder.sourceId, ref: 'revops/runbooks/how-to-refresh-the-tile.md' },
+    });
+    expect(relation.evidence.map(({ measure, value }) => ({ measure, value }))).toEqual([
+      { measure: 'shared-text', value: 100 },
+      { measure: 'edit-dates', value: 3 },
+    ]);
+    const [proposed] = await eventsOf(harness, agentId, 'documentation.relation-proposed');
+    expect(proposed).toMatchObject({
+      kind: 'possible_successor',
+      evidence: [
+        { measure: 'shared-text', value: 100 },
+        { measure: 'edit-dates', value: 3 },
+      ],
+    });
+  });
+
+  it('keeps a copy read from a list of URLs a duplicate: its time is when it was read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder } = await twoCopies(harness, 'urls');
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    expect(await relations(harness)).toMatchObject([{ kind: 'possible_duplicate' }]);
+  });
+
+  it('gives an unanswered duplicate of the pair way to the successor, and leaves one the manager answered', async (): Promise<void> => {
+    for (const answered of [undefined, 'confirmed', 'dismissed'] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const { folder, copies } = await twoCopies(harness);
+      // What v0.19.0's measure proposed for the pair: a duplicate, the later copy first.
+      const earlier = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('docRelations', {
+            userId: 'owner',
+            from: { sourceId: copies.sourceId, ref: 'tile-refresh.md' },
+            to: { sourceId: folder.sourceId, ref: 'revops/runbooks/how-to-refresh-the-tile.md' },
+            kind: 'possible_duplicate',
+            evidence: [{ measure: 'shared-text', value: 100 }],
+            status: answered ?? 'proposed',
+            createdAt: 1,
+            ...(answered !== undefined ? { decidedAt: 2 } : {}),
+          }),
+      );
+      const measuredNow = await measure(
+        harness,
+        folder,
+        'revops/runbooks/how-to-refresh-the-tile.md',
+      );
+      const rows = await relations(harness);
+      if (answered === undefined) {
+        expect(measuredNow).toBe(1);
+        expect(rows).toMatchObject([{ kind: 'possible_successor', status: 'proposed' }]);
+        expect(rows[0]._id).not.toBe(earlier);
+      } else {
+        // The manager's answer stands: "Keep both" and "Not the same" are not asked again.
+        expect(measuredNow).toBe(0);
+        expect(rows).toMatchObject([
+          { _id: earlier, kind: 'possible_duplicate', status: answered },
+        ]);
+      }
+    }
+  });
+});
+
+describe('the existing library measured once by the dated successor (RM19 (a), the remeasure pass)', (): void => {
+  const DAY = DATED_SUCCESSOR_GAP_MS;
+
+  /** A completed run of a source that wrote no page: a later sync that changed nothing. */
+  async function quietWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
+    return await harness.run(async (ctx) => {
+      const runs = await ctx.db
+        .query('docSyncRuns')
+        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+        .collect();
+      for (const run of runs) {
+        if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
+      }
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: runs.length + 1,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: runs.length + 2,
+        completedAt: runs.length + 2,
+      });
+      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
+      return { sourceId, runId };
+    });
+  }
+
+  async function measureWalk(harness: Harness, walk: Source): Promise<void> {
+    await harness.action(internal.docSyncActions.proposeRelations, walk);
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+  }
+
+  const owed = async (harness: Harness, sourceId: Id<'docSources'>) =>
+    (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.relationsRemeasure;
+
+  it('measures every stored page past the look-back from the pass’s mark, past one step’s pages, and clears the mark at the end', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await syncingSource(harness, 'Library');
+    // More pages than one step measures; the two copies are stored last, edited six days apart.
+    for (let index = 0; index < RELATION_PAGES_PER_STEP + 5; index += 1) {
+      await storedPage(harness, library, {
+        ref: `p${index}.md`,
+        title: `Unrelated topic number ${index} qx${index}`,
+        markdown: `# Unrelated topic number ${index} qx${index}\n\nContent unique to page ${index} word${index}.`,
+        updatedAt: 1 + index,
+      });
+    }
+    const runbook = '# Zebra quartz runbook\n\nPress Refresh once and read back the zebra figure.';
+    await storedPage(harness, library, {
+      ref: 'zebra.md',
+      title: 'Zebra quartz runbook',
+      markdown: runbook,
+      updatedAt: 2 * DAY,
+    });
+    await storedPage(harness, library, {
+      ref: 'zebra-copy.md',
+      title: 'Zebra quartz notes',
+      markdown: runbook.replace('# Zebra quartz runbook', '# Zebra quartz notes'),
+      updatedAt: 8 * DAY,
+    });
+    // As v0.19.0 left it: the pair proposed as a duplicate, then two syncs that changed nothing,
+    // so the pages are out of the measuring's look-back.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docRelations', {
+        userId: 'owner',
+        from: { sourceId: library.sourceId, ref: 'zebra-copy.md' },
+        to: { sourceId: library.sourceId, ref: 'zebra.md' },
+        kind: 'possible_duplicate',
+        evidence: [{ measure: 'shared-text', value: 100 }],
+        status: 'proposed',
+        createdAt: 1,
+      });
+    });
+    await quietWalk(harness, library.sourceId);
+    const second = await quietWalk(harness, library.sourceId);
+    // Without the pass's mark, the quiet sync measures nothing and the duplicate stays.
+    await measureWalk(harness, second);
+    expect(await relations(harness)).toMatchObject([{ kind: 'possible_duplicate' }]);
+    // The pass marks the source owed from its start; the next sync measures the whole library.
+    await harness.run(
+      async (ctx) => await ctx.db.patch(library.sourceId, { relationsRemeasure: { cursor: null } }),
+    );
+    await measureWalk(harness, await quietWalk(harness, library.sourceId));
+    expect(await relations(harness)).toMatchObject([
+      {
+        kind: 'possible_successor',
+        status: 'proposed',
+        from: { ref: 'zebra-copy.md' },
+        to: { ref: 'zebra.md' },
+        evidence: [
+          { measure: 'shared-text', value: 100 },
+          { measure: 'edit-dates', value: 6 },
+        ],
+      },
+    ]);
+    expect(await owed(harness, library.sourceId)).toBeUndefined();
+    // Measured once: the next quiet sync measures nothing again.
+    await measureWalk(harness, await quietWalk(harness, library.sourceId));
+    expect(await relations(harness)).toHaveLength(1);
+  }, 120_000);
+
+  it('keeps its place under the cap on new proposals, and goes on from there at the next sync', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await syncingSource(harness, 'Library');
+    // Sixty pairs of copies, each copy edited two days after its first: more than the cap.
+    const PAIRS = RELATION_PROPOSALS_PER_SYNC + 10;
+    for (let index = 0; index < PAIRS; index += 1) {
+      // No word is shared between pairs, so each page's search finds its own copy.
+      const word = `zq${index}x`;
+      const markdown = `# ${word}\n\n${word}a ${word}b ${word}c, in full.`;
+      await storedPage(harness, library, {
+        ref: `${word}.md`,
+        title: word,
+        markdown,
+        updatedAt: index,
+      });
+      await storedPage(harness, library, {
+        ref: `${word}-copy.md`,
+        title: `${word} ${word}d`,
+        markdown: markdown.replace(`# ${word}`, `# ${word} ${word}d`),
+        updatedAt: index + 2 * DAY,
+      });
+    }
+    await quietWalk(harness, library.sourceId);
+    await quietWalk(harness, library.sourceId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(library.sourceId, { relationsRemeasure: { cursor: null } }),
+    );
+    await measureWalk(harness, await quietWalk(harness, library.sourceId));
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
+    expect(await owed(harness, library.sourceId)).toBeDefined();
+    await measureWalk(harness, await quietWalk(harness, library.sourceId));
+    expect(await relations(harness)).toHaveLength(PAIRS);
+    expect(await owed(harness, library.sourceId)).toBeUndefined();
+  }, 120_000);
 });
