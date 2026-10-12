@@ -389,12 +389,64 @@ describe('DocumentationView', () => {
       .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
       .map((heading) => heading?.textContent ?? '')
       .filter((name) => /versions of the same runbook|disagree/.test(name));
+    // Each name carries both pages with their sources since W15-R51: titles alone repeat.
     expect(names).toEqual([
-      'These two look like versions of the same runbook: “Escalation paths”',
-      'These two look like versions of the same runbook: “Close checklist”',
-      'Two pages disagree: “Finance escalation” and “Close checklist”',
-      'Two pages disagree: “Refund policy” and “Refund runbook”',
+      'These two look like versions of the same runbook: “Escalation paths” (RevOps team wiki) and “Escalation paths, draft v2” (How-to guides)',
+      'These two look like versions of the same runbook: “Close checklist” (RevOps team wiki) and “Close checklist v2” (How-to guides)',
+      'Two pages disagree: “Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki)',
+      'Two pages disagree: “Refund policy” (How-to guides) and “Refund runbook” (RevOps team wiki)',
     ]);
+    view.unmount();
+  });
+
+  it('names fifteen cards between same-titled pages of five sources apart (W15-R51)', () => {
+    // The review's bed 3: the five readers' fixtures hold pages titled "运维手册" and "刷新看板"
+    // in every source, and fifteen proposals drew nine regions named by "运维手册" alone.
+    populated();
+    const readers = [
+      'Ops wiki (Cloud)',
+      'Ops wiki (Data Center)',
+      'Runbooks site',
+      'RevOps runbooks',
+      'Runbooks folder',
+    ];
+    const pairs = readers.flatMap((one, index) =>
+      readers.slice(index + 1).map((other) => [one, other]),
+    );
+    const page = (title: string, source: string, updatedAt: number) => ({
+      sourceId: `source-${source}`,
+      ref: `${source}/${title}`,
+      title,
+      source,
+      updatedAt,
+      edited: true,
+    });
+    backend.queries['docRelations:listOpen'] = [
+      ...pairs.map(([one, other], index) => ({
+        ...RELATIONS[0],
+        _id: `relation-ops-${index}`,
+        kind: 'possible_duplicate',
+        from: page('运维手册', one, 2),
+        to: page('运维手册', other, 1),
+      })),
+      ...pairs.slice(0, 5).map(([one, other], index) => ({
+        ...RELATIONS[0],
+        _id: `relation-tile-${index}`,
+        kind: 'possible_duplicate',
+        from: page('刷新看板', one, 2),
+        to: page('刷新看板', other, 1),
+      })),
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const names = [...view.container.querySelectorAll('section[aria-labelledby]')]
+      .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
+      .map((heading) => heading?.textContent ?? '')
+      .filter((name) => name.startsWith('These two look like versions'));
+    expect(names).toHaveLength(15);
+    expect(new Set(names).size).toBe(15);
+    expect(names[0]).toBe(
+      'These two look like versions of the same runbook: “运维手册” (Ops wiki (Data Center)) and “运维手册” (Ops wiki (Cloud))',
+    );
     view.unmount();
   });
 
