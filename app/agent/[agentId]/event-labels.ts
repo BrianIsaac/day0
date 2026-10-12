@@ -420,7 +420,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   },
   'charter.amended': (payload) =>
     `charter amended to v${text(payload.version) ?? '?'}${
-      payload.via === 'plan-approval' ? ' with a plan approval' : ''
+      payload.via === 'plan-approval'
+        ? ' with a plan approval'
+        : payload.via === 'reorientation'
+          ? ' from a reorientation card'
+          : ''
     }`,
   'charter.request_changes': 'charter sent back for changes',
   'charter.question-asked': (payload) =>

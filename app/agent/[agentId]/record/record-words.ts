@@ -784,7 +784,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }${
       p.via === 'plan-approval'
         ? ` as ${addressee(subject)} approved a plan`
-        : ` by ${addressee(subject)}`
+        : p.via === 'reorientation'
+          ? ` as ${addressee(subject)} approved a reorientation card`
+          : ` by ${addressee(subject)}`
     }${because(p.reason)}`,
   'charter.request_changes': (p, subject) =>
     `${decider(subject)} sent the charter back for changes${because(p.notes)}`,

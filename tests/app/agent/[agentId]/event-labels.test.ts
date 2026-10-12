@@ -178,6 +178,15 @@ describe('the live feed labels', (): void => {
     ]);
   });
 
+  it('labels a charter amended from a reorientation card by where it came from (the joins)', (): void => {
+    expect(
+      eventLabel({
+        type: 'charter.amended',
+        payload: { version: '0.2', via: 'reorientation', reason: 'Aman Rao now approves' },
+      }),
+    ).toBe('charter amended to v0.2 from a reorientation card');
+  });
+
   it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {
     expect(
       eventLabel({

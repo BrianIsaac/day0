@@ -97,8 +97,10 @@ describe('approve: the proposal applied through its target', (): void => {
       outcome: { summary: 'the charter was amended to version 0.2' },
     });
     expect(card.outcome?.charterId).toBeDefined();
+    // The card's own summary is the amendment's reason; `via` says it came from a card (the
+    // joins: the record read "by you: reorientation: ...").
     expect(await payloadsOf(harness, agentId, 'charter.amended')).toEqual([
-      expect.objectContaining({ via: 'reorientation' }),
+      expect.objectContaining({ via: 'reorientation', reason: card.triggerSummary }),
     ]);
     expect(await payloadsOf(harness, agentId, 'reorientation.approved')).toEqual([
       expect.objectContaining({ kind: 'charter-change', charterId: card.outcome?.charterId }),

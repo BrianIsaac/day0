@@ -1055,6 +1055,27 @@ describe('what an evaluation and a plan approval say in the record (walk m15)', 
   });
 });
 
+describe('a charter amended from a reorientation card, in the record (the joins)', (): void => {
+  it('says the manager approved a card, then what the card was about', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'charter.amended',
+          payload: {
+            version: '0.2',
+            previousVersion: '0.1',
+            via: 'reorientation',
+            reason: 'Aman Rao now approves REVOPS plans',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Charter amended to version 0.2 from 0.1 as you approved a reorientation card: Aman Rao now approves REVOPS plans.',
+    );
+  });
+});
+
 describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
   /** An event older than the reader's tenure: the manager then was sam@company.com. */
   const earlier = {

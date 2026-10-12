@@ -116,7 +116,7 @@ async function applyProposal(
         agentId: card.agentId,
         changes: proposed.changes,
         via: 'reorientation',
-        reason: `reorientation: ${card.triggerSummary}`,
+        reason: card.triggerSummary,
       }).catch((error: unknown) => {
         if (error instanceof ConvexError) throw error;
         throw new ConvexError(CARD_ACTION_REFUSALS.moved);
