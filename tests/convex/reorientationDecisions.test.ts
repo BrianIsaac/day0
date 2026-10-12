@@ -166,6 +166,65 @@ describe('approve: the proposal applied through its target', (): void => {
     expect(rows.map((row) => row.statement)).toContain('Answer within two days.');
   });
 
+  it('keeps an active agreement, checks an approved one again, and sets a proposed one aside', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const agreement = async (
+      statement: string,
+      fields: Partial<Doc<'workingAgreements'>>,
+    ): Promise<Id<'workingAgreements'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('workingAgreements', {
+            userId: OWNER_SUBJECT,
+            agentId,
+            kind: 'preference',
+            statement,
+            scope: 'global',
+            sourceType: 'manager-card',
+            status: 'active',
+            createdAt: 1,
+            appliedTo: [],
+            ...fields,
+          }),
+      );
+    const kept = await agreement('Copy Priya on tier-2 answers.', { approvedAt: 1 });
+    const checked = await agreement('Answer within a day.', { status: 'proposed', approvedAt: 1 });
+    const setAside = await agreement('Sign off as the team.', { status: 'proposed' });
+    const owner = harness.withIdentity(OWNER);
+    const approve = async (
+      agreementId: Id<'workingAgreements'>,
+      action: 'keep' | 'recheck' | 'dismiss',
+      trigger: 'agreement-corrected' | 'person-dismissed' | 'relationship-changed',
+    ) =>
+      await owner.mutation(api.reorientationDecisions.approve, {
+        reorientationId: await proposedCard(
+          harness,
+          agentId,
+          { kind: 'agreement', agreementId, action, rationale: 'As the change says.' },
+          { trigger, triggerKey: `${trigger}-${action}` },
+        ),
+      });
+    await expect(approve(kept, 'keep', 'agreement-corrected')).resolves.toEqual({
+      result: 'the working agreement was kept as it is',
+    });
+    await expect(approve(checked, 'recheck', 'person-dismissed')).resolves.toEqual({
+      result: 'the working agreement is being checked again',
+    });
+    await expect(approve(setAside, 'dismiss', 'relationship-changed')).resolves.toEqual({
+      result: 'the proposed working agreement was set aside',
+    });
+    const rows = await harness.run(
+      async (ctx) => await ctx.db.query('workingAgreements').collect(),
+    );
+    expect(rows.find((row) => row._id === kept)?.status).toBe('active');
+    expect(rows.find((row) => row._id === setAside)?.status).toBe('dismissed');
+    const scheduled = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    expect(scheduled.map((job) => job.name)).toContain('workingAgreementActions:settleKept');
+  });
+
   it('edits and retires an edge, opening no second card about itself on the employee', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -417,6 +476,58 @@ describe('approve: the proposal applied through its target', (): void => {
       async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
     );
     expect(scheduled.map((job) => job.name)).toContain('storedVerification:verifyStoredSkill');
+  });
+
+  it('withdraws a skill’s library version from every employee', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { skillId, versionId } = await harness.run(async (ctx) => {
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: OWNER_SUBJECT,
+        name: 'notion-append-note',
+        description: 'Append a note.',
+        surfaceClass: 'wiki',
+        operation: 'append',
+        version: 1,
+        body: '# Body',
+        smokeTest: 'print("ok")',
+        bodyHash: 'hash',
+        requiredScopes: [],
+        harnessTools: [],
+        authorAgentId: agentId,
+        authorName: 'Mira',
+        readRefs: [],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        ownerKey: OWNER_SUBJECT,
+        name: 'notion-append-note',
+        description: 'Append a note.',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        registeredAt: 1,
+        createdAt: 1,
+        versionId,
+      });
+      return { skillId, versionId };
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: await proposedCard(harness, agentId, {
+          kind: 'skill-action',
+          skillId,
+          action: 'withdraw',
+          rationale: 'It writes to a page that is gone.',
+        }),
+      }),
+    ).resolves.toEqual({
+      result: 'the skill “notion-append-note” was withdrawn from every employee',
+    });
+    const version = await harness.run(async (ctx) => await ctx.db.get(versionId));
+    expect(version?.revokedAt).toBeDefined();
   });
 
   it('refuses a charter change whose clause moved since it was proposed, and a target of another owner (second pass M2)', async (): Promise<void> => {

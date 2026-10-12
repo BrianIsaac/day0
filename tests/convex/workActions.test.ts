@@ -7358,7 +7358,10 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     );
     expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
 
-    await harness.run(async (ctx) => await ctx.db.patch(cardId, { status: 'dismissed' }));
+    // Decided as the manager decides it, on the card (the second pass: not by a patch).
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: cardId });
     await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
     const resumed = await readItem(harness, workItemId);
     expect((resumed.output as { resumedClosing?: boolean }).resumedClosing).toBe(true);
