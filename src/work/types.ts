@@ -212,7 +212,8 @@ export interface ExecutionPlan {
 /**
  * What a cite is disputed by (wave 15, 15-A): a conflict the manager confirmed between the cited
  * page and another of equal trust, under one heading. The selection tags such a cite line
- * `[conflict]`, and a plan that cites one waits for the manager.
+ * `[conflict]`, and a plan that cites one is asked about it: the steps citing it wait for the
+ * manager's answer.
  */
 export interface CiteConflict {
   /** The relation (`docRelations` id) the manager confirmed. */
