@@ -100,6 +100,7 @@ async function applyProposal(
     case 'none':
       return { result: approvedResultWords.none };
     case 'charter-change': {
+      await refuseMovedClauses(ctx, card.agentId, proposed);
       const amended = await amendCharterInTransaction(ctx, {
         agentId: card.agentId,
         changes: proposed.changes,
@@ -110,7 +111,9 @@ async function applyProposal(
     }
     case 'agreement': {
       const agreement = await ctx.db.get(proposed.agreementId);
-      if (agreement === null) throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+      if (agreement === null || agreement.userId !== card.userId) {
+        throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+      }
       const action = proposed.action;
       switch (action) {
         case 'keep':
@@ -141,7 +144,9 @@ async function applyProposal(
     }
     case 'relationship': {
       const edge = await ctx.db.get(proposed.relationshipId);
-      if (edge === null) throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+      if (edge === null || edge.userId !== card.userId) {
+        throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+      }
       if (proposed.action === 'edit') {
         await editRelationshipInTransaction(ctx, edge, {
           agentId: card.agentId,
@@ -154,7 +159,7 @@ async function applyProposal(
       return { result: approvedResultWords.relationship[proposed.action] };
     }
     case 'page-status':
-      return await applyPageStatus(ctx, proposed);
+      return await applyPageStatus(ctx, proposed, card.userId);
     case 'scope':
       if (proposed.action === 'revoke') {
         await revokeScopeInTransaction(ctx, { agentId: card.agentId, scope: proposed.scope });
@@ -180,10 +185,42 @@ async function applyProposal(
   }
 }
 
+/** The charter's list clauses, by list, as an approved charter's body holds them. */
+type ClauseLists = Readonly<
+  Record<'willDo' | 'willNotDo' | 'escalationTriggers', readonly string[]>
+>;
+
+/**
+ * Refuse a charter change whose clause is no longer what the card showed (the second pass's M2):
+ * a clause is edited by its place in its list, and another amendment since the proposal may have
+ * moved or rewritten it, so Approve compares the text the card drew as "before".
+ */
+async function refuseMovedClauses(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  proposed: Extract<JudgedProposal, { kind: 'charter-change' }>,
+): Promise<void> {
+  const edits = proposed.changes.filter((change) => change.kind === 'edit-clause');
+  if (edits.length === 0 || proposed.before === undefined) return;
+  const charter = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+  const lists = (charter?.body as { proposedBoundaries?: ClauseLists } | undefined)
+    ?.proposedBoundaries;
+  for (const edit of edits) {
+    if (lists?.[edit.field]?.[edit.index] !== proposed.before) {
+      throw new ConvexError(CARD_ACTION_REFUSALS.moved);
+    }
+  }
+}
+
 /** A page's proposed status, set as the manager sets one by hand, or handed back to its source. */
 async function applyPageStatus(
   ctx: MutationCtx,
   proposed: Extract<JudgedProposal, { kind: 'page-status' }>,
+  owner: string,
 ): Promise<{ result: string }> {
   const pageAt = async (ref: { sourceId: Id<'docSources'>; ref: string }) =>
     await ctx.db
@@ -192,7 +229,9 @@ async function applyPageStatus(
       .first();
   const page = await pageAt(proposed.page);
   const source = await ctx.db.get(proposed.page.sourceId);
-  if (page === null || source === null) throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+  if (page === null || source === null || source.userId !== owner) {
+    throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
+  }
   if (proposed.status === 'clear') {
     await clearPageStatusInTransaction(ctx, source, page);
     return { result: approvedResultWords.page('clear', page.title) };

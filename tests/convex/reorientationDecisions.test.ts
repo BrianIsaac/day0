@@ -384,6 +384,141 @@ describe('approve: the proposal applied through its target', (): void => {
     expect(scheduled.map((job) => job.name)).toContain('storedVerification:verifyStoredSkill');
   });
 
+  it('refuses a charter change whose clause moved since it was proposed, and a target of another owner (second pass M2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const moved = await proposedCard(harness, agentId, {
+      kind: 'charter-change',
+      changes: [
+        {
+          kind: 'edit-clause',
+          field: 'escalationTriggers',
+          index: 0,
+          text: 'Send drafts to Priya first.',
+        },
+      ],
+      rationale: 'Priya approves those now.',
+      before: 'Surface tier-2 answer drafts to the manager for review',
+      after: 'Send drafts to Priya first.',
+    });
+    // The clause changed by another amendment meanwhile.
+    await harness.run(async (ctx) => {
+      const [charter] = await ctx.db.query('charters').collect();
+      const body = charter.body as { proposedBoundaries: { escalationTriggers: string[] } };
+      await ctx.db.patch(charter._id, {
+        body: {
+          ...body,
+          proposedBoundaries: {
+            ...body.proposedBoundaries,
+            escalationTriggers: ['Escalate everything.'],
+          },
+        },
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, { reorientationId: moved }),
+    ).rejects.toThrow('What this card proposes to change has moved on since: dismiss it.');
+    expect((await cardOf(harness, moved)).status).toBe('open');
+    const foreign = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workingAgreements', {
+          userId: 'someone-else',
+          kind: 'preference',
+          statement: 'Not yours.',
+          scope: 'global',
+          sourceType: 'manager-card',
+          status: 'active',
+          createdAt: 1,
+          appliedTo: [],
+        }),
+    );
+    const card = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'agreement', agreementId: foreign, action: 'retire', rationale: 'Retire it.' },
+      { trigger: 'agreement-corrected' },
+    );
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, { reorientationId: card }),
+    ).rejects.toThrow('What this card proposes to change is no longer there: dismiss it.');
+    expect((await harness.run(async (ctx) => await ctx.db.get(foreign)))?.status).toBe('active');
+    // An edge and a page of another owner are refused the same way.
+    const { edge, sourceId } = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: 'someone-else',
+        displayName: 'Priya',
+        nameKey: 'priya',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const edge = await ctx.db.insert('relationships', {
+        userId: 'someone-else',
+        fromAgentId: agentId,
+        toPersonId: person,
+        type: 'collaborator',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'someone-else',
+        kind: 'folder',
+        label: 'Their handbook',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 1,
+      });
+      return { edge, sourceId };
+    });
+    const edgeCard = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'relationship', relationshipId: edge, action: 'retire', rationale: 'Retire it.' },
+      { trigger: 'person-dismissed' },
+    );
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, { reorientationId: edgeCard }),
+    ).rejects.toThrow('What this card proposes to change is no longer there: dismiss it.');
+    expect((await harness.run(async (ctx) => await ctx.db.get(edge)))?.status).toBe('active');
+    const pageCard = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'page-status',
+        page: { sourceId, ref: 'runbook.md' },
+        status: 'archived',
+        rationale: 'Archive it.',
+      },
+      { trigger: 'page-status-changed' },
+    );
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, { reorientationId: pageCard }),
+    ).rejects.toThrow('What this card proposes to change is no longer there: dismiss it.');
+    const page = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'runbook.md'))
+          .first(),
+    );
+    expect(page?.status).toBeUndefined();
+  });
+
   it('refuses a card with nothing proposed yet, a decided card, and a stranger', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
