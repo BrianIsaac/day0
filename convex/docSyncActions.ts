@@ -428,7 +428,7 @@ async function keptUnchangedPage(
 async function keptUnreadPages(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  unread: readonly UnreadPage[],
+  unread: readonly Pick<UnreadPage, 'ref'>[],
 ): Promise<{ refs: string[]; credentialRefs: string[] }> {
   if (unread.length === 0) return { refs: [], credentialRefs: [] };
   const stored = await ctx.runQuery(internal.docPages.storedPageRefs, {
@@ -436,11 +436,11 @@ async function keptUnreadPages(
     refs: unread.map((page): string => page.ref),
   });
   const credentialRefs: string[] = [];
-  for (const page of unread) {
+  for (const ref of stored) {
     const rows = await ctx.runQuery(internal.credentials.pageRowsForStore, {
       userId: source.userId,
       sourceId: source._id,
-      pageRef: page.ref,
+      pageRef: ref,
     });
     for (const row of rows) {
       if (typeof row.source !== 'string') credentialRefs.push(row.source.ref);
@@ -609,7 +609,14 @@ export const syncBatch = internalAction({
         ),
         ...persisted.unread,
       ];
-      const kept = await keptUnreadPages(ctx, source, unread);
+      // A source that refused the walk of its archived pages keeps those an earlier walk archived:
+      // unlisted, they would be pruned as gone (W15-R30).
+      const archived = batch.archivedWalkRefused
+        ? (await ctx.runQuery(internal.docPages.archivedPageRefs, { sourceId: source._id })).map(
+            (ref) => ({ ref }),
+          )
+        : [];
+      const kept = await keptUnreadPages(ctx, source, [...unread, ...archived]);
       if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
         throw new Error('Documentation reader repeated its continuation cursor.');
       }

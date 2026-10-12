@@ -67,6 +67,8 @@ interface ListedPages {
   readonly base: string | undefined;
   /** Whether the server says more of this walk follows. */
   readonly more: boolean;
+  /** Whether the server refused the archived walk (a 4xx on it). */
+  readonly refused?: boolean;
 }
 
 /** Reader for one space of a Confluence Data Center server. */
@@ -119,7 +121,12 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
-    return { pages, unread, nextCursor: nextCursor(phase, start, listed) };
+    return {
+      pages,
+      unread,
+      ...(listed.refused === true ? { archivedWalkRefused: true } : {}),
+      nextCursor: nextCursor(phase, start, listed),
+    };
   }
 
   /**
@@ -172,7 +179,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
         host: url.host,
         status: answer.status,
       });
-      return ended;
+      return { ...ended, refused: true };
     }
     const body = this.ownBody(answer, locator);
     const listed = field(accepted(answer, body), 'results');

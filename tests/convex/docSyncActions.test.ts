@@ -2265,3 +2265,76 @@ describe('documentation sync batching', (): void => {
     );
   }, 120_000);
 });
+
+describe('a source that refuses the walk of its archived pages (W15-R30)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the page an earlier walk archived, which two walks refused the deleted view would have pruned', async (): Promise<void> => {
+    let refused = false;
+    const space = providerFake('yuque', {
+      override: (request) =>
+        refused && request.url.searchParams.get('deleted') === 'true'
+          ? new Response(JSON.stringify({ status: 403, message: 'Forbidden' }), {
+              status: 403,
+              headers: { 'content-type': 'application/json' },
+            })
+          : undefined,
+    });
+    const reader = new YuqueReader({
+      fetch: space.fetch,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-refused-');
+    await mkdir(join(root, 'space'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'RevOps runbooks',
+      kind: 'folder',
+      locator: 'space',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit) =>
+        await reader.listPageBatch(
+          {
+            _id: source._id,
+            kind: 'yuque',
+            label: 'RevOps runbooks',
+            locator: 'https://acme.yuque.com/revops/runbooks',
+          },
+          'fixture-yuque-token',
+          cursor,
+          limit,
+        ),
+    );
+    const sync = async (): Promise<void> => {
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    };
+    const deleted = async () =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', '210000009'))
+            .unique(),
+      );
+    await sync();
+    expect((await deleted())?.status).toBe('archived');
+    // The token loses the deleted view: two walks in a row list the document nowhere.
+    refused = true;
+    await sync();
+    await sync();
+    expect((await deleted())?.status).toBe('archived');
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.status).toBe('synced');
+  }, 60_000);
+});

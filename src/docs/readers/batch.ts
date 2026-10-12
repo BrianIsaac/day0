@@ -30,6 +30,12 @@ export interface UnreadPage {
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */
 export interface ReadPageBatch extends DocPageBatch {
   readonly unread: readonly UnreadPage[];
+  /**
+   * Set when the source refused the walk of its archived or deleted pages (a 4xx on it): the
+   * pages an earlier walk archived are not listed, and stand as stored rather than being pruned
+   * as gone (W15-R30).
+   */
+  readonly archivedWalkRefused?: boolean;
 }
 
 /** A documentation reader whose batches name the pages they could not read. */

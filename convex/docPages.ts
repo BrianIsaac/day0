@@ -275,3 +275,25 @@ export const storedPageRefs = internalQuery({
     return args.refs.filter((_ref, index) => stored[index]);
   },
 });
+
+/** The most archived pages one batch keeps as stored when a source refuses its archived walk. */
+const ARCHIVED_KEPT_READ = 4_000;
+
+/**
+ * The refs of a source's archived pages, from their slim listing rows: the pages a batch keeps as
+ * stored when the source refused the walk that lists them (`ReadPageBatch.archivedWalkRefused`,
+ * W15-R30), so a token refused that walk prunes none of them as gone. Internal; reads one index
+ * range of small rows, at most `ARCHIVED_KEPT_READ`.
+ */
+export const archivedPageRefs = internalQuery({
+  args: { sourceId: v.id('docSources') },
+  handler: async (ctx, args): Promise<string[]> =>
+    (
+      await ctx.db
+        .query('docPageListings')
+        .withIndex('by_source_not_current', (q) =>
+          q.eq('sourceId', args.sourceId).eq('notCurrent', 'archived'),
+        )
+        .take(ARCHIVED_KEPT_READ)
+    ).map((row) => row.ref),
+});

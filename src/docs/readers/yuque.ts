@@ -145,6 +145,7 @@ export class YuqueReader implements DocumentationReader {
     return {
       pages,
       unread,
+      ...(listed.refused === true ? { archivedWalkRefused: true } : {}),
       nextCursor: listed.more
         ? `yq|${phase}|${offset + listed.count}`
         : next === undefined
@@ -165,6 +166,8 @@ export class YuqueReader implements DocumentationReader {
     /** How many entries Yuque listed, whatever of them the walk keeps. */
     readonly count: number;
     readonly more: boolean;
+    /** Whether Yuque refused the deleted view to the token. */
+    readonly refused?: boolean;
   }> {
     const { host, group, book } = session.locator;
     const url = this.address(session, '');
@@ -179,7 +182,7 @@ export class YuqueReader implements DocumentationReader {
         host,
         status: answer.status,
       });
-      return { entries: [], count: 0, more: false };
+      return { entries: [], count: 0, more: false, refused: true };
     }
     const body = this.ownBody(answer, session.locator);
     if (answer.status === 404) {

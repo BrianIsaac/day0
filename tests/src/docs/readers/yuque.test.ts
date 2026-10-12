@@ -215,6 +215,24 @@ describe('the Yuque documentation reader', (): void => {
     ]);
   });
 
+  it('says the walk of its deleted documents was refused, so the pages an earlier walk archived stand (W15-R30)', async (): Promise<void> => {
+    // The review: a 4xx on that walk ended it, and the finish pruned the pages archived before.
+    const { reader } = readerOnSpace((request) =>
+      request.url.searchParams.get('deleted') === 'true'
+        ? json(403, { status: 403, message: 'Forbidden' })
+        : undefined,
+    );
+    const said: boolean[] = [];
+    let cursor: string | undefined;
+    do {
+      const batch = await reader.listPageBatch(repository, TOKEN, cursor, 3);
+      said.push(batch.archivedWalkRefused === true);
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    expect(said.at(-1)).toBe(true);
+    expect(said.slice(0, -1).every((each) => !each)).toBe(true);
+  });
+
   it('names a sheet and a board unread with the reason, and asks nothing more of them', async (): Promise<void> => {
     const { reader, requests } = readerOnSpace();
     const { unread } = await wholeRepository(reader);
