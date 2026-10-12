@@ -180,6 +180,39 @@ export async function closeTalkOfCard(
   if (talk !== null) await closeTalk(ctx, talk);
 }
 
+/** The most talks of one employee a handover clears. */
+const HANDOVER_TALKS_READ = 1_000;
+
+/**
+ * Close every talk of an employee being handed over, with the old manager's words cleared (W16-R1,
+ * D-5 (a)): the turns, the reply being typed and the quotes an outcome kept, as the one-to-one's
+ * are (`voice.endOneToOnesForHandover`). The proposal an outcome put on its card stays with the
+ * card. Called in the handover's transaction (`transferAcceptance`).
+ *
+ * @param ctx - The handover's mutation context.
+ * @param agentId - The employee handed over.
+ * @param now - The handover's time.
+ */
+export async function clearTalksForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<void> {
+  const talks = await ctx.db
+    .query('reorientationTalks')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .take(HANDOVER_TALKS_READ);
+  for (const talk of talks) {
+    await ctx.db.patch(talk._id, {
+      state: 'closed',
+      turns: [],
+      replyDraft: undefined,
+      endedAt: talk.endedAt ?? now,
+      ...(talk.outcome !== undefined ? { outcome: { ...talk.outcome, quotes: [] } } : {}),
+    });
+  }
+}
+
 /** The card's one talk, if it has one. */
 async function talkOfCard(
   ctx: MutationCtx,

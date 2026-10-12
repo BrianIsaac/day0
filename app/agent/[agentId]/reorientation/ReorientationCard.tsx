@@ -6,6 +6,7 @@ import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { nextCharterVersion } from '@/agent/charter-amendment';
 import {
+  approvedResultWords,
   cardTitle,
   decisionWords,
   failedProposalWords,
@@ -173,11 +174,25 @@ function ProposalBody({
   }
 }
 
+/** Why a card closed at the handover closed, as its line says after "Closed at the handover: ". */
+const handedOverReason = 'it was the previous manager’s to decide';
+
+/** Whether a card was closed by its employee's handover rather than by a manager (W16-R1). */
+function closedAtHandover(card: CardView['card']): boolean {
+  return card.status === 'dismissed' && card.outcome?.summary === approvedResultWords.handedOver;
+}
+
+/** How a decided card was decided, as its muted line says it. */
+function decidedWords(card: CardView['card']): string {
+  if (card.status === 'applied') return 'approved';
+  return closedAtHandover(card) ? 'closed at the handover' : 'dismissed';
+}
+
 /** The card's muted line: when it opened, how much it can hold up, and what it holds now. */
 function metaWords(view: CardView, zone: string | undefined): string {
   const { card } = view;
   if (card.status === 'applied' || card.status === 'dismissed') {
-    return `${card.status === 'applied' ? 'approved' : 'dismissed'} ${clockTime(card.decidedAt ?? card.createdAt, zone)}`;
+    return `${decidedWords(card)} ${clockTime(card.decidedAt ?? card.createdAt, zone)}`;
   }
   const opened =
     card.trigger === 'role-changed'
@@ -299,7 +314,9 @@ export function ReorientationCard({
         {decided ? (
           card.outcome !== undefined ? (
             <p className="text-[var(--color-fg-2)]">
-              {card.status === 'applied' ? 'Approved' : 'Dismissed'}: {card.outcome.summary}.
+              {closedAtHandover(card)
+                ? `Closed at the handover: ${handedOverReason}.`
+                : `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome.summary}.`}
             </p>
           ) : null
         ) : (

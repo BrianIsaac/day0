@@ -31,6 +31,8 @@ export const CARD_ACTION_REFUSALS = {
 export const approvedResultWords = {
   none: 'nothing needed to change',
   dismissed: 'nothing changed',
+  /** A card still undecided when its employee was handed over (W16-R1, D-5 (a)). */
+  handedOver: 'closed at the handover, as it was the previous manager’s to decide',
   charter: (version: string): string => `the charter was amended to version ${version}`,
   agreement: {
     keep: 'the working agreement was kept as it is',

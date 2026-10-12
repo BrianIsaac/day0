@@ -485,6 +485,23 @@ describe('a reorientation card', (): void => {
     }
   });
 
+  it('says a card closed by a handover was closed there, not dismissed (W16-R1, D-5 (a))', async (): Promise<void> => {
+    const view = drawn(
+      withCard({
+        status: 'dismissed',
+        decidedAt: OPENED + 60_000,
+        outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+      }),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Closed at the handover: it was the previous manager’s to decide.');
+    expect(text).toContain('closed at the handover 26 Sep 2026, 14:45');
+    expect(text).not.toContain('Dismissed');
+    expect(controls(view.container)).toEqual([]);
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('offers Discuss with Mira after the three decisions, to the card’s own talk', async (): Promise<void> => {
     const view = drawn(BASE);
     const foot = [...view.container.querySelectorAll('button, a')].map(

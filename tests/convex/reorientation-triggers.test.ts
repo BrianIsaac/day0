@@ -431,6 +431,124 @@ describe('manager changed: a handover is accepted (manager.transferred)', (): vo
   });
 });
 
+describe('a handover closes what the old manager was deciding (W16-R1, D-5 (a))', (): void => {
+  it('closes the undecided cards and every talk with the words cleared, and shows the new manager nothing of the old graph', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const ines = await seedPerson(harness, 'Ines Duarte');
+    const edgeId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('relationships', {
+          userId: OWNER_SUBJECT,
+          toPersonId: ines,
+          type: 'approval-authority',
+          scope: 'NetLedger journal changes',
+          effectiveFrom: 1,
+          status: 'active',
+          source: 'manager',
+          confirmedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const standing = await openTestCard(harness, {
+      agentId,
+      trigger: 'relationship-changed',
+      triggerKey: 'edge-change',
+      summary: 'Ines Duarte, its approver, changed',
+      evidence: { relationshipIds: [edgeId] },
+    });
+    const decided = await openTestCard(harness, {
+      agentId,
+      trigger: 'role-changed',
+      triggerKey: 'by-hand',
+      summary: 'Its role changed',
+    });
+    if (standing === null || decided === null) throw new Error('no card opened');
+    const turns = [
+      { id: 'e0', speaker: 'employee' as const, text: 'Who approves now?', at: 1 },
+      { id: 'm0', speaker: 'manager' as const, text: 'Aisha does, Ines never did well.', at: 2 },
+    ];
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(standing, { status: 'discussing' });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: standing,
+        state: 'active',
+        turns,
+        replyDraft: 'And tell Ines',
+        conversation: 1,
+        startedAt: 1,
+      });
+      await ctx.db.patch(decided, { status: 'dismissed', decidedAt: 2 });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: decided,
+        state: 'finished',
+        turns,
+        conversation: 1,
+        outcome: {
+          proposed: { kind: 'none', rationale: 'Nothing changes.' },
+          quotes: ['Aisha does, Ines never did well.'],
+        },
+        startedAt: 1,
+        endedAt: 2,
+      });
+    });
+    const transferId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Mira',
+          fromOwnerKey: OWNER_SUBJECT,
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: fixtureAddressOf('colleague'),
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+    const colleague = harness.withIdentity(managerIdentity('colleague'));
+    await colleague.mutation(api.transferAcceptance.accept, { transferId });
+    await harness.finishInProgressScheduledFunctions();
+
+    const cards = await cardsOf(harness, agentId);
+    expect(cards.find((card) => card._id === standing)).toMatchObject({
+      status: 'dismissed',
+      userId: 'colleague',
+      outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+    });
+    expect(cards.filter((card) => card.trigger === 'manager-changed')).toMatchObject([
+      { status: 'open', userId: 'colleague' },
+    ]);
+    const talks = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('reorientationTalks')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(talks).toHaveLength(2);
+    for (const talk of talks) {
+      expect(talk).toMatchObject({ state: 'closed', turns: [] });
+      expect(talk.replyDraft).toBeUndefined();
+      expect(talk.outcome?.quotes ?? []).toEqual([]);
+    }
+    for (const cardId of [standing, decided]) {
+      const room = await colleague.query(api.reorientationTalk.forCard, {
+        reorientationId: cardId,
+      });
+      expect(room?.talk?.turns).toEqual([]);
+    }
+    const listed = await colleague.query(api.reorientationDecisions.listForAgent, { agentId });
+    // The card keeps its own summary, as the employee's record does; the old manager's edge, its
+    // person and its scope are no longer resolved onto it.
+    const said = JSON.stringify(listed);
+    expect(said).not.toContain('Ines Duarte, its approver for');
+    expect(said).not.toContain('NetLedger journal changes');
+    expect(listed.find((view) => view.card._id === standing)?.people).toEqual([]);
+  });
+});
+
 /** A confirmed person of the owner's graph. */
 async function seedPerson(harness: Harness, displayName: string): Promise<Id<'people'>> {
   return await harness.run(

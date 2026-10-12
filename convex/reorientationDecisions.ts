@@ -445,14 +445,18 @@ export const listForAgent = query({
     ]) {
       const ids = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
       const rows = await Promise.all(ids.map(async (id) => await ctx.db.get(id)));
+      // Only rows of the card's own owner are named on it: after a handover the old manager's
+      // graph, agreements and documentation stay theirs (W16-R1, `people.ts`' rule).
+      const owned = <Row extends { readonly userId: string }>(row: Row | null): Row | null =>
+        row !== null && row.userId === card.userId ? row : null;
       const pages = await Promise.all(
-        card.evidence.pageRefs.slice(0, 10).map(
-          async (ref) =>
-            await ctx.db
-              .query('docPages')
-              .withIndex('by_source_ref', (q) => q.eq('sourceId', ref.sourceId).eq('ref', ref.ref))
-              .first(),
-        ),
+        card.evidence.pageRefs.slice(0, 10).map(async (ref) => {
+          if (owned(await ctx.db.get(ref.sourceId)) === null) return null;
+          return await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', ref.sourceId).eq('ref', ref.ref))
+            .first();
+        }),
       );
       const skills = await Promise.all(
         [...new Set([...card.affected.skills, ...card.evidence.skillIds])]
@@ -460,17 +464,17 @@ export const listForAgent = query({
           .map(async (id) => await ctx.db.get(id)),
       );
       const agreements = await Promise.all(
-        card.affected.agreements.slice(0, 10).map(async (id) => await ctx.db.get(id)),
+        card.affected.agreements.slice(0, 10).map(async (id) => owned(await ctx.db.get(id))),
       );
       const edges = await Promise.all(
         [...new Set([...card.affected.relationships, ...card.evidence.relationshipIds])]
           .slice(0, 10)
-          .map(async (id) => await ctx.db.get(id)),
+          .map(async (id) => owned(await ctx.db.get(id))),
       );
       const people: CardView['people'] = [];
       for (const edge of edges) {
         if (edge === null) continue;
-        const person = await ctx.db.get(edge.toPersonId);
+        const person = owned(await ctx.db.get(edge.toPersonId));
         people.push({
           _id: edge._id,
           words: `${person?.displayName ?? 'Someone'}, its ${RELATIONSHIP_NOUNS[edge.type]}${

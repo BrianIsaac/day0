@@ -20,7 +20,11 @@ import {
   type ReorientationStatus,
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
-import { conflictQuestionText, type NamedPageWords } from '../src/agent/reorientation-words';
+import {
+  approvedResultWords,
+  conflictQuestionText,
+  type NamedPageWords,
+} from '../src/agent/reorientation-words';
 import {
   COUNTED_EVENTS_SHOWN,
   agreementActionsOf,
@@ -546,22 +550,37 @@ export const holdingCard = internalQuery({
 });
 
 /**
- * Move an employee's cards to its new owner, in the handover's transaction (16-K's F2, option
- * (a)): `userId` is a copy of the employee's owner key, so the owner's cards across employees
- * (`by_user_status`) list the moved employee's under the owner who has it.
+ * Move an employee's cards to its new owner, in the handover's transaction (16-K's F2): `userId`
+ * is a copy of the employee's owner key, so the owner's cards across employees (`by_user_status`)
+ * list the moved employee's under the owner who has it. A card still undecided is closed as handed
+ * over (W16-R1, D-5 (a); 16-K's option (b)): what it asks rests on the old manager's graph, words
+ * and documentation, which stay theirs, so the new manager starts from the transfer's own card.
+ * Its talk's words are cleared beside it (`reorientationTalk.clearTalksForHandover`).
  */
 export async function moveCardsToOwner(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   userId: string,
+  now: number,
 ): Promise<void> {
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
     const cards = await ctx.db
       .query('reorientations')
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
       .take(MOVED_CARDS_READ);
+    const undecided = (UNDECIDED_REORIENTATION_STATUSES as readonly string[]).includes(status);
     for (const card of cards) {
-      if (card.userId !== userId) await ctx.db.patch(card._id, { userId });
+      if (undecided) {
+        await ctx.db.patch(card._id, {
+          userId,
+          status: 'dismissed',
+          decidedAt: now,
+          revisitAt: undefined,
+          outcome: { summary: approvedResultWords.handedOver },
+        });
+      } else if (card.userId !== userId) {
+        await ctx.db.patch(card._id, { userId });
+      }
     }
   }
 }

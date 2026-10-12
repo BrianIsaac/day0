@@ -540,8 +540,15 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
       summary: 'Linear access ended',
     }))!;
     await harness.run(async (ctx) => await ctx.db.patch(applied, { status: 'applied' }));
-    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor'));
+    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor', 5));
     expect((await cardOf(harness, open)).userId).toBe('successor');
     expect((await cardOf(harness, applied)).userId).toBe('successor');
+    // The undecided card closes as handed over (W16-R1, D-5 (a)); the decided one keeps its standing.
+    expect(await cardOf(harness, open)).toMatchObject({
+      status: 'dismissed',
+      decidedAt: 5,
+      outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+    });
+    expect((await cardOf(harness, applied)).status).toBe('applied');
   });
 });
