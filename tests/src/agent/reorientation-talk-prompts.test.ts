@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import type { ProposalInput } from '../../../src/agent/reorientation-proposal';
 import {
+  PLAIN_PUNCTUATION_IN_EVERY_FIELD,
+  PLAIN_PUNCTUATION_RULE,
+} from '../../../src/agent/drafted-text-rules';
+import {
   REORIENTATION_COMPLETE_TOOL,
   REORIENTATION_TALK_PROMPT_CACHE_KEY,
   TALK_FINISH_NOTE,
@@ -87,6 +91,13 @@ describe('the talk’s system prompt', (): void => {
     expect(system).toContain('at most one question for each numbered item');
     expect(system).toContain('call reorientationComplete');
     expect(system).toContain('Nothing changes until the manager approves the card');
+  });
+
+  it('holds its turns and the words it puts on the card to the house copy rules (the walk’s W-2)', (): void => {
+    const system = talkSystemPrompt(INPUT, { kind: 'pending' });
+    expect(system).toContain(PLAIN_PUNCTUATION_RULE);
+    expect(system).toContain(PLAIN_PUNCTUATION_IN_EVERY_FIELD);
+    expect(system).not.toContain('—');
   });
 
   it('is cached under its own key', (): void => {

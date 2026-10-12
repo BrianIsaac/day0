@@ -205,6 +205,8 @@ async function loadRoute(
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_input: unknown, init?: RequestInit) => {
+      // As the platform's fetch does: a call whose signal has fired never reaches the provider.
+      init?.signal?.throwIfAborted();
       sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       const reply = replies[Math.min(call, replies.length - 1)];
       call += 1;
@@ -386,6 +388,25 @@ describe('the talk’s route: Put this on the card', (): void => {
       after: 'm0',
       outcome: { quotes: OUTCOME.quotes, reply: { change: 'edit-clause', candidate: 2 } },
     });
+  });
+
+  it('puts the talk on the card even when the room has gone before the answer (the walk’s W-1)', async (): Promise<void> => {
+    afterOpening();
+    const POST = await loadRoute([() => generated(true)]);
+    const left = new AbortController();
+    const request = new Request('http://127.0.0.1:3000/api/reorientation/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }),
+      signal: left.signal,
+    });
+    // The manager pressed Put this on the card, then Back to the card: the page's request is gone.
+    left.abort();
+    await POST(request);
+    expect(talk.calls.map((call) => call.name)).toEqual([
+      'reorientationTalk:takeTurn',
+      'reorientationTalk:finish',
+    ]);
   });
 
   it('says so when the employee put nothing on the card', async (): Promise<void> => {

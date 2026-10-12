@@ -1,4 +1,5 @@
 import type { Doc } from '../../convex/_generated/dataModel';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD, PLAIN_PUNCTUATION_RULE } from './drafted-text-rules';
 import {
   proposalPrompt,
   type ProposalCandidate,
@@ -54,6 +55,7 @@ const TALK_RULES = [
   '- Ask only about what the change reaches. Never invent a fact that the evidence and the manager did not give you.',
   '- When the items that matter have an answer, say in one or two sentences what you will put on the card and ask whether that is right.',
   "- Say no field names, ids, item numbers or internal labels: speak as the employee, in the manager's words.",
+  `- ${PLAIN_PUNCTUATION_RULE} Spell in British English.`,
   '',
   'When the manager agrees, or asks you to put it on the card, call reorientationComplete with the one change the answers support:',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',
@@ -64,6 +66,7 @@ const TALK_RULES = [
   '- `skill`: `action` is recheck, retire or withdraw.',
   '- `none`: nothing needs to change; `candidate`, `action` and `text` are null.',
   "`quotes` are the manager's own words, copied exactly; never your own. Prefer the smallest change the manager's answers support.",
+  PLAIN_PUNCTUATION_IN_EVERY_FIELD,
   'Nothing changes until the manager approves the card.',
 ].join('\n');
 

@@ -77,7 +77,11 @@ const reorientationComplete = tool({
  * the request's origin checked before the body is read.
  */
 export async function POST(req: Request): Promise<Response> {
-  const abortSignal = AbortSignal.any([req.signal, AbortSignal.timeout(maxDuration * 1000)]);
+  // The route's own deadline. A turn also stops with the page that asked for it; Put this on the
+  // card does not, since a manager who presses it and goes back to the card has asked for it whole
+  // (the walk's W-1: the outcome was never written when the page left first).
+  const deadline = AbortSignal.timeout(maxDuration * 1000);
+  const abortSignal = AbortSignal.any([req.signal, deadline]);
   const crossOrigin = crossOriginRefusal(req);
   if (crossOrigin) return crossOrigin;
   const caller = await establishConvexCaller();
@@ -140,6 +144,7 @@ export async function POST(req: Request): Promise<Response> {
     try {
       const answered = await generateText({
         ...settings,
+        abortSignal: deadline,
         model,
         // The one system message in the list is the route's own note, never the manager's words.
         messages: [...messages, { role: 'system', content: TALK_FINISH_NOTE }],
@@ -149,7 +154,9 @@ export async function POST(req: Request): Promise<Response> {
       });
       outcome = talkOutcomeOfCalls(answered.toolCalls);
     } catch (err: unknown) {
-      log.warn('reorientation talk: the outcome was not asked', { reason: errorMessage(err) });
+      log.warn('reorientation talk: the outcome was not asked', {
+        reason: errorMessage(err, err instanceof Error ? err.name : 'unknown error'),
+      });
       return Response.json(
         { error: `${taken.employeeName} could not be reached` },
         { status: 503 },
