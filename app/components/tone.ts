@@ -8,9 +8,12 @@ export const TONES = ['accent', 'warn', 'ok', 'danger', 'muted'] as const;
 /** One of the theme's hues, as a component names it. */
 export type Tone = (typeof TONES)[number];
 
-/** Text in the tone's hue on a 15 percent fill of it: a chip, a pill, a count. */
+/**
+ * Text in the tone's hue on a 15 percent fill of it: a chip, a pill, a count. The accent's fill is
+ * its own token, opaque in the light set, where the mix left its text short of AA.
+ */
 export const TONE_FILL: Readonly<Record<Tone, string>> = {
-  accent: 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]',
+  accent: 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]',
   warn: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
   ok: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]',
   danger: 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]',

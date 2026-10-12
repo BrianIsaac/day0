@@ -285,6 +285,11 @@ export const deploy = mutation({
       });
     }
     await ctx.scheduler.runAfter(0, internal.docSyncActions.mirrorForAgent, { agentId });
+    // The hosted office is seeded by the deploy itself (the TODO's item 5, 16-F), so a deployed
+    // employee has its office with no page open; the deploy form's seed request finds it seeded.
+    if (SURFACE_MODE === 'mock') {
+      await ctx.scheduler.runAfter(0, internal.mockSeed.seedMockEnvironment, { agentId });
+    }
     return agentId;
   },
 });

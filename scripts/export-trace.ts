@@ -21,13 +21,18 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
+  assembleOwnerExport,
   assembleTrace,
   type AgentTrace,
+  type OwnerExport,
+  type OwnerExportHead,
+  type OwnerPage,
   type TraceHead,
   type TracePage,
 } from '../src/export/trace';
 
-const USAGE = 'Usage: pnpm export:trace <agentId> --out <trace.json> [--identity <subject>]';
+const USAGE =
+  'Usage: pnpm export:trace <agentId> --out <trace.json> [--identity <subject>], or pnpm export:trace --owner --out <owner.json> [--identity <subject>]';
 
 /** One call of a deployed function: its name, its arguments, the caller's subject. */
 export type ConvexRun = (name: string, args: Record<string, unknown>, subject: string) => unknown;
@@ -77,15 +82,47 @@ export async function exportTrace(
   });
 }
 
+/**
+ * Export the caller's owner export (wave 16, 16-F): every employee's trace and the owner's own
+ * rows, assembled through the paged actions into the one file `metrics:recompute` reads.
+ *
+ * @param run - How a deployed function is called.
+ * @param subject - The caller's subject, the no-auth one a local bed runs as by default.
+ * @returns The whole file.
+ */
+export async function exportOwner(
+  run: ConvexRun,
+  subject: string = DEV_NO_AUTH_SUBJECT,
+): Promise<OwnerExport> {
+  return await assembleOwnerExport({
+    head: async () => (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
+    page: async (cursor) =>
+      (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
+    employee: {
+      head: async ({ agentId }) =>
+        (await run('exportActions:exportForAgent', { agentId }, subject)) as TraceHead,
+      page: async ({ agentId, page }) =>
+        (await run(
+          'exportActions:exportPage',
+          { agentId, section: page.section, cursor: page.cursor },
+          subject,
+        )) as TracePage,
+    },
+  });
+}
+
 function parseArguments(
   argv: readonly string[],
-): { agentId: string; out: string; subject: string } | undefined {
+): { agentId: string | 'owner'; out: string; subject: string } | undefined {
   let agentId: string | undefined;
   let out: string | undefined;
   let subject = DEV_NO_AUTH_SUBJECT;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === '--out' || argument === '--identity') {
+    if (argument === '--owner') {
+      if (agentId !== undefined) return undefined;
+      agentId = 'owner';
+    } else if (argument === '--out' || argument === '--identity') {
       const value = argv[index + 1];
       if (value === undefined || value.startsWith('--')) return undefined;
       if (argument === '--out') out = value;
@@ -118,6 +155,25 @@ export async function runExportTrace(
   if (!options) {
     io.error(USAGE);
     return 2;
+  }
+  if (options.agentId === 'owner') {
+    let file: OwnerExport;
+    try {
+      file = await exportOwner(run, options.subject);
+    } catch (error) {
+      io.error(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+      return 2;
+    }
+    writeFileSync(options.out, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
+    const { manifest } = file;
+    io.log(
+      `${options.out}: the owner export, exported ${manifest.exportedOn} (${manifest.zone}) at release ${manifest.release ?? 'unstamped'}, commit ${manifest.commit ?? 'unknown'}; ${Object.entries(
+        manifest.counts,
+      )
+        .map(([section, count]) => `${count} ${section}`)
+        .join(', ')}`,
+    );
+    return 0;
   }
   let trace: AgentTrace;
   try {

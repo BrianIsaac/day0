@@ -74,7 +74,7 @@ function TweetThread({
                 aria-hidden="true"
                 className={`flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${
                   r.isAgentDraft
-                    ? 'bg-[var(--color-warn)]/30 text-[var(--color-warn)]'
+                    ? 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]'
                     : 'bg-[var(--color-muted)]/30'
                 }`}
               >

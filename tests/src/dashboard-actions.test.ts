@@ -467,6 +467,7 @@ const completeMetrics: AgentMetrics = {
       ended: 0,
       medianToEndMs: null,
       completed: 0,
+      partlyDone: 0,
       medianToCompletionMs: null,
       p90ToCompletionMs: null,
     },
