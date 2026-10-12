@@ -13,6 +13,11 @@ import {
   QUILL_COMMENT,
   ROOK_COMMENT,
 } from '../../fixtures/work/work-done-corpora';
+import {
+  PIP_SAME_SET,
+  PIP_SAME_SET_DRAFT,
+  PIP_TICKET_SUMMARY,
+} from '../../fixtures/work/pip-same-set-report-2026-10-11';
 
 const recorded = vi.hoisted(() => ({
   calls: [] as Array<{ user: string }>,
@@ -492,5 +497,45 @@ describe('a real run held to its answer', (): void => {
       'I could not reconcile the three October closed-won deals',
     );
     expect(output.actions).toHaveLength(2);
+  });
+});
+
+describe("Pip's true comment on the v0.19.0 walk (RM22 (a), W19-2)", (): void => {
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  const pipReply = {
+    draft: PIP_SAME_SET_DRAFT,
+    notes: '',
+    needsDependentPhase: false,
+    workDone: 'done',
+    workDoneWhy: 'The reply is posted in the thread, and the ticket is commented and closed.',
+    actions: PIP_SAME_SET,
+    procedureTrails: [{ trailId: 'trail-1', actionIndex: 1, inapplicabilityReason: null }],
+  };
+
+  it('takes the set as written, with one call, and withholds neither the comment nor the DM', async (): Promise<void> => {
+    recorded.outputs.push(pipReply, pipReply);
+    const corrections: string[] = [];
+    const output = await runSkill({
+      skill,
+      plan,
+      candidate: { ...ticket, contentSummary: PIP_TICKET_SUMMARY },
+      charter,
+      mockEnv,
+      onAuditCorrection: (_removed, reason): void => {
+        corrections.push(reason);
+      },
+    });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions.map((action) => action.tool)).toEqual([
+      'slack.postMessage',
+      'ticket.update',
+      'slack.postMessage',
+    ]);
+    expect(output.withheldActions ?? []).toEqual([]);
+    expect(corrections).toEqual([]);
   });
 });
