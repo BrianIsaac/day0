@@ -19,6 +19,7 @@ import {
   type ReorientationStatus,
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
+import { conflictQuestionText, type NamedPageWords } from '../src/agent/reorientation-words';
 import {
   agreementActionsOf,
   type ClauseField,
@@ -610,6 +611,75 @@ export async function openCardsOnSurfaces(
     });
   }
 }
+
+/** A standing conflict as a question names it: its relation, its heading and its two pages. */
+export interface ConflictAsked {
+  readonly relationId: Id<'docRelations'>;
+  readonly heading: string;
+  readonly pages: readonly [NamedPageWords, NamedPageWords];
+}
+
+/** A conflict question's key: one question about one relation on one work item. */
+export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
+  return `conflict:${relationId}`;
+}
+
+/**
+ * Ask, beside a plan, which of two pages is right (RM20 (a); D-4 (c)): one non-blocking
+ * `retrieval` question about the relation, on the plan's own row, which its request and its card
+ * carry; asked once per row and relation. The steps that rely on the passage wait for the answer
+ * at the apply, and the rest run. Nothing is asked of an employee with no approved charter (a
+ * question names the charter it was asked under). Writes the question and
+ * `manager.question-asked`.
+ *
+ * @returns The question, or null when it was asked before or could not be.
+ */
+export async function askConflictQuestion(
+  ctx: MutationCtx,
+  ask: { readonly row: Doc<'workItems'>; readonly conflict: ConflictAsked; readonly now: number },
+): Promise<Id<'managerQuestions'> | null> {
+  const { row, conflict } = ask;
+  const asked = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_relation', (q) => q.eq('relationId', conflict.relationId))
+    .take(QUESTIONS_PER_RELATION_READ);
+  if (asked.some((question) => question.workItemId === row._id)) return null;
+  const [agent, charter] = await Promise.all([
+    ctx.db.get(row.agentId),
+    approvedCharter(ctx, row.agentId),
+  ]);
+  if (agent === null || charter === undefined) return null;
+  const question = conflictQuestionText(agent.name, conflict.heading, conflict.pages);
+  const questionId = await ctx.db.insert('managerQuestions', {
+    agentId: row.agentId,
+    key: conflictQuestionKey(conflict.relationId),
+    question,
+    context: { touchedBy: 'plan', text: conflict.heading, words: [] },
+    askedAt: ask.now,
+    workItemId: row._id,
+    charterId: charter._id,
+    blocking: false,
+    type: 'retrieval',
+    relationId: conflict.relationId,
+  });
+  await appendEvent(ctx, {
+    agentId: row.agentId,
+    type: 'manager.question-asked',
+    payload: {
+      questionId,
+      workItemId: row._id,
+      question,
+      type: 'retrieval',
+      blocking: false,
+      relationId: conflict.relationId,
+    },
+    createdAt: ask.now,
+  });
+  return questionId;
+}
+
+/** The questions about one relation one read takes: one a work item, few items a relation. */
+const QUESTIONS_PER_RELATION_READ = 500;
 
 /** The employee's charter as approved last, or undefined. */
 async function approvedCharter(

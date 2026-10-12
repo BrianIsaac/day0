@@ -1972,17 +1972,6 @@ export interface ManagerQuestionAskedPayload {
 }
 
 /**
- * The wave 16 event types and their payloads (16-K for 16-O and 16-D), declared by the schema
- * step and not yet in {@link EventPayloads}: a listed type no writer writes fails the contract's
- * test, and the record's three maps (`RECORD_FILTER_OF`, `record-words.ts`'s `WORDS`,
- * `event-labels.ts`'s `LABELS`) take an entry for every listed type. 16-O moves each into
- * `EventPayloads` and `EVENT_TYPES` in the commit that writes and renders it.
- */
-export interface ReorientationEventPayloads {
-  'manager.question-asked': ManagerQuestionAskedPayload;
-}
-
-/**
  * Every event type and its payload. The keys are the contract's types; the
  * tuple below lists the same keys at run time.
  */
@@ -2184,6 +2173,7 @@ export interface EventPayloads {
   'reorientation.approved': ReorientationApprovedPayload;
   'reorientation.dismissed': ReorientationDismissedPayload;
   'reorientation.deferred': ReorientationDeferredPayload;
+  'manager.question-asked': ManagerQuestionAskedPayload;
 }
 
 /** One event type of the contract. */
@@ -2198,11 +2188,6 @@ function everyKey<Of extends string>() {
     tuple: Tuple & ([Of] extends [Tuple[number]] ? unknown : never),
   ): Tuple => tuple;
 }
-
-/** The wave 16 event types not yet written (see {@link ReorientationEventPayloads}), at run time. */
-export const REORIENTATION_EVENT_TYPES = everyKey<keyof ReorientationEventPayloads>()([
-  'manager.question-asked',
-]);
 
 /** Every event type Day0 writes, at run time. */
 export const EVENT_TYPES = everyKey<EventType>()([
@@ -2403,6 +2388,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'reorientation.approved',
   'reorientation.dismissed',
   'reorientation.deferred',
+  'manager.question-asked',
 ]);
 
 const LISTED: ReadonlySet<string> = new Set(EVENT_TYPES);

@@ -1,5 +1,5 @@
 import type { PageStatus } from '../docs/authority';
-import type { CitedBlock, DocumentationSelectionRecord, PlanCite } from './types';
+import type { CiteConflict, CitedBlock, DocumentationSelectionRecord, PlanCite } from './types';
 
 /*
  * A plan's cites (wave 14, 14-R): the documentation each step follows, named by the planner
@@ -37,11 +37,19 @@ export function resolvedPlanCites(
   if (!stepCites || !documentation) return [];
   // One label printed twice (a heading repeated on a page) stands for every block under it. Two
   // sources never print one label: the selection tells same-labelled sources apart (W14-R27).
-  const printed = new Map<string, Omit<PlanCite, 'step' | 'blocks'> & { blocks: CitedBlock[] }>();
+  const printed = new Map<
+    string,
+    Omit<PlanCite, 'step' | 'blocks' | 'conflict'> & {
+      blocks: CitedBlock[];
+      conflict?: CiteConflict;
+    }
+  >();
   for (const citation of documentation.citations) {
     const held = printed.get(citation.label);
     if (held !== undefined) {
       held.blocks.push(...citation.blocks);
+      // A later passage under the same label that is disputed keeps its tag (W15-R18).
+      held.conflict ??= citation.conflict;
       continue;
     }
     printed.set(citation.label, {

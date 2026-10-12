@@ -77,3 +77,55 @@ export function isClosingHeld(failure: string): boolean {
 export function heldPlanWords(summary: string): string {
   return `Held until you decide the reorientation card: ${summary}.`;
 }
+
+/** A documentation page as a conflict's question names it: its title and its source's label. */
+export interface NamedPageWords {
+  readonly title: string;
+  readonly source: string;
+}
+
+/** The three answers a conflict's question takes, as the request and the card offer them. */
+export const CONFLICT_CHOICES = ['from', 'to', 'both'] as const;
+
+/** One answer to a conflict's question: the first page is right, the second, or both hold. */
+export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
+
+/**
+ * The question a standing conflict under a drafted plan asks, in the plan's own request (RM20 (a);
+ * section 7): "Two pages disagree under “{heading}”: {A} ({source}) and {B} ({source}). Which is
+ * right? {name} runs the other steps now and holds the ones that rely on this until you answer."
+ */
+export function conflictQuestionText(
+  name: string,
+  heading: string,
+  pages: readonly [NamedPageWords, NamedPageWords],
+): string {
+  const [a, b] = pages;
+  return `Two pages disagree under “${heading}”: ${a.title} (${a.source}) and ${b.title} (${b.source}). Which is right? ${name} runs the other steps now and holds the ones that rely on this until you answer.`;
+}
+
+/** An answer's words, as the card's buttons and the record say it. */
+export function conflictChoiceWords(
+  choice: ConflictChoice,
+  pages: readonly [NamedPageWords, NamedPageWords],
+): string {
+  if (choice === 'both') return 'Both hold';
+  return `${(choice === 'from' ? pages[0] : pages[1]).title} is right`;
+}
+
+/** How a Slack request asks for the answer: the decision's code and a letter. */
+export function conflictReplyLine(id: string): string {
+  return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
+}
+
+/**
+ * Why a run stopped on a conflict the manager confirmed after approving its plan (D-4 (b); section
+ * 7): "Stopped: since you approved this plan, you confirmed that {A} and {B} disagree under
+ * “{heading}”. Retry drafts the plan again."
+ */
+export function conflictConfirmedStopReason(
+  heading: string,
+  pages: readonly [NamedPageWords, NamedPageWords],
+): string {
+  return `Since you approved this plan, you confirmed that ${pages[0].title} and ${pages[1].title} disagree under “${heading}”. Retry drafts the plan again.`;
+}

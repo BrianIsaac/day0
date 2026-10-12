@@ -196,6 +196,31 @@ describe('resolvedPlanCites and a cite two pages disagree on (15-A)', (): void =
       ]);
     }
   });
+
+  it('keeps the tag of a label printed twice when only the later passage is disputed (W15-R18, the second input)', (): void => {
+    const twice = {
+      citations: [
+        {
+          label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+          blocks: [{ id: 'b0', hash: 'h0' }],
+        },
+        ...selection.citations,
+      ],
+    };
+    expect(
+      resolvedPlanCites([['Handbook/runbooks/pipeline-runbook.md#Thresholds']], 1, twice),
+    ).toEqual([
+      {
+        step: 1,
+        label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+        blocks: [
+          { id: 'b0', hash: 'h0' },
+          { id: 'b1', hash: 'h1' },
+        ],
+        conflict,
+      },
+    ]);
+  });
 });
 
 describe('isGoneCitesReason', (): void => {

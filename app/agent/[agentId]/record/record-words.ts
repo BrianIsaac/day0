@@ -1409,6 +1409,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
   'reorientation.deferred': (p, subject) =>
     `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
+  'manager.question-asked': (p, subject) =>
+    `${subject.name} asked ${addressee(subject)} beside the plan${forItem(subject)}${
+      text(p.question) ? `: ${text(p.question)}` : ''
+    }`,
   'reorientation.reopened': (p) =>
     `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
 };

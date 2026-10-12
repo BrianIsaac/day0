@@ -4,6 +4,7 @@ import {
   internalQuery,
   mutation,
   query,
+  type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
@@ -22,12 +23,14 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
+  citeConflictOf,
   confirmedConflicts,
   decisionsOffered,
   standingConflictOf,
   standingWithPages,
   type RelationDecision,
 } from './docConflicts';
+import { askConflictQuestion, openWorkCiting } from './reorientation';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -327,91 +330,141 @@ export const decide = mutation({
     const relation = await ctx.db.get(args.relationId);
     if (relation === null) throw new ConvexError('That relation is no longer stored.');
     if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
-    const [from, to, fromSource, toSource] = await Promise.all([
-      pageAt(ctx, relation.from),
-      pageAt(ctx, relation.to),
-      ctx.db.get(relation.from.sourceId),
-      ctx.db.get(relation.to.sourceId),
-    ]);
-    const equalTrust =
-      from === null ||
-      to === null ||
-      fromSource === null ||
-      toSource === null ||
-      authorityOf(from, fromSource) === authorityOf(to, toSource);
-    if (!decisionsOffered(relation, equalTrust).includes(args.decision)) {
-      throw new ConvexError(DECISION_NOT_OFFERED);
-    }
-    // A confirmed conflict takes its answers only while it stands (W15-R6): once one page was
-    // named right, a second answer from a card drawn before would supersede the other page too.
-    if (
-      relation.kind === 'possible_conflict' &&
-      relation.status === 'confirmed' &&
-      (await standingConflictOf(ctx, relation)) === undefined
-    ) {
-      throw new ConvexError(DECISION_NOT_OFFERED);
-    }
-    // The page an answer makes stand in for the other must be current itself.
-    const successor =
-      args.decision === 'supersedes' || args.decision === 'from-is-right'
-        ? from
-        : args.decision === 'to-is-right'
-          ? to
-          : null;
-    if (successor !== null && pageStatusOf(successor) !== 'active') {
-      throw new ConvexError(SUCCESSOR_NOT_CURRENT);
-    }
-    const now = Date.now();
-    const decidedBy = verifiedAddressOf(caller);
-    await ctx.db.patch(
-      relation._id,
-      args.decision === 'undo'
-        ? { ...decided(args.decision), decidedBy: undefined, decidedAt: undefined }
-        : {
-            ...decided(args.decision),
-            ...(decidedBy !== undefined ? { decidedBy } : {}),
-            decidedAt: now,
-          },
+    return await decideRelationInTransaction(
+      ctx,
+      relation,
+      args.decision,
+      verifiedAddressOf(caller),
     );
-    if (from === null || to === null || fromSource === null || toSource === null) return null;
-    // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
-    if (
-      args.decision === 'supersedes' ||
-      (args.decision === 'undo' && relation.kind === 'possible_successor')
-    ) {
-      const change = await restatePage(ctx, { source: toSource, page: to, now });
-      await stampStatusChanges(ctx, toSource, [change], now);
-    } else if (args.decision === 'from-is-right' || args.decision === 'to-is-right') {
-      const [right, wrong, wrongSource] =
-        args.decision === 'from-is-right' ? [from, to, toSource] : [to, from, fromSource];
-      await decideByHand(ctx, {
-        source: wrongSource,
-        page: wrong,
-        status: 'superseded',
-        supersededBy: { sourceId: right.sourceId, ref: right.ref },
-        decidedBy,
+  },
+});
+
+/**
+ * Answer a relation in the caller's transaction ({@link decide}; a conflict's question answered
+ * beside a plan, on the card or in the plan's Slack request, 16-O): what `decide` writes and sets
+ * off, with the manager's verified address when there is one.
+ *
+ * @throws ConvexError as {@link decide} refuses.
+ */
+export async function decideRelationInTransaction(
+  ctx: MutationCtx,
+  relation: Doc<'docRelations'>,
+  decision: RelationDecision,
+  decidedBy: string | undefined,
+): Promise<SupersedeOutcome | null> {
+  const [from, to, fromSource, toSource] = await Promise.all([
+    pageAt(ctx, relation.from),
+    pageAt(ctx, relation.to),
+    ctx.db.get(relation.from.sourceId),
+    ctx.db.get(relation.to.sourceId),
+  ]);
+  const equalTrust =
+    from === null ||
+    to === null ||
+    fromSource === null ||
+    toSource === null ||
+    authorityOf(from, fromSource) === authorityOf(to, toSource);
+  if (!decisionsOffered(relation, equalTrust).includes(decision)) {
+    throw new ConvexError(DECISION_NOT_OFFERED);
+  }
+  // A confirmed conflict takes its answers only while it stands (W15-R6): once one page was
+  // named right, a second answer from a card drawn before would supersede the other page too.
+  if (
+    relation.kind === 'possible_conflict' &&
+    relation.status === 'confirmed' &&
+    (await standingConflictOf(ctx, relation)) === undefined
+  ) {
+    throw new ConvexError(DECISION_NOT_OFFERED);
+  }
+  // The page an answer makes stand in for the other must be current itself.
+  const successor =
+    decision === 'supersedes' || decision === 'from-is-right'
+      ? from
+      : decision === 'to-is-right'
+        ? to
+        : null;
+  if (successor !== null && pageStatusOf(successor) !== 'active') {
+    throw new ConvexError(SUCCESSOR_NOT_CURRENT);
+  }
+  const now = Date.now();
+  await ctx.db.patch(
+    relation._id,
+    decision === 'undo'
+      ? { ...decided(decision), decidedBy: undefined, decidedAt: undefined }
+      : {
+          ...decided(decision),
+          ...(decidedBy !== undefined ? { decidedBy } : {}),
+          decidedAt: now,
+        },
+  );
+  if (from === null || to === null || fromSource === null || toSource === null) return null;
+  // A successor confirmed, or one whose confirmation is taken back: the older page is restated.
+  if (
+    decision === 'supersedes' ||
+    (decision === 'undo' && relation.kind === 'possible_successor')
+  ) {
+    const change = await restatePage(ctx, { source: toSource, page: to, now });
+    await stampStatusChanges(ctx, toSource, [change], now);
+  } else if (decision === 'from-is-right' || decision === 'to-is-right') {
+    const [right, wrong, wrongSource] =
+      decision === 'from-is-right' ? [from, to, toSource] : [to, from, fromSource];
+    await decideByHand(ctx, {
+      source: wrongSource,
+      page: wrong,
+      status: 'superseded',
+      supersededBy: { sourceId: right.sourceId, ref: right.ref },
+      decidedBy,
+      now,
+    });
+  }
+  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
+    await appendEvent(ctx, {
+      agentId: agent._id,
+      type: 'documentation.relation-decided',
+      payload: {
+        relationId: relation._id,
+        kind: decided(decision).kind ?? relation.kind,
+        decision: decision,
+        from: named(from, fromSource),
+        to: named(to, toSource),
+      },
+      createdAt: now,
+    });
+  }
+  // A conflict confirmed asks which page is right beside every drafted plan citing either page
+  // (section 3's conflict row: a question, never a card; D-4 (c)).
+  if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (decision !== 'supersedes') return null;
+  const older = (await ctx.db.get(to._id)) ?? to;
+  return { older: pageStatusOf(older), by: statusSourceOf(older) };
+}
+
+/** Ask a confirmed conflict's question beside each reader's drafted plan that cites either page. */
+async function askAtConfirmation(
+  ctx: MutationCtx,
+  relation: Doc<'docRelations'>,
+  now: number,
+): Promise<void> {
+  const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
+  if (standing === undefined) return;
+  const conflict = citeConflictOf(standing);
+  const [fromSource, toSource] = await Promise.all([
+    ctx.db.get(relation.from.sourceId),
+    ctx.db.get(relation.to.sourceId),
+  ]);
+  if (fromSource === null || toSource === null) return;
+  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
+    for (const workItemId of await openWorkCiting(ctx, agent._id, [relation.from, relation.to])) {
+      const row = await ctx.db.get(workItemId);
+      if (row?.state !== 'plan-pending') continue;
+      await askConflictQuestion(ctx, {
+        row,
+        conflict: { relationId: relation._id, heading: conflict.heading, pages: conflict.pages },
         now,
       });
     }
-    for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-      await appendEvent(ctx, {
-        agentId: agent._id,
-        type: 'documentation.relation-decided',
-        payload: {
-          relationId: relation._id,
-          kind: decided(args.decision).kind ?? relation.kind,
-          decision: args.decision,
-          from: named(from, fromSource),
-          to: named(to, toSource),
-        },
-        createdAt: now,
-      });
-    }
-    if (args.decision !== 'supersedes') return null;
-    const older = (await ctx.db.get(to._id)) ?? to;
-    return { older: pageStatusOf(older), by: statusSourceOf(older) };
-  },
-});
+  }
+}
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
 type CardPage = NamedPage & {
