@@ -326,6 +326,12 @@ export const answerConflict = mutation({
   },
 });
 
+/**
+ * The questions one item's reads take (standard 10.4): an item asks one question per open charter
+ * question its plan touched and one per conflict under it, a handful in practice.
+ */
+const ITEM_QUESTIONS_READ = 100;
+
 /** The questions one item's plan raised and nobody has answered, oldest first. */
 export async function openConflictQuestions(
   ctx: Pick<QueryCtx, 'db'>,
@@ -335,7 +341,7 @@ export async function openConflictQuestions(
     await ctx.db
       .query('managerQuestions')
       .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-      .collect()
+      .take(ITEM_QUESTIONS_READ)
   ).filter(
     (question) =>
       question.type === 'retrieval' &&
@@ -400,7 +406,7 @@ export const conflictConfirmedSince = internalQuery({
         await ctx.db
           .query('managerQuestions')
           .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-          .collect()
+          .take(ITEM_QUESTIONS_READ)
       ).flatMap((question) => (question.relationId === undefined ? [] : [question.relationId])),
     );
     for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent.userId)) {
