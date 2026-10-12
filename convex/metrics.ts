@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
 import {
@@ -18,11 +18,13 @@ import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
 import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
+import { addDays, agentZone, dayStart } from '../src/lib/zone';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
   isWholeHistory,
   isWithinTenure,
   tenureWindowsOf,
+  WHOLE_HISTORY,
   type AcceptedHandover,
   type TenureWindow,
 } from '../src/metrics/tenure';
@@ -1329,22 +1331,81 @@ export function figuresForCurrentManager(
 }
 
 /**
+ * One employee's records of one day in its zone (N12): the events logged from that day's
+ * midnight to the next, and its work rows as they read before it, their ledgers read only from
+ * the day's events and a decision kept only when it was made that day, as a closed span is read
+ * ({@link recordsWithinTenure}).
+ *
+ * @param records - The employee's records, already cut to the reader's spans.
+ * @param day - The day, `YYYY-MM-DD`.
+ * @param zone - The employee's zone.
+ */
+export function recordsOfDay(records: EmployeeRecords, day: string, zone: string): EmployeeRecords {
+  const from = dayStart(day, zone);
+  const until = dayStart(addDays(day, 1), zone);
+  const within = (at: number): boolean => at >= from && at < until;
+  return {
+    ...records,
+    events: records.events.filter((event) => within(event.createdAt)),
+    workItems: records.workItems.map(
+      (item): Doc<'workItems'> => ({
+        ...item,
+        output: undefined,
+        manualEstimateMinutes: undefined,
+        decision:
+          item.decision?.decidedAt !== undefined && within(item.decision.decidedAt)
+            ? item.decision
+            : undefined,
+      }),
+    ),
+    charters: [],
+  };
+}
+
+/** A day as the page names it, `YYYY-MM-DD`, that is a day of the calendar. */
+function isDayKey(day: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && addDays(day, 0) === day;
+}
+
+/**
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
- * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}).
- * Writes nothing.
+ * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
+ * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
+ * employee's zone beside them, under `today`. Writes nothing.
  */
 export const forAgent = query({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), day: v.optional(v.string()) },
   handler: async (ctx, args): Promise<AgentMetrics> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    // The guard first: a caller it refuses learns nothing of the arguments (12-G).
+    const { day } = args;
+    if (day !== undefined && !isDayKey(day)) {
+      throw new ConvexError(`${day} is not a day; name it as YYYY-MM-DD`);
+    }
     const [records, transfers] = await Promise.all([
       readEmployeeRecords(ctx, agent),
       acceptedTransfersOf(ctx, agent._id),
     ]);
     // The guard has proved the caller owns the employee, so the row's owner is the reader.
-    return figuresForCurrentManager(records, handoversFromTransfers(transfers), agent.userId);
+    const handovers = handoversFromTransfers(transfers);
+    const figures = figuresForCurrentManager(records, handovers, agent.userId);
+    if (day === undefined) return figures;
+    // The day's decisions are the reader's as the whole record's are: within the spans it held
+    // the employee, or the whole record where the rows name no span of its own.
+    const held =
+      agent.userId === undefined ? [] : tenureWindowsOf(agent.userId, agent.userId, handovers);
+    const windows = held.length > 0 ? held : [WHOLE_HISTORY];
+    const ofDay = computeAgentMetrics(
+      ...recordsArgs(recordsOfDay(recordsWithinTenure(records, windows), day, agentZone(agent))),
+    );
+    return { ...figures, today: { day, decisions: ofDay.decisions, actions: ofDay.actions } };
   },
 });
+
+/** One employee's records as `computeAgentMetrics` takes them. */
+function recordsArgs(records: EmployeeRecords): Parameters<typeof computeAgentMetrics> {
+  return [records.events, records.workItems, records.charters, records.surfaces ?? []];
+}
 
 /**
  * One employee's records within the spans one owner held it (D12 (a)).

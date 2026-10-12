@@ -189,6 +189,8 @@ export const rosterRowValidator = v.object({
   stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
+  /** Today, `YYYY-MM-DD`, in the employee's zone (N12, 16-F): the day the home's month card marks. */
+  today: v.string(),
   landedThisMonth: landedThisMonthValidator,
   /** Where the employee's decisions reach the manager (12-M; H D6): a DM, buttons or not, or here. */
   decisionsReach: v.union(
@@ -426,6 +428,7 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         // A drafted charter is the one thing the manager must approve before any work.
         needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
         docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
+        today: dayKey(now, agentZone(agent)),
         landedThisMonth: landed,
         decisionsReach: decisionsReachOf(
           channel,

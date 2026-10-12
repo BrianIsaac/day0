@@ -56,6 +56,19 @@ export interface AgentMetrics {
   auditTrail: { complete: number; total: number; fraction: number | null };
   /** A9's five pilot figures. */
   pilot: PilotFigures;
+  /**
+   * The decisions and actions of one day in the employee's zone, its "Today" (16-F): present when
+   * the page asked for its day (`metrics.forAgent` with `day`), absent otherwise.
+   */
+  today?: TodayFigures;
+}
+
+/** One day's decisions and actions in the employee's zone, for the page's "Today". */
+export interface TodayFigures {
+  /** The day, `YYYY-MM-DD`, in the employee's zone. */
+  day: string;
+  decisions: AgentMetrics['decisions'];
+  actions: AgentMetrics['actions'];
 }
 
 /**

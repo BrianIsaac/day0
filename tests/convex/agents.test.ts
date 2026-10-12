@@ -958,6 +958,9 @@ type Harness = TestConvex<typeof schema>;
 /** An employee's month with nothing landed yet, as the roster returns it. */
 const NOTHING_LANDED = { month: expect.stringMatching(/^\d{4}-\d{2}$/), days: [], atLeast: false };
 
+/** The employee's today on a roster row read at the clock's own time (16-F; pinned by zone below). */
+const A_DAY = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
+
 /**
  * Deploy one employee through the public mutation, as the landing page does.
  *
@@ -1273,6 +1276,8 @@ describe('the employee roster', (): void => {
         // The drafted charter waits on the manager's approval.
         needsYou: 1,
         docSourceCount: 1,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         // No chat surface: decisions reach the manager in this dashboard alone (12-M; H D6).
         decisionsReach: { kind: 'dashboard' },
@@ -1292,6 +1297,8 @@ describe('the employee roster', (): void => {
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -1313,6 +1320,8 @@ describe('the employee roster', (): void => {
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -1335,6 +1344,8 @@ describe('the employee roster', (): void => {
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 1,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -2114,6 +2125,24 @@ describe('the employee roster', (): void => {
       month: '2026-10',
       days: [{ day: '2026-10-11', landed: 1, partly: 2 }],
       atLeast: false,
+    });
+  });
+
+  it('says each employee’s today in its own zone (16-F)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 18:00 UTC on 30 September is 1 October 02:00 in Singapore.
+    vi.setSystemTime(new Date('2026-09-30T18:00:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    await harness.run(async (ctx) => await ctx.db.patch(mira, { zone: 'Asia/Singapore' }));
+    const tomas = await deployEmployee(harness, 'owner', 'Tomas');
+    await harness.run(async (ctx) => await ctx.db.patch(tomas, { zone: 'Europe/London' }));
+
+    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(Object.fromEntries(rows.map((row) => [row.name, row.today]))).toEqual({
+      Mira: '2026-10-01',
+      Tomas: '2026-09-30',
     });
   });
 });

@@ -2516,3 +2516,69 @@ describe('the cycle time counts done answers, partly done named beside (RM23 (a)
     expect(lark.pilot.cycleTime.medianToCompletionMs).toBe(180_000);
   });
 });
+
+describe('today in the employee’s zone (16-F)', (): void => {
+  /** An employee in Singapore with two plan decisions either side of its midnight, 16:00 UTC. */
+  async function singaporeEmployee() {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'Asia/Singapore',
+        createdAt: 1,
+      });
+      const at = (iso: string): number => Date.parse(iso);
+      const decide = async (
+        workItemId: string,
+        asked: string,
+        decided: string,
+        type: 'work.plan-approved' | 'work.cancelled',
+      ): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.decision-requesting',
+          payload: { workItemId, kind: 'plan', decisionId: `d-${workItemId}` },
+          createdAt: at(asked),
+        });
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, decidedVia: 'dashboard' },
+          createdAt: at(decided),
+        });
+      };
+      // 23:40 on 11 October in Singapore: yesterday there.
+      await decide('w1', '2026-10-11T15:30:00Z', '2026-10-11T15:40:00Z', 'work.plan-approved');
+      // 00:20 and 10:00 on 12 October in Singapore, though still 11 October in UTC for the first.
+      await decide('w2', '2026-10-11T16:10:00Z', '2026-10-11T16:20:00Z', 'work.plan-approved');
+      await decide('w3', '2026-10-12T01:00:00Z', '2026-10-12T02:00:00Z', 'work.cancelled');
+      return id;
+    });
+    return { harness, agentId };
+  }
+
+  it('counts the decisions made on the employee’s day, from its own midnight', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-12' });
+
+    expect(metrics.today?.day).toBe('2026-10-12');
+    expect(metrics.today?.decisions).toMatchObject({ approved: 1, rejected: 1 });
+    expect(metrics.decisions).toMatchObject({ approved: 2, rejected: 1 });
+  });
+
+  it('answers no day’s figures when none is asked, and refuses a day that is not one', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.metrics.forAgent, { agentId })).not.toHaveProperty('today');
+    await expect(owner.query(api.metrics.forAgent, { agentId, day: '12 October' })).rejects.toThrow(
+      'not a day',
+    );
+  });
+});

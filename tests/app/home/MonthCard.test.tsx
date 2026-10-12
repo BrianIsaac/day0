@@ -104,3 +104,49 @@ describe('MonthCard', (): void => {
     ).not.toContain('<dl');
   });
 });
+
+describe('the month card’s today is the employees’ day (16-F)', (): void => {
+  it('marks the employees’ today, not the viewer’s, when their zone is already in the next month', (): void => {
+    // 30 September 18:00 UTC is 1 October 02:00 in Singapore.
+    const late = Date.UTC(2026, 8, 30, 18, 0);
+    const html = renderToStaticMarkup(
+      <MonthCard
+        roster={[
+          {
+            today: '2026-10-01',
+            landedThisMonth: {
+              month: '2026-10',
+              days: [{ day: '2026-10-01', landed: 2 }],
+              atLeast: false,
+            },
+          } as unknown as RosterRow,
+        ]}
+        figures={null}
+        waiting={1}
+        now={late}
+      />,
+    );
+    expect(html).toContain('October, supervised from here');
+    expect(dayText(html, 1)).toBe('1 2 landed 1 waiting 2 1');
+    expect(html).toMatch(/<li aria-current="date"[^>]*><span class="block font-semibold">1</);
+  });
+
+  it('takes the day most employees are in when their zones disagree', (): void => {
+    const html = renderToStaticMarkup(
+      <MonthCard
+        roster={['2026-10-01', '2026-09-30', '2026-09-30'].map(
+          (today) =>
+            ({
+              today,
+              landedThisMonth: { month: today.slice(0, 7), days: [], atLeast: false },
+            }) as unknown as RosterRow,
+        )}
+        figures={null}
+        waiting={0}
+        now={Date.UTC(2026, 8, 30, 18, 0)}
+      />,
+    );
+    expect(html).toContain('September, supervised from here');
+    expect(html).toMatch(/<li aria-current="date"[^>]*><span class="block font-semibold">30</);
+  });
+});
