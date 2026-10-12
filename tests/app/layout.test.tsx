@@ -147,6 +147,17 @@ describe('the header', (): void => {
     expect(html.indexOf('<script>')).toBeLessThan(html.indexOf('<header'));
   });
 
+  it('applies the stored theme in the head before anything is painted, before the session hint (16-T)', async (): Promise<void> => {
+    const { THEME_HINT_SCRIPT } = await import('../../app/theme-preference');
+    const { SESSION_HINT_SCRIPT } = await import('../../app/session-hint');
+    const html = await renderLayout();
+    const head = /<head>([\s\S]*?)<\/head>/.exec(html)?.[1] ?? '';
+    // Inline and parser-blocking, as the session hint is: the first script the document runs, so
+    // the light set is on <html> before the body exists and no frame is ever drawn dark first.
+    expect(head.indexOf(`<script>${THEME_HINT_SCRIPT}</script>`)).toBe(head.indexOf('<script'));
+    expect(head.indexOf(THEME_HINT_SCRIPT)).toBeLessThan(head.indexOf(SESSION_HINT_SCRIPT));
+  });
+
   it('holds every page in its one main landmark, after the header', async (): Promise<void> => {
     const html = await renderLayout();
     expect(html.match(/<main[\s>]/g)).toHaveLength(1);
@@ -171,11 +182,16 @@ describe('the header', (): void => {
     expect(html).toMatch(/<main id="main" tabindex="-1"[^>]*><p>Page<\/p><\/main>/);
   });
 
-  it('colours the browser chrome with the page', async (): Promise<void> => {
+  // Re-pinned per theme (16-T): the layout renders the default theme's colour, and the head's
+  // script retargets it to the light set's page colour when the page is drawn light.
+  it('colours the browser chrome with the page, in the default theme and in light', async (): Promise<void> => {
     const { viewport } = await import('../../app/layout');
+    const { THEME_COLOURS } = await import('../../app/theme-preference');
     expect(viewport.themeColor).toBe('#0a0a0b');
+    expect(THEME_COLOURS).toEqual({ dark: '#0a0a0b', light: '#fafafa' });
     const css = readFileSync(new URL('../../app/globals.css', import.meta.url), 'utf8');
     expect(css).toContain('--color-bg: #0a0a0b;');
+    expect(css).toMatch(/:root\[data-theme='light'\] \{[^}]*--color-bg: #fafafa;/);
   });
 
   it('describes the site as the landing does, in the manager’s words', async (): Promise<void> => {
