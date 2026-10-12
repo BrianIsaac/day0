@@ -3,6 +3,7 @@ import type { ManagerFeedback } from './manager-feedback';
 import { MANAGER_REJECTION_PREFIX } from './needs-manager';
 import { replyTargetFor } from './reply-target';
 import type { TicketSnapshot } from './ticket-ownership';
+import { skipClause } from './skip-reasons';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from './types';
 
 /**
@@ -103,12 +104,11 @@ export function withSlackMentionsNamed(
  * @param reason - The skip verdict's reason.
  */
 export function skipSentence(reason: string): string {
-  if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) {
-    return sentence(reason.slice(OUT_OF_SCOPE_SKIP_PREFIX.length));
-  }
   if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) {
     return `Judged not worth doing as it stands: ${sentence(reason.slice(QUALITY_FIT_SKIP_PREFIX.length))}`;
   }
+  // The lexical rule's sentence of an earlier release reads in today's words (W19-7).
+  if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) return sentence(skipClause(reason));
   return sentence(reason);
 }
 

@@ -4,6 +4,7 @@ import { agentJson, makeAgent } from '../lib/mastra';
 import { answeredQuestionLines } from './charter-answers';
 import { qualityFit } from './quality-fit';
 import { comparableSurfaceText } from './skill-shape';
+import { NO_OVERLAP_REASON } from './skip-reasons';
 import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
@@ -47,8 +48,7 @@ import { escapeRegExp } from '../lib/regex';
  * real-mode item the model was asked about.
  */
 
-/** The reason the lexical rule writes when nothing ties the item to the charter. */
-export const NO_OVERLAP_REASON = `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap`;
+export { NO_OVERLAP_REASON } from './skip-reasons';
 
 /**
  * What placed a candidate in scope, why it is not, or that no judgement was

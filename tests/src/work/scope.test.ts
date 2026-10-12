@@ -289,7 +289,9 @@ describe('one scope judgement for the R6 card', (): void => {
     ).resolves.toEqual({
       admitted: false,
       basis: 'no-overlap',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
+      // Re-taken for RM21 (c), 12 October 2026: the same rule's reason in plain words.
+      reason:
+        'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
     });
     expect(model.calls).toEqual([]);
   });
