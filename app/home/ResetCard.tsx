@@ -185,7 +185,8 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
 
 /**
  * The deletion of the manager's data: every employee and what it made, the skill library, the
- * notes on their handover requests, and optionally the documentation. Live whenever the account
+ * notes on their handover requests, and optionally the documentation (a choice the hosted office,
+ * which links none, does not draw: RM26 (a)). Live whenever the account
  * holds anything the deletion would take, an employee or not (the v0.13.0 walk), and disabled
  * while it holds nothing or the page has not read it yet; the line under the words says which.
  * A danger card, as Retire's is. Pressing it opens the shared confirmation dialog, Keep my data
@@ -193,7 +194,10 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
  * button, or to the card once nothing is left for the button to take.
  */
 export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
-  const holdings = useQuery(api.reset.holdings);
+  const stored = useQuery(api.reset.holdings);
+  // The hosted office draws no unlink choice, so nothing the card says points at one (RM26 (a)).
+  const holdings =
+    stored && mode === 'mock' ? { ...stored, documentation: false, credentials: false } : stored;
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
   // What was stored when the dialog opened: its warning stays the one the manager is answering,
@@ -221,14 +225,17 @@ export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
               ? heldNow(holdings, alsoUnlinkDocumentation)
               : 'Checking what is stored for you…'}
           </p>
-          <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
-            <input
-              type="checkbox"
-              checked={alsoUnlinkDocumentation}
-              onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
-            />
-            {unlinkLabel(holdings)}
-          </label>
+          {/* The hosted office links no documentation and stores no credential (RM26 (a)). */}
+          {mode === 'mock' ? null : (
+            <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
+              <input
+                type="checkbox"
+                checked={alsoUnlinkDocumentation}
+                onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
+              />
+              {unlinkLabel(holdings)}
+            </label>
+          )}
         </div>
         <Button
           ref={opener}
