@@ -811,12 +811,14 @@ function reportsAhead(action: MockAction, index: number, actions: readonly MockA
 }
 
 /**
- * Where a message's declared `reports` and its words disagree (the tripwire over D-5 (b)): a
- * sentence whose words report an earlier write the declaration leaves out, a declared place
- * that is not a write before the message, a sentence that names more messages by their kind than
- * the declaration holds of that kind (W15-R2), or a report of a write that comes after the
- * message (W15-R1). An empty `reports` is still bound by the words that name a write; a reply
- * recorded before the field has none and is read by its words alone, as it was.
+ * Where a message's declared `reports` and its words disagree in a way the binding cannot settle
+ * (the tripwire over D-5 (b)): a declared place that is not a write before the message, a sentence
+ * that names more messages by their kind than the declaration holds of that kind (W15-R2), or a
+ * report of a write that comes after the message (W15-R1). A sentence whose words name the earlier
+ * writes it reports binds the message to them whatever the declaration says, so the message waits
+ * for them and is sent after they land: it is no disagreement (RM22 (a), 12 October 2026, from
+ * Pip's true comment withheld on the v0.19.0 walk). A message whose `reports` was never declared
+ * is read the same way, as a reply recorded before the field always was.
  *
  * Args:
  *   action: The message as the executor emitted it.
@@ -834,7 +836,7 @@ function reportsDisagreements(
   if (action.reports === undefined) return [];
   const earlier = actions.slice(0, index);
   const ahead = reportsAhead(action, index, actions);
-  if (action.reports === null) return [...undeclaredReports(action, index, earlier), ...ahead];
+  if (action.reports === null) return ahead;
   const declared = action.reports;
   const named = new Set(declaredReports(action, earlier));
   const issues: string[] = [];
@@ -849,15 +851,9 @@ function reportsDisagreements(
     for (const sentence of sentencesOf(text)) {
       if (negatesReport(sentence)) continue;
       const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
-      const said = reportedWriteIndexes(clause, earlier, false);
-      if (said.length > 0) {
-        // The words name their writes: an empty declaration is bound by them, as before the field.
-        if (declared.length === 0 || said.every((at) => named.has(at))) continue;
-        issues.push(
-          `action ${index} (${describeAction(action)}) reports a write its \`reports\` does not name: it says "${sentence}" and \`reports\` names ${declaredList}, while its words report [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
-        );
-        continue;
-      }
+      // The words name their writes, which bind the message beside its declaration
+      // (`boundEarlierWrites`): it is held with them and sent after them.
+      if (reportedWriteIndexes(clause, earlier, false).length > 0) continue;
       // The words name only a kind of message ("both notes"), which binds nothing beside a
       // declaration: the declaration must then hold as many of that kind as the sentence says.
       const ofKind = reportedWriteIndexes(clause, earlier);
@@ -869,28 +865,6 @@ function reportsDisagreements(
     }
   }
   return [...issues, ...ahead];
-}
-
-/**
- * The tripwire on a message whose `reports` is null while its words report earlier writes of its
- * set (W14-R8): the words alone would bind it, the kind guess included, so the repair asks for the
- * field. A reply recorded before the field has none and is read by its words, as it was.
- */
-function undeclaredReports(
-  action: MockAction,
-  index: number,
-  earlier: readonly MockAction[],
-): string[] {
-  return messageTexts(action).flatMap((text) =>
-    sentencesOf(text).flatMap((sentence): string[] => {
-      if (negatesReport(sentence)) return [];
-      const said = reportedWriteIndexes(sentence.replace(CONDITIONAL_CLAUSE, ' '), earlier);
-      if (said.length === 0) return [];
-      return [
-        `action ${index} (${describeAction(action)}) reports earlier writes of this set in its words and declares no \`reports\`: it says "${sentence}", which reports [${said.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or [] when it reports none`,
-      ];
-    }),
-  );
 }
 
 /**

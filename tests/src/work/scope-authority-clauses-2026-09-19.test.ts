@@ -138,13 +138,14 @@ describe('clauses about who approves are not scope exclusions (finding L, FIN-1)
   it('shows the model the authority clauses apart from the exclusions, as met by supervision', (): void => {
     const prompt = charterJudgementPrompt({ candidate: fin1, charter: mateoCharter, agentsMd: '' });
 
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the card's labels, not the field keys.
     expect(prompt).toContain(
-      "willNotDo: Change the accounting team's step tickets in Linear. | Access or work in NetLedger directly.",
+      "Will not do: Change the accounting team's step tickets in Linear. | Access or work in NetLedger directly.",
     );
     expect(prompt).toContain(
       "authority (met by supervision: every plan is held for the manager; never a reason a request is outside the role): Send anything out without the manager's approval. | Post the status note without asking until the manager decides otherwise.",
     );
-    expect(prompt).not.toMatch(/^willNotDo: .*without asking/m);
+    expect(prompt).not.toMatch(/^Will not do: .*without asking/m);
   });
 
   it('leaves the prompt of a charter without such clauses as it was', (): void => {
@@ -157,8 +158,9 @@ describe('clauses about who approves are not scope exclusions (finding L, FIN-1)
     };
     const prompt = charterJudgementPrompt({ candidate: revops27, charter, agentsMd: '' });
 
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the card's labels, not the field keys.
     expect(prompt).toContain(
-      'willNotDo: Access or work in Northstar CRM until there is an approved way in.\n',
+      'Will not do: Access or work in Northstar CRM until there is an approved way in.\n',
     );
     expect(prompt).not.toContain('authority (');
   });
@@ -191,7 +193,9 @@ describe('a row already judged in scope is not judged again', (): void => {
 
     expect(verdict).toEqual({
       decision: 'skip',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
+      // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+      reason:
+        'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
     });
   });
 

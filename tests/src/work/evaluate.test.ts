@@ -418,7 +418,9 @@ describe('work surface enablement', (): void => {
         evaluateCandidate(auditNote(), context('real', [surface('linear', 'absent')]), lookups()),
       ).resolves.toEqual({
         decision: 'skip',
-        reason: 'out-of-scope: no charter or current documented-system overlap',
+        // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+        reason:
+          'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
       });
     });
 
@@ -440,7 +442,9 @@ describe('work surface enablement', (): void => {
         evaluateCandidate(auditNote(), context('real', [unnamed]), lookups()),
       ).resolves.toEqual({
         decision: 'skip',
-        reason: 'out-of-scope: no charter or current documented-system overlap',
+        // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+        reason:
+          'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
       });
       await expect(
         evaluateCandidate(
@@ -464,7 +468,9 @@ describe('work surface enablement', (): void => {
         ),
       ).resolves.toEqual({
         decision: 'skip',
-        reason: 'out-of-scope: no charter or current documented-system overlap',
+        // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+        reason:
+          'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
       });
       await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toMatchObject({
         decision: 'skip',
@@ -477,7 +483,9 @@ describe('work surface enablement', (): void => {
     work.title = 'Book the offsite venue';
     await expect(evaluateCandidate(work, context('mock', []), lookups())).resolves.toEqual({
       decision: 'skip',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
+      // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+      reason:
+        'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
     });
     await expect(
       evaluateCandidate(work, { ...context('mock', []), scopeWaived: true }, lookups()),
@@ -521,7 +529,9 @@ describe('work surface enablement', (): void => {
       evaluateCandidate(work, context('real', [unnamedLinear, retired]), lookups()),
     ).resolves.toEqual({
       decision: 'skip',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
+      // Re-taken for RM21 (c), 12 October 2026: the lexical rule's reason in plain words.
+      reason:
+        'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
     });
     // From a connected, currently named Linear the same item is in scope by
     // provenance and stops at the Northstar connection gate instead.

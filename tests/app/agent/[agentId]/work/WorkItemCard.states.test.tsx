@@ -1070,3 +1070,75 @@ describe('a close Day0 held, after an approval in Slack sent the rest (12-H, R-1
     );
   });
 });
+
+describe('the approval line once the approved writes have applied (W19-8)', (): void => {
+  it('stops saying "they apply now" once the row has finished, and keeps saying it while it applies', async (): Promise<void> => {
+    // The v0.19.0 walk: every finished card kept "Approved 1 action: it applies now." after the
+    // actions applied.
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const view = mount(element(DRAWN.held));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void =>
+      view.root.render(element({ ...DRAWN.held, state: 'executing', applyPhase: 'approved' })),
+    );
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void => view.root.render(element({ ...DRAWN.landed, _id: DRAWN.held._id })));
+    expect(said(view.container)).toEqual([]);
+    view.unmount();
+  });
+
+  it('keeps a rejection said once the row has finished: it is still true (the second pass)', async (): Promise<void> => {
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const view = mount(element(DRAWN.held));
+    await press(view.container, 'Reject the run');
+    await press(view.container, 'Reject without a reason');
+    const rejected = said(view.container);
+    expect(rejected.join(' ')).toContain('Run rejected: nothing held on');
+    act((): void => view.root.render(element({ ...DRAWN.held, state: 'cancelled' })));
+    expect(said(view.container)).toEqual(rejected);
+    view.unmount();
+  });
+});

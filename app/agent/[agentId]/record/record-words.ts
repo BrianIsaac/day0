@@ -17,6 +17,7 @@ import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
+import { skipClause } from '@/work/skip-reasons';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -1149,7 +1150,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       ? `${subject.name} evaluated ${itemOf(subject)}: ${decision?.replace(/-/g, ' ') ?? 'no verdict'}`
       : `${subject.name} judged ${itemOf(subject)} ${judged}`;
   },
-  'work.skipped': (p, subject) => `${subject.name} skipped ${itemOf(subject)}${because(p.reason)}`,
+  // The reason without its machine label, in the words the card says it in (W19-7).
+  'work.skipped': (p, subject) =>
+    `${subject.name} skipped ${itemOf(subject)}${because(
+      typeof p.reason === 'string' ? skipClause(p.reason) : p.reason,
+    )}`,
   'work.scope-judgement-unavailable': (p, subject) =>
     `The scope check on ${itemOf(subject)} could not be made${because(
       p.cause,

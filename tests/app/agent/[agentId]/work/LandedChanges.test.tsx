@@ -5,6 +5,7 @@ import {
   NotSentLedger,
   notSentWords,
 } from '../../../../../app/agent/[agentId]/work/LandedChanges';
+import { WITHHELD_REPORTED_WRITE_NOT_LANDED } from '../../../../../src/surfaces/policy';
 
 const row = (place: number, effect: string) => ({
   tool: 'linear.save_comment',
@@ -104,6 +105,10 @@ describe('what was held and never sent', (): void => {
     );
     expect(notSentWords('rejected by the manager: no')).toBe('rejected with the run; never sent');
     expect(notSentWords('no grant')).toBe('held: no grant; never sent');
+    // RM22 (a): a message held back at the apply because the write it reports did not land.
+    expect(notSentWords(WITHHELD_REPORTED_WRITE_NOT_LANDED)).toBe(
+      'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue',
+    );
     const markup = renderToStaticMarkup(
       <NotSentLedger
         rows={[

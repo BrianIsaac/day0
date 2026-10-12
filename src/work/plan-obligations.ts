@@ -146,9 +146,10 @@ export function planObligationsPrompt(args: PlanObligationsArgs): string {
     `Role: ${args.charter.proposedFunction}`,
     '',
     '--- Charter boundaries ---',
-    `willDo: ${clauses(args.charter.proposedBoundaries?.willDo)}`,
-    `willNotDo: ${clauses(args.charter.proposedBoundaries?.willNotDo)}`,
-    `escalationTriggers: ${clauses(args.charter.proposedBoundaries?.escalationTriggers)}`,
+    // The clauses by the labels the charter card prints, never its field keys (W15-R16).
+    `Will do: ${clauses(args.charter.proposedBoundaries?.willDo)}`,
+    `Will not do: ${clauses(args.charter.proposedBoundaries?.willNotDo)}`,
+    `Escalates when: ${clauses(args.charter.proposedBoundaries?.escalationTriggers)}`,
     '',
     '--- Connected surfaces (the only surfaces an obligation may name) ---',
     connected.length === 0

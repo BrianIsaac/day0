@@ -8599,7 +8599,9 @@ describe('work.listForAgent', (): void => {
     const { WORK_LIST_LIMIT } = await import('../../convex/work');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
-    const states = ['discovered', 'completed', 'skipped'] as const;
+    // Re-taken for W15-R14, 12 October 2026: the oldest row is a finished one, since an open row
+    // is listed however old it is (the test below).
+    const states = ['completed', 'discovered', 'skipped'] as const;
     await harness.run(async (ctx): Promise<void> => {
       for (let item = 0; item <= WORK_LIST_LIMIT; item += 1) {
         await ctx.db.insert('workItems', {
@@ -8636,6 +8638,44 @@ describe('work.listForAgent', (): void => {
       ],
     ]);
     expect(listed.at(-1)?.state).toBe('completed');
+  });
+
+  it('lists an open item past the bound, which Needs you links to, beside the newest finished ones (W15-R14)', async (): Promise<void> => {
+    const { WORK_LIST_LIMIT } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const row = (externalId: string, state: Doc<'workItems'>['state'], at: number) => ({
+      agentId,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      externalId,
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Synthetic.',
+      contentRefs: [],
+      state,
+      observedAt: at,
+      createdAt: at,
+    });
+    // The review's probe: a plan the manager has not decided and a stopped run, older than the
+    // newest 300 finished items, both of which Needs you lists and links to on the Work tab.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', row('REVOPS-OLD-PLAN', 'plan-pending', 0));
+      await ctx.db.insert('workItems', row('REVOPS-OLD-STOP', 'failed', 1));
+      await ctx.db.insert('workItems', row('REVOPS-OLD-DONE', 'completed', 2));
+      for (let item = 0; item < WORK_LIST_LIMIT; item += 1) {
+        await ctx.db.insert('workItems', row(`REVOPS-${item}`, 'completed', 10 + item));
+      }
+    });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    const ids = listed.map((item) => item.externalId);
+    expect(ids).toContain('REVOPS-OLD-PLAN');
+    expect(ids).toContain('REVOPS-OLD-STOP');
+    expect(ids).not.toContain('REVOPS-OLD-DONE');
+    expect(listed).toHaveLength(WORK_LIST_LIMIT + 2);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
