@@ -3,6 +3,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import {
   ProposalRefused,
   REORIENTATION_PROPOSAL_SYSTEM,
+  countedEventLine,
   proposalOf,
   proposalPrompt,
   proposalReplySchema,
@@ -293,6 +294,51 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
         ),
       ).toMatchObject({ kind: 'relationship', action: 'edit', scope: text });
     }
+  });
+});
+
+describe('countedEventLine: what a counted card rests on, as the judgement reads it (W16-R4)', (): void => {
+  it('says a rejection by its reason, without the cancellation’s own prefix, and one with none', (): void => {
+    expect(
+      countedEventLine({
+        type: 'work.cancelled',
+        title: 'Send the close summary',
+        reason: 'plan cancelled by the manager: not without my approval',
+      }),
+    ).toBe('Plan rejected for “Send the close summary”: not without my approval');
+    expect(
+      countedEventLine({
+        type: 'work.cancelled',
+        title: 'Send the close summary',
+        reason: 'plan cancelled by the manager',
+      }),
+    ).toBe('Plan rejected for “Send the close summary”, with no reason given');
+  });
+
+  it('says a skip with or without its clause, and a run’s withheld reasons once each', (): void => {
+    expect(countedEventLine({ type: 'work.skipped', title: 'Change the deck' })).toBe(
+      'Skipped “Change the deck”',
+    );
+    expect(
+      countedEventLine({
+        type: 'work.actions-withheld',
+        title: 'Read REVOPS-1',
+        reasons: ['no grant (linear:read)', 'no grant (linear:read)', 'left out by the manager'],
+      }),
+    ).toBe('Held in a run of “Read REVOPS-1”: no grant (linear:read); left out by the manager');
+    expect(
+      countedEventLine({ type: 'work.actions-withheld', title: 'Read REVOPS-1', reasons: [' '] }),
+    ).toBeUndefined();
+  });
+
+  it('bounds a line’s words', (): void => {
+    const line = countedEventLine({
+      type: 'work.cancelled',
+      title: 'Send it',
+      reason: 'word '.repeat(200),
+    });
+    expect(line?.length).toBeLessThan(340);
+    expect(line?.endsWith('...')).toBe(true);
   });
 });
 

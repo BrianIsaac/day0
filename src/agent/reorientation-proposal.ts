@@ -13,6 +13,8 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { PageStatus } from '../docs/authority';
 import type { RelationshipType } from '../people/vocabulary';
 import { isScopePhrase } from '../people/words';
+import { redactTokenShapes } from '../surfaces/redact';
+import { PLAN_CANCELLED_REASON } from '../work/stop';
 import { awaitingCheck } from '../work/agreement-words';
 import {
   PAGE_STATUS_PROPOSALS,
@@ -73,6 +75,75 @@ export type ProposalCandidate =
       readonly held: boolean;
     }
   | { readonly kind: 'skill'; readonly skillId: Id<'skills'>; readonly name: string };
+
+/** The most events of one counted type a card's evidence shows the judgement (D-4 (a)). */
+export const COUNTED_EVENTS_SHOWN = 10;
+
+/** The most of one counted event's words an evidence line keeps. */
+const COUNTED_EVENT_CHARS = 300;
+
+/** One event a counted card rests on, as the judgement is shown it, with its item's title. */
+export type CountedEvent =
+  | { readonly type: 'work.cancelled'; readonly title: string; readonly reason: string }
+  | {
+      readonly type: 'work.skipped';
+      readonly title: string;
+      readonly clause?: string;
+      readonly reason?: string;
+    }
+  | {
+      readonly type: 'work.actions-withheld';
+      readonly title: string;
+      readonly reasons: readonly string[];
+    };
+
+/** Words of an event, scrubbed of token shapes and cut to the line's bound. */
+function eventWords(text: string): string {
+  const scrubbed = redactTokenShapes(text.replace(/\s+/g, ' ').trim());
+  return scrubbed.length > COUNTED_EVENT_CHARS
+    ? `${scrubbed.slice(0, COUNTED_EVENT_CHARS - 3).trimEnd()}...`
+    : scrubbed;
+}
+
+/**
+ * One event a counted card rests on as an evidence line (W16-R4, D-4 (a)): a rejection's reason, a
+ * skip's clause and reason, a run's withheld reasons, each by its item. Without them the judgement
+ * of a card about three rejections quoting one clause reads only "the change itself" and proposes
+ * nothing.
+ *
+ * @param event - The event and its item's title.
+ * @returns The line, or undefined when the event says nothing to show.
+ */
+export function countedEventLine(event: CountedEvent): string | undefined {
+  const title = eventWords(event.title);
+  switch (event.type) {
+    case 'work.cancelled': {
+      const given = event.reason.startsWith(`${PLAN_CANCELLED_REASON}: `)
+        ? event.reason.slice(PLAN_CANCELLED_REASON.length + 2)
+        : event.reason;
+      return given === PLAN_CANCELLED_REASON
+        ? `Plan rejected for “${title}”, with no reason given`
+        : `Plan rejected for “${title}”: ${eventWords(given)}`;
+    }
+    case 'work.skipped': {
+      const clause = event.clause === undefined ? '' : ` under “${eventWords(event.clause)}”`;
+      const reason = event.reason === undefined ? '' : `: ${eventWords(event.reason)}`;
+      return `Skipped “${title}”${clause}${reason}`;
+    }
+    case 'work.actions-withheld': {
+      const reasons = [...new Set(event.reasons.map((reason) => reason.trim()))].filter(
+        (reason) => reason !== '',
+      );
+      return reasons.length === 0
+        ? undefined
+        : `Held in a run of “${title}”: ${eventWords(reasons.join('; '))}`;
+    }
+    default: {
+      const unknown: never = event;
+      throw new Error(`unhandled event ${String(unknown)}`);
+    }
+  }
+}
 
 /** What the judgement is asked about one card. */
 export interface ProposalInput {

@@ -12,6 +12,7 @@ import schema, { reorientationTalkProposalValidator } from './schema';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
+import { PLAN_CANCELLED_REASON } from '../src/work/stop';
 import {
   REORIENTATION_BLOCKING_LIMIT,
   UNDECIDED_REORIENTATION_STATUSES,
@@ -21,8 +22,11 @@ import {
 } from '../src/agent/reorientation-vocabulary';
 import { conflictQuestionText, type NamedPageWords } from '../src/agent/reorientation-words';
 import {
+  COUNTED_EVENTS_SHOWN,
   agreementActionsOf,
+  countedEventLine,
   type ClauseField,
+  type CountedEvent,
   type ProposalCandidate,
   type ProposalInput,
 } from '../src/agent/reorientation-proposal';
@@ -1025,11 +1029,77 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
     if (correction !== null)
       lines.push(`Correction on “${correction.itemTitle}”: ${correction.text}`);
   }
+  lines.push(...(await countedEventLines(ctx, card)));
   for (const id of card.affected.workItems.slice(0, 10)) {
     const row = await ctx.db.get(id);
     if (row !== null) lines.push(`Work affected: “${row.title}”, ${row.state}`);
   }
   return lines;
+}
+
+/**
+ * The events a counted card rests on, up to `COUNTED_EVENTS_SHOWN` of each type, as evidence lines
+ * (W16-R4, D-4 (a)): the rejections' reasons, the skips' clauses and reasons, the refusals'
+ * withheld reasons, each by its item's title. Other events a card carries say nothing here.
+ */
+async function countedEventLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promise<string[]> {
+  const lines: string[] = [];
+  const shown = new Map<string, number>();
+  for (const id of card.evidence.eventIds) {
+    const event = await ctx.db.get(id);
+    if (event === null) continue;
+    const counted = await countedEventOf(ctx, event);
+    if (counted === undefined || (shown.get(counted.type) ?? 0) >= COUNTED_EVENTS_SHOWN) continue;
+    const line = countedEventLine(counted);
+    if (line === undefined) continue;
+    shown.set(counted.type, (shown.get(counted.type) ?? 0) + 1);
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** A counted event with its item's title, or undefined for an event of another type. */
+async function countedEventOf(
+  ctx: QueryCtx,
+  event: Doc<'events'>,
+): Promise<CountedEvent | undefined> {
+  const payload = event.payload as {
+    workItemId?: Id<'workItems'>;
+    reason?: unknown;
+    clause?: unknown;
+    withheld?: ReadonlyArray<{ reason?: unknown }>;
+  };
+  if (
+    event.type !== 'work.cancelled' &&
+    event.type !== 'work.skipped' &&
+    event.type !== 'work.actions-withheld'
+  ) {
+    return undefined;
+  }
+  const item = payload.workItemId === undefined ? null : await ctx.db.get(payload.workItemId);
+  const title = item?.title ?? 'an item no longer listed';
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() !== '' ? value : undefined;
+  switch (event.type) {
+    case 'work.cancelled':
+      return { type: event.type, title, reason: text(payload.reason) ?? PLAN_CANCELLED_REASON };
+    case 'work.skipped': {
+      const clause = text(payload.clause);
+      const reason = text(payload.reason);
+      return {
+        type: event.type,
+        title,
+        ...(clause === undefined ? {} : { clause }),
+        ...(reason === undefined ? {} : { reason }),
+      };
+    }
+    case 'work.actions-withheld':
+      return {
+        type: event.type,
+        title,
+        reasons: (payload.withheld ?? []).flatMap((row) => text(row.reason) ?? []),
+      };
+  }
 }
 
 /**

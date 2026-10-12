@@ -14,6 +14,7 @@ import {
 import { type DecisionKind, MANAGER_FEEDBACK_MAX_CHARS } from '../src/work/manager-channel';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { appendEvent } from './eventLog';
+import { PLAN_CANCELLED_REASON } from '../src/work/stop';
 import { openRepeatedRejectionCard } from './reorientationPatterns';
 import { actionsOf, indexesWith, ledgerOf, verdictList } from './workLedger';
 import { releaseExternalClaim, releaseItemClaim, settleWriteTargetClaims } from './workClaims';
@@ -106,8 +107,8 @@ export async function approvePlanInTransaction(
   await scheduleNextStep(ctx, { ...row, state: 'plan-approved' });
 }
 
-/** Why a work item is `cancelled` after the manager turned its plan down. */
-export const PLAN_CANCELLED_REASON = 'plan cancelled by the manager';
+/** Why a work item is `cancelled` after the manager turned its plan down (its home is `src/work/stop.ts`). */
+export { PLAN_CANCELLED_REASON };
 
 function planCancelledReason(reason: string): string {
   const detail = reason.replace(/\s+/g, ' ').trim().slice(0, 200);

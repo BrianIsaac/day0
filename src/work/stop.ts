@@ -40,6 +40,9 @@ export const STOPPED_PREFIX = 'stopped: ';
 /** How a stop the manager made begins, after the stopped prefix (wave 12, 12-W; wording draft). */
 export const MANAGER_STOP = 'stopped by the manager';
 
+/** Why a work item is `cancelled` after the manager turned its plan down, before any reason given. */
+export const PLAN_CANCELLED_REASON = 'plan cancelled by the manager';
+
 /** A Stop that stopped the run, or took back an approval whose writes had not started. */
 export interface StopRunStopped {
   readonly ok: true;

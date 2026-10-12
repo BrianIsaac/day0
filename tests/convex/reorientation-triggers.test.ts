@@ -5,6 +5,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { stampRecheckDue } from '../../convex/skillVersions';
 import { transferExpiresAt } from '../../src/agent/manager-transfer';
+import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { allConvexModules } from './all-modules';
 import {
   MANAGER_ADDRESS,
@@ -12,7 +13,7 @@ import {
   fixtureAddressOf,
   managerIdentity,
 } from './fakes/manager-identity';
-import { cardsOf, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import { cardsOf, openTestCard, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /*
@@ -976,5 +977,148 @@ describe('the counted rows: three refusals, skips or rejections', (): void => {
     vi.setSystemTime(Date.now() + 60_000);
     await reject(4);
     expect(await cardsOf(harness, agentId)).toHaveLength(1);
+  });
+});
+
+describe('the counted cards show their events to the judgement (W16-R4, D-4 (a))', (): void => {
+  /** The will-not-do clause 16-J's three rejections quoted. */
+  const CLAUSE = 'Send anything out without manager approval.';
+
+  /** What the judgement reads of the employee's one card. */
+  async function judgementEvidence(harness: Harness, agentId: Id<'agents'>): Promise<string[]> {
+    const [card] = await cardsOf(harness, agentId);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    if (read === null) throw new Error('the card is not open to the judgement');
+    return [...read.input.evidence];
+  }
+
+  it('gives the rejections’ reasons, each by its item, so three quoting one clause can propose the amendment', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    for (const index of [1, 2, 3]) {
+      const workItemId = await seedWork(harness, agentId, 'plan-pending', {
+        externalId: `REVOPS-${index}`,
+        title: `Send the REVOPS-${index} close summary to the customer`,
+        plan: { steps: ['Send it'] },
+      });
+      await owner.mutation(api.work.cancelPlan, {
+        workItemId,
+        reason: `It must not go out on its own: “${CLAUSE}” ${CORPUS_SLOTS.linear_token}`,
+      });
+    }
+    const evidence = await judgementEvidence(harness, agentId);
+    for (const index of [1, 2, 3]) {
+      expect(evidence).toContainEqual(
+        expect.stringContaining(
+          `Plan rejected for “Send the REVOPS-${index} close summary to the customer”: It must not go out on its own: “${CLAUSE}”`,
+        ),
+      );
+    }
+    // The reasons pass the token scrub before they reach a prompt.
+    expect(evidence.join('\n')).not.toContain(CORPUS_SLOTS.linear_token);
+  });
+
+  it('shows at most ten events of one type, and none of a type it does not count', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedWork(harness, agentId, 'cancelled', { title: 'Send it' });
+    const eventIds = await harness.run(async (ctx) => {
+      const ids: Id<'events'>[] = [];
+      for (let index = 0; index < 12; index += 1) {
+        ids.push(
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'work.cancelled',
+            payload: { workItemId, reason: `reason ${index}`, decidedVia: 'dashboard' },
+            createdAt: index,
+          }),
+        );
+      }
+      ids.push(
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.discovered',
+          payload: { workItemId },
+          createdAt: 12,
+        }),
+      );
+      return ids;
+    });
+    await openTestCard(harness, {
+      agentId,
+      trigger: 'repeated-rejection',
+      triggerKey: 'rejections',
+      summary: 'You rejected 12 of its plans in thirty days',
+      evidence: { eventIds },
+    });
+    const evidence = await judgementEvidence(harness, agentId);
+    expect(evidence).toHaveLength(10);
+    expect(evidence[9]).toBe('Plan rejected for “Send it”: reason 9');
+  });
+
+  it('gives the skips’ clause and reason, and a refusal’s withheld reasons', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (const index of [1, 2, 3]) {
+      const workItemId = await seedWork(harness, agentId, 'discovered', {
+        externalId: `REVOPS-${index}`,
+        title: `Change the deck for REVOPS-${index}`,
+      });
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: the deck is not its to change',
+          clause: 'Change committee-deck numbers',
+        },
+      });
+    }
+    const evidence = await judgementEvidence(harness, agentId);
+    expect(evidence).toContainEqual(
+      'Skipped “Change the deck for REVOPS-1” under “Change committee-deck numbers”: out-of-scope: the deck is not its to change',
+    );
+    expect(evidence.filter((line) => line.startsWith('Skipped '))).toHaveLength(3);
+
+    const refused = convexTest(schema, allConvexModules());
+    const refusedAgent = await seedEmployee(refused);
+    for (const index of [1, 2, 3]) {
+      const runId = await refused.run(
+        async (ctx) =>
+          await ctx.db.insert('events', {
+            agentId: refusedAgent,
+            type: 'work.execution-claimed',
+            payload: {},
+            createdAt: 1,
+          }),
+      );
+      const workItemId = await seedWork(refused, refusedAgent, 'executing', {
+        externalId: `REVOPS-${index}`,
+        title: `Read REVOPS-${index}`,
+        executionRunId: runId,
+      });
+      await refused.mutation(internal.workRuns.setCompleted, {
+        workItemId,
+        runId,
+        output: {
+          actions: [],
+          applied: [
+            { tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: `k${index}` },
+            {
+              tool: 'linear.read',
+              ok: true,
+              held: true,
+              reason:
+                "dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
+            },
+          ],
+        },
+      });
+    }
+    expect(await judgementEvidence(refused, refusedAgent)).toContainEqual(
+      "Held in a run of “Read REVOPS-1”: dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
+    );
   });
 });
