@@ -414,6 +414,58 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
   });
 
+  it('asks beside a plan whose cite of the disputed passage carries no tag, the conflict confirmed after it was drafted (the second pass’s minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    // The planner drafted from the passage before the conflict was confirmed: its cite has no tag.
+    const { citations } = await selection(harness, agentId);
+    const untagged = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const { conflict: _drafted, ...cite } = untagged;
+    const workItemId = await planned(harness, agentId, { cites: [{ step: 1, ...cite }] });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+  });
+
+  it('finds a conflict confirmed since approval under a plan that read the whole mirror (the second pass’s D-4 (b) minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    const workItemId = await planned(harness, agentId, {});
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'plan-approved' });
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 2,
+      });
+    });
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    expect(
+      await harness.query(internal.managerQuestions.conflictConfirmedSince, { workItemId }),
+    ).toMatchObject({ heading: 'Thresholds' });
+  });
+
   it('asks beside a drafted plan citing either page once the manager confirms the conflict after it (section 3’s conflict row)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

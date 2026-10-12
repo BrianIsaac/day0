@@ -390,7 +390,8 @@ export const conflictHoldsFor = internalQuery({
  * The first conflict that stands on the blocks an approved plan relies on and that nobody asked
  * about beside it (D-4 (b)): confirmed since the plan was approved, so the run stops with the two
  * pages named and Retry drafts it again. The blocks are the plan's cited ones, or, where it cites
- * nothing, those its selection recorded. Internal; read by `workActions.refuseGoneCites`.
+ * nothing, those its selection recorded, or, where the planner read the whole mirror, every pair of
+ * pages the employee reads. Internal; read by `workActions.refuseGoneCites`.
  */
 export const conflictConfirmedSince = internalQuery({
   args: { workItemId: v.id('workItems') },
@@ -409,7 +410,7 @@ export const conflictConfirmedSince = internalQuery({
           .take(ITEM_QUESTIONS_READ)
       ).flatMap((question) => (question.relationId === undefined ? [] : [question.relationId])),
     );
-    for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent.userId)) {
+    for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent)) {
       if (asked.has(conflict.relationId as Id<'docRelations'>)) continue;
       return { heading: conflict.heading, pages: [conflict.pages[0], conflict.pages[1]] };
     }

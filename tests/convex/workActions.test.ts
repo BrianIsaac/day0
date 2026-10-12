@@ -7491,6 +7491,37 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     expect(recorded.mcp).toEqual([]);
   });
 
+  it('stops a run that read the whole mirror for a conflict confirmed since its approval (the second pass’s D-4 (b) minor)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = phaseOne();
+    recorded.dependentOutput = closing;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedTicket(harness, [
+      'boss:message',
+      'linear:read',
+      'linear:write',
+      'slack:read',
+    ]);
+    await confirmedConflict(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 2,
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(stopped.skipReason).toBe(
+      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(recorded.mcp).toEqual([]);
+  });
+
   it('stops the closing phase when the conflict is confirmed between the two phases (16-O; D-4 (b))', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = phaseOne();

@@ -4238,7 +4238,8 @@ async function refuseGoneCites(
     cites.length > 0
       ? cites.flatMap((cite) => cite.blocks)
       : (await ctx.runQuery(internal.docSelection.plannedFromBlocks, item)).map((id) => ({ id }));
-  if (blocks.length === 0) return;
+  // A plan naming no block (it read the whole mirror) still meets a conflict confirmed since.
+  if (blocks.length === 0) return await refuseConfirmedSince(ctx, item.workItemId);
   const parts: Array<typeof blocks> = [];
   for (let start = 0; start < blocks.length; start += CITE_CHECK_BATCH) {
     parts.push(blocks.slice(start, start + CITE_CHECK_BATCH));
