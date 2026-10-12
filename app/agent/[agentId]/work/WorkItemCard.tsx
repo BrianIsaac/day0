@@ -256,15 +256,24 @@ export function WorkItemCard({
   const change = useChange(cardRef);
   const deciding = change.busy;
   const [stopping, setStopping] = useState(false);
-  // The state a decision on this card was made in: what the card said of it is not said once the
-  // row it decided has finished, where "it applies now" would no longer be true (W19-8).
-  const [decidedIn, setDecidedIn] = useState<Doc<'workItems'>['state'] | undefined>(undefined);
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void => {
-    setDecidedIn(item.state);
+  // The state an approval of held writes was made in: its "it applies now" is not said once the
+  // row has finished, where it would no longer be true (W19-8). Every other outcome stays, a
+  // cancellation's or a rejection's included, as does a refusal (the second pass).
+  const [appliedIn, setAppliedIn] = useState<Doc<'workItems'>['state'] | undefined>(undefined);
+  const decide = (
+    call: () => Promise<unknown> | void,
+    done: string,
+    refused: string,
+    applies = false,
+  ): void => {
+    setAppliedIn(applies ? item.state : undefined);
     change.run(call, { done, refused });
   };
   const outcomeOutlived =
-    decidedIn !== undefined && decidedIn !== item.state && FINISHED_STATES.has(item.state);
+    appliedIn !== undefined &&
+    appliedIn !== item.state &&
+    FINISHED_STATES.has(item.state) &&
+    change.outcome?.tone === 'done';
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -626,6 +635,7 @@ export function WorkItemCard({
                     ? 'Approved 1 action: it applies now.'
                     : `Approved ${approvedIndexes.length} actions: they apply now.`,
                 'The actions were not approved.',
+                approvedIndexes.length > 0,
               )
             }
             onReject={(reason) =>

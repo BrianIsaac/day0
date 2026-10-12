@@ -638,6 +638,21 @@ describe("a mock message that says it waits for the manager's approval (W19-4, t
     expect(output.withheldActions?.map((row) => row.action.tool)).toEqual(['slack.postMessage']);
   });
 
+  it('reads an escalation that holds something else for the manager as no draft (the second pass)', async (): Promise<void> => {
+    const escalation: MockAction = {
+      tool: 'slack.postMessage',
+      args: {
+        channelSlug: 'dm-manager',
+        body: 'I have not issued the refund: it waits for your approval, as the billing page says.',
+      },
+      reports: null as unknown as number[],
+    };
+    recorded.outputs.push(reply(escalation));
+    const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
+    expect(recorded.calls).toHaveLength(1);
+    expect(output.actions).toHaveLength(1);
+  });
+
   it('takes the answer posted in Hana’s thread as it is, with one call', async (): Promise<void> => {
     const answer: MockAction = {
       tool: 'slack.postMessage',

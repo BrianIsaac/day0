@@ -17,7 +17,7 @@ import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../componen
 import { Disclosure } from '../../../components/Disclosure';
 import { describeAction, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
-import { withheldInWords } from '@/work/withheld-words';
+import { innermostReason, withheldInWords } from '@/work/withheld-words';
 import {
   outcomeUnknownDetail,
   type GivenAnswer,
@@ -423,13 +423,16 @@ export function WithheldActionsDetails({
   employeeName?: string;
 }) {
   if (!withheld || withheld.length === 0) return null;
-  const waiting = withheld.filter((row) => isWithheldForAnswer(row.reason));
+  // A message withheld with a write that waits on the answer waits on it too.
+  const waitsForAnswer = (row: WithheldActionRow): boolean =>
+    isWithheldForAnswer(innermostReason(row.reason));
+  const waiting = withheld.filter(waitsForAnswer);
   if (waiting.length > 0 && waiting.length < withheld.length) {
     return (
       <>
         <WithheldActionsDetails withheld={waiting} employeeName={employeeName} />
         <WithheldActionsDetails
-          withheld={withheld.filter((row) => !isWithheldForAnswer(row.reason))}
+          withheld={withheld.filter((row) => !waitsForAnswer(row))}
           employeeName={employeeName}
         />
       </>

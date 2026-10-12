@@ -174,7 +174,8 @@ function withAskThread(
 ): DraftedWorkItem {
   if (item.purpose !== 'read-and-answer') return item;
   if (item.contentRefs.some((ref) => ref.startsWith('channel://'))) return item;
-  const thread = threads.get(item.requesterLabel);
+  // "Hana (Support)" is Hana: the asker by the first word of the label.
+  const thread = threads.get(item.requesterLabel.trim().split(/[\s(,]/)[0] ?? '');
   return thread ? { ...item, contentRefs: [...item.contentRefs, thread] } : item;
 }
 

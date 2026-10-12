@@ -1368,11 +1368,13 @@ function closingAgainstFactIssues(output: CorrectableOutput & WorkDoneFields): s
 }
 
 /**
- * Words that say a message is a draft that waits for the manager, which no mock message is: every
- * write of a mock set is approved before it lands and is read once it has (W19-4).
+ * Words that frame a message as a draft that waits for the manager, which no mock message is:
+ * every write of a mock set is approved before it lands and is read once it has (W19-4). A message
+ * that holds something else for the manager ("I have not issued the refund; it waits for your
+ * approval") is an escalation, not a draft, and is not read here (the second pass).
  */
 const APPROVAL_TENSE =
-  /\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bfor your (?:approval|review|sign-off)\b|\bonce (?:you )?approved?\b|\bdraft for review\b/i;
+  /\bdraft(?:ed)?\b[^.:;]{0,60}\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bdraft(?:ed)?\b[^.:;]{0,60}\bfor your (?:approval|review|sign-off)\b|\bdraft for review\b|\b(?:will|i'?ll) (?:post|send|share)\b[^.]{0,40}\bonce (?:you )?approved?\b/i;
 
 /** The tripwire's words, which the card reads as an approval-tense message (`withheldInWords`). */
 export const APPROVAL_TENSE_ISSUE =

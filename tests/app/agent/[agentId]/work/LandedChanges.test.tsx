@@ -107,7 +107,7 @@ describe('what was held and never sent', (): void => {
     expect(notSentWords('no grant')).toBe('held: no grant; never sent');
     // RM22 (a): a message held back at the apply because the write it reports did not land.
     expect(notSentWords(WITHHELD_REPORTED_WRITE_NOT_LANDED)).toBe(
-      'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue; Retry writes them again',
+      'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue',
     );
     const markup = renderToStaticMarkup(
       <NotSentLedger

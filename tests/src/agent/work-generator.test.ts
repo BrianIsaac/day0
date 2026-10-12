@@ -758,6 +758,17 @@ describe('a read-and-answer item names the thread its asker asks in (W19-4, the 
     expect(second?.contentRefs).toEqual(['channel://office-asks#thread-double-charge']);
   });
 
+  it('reads the asker by the first word of a label such as "Hana (Support)" (the second pass)', async (): Promise<void> => {
+    drafts.push([
+      { ...HANAS_DOCS_ASK, requesterLabel: 'Hana (Support)' },
+      PIP_ACTION,
+      PIP_BEYOND,
+      PIP_OUT,
+    ]);
+    const [first] = await generateWorkItemsFromCharter(PIP_W19, PIPS_OFFICE as never);
+    expect(first?.contentRefs).toContain('channel://office-asks#thread-double-charge');
+  });
+
   it('asks the generator to name the thread itself', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(
       'When the question was asked in a thread the snapshot shows, its contentRefs name that thread too ("channel://<slug>#<thread>"), so the answer goes back where it was asked.',

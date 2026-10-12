@@ -224,7 +224,9 @@ export function adoptedFromWords(source: Pick<AdoptedSource, 'version' | 'author
 /** An input the draft uses and never declares, as the check names it (`src/work/authored-skill.ts`). */
 const UNDECLARED_INPUT = /uses `<([^`>]+)>` without declaring it under `## Inputs`/;
 /** A sandbox run whose smoke test failed (`src/work/smoke-harness.ts`). */
-const SMOKE_FAILED = /\bsmoke test exited \d+/;
+const SMOKE_FAILED = /\bsmoke test exited [1-9]\d*/;
+/** A smoke test that ran clean but showed nothing it checked (`src/lib/skill-sandbox.ts`). */
+const SMOKE_SILENT = /\bsmoke test exited 0 but printed\b/;
 /** A smoke test the syntax check refused, at its line (`src/work/smoke-test.ts`). */
 const DOES_NOT_PARSE = /\bdoes not parse at line (\d+)/;
 /** The opening of every refusal of a draft written for one item. */
@@ -248,6 +250,9 @@ export function checkInWords(log: string, employee: string): string {
   const line = DOES_NOT_PARSE.exec(log)?.[1];
   if (line !== undefined) {
     return `Its smoke test is not valid at line ${line}. Retry hands ${employee} the error to fix.`;
+  }
+  if (SMOKE_SILENT.test(log)) {
+    return `Its smoke test ran in the sandbox but did not show the skill following its inputs. Retry hands ${employee} the reason.`;
   }
   if (SMOKE_FAILED.test(log)) {
     return `Its smoke test failed when it ran in the sandbox. Retry hands ${employee} the failure to fix.`;

@@ -103,6 +103,16 @@ describe('withheldInWords: what a withheld write says to a manager (RM22 (a))', 
     );
   });
 
+  it('says a message withheld with a write that waits on the answer waits on it too (the second pass)', (): void => {
+    const [, dependent] = withReportsOfWithheld(
+      [PIP_REPLY_POST, PIP_COMMENT_AND_CLOSE],
+      [{ index: 0, reason: withheldForAnswerReason(2) }],
+    );
+    expect(words(PIP_COMMENT_AND_CLOSE, dependent!.reason)).toBe(
+      "Not sent: it waits on your answer to Pip's question.",
+    );
+  });
+
   it('says a write waiting on the answer waits on it, and anything else in plain words', (): void => {
     expect(words(PIP_MANAGER_DM, withheldForAnswerReason(2))).toBe(
       "Not sent: it waits on your answer to Pip's question.",

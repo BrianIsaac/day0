@@ -321,27 +321,23 @@ export async function assertSameAgent(
 export const WORK_LIST_LIMIT = 300;
 
 /**
- * The states a row is not finished in: it holds a slot, is parked, waits to be judged or stopped
- * with a reason the manager reads. Every such row is listed whatever its age, since Needs you
- * links to it and the shell counts it (W15-R14); a row that finished, was cancelled or was skipped
- * is listed only among the newest.
+ * The states a row is not finished in, each with the most of its newest rows one read takes: a
+ * slot-holding or parked row is listed whatever its age, since Needs you links to it and the shell
+ * counts it (W15-R14); a stopped row as many as the inbox lists (`NEEDS_YOU_STOPPED_READ_LIMIT`),
+ * an unjudged one as many as a page of intake. A row that finished, was cancelled or was skipped is
+ * listed only among the newest. Slots are held to the work-in-progress cap, so their bound is never
+ * reached; the bounds keep the read near the 300 rows it was, with their outputs (the second pass).
  */
-const UNFINISHED_WORK_STATES = [
-  ...OPEN_WORK_STATES,
-  ...PARKED_WORK_STATES,
-  'discovered',
-  'failed',
-] as const satisfies readonly Doc<'workItems'>['state'][];
+const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'], number]> = [
+  ...OPEN_WORK_STATES.map((state) => [state, 100] as const),
+  ...PARKED_WORK_STATES.map((state) => [state, 100] as const),
+  ['failed', 25],
+  ['discovered', 50],
+];
 
 /**
- * Bound on each open state's read, the inbox's own (`NEEDS_YOU_STATE_READ_LIMIT`): plans, held
- * sets and runs are held to the work-in-progress cap, so for them it is never reached.
- */
-const OPEN_STATE_READ_LIMIT = 100;
-
-/**
- * Public, owner-guarded: one employee's work items: every unfinished one (each state's newest
- * {@link OPEN_STATE_READ_LIMIT}) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
+ * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
+ * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
  * order the page has always been given: by state, last first, and the newest first within one.
  */
 export const listForAgent = query({
@@ -354,13 +350,13 @@ export const listForAgent = query({
         .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
         .order('desc')
         .take(WORK_LIST_LIMIT),
-      ...UNFINISHED_WORK_STATES.map(
-        async (state) =>
+      ...UNFINISHED_STATE_READS.map(
+        async ([state, limit]) =>
           await ctx.db
             .query('workItems')
             .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', state))
             .order('desc')
-            .take(OPEN_STATE_READ_LIMIT),
+            .take(limit),
       ),
     ]);
     const byId = new Map([...newest, ...open.flat()].map((row) => [row._id, row]));

@@ -1108,4 +1108,37 @@ describe('the approval line once the approved writes have applied (W19-8)', (): 
     expect(said(view.container)).toEqual([]);
     view.unmount();
   });
+
+  it('keeps a rejection said once the row has finished: it is still true (the second pass)', async (): Promise<void> => {
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const view = mount(element(DRAWN.held));
+    await press(view.container, 'Reject the run');
+    await press(view.container, 'Reject without a reason');
+    const rejected = said(view.container);
+    expect(rejected.join(' ')).toContain('Run rejected: nothing held on');
+    act((): void => view.root.render(element({ ...DRAWN.held, state: 'cancelled' })));
+    expect(said(view.container)).toEqual(rejected);
+    view.unmount();
+  });
 });

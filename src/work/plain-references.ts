@@ -41,15 +41,16 @@ function plainName(scheme: string, slug: string, fragment: string | undefined): 
 
 /**
  * A text with every hosted office reference written as the record it names: a page, a thread in
- * a channel, a channel, a sheet, a ticket's key or a social post. A reference in parentheses
- * beside the name it repeats ("the billing replies doc (docs-fixture/billing-replies)") is
- * dropped with its parentheses.
+ * a channel, a channel, a sheet, a ticket's key or a social post. A page's reference in
+ * parentheses beside the name it repeats ("the billing replies doc (docs-fixture/billing-replies)")
+ * is dropped with its parentheses; any other reference is named in place ("(REVOPS-204)").
  *
  * @param text - A plan's step, a draft or a message as the model wrote it.
  * @returns The text with no `docs-fixture/` or `<scheme>://` reference left.
  */
 export function inPlainNames(text: string): string {
-  const bracketed = new RegExp(`\\s*\\((?:${REFERENCE.source})\\)`, 'g');
+  // A page's reference in parentheses repeats the page its words named; any other is kept, named.
+  const bracketed = /\s*\(docs-fixture\/[\w-]+\)/g;
   return text
     .replace(bracketed, '')
     .replace(REFERENCE, (_whole, scheme: string, slug: string, fragment: string | undefined) =>

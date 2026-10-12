@@ -185,7 +185,7 @@ export function notSentWords(reason: string | undefined): string {
   if (reason === NOT_SENT_AFTER_STOP_REASON) return 'not sent: the run stopped before it went out';
   // A message held back with the write it reports, in a manager's words (RM22 (a)).
   if (reason === WITHHELD_REPORTED_WRITE_NOT_LANDED)
-    return 'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue; Retry writes them again';
+    return 'not sent: it reports a write of this run that had not landed when it was to be sent, so it would have said something untrue';
   return `held${reason ? `: ${reason}` : ''}; never sent`;
 }
 

@@ -39,6 +39,8 @@ describe('inPlainNames: the hosted office references as records (W19-7, the v0.1
     ).toBe(
       'Post in #revops, append to the q4 revenue tracker sheet, comment on REVOPS-204 and answer the social post tweet acme feedback.',
     );
+    // Only a page's reference repeats the words beside it; a ticket's is its only name (the second pass).
+    expect(inPlainNames('Closed it (ticket://REVOPS-204).')).toBe('Closed it (REVOPS-204).');
     expect(inPlainNames('Nothing to name here: https://example.com/a#b.')).toBe(
       'Nothing to name here: https://example.com/a#b.',
     );

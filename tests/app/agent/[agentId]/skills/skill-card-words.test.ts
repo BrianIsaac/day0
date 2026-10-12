@@ -166,6 +166,15 @@ describe('why a draft did not pass its check, in a manager’s words (W19-8)', (
     ).toBe(
       'The draft is written for one item rather than as a procedure for any item like it. Retry hands Nell the reason.',
     );
+    // An exit 0 that showed nothing is no failed run (the second pass).
+    expect(
+      checkInWords(
+        'verification in Daytona failed - smoke test exited 0 but printed nothing, so the run produced no verification signal',
+        'Nell',
+      ),
+    ).toBe(
+      'Its smoke test ran in the sandbox but did not show the skill following its inputs. Retry hands Nell the reason.',
+    );
     expect(checkInWords('The sandbox component is not running.', 'Nell')).toBe(
       'The sandbox component is not running.',
     );

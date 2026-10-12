@@ -49,15 +49,31 @@ const CLAIMED_WRITE = 'withheld with the write it reports: ';
 /** The sentence an unsupported claim's reason quotes (`unsupportedClaimFindings`). */
 const UNSUPPORTED_SAID = /\bsays "([^]*?)"(?:; quote the ledger row|$)/;
 
+/**
+ * The reason a withhold began with: a message withheld with a write it reports carries that
+ * write's reason after its own opening, once per link of the chain.
+ *
+ * @param reason - A withheld row's reason.
+ */
+export function innermostReason(reason: string): string {
+  let inner = reason;
+  while (inner.startsWith(REPORTED_WRITE_WITHHELD))
+    inner = inner.slice(REPORTED_WRITE_WITHHELD.length);
+  return inner;
+}
+
 /** The kind of hold a check's reason names. */
 function holdOf(reason: string): HoldKind {
-  if (isWithheldForAnswer(reason)) return { kind: 'for-answer' };
+  // A message withheld with a write that waits on the manager's answer waits on it too.
+  if (isWithheldForAnswer(innermostReason(reason))) return { kind: 'for-answer' };
   if (reason.startsWith(REPORTED_WRITE_WITHHELD)) return { kind: 'reported-write-withheld' };
   if (reason.startsWith(CLAIMED_WRITE)) return { kind: 'claimed-write' };
   if (reason.includes("asserted a fact the ledger, the documentation and the manager's feedback")) {
     const said = UNSUPPORTED_SAID.exec(reason)?.[1];
     return said === undefined ? { kind: 'unsupported' } : { kind: 'unsupported', said };
   }
+  if (reason.includes('so a message never says it is a draft or waits for approval'))
+    return { kind: 'approval-tense' };
   if (reason.includes('the not-confirmed line names')) return { kind: 'not-confirmed-line' };
   if (reason.includes('reports a write that comes after it in this set'))
     return { kind: 'reports-ahead' };
@@ -70,8 +86,6 @@ function holdOf(reason: string): HoldKind {
   ) {
     return { kind: 'which-writes' };
   }
-  if (reason.includes('so a message never says it is a draft or waits for approval'))
-    return { kind: 'approval-tense' };
   if (reason.startsWith('a ticket state change lands only after a landed audit comment'))
     return { kind: 'orphaned-close' };
   if (/^sets the ticket to .+ while workDone is "/.test(reason))
