@@ -15,7 +15,7 @@ import type { Doc, Id } from './_generated/dataModel';
  * anything that reaches `work`.
  */
 
-/** One bounded read of a source's blocks for the pages they belong to: under a query's read limit. */
+/** One bounded read of a source's blocks, for the pages they belong to: under a query's limit. */
 const REMEASURE_BLOCKS_READ = { numItems: 400, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /** Whether a run is the source's running or last completed one: a newer sync measures instead. */

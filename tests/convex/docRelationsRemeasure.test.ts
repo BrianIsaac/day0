@@ -39,7 +39,7 @@ describe('pagesOwed', (): void => {
     expect(await harness.query(internal.docRelationsRemeasure.pagesOwed, source)).toBeNull();
   });
 
-  it('reads the source’s pages from the mark’s start, each page once, and says where the read ends', async (): Promise<void> => {
+  it('reads the source’s pages from the mark’s start, each a read holds once, and says where the read ends', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await library(harness);
     await mark(harness, source.sourceId, null);

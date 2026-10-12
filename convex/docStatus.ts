@@ -519,8 +519,9 @@ export const restatePages = internalMutation({
 
 /**
  * Restate one page the status phase handed back for want of room in its walk page
- * (`StatusPhasePage.toRestate`; W15-R24), in a transaction of its own, so a page of any size is
- * restated and the walk's bound holds. Internal; fenced on the source's running generation.
+ * (`StatusPhasePage.toRestate`; W15-R24), in a transaction of its own, so the walk's bound holds
+ * however many of its pages change status. Internal; fenced on the source's running generation.
+ * A finish cut off between the walk page and these restates them at the next sync.
  *
  * @returns Whether the page was restated: false when it is gone or the generation moved on.
  */
