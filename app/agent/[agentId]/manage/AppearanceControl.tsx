@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useSyncExternalStore } from 'react';
+import { useEffect, useId, useState, useSyncExternalStore } from 'react';
 import {
   THEME_CHANGE_EVENT,
   THEME_PREFERENCES,
@@ -51,6 +51,13 @@ export function AppearanceControl() {
   const shown = unkept ?? stored;
   const group = useId();
 
+  // Another tab storing a choice is what the page draws then, so the card shows it too.
+  useEffect(() => {
+    const showStored = (): void => setUnkept(null);
+    window.addEventListener('storage', showStored);
+    return () => window.removeEventListener('storage', showStored);
+  }, []);
+
   function choose(preference: ThemePreference): void {
     const kept = storeThemePreference(preference);
     setUnkept(kept ? null : preference);
@@ -71,7 +78,7 @@ export function AppearanceControl() {
           {THEME_PREFERENCES.map((preference) => (
             <label
               key={preference}
-              className="inline-flex min-h-11 cursor-pointer items-center rounded-full border border-[var(--color-border)] px-3.5 text-[13px] text-[var(--color-fg-2)] transition-colors has-checked:border-[var(--color-accent-line)] has-checked:bg-[var(--color-accent-soft)] has-checked:text-[var(--color-accent)] has-focus-visible:outline-2 has-focus-visible:outline-offset-1 has-focus-visible:outline-[var(--color-accent)] not-has-checked:hover:border-[var(--color-border-2)] not-has-checked:hover:text-[var(--color-fg)] motion-reduce:transition-none"
+              className="relative inline-flex min-h-11 cursor-pointer items-center rounded-full border border-[var(--color-border)] px-3.5 text-[13px] text-[var(--color-fg-2)] transition-colors has-checked:border-[var(--color-accent-line)] has-checked:bg-[var(--color-accent-soft)] has-checked:text-[var(--color-accent)] has-focus-visible:outline-2 has-focus-visible:outline-offset-1 has-focus-visible:outline-[var(--color-accent)] not-has-checked:hover:border-[var(--color-border-2)] not-has-checked:hover:text-[var(--color-fg)] motion-reduce:transition-none"
             >
               <input
                 type="radio"

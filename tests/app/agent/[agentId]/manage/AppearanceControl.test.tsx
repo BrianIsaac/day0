@@ -102,6 +102,20 @@ describe('AppearanceControl (16-T, the Manage tab’s Appearance card)', (): voi
     ]);
   });
 
+  it('shows the choice another tab stores after one this browser refused to keep', async (): Promise<void> => {
+    const refuse = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError');
+    });
+    const view = mount(<AppearanceControl />);
+    await pick(view.container, 'Follow system');
+    refuse.mockRestore();
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    await act(async (): Promise<void> => {
+      window.dispatchEvent(new StorageEvent('storage', { key: THEME_STORAGE_KEY }));
+    });
+    expect(choices(view.container).find(([, checked]) => checked)?.[0]).toBe('Light');
+  });
+
   it('takes a choice made in another tab', async (): Promise<void> => {
     const view = mount(<AppearanceControl />);
     window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
