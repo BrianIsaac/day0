@@ -368,7 +368,8 @@ export const conflictHoldsFor = internalQuery({
     const holds: Array<{ question: string; relationId: string; blocks: string[] }> = [];
     for (const question of await openConflictQuestions(ctx, args.workItemId)) {
       const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
-      if (relation === null) continue;
+      // A conflict that no longer stands holds nothing, whatever became of its question.
+      if (relation === null || (await standingConflictOf(ctx, relation)) === undefined) continue;
       holds.push({
         question: question.question,
         relationId: relation._id,

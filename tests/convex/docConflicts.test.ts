@@ -532,6 +532,45 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).resolves.toMatchObject({ status: 'ignored', reason: 'no open question' });
   });
 
+  it('closes the question when the conflict is settled on the Documentation tab, so nothing waits on it (second pass B1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'both-hold',
+    });
+    const [question] = await questionsOf(harness, workItemId);
+    expect(question.answer).toMatchObject({ text: 'Both hold', via: 'dashboard' });
+    expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
+      [],
+    );
+  });
+
+  it('opens no card about the page its own answer superseded (second pass M4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
+    const [question] = await questionsOf(harness, workItemId);
+    // The answer that supersedes the very page the plan cites.
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const cited = await harness.run(
+      async (ctx) =>
+        ((await ctx.db.get(workItemId))?.plan as { cites: Array<{ pageRef?: string }> }).cites[0]
+          .pageRef,
+    );
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: relation.from.ref === cited ? 'to' : 'from',
+    });
+    const pages = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(pages.find((page) => page.ref === cited)?.status).toBe('superseded');
+    const cards = await harness.run(async (ctx) =>
+      (await ctx.db.query('reorientations').collect()).filter((card) => card.agentId === agentId),
+    );
+    expect(cards).toEqual([]);
+  });
+
   it('decides the relation from the answer on the plan’s card, and refuses a second answer', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

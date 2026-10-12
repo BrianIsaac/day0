@@ -219,6 +219,11 @@ async function writeStatus(
     readonly supersededBy: PageName | undefined;
     readonly manager?: { readonly decidedBy: string | undefined; readonly decidedAt: number };
     readonly now: number;
+    /**
+     * False when the change is a relation's own answer (16-O): the plans citing the page are the
+     * relation's to settle (its question, or the run's stop), so no card opens about it.
+     */
+    readonly opensCard?: boolean;
   },
 ): Promise<StatusChange | null> {
   const { source, page, decided, supersededBy, now } = args;
@@ -259,7 +264,9 @@ async function writeStatus(
       },
       createdAt: now,
     });
-    await openCardUnderPlan(ctx, { agent, page, to: decided.status, supersededBy, eventId, now });
+    if (args.opensCard !== false) {
+      await openCardUnderPlan(ctx, { agent, page, to: decided.status, supersededBy, eventId, now });
+    }
     // Out-of-scope skips read the documentation the employee has; a page that left it, or came
     // back, may change the verdict. Keyed by the status, so the same change re-admits once.
     await reevaluatePendingInTransaction(ctx, {
@@ -570,6 +577,8 @@ export async function decideByHand(
     readonly supersededBy: PageName | undefined;
     readonly decidedBy: string | undefined;
     readonly now: number;
+    /** False for a relation's own answer, which opens no reorientation card (16-O). */
+    readonly opensCard?: boolean;
   },
 ): Promise<void> {
   const change = await writeStatus(ctx, {
@@ -579,6 +588,7 @@ export async function decideByHand(
     supersededBy: args.supersededBy,
     manager: { decidedBy: args.decidedBy, decidedAt: args.now },
     now: args.now,
+    ...(args.opensCard === false ? { opensCard: false } : {}),
   });
   await stampStatusChanges(ctx, args.source, [change], args.now);
 }

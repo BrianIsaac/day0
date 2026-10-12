@@ -415,6 +415,7 @@ export async function decideRelationInTransaction(
       supersededBy: { sourceId: right.sourceId, ref: right.ref },
       decidedBy,
       now,
+      opensCard: false,
     });
   }
   for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
@@ -432,11 +433,46 @@ export async function decideRelationInTransaction(
     });
   }
   // A conflict confirmed asks which page is right beside every drafted plan citing either page
-  // (section 3's conflict row: a question, never a card; D-4 (c)).
+  // (section 3's conflict row: a question, never a card; D-4 (c)); a conflict settled here answers
+  // the questions asked about it, so nothing waits on them (the second pass's B1).
   if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (relation.kind === 'possible_conflict') {
+    const settled =
+      decision === 'from-is-right'
+        ? `${from.title} is right`
+        : decision === 'to-is-right'
+          ? `${to.title} is right`
+          : decision === 'both-hold'
+            ? 'Both hold'
+            : undefined;
+    if (settled !== undefined) await closeConflictQuestions(ctx, relation._id, settled, now);
+  }
   if (decision !== 'supersedes') return null;
   const older = (await ctx.db.get(to._id)) ?? to;
   return { older: pageStatusOf(older), by: statusSourceOf(older) };
+}
+
+/** The questions about one relation one settling reads: one a work item, few items a relation. */
+const QUESTIONS_SETTLED_READ = 500;
+
+/**
+ * Answer every open question about a conflict the manager settled on its card, in the card's
+ * words, so no plan's steps wait on a question nobody can answer any more (16-O).
+ */
+async function closeConflictQuestions(
+  ctx: MutationCtx,
+  relationId: Id<'docRelations'>,
+  text: string,
+  now: number,
+): Promise<void> {
+  const questions = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_relation', (q) => q.eq('relationId', relationId))
+    .take(QUESTIONS_SETTLED_READ);
+  for (const question of questions) {
+    if (question.answer !== undefined) continue;
+    await ctx.db.patch(question._id, { answer: { text, answeredAt: now, via: 'dashboard' } });
+  }
 }
 
 /** Ask a confirmed conflict's question beside each reader's drafted plan that cites either page. */
