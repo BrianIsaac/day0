@@ -842,7 +842,8 @@ async function walkFinishingPhase(
 
 /**
  * Walk the status phase to its end: every page the generation keeps is restated a bounded page
- * per transaction (`docStatus.restatePages`), and then the model is asked about each page whose
+ * per transaction (`docStatus.restatePages`), a page whose new status its walk page had no room
+ * to copy onto its blocks in a transaction of its own (`docStatus.restateDeferred`), and then the model is asked about each page whose
  * marker lines no stored judgement stands for, one call a page, the pages asked least recently
  * first (`docPages.judgedAttemptAt`; never asked, first), at most `MARKER_JUDGEMENTS_PER_SYNC` a
  * finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20; the rest are asked at the next
@@ -877,6 +878,14 @@ async function walkStatusPhase(
     if (page === null) return null;
     checkpoint = page.checkpoint;
     toJudge.push(...page.toJudge);
+    // A page whose blocks the walk page had no room to restate, restated on its own (W15-R24).
+    for (const ref of page.toRestate) {
+      await ctx.runMutation(internal.docStatus.restateDeferred, {
+        sourceId: start.sourceId,
+        syncRunId: start.runId,
+        ref,
+      });
+    }
     if (page.done) break;
     from = page.from;
   }

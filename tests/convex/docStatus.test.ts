@@ -658,6 +658,76 @@ describe('restatePages: the status phase of a finishing sync', (): void => {
     ]);
   });
 
+  it('flips no more pages in one walk page than its read can copy onto their blocks, and hands the rest back to restate one by one (W15-R24)', async (): Promise<void> => {
+    // The review's reader 1 (vt/probe2.test.ts): with Convex's limits on, 40 pages of 80 KiB of
+    // Latin all changing status in one walk page threw "Read too much data in a single function
+    // execution", and every sync would then fail at that cursor.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const source = await syncingSource(harness);
+    let latin = '# T\n';
+    for (let index = 0; Buffer.byteLength(latin) < 80 * 1024; index += 1) {
+      latin += `\n## Section ${index}\n\nPress refresh twice and wait for the tile to turn green, then check the pipeline dashboard for stale rows number ${index} before closing.\n`;
+    }
+    const PAGES = 40;
+    for (let index = 0; index < PAGES; index += 1) {
+      // Archived at its source since its last read, which the walk now restates.
+      await storedPage(harness, source, {
+        ref: `p${String(index).padStart(2, '0')}.md`,
+        title: `Page ${index}`,
+        markdown: latin,
+      });
+      await harness.run(async (ctx) => {
+        const row = await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', source.sourceId).eq('ref', `p${String(index).padStart(2, '0')}.md`),
+          )
+          .unique();
+        await ctx.db.patch(row!._id, { nativeStatus: 'archived' });
+      });
+    }
+    await standAt(harness, source, STATUS);
+    let from: string | null = null;
+    let checkpoint = STATUS;
+    const deferred: string[] = [];
+    for (;;) {
+      const page: Awaited<ReturnType<typeof walk>> = await walk(checkpoint, from);
+      expect(page).not.toBeNull();
+      deferred.push(...page!.toRestate);
+      checkpoint = page!.checkpoint;
+      if (page!.done) break;
+      from = page!.from;
+    }
+    expect(deferred.length).toBeGreaterThan(0);
+    for (const ref of deferred) {
+      expect(
+        await harness.mutation(internal.docStatus.restateDeferred, {
+          sourceId: source.sourceId,
+          syncRunId: source.runId,
+          ref,
+        }),
+      ).toBe(true);
+    }
+    const statuses = await harness.run(async (ctx) =>
+      (await ctx.db.query('docPages').collect()).map((row) => row.status),
+    );
+    expect(statuses).toEqual(Array.from({ length: PAGES }, () => 'archived'));
+    expect(await blockStatuses(harness, source.sourceId, 'p39.md')).not.toContain(undefined);
+    expect(new Set(await blockStatuses(harness, source.sourceId, 'p39.md'))).toEqual(
+      new Set(['archived']),
+    );
+
+    async function walk(at: string, cursor: string | null) {
+      return await harness.mutation(internal.docStatus.restatePages, {
+        sourceId: source.sourceId,
+        runId: source.runId,
+        checkpoint: at,
+        from: cursor,
+        record: true,
+      });
+    }
+  }, 120_000);
+
   it('runs in its own phase only, and stops for a run a newer sync moved on', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
