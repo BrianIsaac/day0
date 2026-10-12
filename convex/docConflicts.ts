@@ -18,8 +18,7 @@ import type { CiteConflict, PlanCite } from '../src/work/types';
  * decision D-8): a confirmed conflict between two active pages of equal trust whose blocks still
  * disagree, read by the selection (which tags the cites of its blocks), by the plan's decision
  * (which asks which page is right beside a plan that rests on one, 16-O) and by the cards; and the
- * answers a relation's card offers
- * as the relation stands. The registered functions that answer and draw the cards (`decide`,
+ * answers a relation's card offers as the relation stands. The registered functions that answer and draw the cards (`decide`,
  * `listOpen`) stay in `convex/docRelations.ts` under their paths.
  *
  * This module sits below `convex/docRelations.ts` and `convex/work.ts`, above
@@ -254,7 +253,7 @@ async function planBlockHashes(
     return hashes;
   }
   if (row.selectedBlocks !== undefined && row.selectedBlocks.length > 0) {
-    return new Set(row.selectedBlocks.map((block) => block.hash));
+    return new Set(row.selectedBlocks.slice(0, SELECTED_BLOCKS_READ).map((block) => block.hash));
   }
   const selected = await selectedBlocks(ctx, row);
   if (selected === undefined) return undefined;

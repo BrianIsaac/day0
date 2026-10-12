@@ -48,7 +48,18 @@ function runHeadScript(): string | null {
   return document.documentElement.getAttribute(SESSION_HINT_ATTRIBUTE);
 }
 
+/** The observers the head script left watching `<html>`, so none outlives its test. */
+const observers: MutationObserver[] = [];
+const NativeObserver = globalThis.MutationObserver;
+globalThis.MutationObserver = class extends NativeObserver {
+  constructor(callback: MutationCallback) {
+    super(callback);
+    observers.push(this);
+  }
+};
+
 afterEach((): void => {
+  for (const observer of observers.splice(0)) observer.disconnect();
   clearCookies();
   document.documentElement.removeAttribute(SESSION_HINT_ATTRIBUTE);
   document.head.replaceChildren();

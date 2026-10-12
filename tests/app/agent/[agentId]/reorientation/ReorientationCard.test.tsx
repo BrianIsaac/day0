@@ -535,25 +535,40 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     Element.prototype.scrollIntoView = function (this: Element): void {
       scrolled.push(this.id);
     };
-    const second = withCard({ _id: 'card-2' as Id<'reorientations'> });
-    backend.queries['reorientationDecisions:listForAgent'] = [BASE, second];
-    window.location.hash = '#card-card-1';
-    const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
-    await vi.waitFor((): void => {
-      expect(document.activeElement?.id).toBe('card-card-1');
-    });
-    expect(scrolled).toContain('card-card-1');
-    await act(async (): Promise<void> => {
-      window.location.hash = '#card-card-2';
-      window.dispatchEvent(new HashChangeEvent('hashchange'));
-    });
-    await vi.waitFor((): void => {
-      expect(document.activeElement?.id).toBe('card-card-2');
-    });
-    // jsdom fires its own hashchange beside the one dispatched here: where it lands is the point.
-    expect(scrolled.at(-1)).toBe('card-card-2');
-    view.unmount();
-    window.location.hash = '';
-    Element.prototype.scrollIntoView = scroll;
+    try {
+      const second = withCard({ _id: 'card-2' as Id<'reorientations'> });
+      backend.queries['reorientationDecisions:listForAgent'] = [BASE, second];
+      window.location.hash = '#card-card-1';
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      await vi.waitFor((): void => {
+        expect(document.activeElement?.id).toBe('card-card-1');
+      });
+      expect(scrolled).toContain('card-card-1');
+      await act(async (): Promise<void> => {
+        window.location.hash = '#card-card-2';
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      });
+      await vi.waitFor((): void => {
+        expect(document.activeElement?.id).toBe('card-card-2');
+      });
+      // jsdom fires its own hashchange beside the one dispatched here: where it lands is the point.
+      expect(scrolled.at(-1)).toBe('card-card-2');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+      Element.prototype.scrollIntoView = scroll;
+    }
+  });
+
+  it('draws the page and lands nowhere on a fragment that is not a valid escape (the second pass)', (): void => {
+    backend.queries['reorientationDecisions:listForAgent'] = [BASE];
+    window.location.hash = '#card-%E0%A4%A';
+    try {
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      expect(view.container.textContent).toContain('What Mira proposes');
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
   });
 });

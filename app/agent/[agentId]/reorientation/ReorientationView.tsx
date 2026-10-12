@@ -105,7 +105,14 @@ function useCardAnchor(ready: boolean): void {
   }, []);
   useEffect(() => {
     if (!ready || !window.location.hash.startsWith('#card-')) return;
-    const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    // A fragment typed or mangled by hand may not be a valid escape: it names no card.
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+    const card = document.getElementById(id);
     if (!card) return;
     card.scrollIntoView({ block: 'start' });
     card.focus({ preventScroll: true });
