@@ -182,12 +182,15 @@ describe('the header', (): void => {
     expect(html).toMatch(/<main id="main" tabindex="-1"[^>]*><p>Page<\/p><\/main>/);
   });
 
-  // Re-pinned per theme (16-T): the layout renders the default theme's colour, and the head's
-  // script retargets it to the light set's page colour when the page is drawn light.
-  it('colours the browser chrome with the page, in the default theme and in light', async (): Promise<void> => {
-    const { viewport } = await import('../../app/layout');
+  // Re-pinned (16-T), twice: the layout rendered the dark page colour as its `theme-color`, and
+  // with a light theme React added that tag again after hydration beside the one the head's script
+  // had retargeted, so the chrome carried a stale dark second tag (the browser job). The head's
+  // theme script now owns the one tag, in either theme, and the layout renders none.
+  it('leaves the browser chrome to the head theme script, which colours it with each set’s page', async (): Promise<void> => {
+    const layout: Record<string, unknown> = await import('../../app/layout');
+    expect(layout.viewport).toBeUndefined();
+    expect(await renderLayout()).not.toMatch(/<meta[^>]*theme-color/);
     const { THEME_COLOURS } = await import('../../app/theme-preference');
-    expect(viewport.themeColor).toBe('#0a0a0b');
     expect(THEME_COLOURS).toEqual({ dark: '#0a0a0b', light: '#fafafa' });
     const css = readFileSync(new URL('../../app/globals.css', import.meta.url), 'utf8');
     expect(css).toContain('--color-bg: #0a0a0b;');

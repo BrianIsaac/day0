@@ -176,6 +176,18 @@ describe('the head theme script (the preference applied before first paint)', ()
     expect(theme()).toBe('light');
   });
 
+  it('keeps every theme-color tag on the drawn theme, one React adds after hydration too', async (): Promise<void> => {
+    systemScheme(false);
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    runThemeScript();
+    const added = document.createElement('meta');
+    added.setAttribute('name', 'theme-color');
+    added.setAttribute('content', THEME_COLOURS.dark);
+    document.head.append(added);
+    await Promise.resolve();
+    expect(chrome()).toEqual([THEME_COLOURS.light, THEME_COLOURS.light]);
+  });
+
   it('retargets the chrome colour the layout rendered rather than adding a second', (): void => {
     systemScheme(false);
     const rendered = document.createElement('meta');

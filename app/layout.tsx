@@ -1,4 +1,4 @@
-import type { Metadata, Viewport } from 'next';
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import './globals.css';
 import { DocumentationLink } from './DocumentationLink';
@@ -10,7 +10,7 @@ import { SiteNav } from './marketing/SiteNav';
 import { Providers, SessionGate } from './Providers';
 import { RetiredNoticeProvider } from './RetiredNotice';
 import { SESSION_HINT_SCRIPT } from './session-hint';
-import { THEME_COLOURS, THEME_HINT_SCRIPT } from './theme-preference';
+import { THEME_HINT_SCRIPT } from './theme-preference';
 
 const description = HERO.lede;
 
@@ -32,20 +32,15 @@ export const metadata: Metadata = {
   twitter: { card: 'summary_large_image', title: 'Day0', description },
 };
 
-/**
- * The browser chrome takes the page colour, `--color-bg`, so the header runs into it: the default
- * theme's here, retargeted by the head's theme script when the page is drawn light.
- */
-export const viewport: Viewport = { themeColor: THEME_COLOURS.dark };
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     // The head's scripts write the theme and the session hint onto the element before React
     // hydrates it.
     <html lang="en-GB" suppressHydrationWarning>
       <head>
-        {/* Inline and parser-blocking, so the stored theme is drawn from the first paint
-            (app/theme-preference.ts) and the header's account slot is sized before it
+        {/* Inline and parser-blocking, so the stored theme is drawn from the first paint, the
+            browser chrome in its page colour (app/theme-preference.ts, which owns the
+            theme-color tag), and the header's account slot is sized before it
             (app/session-hint.ts). */}
         <script dangerouslySetInnerHTML={{ __html: THEME_HINT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: SESSION_HINT_SCRIPT }} />

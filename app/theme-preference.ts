@@ -29,7 +29,7 @@ const SYSTEM_LIGHT_QUERY = '(prefers-color-scheme: light)';
 
 /**
  * The browser chrome's colour in each theme: each set's `--color-bg`, so the header runs into
- * the window's own frame.
+ * the window's own frame. The head's script writes it: the layout renders no `theme-color`.
  */
 export const THEME_COLOURS: Readonly<Record<Theme, string>> = {
   dark: '#0a0a0b',
@@ -135,6 +135,16 @@ export const THEME_HINT_SCRIPT = `(function () {
     attributes: true,
     attributeFilter: [${JSON.stringify(THEME_ATTRIBUTE)}],
   });
+  // A theme-color tag added later (a route's metadata, React's head after hydration) takes the
+  // drawn theme's colour too, so the chrome never carries a stale one.
+  new MutationObserver(function (changes) {
+    const added = changes.some(function (change) {
+      return Array.prototype.some.call(change.addedNodes, function (node) {
+        return node.nodeName === 'META' && node.getAttribute('name') === 'theme-color';
+      });
+    });
+    if (added) apply();
+  }).observe(document.head, { childList: true });
   window.addEventListener(${JSON.stringify(THEME_CHANGE_EVENT)}, function (event) {
     announced = event.detail;
     apply();
