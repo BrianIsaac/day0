@@ -1,13 +1,11 @@
 'use client';
 
-import { useRef } from 'react';
 import { useMutation } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { conflictChoiceWords, type ConflictChoice } from '@/agent/reorientation-words';
 import { Button } from '../../../components/Button';
-import { StatusRegion } from '../../../components/StatusRegion';
-import { useChange } from '../../../components/use-change';
+import type { Change } from '../../../components/use-change';
 import { ItemSection } from './ItemParts';
 
 /** One conflict question waiting beside a plan, as `managerQuestions.conflictsForAgent` draws it. */
@@ -22,12 +20,20 @@ export type ConflictQuestionRow = FunctionReturnType<
  * no longer standing since (settled elsewhere, a page archived or gone), the question is read,
  * nothing waits on it, and its answers are not offered.
  *
+ * The answer is said in the card's own live region and focus comes back to the card (`change`,
+ * the card's): an answered question leaves the list, and its section with it (W16-R26, W3l).
+ *
  * @param question - The question, with the two pages it is about.
+ * @param change - The card's change, whose live region and focus outlive the question.
  */
-export function ConflictQuestion({ question }: { question: ConflictQuestionRow }) {
+export function ConflictQuestion({
+  question,
+  change,
+}: {
+  question: ConflictQuestionRow;
+  change: Change;
+}) {
   const answerConflict = useMutation(api.managerQuestions.answerConflict);
-  const sectionRef = useRef<HTMLElement>(null);
-  const change = useChange(sectionRef);
   const pages = question.pages;
   const answer = (choice: ConflictChoice): void =>
     change.run(() => answerConflict({ questionId: question._id, choice }), {
@@ -36,12 +42,7 @@ export function ConflictQuestion({ question }: { question: ConflictQuestionRow }
     });
   return (
     <ItemSection>
-      <section
-        ref={sectionRef}
-        tabIndex={-1}
-        aria-label="A question beside the plan"
-        className="grid gap-2"
-      >
+      <section aria-label="A question beside the plan" className="grid gap-2">
         <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
           {question.question}
         </p>
@@ -64,7 +65,6 @@ export function ConflictQuestion({ question }: { question: ConflictQuestionRow }
             The two pages no longer disagree as they did, so nothing waits on this question.
           </p>
         )}
-        <StatusRegion outcome={change.outcome} />
       </section>
     </ItemSection>
   );

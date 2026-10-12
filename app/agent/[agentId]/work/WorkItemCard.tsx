@@ -43,7 +43,7 @@ import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { usePreviousValue } from '../../../components/previous-value';
 import { StatusRegion } from '../../../components/StatusRegion';
-import { useChange } from '../../../components/use-change';
+import { type Change, useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
 import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
@@ -268,6 +268,15 @@ export function WorkItemCard({
   ): void => {
     setAppliedTo(applies ? { state: item.state, since: item.waitingSince } : undefined);
     change.run(call, { done, refused });
+  };
+  // A conflict's answer is the card's change too: the question leaves the card once answered, so
+  // its outcome and focus stay with the card (W16-R26).
+  const answering: Change = {
+    ...change,
+    run: (call, words) => {
+      setAppliedTo(undefined);
+      change.run(call, words);
+    },
   };
   const outcomeOutlived =
     appliedTo !== undefined &&
@@ -573,7 +582,7 @@ export function WorkItemCard({
         />
       ) : null}
       {conflicts.map((question) => (
-        <ConflictQuestion key={question._id} question={question} />
+        <ConflictQuestion key={question._id} question={question} change={answering} />
       ))}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm
