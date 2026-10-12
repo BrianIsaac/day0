@@ -343,7 +343,13 @@ const EMPLOYEE_ROW = `border-b border-[var(--color-border)] ${ROW}`;
  * The five pilot figures (A9), one row per employee and a company row pooled
  * before any median or rate is taken, beside the supervision figures.
  */
-function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
+function PilotFiguresTable({
+  figures,
+  unselected,
+}: {
+  figures: OwnerMetrics;
+  unselected: boolean;
+}) {
   const rows = [
     ...figures.employees.map((employee) => ({
       key: String(employee.agentId),
@@ -376,27 +382,54 @@ function PilotFiguresTable({ figures }: { figures: OwnerMetrics }) {
                   className={figure.wide === true ? `${CELL} max-lg:col-span-2` : CELL}
                 >
                   <StackLabel column={figure} />
-                  {figure.value(row.pilot)}
+                  {unselected && figure.label === 'Retrieval'
+                    ? 'none selected'
+                    : figure.value(row.pilot)}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+      {unselected ? (
+        <p className="px-5 pb-3 text-xs leading-relaxed text-[var(--color-muted)]">
+          {NO_SELECTION_SENTENCE}
+        </p>
+      ) : null}
     </div>
   );
 }
 
 /**
+ * Why the retrieval figure is empty on the hosted office, said once (RM25 (a); section 7's draft,
+ * RM24): its employees read the few seeded pages whole, so the selector never runs and nothing is
+ * graded. On the v0.19.0 walk every row read "no documentation counted yet" after nine runs.
+ */
+export const NO_SELECTION_SENTENCE =
+  'The hosted office’s employees read its few seeded pages whole, so nothing here is selected or graded. A linked library is selected from, and graded.';
+
+/**
  * The company's supervision figures: one row per employee and a company
  * row, as `metrics:forOwner` computes them. At `lg` each is a table; below
  * it every row stacks with its cells labelled, so the card never scrolls
- * sideways.
+ * sideways. On the hosted office, where no selection ever runs, the retrieval
+ * column says so in one sentence under the table instead of on every row.
  *
  * @param figures - The owner's figures.
+ * @param mode - The deployment's surface mode, once read.
  */
-export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
+export function CompanySupervisionCard({
+  figures,
+  mode,
+}: {
+  figures: OwnerMetrics;
+  mode?: 'mock' | 'real';
+}) {
   const { company } = figures;
+  const unselected =
+    mode === 'mock' &&
+    company.pilot.retrieval.tokens === null &&
+    company.pilot.retrieval.recall === null;
   const notes = [
     figures.excludedAgents > 0
       ? `${count(figures.excludedAgents, 'evaluation employee')} left out`
@@ -454,7 +487,7 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
           </tr>
         </tbody>
       </table>
-      <PilotFiguresTable figures={figures} />
+      <PilotFiguresTable figures={figures} unselected={unselected} />
       {notes.length > 0 ? (
         <p className="border-t border-[var(--color-border)] px-5 py-2 text-xs leading-relaxed text-[var(--color-muted)]">
           {notes.join(' · ')}
@@ -467,6 +500,7 @@ export function CompanySupervisionCard({ figures }: { figures: OwnerMetrics }) {
 /** The company supervision card for the signed-in owner, once there is an employee. */
 export function CompanySupervision() {
   const figures = useQuery(api.metrics.forOwner);
+  const surface = useQuery(api.config.surfaceMode);
   if (!figures || figures.employees.length === 0) return null;
-  return <CompanySupervisionCard figures={figures} />;
+  return <CompanySupervisionCard figures={figures} mode={surface?.mode} />;
 }

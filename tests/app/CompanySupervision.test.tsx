@@ -404,6 +404,41 @@ describe('the retrieval figure (14-R)', (): void => {
   });
 });
 
+describe('the retrieval figure where no selection ran (RM25 (a), the v0.19.0 walk’s finding 5)', (): void => {
+  const SENTENCE =
+    'The hosted office’s employees read its few seeded pages whole, so nothing here is selected or graded. A linked library is selected from, and graded.';
+  const unselected: OwnerMetrics = {
+    ...FIGURES,
+    employees: FIGURES.employees.map((employee) => ({
+      ...employee,
+      metrics: {
+        ...employee.metrics,
+        pilot: { ...employee.metrics.pilot, retrieval: { tokens: null, recall: null } },
+      },
+    })),
+    company: {
+      ...FIGURES.company,
+      pilot: { ...FIGURES.company.pilot, retrieval: { tokens: null, recall: null } },
+    },
+  };
+
+  it('says why once on the hosted office, where every row read "no documentation counted yet"', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="mock" />);
+    expect(html).toContain(SENTENCE);
+    expect(html.split(SENTENCE)).toHaveLength(2);
+    expect(html).not.toContain('no documentation counted yet');
+    expect(rowOf(html.slice(html.indexOf('Pilot figures')), 'Company')).toContain('none selected');
+  });
+
+  it('keeps the rows’ own words where a library can be linked, or where a selection ran', (): void => {
+    const real = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="real" />);
+    expect(real).not.toContain(SENTENCE);
+    expect(real).toContain('no documentation counted yet');
+    const selected = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} mode="mock" />);
+    expect(selected).not.toContain(SENTENCE);
+  });
+});
+
 describe('the skill reuse figure (A14, 10-A)', (): void => {
   const [reuse] = PILOT_FIGURES;
   const figures = (skillReuse: PilotFigures['skillReuse']): PilotFigures => ({
