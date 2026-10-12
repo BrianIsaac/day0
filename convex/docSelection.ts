@@ -9,7 +9,7 @@ import {
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
-import { citeConflictOf, standingConflictsOn } from './docRelations';
+import { citeConflictOf, standingConflictsOn } from './docConflicts';
 import { eventsOfType } from './eventLog';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';

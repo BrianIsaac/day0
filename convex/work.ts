@@ -26,7 +26,7 @@ import { incomingTransfersOf } from './managerTransfers';
 import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
-import { citedConflictOf } from './docRelations';
+import { citedConflictOf } from './docConflicts';
 import {
   APPLY_RECOVERY_MS,
   claimLoopStepInTransaction,
