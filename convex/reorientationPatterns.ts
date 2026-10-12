@@ -172,12 +172,17 @@ export async function openRepeatedSkipCard(
       .order('desc')
       .take(COUNTED_EVENTS_READ)
   ).filter((event) => (event.payload as { clause?: unknown }).clause === clause);
-  const counted = await crossing(
-    ctx,
-    agentId,
-    { trigger: 'repeated-skip', triggerKey },
-    skips.map((event) => ({ id: event._id, at: event._creationTime })),
-  );
+  // An item counts once under its clause, at its first skip in the window (W16-R37): a page's
+  // status change re-admits the out-of-scope skips and the model skips them again, which is the
+  // same three items, not three new skips, so a card the manager dismissed stays dismissed.
+  const firstSkips = new Map<string, Occurrence>();
+  for (const event of skips) {
+    const item = String((event.payload as { workItemId?: unknown }).workItemId ?? event._id);
+    firstSkips.set(item, { id: event._id, at: event._creationTime });
+  }
+  const counted = await crossing(ctx, agentId, { trigger: 'repeated-skip', triggerKey }, [
+    ...firstSkips.values(),
+  ]);
   if (counted === undefined) return;
   await openCard(ctx, {
     agentId,

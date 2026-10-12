@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { stampRecheckDue } from '../../convex/skillVersions';
+import { reevaluatePendingInTransaction } from '../../convex/workReevaluation';
 import { transferExpiresAt } from '../../src/agent/manager-transfer';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { allConvexModules } from './all-modules';
@@ -1061,6 +1062,57 @@ describe('the counted rows: three refusals, skips or rejections', (): void => {
     expect((await cardsOf(harness, agentId))[0].affected.charterClauses).toEqual([
       { field: 'willNotDo', index: 0, text: 'Change committee-deck numbers' },
     ]);
+  });
+
+  it('keeps a dismissed skip card dismissed when a status flip re-admits the same skips and they are skipped again (W16-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const clause = 'Change committee-deck numbers';
+    const skip = async (workItemId: Id<'workItems'>): Promise<void> => {
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: the deck is not its to change',
+          clause,
+        },
+      });
+    };
+    const items: Id<'workItems'>[] = [];
+    for (const index of [1, 2, 3]) {
+      items.push(await seedWork(harness, agentId, 'discovered', { externalId: `REVOPS-${index}` }));
+    }
+    for (const workItemId of items) await skip(workItemId);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.trigger).toBe('repeated-skip');
+    vi.setSystemTime(Date.now() + 60_000);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(card._id, { status: 'dismissed', decidedAt: Date.now() }),
+    );
+    // Bed 3: a page superseded re-admits the out-of-scope skips, which the model skips again
+    // under the same clause; the same three items are not three new skips.
+    for (const round of [1, 2]) {
+      vi.setSystemTime(Date.now() + 60_000);
+      await harness.run(
+        async (ctx) =>
+          await reevaluatePendingInTransaction(ctx, {
+            agentId,
+            trigger: 'documentation',
+            key: `documentation-status:source:runbooks/page-${round}.md:superseded`,
+          }),
+      );
+      for (const workItemId of items) await skip(workItemId);
+    }
+    expect((await cardsOf(harness, agentId)).map((row) => [row._id, row.status])).toEqual([
+      [card._id, 'dismissed'],
+    ]);
+    // A fourth item skipped under the clause is one new skip; three new ones open a card again.
+    for (const index of [4, 5]) {
+      await skip(await seedWork(harness, agentId, 'discovered', { externalId: `REVOPS-${index}` }));
+    }
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+    await skip(await seedWork(harness, agentId, 'discovered', { externalId: 'REVOPS-6' }));
+    expect(await cardsOf(harness, agentId)).toHaveLength(2);
   });
 
   it('opens one card when the manager rejects a third plan in thirty days, and again only after a decided card', async (): Promise<void> => {
