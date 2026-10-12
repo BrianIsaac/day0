@@ -3,7 +3,9 @@ import {
   approvedResultWords,
   closingHeldReason,
   heldPlanWords,
+  heldWords,
   isClosingHeld,
+  pendingWords,
 } from '../../../src/agent/reorientation-words';
 
 describe('the reorientation card’s words (section 7, RM24)', (): void => {
@@ -14,6 +16,25 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
     );
     expect(isClosingHeld(`stopped: ${reason}`)).toBe(true);
     expect(isClosingHeld('stopped: the approved plan leaves step 2 to the manager')).toBe(false);
+  });
+
+  it('says what a card holds as the hold stops it: plans at approval, runs before closing (second pass M3)', (): void => {
+    expect(heldWords({ plans: 0, runs: 0 })).toBe('nothing held');
+    expect(heldWords({ plans: 1, runs: 0 })).toBe('1 plan held');
+    expect(heldWords({ plans: 2, runs: 1 })).toBe('2 plans held, 1 run held before closing');
+    expect(heldWords({ plans: 0, runs: 3 })).toBe('3 runs held before closing');
+    expect(pendingWords('Mira', { plans: 0, runs: 0 })).toBe(
+      'Mira is working out what to propose. Nothing is held while it does.',
+    );
+    expect(pendingWords('Mira', { plans: 1, runs: 0 })).toBe(
+      'Mira is working out what to propose. The plan it holds waits until you decide the card.',
+    );
+    expect(pendingWords('Mira', { plans: 0, runs: 2 })).toBe(
+      'Mira is working out what to propose. The 2 runs it holds stop before their closing steps until you decide the card.',
+    );
+    expect(pendingWords('Mira', { plans: 2, runs: 1 })).toBe(
+      'Mira is working out what to propose. The 2 plans it holds wait, and the run it holds stops before its closing steps, until you decide the card.',
+    );
   });
 
   it('says a held plan and what each Approve did', (): void => {

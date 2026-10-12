@@ -185,7 +185,7 @@ function metaWords(view: CardView, zone: string | undefined): string {
     card.status === 'deferred' && card.revisitAt !== undefined
       ? ` · deferred until ${revisitDay(card.revisitAt, zone)}`
       : '';
-  return `${opened} · ${card.risk} risk · ${heldWords(card.blockingWork.length)}${deferred}`;
+  return `${opened} · ${card.risk} risk · ${heldWords(view.held)}${deferred}`;
 }
 
 /**
@@ -219,7 +219,7 @@ export function ReorientationCard({
   const reorientationId = card._id;
   const decided = card.status === 'applied' || card.status === 'dismissed';
   const proposed = card.proposed;
-  const held = card.blockingWork.length;
+  const held = view.held;
   const affected = [
     card.affected.charterClauses.length > 0
       ? counted(card.affected.charterClauses.length, 'charter clause')
@@ -231,7 +231,8 @@ export function ReorientationCard({
     card.affected.surfaces.length > 0
       ? counted(card.affected.surfaces.length, 'connected system')
       : undefined,
-    held > 0 ? counted(held, 'plan held', 'plans held') : '0 plans held',
+    // A decided card holds nothing, and a standing one says what its hold stops (M3).
+    decided ? undefined : held.plans + held.runs > 0 ? heldWords(held) : '0 plans held',
   ].filter((words): words is string => words !== undefined);
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),

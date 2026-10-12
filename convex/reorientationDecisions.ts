@@ -19,11 +19,12 @@ import {
   retireSkillInTransaction,
   withdrawSkillInTransaction,
 } from './skillControls';
-import { charterClausesWhere, openCard } from './reorientation';
+import { charterClausesWhere, heldStageOf, openCard } from './reorientation';
 import {
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
   approvedResultWords,
+  type HeldCounts,
 } from '../src/agent/reorientation-words';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
 import { UNDECIDED_REORIENTATION_STATUSES } from '../src/agent/reorientation-vocabulary';
@@ -61,6 +62,8 @@ export interface CardView {
   readonly agreements: Array<{ _id: Id<'workingAgreements'>; statement: string }>;
   /** The edges it names, each as the person and what they are to the employee. */
   readonly people: Array<{ _id: Id<'relationships'>; words: string }>;
+  /** What the card holds, as the hold stops it: none once it is decided (M3). */
+  readonly held: HeldCounts;
   /** The charter version an Approve of a charter change would amend, when there is one. */
   readonly charterVersion?: string;
 }
@@ -458,8 +461,19 @@ export const listForAgent = query({
           }`,
         });
       }
+      const holding =
+        card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
+      const stages = holding
+        ? rows.flatMap((row) =>
+            row !== null && card.blockingWork.includes(row._id) ? [heldStageOf(row)] : [],
+          )
+        : [];
       views.push({
         card,
+        held: {
+          plans: stages.filter((stage) => stage === 'plan').length,
+          runs: stages.filter((stage) => stage === 'run').length,
+        },
         workItems: rows.flatMap((row) =>
           row === null ? [] : [{ _id: row._id, title: row.title, state: row.state }],
         ),

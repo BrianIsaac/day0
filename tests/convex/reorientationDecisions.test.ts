@@ -726,4 +726,45 @@ describe('openByHand and listForAgent', (): void => {
         .query(api.reorientationDecisions.listForAgent, { agentId }),
     ).rejects.toThrow();
   });
+
+  it('counts what a standing card holds as the hold stops it, and nothing on a decided card (second pass M3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    // A plan waits at its approval; a run stops before its closing steps; a run whose closing set
+    // is already written, and a plan already done, are past what the hold stops.
+    const plan = await seedWork(harness, agentId, 'plan-pending');
+    const approved = await seedWork(harness, agentId, 'plan-approved');
+    const running = await seedWork(harness, agentId, 'executing');
+    const firstWrites = await seedWork(harness, agentId, 'actions-pending', {
+      output: { phase: 'auto' },
+    });
+    const closingWrites = await seedWork(harness, agentId, 'actions-pending', {
+      output: { phase: 'dependent' },
+    });
+    const done = await seedWork(harness, agentId, 'completed');
+    const holding = await proposedCard(harness, agentId, { kind: 'none', rationale: 'Nothing.' });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(holding, {
+        risk: 'high',
+        blockingWork: [plan, approved, running, firstWrites, closingWrites, done],
+      });
+    });
+    const decided = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'none', rationale: 'Nothing.' },
+      { trigger: 'access-ended', triggerKey: 'access-ended-linear' },
+    );
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(decided, { risk: 'high', blockingWork: [plan] });
+    });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.dismiss, { reorientationId: decided });
+    const views = await harness
+      .withIdentity(OWNER)
+      .query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(views.find((view) => view.card._id === holding)?.held).toEqual({ plans: 1, runs: 3 });
+    expect(views.find((view) => view.card._id === decided)?.held).toEqual({ plans: 0, runs: 0 });
+  });
 });

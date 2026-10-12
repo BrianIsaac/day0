@@ -132,22 +132,46 @@ export function revisitDay(ms: number, zone: string | undefined): string {
   }).format(ms);
 }
 
-/** How many plans a card holds, as its line says it. */
-export function heldWords(held: number): string {
-  if (held === 0) return 'nothing held';
-  return held === 1 ? '1 plan held' : `${held} plans held`;
+/**
+ * What a standing card holds, as the hold stops it (the second pass's M3): plans wait at their
+ * approval, and runs already going on stop before their closing steps. Nothing else is held.
+ */
+export interface HeldCounts {
+  readonly plans: number;
+  readonly runs: number;
+}
+
+/** What a card holds, as its line says it: "2 plans held, 1 run held before closing". */
+export function heldWords(held: HeldCounts): string {
+  const parts = [
+    held.plans > 0 ? (held.plans === 1 ? '1 plan held' : `${held.plans} plans held`) : undefined,
+    held.runs > 0
+      ? held.runs === 1
+        ? '1 run held before closing'
+        : `${held.runs} runs held before closing`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return parts.length === 0 ? 'nothing held' : parts.join(', ');
 }
 
 /**
  * The card's waiting line while the judgement works (section 7): "{name} is working out what to
- * propose. Nothing is held while it does." A high-risk card holds its plans meanwhile, and says so
- * (flagged: the draft's second sentence would be untrue there).
+ * propose. Nothing is held while it does." A high-risk card holds its plans and runs meanwhile,
+ * and says what of them waits (flagged: the draft's second sentence would be untrue there).
  */
-export function pendingWords(name: string, held: number): string {
+export function pendingWords(name: string, held: HeldCounts): string {
   const opening = `${name} is working out what to propose.`;
-  return held === 0
-    ? `${opening} Nothing is held while it does.`
-    : `${opening} ${held === 1 ? 'The plan it holds waits' : `The ${held} plans it holds wait`} until you decide the card.`;
+  const plans = held.plans === 1 ? 'plan it holds waits' : `${held.plans} plans it holds wait`;
+  const runs =
+    held.runs === 1
+      ? 'run it holds stops before its closing steps'
+      : `${held.runs} runs it holds stop before their closing steps`;
+  if (held.plans > 0 && held.runs > 0) {
+    return `${opening} The ${plans}, and the ${runs}, until you decide the card.`;
+  }
+  if (held.plans > 0) return `${opening} The ${plans} until you decide the card.`;
+  if (held.runs > 0) return `${opening} The ${runs} until you decide the card.`;
+  return `${opening} Nothing is held while it does.`;
 }
 
 /** What a card says when the judgement could not propose: the card stays, and Dismiss is the way on. */

@@ -360,6 +360,29 @@ export async function heldByReorientation(
 }
 
 /**
+ * Where a card's hold stops a row it names (the second pass's M3): a drafted plan at its approval
+ * (`decidePlan`'s seventh reason), a run going on before its closing steps (the closing phase's
+ * check); a run whose closing set is already written, or a row past running, is not stopped.
+ */
+export function heldStageOf(
+  row: Pick<Doc<'workItems'>, 'state' | 'output'>,
+): 'plan' | 'run' | undefined {
+  switch (row.state) {
+    case 'plan-pending':
+      return 'plan';
+    case 'plan-approved':
+    case 'executing':
+      return 'run';
+    case 'actions-pending':
+      return (row.output as { phase?: string } | undefined)?.phase === 'dependent'
+        ? undefined
+        : 'run';
+    default:
+      return undefined;
+  }
+}
+
+/**
  * The card holding a work item, for the closing phase's own check (O-3): its id and its summary,
  * or null. Internal; read by `workActions.authorDependentActions` in both modes.
  */

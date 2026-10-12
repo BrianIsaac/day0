@@ -105,6 +105,7 @@ const BASE: CardView = {
   skills: [{ _id: 'skill-1' as Id<'skills'>, name: 'kanban-comment-and-close' }],
   agreements: [],
   people: [],
+  held: { plans: 0, runs: 0 },
   charterVersion: '0.1',
 };
 
@@ -208,6 +209,7 @@ describe('a reorientation card', (): void => {
               state: 'plan-pending',
             },
           ],
+          held: { plans: 1, runs: 0 },
         },
       ),
     );
@@ -219,6 +221,51 @@ describe('a reorientation card', (): void => {
     expect(text).toContain('Work“Answer the tier-2 ask”');
     await floor(view.container);
     view.unmount();
+  });
+
+  it('says a running item is held only before its closing steps, and a decided card holds nothing (second pass M3)', async (): Promise<void> => {
+    const running = drawn(
+      withCard(
+        {
+          proposed: { kind: 'pending' },
+          risk: 'high',
+          blockingWork: ['item-1' as Id<'workItems'>],
+        },
+        {
+          workItems: [
+            {
+              _id: 'item-1' as Id<'workItems'>,
+              title: 'Answer the tier-2 ask',
+              state: 'executing',
+            },
+          ],
+          held: { plans: 0, runs: 1 },
+        },
+      ),
+    );
+    const text = running.container.textContent ?? '';
+    expect(text).toContain('high risk · 1 run held before closing');
+    expect(text).toContain('Affected1 charter clause · 1 skill · 1 run held before closing');
+    expect(text).toContain(
+      'Mira is working out what to propose. The run it holds stops before its closing steps until you decide the card.',
+    );
+    expect(text).not.toContain('plan held');
+    running.unmount();
+    const decided = drawn(
+      withCard(
+        {
+          status: 'dismissed',
+          risk: 'high',
+          blockingWork: ['item-1' as Id<'workItems'>],
+          decidedAt: OPENED,
+          outcome: { summary: 'nothing changed' },
+        },
+        { held: { plans: 0, runs: 0 } },
+      ),
+    );
+    expect(decided.container.textContent).toContain('Affected1 charter clause · 1 skill');
+    expect(decided.container.textContent).not.toContain('held');
+    decided.unmount();
   });
 
   it('says a proposal could not be had, and leaves Dismiss', async (): Promise<void> => {
