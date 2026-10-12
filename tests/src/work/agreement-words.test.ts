@@ -84,8 +84,9 @@ describe('what the cards say of a working agreement', (): void => {
     expect(refusalSentence(held, 'Ines', 'charter')).toBe(
       "Not in effect for Ines: Day0 has not checked it against Ines's charter, and it checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect for your other employees.",
     );
+    // Re-pinned for W15-R37: the sweep checks a hold within half an hour, which the line omitted.
     expect(refusalSentence({ ...held, checkable: true }, 'Ines', 'charter')).toBe(
-      "Not in effect for Ines yet: Day0 has not checked it against Ines's charter. It checks when Ines next drafts a plan, or now with Check now. It stays in effect for your other employees.",
+      "Not in effect for Ines yet: Day0 has not checked it against Ines's charter. It checks within half an hour, or now with Check now. It stays in effect for your other employees.",
     );
     expect(refusalOffersAmendment(held)).toBe(false);
   });

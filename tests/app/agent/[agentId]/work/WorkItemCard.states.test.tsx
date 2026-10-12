@@ -1106,6 +1106,7 @@ describe('the approval line once the approved writes have applied (W19-8)', (): 
     expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
     act((): void => view.root.render(element({ ...DRAWN.landed, _id: DRAWN.held._id })));
     expect(said(view.container)).toEqual([]);
+    expect(view.container.textContent).not.toContain('apply now');
     view.unmount();
   });
 

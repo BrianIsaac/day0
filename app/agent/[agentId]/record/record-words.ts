@@ -930,8 +930,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The skill ${text(p.name) ?? 'unnamed'} passed its check and can be called${
       typeof p.version === 'number' ? ` as version ${p.version}` : ''
     }`,
+  // What a re-check means for the work and what the manager can do (the v0.19.0 walk's finding
+  // 8): the skill keeps running (A13), and one of the library's offers Re-check now on its card.
   'skill.recheck-due': (p) =>
-    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}`,
+    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}. It keeps running meanwhile${
+      text(p.versionId) ? '; Re-check now on the Skills tab checks it' : ''
+    }`,
   'skill.adoption-offered': (p, subject) =>
     `${subject.name} was offered ${versionOfSkill(p, subject)} to adopt`,
   'skill.adopted': (p, subject) =>
@@ -1213,6 +1217,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`
       : `${decider(subject)} retired a working agreement`,
+  'agreement.check-owed': (_, subject) =>
+    `Day0 could not check a working agreement for every employee against ${subject.name}'s amended charter: it stays in effect, and the check is owed`,
+  'agreement.checked': (_, subject) =>
+    `Day0 checked a working agreement for every employee against ${subject.name}'s charter: it stays in effect`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''

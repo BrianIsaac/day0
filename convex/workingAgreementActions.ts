@@ -14,7 +14,11 @@ import {
   type CheckedStatement,
 } from '../src/work/agreement-judgements';
 import type { CharterBounds } from '../src/work/agreements';
-import { CHECK_RETRY_DELAYS_MS } from '../src/work/agreement-vocabulary';
+import {
+  CHECK_BATCH,
+  CHECK_OUTLIVED_MS,
+  CHECK_RETRY_DELAYS_MS,
+} from '../src/work/agreement-vocabulary';
 import type { CheckInputs, ProposalInputs } from './workingAgreements';
 
 /*
@@ -276,23 +280,73 @@ export const settleKept = internalAction({
   },
 });
 
+/** What one run of a charter's check is asked: the employee, the attempt, the agreements. */
+interface CharterCheckArgs {
+  readonly agentId: Id<'agents'>;
+  readonly attempt: number;
+  readonly agreementIds?: Id<'workingAgreements'>[];
+}
+
+/**
+ * Keep a watch on a run of a charter's check (W15-R34): what the run would do were the model unable
+ * to answer for the agreements it has not settled, scheduled past the longest a run may last
+ * (`CHECK_OUTLIVED_MS`), so a run that dies, at its time limit or otherwise, is taken as such a run
+ * and leaves its record: the next attempt, or, after the last, `settleUncheckable`. The run cancels
+ * the watch as it settles each agreement and keeps a new one over the rest.
+ *
+ * @returns The watch, or nothing when no agreement is left unsettled.
+ */
+async function watchOver(
+  ctx: ActionCtx,
+  args: CharterCheckArgs,
+  unsettled: readonly Id<'workingAgreements'>[],
+): Promise<Id<'_scheduled_functions'> | null> {
+  if (unsettled.length === 0) return null;
+  const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
+  return delay === undefined
+    ? await ctx.scheduler.runAfter(
+        CHECK_OUTLIVED_MS,
+        internal.workingAgreements.settleUncheckable,
+        {
+          agentId: args.agentId,
+          agreementIds: [...unsettled],
+          tried: true,
+        },
+      )
+    : await ctx.scheduler.runAfter(
+        Math.max(delay, CHECK_OUTLIVED_MS),
+        internal.workingAgreementActions.checkForCharter,
+        { agentId: args.agentId, attempt: args.attempt + 1, agreementIds: [...unsettled] },
+      );
+}
+
+/** Cancel a run's watch, if it keeps one. */
+async function endWatch(ctx: ActionCtx, watch: Id<'_scheduled_functions'> | null): Promise<void> {
+  if (watch !== null) await ctx.scheduler.cancel(watch);
+}
+
 /**
  * Internal: check an employee's newly approved charter against its owner's active agreements for
  * every employee (13-W's gap; scheduled by `charters.approve`), each as the keep's check would have:
- * one the charter refuses is refused on its row (`settleCharterCheck`); once the owner has more
- * employees than the check reads, every one is held for this employee alone and stays in effect for
- * the others (`holdForEmployee`, W14-R15). A check that could not be had is tried again after each
- * of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could not be had alone; after the
- * last, each of those is held for this employee too, since nothing checked it against the charter
- * (15-FX: it stayed binding unchecked, with nothing on a row to say so). **The hold is a first
- * charter's alone** (W15-R12; D-2 (c)): an amendment of an established employee's charter holds
- * nothing, since its agreements were checked against the charter it amends; they stay in effect
- * while the re-check is owed, and only a refusal ends one. An agreement held for the
+ * one the charter refuses is refused on its row (`settleCharterCheck`). A check that could not be
+ * had is tried again after each of `CHECK_RETRY_DELAYS_MS`, for the agreements whose check could
+ * not be had alone; after the last, `settleUncheckable` records it: on a first charter each such
+ * agreement is held for the employee, and stays in effect for the others (15-FX: it stayed binding
+ * unchecked, with nothing on a row to say so); on an amendment of an established employee's
+ * charter each stays in effect, since it was checked against the charter amended (W15-R12; D-2
+ * (c)), and its check is owed (`agreement.check-owed`, RM28 (b)), which the Agreements card says
+ * with Check now. Past the employees the check reads, or under a pause, no model is asked and the
+ * same record is written at once for a first charter (W14-R15) and past the bound for an amendment;
+ * under a pause an amendment's check is asked again after each wait. An agreement held for the
  * employee that the check allows is in effect for it from then (`liftHold`): the hold's lift, by
  * this check, the employee's next stored plan, its resume, the stalled-step sweep
- * (`scheduleDueHoldChecks`), or Check now on its card. A check held by a pause asks no model and
- * holds each agreement too, so the end of a pause of the whole deployment, which resumes no
- * employee by name, still finds what to check.
+ * (`scheduleDueHoldChecks`), or Check now on its card; an owed check one allows is ended
+ * (`recordChecked`).
+ *
+ * One run reads at most `CHECK_BATCH` agreements with the model, one at a time, and hands the rest
+ * to the next run, and it keeps a watch on itself ({@link watchOver}), so a run that dies mid-way
+ * leaves the record a run the model could not answer leaves (W15-R34: it wrote neither the retry
+ * nor the hold, and the agreements stayed in force unchecked).
  */
 export const checkForCharter = internalAction({
   args: {
@@ -309,83 +363,85 @@ export const checkForCharter = internalAction({
       ...(args.agreementIds === undefined ? {} : { agreementIds: args.agreementIds }),
     });
     if (inputs === null) return;
-    // Past the check, the agreements stay in effect for the employees they were checked against,
-    // and are held for this one alone (W14-R15): ended for everyone, the fiftieth's agreement went
-    // with the fifty-first's hire. A check a pause holds asks no model either, and holds them the
-    // same way (15-FX): the pause's end has no record of a check it held, so the hold is the
-    // record, and the sweep, the resume or the next plan lifts it.
-    // An amendment is another matter (W15-R12; D-2 (c)): the agreements were checked against the
-    // charter it amends, so they stay in effect for the employee while this check is owed, and
-    // only a refusal ends one. Past the check nothing can be asked, so nothing changes; under a
-    // pause the check is asked again after each wait, as one the model could not answer is.
-    if ((inputs.pastTheCheck || paused) && !inputs.established) {
-      for (const agreement of inputs.agreements) {
-        await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
-          agreementId: agreement._id,
-          agentId: args.agentId,
-        });
-      }
+    const asked = inputs.agreements.map((agreement) => agreement._id);
+    // Past the check no model is asked: a first charter's agreements are held for this employee
+    // alone and stay in effect for the others (W14-R15), and an amendment's are owed their check.
+    // A pause holds a first charter's the same way (15-FX): its end has no record of a check it
+    // held, so the hold is the record, and the sweep, the resume or the next plan lifts it. Under
+    // a pause an amendment's check is asked again after each wait, as one the model could not
+    // answer is (W15-R12; D-2 (c)).
+    if (inputs.pastTheCheck || (paused && !inputs.established)) {
+      await ctx.runMutation(internal.workingAgreements.settleUncheckable, {
+        agentId: args.agentId,
+        agreementIds: asked,
+        tried: false,
+      });
       return;
     }
-    if (inputs.pastTheCheck) return;
+    const batch = inputs.agreements.slice(0, CHECK_BATCH);
+    const rest = asked.slice(CHECK_BATCH);
     const unavailable: Id<'workingAgreements'>[] = [];
-    for (const agreement of inputs.agreements) {
-      if (paused) {
-        unavailable.push(agreement._id);
-        continue;
-      }
-      const outcome = await checkedOrUnavailable(ctx, {
-        agreement,
-        charters: [inputs.charter],
-        pastTheCheck: false,
-      });
+    let watch = await watchOver(ctx, args, asked);
+    for (const [at, agreement] of batch.entries()) {
+      const outcome: CheckedStatement = paused
+        ? { outcome: 'unavailable', statement: agreement.statement, reason: 'the work is paused' }
+        : await checkedOrUnavailable(ctx, {
+            agreement,
+            charters: [inputs.charter],
+            pastTheCheck: false,
+          });
       if (outcome.outcome === 'unavailable') {
         unavailable.push(agreement._id);
-        log.warn('working agreements: a new charter waits on its check', {
+        log.warn('working agreements: a charter waits on its check', {
           agreementId: agreement._id,
           attempt: args.attempt,
           reason: outcome.reason,
         });
-        continue;
+      } else if (outcome.outcome === 'refused') {
+        await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
+          agreementId: agreement._id,
+          agentId: args.agentId,
+          refusal: outcome.refusal,
+        });
+      } else if (inputs.held.includes(agreement._id)) {
+        await ctx.runMutation(internal.workingAgreements.liftHold, {
+          agreementId: agreement._id,
+          agentId: args.agentId,
+        });
+      } else if (inputs.owed.includes(agreement._id)) {
+        await ctx.runMutation(internal.workingAgreements.recordChecked, {
+          agreementId: agreement._id,
+          agentId: args.agentId,
+        });
       }
-      if (outcome.outcome !== 'refused') {
-        if (inputs.held.includes(agreement._id)) {
-          await ctx.runMutation(internal.workingAgreements.liftHold, {
-            agreementId: agreement._id,
-            agentId: args.agentId,
-          });
-        }
-        continue;
-      }
-      await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
-        agreementId: agreement._id,
+      // The new watch first, then the old one ended: no moment is left unwatched (the second
+      // pass).
+      const next = await watchOver(ctx, args, [...unavailable, ...asked.slice(at + 1)]);
+      await endWatch(ctx, watch);
+      watch = next;
+    }
+    if (rest.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
         agentId: args.agentId,
-        refusal: outcome.refusal,
+        attempt: args.attempt,
+        agreementIds: rest,
       });
     }
     const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
-    if (unavailable.length === 0) return;
-    if (delay !== undefined) {
+    if (unavailable.length > 0 && delay !== undefined) {
       await ctx.scheduler.runAfter(delay, internal.workingAgreementActions.checkForCharter, {
         agentId: args.agentId,
         attempt: args.attempt + 1,
         agreementIds: unavailable,
       });
-      return;
-    }
-    if (inputs.established) {
-      log.warn('working agreements: an amended charter was not checked against these agreements', {
+    } else if (unavailable.length > 0) {
+      await ctx.runMutation(internal.workingAgreements.settleUncheckable, {
         agentId: args.agentId,
         agreementIds: unavailable,
-        reason: 'the check could not be had after its last retry; they stay in effect',
-      });
-      return;
-    }
-    for (const agreementId of unavailable) {
-      await ctx.runMutation(internal.workingAgreements.holdForEmployee, {
-        agreementId,
-        agentId: args.agentId,
+        tried: !paused,
       });
     }
+    // Ended only once what follows the run is scheduled or written.
+    await endWatch(ctx, watch);
   },
 });

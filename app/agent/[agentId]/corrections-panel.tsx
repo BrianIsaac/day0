@@ -18,10 +18,12 @@ import {
   proposalQuestion,
   REFUSED_WITHOUT_REASON,
   WITHDRAWN,
+  recheckLine,
   refusalOffersAmendment,
   refusalSentence,
   refusedKicker,
   type AgreementView,
+  type RecheckOutcome,
 } from '../../../src/work/agreement-words';
 import { Button, ButtonLink } from '../../components/Button';
 import { Card } from '../../components/Card';
@@ -262,7 +264,7 @@ export function AgreementProposals({
   onKeep: (agreementId: AgreementView['_id'], forEveryEmployee: boolean) => Promise<unknown>;
   onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
   /** Try a kept agreement's check again once it is stale (W13-R30). */
-  onRecheck: (agreementId: AgreementView['_id']) => Promise<unknown>;
+  onRecheck: (agreementId: AgreementView['_id']) => Promise<RecheckOutcome>;
 }) {
   const now = useNow();
   const card = useRef<HTMLElement>(null);
@@ -349,7 +351,12 @@ export function AgreementProposals({
                             className={ROW_BUTTON}
                             onClick={() =>
                               change.run(() => onRecheck(row._id), {
-                                done: checkingHoldLine(employeeName),
+                                done: (outcome) =>
+                                  recheckLine(
+                                    outcome,
+                                    checkingHoldLine(employeeName),
+                                    employeeName,
+                                  ),
                                 refused: 'The check was not started.',
                               })
                             }
@@ -389,7 +396,7 @@ export function AgreementProposals({
                           className={ROW_BUTTON}
                           onClick={() =>
                             change.run(() => onRecheck(row._id), {
-                              done: CHECKING_AGAIN,
+                              done: (outcome) => recheckLine(outcome, CHECKING_AGAIN, employeeName),
                               refused: 'The check was not tried again.',
                             })
                           }

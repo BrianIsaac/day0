@@ -187,6 +187,23 @@ describe('the voice room once the call is over (round two section 3.4)', (): voi
     ).toBe(false);
   });
 
+  it("carries the drafting line once, in the region that says it (the v0.19.0 walk's finding 8)", async (): Promise<void> => {
+    voice.session = {
+      _id: 'session-1',
+      state: 'synthesising',
+      pendingTranscript: 'AGENT: Why this hire?\n\nUSER: The close.',
+    };
+    const container = await renderVoiceRoom({
+      configured: true,
+      agentId: 'agent_voice',
+      signedUrl: null,
+      public: true,
+    });
+    expect(
+      (container.textContent ?? '').split('Drafting your charter, usually under a minute.'),
+    ).toHaveLength(2);
+  });
+
   it('shows the draft of a call held before this deployment lost its voice credentials', async (): Promise<void> => {
     voice.session = {
       _id: 'session-1',

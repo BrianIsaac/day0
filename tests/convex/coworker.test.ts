@@ -88,13 +88,19 @@ describe('coworker replies in the mock office', (): void => {
   it('writes nothing in the manager’s DM, where the manager is the one who reads (W19-8)', async (): Promise<void> => {
     // The v0.19.0 walk's record (`A-Lark-record.txt`): "Manager replied in #dm-manager." seven times
     // across three employees, where the visitor, the manager, wrote nothing.
+    // A completion report, and a draft held for approval (16-FX's case of the same finding).
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedAgent(harness);
-    await harness.mutation(internal.coworker.replyToAgentMessage, {
-      agentId,
-      channelSlug: 'dm-manager',
-      originalBody: 'Done: the three closed-won deals are in the tracker.',
-    });
+    for (const originalBody of [
+      'Done: the three closed-won deals are in the tracker.',
+      'Draft reply to Hana, for your approval.',
+    ]) {
+      await harness.mutation(internal.coworker.replyToAgentMessage, {
+        agentId,
+        channelSlug: 'dm-manager',
+        originalBody,
+      });
+    }
     expect(await officeMessages(harness, agentId)).toEqual([]);
     const events = await harness.run(
       async (ctx) =>

@@ -1479,7 +1479,27 @@ export interface AgreementRefusedPayload extends AgreementNamed {
   readonly reason: AgreementRowRefusalReason;
   /** The `willNotDo` clause it contradicts, word for word. */
   readonly clause?: string;
+  /**
+   * A hold (`unchecked-for-employee`): the employee's own refused row that holds the agreement
+   * named, which the lift's `agreement.activated` names too (W15-R37). A hold written before
+   * v0.20.0 named its own row as `agreementId` and carries no `holdId`.
+   */
+  readonly holdId?: Id<'workingAgreements'>;
 }
+
+/**
+ * The payload of `agreement.check-owed` (RM28 (b)): an agreement for every employee stays in effect
+ * for an employee whose amended charter it could not be checked against (after the check's last
+ * retry, when the check died, or past the employees the check reads), and the check is owed.
+ * Written once until a check is had; the Agreements card says it with Check now.
+ */
+export interface AgreementCheckOwedPayload extends AgreementNamed {
+  /** When the agreement was last checked against this employee's charter. */
+  readonly since: number;
+}
+
+/** The payload of `agreement.checked`: a check that was owed was had and allowed it (RM28 (b)). */
+export type AgreementCheckedPayload = AgreementNamed;
 
 /** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
 export interface AgreementRetiredPayload extends AgreementNamed {
@@ -2139,6 +2159,8 @@ export interface EventPayloads {
   'agreement.activated': AgreementActivatedPayload;
   'agreement.refused': AgreementRefusedPayload;
   'agreement.retired': AgreementRetiredPayload;
+  'agreement.check-owed': AgreementCheckOwedPayload;
+  'agreement.checked': AgreementCheckedPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
   'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
@@ -2358,6 +2380,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'agreement.activated',
   'agreement.refused',
   'agreement.retired',
+  'agreement.check-owed',
+  'agreement.checked',
   'work.draft-resumed',
   'work.execution-resumed',
   'work.plan-held',

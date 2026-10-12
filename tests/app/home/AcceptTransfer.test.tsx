@@ -261,7 +261,8 @@ describe('AcceptTransfer', () => {
         '3 items in progress',
         '2 skills',
         'charter version 0.2, approved',
-        'permissions: docs:read',
+        // Re-pinned for the v0.19.0 walk's finding 7 (16-FX): the access in the manager's words.
+        'its access: reading the docs',
         'its record: 41 events, decisions included, as they were made',
       ],
       [
