@@ -47,6 +47,7 @@ import { replyTargetFor } from '../src/work/reply-target';
 import {
   type MockAction,
   type ReplyTarget,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
@@ -262,6 +263,11 @@ export const retryFailed = mutation({
       ...(row.dismissedAt !== undefined ? { dismissedAt: undefined } : {}),
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
+      // "Take it anyway" on a colleague's settled ticket, stamped on the row, so the waiver never
+      // rests on the newest retries the employee's events hold (W15-R16).
+      ...(skipReason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)
+        ? { settledWaivedAt: Date.now() }
+        : {}),
       ...(feedback
         ? {
             managerFeedback: {

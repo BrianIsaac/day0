@@ -332,8 +332,13 @@ async function settledTicket(
   return undefined;
 }
 
-/** Whether the manager sent this row back with Retry: the work is then theirs to give. */
+/**
+ * Whether the manager sent this row back with Retry: the work is then theirs to give. The waiver
+ * is stamped on the row (`settledWaivedAt`, W15-R16); a row retried before the stamp is read from
+ * the newest retries, as it was.
+ */
 async function takenAnyway(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
+  if (row.settledWaivedAt !== undefined) return true;
   const retries = await eventsOfType(ctx, row.agentId, 'work.retry')
     .order('desc')
     .take(TAKEN_ANYWAY_READ);
