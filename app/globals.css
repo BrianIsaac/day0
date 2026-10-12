@@ -34,6 +34,9 @@
   --color-ok-line: #396754;
   --color-danger-soft: #281d1f;
   --color-danger-line: #733937;
+  /* The accent's bright point: the orbit's packets on the landing, lighter than the accent in the
+     dark set and the icon's darker step in the light one, so it reads on either page. */
+  --color-glint: #a5f3fc;
   /* What dims the page under a dialog (each scrim sets its own alpha), and the colour a raised
      surface's shadow is cast in; the raised shadow itself is the prototype's `--shadow-2`. */
   --color-scrim: #0a0a0b;
@@ -70,6 +73,7 @@
   --color-ok-line: #92ada3;
   --color-danger-soft: #f9edec;
   --color-danger-line: #cd9893;
+  --color-glint: #0891b2;
   --color-scrim: #18181b;
   --color-shadow: #18181b;
   --shadow-raised: 0 1px 2px rgb(24 24 27 / 0.05), 0 16px 40px -16px rgb(24 24 27 / 0.25);
