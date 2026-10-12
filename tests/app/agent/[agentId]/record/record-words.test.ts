@@ -261,7 +261,27 @@ describe('recordWords', (): void => {
         },
         subject,
       ),
-    ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
+    ).toBe(
+      // Re-pinned for the v0.19.0 walk's finding 8 (16-FX): the line says what it means for the
+      // work; a skill with no library version has no Re-check now to name.
+      'The skill kanban-comment-and-close is due a re-check: its check was not kept. It keeps running meanwhile.',
+    );
+    // The walk's own line: what the version reason means, and what to do.
+    expect(
+      recordWords(
+        {
+          type: 'skill.recheck-due',
+          payload: {
+            name: 'kanban-comment-and-close',
+            reason: 'v2 is verified; this runs v1',
+            versionId: 'skillVersions:v1',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close is due a re-check: v2 is verified; this runs v1. It keeps running meanwhile; Re-check now on the Skills tab checks it.',
+    );
   });
 
   it('says whose skill was offered for adoption, and that adopting it checks it again first (10-A)', (): void => {
