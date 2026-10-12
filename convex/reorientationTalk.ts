@@ -20,6 +20,7 @@ import {
 import {
   PROPOSAL_CHANGES,
   ProposalRefused,
+  ScopeNotAPhrase,
   proposalOf,
   type JudgedProposal,
 } from '../src/agent/reorientation-proposal';
@@ -77,6 +78,10 @@ const ALREADY_ON_CARD = 'This talk is already on the card. Reply to take it up a
 
 /** Said when an outcome names what the card does not hold, or an action it does not take. */
 const OUTCOME_REFUSED = 'The proposal named something this card cannot change. Ask again.';
+
+/** Said when an outcome's new scope for a relationship is a sentence, not a phrase (W16-R3). */
+const SCOPE_REFUSED =
+  'The proposal put a sentence where a short phrase of what the relationship covers goes. Ask again.';
 
 /** What a turn of the talk is: one of the one-to-one's three, or a finish. */
 const talkRequestValidator = v.union(
@@ -327,7 +332,7 @@ async function endInProposal(ctx: MutationCtx, ending: Ending): Promise<string |
       reorientationId: card._id,
       reason: err.message,
     });
-    return OUTCOME_REFUSED;
+    return err instanceof ScopeNotAPhrase ? SCOPE_REFUSED : OUTCOME_REFUSED;
   }
   const now = Date.now();
   // A card being talked through is open again; a deferred one keeps its date (the second pass's M2).

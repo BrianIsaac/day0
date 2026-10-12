@@ -100,8 +100,17 @@ describe('the talk’s system prompt', (): void => {
     expect(system).not.toContain('—');
   });
 
-  it('is cached under its own key', (): void => {
-    expect(REORIENTATION_TALK_PROMPT_CACHE_KEY).toBe('day0-reorientation-talk-v1');
+  it('is cached under its own key, moved with the prompt (v2: the scope phrase, W16-R3)', (): void => {
+    expect(REORIENTATION_TALK_PROMPT_CACHE_KEY).toBe('day0-reorientation-talk-v2');
+  });
+
+  it('asks for a relationship’s new scope as a phrase, never a sentence (W16-R3, D-3 (a))', (): void => {
+    const phrase =
+      'a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence';
+    expect(talkSystemPrompt(INPUT, { kind: 'pending' })).toContain(
+      `\`text\` is the new scope for edit: ${phrase}.`,
+    );
+    expect(REORIENTATION_COMPLETE_TOOL.text).toContain(phrase);
   });
 });
 

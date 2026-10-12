@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { PageStatus } from '../docs/authority';
 import type { RelationshipType } from '../people/vocabulary';
+import { isScopePhrase } from '../people/words';
 import { awaitingCheck } from '../work/agreement-words';
 import {
   PAGE_STATUS_PROPOSALS,
@@ -134,6 +135,13 @@ export type ProposalReply = z.infer<typeof proposalReplySchema>;
 /** Why a reply was refused: it named something the card does not hold, or an action it cannot take. */
 export class ProposalRefused extends Error {}
 
+/** A relationship's new scope written as a sentence or past the edge's bound (W16-R3). */
+export class ScopeNotAPhrase extends ProposalRefused {}
+
+/** What an edge's scope must be, as the two prompts ask for it and a refusal says it. */
+export const SCOPE_PHRASE_RULE =
+  'a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence';
+
 /** The system prompt of the proposal judgement. */
 export const REORIENTATION_PROPOSAL_SYSTEM = [
   'You are an AI employee. Something your work relied on changed: a person, a page, a skill, an access or a pattern in your work.',
@@ -143,7 +151,7 @@ export const REORIENTATION_PROPOSAL_SYSTEM = [
   'Choose from the numbered candidates only. Each line says what it is and the actions it takes.',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',
   '- `agreement`: `action` is one of the actions its line lists (keep, edit, retire, recheck or dismiss); `text` is the new statement for edit.',
-  '- `relationship`: `action` is edit or retire; `text` is the new scope for edit.',
+  `- \`relationship\`: \`action\` is edit or retire; \`text\` is the new scope for edit: ${SCOPE_PHRASE_RULE}.`,
   '- `page-status`: `action` is the status the page should have: active, archived, draft, clear, or superseded where its line names a successor.',
   '- `scope`: `action` is revoke for a scope held, grant for one not held.',
   '- `skill`: `action` is recheck, retire or withdraw.',
@@ -298,6 +306,15 @@ function writtenText(reply: ProposalReply, what: string): string {
   return text;
 }
 
+/** The reply's new scope for an edge, refused unless it is a phrase the graph can match. */
+function scopePhrase(reply: ProposalReply): string {
+  const scope = writtenText(reply, 'scope');
+  if (!isScopePhrase(scope)) {
+    throw new ScopeNotAPhrase(`the new scope must be ${SCOPE_PHRASE_RULE}`);
+  }
+  return scope;
+}
+
 /**
  * The proposal a reply stands for, checked against the card's candidates: the change, its target
  * by the id the card holds, the action that target takes and the words it writes.
@@ -305,7 +322,8 @@ function writtenText(reply: ProposalReply, what: string): string {
  * @param reply - The model's answer.
  * @param candidates - The candidates the prompt numbered, in its order.
  * @throws ProposalRefused when the reply names a candidate the card does not hold, one of another
- *   kind, an action it does not take, or leaves out the words an edit writes.
+ *   kind, an action it does not take, or leaves out the words an edit writes; `ScopeNotAPhrase`
+ *   when an edge's new scope is a sentence or longer than the edge takes.
  */
 export function proposalOf(
   reply: ProposalReply,
@@ -346,7 +364,7 @@ export function proposalOf(
         kind: 'relationship',
         relationshipId: edge.relationshipId,
         action,
-        ...(action === 'edit' ? { type: edge.type, scope: writtenText(reply, 'scope') } : {}),
+        ...(action === 'edit' ? { type: edge.type, scope: scopePhrase(reply) } : {}),
         rationale,
       };
     }

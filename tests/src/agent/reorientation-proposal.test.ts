@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
   ProposalRefused,
+  REORIENTATION_PROPOSAL_SYSTEM,
   proposalOf,
   proposalPrompt,
   proposalReplySchema,
   type ProposalCandidate,
   type ProposalReply,
 } from '../../../src/agent/reorientation-proposal';
+import { scopeCovers } from '../../../src/people/resolution';
+import { RELATIONSHIP_SCOPE_LIMIT } from '../../../src/people/words';
 
 const page = { sourceId: 'source-1' as Id<'docSources'>, ref: 'revops/escalation-paths.md' };
 const successor = {
@@ -237,6 +240,67 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
     );
     expect(proposed.rationale).toHaveLength(600);
     expect(proposed.kind === 'charter-change' && proposed.after).toHaveLength(600);
+  });
+
+  /** The 16-RV review's bed 1: Approve stored this 189-character sentence as the edge's scope. */
+  const BED_ONE_SENTENCE =
+    'Ines Duarte is no longer the approver for NetLedger journal changes and REVOPS close plans; approval for these routes to the current Revops manager until a successor approver is named.';
+  /** 16-J's walk (W1c): the talk's sentence Approve stored as the scope. */
+  const WALK_SENTENCE =
+    'Ines Duarte approves NetLedger journal changes only; no longer approver for REVOPS close plans, which Aisha Bello now approves first.';
+
+  it('refuses an edge scope that is a sentence, which the graph would read as a bag of words (W16-R3, D-3 (a))', (): void => {
+    // The reason it must be refused: every word of "REVOPS close plans" is among the sentence's,
+    // so the graph still routes REVOPS close plans to the person it says no longer approves them.
+    expect(scopeCovers(BED_ONE_SENTENCE, 'REVOPS close plans')).toBe(true);
+    expect(scopeCovers(WALK_SENTENCE, 'REVOPS close plans')).toBe(true);
+    for (const text of [BED_ONE_SENTENCE, WALK_SENTENCE]) {
+      expect(() =>
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toThrow(ProposalRefused);
+    }
+    for (const text of ['Approves close plans.', 'Close plans: first', 'Who approves? Aisha']) {
+      expect(() =>
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toThrow('a short phrase');
+    }
+  });
+
+  it('refuses an edge scope past the 200 characters Approve takes, and keeps a phrase', (): void => {
+    const longPhrase = `NetLedger ${'journal '.repeat(30)}changes`;
+    expect(longPhrase.length).toBeGreaterThan(RELATIONSHIP_SCOPE_LIMIT);
+    expect(() =>
+      proposalOf(
+        reply({ change: 'relationship', candidate: 3, action: 'edit', text: longPhrase }),
+        CANDIDATES,
+      ),
+    ).toThrow(ProposalRefused);
+    for (const text of [
+      'NetLedger journal changes',
+      'Q3 close, v1.2 runbooks',
+      'acme.test renewals',
+    ]) {
+      expect(
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toMatchObject({ kind: 'relationship', action: 'edit', scope: text });
+    }
+  });
+});
+
+describe('the proposal judgement’s system prompt', (): void => {
+  it('asks for a relationship’s new scope as a phrase, never a sentence (W16-R3, D-3 (a))', (): void => {
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(
+      '- `relationship`: `action` is edit or retire; `text` is the new scope for edit: a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence.',
+    );
   });
 });
 

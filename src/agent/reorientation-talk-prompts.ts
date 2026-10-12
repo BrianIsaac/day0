@@ -1,6 +1,7 @@
 import type { Doc } from '../../convex/_generated/dataModel';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD, PLAIN_PUNCTUATION_RULE } from './drafted-text-rules';
 import {
+  SCOPE_PHRASE_RULE,
   proposalPrompt,
   type ProposalCandidate,
   type ProposalInput,
@@ -22,7 +23,7 @@ import {
 export const REORIENTATION_COMPLETE = 'reorientationComplete';
 
 /** The provider's prompt cache key for the talk's system prompt; moved with the prompt. */
-export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v1';
+export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v2';
 
 /** The priming turn a talk opens from: it stands in for the manager and is never kept or drawn. */
 export const TALK_OPENING = 'The manager opened this talk from the card. Begin.';
@@ -40,7 +41,7 @@ export const REORIENTATION_COMPLETE_TOOL = {
   candidate: 'The number of the item the change is to; null for none.',
   action:
     'What is done to the item: one of the actions its line lists; null for an edited clause or none.',
-  text: "The clause's whole new words, an agreement's new statement or a relationship's new scope; otherwise null.",
+  text: `The clause's whole new words, an agreement's new statement or a relationship's new scope (${SCOPE_PHRASE_RULE}); otherwise null.`,
   rationale:
     'Why, in one or two plain sentences the manager reads on the card, resting on what the manager said.',
   quotes:
@@ -60,7 +61,7 @@ const TALK_RULES = [
   'When the manager agrees, or asks you to put it on the card, call reorientationComplete with the one change the answers support:',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',
   '- `agreement`: `action` is one of the actions its line lists; `text` is the new statement for edit.',
-  '- `relationship`: `action` is edit or retire; `text` is the new scope for edit.',
+  `- \`relationship\`: \`action\` is edit or retire; \`text\` is the new scope for edit: ${SCOPE_PHRASE_RULE}.`,
   '- `page-status`: `action` is the status its line lists.',
   '- `scope`: `action` is revoke for a scope held, grant for one not held.',
   '- `skill`: `action` is recheck, retire or withdraw.',
