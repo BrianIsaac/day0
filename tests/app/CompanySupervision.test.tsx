@@ -341,6 +341,18 @@ describe('the company supervision card', (): void => {
   });
 });
 
+describe("the card's header on a phone (Q6, 16-T)", (): void => {
+  // 15-Q's phone shot (`wave15-q-2026-10-11-bed/card-phone.png`): at 390 the title and "3
+  // employees, one manager" shared one line with a few pixels between them. A column gap keeps
+  // them apart, and the count wraps under the title when the line has no room for both.
+  it('keeps a gap between the title and the count, and wraps the count under the title when there is no room', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+    const header = /<div class="([^"]*)"><h2[^>]*>Company supervision<\/h2>/.exec(html)?.[1] ?? '';
+    expect(header.split(' ')).toEqual(expect.arrayContaining(['flex', 'flex-wrap', 'gap-x-4']));
+    expect(header).toMatch(/\bgap-y-1\b/);
+  });
+});
+
 describe('the retrieval figure (14-R)', (): void => {
   it('takes both columns of the stacked grid on a phone, as its words are the longest', (): void => {
     const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
