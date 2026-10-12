@@ -863,7 +863,7 @@ describe('the batch lines when a member leaves a ticket close for its card (12-H
 
 describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): void => {
   const question =
-    'Two pages disagree under “Thresholds”: Finance escalation (Finance wiki) and Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that rely on this until you answer.';
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.';
 
   it('carries the question and its answer line before the reply line, and only on a plan', (): void => {
     expect(

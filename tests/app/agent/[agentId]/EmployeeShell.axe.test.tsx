@@ -227,7 +227,7 @@ function populated(): Record<string, unknown> {
         _id: 'q-conflict',
         workItemId: 'w-plan',
         question:
-          'Two pages disagree under “Thresholds”: Finance escalation (Finance wiki) and Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that rely on this until you answer.',
+          'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
         pages: [
           { title: 'Finance escalation', source: 'Finance wiki' },
           { title: 'Pipeline runbook', source: 'Handbook' },

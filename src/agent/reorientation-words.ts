@@ -57,25 +57,24 @@ export const approvedResultWords = {
         : `the skill “${name}” was withdrawn from every employee`,
 } as const;
 
-/** The opening of a closing phase held by a card, so a Retry can tell it from another stop. */
-const CLOSING_HELD_OPENING = 'stopped before its closing steps: the reorientation card about ';
+/** A card's summary without the full stop or other closing mark it may end with. */
+function withoutStop(summary: string): string {
+  return summary.trim().replace(/[.!?]+$/u, '');
+}
+
+/** A card's summary as a sentence of its own: one closing mark, never two. */
+export function sentenceOf(summary: string): string {
+  return /[.!?]$/u.test(summary.trim()) ? summary.trim() : `${summary.trim()}.`;
+}
 
 /**
- * Why a run's closing phase did not author (O-3; section 7): "{name} stopped before its closing
- * steps: the reorientation card about {summary} is still open. Decide it, then Retry."
+ * Why a run's closing phase did not author (O-3; section 7, flagged: the draft spliced the card's
+ * summary into "the reorientation card about {summary}", which read wrongly for most summaries):
+ * "{name} stopped before its closing steps: a reorientation card is still open ({summary}).
+ * Decide it, then Retry."
  */
 export function closingHeldReason(name: string, summary: string): string {
-  return `${name} ${CLOSING_HELD_OPENING}${summary} is still open. Decide it, then Retry.`;
-}
-
-/** Whether a run's failure is a closing phase a reorientation card held. */
-export function isClosingHeld(failure: string): boolean {
-  return failure.includes(CLOSING_HELD_OPENING);
-}
-
-/** What a plan a card holds says (section 7). */
-export function heldPlanWords(summary: string): string {
-  return `Held until you decide the reorientation card: ${summary}.`;
+  return `${name} stopped before its closing steps: a reorientation card is still open (${withoutStop(summary)}). Decide it, then Retry.`;
 }
 
 /** A documentation page as a conflict's question names it: its title and its source's label. */
@@ -92,8 +91,10 @@ export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
 
 /**
  * The question a standing conflict under a drafted plan asks, in the plan's own request (RM20 (a);
- * section 7): "Two pages disagree under “{heading}”: {A} ({source}) and {B} ({source}). Which is
- * right? {name} runs the other steps now and holds the ones that rely on this until you answer."
+ * section 7, flagged: the pages are lettered as the typed answer names them, a plan citing nothing
+ * holds every step, and the held steps run on Retry after the answer): "Two pages disagree under
+ * “{heading}”: A, {A} ({source}), and B, {B} ({source}). Which is right? {name} runs the other
+ * steps now and holds the ones that may rely on this until you answer and Retry."
  */
 export function conflictQuestionText(
   name: string,
@@ -101,7 +102,7 @@ export function conflictQuestionText(
   pages: readonly [NamedPageWords, NamedPageWords],
 ): string {
   const [a, b] = pages;
-  return `Two pages disagree under “${heading}”: ${a.title} (${a.source}) and ${b.title} (${b.source}). Which is right? ${name} runs the other steps now and holds the ones that rely on this until you answer.`;
+  return `Two pages disagree under “${heading}”: A, ${a.title} (${a.source}), and B, ${b.title} (${b.source}). Which is right? ${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
 }
 
 /** An answer's words, as the card's buttons and the record say it. */
@@ -189,10 +190,16 @@ export function decisionWords(args: {
   readonly approves: string;
   readonly revisit: string;
   readonly charterVersion?: string;
+  /** The card holds plans or runs, which a deferred card keeps holding (A21). */
+  readonly holds?: boolean;
 }): string {
   const keeps =
     args.charterVersion !== undefined
       ? `Dismiss closes the card and ${args.name} keeps working under version ${args.charterVersion}.`
       : 'Dismiss closes the card and nothing changes.';
-  return `${args.approves} Defer revisits on ${args.revisit} and changes nothing. ${keeps}`;
+  const defers =
+    args.holds === true
+      ? `Defer revisits on ${args.revisit} and keeps what the card holds held until then.`
+      : `Defer revisits on ${args.revisit} and changes nothing.`;
+  return `${args.approves} ${defers} ${keeps}`;
 }

@@ -223,6 +223,26 @@ describe('a reorientation card', (): void => {
     view.unmount();
   });
 
+  it('ends a summary with one full stop, and says Defer keeps a holding card’s plans held (the second pass’s minors)', async (): Promise<void> => {
+    const view = drawn(
+      withCard(
+        {
+          triggerSummary: 'The organisation’s Linear connection was revoked: rotated.',
+          risk: 'high',
+          blockingWork: ['item-1' as Id<'workItems'>],
+        },
+        { held: { plans: 1, runs: 0 } },
+      ),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('was revoked: rotated.Affected');
+    expect(text).not.toContain('rotated..');
+    expect(text).toContain(
+      'Defer revisits on 3 October and keeps what the card holds held until then.',
+    );
+    view.unmount();
+  });
+
   it('says a running item is held only before its closing steps, and a decided card holds nothing (second pass M3)', async (): Promise<void> => {
     const running = drawn(
       withCard(

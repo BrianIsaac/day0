@@ -11,6 +11,7 @@ import {
   failedProposalWords,
   heldWords,
   pendingWords,
+  sentenceOf,
   revisitDay,
 } from '@/agent/reorientation-words';
 import { Button } from '../../../components/Button';
@@ -254,7 +255,7 @@ export function ReorientationCard({
       data-reorientation-status={card.status}
     >
       <div className="grid gap-4 text-sm">
-        <p className="text-[var(--color-fg-2)]">{card.triggerSummary}.</p>
+        <p className="text-[var(--color-fg-2)]">{sentenceOf(card.triggerSummary)}</p>
         <dl className="grid gap-1 sm:grid-cols-[8rem_1fr]">
           <dt className="text-[var(--color-muted)]">Affected</dt>
           <dd className="[overflow-wrap:anywhere]">{affected.join(' · ')}</dd>
@@ -346,6 +347,7 @@ export function ReorientationCard({
                     ? 'Approve waits for the proposal.'
                     : approveWords(view, proposed),
                 revisit: revisitDay(now + WEEK_MS, zone),
+                holds: held.plans + held.runs > 0,
                 ...(view.charterVersion !== undefined
                   ? { charterVersion: view.charterVersion }
                   : {}),

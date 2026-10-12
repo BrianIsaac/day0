@@ -2,20 +2,60 @@ import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
   closingHeldReason,
-  heldPlanWords,
+  conflictQuestionText,
+  decisionWords,
   heldWords,
-  isClosingHeld,
   pendingWords,
+  sentenceOf,
 } from '../../../src/agent/reorientation-words';
 
 describe('the reorientation card’s words (section 7, RM24)', (): void => {
-  it('says a held closing phase as drafted, and tells it from any other stop', (): void => {
-    const reason = closingHeldReason('Mira', '“Escalation paths” was superseded');
-    expect(reason).toBe(
-      'Mira stopped before its closing steps: the reorientation card about “Escalation paths” was superseded is still open. Decide it, then Retry.',
+  it('says a held closing phase with the card’s summary set apart, one full stop each (the second pass’s minors)', (): void => {
+    expect(closingHeldReason('Mira', 'Its access “linear:write” was revoked')).toBe(
+      'Mira stopped before its closing steps: a reorientation card is still open (Its access “linear:write” was revoked). Decide it, then Retry.',
     );
-    expect(isClosingHeld(`stopped: ${reason}`)).toBe(true);
-    expect(isClosingHeld('stopped: the approved plan leaves step 2 to the manager')).toBe(false);
+    expect(
+      closingHeldReason('Mira', 'The organisation’s Linear connection was revoked: rotated.'),
+    ).toBe(
+      'Mira stopped before its closing steps: a reorientation card is still open (The organisation’s Linear connection was revoked: rotated). Decide it, then Retry.',
+    );
+    expect(sentenceOf('Priya, its approver, changed')).toBe('Priya, its approver, changed.');
+    expect(sentenceOf('The connection was revoked: rotated.')).toBe(
+      'The connection was revoked: rotated.',
+    );
+  });
+
+  it('labels the question’s two pages as the answer names them, and says Retry runs the held steps', (): void => {
+    expect(
+      conflictQuestionText('Mira', 'Thresholds', [
+        { title: 'Pipeline variance runbook', source: 'Company folder' },
+        { title: 'Finance variance escalation', source: 'Company folder' },
+      ]),
+    ).toBe(
+      'Two pages disagree under “Thresholds”: A, Pipeline variance runbook (Company folder), and B, Finance variance escalation (Company folder). Which is right? Mira runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
+    );
+  });
+
+  it('says Defer keeps what a card holds held', (): void => {
+    expect(
+      decisionWords({
+        name: 'Mira',
+        approves: 'Approve writes version 0.2.',
+        revisit: '3 October',
+      }),
+    ).toBe(
+      'Approve writes version 0.2. Defer revisits on 3 October and changes nothing. Dismiss closes the card and nothing changes.',
+    );
+    expect(
+      decisionWords({
+        name: 'Mira',
+        approves: 'Approve writes version 0.2.',
+        revisit: '3 October',
+        holds: true,
+      }),
+    ).toBe(
+      'Approve writes version 0.2. Defer revisits on 3 October and keeps what the card holds held until then. Dismiss closes the card and nothing changes.',
+    );
   });
 
   it('says what a card holds as the hold stops it: plans at approval, runs before closing (second pass M3)', (): void => {
@@ -37,10 +77,7 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
     );
   });
 
-  it('says a held plan and what each Approve did', (): void => {
-    expect(heldPlanWords('Priya, its approver, changed')).toBe(
-      'Held until you decide the reorientation card: Priya, its approver, changed.',
-    );
+  it('says what each Approve did', (): void => {
     expect(approvedResultWords.charter('0.2')).toBe('the charter was amended to version 0.2');
     expect(approvedResultWords.page('active', 'Runbook')).toBe('“Runbook” was marked current');
     expect(approvedResultWords.page('clear', 'Runbook')).toBe(

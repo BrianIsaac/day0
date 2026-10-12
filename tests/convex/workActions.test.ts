@@ -7354,7 +7354,7 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     expect(held.state).toBe('failed');
     expect(held.skipReason).toMatch(/^stopped: /);
     expect(held.skipReason).toContain(
-      'stopped before its closing steps: the reorientation card about its access “linear:write” was revoked is still open. Decide it, then Retry.',
+      'stopped before its closing steps: a reorientation card is still open (its access “linear:write” was revoked). Decide it, then Retry.',
     );
     expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
 
