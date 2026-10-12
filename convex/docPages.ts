@@ -297,3 +297,55 @@ export const archivedPageRefs = internalQuery({
         .take(ARCHIVED_KEPT_READ)
     ).map((row) => row.ref),
 });
+
+/** A stored page as the sync keeps it by its revision, its body unread from its source (X-13). */
+export interface StoredForRevision {
+  readonly ref: string;
+  readonly title: string;
+  readonly url?: string;
+  readonly markdown: string;
+  readonly updatedAt: number;
+  readonly sourceRevision: string;
+  readonly nativeStatus?: Doc<'docPages'>['nativeStatus'];
+}
+
+/** The most bytes of page rows one answer of stored revisions reads: a page row holds its text. */
+const STORED_REVISIONS_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The stored pages of a source a batch may keep by their revision without reading their bodies
+ * (the reader contract by revision, X-13): each listed ref stored with a revision and with the
+ * hash its split wrote (W15-R25), so its blocks are its text's, at most `STORED_REVISIONS_BYTES`
+ * of them, the rest left to be read. A source owed the 0.20.0 remeasure is a library as v0.19.0
+ * left it, whose pages are read as before until a 0.20.0 sync has seen it. Internal; reads the
+ * source and the listed pages' rows.
+ */
+export const storedForRevision = internalQuery({
+  args: { sourceId: v.id('docSources'), refs: v.array(v.string()) },
+  handler: async (ctx, args): Promise<StoredForRevision[]> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || source.relationsRemeasure !== undefined) return [];
+    const kept: StoredForRevision[] = [];
+    let bytes = 0;
+    for (const ref of args.refs) {
+      const page = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', ref))
+        .unique();
+      if (page === null) continue;
+      bytes += 3 * (page.markdown.length + page.title.length);
+      if (bytes > STORED_REVISIONS_BYTES) break;
+      if (page.sourceRevision === undefined || page.contentHash === undefined) continue;
+      kept.push({
+        ref: page.ref,
+        title: page.title,
+        ...(page.url !== undefined ? { url: page.url } : {}),
+        markdown: page.markdown,
+        updatedAt: page.updatedAt,
+        sourceRevision: page.sourceRevision,
+        ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+      });
+    }
+    return kept;
+  },
+});

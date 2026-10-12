@@ -85,9 +85,7 @@ describe('the Yuque documentation reader', (): void => {
       '210000009',
     ]);
     expect(unread.map((page) => page.ref)).toEqual(['210000003', '210000006']);
-    // Re-taken for W15-R30: the second page is full, so the walk asks once more and its empty
-    // page ends it (the total of six ended it there on the base).
-    expect(listings(requests)).toEqual(['live@0', 'live@3', 'live@6', 'deleted@0']);
+    expect(listings(requests)).toEqual(['live@0', 'live@3', 'deleted@0']);
     for (const request of requests) {
       expect(request.url.origin).toBe('https://acme.yuque.com');
       expect(request.headers.get('x-auth-token')).toBe(TOKEN);
@@ -95,9 +93,10 @@ describe('the Yuque documentation reader', (): void => {
     }
     const [first] = requests;
     expect(first.url.pathname).toBe('/api/v2/repos/revops/runbooks/docs');
+    // A hundred a listing page, the most Yuque lists (W15-R31): on the base the batch's limit.
     expect(Object.fromEntries(first.url.searchParams)).toEqual({
       offset: '0',
-      limit: '3',
+      limit: '100',
       deleted: 'false',
     });
   });
@@ -115,19 +114,32 @@ describe('the Yuque documentation reader', (): void => {
   it('reads on past a full page whatever a narrower total says (W15-R30)', async (): Promise<void> => {
     // The review: a total narrower than the documents ended the walk on a full page, and the
     // finish pruned the rest. The meaning of meta.total is unproven, so a full page reads on.
-    const docs0 = JSON.parse(
-      readFileSync(new URL('../../../fixtures/readers/yuque/docs-0.json', import.meta.url), 'utf8'),
-    );
-    const { reader, requests } = readerOnSpace((request) =>
-      request.url.pathname.endsWith('/docs') &&
-      request.url.searchParams.get('deleted') === 'false' &&
-      request.url.searchParams.get('offset') === '0'
-        ? json(200, { ...docs0, meta: { total: 3 } })
-        : undefined,
-    );
-    const { pages } = await wholeRepository(reader);
-    expect(pages.map((page) => page.ref)).toContain('210000004');
-    expect(listings(requests)).toEqual(['live@0', 'live@3', 'live@6', 'deleted@0']);
+    const full = Array.from({ length: 100 }, (_unused, index) => ({
+      id: 220000000 + index,
+      title: `Runbook ${index}`,
+      type: 'Doc',
+      status: 1,
+      content_updated_at: '2026-10-01T00:00:00.000Z',
+    }));
+    const { reader, requests } = readerOnSpace((request) => {
+      if (!request.url.pathname.endsWith('/docs')) return undefined;
+      if (request.url.searchParams.get('deleted') === 'true') return json(200, { data: [] });
+      return request.url.searchParams.get('offset') === '0'
+        ? json(200, { data: full, meta: { total: 3 } })
+        : json(200, { data: [], meta: { total: 3 } });
+    });
+    // Every document is stored at its listed revision, so the full page is kept with no body read.
+    const stored = async (refs: readonly string[]) =>
+      new Map(refs.map((ref) => [ref, '2026-10-01T00:00:00.000Z']));
+    let cursor: string | undefined;
+    const kept: string[] = [];
+    do {
+      const batch = await reader.listPageBatch(repository, TOKEN, cursor, 3, stored);
+      kept.push(...(batch.kept ?? []).map((page) => page.ref));
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    expect(kept).toHaveLength(100);
+    expect(listings(requests)).toEqual(['live@0', 'live@100', 'deleted@0']);
   });
 
   it("reads a Markdown document's body as it is and any other through its HTML, each under its title", async (): Promise<void> => {
@@ -377,5 +389,80 @@ describe('the Yuque documentation reader', (): void => {
       reason: '"Close the quarter" is larger than the 16 MiB Day0 reads of one Yuque document.',
     });
     expect(batch.pages.map((page) => page.ref)).toEqual(['210000002']);
+  });
+});
+
+describe('the reader contract by revision (X-13; W15-R31)', (): void => {
+  it('keeps every document stored at its listed revision with no body asked, and reads the one that changed', async (): Promise<void> => {
+    const { reader, requests } = readerOnSpace();
+    // As the sync stores them: each document with the revision it was read at; one edited since.
+    const revisions: Record<string, string> = {
+      '210000001': '2026-10-01T09:30:00.000Z',
+      '210000002': '2026-09-01T00:00:00.000Z',
+      '210000004': '2026-10-05T07:00:00.000Z',
+      '210000005': '2026-09-20T02:00:00.000Z',
+    };
+    const asked: string[][] = [];
+    const stored = async (refs: readonly string[]) => {
+      asked.push([...refs]);
+      return new Map(
+        refs.flatMap((ref) => (ref in revisions ? [[ref, revisions[ref]] as const] : [])),
+      );
+    };
+    const kept: string[] = [];
+    const read: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const batch = await reader.listPageBatch(repository, TOKEN, cursor, 25, stored);
+      kept.push(...(batch.kept ?? []).map((page) => page.ref));
+      read.push(...batch.pages.map((page) => page.ref));
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    expect(kept).toEqual(['210000001', '210000004', '210000005']);
+    // The edited document, and the deleted one, which is archived from its listing.
+    expect(read).toEqual(['210000002', '210000009']);
+    const details = requests.filter((request) => /\/docs\/\d+$/.test(request.url.pathname));
+    expect(details.map((request) => request.url.pathname.split('/').pop())).toEqual(['210000002']);
+    // Each live listing page is asked about once, by every document it lists.
+    expect(asked).toEqual([
+      ['210000001', '210000002', '210000003'],
+      ['210000004', '210000005', '210000006'],
+    ]);
+  });
+
+  it('lists 1,200 unchanged documents inside Yuque’s hourly limit at the fifteen-minute schedule', async (): Promise<void> => {
+    // 15-X's X-13: 1,200 documents cost 1,249 requests a sync, 4,996 an hour against 5,000, and
+    // one sync took 14.99 minutes at the 720 ms spacing.
+    const DOCS = 1_200;
+    const documents = Array.from({ length: DOCS }, (_unused, index) => ({
+      id: 230000000 + index,
+      title: `Runbook ${index}`,
+      type: 'Doc',
+      status: 1,
+      content_updated_at: '2026-10-01T00:00:00.000Z',
+    }));
+    const { reader, requests, sleeps } = readerOnSpace((request) => {
+      if (!request.url.pathname.endsWith('/docs')) return undefined;
+      if (request.url.searchParams.get('deleted') === 'true') return json(200, { data: [] });
+      const offset = Number(request.url.searchParams.get('offset'));
+      const limit = Number(request.url.searchParams.get('limit'));
+      return json(200, { data: documents.slice(offset, offset + limit), meta: { total: DOCS } });
+    });
+    const stored = async (refs: readonly string[]) =>
+      new Map(refs.map((ref) => [ref, '2026-10-01T00:00:00.000Z']));
+    let cursor: string | undefined;
+    let kept = 0;
+    do {
+      const batch = await reader.listPageBatch(repository, TOKEN, cursor, 25, stored);
+      kept += batch.kept?.length ?? 0;
+      expect(batch.pages).toEqual([]);
+      cursor = batch.nextCursor;
+    } while (cursor !== undefined);
+    expect(kept).toBe(DOCS);
+    const SYNCS_AN_HOUR = 4;
+    expect(requests.length * SYNCS_AN_HOUR).toBeLessThan(5_000 / 10);
+    // The requests' own spacing is the sync's time with Yuque: well inside its fifteen minutes.
+    const waited = sleeps.reduce((total, ms) => total + ms, 0);
+    expect(waited).toBeLessThan(60_000);
   });
 });

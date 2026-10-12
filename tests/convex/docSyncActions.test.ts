@@ -2338,3 +2338,87 @@ describe('a source that refuses the walk of its archived pages (W15-R30)', (): v
     expect(source?.status).toBe('synced');
   }, 60_000);
 });
+
+describe('the reader contract by revision at the sync (X-13; W15-R31)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps a Yuque repository unchanged since its last sync with no document body asked, mirrored and stored as it was', async (): Promise<void> => {
+    const space = providerFake('yuque');
+    const reader = new YuqueReader({
+      fetch: space.fetch,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-revision-');
+    await mkdir(join(root, 'space'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'RevOps runbooks',
+      kind: 'folder',
+      locator: 'space',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'manager@acme.test',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+    });
+    // The folder source's reads answered by the Yuque reader, with the sync's stored revisions.
+    vi.spyOn(FolderReader.prototype as DocumentationReader, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit, stored) =>
+        await reader.listPageBatch(
+          {
+            _id: source._id,
+            kind: 'yuque',
+            label: 'RevOps runbooks',
+            locator: 'https://acme.yuque.com/revops/runbooks',
+          },
+          'fixture-yuque-token',
+          cursor,
+          limit,
+          stored,
+        ),
+    );
+    const sync = async (): Promise<void> => {
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    };
+    const state = async () =>
+      await harness.run(async (ctx) => ({
+        pages: (await ctx.db.query('docPages').collect())
+          .map((page) => [page.ref, page.sourceRevision ?? null, page.status ?? 'active'])
+          .sort(),
+        mirrors: (await ctx.db.query('mockDocs').collect()).length,
+        source: await ctx.db.get(sourceId),
+        run: await ctx.db.query('docSyncRuns').order('desc').first(),
+      }));
+    await sync();
+    const first = await state();
+    expect(first.pages.length).toBeGreaterThan(0);
+    const details = (): number =>
+      space.requests.filter((request) => /\/docs\/\d+$/.test(request.url.pathname)).length;
+    const before = details();
+    expect(before).toBeGreaterThan(0);
+    await sync();
+    // Nothing changed in the repository: its documents are kept by their listed revisions.
+    expect(details()).toBe(before);
+    const second = await state();
+    expect(second.pages).toEqual(first.pages);
+    expect(second.mirrors).toBe(first.mirrors);
+    expect(second.source?.status).toBe('synced');
+    // The run counts the pages kept by their revision among the pages the source holds.
+    expect(second.run?.pageCount).toBe(first.run?.pageCount);
+  }, 60_000);
+});

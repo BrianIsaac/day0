@@ -73,27 +73,6 @@
       "query": [
         [
           "offset",
-          "6"
-        ],
-        [
-          "limit",
-          "*"
-        ],
-        [
-          "deleted",
-          "false"
-        ]
-      ],
-      "status": 200,
-      "body": "docs-6.json"
-    },
-    {
-      "method": "GET",
-      "host": "acme.yuque.com",
-      "path": "/api/v2/repos/revops/runbooks/docs",
-      "query": [
-        [
-          "offset",
           "0"
         ],
         [

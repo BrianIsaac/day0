@@ -21,7 +21,9 @@ import { parseYuqueLocator, type YuqueLocator } from '../yuque-source';
 import {
   ListingChangedError,
   type DocumentationReader,
+  type KeptPage,
   type ReadPageBatch,
+  type StoredRevisions,
   type UnreadPage,
 } from './batch';
 import { DocumentConversionError, documentHtmlToMarkdown, underTitle } from './html-markdown';
@@ -114,6 +116,7 @@ export class YuqueReader implements DocumentationReader {
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
+    stored?: StoredRevisions,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -129,10 +132,41 @@ export class YuqueReader implements DocumentationReader {
     };
     const phase: Phase = resumed?.[1] === 'deleted' ? 'deleted' : 'live';
     const offset = Number(resumed?.[2] ?? 0);
-    const listed = await this.listing(session, phase, offset, Math.min(limit, MAX_PAGE_LIMIT));
+    // The live documents are listed a hundred at a time, the most Yuque lists, so a repository's
+    // listing costs a request a hundred documents (W15-R31); each listing page is taken as far as
+    // the batch's limit of bodies read, and the next batch lists again from the first entry left.
+    const listed = await this.listing(
+      session,
+      phase,
+      offset,
+      phase === 'live' ? MAX_PAGE_LIMIT : Math.min(limit, MAX_PAGE_LIMIT),
+    );
+    const revisions =
+      phase === 'live' && stored !== undefined
+        ? await stored(
+            listed.entries.flatMap((entry): string[] => {
+              const id = field(entry, 'id');
+              return typeof id === 'number' || typeof id === 'string' ? [String(id)] : [];
+            }),
+          )
+        : new Map<string, string>();
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
+    const kept: KeptPage[] = [];
+    let taken = 0;
     for (const entry of listed.entries) {
+      if (pages.length + unread.length >= limit) break;
+      taken += 1;
+      if (phase === 'live') {
+        const ref = String(field(entry, 'id'));
+        const revision = textField(entry, 'content_updated_at');
+        // Unchanged since it was stored, by the listing's own revision: no body is asked (X-13).
+        if (revision !== undefined && revisions.get(ref) === revision) {
+          const nativeStatus = yuqueNativeStatus(field(entry, 'status'));
+          kept.push({ ref, ...(nativeStatus === undefined ? {} : { nativeStatus }) });
+          continue;
+        }
+      }
       const read =
         phase === 'deleted'
           ? this.deleted(source, entry)
@@ -145,12 +179,16 @@ export class YuqueReader implements DocumentationReader {
     return {
       pages,
       unread,
+      ...(kept.length > 0 ? { kept } : {}),
       ...(listed.refused === true ? { archivedWalkRefused: true } : {}),
-      nextCursor: listed.more
-        ? `yq|${phase}|${offset + listed.count}`
-        : next === undefined
-          ? undefined
-          : `yq|${next}|0`,
+      nextCursor:
+        taken < listed.entries.length
+          ? `yq|${phase}|${offset + taken}`
+          : listed.more
+            ? `yq|${phase}|${offset + listed.count}`
+            : next === undefined
+              ? undefined
+              : `yq|${next}|0`,
     };
   }
 

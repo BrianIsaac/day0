@@ -19,7 +19,12 @@ import { ownerKnownValues } from '../src/redaction/known-values';
 import { redactSecret } from '../src/surfaces/redact';
 import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
-import { ListingChangedError, type UnreadPage } from '../src/docs/readers/batch';
+import {
+  ListingChangedError,
+  type KeptPage,
+  type StoredRevisions,
+  type UnreadPage,
+} from '../src/docs/readers/batch';
 import {
   intakeScopeValues,
   restatedScope,
@@ -44,6 +49,7 @@ import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/doc
 import { judgeMarker } from '../src/docs/marker-judge';
 import type { MeasuringPlan } from './docRelations';
 import type { PagesOwed } from './docRelationsRemeasure';
+import type { StoredForRevision } from './docPages';
 import type { MarkerToJudge, StatusPhasePage } from './docStatus';
 
 export const SYNC_BATCH_SIZE = 25;
@@ -449,6 +455,48 @@ async function keptUnreadPages(
   return { refs: stored, credentialRefs };
 }
 
+/**
+ * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
+ * for the source's readers from its stored text, as a page kept by its hash is, and, where its
+ * listing now says another status than the one stored, that is recorded (`recordRead`) with its
+ * revision as stored. Its refs and stored credentials are added to the batch's by the caller.
+ *
+ * @returns The refs of the pages kept.
+ */
+async function keptByRevision(
+  ctx: ActionCtx,
+  source: Doc<'docSources'>,
+  agents: Doc<'agents'>[],
+  syncRunId: Id<'docSyncRuns'>,
+  kept: readonly KeptPage[],
+  stored: ReadonlyMap<string, StoredForRevision>,
+): Promise<Array<{ ref: string }>> {
+  const pages: DocPage[] = [];
+  for (const entry of kept) {
+    const row = stored.get(entry.ref);
+    if (row === undefined) continue;
+    if (row.nativeStatus !== entry.nativeStatus) {
+      await ctx.runMutation(internal.docStatus.recordRead, {
+        sourceId: source._id,
+        syncRunId,
+        ref: row.ref,
+        ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
+        keepRevision: true,
+      });
+    }
+    pages.push({
+      sourceId: source._id,
+      ref: row.ref,
+      title: row.title,
+      ...(row.url !== undefined ? { url: row.url } : {}),
+      markdown: row.markdown,
+      updatedAt: row.updatedAt,
+    });
+  }
+  for (const agent of agents) await mirrorPages(ctx, agent._id, source, pages, syncRunId);
+  return pages.map((page) => ({ ref: page.ref }));
+}
+
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
 function readsWithSecret(source: Doc<'docSources'>): boolean {
   return source.kind === 'mcp' || source.credentialId !== undefined;
@@ -569,11 +617,34 @@ export const syncBatch = internalAction({
         });
         credentialUnavailable = false;
       }
+      // The reader contract by revision (X-13): a listed page stored at the revision its listing
+      // gives is kept with no body read. A page whose stored text holds a value the owner stored
+      // since it was redacted is not offered, so it is read and redacted again.
+      const storedByRevision = new Map<string, StoredForRevision>();
+      const storedRevisions: StoredRevisions = async (refs) => {
+        const rows: StoredForRevision[] = await ctx.runQuery(internal.docPages.storedForRevision, {
+          sourceId: source._id,
+          refs: [...refs],
+        });
+        const revisions = new Map<string, string>();
+        for (const row of rows) {
+          if (
+            knownValueSpans(row.markdown, known).length > 0 ||
+            knownValueSpans(row.title, known).length > 0
+          ) {
+            continue;
+          }
+          storedByRevision.set(row.ref, row);
+          revisions.set(row.ref, row.sourceRevision);
+        }
+        return revisions;
+      };
       const batch = await readerFor(source.kind).listPageBatch(
         source as DocSourceRecord,
         secret,
         args.cursor,
         SYNC_BATCH_SIZE,
+        storedRevisions,
       );
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
@@ -584,7 +655,9 @@ export const syncBatch = internalAction({
       // Asked before the batch is stored, which stamps each stored page with the listing too.
       const relisted = await ctx.runQuery(internal.docSources.relistedRefs, {
         runId: args.runId,
-        refs: [...batch.pages, ...batch.unread].map((page): string => page.ref),
+        refs: [...batch.pages, ...batch.unread, ...(batch.kept ?? [])].map(
+          (page): string => page.ref,
+        ),
       });
       const agents = await ctx.runQuery(internal.docSources.agentsForSource, {
         sourceId: source._id,
@@ -616,7 +689,15 @@ export const syncBatch = internalAction({
             (ref) => ({ ref }),
           )
         : [];
-      const kept = await keptUnreadPages(ctx, source, [...unread, ...archived]);
+      const byRevision = await keptByRevision(
+        ctx,
+        source,
+        agents,
+        args.runId,
+        batch.kept ?? [],
+        storedByRevision,
+      );
+      const kept = await keptUnreadPages(ctx, source, [...unread, ...archived, ...byRevision]);
       if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
         throw new Error('Documentation reader repeated its continuation cursor.');
       }
@@ -628,12 +709,15 @@ export const syncBatch = internalAction({
         nextCursor,
         refs: [...persisted.refs, ...kept.refs],
         credentialRefs: [...persisted.credentialRefs, ...kept.credentialRefs],
-        pageCount: persisted.pages,
+        pageCount: persisted.pages + byRevision.length,
         redactionCount: persisted.redactions,
         unread,
         relisted,
       });
-      const counts = { pages: persisted.pages, redactions: persisted.redactions };
+      const counts = {
+        pages: persisted.pages + byRevision.length,
+        redactions: persisted.redactions,
+      };
       if (!recorded) return { ok: false, ...counts, complete: true };
       if (nextCursor === FINISHING_CURSOR) {
         return await finishGeneration(ctx, source, args.runId, { phase: 'pages', cursor: null });
