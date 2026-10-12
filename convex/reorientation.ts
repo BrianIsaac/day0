@@ -11,6 +11,7 @@ import { appendEvent } from './eventLog';
 import { reorientationTalkProposalValidator } from './schema';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
+import { RELATIONSHIP_NOUNS } from '../src/people/words';
 import {
   REORIENTATION_BLOCKING_LIMIT,
   UNDECIDED_REORIENTATION_STATUSES,
@@ -486,6 +487,63 @@ export async function surfaceReach(
   return { ...(await skillReach(ctx, surface.agentId, writing)), surfaces: [surface._id] };
 }
 
+/** The employees of an owner a fan-out reads, at most. */
+const OWNER_AGENTS_READ = 200;
+
+/** The agreements one read of an owner's or an employee's active ones takes. */
+const AGREEMENTS_READ = 200;
+
+/** Every employee of an owner, to the fan-out's bound. */
+export async function ownerAgents(ctx: QueryCtx, userId: string): Promise<Doc<'agents'>[]> {
+  return await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', userId))
+    .take(OWNER_AGENTS_READ);
+}
+
+/** The owner's active working agreements about one person. */
+export async function personAgreements(
+  ctx: QueryCtx,
+  userId: string,
+  personId: Id<'people'>,
+): Promise<Id<'workingAgreements'>[]> {
+  return (
+    await ctx.db
+      .query('workingAgreements')
+      .withIndex('by_user_person', (q) =>
+        q.eq('userId', userId).eq('personId', personId).eq('status', 'active'),
+      )
+      .take(AGREEMENTS_READ)
+  ).map((agreement) => agreement._id);
+}
+
+/**
+ * The active working agreements binding an employee (its own and the owner's for everyone) whose
+ * stored plans include a work item: what a correction on that item reaches.
+ */
+export async function agreementsApplying(
+  ctx: QueryCtx,
+  agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
+  workItemId: Id<'workItems'>,
+): Promise<Id<'workingAgreements'>[]> {
+  const userId = agent.userId;
+  if (userId === undefined) return [];
+  const [own, everyone] = await Promise.all(
+    [agent._id, undefined].map(
+      async (agentId) =>
+        await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_user_agent_status', (q) =>
+            q.eq('userId', userId).eq('agentId', agentId).eq('status', 'active'),
+          )
+          .take(AGREEMENTS_READ),
+    ),
+  );
+  return [...own, ...everyone]
+    .filter((agreement) => agreement.appliedTo.includes(workItemId))
+    .map((agreement) => agreement._id);
+}
+
 /** The employee's charter as approved last, or undefined. */
 async function approvedCharter(
   ctx: QueryCtx,
@@ -590,7 +648,7 @@ async function pageOf(
 async function edgeWords(ctx: QueryCtx, edge: Doc<'relationships'>): Promise<string> {
   const person = await ctx.db.get(edge.toPersonId);
   const scope = edge.scope !== undefined && edge.scope !== '' ? `, for ${edge.scope}` : '';
-  return `${person?.displayName ?? 'someone'} (${edge.type.replace(/-/g, ' ')}${scope}), ${edge.status}`;
+  return `${person?.displayName ?? 'someone'} (${RELATIONSHIP_NOUNS[edge.type]}${scope}), ${edge.status}`;
 }
 
 /** The candidates a card offers its judgement, in the prompt's order. */

@@ -20,6 +20,7 @@ import {
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 import { appendEvent } from './eventLog';
+import { agreementsApplying, openCard } from './reorientation';
 import { firstRetiredRejection } from './retirements';
 import { scheduleProposals } from './workingAgreements';
 
@@ -257,6 +258,20 @@ export async function keepCorrectionInTransaction(
   });
   // A new correction may say what an earlier one said: the employee's proposal run asks (F10).
   await scheduleProposals(ctx, row.agentId);
+  // A correction on an item whose plan applied an agreement may say the agreement is stale
+  // (wave 16, 16-O; section 3's correction row).
+  const agent = await ctx.db.get(row.agentId);
+  const agreements = agent === null ? [] : await agreementsApplying(ctx, agent, row._id);
+  if (agreements.length > 0) {
+    await openCard(ctx, {
+      agentId: row.agentId,
+      trigger: 'agreement-corrected',
+      triggerKey: correctionId,
+      summary: `You corrected “${row.title}”, which followed a working agreement`,
+      evidence: { correctionIds: [correctionId] },
+      affected: { agreements },
+    });
+  }
   return correctionId;
 }
 

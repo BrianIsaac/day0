@@ -18,6 +18,7 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
+import { openCard, openWorkOf, ownerAgents, personAgreements } from './reorientation';
 import {
   EVIDENCE_SHOWN,
   GRAPH_READ_LIMIT,
@@ -53,6 +54,7 @@ import {
   OWNER_IS_THE_MANAGER,
   RELATIONSHIP_ENDED,
   RELATIONSHIP_HELD,
+  RELATIONSHIP_NOUNS,
   RELATIONSHIP_SCOPE_LIMIT,
   RELATIONSHIP_TYPE_FIXED,
   SAME_PERSON_CONFLICT,
@@ -448,12 +450,31 @@ export const dismiss = mutation({
       await ctx.db.patch(person._id, { status: 'dismissed', dismissedAt: now, updatedAt: now });
     }
     for (const edge of proposed) await ctx.db.patch(edge._id, { status: 'retired' });
-    await appendEvent(ctx, {
+    const eventId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'person.dismissed',
       payload: { personId: person._id, person: person.displayName, edgesRetired: proposed.length },
       createdAt: now,
     });
+    const agreements = await personAgreements(ctx, person.userId, person._id);
+    const reached = new Set<Id<'agents'>>([args.agentId]);
+    for (const edge of proposed) if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+    for (const agentId of reached) {
+      const retired = proposed
+        .filter((edge) => edge.fromAgentId === undefined || edge.fromAgentId === agentId)
+        .map((edge) => edge._id);
+      // A dismissal that took no edge of the employee's and no agreement reaches nothing of its.
+      if (retired.length === 0 && agreements.length === 0) continue;
+      await openCard(ctx, {
+        agentId,
+        trigger: 'person-dismissed',
+        triggerKey: eventId,
+        summary: `You dismissed ${person.displayName}`,
+        evidence: { eventIds: agentId === args.agentId ? [eventId] : [], relationshipIds: retired },
+        affected: { agreements },
+        now,
+      });
+    }
     return { edgesRetired: proposed.length };
   },
 });
@@ -675,7 +696,7 @@ async function recordEdgeChange(
   const edge = await ctx.db.get(relationshipId);
   const person = edge === null ? null : await ctx.db.get(edge.toPersonId);
   if (edge === null || person === null) return;
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId,
     type: 'relationship.changed',
     payload: {
@@ -687,6 +708,63 @@ async function recordEdgeChange(
     },
     createdAt: now,
   });
+  await openEdgeCards(ctx, { agentId, edge, person, change, eventId, now });
+}
+
+/** The edge types whose change reaches an employee's work: who approves it, whom it escalates to. */
+const CARD_EDGE_TYPES: readonly RelationshipType[] = ['approval-authority', 'escalation-contact'];
+
+/** What a card says became of an edge, by its change. */
+function edgeChangeWords(person: string, noun: string, change: RelationshipChange): string {
+  if (change === 'added') return `${person} is now its ${noun}`;
+  if (change === 'retired') return `${person} is no longer its ${noun}`;
+  return `${person}, its ${noun}, changed`;
+}
+
+/**
+ * Open a reorientation card on every employee an approver's or an escalation contact's edge
+ * concerns (wave 16, 16-O; section 3's people row): the tab's employee, the edge's own employee,
+ * or every employee of the owner for an edge for everyone. The card holds the employee's open
+ * plans, which the approver or contact bears on, and the agreements about the person.
+ */
+async function openEdgeCards(
+  ctx: MutationCtx,
+  change: {
+    readonly agentId: Id<'agents'>;
+    readonly edge: Doc<'relationships'>;
+    readonly person: Doc<'people'>;
+    readonly change: RelationshipChange;
+    readonly eventId: Id<'events'>;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { edge, person } = change;
+  if (!CARD_EDGE_TYPES.includes(edge.type)) return;
+  const forEveryone = edge.fromAgentId === undefined && edge.fromPersonId === undefined;
+  const reached = new Set<Id<'agents'>>([change.agentId]);
+  if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+  if (forEveryone) {
+    for (const agent of await ownerAgents(ctx, edge.userId)) reached.add(agent._id);
+  }
+  const agreements = await personAgreements(ctx, edge.userId, person._id);
+  for (const agentId of reached) {
+    await openCard(ctx, {
+      agentId,
+      trigger: 'relationship-changed',
+      triggerKey: change.eventId,
+      summary: edgeChangeWords(person.displayName, RELATIONSHIP_NOUNS[edge.type], change.change),
+      evidence: {
+        eventIds: agentId === change.agentId ? [change.eventId] : [],
+        relationshipIds: [edge._id],
+      },
+      affected: {
+        relationships: [edge._id],
+        agreements,
+        workItems: (await openWorkOf(ctx, agentId)).map((row) => row._id),
+      },
+      now: change.now,
+    });
+  }
 }
 
 /** A scope the manager typed, trimmed and bounded, or undefined for none. */

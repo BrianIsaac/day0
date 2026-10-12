@@ -13,6 +13,7 @@ import {
   managerIdentity,
 } from './fakes/manager-identity';
 import { cardsOf, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /*
  * The wave file's section 3, one row a test (16-O's acceptance: "each trigger opens exactly one
@@ -406,5 +407,182 @@ describe('manager changed: a handover is accepted (manager.transferred)', (): vo
           .collect(),
     );
     expect(listed).toEqual([]);
+  });
+});
+
+/** A confirmed person of the owner's graph. */
+async function seedPerson(harness: Harness, displayName: string): Promise<Id<'people'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName,
+        nameKey: displayName.toLowerCase(),
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }),
+  );
+}
+
+/** An active working agreement of the employee's, about a person when one is named. */
+async function seedAgreement(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  fields: Partial<Doc<'workingAgreements'>> = {},
+): Promise<Id<'workingAgreements'>> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.insert('workingAgreements', {
+        userId: OWNER_SUBJECT,
+        agentId,
+        kind: 'preference',
+        statement: 'Copy Priya on tier-2 answers about committee-deck numbers.',
+        scope: 'global',
+        sourceType: 'manager-card',
+        status: 'active',
+        createdAt: 1,
+        appliedTo: [],
+        ...fields,
+      }),
+  );
+}
+
+describe('approver or escalation contact changed (relationship.changed)', (): void => {
+  it('opens one high-risk card holding the open plans when an approval authority is edited, with the person’s agreements', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const priya = await seedPerson(harness, 'Priya');
+    const edge = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('relationships', {
+          userId: OWNER_SUBJECT,
+          toPersonId: priya,
+          type: 'approval-authority',
+          scope: 'committee-deck numbers',
+          effectiveFrom: 1,
+          status: 'active',
+          source: 'manager',
+          confirmedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const agreement = await seedAgreement(harness, agentId, { scope: 'person', personId: priya });
+    const plan = await seedWork(harness, agentId, 'plan-pending');
+    const edited = await harness.withIdentity(OWNER).mutation(api.people.editRelationship, {
+      relationshipId: edge,
+      agentId,
+      type: 'approval-authority',
+      scope: 'renewals only',
+    });
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'relationship-changed',
+        triggerSummary: 'Priya, its approver, changed',
+        risk: 'high',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.evidence.relationshipIds).toEqual([edited]);
+    expect(card.affected.agreements).toEqual([agreement]);
+    expect(card.blockingWork).toEqual([plan]);
+  });
+
+  it('opens no card for a collaborator edge', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const pip = await seedPerson(harness, 'Pip');
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.people.addRelationship, { personId: pip, agentId, type: 'collaborator' });
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+  });
+});
+
+describe('a person dismissed (person.dismissed)', (): void => {
+  it('opens one card on the employee whose edge it retired', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const nell = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('people', {
+          userId: OWNER_SUBJECT,
+          displayName: 'Nell',
+          nameKey: 'nell',
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('relationships', {
+          userId: OWNER_SUBJECT,
+          fromAgentId: agentId,
+          toPersonId: nell,
+          type: 'escalation-contact',
+          effectiveFrom: 1,
+          status: 'proposed',
+          source: 'documentation',
+          createdAt: 1,
+        }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.people.dismiss, { personId: nell, agentId });
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'person-dismissed',
+        triggerSummary: 'You dismissed Nell',
+        risk: 'low',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+  });
+});
+
+describe('a correction on an item that applied an agreement (a kept correction)', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  it('opens one card about the agreement the corrected plan applied, and none for an item that applied none', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const applied = await seedWork(harness, agentId, 'plan-pending', {
+      plan: { steps: ['Reply'] },
+    });
+    const plain = await seedWork(harness, agentId, 'plan-pending', {
+      externalId: 'REVOPS-2',
+      plan: { steps: ['Reply'] },
+    });
+    const agreement = await seedAgreement(harness, agentId, { appliedTo: [applied] });
+    const owner = harness.withIdentity(OWNER);
+    await owner.mutation(api.work.cancelPlan, {
+      workItemId: plain,
+      reason: 'Not this week.',
+    });
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    await owner.mutation(api.work.cancelPlan, {
+      workItemId: applied,
+      reason: 'Do not copy Priya on this one.',
+    });
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'agreement-corrected',
+        triggerSummary:
+          'You corrected “Answer the tier-2 ask about the committee deck”, which followed a working agreement',
+        risk: 'low',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.affected.agreements).toEqual([agreement]);
+    expect(card.evidence.correctionIds).toHaveLength(1);
   });
 });
