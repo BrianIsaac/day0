@@ -50,6 +50,7 @@ import {
   type StatusSource,
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
+import { conflictChoiceWords } from '../src/agent/reorientation-words';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -457,13 +458,15 @@ export async function decideRelationInTransaction(
   // the questions asked about it, so nothing waits on them (the second pass's B1).
   if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
   if (relation.kind === 'possible_conflict') {
+    // Each page by its letter, title and source, as the question named them (W16-R12).
+    const pages = [named(from, fromSource), named(to, toSource)] as const;
     const settled =
       decision === 'from-is-right'
-        ? `${from.title} is right`
+        ? conflictChoiceWords('from', pages)
         : decision === 'to-is-right'
-          ? `${to.title} is right`
+          ? conflictChoiceWords('to', pages)
           : decision === 'both-hold'
-            ? 'Both hold'
+            ? conflictChoiceWords('both', pages)
             : undefined;
     if (settled !== undefined) {
       await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
   closingHeldReason,
+  conflictChoiceWords,
   conflictQuestionText,
   decisionWords,
   heldWords,
@@ -89,5 +90,25 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
     expect(approvedResultWords.skill('withdraw', 'kanban')).toBe(
       'the skill “kanban” was withdrawn from every employee',
     );
+  });
+});
+
+/** 16-J's walk (W3j): two folder sources each holding a page of one title, disagreeing. */
+const SAME_TITLED = [
+  { title: 'Close escalation window', source: 'Policies folder' },
+  { title: 'Close escalation window', source: 'Revops folder' },
+] as const;
+
+describe('a conflict’s two pages named apart (W16-R12)', (): void => {
+  it('gives the answer buttons two names when the pages share a title, as the question letters them', (): void => {
+    const names = (['from', 'to', 'both'] as const).map((choice) =>
+      conflictChoiceWords(choice, SAME_TITLED),
+    );
+    expect(names).toEqual([
+      'A, Close escalation window (Policies folder) is right',
+      'B, Close escalation window (Revops folder) is right',
+      'Both hold',
+    ]);
+    expect(new Set(names).size).toBe(3);
   });
 });

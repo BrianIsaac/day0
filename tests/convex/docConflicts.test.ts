@@ -608,7 +608,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(pages.find((page) => page.title === 'Finance escalation')?.status).toBe('superseded');
     expect(await questionsOf(harness, workItemId)).toEqual([
       expect.objectContaining({
-        answer: expect.objectContaining({ text: 'Pipeline runbook is right', via: 'slack' }),
+        answer: expect.objectContaining({
+          text: 'B, Pipeline runbook (Handbook) is right',
+          via: 'slack',
+        }),
       }),
     ]);
     // The acknowledgement says what Retry does with the steps that waited (the second pass's m7).
@@ -616,7 +619,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
     );
     expect(notice.text).toBe(
-      'Recorded: Pipeline runbook is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
+      'Recorded: B, Pipeline runbook (Handbook) is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
     );
     // A second answer finds nothing waiting, and says so.
     await expect(
@@ -662,7 +665,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
     });
     expect((await harness.run(async (ctx) => await ctx.db.get(other)))?.answer).toMatchObject({
-      text: 'Pipeline runbook is right',
+      text: 'B, Pipeline runbook (Handbook) is right',
       via: 'slack',
     });
   });
@@ -746,7 +749,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       }),
     ).resolves.toMatchObject({ status: 'answered' });
     expect((await harness.run(async (ctx) => await ctx.db.get(live)))?.answer).toMatchObject({
-      text: 'Pipeline runbook is right',
+      text: 'B, Pipeline runbook (Handbook) is right',
     });
     expect((await harness.run(async (ctx) => await ctx.db.get(stale._id)))?.answer).toBeUndefined();
   });
@@ -801,6 +804,21 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
       [],
     );
+  });
+
+  it('stores a page settled on the Documentation tab by its letter, title and source (W16-R12, W3g)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'from-is-right',
+    });
+    const [question] = await questionsOf(harness, workItemId);
+    expect(question.answer).toMatchObject({
+      text: 'A, Finance escalation (Finance wiki) is right',
+      via: 'dashboard',
+    });
   });
 
   it('opens no card about the page its own answer superseded (second pass M4)', async (): Promise<void> => {

@@ -11,7 +11,7 @@ vi.mock('convex/react', () => ({
     (reference: unknown) =>
     async (args: unknown): Promise<unknown> => {
       backend.calls.push({ name: getFunctionName(reference as never), args });
-      return { text: 'Pipeline runbook is right' };
+      return { text: 'B, Pipeline runbook (Handbook) is right' };
     },
   useQuery: (): unknown => undefined,
 }));
@@ -48,14 +48,19 @@ describe('the conflict question on a plan’s card', (): void => {
     expect(view.container.textContent).toContain(QUESTION.question);
     expect(
       [...view.container.querySelectorAll('button')].map((control) => control.textContent),
-    ).toEqual(['Finance escalation is right', 'Pipeline runbook is right', 'Both hold']);
+    ).toEqual([
+      // Each page by its letter, title and source, as the question names it (W16-R12).
+      'A, Finance escalation (Finance wiki) is right',
+      'B, Pipeline runbook (Handbook) is right',
+      'Both hold',
+    ]);
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     expect(underTarget(view.container)).toEqual([]);
-    await press(view.container, 'Pipeline runbook is right');
+    await press(view.container, 'B, Pipeline runbook (Handbook) is right');
     expect(backend.calls).toEqual([
       { name: 'managerQuestions:answerConflict', args: { questionId: 'q1', choice: 'to' } },
     ]);
-    expect(said(view.container).at(-1)).toBe('Recorded: Pipeline runbook is right.');
+    expect(said(view.container).at(-1)).toBe('Recorded: B, Pipeline runbook (Handbook) is right.');
     view.unmount();
   });
 

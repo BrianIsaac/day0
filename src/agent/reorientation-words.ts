@@ -83,6 +83,18 @@ export interface NamedPageWords {
   readonly source: string;
 }
 
+/** The letter each of a conflict's two pages goes by, as the typed answer names it. */
+export type PageLetter = 'A' | 'B';
+
+/**
+ * One of a conflict's two pages as every place that names it says it (W16-R12): its letter, its
+ * title and its source, "A, {title} ({source})". Two pages of one title in two sources are told
+ * apart by the source, and two sources of one label by the letter the question gave them.
+ */
+export function pageWords(letter: PageLetter, page: NamedPageWords): string {
+  return `${letter}, ${page.title} (${page.source})`;
+}
+
 /** The three answers a conflict's question takes, as the request and the card offer them. */
 export const CONFLICT_CHOICES = ['from', 'to', 'both'] as const;
 
@@ -102,16 +114,21 @@ export function conflictQuestionText(
   pages: readonly [NamedPageWords, NamedPageWords],
 ): string {
   const [a, b] = pages;
-  return `Two pages disagree under “${heading}”: A, ${a.title} (${a.source}), and B, ${b.title} (${b.source}). Which is right? ${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+  return `Two pages disagree under “${heading}”: ${pageWords('A', a)}, and ${pageWords('B', b)}. Which is right? ${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
 }
 
-/** An answer's words, as the card's buttons and the record say it. */
+/**
+ * An answer's words, as the card's buttons, the stored answer and the record say it: "A, {title}
+ * ({source}) is right", so two pages of one title make two controls of two names (W16-R12).
+ */
 export function conflictChoiceWords(
   choice: ConflictChoice,
   pages: readonly [NamedPageWords, NamedPageWords],
 ): string {
   if (choice === 'both') return 'Both hold';
-  return `${(choice === 'from' ? pages[0] : pages[1]).title} is right`;
+  return choice === 'from'
+    ? `${pageWords('A', pages[0])} is right`
+    : `${pageWords('B', pages[1])} is right`;
 }
 
 /** How a Slack request asks for the answer: the decision's code and a letter. */
