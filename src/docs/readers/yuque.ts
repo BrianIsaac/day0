@@ -23,6 +23,7 @@ import {
   type DocumentationReader,
   type KeptPage,
   type ReadPageBatch,
+  type StoredMark,
   type StoredRevisions,
   type UnreadPage,
 } from './batch';
@@ -149,7 +150,7 @@ export class YuqueReader implements DocumentationReader {
               return typeof id === 'number' || typeof id === 'string' ? [String(id)] : [];
             }),
           )
-        : new Map<string, string>();
+        : new Map<string, StoredMark>();
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
     const kept: KeptPage[] = [];
@@ -160,8 +161,16 @@ export class YuqueReader implements DocumentationReader {
       if (phase === 'live') {
         const ref = String(field(entry, 'id'));
         const revision = textField(entry, 'content_updated_at');
-        // Unchanged since it was stored, by the listing's own revision: no body is asked (X-13).
-        if (revision !== undefined && revisions.get(ref) === revision) {
+        const mark = revisions.get(ref);
+        // Unchanged since it was stored, by the listing's own revision, title and address: no body
+        // is asked (X-13). Yuque moves the revision with the body only, so a rename is read.
+        if (
+          revision !== undefined &&
+          mark !== undefined &&
+          mark.revision === revision &&
+          mark.title === (textField(entry, 'title')?.trim() || 'Untitled') &&
+          mark.url === this.documentUrl(session.locator, textField(entry, 'slug'))
+        ) {
           const nativeStatus = yuqueNativeStatus(field(entry, 'status'));
           kept.push({ ref, ...(nativeStatus === undefined ? {} : { nativeStatus }) });
           continue;
@@ -310,14 +319,12 @@ export class YuqueReader implements DocumentationReader {
     const edited = Date.parse(revision ?? textField(detail, 'updated_at') ?? '');
     const slug = textField(detail, 'slug') ?? textField(entry, 'slug');
     const nativeStatus = yuqueNativeStatus(field(detail, 'status') ?? field(entry, 'status'));
-    const { host, group, book } = session.locator;
+    const url = this.documentUrl(session.locator, slug);
     return {
       sourceId: source._id,
       ref,
       title,
-      ...(slug === undefined
-        ? {}
-        : { url: `https://${host}/${group}/${book}/${encodeURIComponent(slug)}` }),
+      ...(url === undefined ? {} : { url }),
       markdown: underTitle(title, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
       ...(nativeStatus === undefined ? {} : { nativeStatus }),
@@ -340,6 +347,14 @@ export class YuqueReader implements DocumentationReader {
       updatedAt: Number.isFinite(deletedAt) ? deletedAt : this.now(),
       nativeStatus: 'archived',
     };
+  }
+
+  /** A document's address in Yuque by its slug, or undefined for a document with none. */
+  private documentUrl(locator: YuqueLocator, slug: string | undefined): string | undefined {
+    const { host, group, book } = locator;
+    return slug === undefined
+      ? undefined
+      : `https://${host}/${group}/${book}/${encodeURIComponent(slug)}`;
   }
 
   /** An address under the repository's documents. */

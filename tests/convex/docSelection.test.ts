@@ -1117,6 +1117,27 @@ describe('docSelection.plannedFromBlocks: the blocks a plan with no cites was dr
     ).toEqual([{ id: blocks[0]._id }]);
   });
 
+  it('reads the event for an item whose kept selection holds no block, so its check is never vacuous (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, blocks } = await drafted(harness);
+    // The selection's blocks came without hashes, so none was kept on the item.
+    await harness.mutation(internal.docSelection.recordPlanSelection, {
+      workItemId,
+      blocks: [{ id: blocks[0]._id as string }],
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selected',
+        payload: { workItemId, site: 'plan', blockIds: [blocks[0]._id], chars: 40 },
+        createdAt: 1,
+      });
+    });
+    expect(
+      await harness.query(internal.docSelection.plannedFromBlocks, { agentId, workItemId }),
+    ).toEqual([{ id: blocks[0]._id }]);
+  });
+
   it('keeps only blocks given with a hash, by a block’s id', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { workItemId, blocks } = await drafted(harness);

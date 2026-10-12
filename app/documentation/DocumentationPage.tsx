@@ -35,12 +35,12 @@ export function DocumentationPage(): React.ReactNode {
         )}
       </div>
 
-      {!isReal ? (
+      {config === undefined ? (
+        <p className="text-sm text-[var(--color-muted)]">Loading</p>
+      ) : !isReal ? (
         <section className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-xl p-5">
           <h2 className="font-medium">The hosted office&apos;s documentation</h2>
-          <p className="text-sm text-[var(--color-muted)] mt-2">
-            {config === undefined ? 'Loading' : MOCK_OFFICE_DOCUMENTATION}
-          </p>
+          <p className="text-sm text-[var(--color-muted)] mt-2">{MOCK_OFFICE_DOCUMENTATION}</p>
         </section>
       ) : (
         <div className="grid gap-8">

@@ -150,8 +150,9 @@ export function retryAfterMs(
     const wait = Math.ceil(Number(seconds[1]) * 1_000);
     return Number.isSafeInteger(wait) ? wait : undefined;
   }
-  // A number that is not delta seconds (signed, say) is no date either, whatever Date.parse makes.
-  if (/^[+-]?[\d.]/.test(text)) return undefined;
+  // A number that is not delta seconds (signed, or under another unit) is no date either,
+  // whatever Date.parse makes of it; a date that begins with a digit is still read as one.
+  if (/^[+-]?\d+(?:\.\d+)?\s*[a-z]*$/i.test(text)) return undefined;
   const at = Date.parse(text);
   return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }

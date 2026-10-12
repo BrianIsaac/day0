@@ -9,7 +9,8 @@ import { focusedName, mount, press, said } from '../../fixtures/dom/press';
 
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
-  mode: 'real' as 'real' | 'mock',
+  /** The deployment's surface mode; `loading` while `config.surfaceMode` has not answered. */
+  mode: 'real' as 'real' | 'mock' | 'loading',
   /** Mutations that reject, by function name, with the text they reject with. */
   refusals: {} as Record<string, string>,
 }));
@@ -24,8 +25,11 @@ vi.mock('convex/react', () => ({
     },
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode')
-      return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    if (name === 'config:surfaceMode') {
+      return state.mode === 'loading'
+        ? undefined
+        : { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    }
     if (name === 'docSources:listMine') return state.sources;
     return [];
   },
@@ -65,6 +69,13 @@ it('says what the hosted office reads in its one sentence, and nothing of a mock
   for (const said of ['>mock<', 'Demo docs', 'hosted mock', 'Link read-only locations']) {
     expect(html).not.toContain(said);
   }
+});
+
+it('says neither office’s words while the mode is still loading (the second pass)', (): void => {
+  state.mode = 'loading';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).not.toContain('hosted office');
+  expect(html).not.toContain('Link a documentation location');
 });
 
 it('keeps the hosted mock documentation page unchanged', (): void => {

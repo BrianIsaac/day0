@@ -518,8 +518,10 @@ export const recordPlanSelection = internalMutation({
 export const plannedFromBlocks = internalQuery({
   args: { agentId: v.id('agents'), workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<Array<{ id: string; hash?: string }>> => {
+    // A kept selection that holds no block (its blocks came without hashes) says nothing: the
+    // event's ids are read instead, so the check is never vacuous.
     const item = await ctx.db.get(args.workItemId);
-    if (item?.selectedBlocks !== undefined) {
+    if (item?.selectedBlocks !== undefined && item.selectedBlocks.length > 0) {
       return item.selectedBlocks.map((block) => ({ id: block.id, hash: block.hash }));
     }
     const recent = await eventsOfType(ctx, args.agentId, 'work.documentation-selected')

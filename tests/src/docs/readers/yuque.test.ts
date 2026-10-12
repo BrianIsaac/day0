@@ -130,7 +130,15 @@ describe('the Yuque documentation reader', (): void => {
     });
     // Every document is stored at its listed revision, so the full page is kept with no body read.
     const stored = async (refs: readonly string[]) =>
-      new Map(refs.map((ref) => [ref, '2026-10-01T00:00:00.000Z']));
+      new Map(
+        refs.map((ref) => [
+          ref,
+          {
+            revision: '2026-10-01T00:00:00.000Z',
+            title: `Runbook ${Number(ref) - 220000000}`,
+          },
+        ]),
+      );
     let cursor: string | undefined;
     const kept: string[] = [];
     do {
@@ -395,19 +403,35 @@ describe('the Yuque documentation reader', (): void => {
 describe('the reader contract by revision (X-13; W15-R31)', (): void => {
   it('keeps every document stored at its listed revision with no body asked, and reads the one that changed', async (): Promise<void> => {
     const { reader, requests } = readerOnSpace();
-    // As the sync stores them: each document with the revision it was read at; one edited since.
-    const revisions: Record<string, string> = {
-      '210000001': '2026-10-01T09:30:00.000Z',
-      '210000002': '2026-09-01T00:00:00.000Z',
-      '210000004': '2026-10-05T07:00:00.000Z',
-      '210000005': '2026-09-20T02:00:00.000Z',
+    // As the sync stores them: each document with the revision it was read at, its title and its
+    // address; one edited since.
+    const at = (slug: string) => `https://acme.yuque.com/revops/runbooks/${slug}`;
+    const marks: Record<string, { revision: string; title: string; url: string }> = {
+      '210000001': {
+        revision: '2026-10-01T09:30:00.000Z',
+        title: 'Close the quarter',
+        url: at('close-the-quarter'),
+      },
+      '210000002': {
+        revision: '2026-09-01T00:00:00.000Z',
+        title: '刷新看板',
+        url: at('refresh-the-tile'),
+      },
+      '210000004': {
+        revision: '2026-10-05T07:00:00.000Z',
+        title: 'Escalation paths 2027',
+        url: at('escalation-2027'),
+      },
+      '210000005': {
+        revision: '2026-09-20T02:00:00.000Z',
+        title: '运维手册',
+        url: at('ops-handbook'),
+      },
     };
     const asked: string[][] = [];
     const stored = async (refs: readonly string[]) => {
       asked.push([...refs]);
-      return new Map(
-        refs.flatMap((ref) => (ref in revisions ? [[ref, revisions[ref]] as const] : [])),
-      );
+      return new Map(refs.flatMap((ref) => (ref in marks ? [[ref, marks[ref]] as const] : [])));
     };
     const kept: string[] = [];
     const read: string[] = [];
@@ -430,6 +454,28 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
     ]);
   });
 
+  it('reads a document renamed since it was stored, though its revision is the stored one (the second pass)', async (): Promise<void> => {
+    // Yuque moves content_updated_at with the body only: a new title or slug leaves it as it was.
+    const { reader, requests } = readerOnSpace();
+    const stored = async (refs: readonly string[]) =>
+      new Map(
+        refs
+          .filter((ref) => ref === '210000001')
+          .map((ref) => [
+            ref,
+            {
+              revision: '2026-10-01T09:30:00.000Z',
+              title: 'Close the quarter (old title)',
+              url: 'https://acme.yuque.com/revops/runbooks/close-the-quarter',
+            },
+          ]),
+      );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(batch.kept ?? []).toEqual([]);
+    expect(batch.pages.map((page) => page.ref)).toContain('210000001');
+    expect(requests.some((request) => request.url.pathname.endsWith('/docs/210000001'))).toBe(true);
+  });
+
   it('lists 1,200 unchanged documents inside Yuque’s hourly limit at the fifteen-minute schedule', async (): Promise<void> => {
     // 15-X's X-13: 1,200 documents cost 1,249 requests a sync, 4,996 an hour against 5,000, and
     // one sync took 14.99 minutes at the 720 ms spacing.
@@ -449,7 +495,15 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
       return json(200, { data: documents.slice(offset, offset + limit), meta: { total: DOCS } });
     });
     const stored = async (refs: readonly string[]) =>
-      new Map(refs.map((ref) => [ref, '2026-10-01T00:00:00.000Z']));
+      new Map(
+        refs.map((ref) => [
+          ref,
+          {
+            revision: '2026-10-01T00:00:00.000Z',
+            title: `Runbook ${Number(ref) - 230000000}`,
+          },
+        ]),
+      );
     let cursor: string | undefined;
     let kept = 0;
     do {

@@ -631,7 +631,7 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
   /** The company folder's runbook and, in a second source, its copy, each with its own edit time. */
   async function twoCopies(
     harness: Harness,
-    copyKind: 'folder' | 'urls' = 'folder',
+    copyKind: 'folder' | 'urls' | 'git' = 'folder',
   ): Promise<{ folder: Source; copies: Source }> {
     const folder = await syncingSource(harness, 'Company folder');
     const copies = await syncingSource(harness, 'Team copies');
@@ -684,6 +684,13 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
   it('keeps a copy read from a list of URLs a duplicate: its time is when it was read', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { folder } = await twoCopies(harness, 'urls');
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    expect(await relations(harness)).toMatchObject([{ kind: 'possible_duplicate' }]);
+  });
+
+  it('keeps a copy in a git checkout a duplicate: its time is when the checkout wrote the file (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder } = await twoCopies(harness, 'git');
     expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
     expect(await relations(harness)).toMatchObject([{ kind: 'possible_duplicate' }]);
   });

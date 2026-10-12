@@ -22,6 +22,7 @@ import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs
 import {
   ListingChangedError,
   type KeptPage,
+  type StoredMark,
   type StoredRevisions,
   type UnreadPage,
 } from '../src/docs/readers/batch';
@@ -626,7 +627,7 @@ export const syncBatch = internalAction({
           sourceId: source._id,
           refs: [...refs],
         });
-        const revisions = new Map<string, string>();
+        const revisions = new Map<string, StoredMark>();
         for (const row of rows) {
           if (
             knownValueSpans(row.markdown, known).length > 0 ||
@@ -635,7 +636,11 @@ export const syncBatch = internalAction({
             continue;
           }
           storedByRevision.set(row.ref, row);
-          revisions.set(row.ref, row.sourceRevision);
+          revisions.set(row.ref, {
+            revision: row.sourceRevision,
+            title: row.title,
+            ...(row.url !== undefined ? { url: row.url } : {}),
+          });
         }
         return revisions;
       };
@@ -937,8 +942,9 @@ async function walkFinishingPhase(
 /**
  * Walk the status phase to its end: every page the generation keeps is restated a bounded page
  * per transaction (`docStatus.restatePages`), a page whose new status its walk page had no room
- * to copy onto its blocks in a transaction of its own (`docStatus.restateDeferred`), and then the model is asked about each page whose
- * marker lines no stored judgement stands for, one call a page, the pages asked least recently
+ * to copy onto its blocks in a transaction of its own (`docStatus.restateDeferred`), and then
+ * the model is asked about each page whose marker lines no stored judgement stands for, one call
+ * a page, the pages asked least recently
  * first (`docPages.judgedAttemptAt`; never asked, first), at most `MARKER_JUDGEMENTS_PER_SYNC` a
  * finish and for at most `MARKER_JUDGING_BUDGET_MS` of it (N20; the rest are asked at the next
  * sync). Every attempt is kept on its page, answered or not, so pages whose judgement always fails
@@ -1129,7 +1135,9 @@ export const proposeRelations = internalAction({
  * pages at a time from the place the mark keeps, the place written back after each read, the mark
  * cleared at the end. The cap on new proposals a sync stops it where it is reached, the read it
  * stopped in owed again from its start, for the next sync's measuring; a step that has measured
- * its share hands on to the next (`remeasureRelations`).
+ * its share hands on to the next (`remeasureRelations`). A step finishes the read it is in, so it
+ * may measure up to a read's pages past its share; a page whose blocks two reads hold, or that a
+ * hand-on or the cap repeats, is measured twice, and a pair is proposed once.
  *
  * @returns How many pages the measuring measured, its own and these, and the sync's proposals.
  */

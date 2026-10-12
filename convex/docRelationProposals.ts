@@ -67,10 +67,15 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
     .unique();
 }
 
-/** The kinds of source whose reader gives no edit time: a page's time is when it was read. */
+/**
+ * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
+ * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
+ * and its card says "last read".
+ */
 export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
   'urls',
   'mcp',
+  'git',
 ]);
 
 /**

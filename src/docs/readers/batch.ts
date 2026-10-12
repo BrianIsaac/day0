@@ -28,14 +28,24 @@ export interface UnreadPage {
   readonly kind?: UnreadKind;
 }
 
+/** What the sync holds of a stored page, for a reader to tell whether its listing changed it. */
+export interface StoredMark {
+  /** The revision it was stored with (`docPages.sourceRevision`). */
+  readonly revision: string;
+  /** Its stored title. */
+  readonly title: string;
+  /** Its stored address, where it has one. */
+  readonly url?: string;
+}
+
 /**
- * The reader contract by revision (X-13; wave 16, 16-FD): for listed pages, the revision each was
- * stored with (`docPages.sourceRevision`), by ref. A reader whose listing gives each page's
- * revision asks it before it reads any body, and keeps a page whose revision is the stored one
- * without reading its body (`ReadPageBatch.kept`); a ref the sync does not answer (not stored, no
+ * The reader contract by revision (X-13; wave 16, 16-FD): for listed pages, what each was stored
+ * with, by ref. A reader whose listing gives each page's revision asks it before it reads any
+ * body, and keeps a page whose listing says the stored revision, title and address without
+ * reading its body (`ReadPageBatch.kept`); a ref the sync does not answer (not stored, no
  * revision, or a page it would not keep as stored) is read as before.
  */
-export type StoredRevisions = (refs: readonly string[]) => Promise<ReadonlyMap<string, string>>;
+export type StoredRevisions = (refs: readonly string[]) => Promise<ReadonlyMap<string, StoredMark>>;
 
 /** A listed page kept as stored by its revision, its body unread (X-13). */
 export interface KeptPage {
