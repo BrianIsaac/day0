@@ -821,6 +821,8 @@ function pilotTotals(
   const firstCompletion = new Map<string, number>();
   // Every item's first completion, whatever its run answered: a later one is not the first.
   const completedOnce = new Set<string>();
+  // Items whose first completion answered not done, which a Retry may yet finish (W16-R17).
+  const notDoneFirst = new Set<string>();
   let partlyDone = 0;
   const discoveredAt = new Map<string, number>();
   let answered = 0;
@@ -872,6 +874,9 @@ function pilotTotals(
     // anyway") did not end the item; its next end is the one that stands.
     if (isEventOf(event, 'work.retry') && workItemId) {
       standingEnd.delete(workItemId);
+      // A not-done answer Retry sent back did not finish the item either: the completion that
+      // follows is the one the cycle time reads (W16-R17).
+      if (notDoneFirst.delete(workItemId)) completedOnce.delete(workItemId);
       continue;
     }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
@@ -883,6 +888,7 @@ function pilotTotals(
         const answer = finishedAnswerOf(event.payload.output);
         if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
         else if (answer === 'partial') partlyDone += 1;
+        else notDoneFirst.add(workItemId);
       }
       continue;
     }
@@ -1380,19 +1386,9 @@ export function recordsOfDay(records: EmployeeRecords, day: string, zone: string
       return result === undefined ? [] : [result.workItemId];
     }),
   );
-  const asks = records.events.filter((event) => {
-    const workItemId = asString(asRecord(event.payload)?.workItemId);
-    return (
-      event.createdAt < from &&
-      isEventType(event.type) &&
-      WAIT_EVENTS.has(event.type) &&
-      workItemId !== undefined &&
-      decidedOnDay.has(workItemId)
-    );
-  });
   return {
     ...records,
-    events: [...asks, ...ofDay],
+    events: [...asksStillOpen(records.events, from, decidedOnDay), ...ofDay],
     workItems: records.workItems.map(
       (item): Doc<'workItems'> => ({
         ...item,
@@ -1403,6 +1399,57 @@ export function recordsOfDay(records: EmployeeRecords, day: string, zone: string
     ),
     charters: [],
   };
+}
+
+/**
+ * The asks of the items decided on a day that were still open at its start (W16-R16): for each item
+ * and kind, the latest request and the latest start of a wait before the day, unless a decision or
+ * a redraft before the day closed it. Carrying every earlier ask paired the day's decision with an
+ * ask an earlier decision had already answered, so a re-asked decision read days long.
+ *
+ * @param events - The employee's records' events.
+ * @param from - The day's start.
+ * @param decided - The items decided on the day.
+ */
+function asksStillOpen(
+  events: readonly Doc<'events'>[],
+  from: number,
+  decided: ReadonlySet<string>,
+): Doc<'events'>[] {
+  const open = new Map<string, { request?: Doc<'events'>; wait?: Doc<'events'> }>();
+  for (const event of [...events].sort(byWriteOrder)) {
+    if (event.createdAt >= from) continue;
+    const payload = asRecord(event.payload);
+    const workItemId = asString(payload?.workItemId);
+    if (workItemId === undefined || !decided.has(workItemId)) continue;
+    if (isEventOf(event, 'work.plan-redrafting')) {
+      open.delete(`${workItemId}:plan`);
+      continue;
+    }
+    const result = decisionResult(event);
+    if (result !== undefined) {
+      open.delete(`${workItemId}:${result.kind}`);
+      continue;
+    }
+    if (!isEventType(event.type) || !WAIT_EVENTS.has(event.type)) continue;
+    const kind = isEventOf(event, 'work.decision-requesting')
+      ? payload?.kind
+      : isEventOf(event, 'work.plan-drafted')
+        ? 'plan'
+        : 'actions';
+    if (kind !== 'plan' && kind !== 'actions') continue;
+    const key = `${workItemId}:${kind}`;
+    const ask = open.get(key) ?? {};
+    // A resend after an undelivered DM is the same ask as the request it supersedes.
+    if (isEventOf(event, 'work.decision-requesting')) {
+      if (asString(payload?.supersedes) === undefined) open.set(key, { ...ask, request: event });
+    } else {
+      open.set(key, { ...ask, wait: event });
+    }
+  }
+  return [...open.values()].flatMap((ask) =>
+    [ask.wait, ask.request].filter((event): event is Doc<'events'> => event !== undefined),
+  );
 }
 
 /** A day as the page names it, `YYYY-MM-DD`, that is a day of the calendar. */

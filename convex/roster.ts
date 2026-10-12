@@ -129,12 +129,11 @@ async function landedThisMonth(
   for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
     if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
     const workItemId: unknown = event.payload.workItemId;
-    // Read newest first, so the last completion kept per item is its first in the month.
-    if (typeof workItemId === 'string') {
-      firstFinished.set(workItemId, {
-        at: event.createdAt,
-        answer: finishedAnswerOf(event.payload.output),
-      });
+    const answer = finishedAnswerOf(event.payload.output);
+    // Read newest first, so the last completion kept per item is its first in the month that did
+    // the work, in whole or in part; a not-done answer Retry sent back lands nothing (W16-R17).
+    if (typeof workItemId === 'string' && answer !== 'not-done') {
+      firstFinished.set(workItemId, { at: event.createdAt, answer });
     }
   }
   const byDay = new Map<string, { landed: number; partly: number }>();

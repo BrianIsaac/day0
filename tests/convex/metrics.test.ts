@@ -2502,6 +2502,32 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       p90ToCompletionMs: 10_000,
     });
   });
+
+  it('counts a not-done answer retried to done as done, at its done completion (W16-R17, reader 5’s retry.ts)', (): void => {
+    const notDone = { workDone: 'not-done', workDoneWhy: 'The checks could not all be read.' };
+    const done = { workDone: 'done', workDoneWhy: 'Every check was read and posted.' };
+    const events = [
+      event('work.discovered', { workItemId: 'r' }, 1_000),
+      event('work.completed', { workItemId: 'r', output: notDone }, 5_000),
+      event(
+        'work.retry',
+        {
+          workItemId: 'r',
+          resumeState: 'plan-approved',
+          fromState: 'completed',
+          feedback: 'Read the rest.',
+        },
+        6_000,
+      ),
+      event('work.completed', { workItemId: 'r', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('r')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
 });
 
 describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
@@ -2684,6 +2710,62 @@ describe('today in the employee’s zone (16-F)', (): void => {
       .query(api.metrics.forAgent, { agentId, day: '2026-10-12' });
 
     expect(metrics.today?.decisions).toMatchObject({ approved: 1, rejected: 0 });
+  });
+
+  it('pairs a re-asked decision made today with its latest ask, not one an earlier decision or a redraft closed (W16-R16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const at = (iso: string): number => Date.parse(iso);
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'UTC',
+        createdAt: 1,
+      });
+      const event = async (type: string, workItemId: string, iso: string, extra = {}) =>
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, ...extra },
+          createdAt: at(iso),
+        });
+      const ask = { kind: 'plan' };
+      // Reader 5's ask.ts: asked and decided on 1 October, asked again on 3 October, decided on
+      // the 4th, 1,470 minutes after its second ask.
+      await event('work.decision-requesting', 'w1', '2026-10-01T00:00:00Z', {
+        ...ask,
+        decisionId: 'a',
+      });
+      await event('work.plan-approved', 'w1', '2026-10-01T01:00:00Z', { decidedVia: 'dashboard' });
+      await event('work.decision-requesting', 'w1', '2026-10-03T00:00:00Z', {
+        ...ask,
+        decisionId: 'b',
+      });
+      await event('work.plan-approved', 'w1', '2026-10-04T00:30:00Z', { decidedVia: 'dashboard' });
+      // Reader 5's ask2.ts: an ask a redraft withdrew, then the redraft's ask, decided 1,469
+      // minutes after it.
+      await event('work.decision-requesting', 'w2', '2026-10-01T00:00:00Z', {
+        ...ask,
+        decisionId: 'c',
+      });
+      await event('work.plan-redrafting', 'w2', '2026-10-02T00:00:00Z');
+      await event('work.decision-requesting', 'w2', '2026-10-03T00:00:00Z', {
+        ...ask,
+        decisionId: 'd',
+      });
+      await event('work.plan-approved', 'w2', '2026-10-04T00:29:00Z', { decidedVia: 'dashboard' });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-04' });
+
+    expect(metrics.today?.decisions).toMatchObject({ requested: 2, approved: 2 });
+    // The medians of 1,470 and 1,469 minutes: 1,469.5 minutes.
+    expect(metrics.today?.decisions.medianLatencyMs).toBe(1_469.5 * 60_000);
   });
 
   it('answers no day’s figures when none is asked, and refuses a day that is not one', async (): Promise<void> => {
