@@ -619,6 +619,52 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     });
   });
 
+  it('keeps reading the DM while a question waits, however long ago its plan was approved (the second pass’s M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, workItemId } = await askedInRequest(harness);
+    // The manager approved the plan two hours ago; the question beside it is still open.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        decision: { ...row!.decision!, decidedAt: Date.now() - 2 * 60 * 60 * 1000 },
+      });
+    });
+    expect((await harness.query(internal.work.openDecisions, { surfaceId })).noticeOwed).toBe(true);
+  });
+
+  it('answers a code a redraft replaced with the replaced notice, not as unknown (the second pass’s M1)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, surfaceId, workItemId } = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.insert('replacedDecisionRequests', {
+        agentId,
+        workItemId,
+        decisionId: 'ab3xyz',
+        replacedBy: 'cd4xyz',
+        kind: 'plan',
+        surfaceSlug: 'team-chat',
+        channel: 'D0MANAGER',
+        ts: row!.decision!.ts,
+        replacedAt: Date.now(),
+      });
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, id: 'cd4xyz' } });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced', replacedBy: 'cd4xyz' });
+  });
+
   it('answers a reply once, so a poll that delivers it again answers no second question (the second pass’s minor)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

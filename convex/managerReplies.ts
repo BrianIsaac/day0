@@ -439,40 +439,9 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       : false;
     return { ...(await ignored(reason)), notified };
   };
-  const row = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_decision', (q) =>
-      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
-    )
-    .first();
-  // An answer to a plan's conflict question names that plan's own request, decided or not: the
-  // plan goes on meanwhile, so the answer can come after the approval (RM20 (a)).
-  if (args.reply.verb === 'answer') {
-    if (
-      !row?.decision ||
-      row.decision.kind !== 'plan' ||
-      row.decision.surfaceSlug !== surface.slug ||
-      row.decision.channel !== surface.managerDmChannelId
-    ) {
-      return await unknown('no plan request with that code on this channel');
-    }
-    return await answerFromChannel(
-      ctx,
-      surface,
-      { row, decision: row.decision },
-      {
-        ...args,
-        reply: args.reply,
-      },
-    );
-  }
-  if (!row?.decision) {
-    const batch = await ctx.db
-      .query('decisionBatches')
-      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
-      .first();
-    if (batch)
-      return await resolveChannelBatch(ctx, surface, batch, { ...args, reply: args.reply });
+  // A code a newer request replaced (a redraft, a re-held set) is answered as replaced, whatever
+  // the reply's verb (W12-R19; an answer to a conflict's question too, the second pass's M1).
+  const replacedReply = async () => {
     const replaced = await ctx.db
       .query('replacedDecisionRequests')
       .withIndex('by_agent_decision', (q) =>
@@ -512,6 +481,42 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
       notified,
     };
+  };
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
+    )
+    .first();
+  // An answer to a plan's conflict question names that plan's own request, decided or not: the
+  // plan goes on meanwhile, so the answer can come after the approval (RM20 (a)).
+  if (args.reply.verb === 'answer') {
+    if (!row?.decision) return await replacedReply();
+    if (
+      row.decision.kind !== 'plan' ||
+      row.decision.surfaceSlug !== surface.slug ||
+      row.decision.channel !== surface.managerDmChannelId
+    ) {
+      return await unknown('no plan request with that code on this channel');
+    }
+    return await answerFromChannel(
+      ctx,
+      surface,
+      { row, decision: row.decision },
+      {
+        ...args,
+        reply: args.reply,
+      },
+    );
+  }
+  if (!row?.decision) {
+    const batch = await ctx.db
+      .query('decisionBatches')
+      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+      .first();
+    if (batch)
+      return await resolveChannelBatch(ctx, surface, batch, { ...args, reply: args.reply });
+    return await replacedReply();
   }
   if (
     row.decision.surfaceSlug !== surface.slug ||

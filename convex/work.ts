@@ -27,6 +27,7 @@ import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
 import { conflictsUnderPlan } from './docConflicts';
+import { conflictAnswerOwedOn } from './managerQuestions';
 import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
@@ -1971,7 +1972,8 @@ export const openDecisions = internalQuery({
     return {
       requests,
       batches,
-      noticeOwed: decidedLately.length > 0,
+      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
+      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
       ...(threads.length > 0 ? { threads } : {}),
     };
   },

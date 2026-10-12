@@ -353,6 +353,42 @@ export async function openConflictQuestions(
   );
 }
 
+/** The agent's questions the poll's check reads back, newest first (standard 10.4). */
+const QUESTIONS_OWED_READ = 100;
+
+/**
+ * Whether a conflict's question beside a plan whose request went to this DM still waits for its
+ * answer (the second pass's M1): the question holds nothing of the plan, so the manager may answer
+ * long after the request was decided, and the poll reads the DM until the conflict is settled or
+ * answered. A question whose conflict no longer stands waits for nothing.
+ *
+ * @param ctx - The poll's query context.
+ * @param surface - The manager channel's card.
+ * @param channel - Its DM's id.
+ */
+export async function conflictAnswerOwedOn(
+  ctx: QueryCtx,
+  surface: Pick<Doc<'surfaces'>, 'agentId' | 'slug'>,
+  channel: string,
+): Promise<boolean> {
+  const questions = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_agent', (q) => q.eq('agentId', surface.agentId))
+    .order('desc')
+    .take(QUESTIONS_OWED_READ);
+  for (const question of questions) {
+    if (question.type !== 'retrieval' || question.relationId === undefined) continue;
+    if (question.answer !== undefined) continue;
+    const decision = (await ctx.db.get(question.workItemId))?.decision;
+    if (decision?.kind !== 'plan' || decision.surfaceSlug !== surface.slug) continue;
+    if (decision.channel !== channel) continue;
+    if ((await standingConflictOf(ctx, await ctx.db.get(question.relationId))) !== undefined) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The conflict questions a plan's decision request carries, by their text. Internal; read by
  * `managerChannelActions.requestDecision`.
