@@ -24,6 +24,7 @@ import type * as crons from '../crons.js';
 import type * as decisionRequests from '../decisionRequests.js';
 import type * as devAuth from '../devAuth.js';
 import type * as docBlocks from '../docBlocks.js';
+import type * as docConflicts from '../docConflicts.js';
 import type * as docPages from '../docPages.js';
 import type * as docRelationProposals from '../docRelationProposals.js';
 import type * as docRelations from '../docRelations.js';
@@ -157,6 +158,7 @@ declare const fullApi: ApiFromModules<{
   decisionRequests: typeof decisionRequests;
   devAuth: typeof devAuth;
   docBlocks: typeof docBlocks;
+  docConflicts: typeof docConflicts;
   docPages: typeof docPages;
   docRelationProposals: typeof docRelationProposals;
   docRelations: typeof docRelations;
