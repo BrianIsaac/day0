@@ -6,6 +6,7 @@
  */
 
 import { agentJson, makeAgent } from '../lib/mastra';
+import { safeFailureMessage } from '../surfaces/redact';
 import {
   REORIENTATION_PROPOSAL_SYSTEM,
   proposalOf,
@@ -54,7 +55,10 @@ export async function judgeProposal(
     const reply = await call(proposalPrompt(input));
     return { outcome: 'proposed', proposed: proposalOf(reply, input.candidates) };
   } catch (err: unknown) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return { outcome: 'unavailable', reason: reason.slice(0, FAILURE_CHARS) };
+    // Its first line, with any credential shape a provider echoed removed, as a run's failure is.
+    return {
+      outcome: 'unavailable',
+      reason: safeFailureMessage(err, '', 'the judgement failed', FAILURE_CHARS),
+    };
   }
 }

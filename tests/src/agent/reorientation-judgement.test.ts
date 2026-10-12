@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { judgeProposal } from '../../../src/agent/reorientation-judgement';
 import type { ProposalInput } from '../../../src/agent/reorientation-proposal';
+import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 const INPUT: ProposalInput = {
   employeeName: 'Mira',
@@ -37,6 +38,14 @@ describe('judgeProposal', (): void => {
         throw new Error('timed out');
       }),
     ).resolves.toEqual({ outcome: 'unavailable', reason: 'timed out' });
+    // A provider's echo of a credential, and a stack, never reach the card (the second pass's minor).
+    await expect(
+      judgeProposal(INPUT, async () => {
+        throw new Error(
+          `401 for Bearer ${CORPUS_SLOTS.slack_bot_token}\n    at Transport._send (/srv/app/index.mjs:1:1)`,
+        );
+      }),
+    ).resolves.toEqual({ outcome: 'unavailable', reason: '401 for Bearer <redacted>' });
     await expect(
       judgeProposal(INPUT, async () => ({
         change: 'edit-clause',
