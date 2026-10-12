@@ -28,11 +28,12 @@ import {
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
-import { notDoneStatements, runOwnWords } from '@/work/not-done';
+import { notDoneStatements } from '@/work/not-done';
 import {
   doneAgainstLedger,
   finishedAnswerOf,
   landedClosings,
+  ownWordsOf,
   workDoneFactOf,
   workDoneFromLedger,
   type LandedClosing,
@@ -647,11 +648,7 @@ const UNFINISHED_SHOWN = 3;
  * @returns The clauses, in order; empty when the words say nothing of the kind.
  */
 export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
-  if (!output) return [];
-  const initial = output.initial?.actions ?? [];
-  return notDoneStatements(
-    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
-  ).slice(0, UNFINISHED_SHOWN);
+  return notDoneStatements(ownWordsOf(output)).slice(0, UNFINISHED_SHOWN);
 }
 
 /** A finished run's end as the record says it: the word its card leads with (13-FD). */

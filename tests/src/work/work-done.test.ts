@@ -6,6 +6,7 @@ import {
   doneAgainstLedger,
   doneAgainstWords,
   finishedAnswerOf,
+  ownWordsOf,
   landedClosings,
   withAnswerHeldToLedger,
   WORK_DONE_WHY_LIMIT,
@@ -441,5 +442,19 @@ describe('finishedAnswerOf (one reading of a finished run for every count, RM23 
         actions: [],
       }),
     ).toBe('not-done');
+  });
+});
+
+describe('ownWordsOf (the one reading of a run’s own words, the second pass’s finding 9)', (): void => {
+  it('reads the draft and both phases’ messages, and nothing from a shape that holds none', (): void => {
+    expect(
+      ownWordsOf({
+        draft: 'Drafted the reply.',
+        initial: { actions: [ticketUpdate('Posted the first reply.', 'in-progress')] },
+        actions: [ticketUpdate('Closed it.', 'done')],
+      }),
+    ).toEqual(['Drafted the reply.', 'Posted the first reply.', 'Closed it.']);
+    expect(ownWordsOf({ draft: 3, actions: 'not a list' })).toEqual([]);
+    expect(ownWordsOf(null)).toEqual([]);
   });
 });

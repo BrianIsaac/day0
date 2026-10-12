@@ -200,21 +200,31 @@ export function workDoneFromLedger(output: unknown): boolean {
  * @param output - A finished run's output, as the row or its `work.completed` event stores it.
  */
 export function finishedAnswerOf(output: unknown): WorkDoneAnswer {
-  const listed = (actions: unknown): readonly MockAction[] =>
-    Array.isArray(actions) ? (actions as MockAction[]) : [];
   const fact = workDoneFactOf(output);
   if (fact !== undefined) return doneAgainstLedger(output)?.workDone ?? fact.workDone;
-  if (typeof output !== 'object' || output === null) return 'done';
+  return notDoneStatements(ownWordsOf(output)).length > 0 ? 'not-done' : 'done';
+}
+
+/**
+ * A finished run's own words, as a reader takes them for its account of the work: its draft and
+ * every comment and message of both phases (`runOwnWords`), read off a stored output of any shape.
+ * The one reading the card's words (`unfinishedInOwnWords`) and the counts both take.
+ *
+ * @param output - A finished run's output, as the row or its event stores it.
+ */
+export function ownWordsOf(output: unknown): string[] {
+  if (typeof output !== 'object' || output === null) return [];
   const run = output as {
     readonly draft?: unknown;
-    readonly actions?: readonly MockAction[];
-    readonly initial?: { readonly actions?: readonly MockAction[] };
+    readonly actions?: unknown;
+    readonly initial?: { readonly actions?: unknown };
   };
-  const words = runOwnWords({
+  const listed = (actions: unknown): readonly MockAction[] =>
+    Array.isArray(actions) ? (actions as MockAction[]) : [];
+  return runOwnWords({
     draft: run.draft,
     actions: [...listed(run.initial?.actions), ...listed(run.actions)],
   });
-  return notDoneStatements(words).length > 0 ? 'not-done' : 'done';
 }
 
 /** One action that lands a closing state on a ticket, by its index in the set. */
