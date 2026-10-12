@@ -544,6 +544,38 @@ export async function agreementsApplying(
     .map((agreement) => agreement._id);
 }
 
+/**
+ * Open one card on every employee among some of their systems' cards, each card naming that
+ * employee's systems and what they reach: a change the organisation made to a connection several
+ * employees' systems run on (section 3's revocation rows).
+ */
+export async function openCardsOnSurfaces(
+  ctx: MutationCtx,
+  surfaceIds: readonly Id<'surfaces'>[],
+  change: Pick<CardTrigger, 'trigger' | 'triggerKey' | 'summary' | 'now'>,
+): Promise<void> {
+  const byAgent = new Map<Id<'agents'>, Doc<'surfaces'>[]>();
+  for (const id of surfaceIds) {
+    const surface = await ctx.db.get(id);
+    if (surface !== null)
+      byAgent.set(surface.agentId, [...(byAgent.get(surface.agentId) ?? []), surface]);
+  }
+  for (const [agentId, surfaces] of byAgent) {
+    const reached = await Promise.all(
+      surfaces.map(async (surface) => await surfaceReach(ctx, surface)),
+    );
+    await openCard(ctx, {
+      ...change,
+      agentId,
+      affected: {
+        surfaces: reached.flatMap((reach) => reach.surfaces ?? []),
+        skills: reached.flatMap((reach) => reach.skills ?? []),
+        workItems: reached.flatMap((reach) => reach.workItems ?? []),
+      },
+    });
+  }
+}
+
 /** The employee's charter as approved last, or undefined. */
 async function approvedCharter(
   ctx: QueryCtx,

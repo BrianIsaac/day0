@@ -10,6 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { finishSourceRevocation, holdForSourceRevocation } from './credentials';
 import { appendConnectionEvent } from './connectionEvents';
 import { appendEvent } from './eventLog';
+import { openCard } from './reorientation';
 import { ACCESS_ENDS, type AccessEnd } from '../src/surfaces/access-identity';
 import type { SourceRevocationOutcome } from '../src/surfaces/revokers/outcome';
 import {
@@ -137,7 +138,7 @@ function primaryOf(rows: readonly IssuedCredential[]): IssuedCredential {
  * @param line - What happened, and the system it happened at.
  */
 async function appendLine(
-  ctx: Pick<MutationCtx, 'db'>,
+  ctx: MutationCtx,
   job: Pick<RevocationJob, 'agentId' | 'surfaceId' | 'surfaceName' | 'credentialId'>,
   line: {
     readonly system: string;
@@ -148,7 +149,7 @@ async function appendLine(
     readonly reason?: string;
   },
 ): Promise<void> {
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId: job.agentId,
     type: 'credential.revoked-at-source',
     payload: {
@@ -166,6 +167,20 @@ async function appendLine(
     },
     createdAt: line.now,
   });
+  // A revocation that failed for good leaves access at the vendor nobody ended (section 3).
+  if (line.outcome === 'failed') {
+    await openCard(ctx, {
+      agentId: job.agentId,
+      trigger: 'revocation-failed',
+      triggerKey: eventId,
+      summary: `Day0 could not end its ${job.surfaceName} access at ${line.system}${
+        line.reason !== undefined ? `: ${line.reason}` : ''
+      }`,
+      evidence: { eventIds: [eventId] },
+      affected: { surfaces: [job.surfaceId] },
+      now: line.now,
+    });
+  }
 }
 
 /** How one end of a card's access sorts the card's rows. */

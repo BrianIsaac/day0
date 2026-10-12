@@ -586,3 +586,173 @@ describe('a correction on an item that applied an agreement (a kept correction)'
     expect(card.evidence.correctionIds).toHaveLength(1);
   });
 });
+
+describe('the revocation rows (credential.revoked-at-source failed; organisation.connection-revoked)', (): void => {
+  it('opens one card when Day0 could not end an employee’s access at the vendor, and none when it did', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const surfaceId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('surfaces', {
+          agentId,
+          slug: 'linear',
+          displayName: 'Linear',
+          class: 'kanban',
+          verdict: 'connected',
+          whereFound: [],
+          credentialLanded: true,
+          createdAt: 1,
+        }),
+    );
+    const job = (credentialId: Id<'credentials'>) => ({
+      agentId,
+      surfaceId,
+      surfaceName: 'Linear',
+      credentialId,
+      companionIds: [],
+    });
+    const credential = async (attempts: number): Promise<Id<'credentials'>> =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('credentials', {
+            userId: OWNER_SUBJECT,
+            kind: 'oauth',
+            label: 'Linear access token',
+            source: 'oauth',
+            issuedBy: { system: 'linear', grant: 'authorisation-code' },
+            createdAt: 1,
+            revokedAt: 1,
+            sourceRevocation: { state: 'pending', attempts, at: 1, end: 'disconnect' },
+          }),
+      );
+    const done = await credential(1);
+    await harness.mutation(internal.sourceRevocation.recordAttempt, {
+      job: job(done),
+      attempt: 1,
+      last: false,
+      result: { kind: 'final', outcome: 'token-revoked' },
+    });
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    const failed = await credential(3);
+    await harness.mutation(internal.sourceRevocation.recordAttempt, {
+      job: job(failed),
+      attempt: 3,
+      last: true,
+      result: { kind: 'failure', permanent: false, words: 'Linear answered HTTP 503.' },
+    });
+    expect(await cardsSaid(harness, agentId)).toEqual([
+      {
+        trigger: 'revocation-failed',
+        triggerSummary: 'Day0 could not end its Linear access at linear: Linear answered HTTP 503.',
+        risk: 'low',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+  });
+
+  it('opens one card on every employee whose card ran on a revoked organisation connection', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await seedEmployee(harness);
+    const pip = await seedEmployee(harness, { name: 'Pip' });
+    const nell = await seedEmployee(harness, { name: 'Nell' });
+    const connectionId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('organisationConnections', {
+          system: 'linear',
+          displayName: 'Linear',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read', 'write'],
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status: 'active',
+          createdAt: 1,
+        }),
+    );
+    for (const agentId of [mira, pip]) {
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('surfaces', {
+            agentId,
+            slug: 'linear',
+            displayName: 'Linear',
+            class: 'kanban',
+            verdict: 'connected',
+            whereFound: [],
+            credentialLanded: true,
+            organisationConnectionId: connectionId,
+            createdAt: 1,
+          }),
+      );
+    }
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'the app was replaced',
+    });
+    for (const agentId of [mira, pip]) {
+      expect(await cardsSaid(harness, agentId)).toEqual([
+        {
+          trigger: 'connection-revoked',
+          triggerSummary: "The organisation's Linear connection was revoked: the app was replaced",
+          risk: 'low',
+          userId: OWNER_SUBJECT,
+        },
+      ]);
+    }
+    expect(await cardsOf(harness, nell)).toEqual([]);
+  });
+
+  it('opens one card on every employee of the connection when its shared token could not be revoked', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await seedEmployee(harness);
+    const connectionId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('organisationConnections', {
+          system: 'linear',
+          displayName: 'Linear',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read'],
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status: 'revoked',
+          revokedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const credentialId = await harness.run(async (ctx) => {
+      await ctx.db.insert('surfaces', {
+        agentId: mira,
+        slug: 'linear',
+        displayName: 'Linear',
+        class: 'kanban',
+        verdict: 'approved',
+        whereFound: [],
+        credentialLanded: false,
+        organisationConnectionId: connectionId,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('credentials', {
+        userId: OWNER_SUBJECT,
+        kind: 'oauth',
+        label: 'Linear shared token',
+        source: 'oauth',
+        createdAt: 1,
+      });
+    });
+    await harness.mutation(internal.organisationSecrets.finishSharedRevocation, {
+      organisationConnectionId: connectionId,
+      credentialId,
+      attempt: 3,
+      outcome: 'failed',
+      reason: 'Linear answered HTTP 503.',
+    });
+    expect(await cardsSaid(harness, mira)).toEqual([
+      {
+        trigger: 'revocation-failed',
+        triggerSummary:
+          "Day0 could not end the organisation's shared Linear token at linear: Linear answered HTTP 503.",
+        risk: 'low',
+        userId: OWNER_SUBJECT,
+      },
+    ]);
+  });
+});
