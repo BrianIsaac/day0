@@ -751,11 +751,12 @@ export function normalisePlanStepOutcomes(
 }
 
 /**
- * What the closing phase is told about the clause a decision was taken under.
+ * What the closing phase is told about the clause a decision was taken under, by the labels the
+ * charter lines print ("Will do:", "Will not do:", "Escalates when:"; W15-R16, 12 October 2026).
  * The quote is checked against the charter and kept with the outcome.
  */
-const CHARTER_CLAUSE_RULE =
-  "When a charter clause decides a step's outcome (a will-not-do clause or an escalation trigger that blocks or withholds it, or the will-do clause that puts it in the role), quote that clause exactly as the charter words it in the step's `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.";
+export const CHARTER_CLAUSE_RULE =
+  'When a charter clause decides a step\'s outcome (a clause under "Will not do:" or "Escalates when:" that blocks or withholds it, or the "Will do:" clause that puts it in the role), quote that clause exactly as the charter words it in the step\'s `charterClause`; otherwise null. The quote is checked against the charter and kept with the outcome as the clause the decision was taken under.';
 
 /**
  * A closing outcome as it is kept: the basis only when it is not the ledger,

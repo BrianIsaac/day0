@@ -764,3 +764,12 @@ describe('a read-and-answer item names the thread its asker asks in (W19-4, the 
     );
   });
 });
+
+describe("the generator's words for the charter's clauses (W15-R16)", (): void => {
+  it('names the clauses in words, never by the charter’s field keys', (): void => {
+    expect(WORK_GEN_SYSTEM).not.toMatch(/willDo|willNotDo/);
+    expect(WORK_GEN_SYSTEM).toContain(
+      'one its will-do clauses leave out or its will-not-do clauses exclude',
+    );
+  });
+});

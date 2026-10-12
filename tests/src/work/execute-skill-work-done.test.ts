@@ -37,6 +37,7 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  CHARTER_CLAUSE_RULE,
   dependentExecuteSchemaForProcedureContract,
   executeSchemaForProcedureContract,
   executorInstructions,
@@ -651,5 +652,14 @@ describe("a mock message that says it waits for the manager's approval (W19-4, t
     const output = await runSkill({ skill, plan, candidate: docsItem, charter, mockEnv });
     expect(recorded.calls).toHaveLength(1);
     expect(output.actions).toHaveLength(1);
+  });
+});
+
+describe('the closing phase names the charter clause by its label (W15-R16)', (): void => {
+  it('reads "Will not do", "Escalates when" and "Will do" as the charter card prints them', (): void => {
+    expect(CHARTER_CLAUSE_RULE).toContain(
+      'a clause under "Will not do:" or "Escalates when:" that blocks or withholds it, or the "Will do:" clause that puts it in the role',
+    );
+    expect(CHARTER_CLAUSE_RULE).not.toMatch(/will-not-do clause|escalation trigger/);
   });
 });
