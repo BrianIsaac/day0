@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
@@ -84,7 +85,9 @@ describe('the Yuque documentation reader', (): void => {
       '210000009',
     ]);
     expect(unread.map((page) => page.ref)).toEqual(['210000003', '210000006']);
-    expect(listings(requests)).toEqual(['live@0', 'live@3', 'deleted@0']);
+    // Re-taken for W15-R30: the second page is full, so the walk asks once more and its empty
+    // page ends it (the total of six ended it there on the base).
+    expect(listings(requests)).toEqual(['live@0', 'live@3', 'live@6', 'deleted@0']);
     for (const request of requests) {
       expect(request.url.origin).toBe('https://acme.yuque.com');
       expect(request.headers.get('x-auth-token')).toBe(TOKEN);
@@ -107,6 +110,24 @@ describe('the Yuque documentation reader', (): void => {
     const second = await reader.listPageBatch(repository, TOKEN, first.nextCursor, 25);
     expect(second.pages.map((page) => page.ref)).toEqual(['210000004', '210000005']);
     expect(listings(requests)).toEqual(['live@0', 'live@3']);
+  });
+
+  it('reads on past a full page whatever a narrower total says (W15-R30)', async (): Promise<void> => {
+    // The review: a total narrower than the documents ended the walk on a full page, and the
+    // finish pruned the rest. The meaning of meta.total is unproven, so a full page reads on.
+    const docs0 = JSON.parse(
+      readFileSync(new URL('../../../fixtures/readers/yuque/docs-0.json', import.meta.url), 'utf8'),
+    );
+    const { reader, requests } = readerOnSpace((request) =>
+      request.url.pathname.endsWith('/docs') &&
+      request.url.searchParams.get('deleted') === 'false' &&
+      request.url.searchParams.get('offset') === '0'
+        ? json(200, { ...docs0, meta: { total: 3 } })
+        : undefined,
+    );
+    const { pages } = await wholeRepository(reader);
+    expect(pages.map((page) => page.ref)).toContain('210000004');
+    expect(listings(requests)).toEqual(['live@0', 'live@3', 'live@6', 'deleted@0']);
   });
 
   it("reads a Markdown document's body as it is and any other through its HTML, each under its title", async (): Promise<void> => {

@@ -207,9 +207,11 @@ export class YuqueReader implements DocumentationReader {
     }
     const total = field(field(body, 'meta'), 'total');
     const end = offset + listed.length;
-    // The listing's own total says whether more follows, where it gives one: a space may answer
-    // fewer than were asked for. An empty page ends the walk whatever the total says.
-    const more = typeof total === 'number' ? end < total : listed.length === limit;
+    // A full page reads on, whatever the listing's total says, since what the total counts is
+    // unproven and a narrower one ended the walk early (W15-R30); a shorter page reads on while
+    // the total says more follows, since a space may answer fewer than were asked for. An empty
+    // page ends the walk whatever the total says.
+    const more = listed.length === limit || (typeof total === 'number' && end < total);
     return { entries, count: listed.length, more: listed.length > 0 && more };
   }
 
