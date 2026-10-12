@@ -113,7 +113,8 @@ first two in its egress list. The backend connects directly: it uses no HTTP pro
 
 **The cloud 21Vianet operates in China.** A site whose address ends in `sharepoint.cn` is read
 through that cloud's hosts instead, which Microsoft's national cloud page names:
-`login.chinacloudapi.cn` and `microsoftgraph.chinacloudapi.cn`. This is a documented option
+`login.chinacloudapi.cn` and `microsoftgraph.chinacloudapi.cn`, and a file is downloaded from the
+address Graph names for it, on your own `<tenant>.sharepoint.cn`. This is a documented option
 that no tenant has checked; Microsoft's Entra documentation names a second sign-in host for that
 cloud (`login.partner.microsoftonline.cn`), and which of the two a tenant answers at is to be
 confirmed on the first one.

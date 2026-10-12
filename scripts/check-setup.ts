@@ -1878,7 +1878,7 @@ export function egressHosts(
     );
     add(
       MICROSOFT_CLOUDS.china.graph,
-      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked',
+      'a SharePoint documentation source on the cloud 21Vianet operates: Microsoft Graph, when one is linked (its files are then downloaded from your own <tenant>.sharepoint.cn)',
     );
     add(
       'www.yuque.com',
