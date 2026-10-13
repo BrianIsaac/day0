@@ -84,11 +84,57 @@ export async function exportTrace(
 }
 
 /**
+ * Write every byte of a piece of the file: one write may take fewer than it was handed (a disk
+ * that fills part way), and what it left would be missing from the file with no error.
+ *
+ * @param bytes - The piece.
+ * @param write - Writes the piece from an offset and answers how many bytes it took.
+ * @throws Error when a write takes nothing, where the loop would never end.
+ */
+export function writeWhole(
+  bytes: Uint8Array,
+  write: (bytes: Uint8Array, offset: number) => number,
+): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const taken = write(bytes, offset);
+    if (taken <= 0) {
+      throw new Error(`the file took none of the ${bytes.length - offset} bytes left to write`);
+    }
+    offset += taken;
+  }
+}
+
+/**
+ * Remove what an export that stopped left on disk, keeping the reason it stopped as the error
+ * thrown: what the tidying itself refuses is said after it, never in its place.
+ *
+ * @param partial - The unfinished file.
+ * @param file - Its descriptor while it is still open, undefined once closed.
+ * @param error - Why the export stopped.
+ * @returns The error to throw.
+ */
+function stoppedExport(partial: string, file: number | undefined, error: unknown): Error {
+  const stopped = error instanceof Error ? error : new Error(String(error));
+  try {
+    if (file !== undefined) closeSync(file);
+    rmSync(partial, { force: true });
+    return stopped;
+  } catch (tidying) {
+    return new Error(
+      `${stopped.message}; and ${partial} could not be removed (${tidying instanceof Error ? tidying.message : String(tidying)}): delete it yourself`,
+      { cause: stopped },
+    );
+  }
+}
+
+/**
  * Export the caller's owner export (wave 16, 16-F) to a file: every employee's trace and the
  * owner's own rows, read through the paged actions and written as each arrives (wave 17, 17-F),
  * so the command holds one employee's trace however many there are. The pieces go to
  * `<out>.partial`, which takes the file's name once it is whole; a call the deployment refuses
- * part way leaves neither.
+ * part way, or a name the whole file cannot take, leaves no partial file. A run that is
+ * interrupted (Ctrl-C) leaves `<out>.partial`, named for what it is; the next run writes over it.
  *
  * @param out - The file to write.
  * @param run - How a deployed function is called.
@@ -103,9 +149,9 @@ export async function exportOwner(
 ): Promise<OwnerExport['manifest']> {
   const partial = `${out}.partial`;
   const file = openSync(partial, 'w');
-  let manifest: OwnerExport['manifest'];
+  let open: number | undefined = file;
   try {
-    manifest = await streamOwnerExport(
+    const manifest = await streamOwnerExport(
       {
         head: async () =>
           (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
@@ -126,19 +172,19 @@ export async function exportOwner(
       },
       {
         write: async (chunk) => {
-          writeSync(file, chunk, null, 'utf8');
+          writeWhole(Buffer.from(chunk, 'utf8'), (bytes, offset) => writeSync(file, bytes, offset));
           await Promise.resolve();
         },
       },
     );
-  } catch (error) {
+    // Marked closed first: a close the disk refuses is not tried a second time by the tidying.
+    open = undefined;
     closeSync(file);
-    rmSync(partial, { force: true });
-    throw error;
+    renameSync(partial, out);
+    return manifest;
+  } catch (error) {
+    throw stoppedExport(partial, open, error);
   }
-  closeSync(file);
-  renameSync(partial, out);
-  return manifest;
 }
 
 function parseArguments(

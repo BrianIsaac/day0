@@ -1,8 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runExportTrace, type ConvexRun } from '../../scripts/export-trace';
+import { runExportTrace, writeWhole, type ConvexRun } from '../../scripts/export-trace';
 import {
   isAgentTrace,
   OWNER_SECTIONS,
@@ -261,5 +269,44 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
       'Export failed: exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS',
     ]);
     expect(readdirSync(directory)).toEqual([]);
+  });
+
+  it('leaves no partial file when the whole file cannot take its name (the second pass, 17-F)', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    // The name asked for is a folder that holds something: the finished file cannot replace it.
+    const out = join(directory, 'owner.json');
+    mkdirSync(out);
+    writeFileSync(join(out, 'kept.txt'), 'kept', 'utf8');
+    const errors: string[] = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: (line) => errors.push(line) },
+      twoEmployees((): void => undefined),
+    );
+    expect(code).toBe(2);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/^Export failed: /);
+    expect(readdirSync(directory)).toEqual(['owner.json']);
+    expect(readdirSync(out)).toEqual(['kept.txt']);
+  });
+});
+
+describe('writing a piece of the export whole (the second pass, 17-F)', (): void => {
+  it('writes on from where a short write stopped, so no byte of the piece is missing', (): void => {
+    const piece = new TextEncoder().encode('{"employees": ["Zoë", "Aiko"]}');
+    const taken: number[] = [];
+    // A file that takes three bytes of whatever it is handed.
+    writeWhole(piece, (bytes, offset): number => {
+      const count = Math.min(3, bytes.length - offset);
+      taken.push(...bytes.subarray(offset, offset + count));
+      return count;
+    });
+    expect(new TextDecoder().decode(new Uint8Array(taken))).toBe('{"employees": ["Zoë", "Aiko"]}');
+  });
+
+  it('refuses a file that takes nothing, where it would write for ever', (): void => {
+    expect((): void => writeWhole(new TextEncoder().encode('{}'), (): number => 0)).toThrow(
+      'the file took none of the 2 bytes left to write',
+    );
   });
 });
