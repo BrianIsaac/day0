@@ -237,4 +237,13 @@ describe('the wave 17 types, declared by the schema step for 17-O and 17-C (17-K
       NonNullable<Doc<'managerDecisionNotices'>['questionId']>
     >();
   });
+
+  it('takes an owed agreement check as the trigger a card opened on (RM34 (a))', (): void => {
+    expectTypeOf<'agreement-check-owed'>().toMatchTypeOf<
+      EventPayloads['reorientation.opened']['trigger']
+    >();
+    expectTypeOf<EventPayloads['reorientation.opened']['trigger']>().toEqualTypeOf<
+      Doc<'reorientations'>['trigger']
+    >();
+  });
 });

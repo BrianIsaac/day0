@@ -8,6 +8,7 @@ import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { insertMinimalRow } from './schema-fixtures';
 import { AGREEMENT_APPROVED_VIA } from '../../src/work/agreement-vocabulary';
+import { REORIENTATION_TRIGGERS } from '../../src/agent/reorientation-vocabulary';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -3666,5 +3667,42 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
         });
       }),
     ).rejects.toThrow();
+  });
+
+  it("opens a card on an owed agreement check, read by the employee's day and trigger, beside every kind 0.20.0 opened (RM34 (a))", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const firstId = (await insertMinimalRow(
+        ctx as never,
+        'reorientations',
+        agentId,
+      )) as Id<'reorientations'>;
+      const first = await ctx.db.get(firstId);
+      for (const trigger of REORIENTATION_TRIGGERS) {
+        const id = (await insertMinimalRow(
+          ctx as never,
+          'reorientations',
+          agentId,
+        )) as Id<'reorientations'>;
+        await ctx.db.patch(id, { trigger, day: '2026-10-13' });
+      }
+      const owed = await ctx.db
+        .query('reorientations')
+        .withIndex('by_agent_day_trigger', (q) =>
+          q.eq('agentId', agentId).eq('day', '2026-10-13').eq('trigger', 'agreement-check-owed'),
+        )
+        .collect();
+      const day = await ctx.db
+        .query('reorientations')
+        .withIndex('by_agent_day_trigger', (q) => q.eq('agentId', agentId).eq('day', '2026-10-13'))
+        .collect();
+      return { first, owed, kinds: day.map((card) => card.trigger).sort() };
+    });
+    // The union's first member is the kind a card of 0.20.0 has always been able to carry.
+    expect(read.first?.trigger).toBe('manager-changed');
+    expect(read.owed.map((card) => card.trigger)).toEqual(['agreement-check-owed']);
+    expect(read.kinds).toEqual([...REORIENTATION_TRIGGERS].sort());
+    expect(read.kinds).toHaveLength(17);
   });
 });

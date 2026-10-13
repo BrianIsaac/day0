@@ -21,7 +21,10 @@
  * out-of-scope skips citing one `willNotDo` clause, or three plan rejections, in 30 days; a page
  * under an open plan was superseded, archived or made a draft
  * (`documentation.page-status-changed`); and the manager opened one by hand for a role or goal
- * change. A confirmed conflict asks a question instead and opens no card (5.2).
+ * change. A confirmed conflict asks a question instead and opens no card (5.2). From wave 17
+ * (17-K for 17-O; RM34 (a)): the agreements could not be checked against an amended charter
+ * (`agreement.check-owed`), a low card that proposes the re-check and holds nothing. A new kind is
+ * added at the end: the schema's union is this list, and a stored card keeps its kind.
  */
 export const REORIENTATION_TRIGGERS = [
   'manager-changed',
@@ -40,6 +43,7 @@ export const REORIENTATION_TRIGGERS = [
   'repeated-rejection',
   'page-status-changed',
   'role-changed',
+  'agreement-check-owed',
 ] as const;
 
 /** One of {@link REORIENTATION_TRIGGERS}. */

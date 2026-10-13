@@ -34,9 +34,17 @@ describe('the reorientation vocabulary (16-K)', (): void => {
       'repeated-rejection',
       'page-status-changed',
       'role-changed',
+      // Wave 17 (17-K, RM34 (a)): a check of the agreements against an amended charter is owed.
+      'agreement-check-owed',
     ]);
     expect(new Set(REORIENTATION_TRIGGERS).size).toBe(REORIENTATION_TRIGGERS.length);
     expect(REORIENTATION_TRIGGERS.some((trigger) => trigger.includes('conflict'))).toBe(false);
+  });
+
+  it('adds the owed agreement check after the sixteen kinds of 0.20.0, each of which keeps its place (17-K, RM34 (a))', (): void => {
+    expect(REORIENTATION_TRIGGERS).toHaveLength(17);
+    expect(REORIENTATION_TRIGGERS.indexOf('agreement-check-owed')).toBe(16);
+    expect(REORIENTATION_TRIGGERS.indexOf('role-changed')).toBe(15);
   });
 
   it('opens a card with its proposal pending, and decides it applied, dismissed or deferred; only open and discussing are undecided', (): void => {
