@@ -18,7 +18,7 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
-import { openCard, personAgreements } from './reorientation';
+import { openCards, personAgreements, type CardTrigger } from './reorientation';
 import { ownerAgents } from './reorientationReach';
 import {
   EVIDENCE_SHOWN,
@@ -460,13 +460,14 @@ export const dismiss = mutation({
     const agreements = await personAgreements(ctx, person.userId, person._id);
     const reached = new Set<Id<'agents'>>([args.agentId]);
     for (const edge of proposed) if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+    const cards: CardTrigger[] = [];
     for (const agentId of reached) {
       const retired = proposed
         .filter((edge) => edge.fromAgentId === undefined || edge.fromAgentId === agentId)
         .map((edge) => edge._id);
       // A dismissal that took no edge of the employee's and no agreement reaches nothing of its.
       if (retired.length === 0 && agreements.length === 0) continue;
-      await openCard(ctx, {
+      cards.push({
         agentId,
         trigger: 'person-dismissed',
         triggerKey: eventId,
@@ -476,6 +477,8 @@ export const dismiss = mutation({
         now,
       });
     }
+    // One list for every employee an edge to the person was proposed from (17-O; O-2).
+    await openCards(ctx, cards);
     return { edgesRetired: proposed.length };
   },
 });
@@ -715,11 +718,42 @@ async function recordEdgeChange(
 /** The edge types whose change reaches an employee's work: who approves it, whom it escalates to. */
 const CARD_EDGE_TYPES: readonly RelationshipType[] = ['approval-authority', 'escalation-contact'];
 
-/** What a card says became of an edge, by its change. */
-function edgeChangeWords(person: string, noun: string, change: RelationshipChange): string {
+/**
+ * What a card says became of an edge, by its change (section 7; the pre-tag's re-walk): an edit
+ * says which of its parts moved, what the edge covers or what the person is to the employee,
+ * where it said "{person}, its {noun}, changed" whatever changed and the judgement read a widened
+ * scope as the person having left. The judgement reads this line as what changed.
+ *
+ * @param before - The edge an edit superseded, when it is still stored.
+ */
+export function edgeChangeWords(
+  person: string,
+  change: RelationshipChange,
+  edge: Pick<Doc<'relationships'>, 'type' | 'scope'>,
+  before?: Pick<Doc<'relationships'>, 'type' | 'scope'>,
+): string {
+  const noun = RELATIONSHIP_NOUNS[edge.type];
   if (change === 'added') return `${person} is now its ${noun}`;
   if (change === 'retired') return `${person} is no longer its ${noun}`;
-  return `${person}, its ${noun}, changed`;
+  const covers = (scope: string | undefined): string | undefined =>
+    scope === undefined || scope.trim() === '' ? undefined : scope.trim();
+  const [now, was] = [covers(edge.scope), covers(before?.scope)];
+  const kind =
+    before !== undefined && before.type !== edge.type
+      ? `${person} is now its ${noun}, where it was its ${RELATIONSHIP_NOUNS[before.type]}`
+      : undefined;
+  const scope =
+    before === undefined || now === was
+      ? undefined
+      : now === undefined
+        ? `now with no stated scope, where it was for “${was}”`
+        : was === undefined
+          ? `now for “${now}”, where it had no stated scope`
+          : `now for “${now}”, where it was “${was}”`;
+  if (kind !== undefined) return scope === undefined ? kind : `${kind}; ${scope}`;
+  return scope === undefined
+    ? `${person}, its ${noun}, changed`
+    : `${person}, its ${noun}: ${scope}`;
 }
 
 /**
@@ -748,21 +782,28 @@ async function openEdgeCards(
     for (const agent of await ownerAgents(ctx, edge.userId)) reached.add(agent._id);
   }
   const agreements = await personAgreements(ctx, edge.userId, person._id);
-  for (const agentId of reached) {
-    await openCard(ctx, {
+  const before =
+    change.change === 'edited' && edge.supersedes !== undefined
+      ? await ctx.db.get(edge.supersedes)
+      : null;
+  const summary = edgeChangeWords(person.displayName, change.change, edge, before ?? undefined);
+  // One list for every employee the edge concerns, up to all of the owner's (17-O; W16-R5).
+  await openCards(
+    ctx,
+    [...reached].map((agentId) => ({
       agentId,
-      trigger: 'relationship-changed',
+      trigger: 'relationship-changed' as const,
       triggerKey: change.eventId,
-      summary: edgeChangeWords(person.displayName, RELATIONSHIP_NOUNS[edge.type], change.change),
+      summary,
       evidence: {
         eventIds: agentId === change.agentId ? [change.eventId] : [],
         relationshipIds: [edge._id],
       },
       affected: { relationships: [edge._id], agreements },
-      reach: { kind: 'open-work' },
+      reach: { kind: 'open-work' as const },
       now: change.now,
-    });
-  }
+    })),
+  );
 }
 
 /** A scope the manager typed, trimmed and bounded, or undefined for none. */

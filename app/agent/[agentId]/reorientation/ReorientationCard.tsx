@@ -8,10 +8,13 @@ import { nextCharterVersion } from '@/agent/charter-amendment';
 import {
   approvedResultWords,
   cardTitle,
+  decidedElsewhereOf,
+  decidedElsewhereWords,
   decisionWords,
   failedProposalWords,
   heldWords,
   pendingWords,
+  proposalFingerprint,
   sentenceOf,
   revisitDay,
 } from '@/agent/reorientation-words';
@@ -19,6 +22,7 @@ import { Button, ButtonLink } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
+import { recordWords } from '../record/record-words';
 import { useChange } from '../../../components/use-change';
 
 /** One card as the reorientation page draws it (`reorientationDecisions.listForAgent`). */
@@ -122,10 +126,13 @@ function ProposalBody({
       return (
         <>
           <p>
-            {agreement !== undefined ? (
-              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
-            ) : (
+            {agreement === undefined ? (
               'A working agreement.'
+            ) : proposed.action === 'keep' || proposed.action === 'recheck' ? (
+              // Kept or checked again, the agreement stands as written: nothing is struck.
+              agreement.statement
+            ) : (
+              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
             )}
           </p>
           {proposed.statement !== undefined ? <p>{proposed.statement}</p> : null}
@@ -185,7 +192,18 @@ function closedAtHandover(card: CardView['card']): boolean {
 /** How a decided card was decided, as its muted line says it. */
 function decidedWords(card: CardView['card']): string {
   if (card.status === 'applied') return 'approved';
+  if (decidedElsewhereOf(card.outcome?.summary) !== undefined) return 'decided on another card';
   return closedAtHandover(card) ? 'closed at the handover' : 'dismissed';
+}
+
+/** A decided card's outcome line: what its decision did, or where it was decided. */
+function outcomeWords(card: CardView['card'], zone: string | undefined): string {
+  if (closedAtHandover(card)) return `Closed at the handover: ${handedOverReason}.`;
+  const elsewhere = decidedElsewhereOf(card.outcome?.summary);
+  if (elsewhere !== undefined) {
+    return decidedElsewhereWords(elsewhere, revisitDay(card.decidedAt ?? card.createdAt, zone));
+  }
+  return `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome?.summary ?? ''}.`;
 }
 
 /** The card's muted line: when it opened, how much it can hold up, and what it holds now. */
@@ -254,6 +272,8 @@ export function ReorientationCard({
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),
     ...view.people.map((edge) => edge.words),
+    // The organisation's ledger lines an organisation's change rests on, in the record's words.
+    ...view.ledger.map((line) => recordWords(line, { name }).replace(/\.$/u, '')),
     // A rule drafted before rules were bound carries no clause, so its own words say it (W16-R21).
     ...(view.carriedRules ?? []).map((quote) => `Its reporting-line rule: “${quote}”`),
   ];
@@ -302,7 +322,7 @@ export function ReorientationCard({
             {proposed.kind === 'pending' ? (
               <p>
                 {proposed.failedAt !== undefined
-                  ? failedProposalWords(name)
+                  ? failedProposalWords(name, proposed.failure)
                   : pendingWords(name, held)}
               </p>
             ) : (
@@ -315,11 +335,7 @@ export function ReorientationCard({
         </div>
         {decided ? (
           card.outcome !== undefined ? (
-            <p className="text-[var(--color-fg-2)]">
-              {closedAtHandover(card)
-                ? `Closed at the handover: ${handedOverReason}.`
-                : `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome.summary}.`}
-            </p>
+            <p className="text-[var(--color-fg-2)]">{outcomeWords(card, zone)}</p>
           ) : null
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-4">
@@ -329,10 +345,13 @@ export function ReorientationCard({
                 size="large"
                 disabled={change.busy || proposed.kind === 'pending'}
                 onClick={() =>
-                  change.run(() => approve({ reorientationId }), {
-                    done: (outcome) => `Approved: ${outcome.result}.`,
-                    refused: 'The card was not approved.',
-                  })
+                  change.run(
+                    () => approve({ reorientationId, shown: proposalFingerprint(proposed) }),
+                    {
+                      done: (outcome) => `Approved: ${outcome.result}.`,
+                      refused: 'The card was not approved.',
+                    },
+                  )
                 }
               >
                 Approve

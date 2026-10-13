@@ -202,17 +202,35 @@ describe('opening a talk', (): void => {
     expect((await cardOf(bed.harness, bed.cardId)).status).toBe('dismissed');
   });
 
-  it('refuses another owner', async (): Promise<void> => {
+  it('tells another owner what a card that is not stored is told, at the turn, the finish and the page (W16-R35)', async (): Promise<void> => {
+    // The review's W16-R35: `ownedCard`, `ownedTalk` and `forCard` read the row and said "gone"
+    // before the owner was checked, so a signed-in stranger could tell a card that exists (the
+    // employee is not yours) from one that does not.
     const bed = await openedCard();
-    await expect(
-      bed.harness
-        .withIdentity(managerIdentity('someone-else'))
-        .mutation(api.reorientationTalk.takeTurn, {
-          reorientationId: bed.cardId,
-          request: { kind: 'open' },
-        }),
-    ).rejects.toThrow();
+    const stranger = bed.harness.withIdentity(managerIdentity('someone-else'));
+    const refused = { taken: false, refusal: 'This card is gone.' };
+    expect(
+      await stranger.mutation(api.reorientationTalk.takeTurn, {
+        reorientationId: bed.cardId,
+        request: { kind: 'open' },
+      }),
+    ).toEqual(refused);
     expect((await cardOf(bed.harness, bed.cardId)).status).toBe('open');
+    expect(
+      await stranger.query(api.reorientationTalk.forCard, { reorientationId: bed.cardId }),
+    ).toBeNull();
+    // The owner's own talk, then the stranger at its write path: the same answer as for a talk
+    // that is not stored, and nothing written.
+    const turn = await taken(bed, { kind: 'open' });
+    expect(
+      await stranger.mutation(api.reorientationTalk.keepReplyDraft, {
+        talkId: turn.talkId,
+        conversation: turn.conversation,
+        text: 'a stranger’s words',
+        after: null,
+      }),
+    ).toEqual({ kept: false });
+    expect((await talkOf(bed)).replyDraft).toBeUndefined();
   });
 });
 

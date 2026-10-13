@@ -1434,6 +1434,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }`,
   'reorientation.reopened': (p) =>
     `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+  'reorientation.card-not-opened': (p, subject) =>
+    `Day0 could not open a reorientation card for ${subject.name}${
+      text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''
+    }${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */

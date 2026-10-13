@@ -1,5 +1,5 @@
 import type { UIMessageChunk } from 'ai';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_KEPT_TURNS,
   MOVED_ON_REFUSAL,
@@ -9,7 +9,10 @@ import {
 import {
   QUOTES_LIMIT,
   TALK_ANSWER_NOT_KEPT,
+  TALK_DEADLINE_MS,
   decideTalkTurn,
+  finishOutcome,
+  talkDeadline,
   keptTalkAnswer,
   managerQuotes,
   talkRefusal,
@@ -397,5 +400,96 @@ describe('a talk answer as it streams', (): void => {
       ),
     );
     expect(chunks.at(-2)).toEqual({ type: 'error', errorText: TALK_ANSWER_NOT_KEPT });
+  });
+});
+
+describe('the talk route’s deadline (W16-R19; the pre-tag’s item 9)', (): void => {
+  afterEach((): void => {
+    vi.useRealTimers();
+  });
+
+  it('aborts at fifty seconds on the clock, short of the platform’s sixty, and not before', (): void => {
+    vi.useFakeTimers();
+    const deadline = talkDeadline();
+    expect(TALK_DEADLINE_MS).toBe(50_000);
+    expect(TALK_DEADLINE_MS).toBeLessThan(60_000);
+    vi.advanceTimersByTime(TALK_DEADLINE_MS - 1);
+    expect(deadline.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(deadline.aborted).toBe(true);
+    expect((deadline.reason as { name?: string }).name).toBe('TimeoutError');
+  });
+
+  it('stops a model call that is still waiting when it passes', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const deadline = talkDeadline(1_000);
+    const waiting = new Promise<string>((resolve, reject) => {
+      deadline.addEventListener('abort', () => {
+        reject(deadline.reason as Error);
+      });
+      setTimeout(() => {
+        resolve('answered');
+      }, 5_000);
+    });
+    const settled = waiting.then(
+      (value) => value,
+      (reason: { name?: string }) => `stopped: ${reason.name}`,
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(settled).resolves.toBe('stopped: TimeoutError');
+  });
+});
+
+describe('Put this on the card, asked once more when the first call is refused (17-O)', (): void => {
+  const OUTCOME = {
+    change: 'none',
+    candidate: null,
+    action: null,
+    text: null,
+    rationale: 'The manager said nothing needs to change.',
+    quotes: [],
+    closingLine: 'I have put that on the card.',
+  };
+  const call = (input: unknown) => ({ toolCalls: [{ toolName: 'reorientationComplete', input }] });
+
+  it('takes the first call when it is in the tool’s shape, asking once', async (): Promise<void> => {
+    const notes: Array<string | undefined> = [];
+    const finished = await finishOutcome(async (note) => {
+      notes.push(note);
+      return call(OUTCOME);
+    });
+    expect(notes).toEqual([undefined]);
+    expect(finished.outcome?.reply.rationale).toBe('The manager said nothing needs to change.');
+    expect(finished.answers).toHaveLength(1);
+  });
+
+  it('asks again with the refused field’s path, and takes the second call', async (): Promise<void> => {
+    const { closingLine: _closingLine, ...noClosingLine } = OUTCOME;
+    void _closingLine;
+    const notes: Array<string | undefined> = [];
+    const finished = await finishOutcome(async (note) => {
+      notes.push(note);
+      return call(note === undefined ? noClosingLine : OUTCOME);
+    });
+    expect(notes).toEqual([
+      undefined,
+      'Your call of reorientationComplete was not taken: closingLine was not in the shape the tool takes. Call reorientationComplete once more, every field as the tool describes it. Say nothing else.',
+    ]);
+    expect(finished.outcome?.reply.change).toBe('none');
+    expect(finished.answers).toHaveLength(2);
+  });
+
+  it('asks once more and no further when the model called nothing, and then answers no outcome', async (): Promise<void> => {
+    const notes: Array<string | undefined> = [];
+    const finished = await finishOutcome(async (note) => {
+      notes.push(note);
+      return { toolCalls: [] };
+    });
+    expect(notes).toEqual([
+      undefined,
+      'You did not call reorientationComplete. Call reorientationComplete once more, every field as the tool describes it. Say nothing else.',
+    ]);
+    expect(finished.outcome).toBeUndefined();
+    expect(finished.answers).toHaveLength(2);
   });
 });

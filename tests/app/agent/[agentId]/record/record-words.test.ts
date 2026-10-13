@@ -1097,6 +1097,27 @@ describe('a charter amended from a reorientation card, in the record (the joins)
   });
 });
 
+describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23)', (): void => {
+  it('says which card could not be opened and why, so the change is not lost unsaid', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.card-not-opened',
+          payload: {
+            trigger: 'page-status-changed',
+            triggerKey: 'event-1',
+            summary: '“Escalation paths” was archived',
+            reason: 'the card could not be written',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Day0 could not open a reorientation card for Mira (the card could not be written): “Escalation paths” was archived.',
+    );
+  });
+});
+
 describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
   /** An event older than the reader's tenure: the manager then was sam@company.com. */
   const earlier = {

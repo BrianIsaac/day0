@@ -32,6 +32,24 @@ export const TALK_OPENING = 'The manager opened this talk from the card. Begin.'
 export const TALK_FINISH_NOTE =
   'The manager asked you to put this on the card now. Call reorientationComplete with the change the manager agreed to, or with `none` if the manager said nothing needs to change. Say nothing else.';
 
+/**
+ * The note a finish adds when its first ask carried no outcome the tool takes (wave 17, 17-O; the
+ * v0.20.0 pre-tag's row 6: three finishes in four were refused on the hosted model, one with
+ * `closingLine` not in the tool's shape): one more ask, naming the fields the schema refused and
+ * never their words, which are the model's and may quote the manager.
+ *
+ * @param refusedFields - The paths the schema refused; none when no call was made at all.
+ */
+export function talkRepairNote(refusedFields: readonly string[]): string {
+  const what =
+    refusedFields.length === 0
+      ? 'You did not call reorientationComplete.'
+      : `Your call of reorientationComplete was not taken: ${refusedFields.join(', ')} ${
+          refusedFields.length === 1 ? 'was' : 'were'
+        } not in the shape the tool takes.`;
+  return `${what} Call reorientationComplete once more, every field as the tool describes it. Say nothing else.`;
+}
+
 /** The `reorientationComplete` tool's words: its description and each field's. */
 export const REORIENTATION_COMPLETE_TOOL = {
   description:

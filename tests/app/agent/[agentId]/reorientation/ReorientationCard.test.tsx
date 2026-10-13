@@ -46,6 +46,7 @@ import {
 } from '../../../../../app/agent/[agentId]/reorientation/ReorientationCard';
 import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { AgentZoneContext } from '../../../../../app/components/time';
+import { proposalFingerprint } from '../../../../../src/agent/reorientation-words';
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, press, said, typeInto } from '../../../../fixtures/dom/press';
@@ -126,6 +127,7 @@ const BASE: CardView = {
   skills: [{ _id: 'skill-1' as Id<'skills'>, name: 'kanban-comment-and-close' }],
   agreements: [],
   people: [],
+  ledger: [],
   held: { plans: 0, runs: 0 },
   charterVersion: '0.1',
 };
@@ -197,7 +199,11 @@ describe('a reorientation card', (): void => {
     await press(view.container, 'Dismiss');
     expect(said(view.container).at(-1)).toBe('Dismissed: nothing changed.');
     expect(backend.calls).toEqual([
-      { name: 'reorientationDecisions:approve', args: { reorientationId: 'card-1' } },
+      // Approve carries what the card showed (17-O; W16-R24): the proposal's own fields.
+      {
+        name: 'reorientationDecisions:approve',
+        args: { reorientationId: 'card-1', shown: proposalFingerprint(BASE.card.proposed) },
+      },
       { name: 'reorientationDecisions:defer', args: { reorientationId: 'card-1' } },
       { name: 'reorientationDecisions:dismiss', args: { reorientationId: 'card-1' } },
     ]);
@@ -317,6 +323,93 @@ describe('a reorientation card', (): void => {
     edge.unmount();
   });
 
+  it('says a card another employee’s card decided was decided there, on its date, with nothing more to do (the pre-tag’s row 6)', (): void => {
+    const sibling = drawn(
+      withCard({
+        status: 'dismissed',
+        decidedAt: Date.UTC(2026, 9, 13, 2, 4),
+        outcome: { summary: 'decided on Priya’s card: the relationship was changed' },
+      }),
+    );
+    expect(sibling.container.textContent).toContain(
+      'Decided on Priya’s card on 13 October: the relationship was changed. Nothing more to do here.',
+    );
+    expect(sibling.container.textContent).toContain('decided on another card');
+    expect(sibling.container.textContent).not.toContain('Dismissed:');
+    sibling.unmount();
+  });
+
+  it('draws the organisation’s ledger line a card rests on as evidence, in the record’s words (17-O)', (): void => {
+    const revoked = drawn(
+      withCard(
+        {
+          trigger: 'connection-revoked',
+          triggerSummary: "The organisation's Linear connection was revoked: the app was replaced",
+        },
+        {
+          pages: [],
+          ledger: [
+            {
+              _id: 'line-1' as Id<'connectionEvents'>,
+              type: 'organisation.connection-revoked',
+              payload: {
+                organisationConnectionId: 'connection-1',
+                system: 'linear',
+                displayName: 'Linear',
+                via: 'setup-cli',
+                reason: 'the app was replaced',
+              },
+              createdAt: 1,
+            },
+          ],
+        },
+      ),
+    );
+    expect(revoked.container.textContent).toMatch(
+      /Evidence.*The organisation's Linear connection was revoked.*the app was replaced/,
+    );
+    revoked.unmount();
+  });
+
+  it('says ten plans held and the rest not held, and strikes no agreement a card only checks again (W16-R22, RM34 (a))', (): void => {
+    const busy = drawn(
+      withCard(
+        { risk: 'high', proposed: { kind: 'pending' } },
+        { held: { plans: 10, runs: 0, notHeld: 90 } },
+      ),
+    );
+    expect(busy.container.textContent).toContain(
+      '10 plans held, and 90 more not held: a card holds at most ten',
+    );
+    busy.unmount();
+    const owed = drawn(
+      withCard(
+        {
+          trigger: 'agreement-check-owed',
+          triggerSummary: 'Its agreements could not be checked against the amended charter',
+          proposed: {
+            kind: 'agreement',
+            agreementId: 'agreement-1' as Id<'workingAgreements'>,
+            action: 'recheck',
+            rationale: 'The check could not be had.',
+          },
+        },
+        {
+          agreements: [
+            {
+              _id: 'agreement-1' as Id<'workingAgreements'>,
+              statement: 'Name the vessel in every comment.',
+            },
+          ],
+        },
+      ),
+    );
+    expect(owed.container.querySelector('s')).toBeNull();
+    expect(owed.container.textContent).toContain('Name the vessel in every comment.');
+    expect(owed.container.textContent).toContain('Approve checks the working agreement again.');
+    owed.unmount();
+  });
+
   it('says a running item is held only before its closing steps, and a decided card holds nothing (second pass M3)', async (): Promise<void> => {
     const running = drawn(
       withCard(
@@ -366,8 +459,9 @@ describe('a reorientation card', (): void => {
     const view = drawn(
       withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timed out' } }),
     );
+    // Re-taken (17-O; W16-R23, section 7): the reason is said and Discuss is named as a way on.
     expect(view.container.textContent).toContain(
-      'Mira could not work out a proposal for this change. Nothing changes unless you act: dismiss the card, or amend the charter yourself.',
+      'Mira could not work out a proposal (timed out). Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
     );
     await floor(view.container);
     view.unmount();

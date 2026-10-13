@@ -14,6 +14,11 @@ import {
  * names it (`CardReach`, `reachOf`); the work a high-risk card holds (`blockingWorkOf`); and an
  * owner's employees, for a change that reaches every one of them (`ownerAgents`).
  *
+ * A transaction that opens many cards reads these rows within a budget (wave 17, 17-O; W16-R6):
+ * each read counts the work rows it took against its transaction (`workRowsReadIn`,
+ * `REACH_ROW_BUDGET`), a reach given less room than it needs says so (`Reached`), and an employee
+ * with no open work at all is found for four index reads (`hasOpenWork`).
+ *
  * This module is the floor under the cards: it reads rows and writes none, registers no function,
  * and imports no other `convex/` module, so it sits below `convex/reorientation.ts`, which calls
  * it where a card opens, and below `convex/work.ts`. A trigger's writer (`agents`, `people`,
@@ -54,21 +59,101 @@ export const OPEN_WORK_STATES = [
 /** The rows one state of an employee's open work is read to, for the affected set. */
 const OPEN_WORK_READ = 100;
 
-/** An employee's open work, each open state read to its bound. */
+/**
+ * The work rows one transaction's cards read between them before the rest of a fan-out waits for
+ * a transaction of its own (W16-R6): a `workItems` row is read whole, its plan, verdict and output
+ * with it, so what bounds a transaction that opens many cards is the bytes of the rows its reaches
+ * read (Convex's 16 MiB), not how many cards it opens. Three hundred rows leave a row about 50 KB.
+ */
+export const REACH_ROW_BUDGET = 300;
+
+/** The work rows each transaction's reaches have read so far, by its database handle. */
+const workRowsRead = new WeakMap<object, number>();
+
+/** The work rows this transaction's reaches have read so far. */
+export function workRowsReadIn(ctx: QueryCtx): number {
+  return workRowsRead.get(ctx.db) ?? 0;
+}
+
+/** Count rows a reach read against its transaction. */
+function countWorkRows(ctx: QueryCtx, rows: number): void {
+  workRowsRead.set(ctx.db, workRowsReadIn(ctx) + rows);
+}
+
+/** Whether each employee has any open work, as this transaction first found it. */
+const openWorkProbed = new WeakMap<object, Map<Id<'agents'>, boolean>>();
+
+/**
+ * Whether an employee has any open work at all: one index read a state, stopping at the first
+ * state that holds a row, so an employee with none costs four index reads and no row, and one with
+ * some costs one row. Asked once an employee a transaction, however many cards ask.
+ */
+export async function hasOpenWork(ctx: QueryCtx, agentId: Id<'agents'>): Promise<boolean> {
+  const probed = openWorkProbed.get(ctx.db) ?? new Map<Id<'agents'>, boolean>();
+  openWorkProbed.set(ctx.db, probed);
+  const known = probed.get(agentId);
+  if (known !== undefined) return known;
+  let found = false;
+  for (const state of OPEN_WORK_STATES) {
+    const row = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      .first();
+    if (row === null) continue;
+    countWorkRows(ctx, 1);
+    found = true;
+    break;
+  }
+  probed.set(agentId, found);
+  return found;
+}
+
+/**
+ * The open work one list of cards has read, an employee's rows once: a status walk reports a
+ * change of every page it flips to every reader, and each of an employee's reports asks which of
+ * the same open plans cite its page. Made by `openWorkCache` for one hand-over of cards, in which
+ * nothing changes a work item's state, and never kept across one.
+ */
+export type OpenWorkCache = Map<Id<'agents'>, Doc<'workItems'>[]>;
+
+/** An empty {@link OpenWorkCache}. */
+export function openWorkCache(): OpenWorkCache {
+  return new Map<Id<'agents'>, Doc<'workItems'>[]>();
+}
+
+/** How far a reach may read. */
+export interface ReachLimits {
+  /** The most work rows the read may take; left out, each read goes to its own bound. */
+  readonly room?: number;
+  /** The open work already read for this list of cards, which the read adds to. */
+  readonly openWork?: OpenWorkCache;
+}
+
+/**
+ * An employee's open work, each open state read to its bound.
+ *
+ * @returns The rows, or null when the employee's open work is more than the room given.
+ */
 export async function openWorkOf(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<Doc<'workItems'>[]> {
-  const byState = await Promise.all(
-    OPEN_WORK_STATES.map(
-      async (state) =>
-        await ctx.db
-          .query('workItems')
-          .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-          .take(OPEN_WORK_READ),
-    ),
-  );
-  return byState.flat();
+  within: ReachLimits = {},
+): Promise<Doc<'workItems'>[] | null> {
+  const known = within.openWork?.get(agentId);
+  if (known !== undefined) return known;
+  const room = within.room ?? Number.POSITIVE_INFINITY;
+  const rows: Doc<'workItems'>[] = [];
+  for (const state of OPEN_WORK_STATES) {
+    const read = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+      .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
+    countWorkRows(ctx, read.length);
+    rows.push(...read);
+    if (rows.length > room) return null;
+  }
+  within.openWork?.set(agentId, rows);
+  return rows;
 }
 
 /** A stored plan's cites, as far as a card reads them: the page each cite is of. */
@@ -79,38 +164,51 @@ function citedPagesOf(plan: unknown): Array<{ sourceId?: string; pageRef?: strin
     : [];
 }
 
-/** An employee's open work whose plan cites any of the pages. */
+/**
+ * An employee's open work whose plan cites any of the pages.
+ *
+ * @returns The cited rows' ids, or null when the employee's open work is more than the room given.
+ */
 export async function openWorkCiting(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   pages: ReadonlyArray<{ readonly sourceId: Id<'docSources'>; readonly ref: string }>,
-): Promise<Id<'workItems'>[]> {
+  within: ReachLimits = {},
+): Promise<Id<'workItems'>[] | null> {
   if (pages.length === 0) return [];
   const keys = new Set(pages.map((page) => `${page.sourceId}:${page.ref}`));
-  return (await openWorkOf(ctx, agentId))
+  const open = await openWorkOf(ctx, agentId, within);
+  if (open === null) return null;
+  return open
     .filter((row) =>
       citedPagesOf(row.plan).some((cite) => keys.has(`${cite.sourceId}:${cite.pageRef}`)),
     )
     .map((row) => row._id);
 }
 
-/** An employee's open work that runs one of the skills. */
+/**
+ * An employee's open work that runs one of the skills.
+ *
+ * @param room - The most rows the read may take.
+ * @returns The rows' ids, or null when the skills' work is more than `room` rows.
+ */
 export async function openWorkUsingSkills(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   skillIds: readonly Id<'skills'>[],
-): Promise<Id<'workItems'>[]> {
-  const rows = await Promise.all(
-    skillIds.map(
-      async (skillId) =>
-        await ctx.db
-          .query('workItems')
-          .withIndex('by_skill', (q) => q.eq('skillId', skillId))
-          .take(OPEN_WORK_READ),
-    ),
-  );
+  room = Number.POSITIVE_INFINITY,
+): Promise<Id<'workItems'>[] | null> {
+  const rows: Doc<'workItems'>[] = [];
+  for (const skillId of skillIds) {
+    const read = await ctx.db
+      .query('workItems')
+      .withIndex('by_skill', (q) => q.eq('skillId', skillId))
+      .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
+    countWorkRows(ctx, read.length);
+    rows.push(...read);
+    if (rows.length > room) return null;
+  }
   return rows
-    .flat()
     .filter(
       (row) =>
         row.agentId === agentId && (OPEN_WORK_STATES as readonly string[]).includes(row.state),
@@ -127,7 +225,10 @@ export async function skillReach(
   agentId: Id<'agents'>,
   skillIds: readonly Id<'skills'>[],
 ): Promise<Partial<CardAffected>> {
-  return { skills: [...skillIds], workItems: await openWorkUsingSkills(ctx, agentId, skillIds) };
+  return {
+    skills: [...skillIds],
+    workItems: (await openWorkUsingSkills(ctx, agentId, skillIds)) ?? [],
+  };
 }
 
 /** An employee's registered skills. */
@@ -164,43 +265,87 @@ export async function scopeReach(
   };
 }
 
+/** The employee's registered skills that write one of its systems. */
+async function skillsWriting(
+  ctx: QueryCtx,
+  surface: Pick<Doc<'surfaces'>, 'agentId' | 'slug'>,
+): Promise<Id<'skills'>[]> {
+  return (await registeredSkills(ctx, surface.agentId))
+    .filter((skill) => skill.targetSurface === surface.slug)
+    .map((skill) => skill._id);
+}
+
 /** What an ended access reaches: the system, the registered skills that write it and their open work. */
 export async function surfaceReach(
   ctx: QueryCtx,
   surface: Pick<Doc<'surfaces'>, '_id' | 'agentId' | 'slug'>,
 ): Promise<Partial<CardAffected>> {
-  const writing = (await registeredSkills(ctx, surface.agentId))
-    .filter((skill) => skill.targetSurface === surface.slug)
-    .map((skill) => skill._id);
+  const writing = await skillsWriting(ctx, surface);
   return { ...(await skillReach(ctx, surface.agentId, writing)), surfaces: [surface._id] };
 }
 
-/** What a change's reach comes to for one employee, or null when it reaches nothing to open on. */
+/**
+ * What a change's reach comes to for one employee: what it reaches, nothing to open a card on, or
+ * more work rows than the transaction has room left to read.
+ */
+export type Reached =
+  | { readonly kind: 'reached'; readonly affected: Partial<CardAffected> }
+  | { readonly kind: 'nothing' }
+  | { readonly kind: 'over-budget' };
+
+const OVER_BUDGET: Reached = { kind: 'over-budget' };
+
+/** A reach that came to work rows, or the budget's refusal when the read was cut short. */
+function reachedWork(
+  workItems: readonly Id<'workItems'>[] | null,
+  rest: Partial<CardAffected> = {},
+): Reached {
+  return workItems === null
+    ? OVER_BUDGET
+    : { kind: 'reached', affected: { ...rest, workItems: [...workItems] } };
+}
+
+/**
+ * What a change's reach comes to for one employee (W16-R6). A reach over the employee's open work
+ * first asks whether there is any (`hasOpenWork`): with none, a `citing` reach is nothing to open
+ * on and an `open-work` reach is empty, and no row is read. Rows are read up to the room given,
+ * and a reach that needs more is answered `over-budget` for its card to wait for another
+ * transaction.
+ */
 export async function reachOf(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   reach: CardReach,
-): Promise<Partial<CardAffected> | null> {
+  within: ReachLimits = {},
+): Promise<Reached> {
   switch (reach.kind) {
-    case 'open-work':
-      return { workItems: (await openWorkOf(ctx, agentId)).map((row) => row._id) };
+    case 'open-work': {
+      if (!(await hasOpenWork(ctx, agentId))) return reachedWork([]);
+      const open = await openWorkOf(ctx, agentId, within);
+      return reachedWork(open === null ? null : open.map((row) => row._id));
+    }
     case 'citing': {
-      const cited = await openWorkCiting(ctx, agentId, reach.pageRefs);
-      return cited.length === 0 ? null : { workItems: cited };
+      if (!(await hasOpenWork(ctx, agentId))) return { kind: 'nothing' };
+      const cited = await openWorkCiting(ctx, agentId, reach.pageRefs, within);
+      return cited !== null && cited.length === 0 ? { kind: 'nothing' } : reachedWork(cited);
     }
     case 'skills':
-      return await skillReach(ctx, agentId, reach.skillIds);
+      return reachedWork(await openWorkUsingSkills(ctx, agentId, reach.skillIds, within.room), {
+        skills: [...reach.skillIds],
+      });
     case 'surfaces': {
-      const reached: Array<Partial<CardAffected>> = [];
+      const surfaces: Id<'surfaces'>[] = [];
+      const skills: Id<'skills'>[] = [];
       for (const id of reach.surfaceIds) {
         const surface = await ctx.db.get(id);
-        if (surface !== null) reached.push(await surfaceReach(ctx, surface));
+        if (surface === null) continue;
+        surfaces.push(surface._id);
+        skills.push(...(await skillsWriting(ctx, surface)));
       }
-      return {
-        surfaces: reached.flatMap((one) => one.surfaces ?? []),
-        skills: reached.flatMap((one) => one.skills ?? []),
-        workItems: reached.flatMap((one) => one.workItems ?? []),
-      };
+      return reachedWork(await openWorkUsingSkills(ctx, agentId, skills, within.room), {
+        surfaces,
+        skills,
+      });
     }
   }
 }
@@ -219,6 +364,7 @@ export async function blockingWorkOf(
   for (const id of affected.workItems) {
     if (open.length >= REORIENTATION_BLOCKING_LIMIT) break;
     const row = await ctx.db.get(id);
+    countWorkRows(ctx, 1);
     if (row !== null && (OPEN_WORK_STATES as readonly string[]).includes(row.state)) open.push(id);
   }
   return open;

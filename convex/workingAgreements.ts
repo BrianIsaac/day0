@@ -11,6 +11,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openCards, type CardTrigger } from './reorientation';
+import { CHECK_OWED_SUMMARY } from '../src/agent/reorientation-words';
 import { confirmedPersonOf, itemPersonIds } from './itemPeople';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -1386,6 +1388,9 @@ export const settleUncheckable = internalMutation({
       ? new Set<Id<'workingAgreements'>>()
       : await heldForEmployee(ctx, userId, args.agentId);
     const now = Date.now();
+    const cards: CardTrigger[] = [];
+    // A check the owner is past the bound of cannot be had from a card either: no card proposes it.
+    const checkable = established && !(await pastTheCheck(ctx, userId));
     for (const agreementId of args.agreementIds) {
       const row = await ctx.db.get(agreementId);
       // An employee let go, or handed to another owner, is no longer this agreement's (W15-R37).
@@ -1395,7 +1400,7 @@ export const settleUncheckable = internalMutation({
         continue;
       }
       if (row.status !== 'active' || row.agentId !== undefined || owed.has(row._id)) continue;
-      await appendEvent(ctx, {
+      const eventId = await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'agreement.check-owed',
         payload: {
@@ -1405,7 +1410,20 @@ export const settleUncheckable = internalMutation({
         },
         createdAt: now,
       });
+      // One low card on the employee for the checks it owes, proposing the re-check (RM34 (a)):
+      // an owed check is otherwise seen only by a manager who opens the Agreements tab.
+      if (!checkable) continue;
+      cards.push({
+        agentId: args.agentId,
+        trigger: 'agreement-check-owed',
+        triggerKey: eventId,
+        summary: CHECK_OWED_SUMMARY,
+        evidence: { eventIds: [eventId] },
+        affected: { agreements: [row._id] },
+        now,
+      });
     }
+    await openCards(ctx, cards);
     return null;
   },
 });
@@ -2052,6 +2070,37 @@ export async function recheckAgreementInTransaction(
 ): Promise<void> {
   if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
   await scheduleCheck(ctx, agreement._id, agentId);
+}
+
+/**
+ * Check again, against an employee's amended charter, the agreements for every employee whose
+ * check is owed among those named, in the caller's transaction (the Approve of an owed check's
+ * reorientation card, RM34 (a)), as {@link recheck} does for one from the Agreements card.
+ * Schedules one check for them all.
+ *
+ * @returns Whether a check was scheduled: false when none of them is owed one any more.
+ * @throws ConvexError when the owner has more employees than the check reads.
+ */
+export async function recheckOwedInTransaction(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  agreementIds: readonly Id<'workingAgreements'>[],
+): Promise<boolean> {
+  const owed = await owedChecksOf(ctx, agentId);
+  const rows = await Promise.all(agreementIds.map(async (id) => await ctx.db.get(id)));
+  const owing = rows.filter(
+    (row): row is Doc<'workingAgreements'> =>
+      row !== null && row.status === 'active' && row.agentId === undefined && owed.has(row._id),
+  );
+  const [first] = owing;
+  if (first === undefined) return false;
+  if (await pastTheCheck(ctx, first.userId)) throw new ConvexError(HOLD_PAST_THE_CHECK);
+  await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+    agentId,
+    attempt: 0,
+    agreementIds: owing.map((row) => row._id),
+  });
+  return true;
 }
 
 /**

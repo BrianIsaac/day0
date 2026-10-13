@@ -422,6 +422,63 @@ describe('the talk’s route: Put this on the card', (): void => {
     expect(talk.calls.map((call) => call.name)).toEqual(['reorientationTalk:takeTurn']);
   });
 
+  it('asks once more, naming the refused field, when the first call is not in the tool’s shape, and puts the second on the card (17-O)', async (): Promise<void> => {
+    // The pre-tag's row 6 (`row6-talk.log`): "nothing was put on the card", `refusedFields`
+    // ["closingLine"], three finishes in four on the hosted model.
+    afterOpening();
+    const { closingLine: _closingLine, ...noClosingLine } = OUTCOME;
+    void _closingLine;
+    const refusedOnce = (): Response =>
+      Response.json({
+        id: 'chatcmpl-talk',
+        object: 'chat.completion',
+        created: 1,
+        model: GLM,
+        choices: [
+          {
+            index: 0,
+            finish_reason: 'tool_calls',
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call_complete',
+                  type: 'function',
+                  function: {
+                    name: 'reorientationComplete',
+                    arguments: JSON.stringify(noClosingLine),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      });
+    const POST = await loadRoute([refusedOnce, () => generated(true)]);
+    const response = await POST(
+      talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }),
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ended: true });
+    expect(talk.calls.map((call) => call.name)).toEqual([
+      'reorientationTalk:takeTurn',
+      'reorientationTalk:finish',
+    ]);
+    // Two asks: the second carries the route's repair note after its finish note, and names the
+    // field's path, never what the model wrote in it.
+    expect(sent).toHaveLength(2);
+    const systemNotes = (request: Record<string, unknown>): string[] =>
+      (request.messages as Array<{ role: string; content: unknown }>)
+        .filter((message) => message.role === 'system')
+        .map((message) => String(message.content));
+    expect(systemNotes(sent[0]).some((note) => note.includes('was not taken'))).toBe(false);
+    expect(systemNotes(sent[1]).at(-1)).toBe(
+      'Your call of reorientationComplete was not taken: closingLine was not in the shape the tool takes. Call reorientationComplete once more, every field as the tool describes it. Say nothing else.',
+    );
+  });
+
   it('logs why nothing was put on the card: the finish, the calls, the refused fields, the text and the usage (W16-R19, W1b)', async (): Promise<void> => {
     const lines: Array<Record<string, unknown>> = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
@@ -470,20 +527,26 @@ describe('the talk’s route: Put this on the card', (): void => {
     const said = lines.filter(
       (line) => line.msg === 'reorientation talk: nothing was put on the card',
     );
+    // Re-taken (17-O): a finish that carried no outcome is asked once more, so each of the two
+    // finishes here is two asks, and the log says which ask each line is of.
+    const nothingSaid = {
+      level: 'warn',
+      finishReason: 'stop',
+      toolCalls: [],
+      textLength: 'Shall I put that on the card?'.length,
+      usage: expect.objectContaining({ inputTokens: 1, outputTokens: 1 }) as unknown,
+    };
+    const refusedCall = {
+      finishReason: 'tool-calls',
+      toolCalls: ['reorientationComplete'],
+      refusedFields: ['rationale'],
+      textLength: 0,
+    };
     expect(said).toEqual([
-      expect.objectContaining({
-        level: 'warn',
-        finishReason: 'stop',
-        toolCalls: [],
-        textLength: 'Shall I put that on the card?'.length,
-        usage: expect.objectContaining({ inputTokens: 1, outputTokens: 1 }),
-      }),
-      expect.objectContaining({
-        finishReason: 'tool-calls',
-        toolCalls: ['reorientationComplete'],
-        refusedFields: ['rationale'],
-        textLength: 0,
-      }),
+      expect.objectContaining({ ...nothingSaid, ask: 1, repaired: false }),
+      expect.objectContaining({ ...nothingSaid, ask: 2, repaired: false }),
+      expect.objectContaining({ ...refusedCall, ask: 1, repaired: false }),
+      expect.objectContaining({ ...refusedCall, ask: 2, repaired: false }),
     ]);
     // Only the fields' paths are logged, never what the model wrote in them.
     expect(JSON.stringify(said)).not.toContain('committee-deck');
