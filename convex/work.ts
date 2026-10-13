@@ -2420,6 +2420,9 @@ export const prepareManagerReplyNotice = internalMutation({
   handler: async (ctx, args) => {
     const notice = await ctx.db.get(args.noticeId);
     if (!notice || notice.claimedAt) return { prepared: false as const };
+    // A `question` notice (the schema's kind since wave 17) is no acknowledgement of a reply: this
+    // path leaves it unclaimed, and no writer queues one until its own send lands (17-C).
+    if (notice.kind === 'question') return { prepared: false as const };
     const [workItem, agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(notice.workItemId),
       ctx.db.get(notice.agentId),

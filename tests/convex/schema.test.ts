@@ -7,6 +7,8 @@ import type { GenericMutationCtx, WithoutSystemFields } from 'convex/server';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { insertMinimalRow } from './schema-fixtures';
+import { AGREEMENT_APPROVED_VIA } from '../../src/work/agreement-vocabulary';
+import { REORIENTATION_TRIGGERS } from '../../src/agent/reorientation-vocabulary';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -3447,5 +3449,260 @@ describe('the wave 16 schema step (16-K, N10: additive and optional)', (): void 
         } as unknown as Doc<'reorientations'>['proposed'],
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('the wave 17 schema step (17-K, N10: additive and optional, no table, no index, no pass)', (): void => {
+  /** An employee of the owner's. */
+  const insertAgent = async (ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> =>
+    await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Mira',
+      userId: 'owner',
+      state: 'deployed',
+      createdAt: 1,
+    });
+
+  it("says whether a page's date is its source's own or the time it was read; a page stored before 0.21.0 says neither (D-8 (a), K-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const older = await ctx.db.get(olderId);
+      const page = { sourceId: older!.sourceId, title: 'Refunds', markdown: '# Refunds' };
+      const datedId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds.md',
+        updatedAt: 5,
+        datedBySource: true,
+      });
+      const readId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds-copy.md',
+        updatedAt: 6,
+        datedBySource: false,
+      });
+      return { older, dated: await ctx.db.get(datedId), read: await ctx.db.get(readId) };
+    });
+    expect(read.older).not.toHaveProperty('datedBySource');
+    expect(read.dated).toMatchObject({ updatedAt: 5, datedBySource: true });
+    expect(read.read).toMatchObject({ updatedAt: 6, datedBySource: false });
+  });
+
+  it("records an agreement a reorientation card's Approve made as the card's, and one kept on the agreements card as that card's still (O-15)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agreement = (
+      approvedVia: Doc<'workingAgreements'>['approvedVia'],
+    ): WithoutSystemFields<Doc<'workingAgreements'>> => ({
+      userId: 'owner',
+      kind: 'convention',
+      statement: 'Link the ticket in every #revops post.',
+      scope: 'global',
+      sourceType: 'manager-card',
+      status: 'active',
+      approvedAt: 5,
+      approvedVia,
+      effectiveFrom: 5,
+      createdAt: 4,
+      appliedTo: [],
+    });
+    const read = await harness.run(async (ctx) => {
+      const fromCard = await ctx.db.insert('workingAgreements', agreement('reorientation'));
+      const fromAgreements = await ctx.db.insert('workingAgreements', agreement('agreements-card'));
+      const active = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'active'))
+        .collect();
+      return {
+        fromCard: await ctx.db.get(fromCard),
+        fromAgreements: await ctx.db.get(fromAgreements),
+        active: active.map((row) => row.approvedVia),
+      };
+    });
+    expect(read.fromCard?.approvedVia).toBe('reorientation');
+    expect(read.fromAgreements?.approvedVia).toBe('agreements-card');
+    expect(read.active).toEqual(['reorientation', 'agreements-card']);
+    // The schema's union is this list: the three ways before 0.21.0 keep their places.
+    expect(AGREEMENT_APPROVED_VIA).toEqual([
+      'promotion-card',
+      'plan-approval',
+      'agreements-card',
+      'reorientation',
+    ]);
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'workingAgreements',
+          agreement('talk' as Doc<'workingAgreements'>['approvedVia']),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("keeps the organisation's ledger lines a card rests on beside its other evidence; a card opened before 0.21.0 has none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    /** A card of the organisation's revoked connection, resting on the evidence a test gives it. */
+    const card = (
+      agentId: Id<'agents'>,
+      evidence: Partial<Doc<'reorientations'>['evidence']>,
+    ): WithoutSystemFields<Doc<'reorientations'>> => ({
+      agentId,
+      userId: 'owner',
+      trigger: 'connection-revoked',
+      triggerKey: 'connection-event:1',
+      triggerSummary: 'IT ended the Linear connection',
+      evidence: {
+        eventIds: [],
+        pageRefs: [],
+        relationIds: [],
+        correctionIds: [],
+        relationshipIds: [],
+        skillIds: [],
+        skillVersionIds: [],
+        ...evidence,
+      },
+      affected: {
+        charterClauses: [],
+        agreements: [],
+        relationships: [],
+        skills: [],
+        surfaces: [],
+        workItems: [],
+      },
+      proposed: { kind: 'pending' },
+      risk: 'low',
+      blockingWork: [],
+      status: 'open',
+      day: '2026-10-13',
+      createdAt: 1,
+    });
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = await ctx.db.insert('reorientations', card(agentId, {}));
+      const revokedId = (await insertMinimalRow(
+        ctx as never,
+        'connectionEvents',
+        agentId,
+      )) as Id<'connectionEvents'>;
+      const failedId = (await insertMinimalRow(
+        ctx as never,
+        'connectionEvents',
+        agentId,
+      )) as Id<'connectionEvents'>;
+      const cardId = await ctx.db.insert(
+        'reorientations',
+        card(agentId, { connectionEventIds: [revokedId, failedId] }),
+      );
+      return {
+        agentId,
+        older: await ctx.db.get(olderId),
+        card: await ctx.db.get(cardId),
+        lines: [revokedId, failedId],
+      };
+    });
+    expect(read.older?.evidence).not.toHaveProperty('connectionEventIds');
+    expect(read.older?.evidence.connectionEventIds ?? []).toEqual([]);
+    expect(read.card?.evidence.connectionEventIds).toEqual(read.lines);
+    expect(read.card?.evidence.eventIds).toEqual([]);
+    // An employee's own row is not a line of the organisation's ledger.
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'reorientations',
+          card(read.agentId, {
+            connectionEventIds: [read.agentId as unknown as Id<'connectionEvents'>],
+          }),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("queues a conflict's question as a notice of its own kind, naming the question; the three acknowledgements name none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      // The first kind the union lists, with no optional field: a notice as 0.20.0 queued it.
+      const olderId = (await insertMinimalRow(
+        ctx as never,
+        'managerDecisionNotices',
+        agentId,
+      )) as Id<'managerDecisionNotices'>;
+      const older = await ctx.db.get(olderId);
+      const questionId = (await insertMinimalRow(
+        ctx as never,
+        'managerQuestions',
+        agentId,
+      )) as Id<'managerQuestions'>;
+      const notice = {
+        agentId,
+        surfaceId: older!.surfaceId,
+        workItemId: older!.workItemId,
+        decisionId: 'D-7K2',
+        text: 'Two pages disagree under "Refund window". Which is right?',
+        createdAt: 2,
+      };
+      const askedId = await ctx.db.insert('managerDecisionNotices', {
+        ...notice,
+        messageTs: 'question:1',
+        kind: 'question',
+        questionId,
+      });
+      for (const kind of ['unknown', 'replaced'] as const) {
+        await ctx.db.insert('managerDecisionNotices', { ...notice, messageTs: kind, kind });
+      }
+      const all = await ctx.db
+        .query('managerDecisionNotices')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .collect();
+      return { older, asked: await ctx.db.get(askedId), questionId, kinds: all.map((n) => n.kind) };
+    });
+    expect(read.older?.kind).toBe('received');
+    expect(read.older).not.toHaveProperty('questionId');
+    expect(read.asked).toMatchObject({ kind: 'question', questionId: read.questionId });
+    expect(read.kinds).toEqual(['received', 'question', 'unknown', 'replaced']);
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.asked!._id, {
+          kind: 'reminder' as Doc<'managerDecisionNotices'>['kind'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("opens a card on an owed agreement check, read by the employee's day and trigger, beside every kind 0.20.0 opened (RM34 (a))", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const firstId = (await insertMinimalRow(
+        ctx as never,
+        'reorientations',
+        agentId,
+      )) as Id<'reorientations'>;
+      const first = await ctx.db.get(firstId);
+      for (const trigger of REORIENTATION_TRIGGERS) {
+        const id = (await insertMinimalRow(
+          ctx as never,
+          'reorientations',
+          agentId,
+        )) as Id<'reorientations'>;
+        await ctx.db.patch(id, { trigger, day: '2026-10-13' });
+      }
+      const owed = await ctx.db
+        .query('reorientations')
+        .withIndex('by_agent_day_trigger', (q) =>
+          q.eq('agentId', agentId).eq('day', '2026-10-13').eq('trigger', 'agreement-check-owed'),
+        )
+        .collect();
+      const day = await ctx.db
+        .query('reorientations')
+        .withIndex('by_agent_day_trigger', (q) => q.eq('agentId', agentId).eq('day', '2026-10-13'))
+        .collect();
+      return { first, owed, kinds: day.map((card) => card.trigger).sort() };
+    });
+    // The union's first member is the kind a card of 0.20.0 has always been able to carry.
+    expect(read.first?.trigger).toBe('manager-changed');
+    expect(read.owed.map((card) => card.trigger)).toEqual(['agreement-check-owed']);
+    expect(read.kinds).toEqual([...REORIENTATION_TRIGGERS].sort());
+    expect(read.kinds).toHaveLength(17);
   });
 });

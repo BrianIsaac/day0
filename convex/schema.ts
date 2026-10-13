@@ -45,7 +45,10 @@ import {
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
 import { CONSTRAINT_KINDS } from '../src/agent/charter-constraints';
-import { MANAGER_QUESTION_TYPES } from '../src/agent/manager-questions';
+import {
+  MANAGER_QUESTION_CLOSE_REASONS,
+  MANAGER_QUESTION_TYPES,
+} from '../src/agent/manager-questions';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import {
   AGREEMENT_PROPOSAL_ACTIONS,
@@ -752,6 +755,15 @@ export default defineSchema({
     url: v.optional(v.string()),
     markdown: v.string(),
     updatedAt: v.number(),
+    /**
+     * Whether `updatedAt` is the source's own edit time (wave 17, 17-K for 17-X and 17-FD; D-8 (a),
+     * K-1): true when the reader was given one, false when it fell back to the time it read the
+     * page, so a dated successor is proposed only between two pages their sources dated. Absent on
+     * a page stored before 0.21.0, where the measure keeps its rule by the source's kind; written
+     * at a page's next store and, for a page kept unchanged, the first time a sync meets it
+     * without the field (K-2: no pass, which could not know which stored dates were a source's).
+     */
+    datedBySource: v.optional(v.boolean()),
     /**
      * A keyed hash of the page as its reader returned it, before redaction (wave 14, 14-I; P8-10):
      * `pageContentHash` (`src/docs/content-hash.ts`), an HMAC under the deployment's credential key
@@ -1840,6 +1852,16 @@ export default defineSchema({
         amendedCharterId: v.optional(v.id('charters')),
       }),
     ),
+    /**
+     * Set when the question was closed without an answer (wave 17, 17-K for 17-C), with why
+     * (`MANAGER_QUESTION_CLOSE_REASONS`: its plan was drafted again, or what it asked about
+     * stopped standing) and when. Not an answer: `answer` stays absent and `answer.via` keeps its
+     * three ways. Absent on a question written before 0.21.0, where an unanswered one reads as
+     * open (`isOpenQuestion`, `src/agent/manager-questions.ts`).
+     */
+    closed: v.optional(
+      v.object({ reason: literals(MANAGER_QUESTION_CLOSE_REASONS), at: v.number() }),
+    ),
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_key', ['agentId', 'key'])
@@ -1876,6 +1898,13 @@ export default defineSchema({
       relationshipIds: v.array(v.id('relationships')),
       skillIds: v.array(v.id('skills')),
       skillVersionIds: v.array(v.id('skillVersions')),
+      /**
+       * The organisation's ledger lines the card rests on (wave 17, 17-K for 17-O): a connection
+       * revoked or a revocation that failed at the vendor is a `connectionEvents` line, never an
+       * employee's event, so `eventIds` cannot hold it. Optional where every other list is
+       * required: a card opened before 0.21.0 has none, and reads as an empty list.
+       */
+      connectionEventIds: v.optional(v.array(v.id('connectionEvents'))),
     }),
     /** What the change reaches, computed by index when the card opens. */
     affected: v.object({
@@ -2059,7 +2088,11 @@ export default defineSchema({
     .index('by_agent_active', ['agentId', 'retiredAt'])
     .index('by_agent_active_createdAt', ['agentId', 'retiredAt', 'createdAt']),
 
-  /** One idempotent manager-DM acknowledgement per parsed provider reply. */
+  /**
+   * A notice Day0 posts in the manager's DM beside a decision request, one per replay key
+   * (`surfaceId`, `messageTs`): the acknowledgement of a parsed provider reply, keyed by that
+   * reply's own message, and from wave 17 a conflict's question in the request's thread (`kind`).
+   */
   managerDecisionNotices: defineTable({
     agentId: v.id('agents'),
     surfaceId: v.id('surfaces'),
@@ -2068,9 +2101,19 @@ export default defineSchema({
     messageTs: v.string(),
     /**
      * `replaced` answers a reply or a press naming a request a newer one replaced, with the code
-     * that replaced it (wave 12, 12-M; F2 D14).
+     * that replaced it (wave 12, 12-M; F2 D14). `question` is not an answer to a reply: it is a
+     * conflict's question posted in the thread of a request already delivered (wave 17, 17-K for
+     * 17-C), naming its question in `questionId`. The kinds are `DecisionNoticeKind` in
+     * `src/events/contract.ts`.
      */
-    kind: v.union(v.literal('received'), v.literal('unknown'), v.literal('replaced')),
+    kind: v.union(
+      v.literal('received'),
+      v.literal('unknown'),
+      v.literal('replaced'),
+      v.literal('question'),
+    ),
+    /** The question a `question` notice asks; absent on the three kinds that answer a reply. */
+    questionId: v.optional(v.id('managerQuestions')),
     text: v.string(),
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),

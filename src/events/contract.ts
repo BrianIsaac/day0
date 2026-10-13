@@ -1647,11 +1647,38 @@ export type WorkDecisionRequestReplacingPayload = DecisionNamed;
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
+/**
+ * What a notice in the manager's DM is, as `managerDecisionNotices.kind` stores it: the
+ * acknowledgement of a decision reply (`received`), the answer to a reply naming no open request
+ * (`unknown`) or a request a newer one replaced (`replaced`, 12-M; F2 D14), and a conflict's
+ * question posted in the thread of a request already delivered (`question`; wave 17, 17-K for
+ * 17-C).
+ */
+export type DecisionNoticeKind = 'received' | 'unknown' | 'replaced' | 'question';
+
+/** The notice kinds that answer a reply of the manager's: every kind but the question Day0 asks. */
+export type DecisionAcknowledgementKind = Exclude<DecisionNoticeKind, 'question'>;
+
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
   /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
-  readonly kind: 'received' | 'unknown' | 'replaced';
+  readonly kind: DecisionAcknowledgementKind;
+}
+
+/**
+ * A `question` notice as its event records it (wave 17, 17-K for 17-C): the conflict's question
+ * posted in the thread of a request already delivered, with the question it asks. Declared, not
+ * yet joined to an event type: the contract's test fails a payload no writer writes and the
+ * record's maps take words for every kind, so 17-C joins it in the commit that queues, sends and
+ * renders the notice (to {@link WorkDecisionAcknowledgingPayload} as a second member, or to a
+ * type of its own).
+ */
+export interface DecisionQuestionNoticePayload extends DecisionNamed {
+  /** The notice's replay key, as `managerDecisionNotices.messageTs` holds it. */
+  readonly messageTs: string;
+  readonly kind: Extract<DecisionNoticeKind, 'question'>;
+  readonly questionId: Id<'managerQuestions'>;
 }
 
 /** The payload of `work.decision-ignored`. */
@@ -1977,6 +2004,22 @@ export interface ReorientationReopenedPayload extends ReorientationNamed {
 }
 
 /**
+ * The payload of `reorientation.card-not-opened` (wave 17, 17-K for 17-O; W16-R23's lost card): a
+ * card one function of the chain could not open, recorded on the employee with the trigger's key
+ * so the change is not lost unsaid and the chain goes on to the next. No card exists, so it names
+ * none.
+ */
+export interface ReorientationCardNotOpenedPayload {
+  readonly trigger: ReorientationTrigger;
+  /** The trigger's key, as the card would have carried it: what names the change it reported. */
+  readonly triggerKey: string;
+  /** One line of what changed, as the card would have said it, so the record reads it alone. */
+  readonly summary: string;
+  /** Why the card could not be opened, in words the record can show. */
+  readonly reason: string;
+}
+
+/**
  * The payload of `manager.question-asked`: a question of a type other than the charter's own
  * open questions (`charter.question-asked` keeps those), whether it holds its plan, and what it
  * is about (a conflict's relation, RM20; a reorientation card).
@@ -2200,6 +2243,22 @@ export interface EventPayloads {
 
 /** One event type of the contract. */
 export type EventType = keyof EventPayloads;
+
+/**
+ * The event types declared for the unit that writes them and not yet listed (wave 17, 17-K, as
+ * 16-K declared wave 16's): `tests/src/events/contract.test.ts` fails a listed type no writer
+ * writes, and the record's maps take an entry for every listed type. 17-O moves
+ * `reorientation.card-not-opened` into {@link EventPayloads} and {@link EVENT_TYPES}, and out of
+ * here, in the commit that writes and renders it.
+ */
+export interface UnlistedEventPayloads {
+  'reorientation.card-not-opened': ReorientationCardNotOpenedPayload;
+}
+
+/** The types of {@link UnlistedEventPayloads}, at run time: every key, checked as the list below is. */
+export const UNLISTED_EVENT_TYPES = everyKey<keyof UnlistedEventPayloads>()([
+  'reorientation.card-not-opened',
+]);
 
 /**
  * A tuple checked to name every key of `Of`: a key it leaves out makes the

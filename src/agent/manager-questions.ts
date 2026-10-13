@@ -36,6 +36,23 @@ export const MANAGER_QUESTION_TYPES = [
 /** One of {@link MANAGER_QUESTION_TYPES}. */
 export type ManagerQuestionType = (typeof MANAGER_QUESTION_TYPES)[number];
 
+/**
+ * Why a question was closed without an answer (wave 17, 17-K for 17-C): the plan it was asked
+ * beside was drafted again (`redrafted`), so the new plan is asked afresh on what it rests on; or
+ * what it asked about stopped standing (`settled`: the two pages no longer disagree). A closed
+ * question was not answered, so `AnswerVia` keeps its three ways.
+ */
+export const MANAGER_QUESTION_CLOSE_REASONS = ['redrafted', 'settled'] as const;
+
+/** One of {@link MANAGER_QUESTION_CLOSE_REASONS}. */
+export type ManagerQuestionCloseReason = (typeof MANAGER_QUESTION_CLOSE_REASONS)[number];
+
+/** That a question was closed without an answer: why, and when. */
+export interface ManagerQuestionClosed {
+  reason: ManagerQuestionCloseReason;
+  at: number;
+}
+
 export interface ManagerQuestionContext {
   touchedBy: QuestionTouchedBy;
   /** The plan step or candidate text that touched the question. */
@@ -72,6 +89,8 @@ export interface ManagerQuestionRecord {
   /** The reorientation card it was asked from. */
   reorientationId?: string;
   answer?: ManagerQuestionAnswer;
+  /** Set when it was closed without an answer; absent reads as not closed ({@link isOpenQuestion}). */
+  closed?: ManagerQuestionClosed;
 }
 
 /**
@@ -88,6 +107,17 @@ export function questionTypeOf(question: {
   readonly type?: ManagerQuestionType;
 }): ManagerQuestionType {
   return question.type ?? 'charter';
+}
+
+/**
+ * Whether a question still waits on the manager: neither answered nor closed without an answer.
+ * A question written before 0.21.0 has no `closed`, so an unanswered one reads as open, as it was.
+ */
+export function isOpenQuestion(question: {
+  readonly answer?: ManagerQuestionAnswer;
+  readonly closed?: ManagerQuestionClosed;
+}): boolean {
+  return question.answer === undefined && question.closed === undefined;
 }
 
 /**

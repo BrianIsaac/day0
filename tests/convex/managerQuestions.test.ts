@@ -16,7 +16,11 @@ import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { goneRowOf, guardRefusal } from './fakes/anonymous-caller';
 import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 import { insertMinimalRow } from './schema-fixtures';
-import { isBlockingQuestion, questionTypeOf } from '../../src/agent/manager-questions';
+import {
+  isBlockingQuestion,
+  isOpenQuestion,
+  questionTypeOf,
+} from '../../src/agent/manager-questions';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -194,24 +198,24 @@ describe('the question record', (): void => {
   });
 });
 
-describe('the question record from wave 16 (16-K, N10: additive and optional)', (): void => {
-  /** A question asked at a plan, with the fields a test gives it. */
-  const question = (
-    agentId: Id<'agents'>,
-    charterId: Id<'charters'>,
-    workItemId: Id<'workItems'>,
-    fields: Partial<Doc<'managerQuestions'>> = {},
-  ) => ({
-    agentId,
-    key: 'which refund page is right',
-    question: 'Two pages disagree under "Refunds". Which is right?',
-    context: { touchedBy: 'plan' as const, text: 'Refund the invoice.', words: ['refund'] },
-    askedAt: 4,
-    workItemId,
-    charterId,
-    ...fields,
-  });
+/** A question asked at a plan, with the fields a test gives it. */
+const question = (
+  agentId: Id<'agents'>,
+  charterId: Id<'charters'>,
+  workItemId: Id<'workItems'>,
+  fields: Partial<Doc<'managerQuestions'>> = {},
+) => ({
+  agentId,
+  key: 'which refund page is right',
+  question: 'Two pages disagree under "Refunds". Which is right?',
+  context: { touchedBy: 'plan' as const, text: 'Refund the invoice.', words: ['refund'] },
+  askedAt: 4,
+  workItemId,
+  charterId,
+  ...fields,
+});
 
+describe('the question record from wave 16 (16-K, N10: additive and optional)', (): void => {
   it('reads a question with no `blocking` as blocking and of the charter, as every question before wave 16 was', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, charterId } = await seedApprovedAgent(harness);
@@ -328,6 +332,82 @@ describe('the question record from wave 16 (16-K, N10: additive and optional)', 
       return { reorientationId, row: await ctx.db.get(id) };
     });
     expect(read.row).toMatchObject({ type: 'org', reorientationId: read.reorientationId });
+  });
+});
+
+describe('a question closed without an answer (17-K, N10: additive and optional)', (): void => {
+  it('reads a question with no `closed` and no answer as open, a closed one as closed with its reason and time, and an answered one as answered', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    await harness.run(async (ctx) => {
+      const conflict = { blocking: false, type: 'retrieval' } as const;
+      // As 0.20.0 wrote them: one still asked, one answered in the plan's Slack request.
+      await ctx.db.insert('managerQuestions', question(agentId, charterId, workItemId, conflict));
+      await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, {
+          ...conflict,
+          key: 'answered',
+          answer: { text: 'A', answeredAt: 5, via: 'slack' },
+        }),
+      );
+      // From 0.21.0: the plan was drafted again; the two pages stopped disagreeing.
+      await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, {
+          ...conflict,
+          key: 'redrafted',
+          closed: { reason: 'redrafted', at: 6 },
+        }),
+      );
+      await ctx.db.insert(
+        'managerQuestions',
+        question(agentId, charterId, workItemId, {
+          ...conflict,
+          key: 'settled',
+          closed: { reason: 'settled', at: 7 },
+        }),
+      );
+    });
+    const asked = await harness
+      .withIdentity(OWNER)
+      .query(api.managerQuestions.forWorkItem, { workItemId });
+    const byKey = (key: string): Doc<'managerQuestions'> | undefined =>
+      asked.find((row) => row.key === key);
+    const [older, answered, redrafted, settled] = [
+      byKey('which refund page is right'),
+      byKey('answered'),
+      byKey('redrafted'),
+      byKey('settled'),
+    ];
+    expect(asked).toHaveLength(4);
+    expect(older).not.toHaveProperty('closed');
+    expect(isOpenQuestion(older!)).toBe(true);
+    expect(isOpenQuestion(answered!)).toBe(false);
+    // Closed is not answered: `answer.via` keeps its three ways and the row carries no answer.
+    expect(redrafted).toMatchObject({ closed: { reason: 'redrafted', at: 6 } });
+    expect(redrafted).not.toHaveProperty('answer');
+    expect(isOpenQuestion(redrafted!)).toBe(false);
+    expect(settled).toMatchObject({ closed: { reason: 'settled', at: 7 } });
+    expect(isOpenQuestion(settled!)).toBe(false);
+  });
+
+  it('refuses a reason to close the vocabulary does not have, and a close with no time', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, charterId } = await seedApprovedAgent(harness);
+    const workItemId = await seedClaimed(harness, agentId, 'Refund the September invoice');
+    const close = async (closed: unknown): Promise<void> =>
+      await harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'managerQuestions',
+          question(agentId, charterId, workItemId, {
+            closed: closed as Doc<'managerQuestions'>['closed'],
+          }),
+        );
+      });
+    await expect(close({ reason: 'expired', at: 6 })).rejects.toThrow(/Validator error/);
+    await expect(close({ reason: 'settled' })).rejects.toThrow(/Validator error/);
   });
 });
 

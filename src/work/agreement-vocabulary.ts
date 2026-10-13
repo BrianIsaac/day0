@@ -129,12 +129,15 @@ export const EMPLOYEES_CHECKED = 50;
 
 /**
  * Where the manager made an agreement active: the promotion card on the Work tab, the "Keep this
- * note" tick of a plan approval, or the Agreements card on the Charter tab (A18).
+ * note" tick of a plan approval, the Agreements card on the Charter tab (A18), or Approve on a
+ * reorientation card that proposed the agreement's edit (wave 17, 17-K for 17-O; O-15). A row
+ * written before 0.21.0 from a reorientation card keeps `agreements-card`.
  */
 export const AGREEMENT_APPROVED_VIA = [
   'promotion-card',
   'plan-approval',
   'agreements-card',
+  'reorientation',
 ] as const;
 
 /** One of {@link AGREEMENT_APPROVED_VIA}. */
