@@ -1878,8 +1878,10 @@ export const ownerFiguresPage = internalQuery({
  * `forOwner` covers the most recent twenty. The action carries the cursor from page to page and
  * pools once every page is in, with the pooling `forOwner` and the recompute take, so the three
  * agree; no query subscribes to every employee's whole record. Each employee is counted within
- * the spans the caller held it (D12 (a)), once however often the walk meets it. Writes nothing.
- * A caller with no identity is refused (`getCallerOrThrow`, 12-G).
+ * the spans the caller held it (D12 (a)), once however often the walk meets it. Each page is a
+ * read of its own, so the answer is no one instant's: an employee handed to the caller after the
+ * walk passed the employees it holds is in the next read, not this one. Writes nothing. A caller
+ * with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwnerByPages = action({
   args: {},

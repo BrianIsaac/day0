@@ -509,6 +509,8 @@ export const page = query({
         ...args.paginationOpts,
         numItems: Math.min(args.paginationOpts.numItems, ROSTER_LIMIT),
       });
+    // The read's own split hints (`splitCursor`, `pageStatus`) are left out by name, never spread:
+    // a page is twenty `agents` rows, far under what one read may hold, so no client splits it.
     return {
       page: await rosterRows(
         ctx,
