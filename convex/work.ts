@@ -27,7 +27,7 @@ import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
 import { conflictsUnderPlan } from './docConflicts';
-import { conflictAnswerOwedOn, questionNoticeOwed } from './managerQuestions';
+import { questionNoticeOwed, questionRequestsOn } from './managerQuestions';
 import { conflictReplyLine } from '../src/agent/reorientation-words';
 import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
@@ -147,8 +147,10 @@ import {
   OPEN_BATCH_SCAN,
   openRequestsOn,
   RECENT_THREADS_READ,
+  QUESTION_THREADS_READ,
   recentThreadsOn,
   rememberDecidedUnmarked,
+  rememberRequestWithQuestion,
   rememberReplacedRequest,
   requestThreadOf,
   scheduleDecisionRequest,
@@ -1997,15 +1999,18 @@ export const openDecisions = internalQuery({
       )
       .order('desc')
       .take(RECENT_THREADS_READ);
+    // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1), and
+    // its request's thread is read for as long, whatever the window (17-C).
+    const asking = await questionRequestsOn(ctx, surface, channel, QUESTION_THREADS_READ);
     const threads = await recentThreadsOn(ctx, surface, channel, since, {
       decided: decidedLately.flatMap((row) => (row.decision?.ts ? [row.decision.ts] : [])),
       open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
+      questions: asking.flatMap((request) => (request.ts ? [request.ts] : [])),
     });
     return {
       requests,
       batches,
-      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
-      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
+      noticeOwed: decidedLately.length > 0 || asking.length > 0,
       ...(threads.length > 0 ? { threads } : {}),
     };
   },
@@ -3268,6 +3273,9 @@ export const setAwaitingApproval = internalMutation({
       reason,
     }));
     if (afterApproval) await rememberDecidedUnmarked(ctx, row, Date.now());
+    // The plan's request goes with this park; while a conflict's question of the plan is open its
+    // code and its thread are still the way to answer (17-C, C-3).
+    await rememberRequestWithQuestion(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

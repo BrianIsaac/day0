@@ -34,7 +34,11 @@ import {
   surfaceAwaitingConnection,
 } from './workApply';
 import { managerText } from './managerDecisions';
-import { rememberRetriedRequest, scheduleDecisionRequest } from './decisionRequests';
+import {
+  rememberRequestWithQuestion,
+  rememberRetriedRequest,
+  scheduleDecisionRequest,
+} from './decisionRequests';
 import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';
@@ -992,6 +996,9 @@ export const setActionsPending = internalMutation({
       });
       return { pending: false };
     }
+    // The plan's request goes with this park; while a conflict's question of the plan is open its
+    // code and its thread are still the way to answer (17-C, C-3).
+    await rememberRequestWithQuestion(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

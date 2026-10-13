@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { conflictsUnderPlan, decisionsOffered } from '../../convex/docConflicts';
+import { rememberRequestWithQuestion } from '../../convex/decisionRequests';
 import { askConflictQuestion } from '../../convex/reorientation';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
@@ -907,6 +908,94 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       });
     });
     expect((await harness.query(internal.work.openDecisions, { surfaceId })).noticeOwed).toBe(true);
+  });
+
+  it('reads the request’s thread ninety minutes after the decision while its question stands, and no longer once it is answered (17-C; W16-R27)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, workItemId } = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        decision: {
+          ...row!.decision!,
+          decidedAt: Date.now() - 90 * 60 * 1000,
+          outcome: 'approved',
+        },
+      });
+    });
+    expect(await harness.query(internal.work.openDecisions, { surfaceId })).toMatchObject({
+      requests: [],
+      noticeOwed: true,
+      threads: [REQUEST_TS],
+    });
+    const [question] = await questionsOf(harness, workItemId);
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: 'both',
+    });
+    const after = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(after.noticeOwed).toBe(false);
+    expect(after.threads).toBeUndefined();
+  });
+
+  it('keeps the plan’s request answerable by its code, and its thread read, after a park cleared it from the item (17-C, C-3)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    // Approved ninety minutes ago; the first set then parked for approval under a request of its
+    // own, as the two parks leave the item.
+    await harness.run(async (ctx) => {
+      const row = (await ctx.db.get(workItemId))!;
+      const decided = {
+        ...row.decision!,
+        decidedAt: Date.now() - 90 * 60 * 1000,
+        outcome: 'approved' as const,
+      };
+      await rememberRequestWithQuestion(ctx, { ...row, decision: decided }, Date.now());
+      await ctx.db.patch(workItemId, {
+        state: 'actions-pending',
+        decision: { ...decided, id: 'cd4xyz', kind: 'actions', ts: '1790000000.000900' },
+      });
+    });
+    const open = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(open.noticeOwed).toBe(true);
+    expect(open.threads).toContain(REQUEST_TS);
+    // The plan's code still answers its question, and the acknowledgement goes to its thread.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000001.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'both' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered', notified: true });
+    expect((await questionsOf(harness, workItemId))[0].answer).toMatchObject({
+      text: 'Both hold',
+      via: 'slack',
+    });
+    expect((await relations(harness)).find((row) => row._id === relationId)?.status).not.toBe(
+      'confirmed',
+    );
+    const [acknowledgement] = await notices(harness);
+    expect(acknowledgement).toMatchObject({ decisionId: 'ab3xyz', kind: 'received' });
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, {
+        noticeId: acknowledgement._id,
+      }),
+    ).resolves.toMatchObject({ prepared: true, threadTs: REQUEST_TS });
+    // With the question answered the old code answers nothing more: it reads as replaced.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000002.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced' });
   });
 
   it('answers a code a redraft replaced with the replaced notice, not as unknown (the second pass’s M1)', async (): Promise<void> => {

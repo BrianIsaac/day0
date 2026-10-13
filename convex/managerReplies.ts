@@ -14,7 +14,11 @@ import { appendEvent } from './eventLog';
 import { providerTsToMs } from '../src/work/provider-ts';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 import { requestThreadOf } from './decisionRequests';
-import { answerConflictInTransaction, numberedConflictQuestions } from './managerQuestions';
+import {
+  answerConflictInTransaction,
+  numberedConflictQuestions,
+  openConflictQuestions,
+} from './managerQuestions';
 import {
   CONFLICT_CHOICES,
   CONFLICT_QUESTION_CLOSED,
@@ -566,7 +570,37 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
   // An answer to a plan's conflict question names that plan's own request, decided or not: the
   // plan goes on meanwhile, so the answer can come after the approval (RM20 (a)).
   if (args.reply.verb === 'answer') {
-    if (!row?.decision) return await replacedReply();
+    if (!row?.decision) {
+      // A park cleared the plan's request from its item while its question was open, and kept it
+      // (17-C, C-3): its code still answers. A request a redraft replaced was never decided, and
+      // its questions closed with its plan, so it is answered as replaced.
+      const kept = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) =>
+          q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
+        )
+        .first();
+      const item =
+        kept?.kind === 'plan' &&
+        kept.decidedAt !== undefined &&
+        kept.surfaceSlug === surface.slug &&
+        kept.channel === surface.managerDmChannelId
+          ? await ctx.db.get(kept.workItemId)
+          : null;
+      if (
+        kept !== null &&
+        item !== null &&
+        (await openConflictQuestions(ctx, item._id)).length > 0
+      ) {
+        return await answerFromChannel(
+          ctx,
+          surface,
+          { row: item, decisionId: kept.decisionId },
+          { ...args, reply: args.reply },
+        );
+      }
+      return await replacedReply();
+    }
     if (
       row.decision.kind !== 'plan' ||
       row.decision.surfaceSlug !== surface.slug ||
