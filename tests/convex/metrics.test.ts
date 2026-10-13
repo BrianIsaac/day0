@@ -1418,6 +1418,61 @@ describe('supervision figures for a company of employees', (): void => {
     expect(whole.employees.map((row) => row.name)).toContain('Priya');
   });
 
+  it('answers by pages what the one read answers for an employee held again, one handed over twice and one retired since its handover (the second pass, 17-F)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    /** The successor handing an employee back, as an accepted request leaves it. */
+    const handBack = async (agentId: Id<'agents'>, acceptedAt: number): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Priya',
+          fromOwnerKey: SUCCESSOR.subject,
+          fromAddress: SUCCESSOR.email ?? '',
+          toAddress: COMPANY_OWNER.email ?? '',
+          state: 'accepted',
+          requestedAt: acceptedAt - 60_000,
+          expiresAt: acceptedAt + 1_209_600_000,
+          decidedAt: acceptedAt,
+          toOwnerKey: COMPANY_OWNER.subject,
+        });
+        await ctx.db.patch(agentId, {
+          userId: COMPANY_OWNER.subject,
+          bossEmail: COMPANY_OWNER.email,
+        });
+      });
+    };
+    const [heldAgain, handedTwice] = [
+      await deployEmployee(harness, THREE_EMPLOYEES[0]),
+      await deployEmployee(harness, THREE_EMPLOYEES[1]),
+    ];
+    await deployEmployee(harness, THREE_EMPLOYEES[2]);
+    // More than one page of employees, so the walk meets its phases across pages.
+    for (let index = 0; index < 7; index += 1) {
+      await deployEmployee(harness, { name: `Later ${index + 1}`, deployedAt: 5_000 + index });
+    }
+    // Away and back: the caller holds it now, and the walk meets it held and departed both.
+    await handOver(harness, heldAgain, 111_000);
+    await handBack(heldAgain, 150_000);
+    // Away, back and away again: two departures of the one employee.
+    await handOver(harness, handedTwice, 112_000);
+    await handBack(handedTwice, 160_000);
+    await handOver(harness, handedTwice, 230_000);
+    // Handed over and retired by its new manager: its records are gone.
+    const gone = await deployEmployee(harness, { name: 'Gone', deployedAt: 9_000 });
+    await handOver(harness, gone, 500_000);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(gone);
+    });
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect(whole).toEqual(await companyFigures(harness));
+    const names = whole.employees.map((row) => row.name);
+    expect(names.filter((name) => name === 'Priya')).toHaveLength(1);
+    expect(names).not.toContain('Gone');
+    expect(whole.company.employees).toBe(names.length);
+  });
+
   it('refuses a caller with no identity the figures by pages', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await expect(harness.action(api.metrics.forOwnerByPages, {})).rejects.toMatchObject(
