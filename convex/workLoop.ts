@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, getConvexSize, getDocumentSize, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -1042,8 +1042,51 @@ export const MANAGER_CLAIM_LEASE_MS = 15 * 60 * 1000;
 export const MANAGER_CLAIM_LAPSED_REASON =
   'the send stopped before it recorded a result, so it is not known whether Slack took it';
 
-/** Lapsed claims settled per employee and kind in one sweep; the rest wait for the next. */
+/** Lapsed claims read per employee and kind at a time; the rest are read once these are settled. */
 const LEASE_BATCH = 50;
+
+/**
+ * Lapsed claims on work items read per employee and kind at a time: fewer than
+ * {@link LEASE_BATCH}, since such a row carries its run's output and is read and rewritten whole.
+ */
+const WORK_ITEM_LEASE_BATCH = 10;
+
+/**
+ * Documents one transaction of the lapsed-claims sweep writes at most (W16-R31): a page was 50
+ * employees, five claim kinds and 50 claims a kind, up to 12,500 patches in one mutation, which
+ * past the transaction's write limit rolled back and started at the same page on every run.
+ */
+export const SETTLE_WRITES_PER_SWEEP = 500;
+
+/**
+ * Bytes of rows one transaction of the sweep rewrites at most, a quarter of what a transaction
+ * may write: a settled claim's row is written whole, and a work item's holds its run's output.
+ */
+export const SETTLE_BYTES_PER_SWEEP = 4 * 1024 * 1024;
+
+/** What one transaction of the sweep may still write, counted as it writes. */
+interface SweepRoom {
+  /** Whether another document may be written. */
+  readonly open: () => boolean;
+  /** The most rows a read of `batch` may take, so a read is never larger than what may be written. */
+  readonly rows: (batch: number) => number;
+  /** Count one document written, of the size given. */
+  readonly spend: (bytes: number) => void;
+}
+
+/** A transaction's room at its start: {@link SETTLE_WRITES_PER_SWEEP} and {@link SETTLE_BYTES_PER_SWEEP}. */
+function sweepRoom(): SweepRoom {
+  let writes = SETTLE_WRITES_PER_SWEEP;
+  let bytes = SETTLE_BYTES_PER_SWEEP;
+  return {
+    open: () => writes > 0 && bytes > 0,
+    rows: (batch) => (bytes > 0 ? Math.max(0, Math.min(batch, writes)) : 0),
+    spend: (written) => {
+      writes -= 1;
+      bytes -= written;
+    },
+  };
+}
 
 /**
  * Settle every manager-channel claim an action died holding (N-3), for one employee, as the
@@ -1053,103 +1096,140 @@ const LEASE_BATCH = 50;
  * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
  * edit record the failure and are not sent again, since the message may have landed. A per-run
  * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
- * older than the lease on its index, so a claim with a result is never read.
+ * older than the lease on its index, so a claim with a result is never read, and each is taken
+ * in its turn and no larger than the transaction's room, so a kind is read only while there is
+ * room to settle it (W16-R31).
  *
  * @param ctx - The sweep's mutation context.
  * @param agentId - The employee.
  * @param now - The instant the lease is judged against.
+ * @param room - What the sweep's transaction may still write; spent here as each claim settles.
  * @returns How many claims were settled.
  */
 async function settleLapsedManagerClaims(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   now: number,
+  room: SweepRoom,
 ): Promise<number> {
   const before = now - MANAGER_CLAIM_LEASE_MS;
   const failure = MANAGER_CLAIM_LAPSED_REASON;
-  const [notes, notices, duplicates, closes, edits] = await Promise.all([
-    ctx.db
-      .query('managerNotes')
-      .withIndex('by_agent_claim_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('providerTs', undefined)
-          .eq('failure', undefined)
-          .eq('discardedAt', undefined)
-          .gt('claimedAt', 0)
-          .lt('claimedAt', before),
-      )
-      .take(LEASE_BATCH),
-    ctx.db
-      .query('managerDecisionNotices')
-      .withIndex('by_agent_claim_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('providerTs', undefined)
-          .eq('failure', undefined)
-          .gt('claimedAt', 0)
-          .lt('claimedAt', before),
-      )
-      .take(LEASE_BATCH),
-    ctx.db
-      .query('workItems')
-      .withIndex('by_agent_duplicate_notice_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('decision.duplicateNoticeTs', undefined)
-          .eq('decision.duplicateNoticeFailure', undefined)
-          .gt('decision.duplicateNoticeClaimedAt', 0)
-          .lt('decision.duplicateNoticeClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
-    ctx.db
-      .query('workItems')
-      .withIndex('by_agent_close_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('decision.closedAt', undefined)
-          .eq('decision.closeFailure', undefined)
-          .gt('decision.closeClaimedAt', 0)
-          .lt('decision.closeClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
-    ctx.db
-      .query('replacedDecisionRequests')
-      .withIndex('by_agent_edit_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('editedAt', undefined)
-          .eq('editFailure', undefined)
-          .gt('editClaimedAt', 0)
-          .lt('editClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
-  ]);
-  const digestNotes = notes.filter((note) => note.digestId !== undefined);
-  for (const note of digestNotes) {
-    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
-  }
-  if (digestNotes.length > 0) {
+  let settled = 0;
+  /** Settle the rows of one kind while the transaction has room, each counted as it is written. */
+  const settle = async <Row extends { _id: string }>(
+    rows: readonly Row[],
+    write: (row: Row) => Promise<number>,
+  ): Promise<Row[]> => {
+    const written: Row[] = [];
+    for (const row of rows) {
+      if (!room.open()) break;
+      room.spend(await write(row));
+      written.push(row);
+    }
+    settled += written.length;
+    return written;
+  };
+
+  const notes = await ctx.db
+    .query('managerNotes')
+    .withIndex('by_agent_claim_open', (q) =>
+      q
+        .eq('agentId', agentId)
+        .eq('providerTs', undefined)
+        .eq('failure', undefined)
+        .eq('discardedAt', undefined)
+        .gt('claimedAt', 0)
+        .lt('claimedAt', before),
+    )
+    .take(room.rows(LEASE_BATCH));
+  const released = await settle(
+    notes.filter((note) => note.digestId !== undefined),
+    async (note) => {
+      await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+      return getDocumentSize(note);
+    },
+  );
+  if (released.length > 0) {
+    const payload = { noteIds: released.map((note) => note._id), reason: failure };
     await appendEvent(ctx, {
       agentId,
       type: 'work.manager-digest-failed',
-      payload: { noteIds: digestNotes.map((note) => note._id), reason: failure },
+      payload,
       createdAt: now,
     });
+    room.spend(getConvexSize(payload));
   }
-  for (const notice of notices) await ctx.db.patch(notice._id, { failure });
-  // One row can hold both claims, so each patch merges into the decision as it stands now.
-  const settleDecision = async (
-    workItemId: Id<'workItems'>,
-    field: 'duplicateNoticeFailure' | 'closeFailure',
-  ): Promise<void> => {
-    const decision = (await ctx.db.get(workItemId))?.decision;
-    if (decision) await ctx.db.patch(workItemId, { decision: { ...decision, [field]: failure } });
-  };
-  for (const row of duplicates) await settleDecision(row._id, 'duplicateNoticeFailure');
-  for (const row of closes) await settleDecision(row._id, 'closeFailure');
-  for (const edit of edits) await ctx.db.patch(edit._id, { editFailure: failure });
-  return digestNotes.length + notices.length + duplicates.length + closes.length + edits.length;
+
+  const notices = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_agent_claim_open', (q) =>
+      q
+        .eq('agentId', agentId)
+        .eq('providerTs', undefined)
+        .eq('failure', undefined)
+        .gt('claimedAt', 0)
+        .lt('claimedAt', before),
+    )
+    .take(room.rows(LEASE_BATCH));
+  await settle(notices, async (notice) => {
+    await ctx.db.patch(notice._id, { failure });
+    return getDocumentSize(notice);
+  });
+
+  // One row can hold both claims, so each patch merges into the decision as this transaction
+  // last wrote it, kept here so the row is not read a second time.
+  const decisions = new Map<Id<'workItems'>, NonNullable<Doc<'workItems'>['decision']>>();
+  const settleDecision =
+    (field: 'duplicateNoticeFailure' | 'closeFailure') =>
+    async (row: Doc<'workItems'>): Promise<number> => {
+      const decision = decisions.get(row._id) ?? row.decision;
+      if (decision === undefined) return 0;
+      const next = { ...decision, [field]: failure };
+      decisions.set(row._id, next);
+      await ctx.db.patch(row._id, { decision: next });
+      return getDocumentSize(row);
+    };
+  const duplicates = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_duplicate_notice_open', (q) =>
+      q
+        .eq('agentId', agentId)
+        .eq('decision.duplicateNoticeTs', undefined)
+        .eq('decision.duplicateNoticeFailure', undefined)
+        .gt('decision.duplicateNoticeClaimedAt', 0)
+        .lt('decision.duplicateNoticeClaimedAt', before),
+    )
+    .take(room.rows(WORK_ITEM_LEASE_BATCH));
+  await settle(duplicates, settleDecision('duplicateNoticeFailure'));
+  const closes = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_close_open', (q) =>
+      q
+        .eq('agentId', agentId)
+        .eq('decision.closedAt', undefined)
+        .eq('decision.closeFailure', undefined)
+        .gt('decision.closeClaimedAt', 0)
+        .lt('decision.closeClaimedAt', before),
+    )
+    .take(room.rows(WORK_ITEM_LEASE_BATCH));
+  await settle(closes, settleDecision('closeFailure'));
+
+  const edits = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_edit_open', (q) =>
+      q
+        .eq('agentId', agentId)
+        .eq('editedAt', undefined)
+        .eq('editFailure', undefined)
+        .gt('editClaimedAt', 0)
+        .lt('editClaimedAt', before),
+    )
+    .take(room.rows(LEASE_BATCH));
+  await settle(edits, async (edit) => {
+    await ctx.db.patch(edit._id, { editFailure: failure });
+    return getDocumentSize(edit);
+  });
+  return settled;
 }
 
 /**
@@ -1162,11 +1242,14 @@ export const SETTLE_AGENTS_PER_SWEEP = 50;
  * Settle the manager-channel claims every employee's actions died holding (N-3); see
  * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
  * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back. Each
- * transaction reads a page of {@link SETTLE_AGENTS_PER_SWEEP} employees and schedules the next
- * page from where it stopped.
+ * transaction reads a page of {@link SETTLE_AGENTS_PER_SWEEP} employees, writes at most
+ * {@link SETTLE_WRITES_PER_SWEEP} documents and {@link SETTLE_BYTES_PER_SWEEP} of rows, and
+ * schedules the next: the same page again when its room ran out, since a settled claim is no
+ * longer read and the page's rest is found there, and the next page from where it stopped
+ * otherwise (W16-R31).
  *
  * @param cursor - Where the previous page stopped; absent, the sweep starts at the first employee.
- * @returns How many claims this page settled.
+ * @returns How many claims this transaction settled.
  */
 export const settleLapsedClaims = internalMutation({
   args: { cursor: v.optional(v.string()) },
@@ -1175,11 +1258,19 @@ export const settleLapsedClaims = internalMutation({
     const page = await ctx.db
       .query('agents')
       .paginate({ cursor: args.cursor ?? null, numItems: SETTLE_AGENTS_PER_SWEEP });
+    const room = sweepRoom();
     let settled = 0;
     for (const agent of page.page) {
-      settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+      if (!room.open()) break;
+      settled += await settleLapsedManagerClaims(ctx, agent._id, now, room);
     }
-    if (!page.isDone) {
+    if (!room.open()) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.workLoop.settleLapsedClaims,
+        args.cursor === undefined ? {} : { cursor: args.cursor },
+      );
+    } else if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.workLoop.settleLapsedClaims, {
         cursor: page.continueCursor,
       });

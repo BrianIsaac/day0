@@ -1753,6 +1753,117 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     vi.useRealTimers();
   });
 
+  /** More lapsed acknowledgements for one employee's item, each its own claim. */
+  async function moreNotices(
+    harness: TestConvex<typeof schema>,
+    seeded: Awaited<ReturnType<typeof claims>>,
+    count: number,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', seeded.agentId))
+        .first();
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('managerDecisionNotices', {
+          agentId: seeded.agentId,
+          surfaceId: surface!._id,
+          workItemId: seeded.workItemId,
+          decisionId: 'abc234',
+          messageTs: `3.${index}`,
+          kind: 'received',
+          text: 'Approval abc234 received.',
+          createdAt: 1,
+          claimedAt: Date.now() - LAPSED,
+        });
+      }
+    });
+  }
+
+  /** How many claims of every kind an action died holding are still unsettled. */
+  async function unsettled(harness: TestConvex<typeof schema>): Promise<number> {
+    return await harness.run(async (ctx) => {
+      const notices = await ctx.db.query('managerDecisionNotices').collect();
+      const notes = await ctx.db.query('managerNotes').collect();
+      const items = await ctx.db.query('workItems').collect();
+      const edits = await ctx.db.query('replacedDecisionRequests').collect();
+      return (
+        notices.filter((row) => row.failure === undefined).length +
+        notes.filter((row) => row.digestId !== undefined && row.failure === undefined).length +
+        items.filter((row) => row.decision?.closeFailure === undefined).length +
+        items.filter((row) => row.decision?.duplicateNoticeFailure === undefined).length +
+        edits.filter((row) => row.editFailure === undefined).length
+      );
+    });
+  }
+
+  it('sizes a page of fifty employees by what it writes, and settles the rest in the transactions after (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review: a page is 50 employees, five claim kinds and 50 claims a kind, up to
+    // 12,500 patches in one mutation, which past the write limit rolls back and starts at the
+    // same page on every run. Here fifteen claims and an event an employee, 800 writes a page,
+    // against a limit of 600 a transaction.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const { SETTLE_AGENTS_PER_SWEEP, SETTLE_WRITES_PER_SWEEP } =
+      await import('../../convex/workLoop');
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsWritten: 600 },
+    });
+    for (let agent = 0; agent < SETTLE_AGENTS_PER_SWEEP; agent += 1) {
+      await moreNotices(harness, await claims(harness, Date.now() - LAPSED), 10);
+    }
+    expect(await unsettled(harness)).toBe(SETTLE_AGENTS_PER_SWEEP * 15);
+
+    const first = await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    expect(first.settled).toBeGreaterThan(0);
+    expect(first.settled).toBeLessThanOrEqual(SETTLE_WRITES_PER_SWEEP);
+    expect(await unsettled(harness)).toBe(SETTLE_AGENTS_PER_SWEEP * 15 - first.settled);
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    // One digest's failure an employee, however many transactions the page took.
+    const failed = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').collect()).filter(
+          (event) => event.type === 'work.manager-digest-failed',
+        ).length,
+    );
+    expect(failed).toBe(SETTLE_AGENTS_PER_SWEEP);
+    vi.useRealTimers();
+  }, 120_000);
+
+  it('sizes a page by the bytes of the rows it rewrites: work items that carry a run’s output (W16-R31)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesWritten: 8 * 1024 * 1024, bytesRead: 12 * 1024 * 1024 },
+    });
+    // Ten employees, four finished items each whose close was claimed and never recorded, each
+    // row 300 KB with its output: 12 MB a page, read and written whole.
+    const output = { actions: [], applied: [], notes: 'x'.repeat(300 * 1024) };
+    for (let agent = 0; agent < 10; agent += 1) {
+      const seeded = await claims(harness, Date.now() - LAPSED);
+      await harness.run(async (ctx) => {
+        const first = await ctx.db.get(seeded.workItemId);
+        const { _id, _creationTime, ...row } = first!;
+        void _id;
+        void _creationTime;
+        await ctx.db.patch(seeded.workItemId, { output });
+        for (let item = 1; item < 4; item += 1) {
+          await ctx.db.insert('workItems', { ...row, externalId: `REVOPS-${item + 1}`, output });
+        }
+      });
+    }
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    vi.useRealTimers();
+  }, 120_000);
+
   it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
