@@ -266,6 +266,43 @@ describe('peopleLookupActions.runLookups', (): void => {
     ]);
   });
 
+  it("records the Linear user for an address stored in another case than Linear's own", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {
+      slug: 'linear',
+      displayName: 'Linear',
+      class: 'kanban',
+      path: 'mcp',
+      endpoint: 'https://mcp.linear.app/mcp',
+      toolAllowlist: ['list_issues', 'get_user'],
+      providerWorkspaceId: 'org-kestrel',
+    });
+    // The asked side is read as an address too, as Slack's is (the second pass, continued): a
+    // stored address that differs only in case is still the user's own.
+    const lee = await seedPerson(harness, 'Lee Tan', { primaryEmail: 'Lee.Tan@Kestrel.test' });
+    const dependencies: LookupDependencies = {
+      bearer: async () => 'lin_api_abcdefghij',
+      fetch: async () => {
+        throw new Error('no Slack card in this test');
+      },
+      makeMcpClient: () => ({
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: { surface: { get_user: { name: 'get_user' } } },
+          errors: {},
+        }),
+        toolFromDefinition: async () => ({
+          execute: async () => ({ id: 'lin-lee', name: 'Lee Tan', email: 'lee.tan@kestrel.test' }),
+        }),
+        disconnect: async () => undefined,
+      }),
+    };
+    expect(await runLookups(runners(harness), [lee], dependencies)).toBe(1);
+    expect((await graphRows(harness)).identities).toMatchObject([
+      { personId: lee, provider: 'linear', externalId: 'lin-lee' },
+    ]);
+  });
+
   it('leaves an identity another person already holds to the manager, and looks nothing up with no card', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

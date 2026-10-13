@@ -7,7 +7,7 @@ import type { Id } from './_generated/dataModel';
 import { createMcpClient, decodeMcpPayload } from './intakeActions';
 import { readSurfaceBearer } from './mcpOauthActions';
 import type { LookupCard } from './peopleProposals';
-import { normaliseManagerAddress } from '../src/agent/manager-address';
+import { sameManagerAddress } from '../src/agent/manager-address';
 import { log } from '../src/lib/logger';
 import { LINEAR_MCP_ENDPOINT } from '../src/surfaces/fixed-endpoints';
 import { safeFailureMessage } from '../src/surfaces/redact';
@@ -156,9 +156,7 @@ async function slackUserByAddress(
   if (user === undefined || userId === undefined || user.is_bot === true || user.deleted === true) {
     return undefined;
   }
-  const asked = normaliseManagerAddress(address);
-  const members = normaliseManagerAddress(text(asRecord(user.profile)?.email));
-  if (asked === undefined || members !== asked) return undefined;
+  if (!sameManagerAddress(address, text(asRecord(user.profile)?.email) ?? '')) return undefined;
   const workspaceId = card.workspaceId ?? text(user.team_id);
   const handle = slackHandle(user);
   return {
@@ -171,7 +169,7 @@ async function slackUserByAddress(
 
 /**
  * The Linear user an address is, by the card's own `get_user`: only an answer whose address is the
- * one asked, so a server that matched on anything else names nobody.
+ * one asked, the two read as addresses, so a server that matched on anything else names nobody.
  */
 async function linearUserByAddress(
   card: LookupCard,
@@ -202,7 +200,7 @@ async function linearUserByAddress(
     );
     const user = asRecord(answer?.user) ?? answer;
     const userId = text(user?.id);
-    if (userId === undefined || normaliseManagerAddress(text(user?.email)) !== address) {
+    if (userId === undefined || !sameManagerAddress(address, text(user?.email) ?? '')) {
       return undefined;
     }
     const name = text(user?.name) ?? text(user?.displayName);
