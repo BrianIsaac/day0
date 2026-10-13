@@ -544,6 +544,30 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('says no card asks when an answer is taken back after one of its pages changed (W15-R48)', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    await press(
+      view.container,
+      '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    await settle();
+    // A sync since the answer left one of the two pages not current: the relation is a proposal
+    // again, and the backend lists no card for it.
+    await press(view.container, 'Undo');
+    await settle();
+    expect(said(view.container)).toContain(
+      'Taken back. One of the two pages has changed since, so no card asks about them.',
+    );
+    expect(said(view.container)).not.toContain('The card asks again');
+    expect(view.container.textContent).not.toContain(
+      'These two look like versions of the same runbook',
+    );
+    view.unmount();
+  });
+
   it('says the older page stays as it was when its source’s word, or the manager’s, stands over the relation', async () => {
     // The second pass's minor 13: "now supersedes" was said whatever became of the older page.
     populated();

@@ -106,7 +106,7 @@ export function DocumentationView() {
           key={answered.relationId}
           answered={answered}
           cardGone={!(relations ?? []).some((relation) => relation._id === answered.relationId)}
-          onUndone={(text) => setAnswered({ relationId: answered.relationId, text, undo: false })}
+          onUndone={() => setAnswered({ ...answered, undo: false, undone: true })}
         />
       ) : null}
       {(relations ?? []).map((relation) =>
