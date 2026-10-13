@@ -317,17 +317,60 @@ export function isStopped(skipReason: string | undefined): boolean {
   return skipReason?.startsWith(STOPPED_PREFIX) === true;
 }
 
+/** How a model call's failure names itself: the function and the agent's internal name. */
+const MODEL_CALL = String.raw`\bagent(?:Json|Text)\([^)]*\):\s*`;
+
 /**
- * The stop reason as the manager reads it, without the prefix.
+ * Each way a model call ends without a reply Day0 can use, as its error words it
+ * (`src/lib/mastra.ts`), beside the manager's words for it. Read in order; the last takes any
+ * other failure of a call, whose own words follow the call's name.
+ */
+const MODEL_CALL_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    new RegExp(`${MODEL_CALL}\\w+ reply did not satisfy the schema`, 'g'),
+    'the model’s reply was not in the form Day0 reads',
+  ],
+  [
+    new RegExp(`${MODEL_CALL}model returned no structured object in \\w+ mode`, 'g'),
+    'the model gave no reply Day0 could read',
+  ],
+  [new RegExp(`${MODEL_CALL}\\w+ generation failed:\\s*`, 'g'), 'the model call failed: '],
+  [
+    new RegExp(`${MODEL_CALL}\\w+ generation finished with an error`, 'g'),
+    'the model call ended in an error',
+  ],
+  [
+    new RegExp(`${MODEL_CALL}\\w+ generation was stopped by a tripwire`, 'g'),
+    'the model call was stopped',
+  ],
+  [new RegExp(MODEL_CALL, 'g'), 'the model call '],
+];
+
+/**
+ * A reason with every model call's failure in the manager's words (finding 1 of the v0.20.0
+ * hosted walk: six of fifteen runs stopped with "agentJson(day0-skill-kanban-comment-and-close-
+ * ticket-...-initial): prompt reply did not satisfy the schema" printed on the card). The recorded
+ * reason keeps the call and the agent's name, for the record's reader and the export.
+ */
+function modelCallsInWords(reason: string): string {
+  return MODEL_CALL_WORDS.reduce((text, [said, words]) => text.replace(said, words), reason);
+}
+
+/**
+ * A failed item's reason as the manager reads it: without the stopped prefix when it is a stop,
+ * and with a model call's failure in words, never by the call's internal name
+ * ({@link modelCallsInWords}).
  *
  * Args:
  *   skipReason: The item's recorded reason.
  *
  * Returns:
- *   The reason text, or the input when it is not a stop.
+ *   The reason text.
  */
 export function stopDetail(skipReason: string): string {
-  return isStopped(skipReason) ? skipReason.slice(STOPPED_PREFIX.length) : skipReason;
+  return modelCallsInWords(
+    isStopped(skipReason) ? skipReason.slice(STOPPED_PREFIX.length) : skipReason,
+  );
 }
 
 /**
