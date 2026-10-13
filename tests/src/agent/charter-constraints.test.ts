@@ -1835,6 +1835,16 @@ describe('withRoutingRules (RM27)', (): void => {
       'No-one sends anything, check with the manager first.',
     ],
     ['Yes - run it by me.', 'Run it by the manager.'],
+    // The continuation's second pass: a hyphen typed against the word with a space after it is
+    // the answer's mark too, and a long dash is a mark wherever it stands, since no word holds one.
+    ['Yes- run it by me.', 'Run it by the manager.'],
+    ['Yes \u2014 run it by me.', 'Run it by the manager.'],
+    ['Yes\u2014run it by me.', 'Run it by the manager.'],
+    ['No\u2013go through me for both.', 'Go through the manager for both.'],
+    [
+      'Right-hand drawer requests, run them by me.',
+      'Right-hand drawer requests, run them by the manager.',
+    ],
   ])(
     'reads the hyphen of %j as the word’s own, and a spaced dash as a mark',
     (said, clause): void => {
