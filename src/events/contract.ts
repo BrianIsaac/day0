@@ -2004,6 +2004,22 @@ export interface ReorientationReopenedPayload extends ReorientationNamed {
 }
 
 /**
+ * The payload of `reorientation.card-not-opened` (wave 17, 17-K for 17-O; W16-R23's lost card): a
+ * card one function of the chain could not open, recorded on the employee with the trigger's key
+ * so the change is not lost unsaid and the chain goes on to the next. No card exists, so it names
+ * none.
+ */
+export interface ReorientationCardNotOpenedPayload {
+  readonly trigger: ReorientationTrigger;
+  /** The trigger's key, as the card would have carried it: what names the change it reported. */
+  readonly triggerKey: string;
+  /** One line of what changed, as the card would have said it, so the record reads it alone. */
+  readonly summary: string;
+  /** Why the card could not be opened, in words the record can show. */
+  readonly reason: string;
+}
+
+/**
  * The payload of `manager.question-asked`: a question of a type other than the charter's own
  * open questions (`charter.question-asked` keeps those), whether it holds its plan, and what it
  * is about (a conflict's relation, RM20; a reorientation card).
@@ -2227,6 +2243,22 @@ export interface EventPayloads {
 
 /** One event type of the contract. */
 export type EventType = keyof EventPayloads;
+
+/**
+ * The event types declared for the unit that writes them and not yet listed (wave 17, 17-K, as
+ * 16-K declared wave 16's): `tests/src/events/contract.test.ts` fails a listed type no writer
+ * writes, and the record's maps take an entry for every listed type. 17-O moves
+ * `reorientation.card-not-opened` into {@link EventPayloads} and {@link EVENT_TYPES}, and out of
+ * here, in the commit that writes and renders it.
+ */
+export interface UnlistedEventPayloads {
+  'reorientation.card-not-opened': ReorientationCardNotOpenedPayload;
+}
+
+/** The types of {@link UnlistedEventPayloads}, at run time. */
+export const UNLISTED_EVENT_TYPES = [
+  'reorientation.card-not-opened',
+] as const satisfies readonly (keyof UnlistedEventPayloads)[];
 
 /**
  * A tuple checked to name every key of `Of`: a key it leaves out makes the

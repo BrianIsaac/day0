@@ -6,6 +6,7 @@ import {
   AGENT_EVENT_TYPES,
   CONNECTION_EVENT_TYPES,
   EVENT_TYPES,
+  UNLISTED_EVENT_TYPES,
   isConnectionEventType,
   isEventOf,
   isEventType,
@@ -16,7 +17,9 @@ import {
   type DecisionQuestionNoticePayload,
   type EventPayloads,
   type PlanHeldForReorientation,
+  type ReorientationCardNotOpenedPayload,
   type ReorientationNamed,
+  type UnlistedEventPayloads,
 } from '../../../src/events/contract';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ManagerQuestionType } from '../../../src/agent/manager-questions';
@@ -245,5 +248,19 @@ describe('the wave 17 types, declared by the schema step for 17-O and 17-C (17-K
     expectTypeOf<EventPayloads['reorientation.opened']['trigger']>().toEqualTypeOf<
       Doc<'reorientations'>['trigger']
     >();
+  });
+
+  it('declares a card that could not be opened by its trigger and its key, naming no card, and leaves it unlisted until 17-O writes it', (): void => {
+    expect(UNLISTED_EVENT_TYPES).toEqual(['reorientation.card-not-opened']);
+    // Not one of the contract's types yet: a listed type no writer writes fails the test above.
+    expect(UNLISTED_EVENT_TYPES.filter((type) => isEventType(type))).toEqual([]);
+    expectTypeOf<
+      UnlistedEventPayloads['reorientation.card-not-opened']
+    >().toEqualTypeOf<ReorientationCardNotOpenedPayload>();
+    expectTypeOf<ReorientationCardNotOpenedPayload['trigger']>().toEqualTypeOf<
+      Doc<'reorientations'>['trigger']
+    >();
+    expectTypeOf<ReorientationCardNotOpenedPayload['triggerKey']>().toEqualTypeOf<string>();
+    expectTypeOf<ReorientationCardNotOpenedPayload>().not.toHaveProperty('reorientationId');
   });
 });
