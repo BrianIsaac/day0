@@ -129,6 +129,8 @@ vi.mock('convex/react', () => {
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
     useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    // The read of every employee by pages (wave 17, 17-F), not made for a company of one.
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
     useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
   };
 });

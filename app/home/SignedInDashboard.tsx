@@ -9,6 +9,7 @@ import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
+import { useCompanyFigures } from './use-company-figures';
 import { useOwnerPerson } from './use-owner-person';
 import { useRoster } from './use-roster';
 import { AcceptTransfer } from './AcceptTransfer';
@@ -61,7 +62,8 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
   const roster = useRoster(now);
   const inboxRead = useNeedsYou();
   const inbox = inboxRead instanceof Error ? undefined : inboxRead;
-  const figures = useQuery(api.metrics.forOwner);
+  // The roster is subscribed for every employee, so it is what tells the figures to read again.
+  const company = useCompanyFigures(roster);
   const docSources = useQuery(api.docSources.listMine);
   const surfaceMode = useQuery(api.config.surfaceMode);
   const reportingElsewhere = useQuery(api.agents.employeesReportingElsewhere);
@@ -160,9 +162,15 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}
           />
           {staffed ? (
-            <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
+            <MonthCard
+              roster={roster}
+              figures={company.figures}
+              coverage={company.coverage}
+              waiting={inbox?.total ?? 0}
+              now={now}
+            />
           ) : null}
-          <CompanySupervision />
+          <CompanySupervision company={company} />
         </div>
         <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {showDeployForm ? <AfterDeploy /> : null}
