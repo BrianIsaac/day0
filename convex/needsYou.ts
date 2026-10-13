@@ -22,6 +22,8 @@ import { accessEnded } from '../src/work/surface-access';
 import { eventsOfType } from './eventLog';
 import { activeConnectionFor } from './organisationConnectionReads';
 import { isEventOf } from '../src/events/contract';
+import { BOUND_MET } from '../src/agent/reorientation-vocabulary';
+import { log } from '../src/lib/logger';
 import { actionsOf, verdictList } from './workLedger';
 
 /*
@@ -604,19 +606,33 @@ export async function needsYouOfEmployee(
 /** The undecided reorientation cards one inbox read takes for an employee (C6 keeps them few). */
 const NEEDS_YOU_CARD_READ = 20;
 
-/** An employee's reorientation cards waiting on the manager: open, or being talked through. */
+/**
+ * An employee's reorientation cards waiting on the manager: open, or being talked through. The
+ * newest of each to the bound (W16-R24: the oldest were read, so past twenty a new card never
+ * reached the inbox), and the function log says when older ones were left out; the employee's
+ * reorientation page lists them all.
+ */
 async function undecidedCards(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'reorientations'>[]> {
   const byStatus = await Promise.all(
-    (['open', 'discussing'] as const).map(
-      async (status) =>
-        await ctx.db
-          .query('reorientations')
-          .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
-          .take(NEEDS_YOU_CARD_READ),
-    ),
+    (['open', 'discussing'] as const).map(async (status) => {
+      const cards = await ctx.db
+        .query('reorientations')
+        .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
+        .order('desc')
+        .take(NEEDS_YOU_CARD_READ + 1);
+      if (cards.length > NEEDS_YOU_CARD_READ) {
+        log.warn(BOUND_MET, {
+          bound: 'NEEDS_YOU_CARD_READ',
+          limit: NEEDS_YOU_CARD_READ,
+          agentId,
+          status,
+        });
+      }
+      return cards.slice(0, NEEDS_YOU_CARD_READ);
+    }),
   );
   return byStatus.flat();
 }

@@ -3,6 +3,7 @@ import type { Id } from '../../../convex/_generated/dataModel';
 import {
   ProposalRefused,
   REORIENTATION_PROPOSAL_SYSTEM,
+  WHAT_CHANGED_VOICE_RULE,
   countedEventLine,
   proposalOf,
   proposalPrompt,
@@ -10,6 +11,7 @@ import {
   type ProposalCandidate,
   type ProposalReply,
 } from '../../../src/agent/reorientation-proposal';
+import { talkSystemPrompt } from '../../../src/agent/reorientation-talk-prompts';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import { scopeCovers } from '../../../src/people/resolution';
 import { RELATIONSHIP_SCOPE_LIMIT } from '../../../src/people/words';
@@ -384,6 +386,29 @@ describe('the proposal judgement’s system prompt', (): void => {
     expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(
       '- `relationship`: `action` is edit or retire; `text` is the new scope for edit: a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence.',
     );
+  });
+
+  it('says whose words the summary is, so a handover’s card is not answered as the manager (17-O)', (): void => {
+    // The v0.20.0 hosted walk's finding 5: the summary "{manager} handed Pip over to you" was
+    // answered "The handover of Pip to me changes who holds the role", and the talk opened "With
+    // Pip handed over to me".
+    expect(WHAT_CHANGED_VOICE_RULE).toBe(
+      'The "What changed" line was written for your manager: "you" and "your" in it are the manager, never you. Write as yourself, the employee.',
+    );
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(WHAT_CHANGED_VOICE_RULE);
+    expect(
+      talkSystemPrompt(
+        {
+          employeeName: 'Pip',
+          roleFunction: 'Answer billing asks.',
+          trigger: 'manager-changed',
+          summary: 'a@acme.test handed Pip over to you',
+          evidence: [],
+          candidates: [],
+        },
+        { kind: 'pending' },
+      ),
+    ).toContain(WHAT_CHANGED_VOICE_RULE);
   });
 });
 

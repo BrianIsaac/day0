@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '../../../components/Button';
@@ -14,7 +14,7 @@ import { useChange } from '../../../components/use-change';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
-import { ReorientationCard } from './ReorientationCard';
+import { ReorientationCard, type CardView } from './ReorientationCard';
 
 /** The longest description of a change of role a card takes. */
 const SUMMARY_LIMIT = 300;
@@ -23,19 +23,25 @@ const SUMMARY_LIMIT = 300;
  * The card the manager opens by hand when the employee's role or goals change (section 3's last
  * row): one sentence of what changed, and the employee proposes the clause to change.
  */
-function OpenByHand({ name }: { name: string }) {
+function OpenByHand({ name, working }: { name: string; working: ReadonlySet<string> }) {
   const { agent } = useEmployee();
   const open = useMutation(api.reorientationDecisions.openByHand);
   const [summary, setSummary] = useState('');
+  // The card the last change left the employee working on, which the form's line says it is.
+  const [asked, setAsked] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const change = useChange(cardRef);
   const trimmed = summary.replace(/\s+/g, ' ').trim();
+  // "{name} is working out what to propose" is said only while it is so: four minutes after the
+  // proposal was on the card the line still said it (the v0.20.0 hosted walk's finding 5).
+  const stale = asked !== null && !working.has(asked);
   return (
     <Card title="When the role changes" focusRef={cardRef}>
       <form
         className="grid gap-3"
         onSubmit={(event) => {
           event.preventDefault();
+          setAsked(null);
           change.run(() => open({ agentId: agent._id, summary: trimmed }), {
             // A second change typed the same day joins the standing card (W16-R24); it is judged
             // again over both unless the card's proposal is one a talk put there. A card whose
@@ -49,7 +55,10 @@ function OpenByHand({ name }: { name: string }) {
                     ? `Added to today’s card. ${name} is working out what to propose over both.`
                     : 'Added to today’s card.',
             refused: 'No card was opened.',
-            after: () => setSummary(''),
+            after: (opened) => {
+              setSummary('');
+              setAsked(opened.asked ? opened.reorientationId : null);
+            },
           });
         }}
       >
@@ -73,7 +82,7 @@ function OpenByHand({ name }: { name: string }) {
             Open a card
           </Button>
         </div>
-        <StatusRegion outcome={change.outcome} />
+        <StatusRegion outcome={stale ? null : change.outcome} />
       </form>
     </Card>
   );
@@ -149,6 +158,17 @@ export function ReorientationView() {
   const decided = (views ?? []).filter(
     (view) => view.card.status === 'applied' || view.card.status === 'dismissed',
   );
+  // The cards whose proposal the employee is still working out.
+  const working = new Set<string>(
+    standing
+      .filter(
+        ({ card }) => card.proposed.kind === 'pending' && card.proposed.failedAt === undefined,
+      )
+      .map(({ card }) => card._id),
+  );
+  const cardOf = (view: CardView): ReactNode => (
+    <ReorientationCard key={view.card._id} view={view} name={agent.name} zone={zone} now={now} />
+  );
   return (
     <Columns
       arriving={arriving}
@@ -159,53 +179,49 @@ export function ReorientationView() {
         </>
       }
     >
-      {views === undefined ? (
+      {views === undefined || (standing.length === 0 && surfaceMode === undefined) ? (
+        // With no card open the page says what opens one, which differs by the mode: until the
+        // mode answers it says neither (W16-R24: an unanswered mode read the hosted sentence).
         <p role="status" className="text-sm text-[var(--color-muted)]">
           Loading the reorientation cards
         </p>
-      ) : standing.length === 0 ? (
-        <Card title="No reorientation card is open">
-          {surfaceMode === 'real' ? (
-            <p className="text-sm text-[var(--color-fg-2)]">
-              A card opens when a person, a page, a skill or an access {agent.name} relies on
-              changes. Meanwhile you can amend the charter on the {charter}.
-            </p>
-          ) : (
-            <p className="text-sm text-[var(--color-fg-2)]">
-              The hosted office&apos;s pages do not change, so a card opens here when {agent.name}{' '}
-              is handed over to you, or when you open one below. You can amend the charter on the{' '}
-              {charter}.
-            </p>
-          )}
-        </Card>
       ) : (
-        standing.map((view) => (
-          <ReorientationCard
-            key={view.card._id}
-            view={view}
-            name={agent.name}
-            zone={zone}
-            now={now}
-          />
-        ))
+        // One keyed list, the standing cards, the by-hand form, then the decided ones: a card that
+        // Approve or Dismiss moves under Decided stays the element it was, so focus has the card
+        // to come back to and its live region says the outcome (the v0.20.0 hosted walk's finding
+        // 5: drawn as two lists, the decided card was a new element and focus fell to the page).
+        [
+          standing.length === 0 ? (
+            <Card key="none-open" title="No reorientation card is open">
+              {surfaceMode === 'real' ? (
+                <p className="text-sm text-[var(--color-fg-2)]">
+                  A card opens when a person, a page, a skill or an access {agent.name} relies on
+                  changes. Meanwhile you can amend the charter on the {charter}.
+                </p>
+              ) : (
+                <p className="text-sm text-[var(--color-fg-2)]">
+                  The hosted office&apos;s pages and people do not change, so a card opens here when
+                  a skill or an access {agent.name} relies on changes, when {agent.name} is handed
+                  over to you, or when you open one below. You can amend the charter on the{' '}
+                  {charter}.
+                </p>
+              )}
+            </Card>
+          ) : null,
+          ...standing.map(cardOf),
+          <OpenByHand key="open-by-hand" name={agent.name} working={working} />,
+          decided.length > 0 ? (
+            <h2
+              key="decided-cards"
+              id="decided-cards"
+              className="text-sm font-semibold text-[var(--color-muted)]"
+            >
+              Decided
+            </h2>
+          ) : null,
+          ...decided.map(cardOf),
+        ]
       )}
-      {views !== undefined ? <OpenByHand name={agent.name} /> : null}
-      {decided.length > 0 ? (
-        <section aria-labelledby="decided-cards" className="grid gap-3">
-          <h2 id="decided-cards" className="text-sm font-semibold text-[var(--color-muted)]">
-            Decided
-          </h2>
-          {decided.map((view) => (
-            <ReorientationCard
-              key={view.card._id}
-              view={view}
-              name={agent.name}
-              zone={zone}
-              now={now}
-            />
-          ))}
-        </section>
-      ) : null}
     </Columns>
   );
 }

@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
+  closedByHandSummary,
   closingHeldReason,
   conflictChoiceWords,
   conflictNoticeText,
   conflictQuestionText,
   conflictNoticeReplyLine,
   conflictReplyLine,
+  decidedElsewhereOf,
+  decidedElsewhereWords,
   decisionWords,
+  failedProposalWords,
+  deferredWords,
   heldWords,
   pendingWords,
+  proposalFingerprint,
   sentenceOf,
+  unproposedWords,
+  PROPOSAL_DID_NOT_FINISH,
 } from '../../../src/agent/reorientation-words';
 
 describe('the reorientation card’s words (section 7, RM24)', (): void => {
@@ -37,6 +45,16 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
       ]),
     ).toBe(
       'Two pages disagree under “Thresholds”: A, Pipeline variance runbook (Company folder), and B, Finance variance escalation (Company folder). Which is right? Mira runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
+    );
+  });
+
+  it('says how long a deferred card’s plans stay held, and only the date where it holds none (W16-R24; section 7)', (): void => {
+    expect(deferredWords('3 October', { plans: 0, runs: 0 })).toBe('Deferred until 3 October.');
+    expect(deferredWords('3 October', { plans: 1, runs: 0 })).toBe(
+      'Deferred until 3 October. Its 1 plan stays held until then.',
+    );
+    expect(deferredWords('3 October', { plans: 2, runs: 1 })).toBe(
+      'Deferred until 3 October. Its 2 plans and 1 run stay held until then.',
     );
   });
 
@@ -67,6 +85,14 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
     expect(heldWords({ plans: 1, runs: 0 })).toBe('1 plan held');
     expect(heldWords({ plans: 2, runs: 1 })).toBe('2 plans held, 1 run held before closing');
     expect(heldWords({ plans: 0, runs: 3 })).toBe('3 runs held before closing');
+    // A change that reached more open work than a card holds says the rest (W16-R22; section 7).
+    expect(heldWords({ plans: 10, runs: 0, notHeld: 90 })).toBe(
+      '10 plans held, and 90 more not held: a card holds at most ten',
+    );
+    expect(heldWords({ plans: 7, runs: 3, notHeld: 1 })).toBe(
+      '7 plans held, 3 runs held before closing, and 1 more not held: a card holds at most ten',
+    );
+    expect(heldWords({ plans: 2, runs: 0, notHeld: 0 })).toBe('2 plans held');
     expect(pendingWords('Mira', { plans: 0, runs: 0 })).toBe(
       'Mira is working out what to propose. Nothing is held while it does.',
     );
@@ -101,6 +127,74 @@ const SAME_TITLED = [
   { title: 'Close escalation window', source: 'Policies folder' },
   { title: 'Close escalation window', source: 'Revops folder' },
 ] as const;
+
+describe('a judgement that failed, and an Approve of what the manager was shown (17-O; W16-R23, W16-R24)', (): void => {
+  it('says of a decided card’s missing proposal only that none came, and why when the judgement failed', (): void => {
+    expect(unproposedWords('Mira', {})).toBe(
+      'Mira had proposed nothing when the card was decided.',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'Not Found' })).toBe(
+      'Mira could not work out a proposal (Not Found).',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: PROPOSAL_DID_NOT_FINISH })).toBe(
+      'Mira did not finish working out a proposal.',
+    );
+  });
+
+  it('names the ways on from a failed judgement, Discuss first, with its reason or that it did not finish', (): void => {
+    const ways =
+      'Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
+    expect(failedProposalWords('Mira', 'timed out.')).toBe(
+      `Mira could not work out a proposal (timed out). ${ways}`,
+    );
+    expect(failedProposalWords('Mira', PROPOSAL_DID_NOT_FINISH)).toBe(
+      `Mira did not finish working out a proposal. ${ways}`,
+    );
+    expect(failedProposalWords('Mira')).toBe(
+      `Mira could not work out a proposal for this change. ${ways}`,
+    );
+  });
+
+  it('gives one proposal one fingerprint whatever order its fields are stored in, and another proposal another', (): void => {
+    const shown = { kind: 'relationship', action: 'retire', relationshipId: 'e1', rationale: 'r' };
+    expect(
+      proposalFingerprint({
+        rationale: 'r',
+        relationshipId: 'e1',
+        action: 'retire',
+        kind: 'relationship',
+      }),
+    ).toBe(proposalFingerprint(shown));
+    expect(proposalFingerprint({ ...shown, action: 'edit' })).not.toBe(proposalFingerprint(shown));
+    expect(
+      proposalFingerprint({ kind: 'charter-change', changes: [{ index: 1, field: 'willDo' }] }),
+    ).toBe(
+      proposalFingerprint({ changes: [{ field: 'willDo', index: 1 }], kind: 'charter-change' }),
+    );
+  });
+});
+
+describe('a card decided on another employee’s card, and one closed at a handover (17-O)', (): void => {
+  it('stores whose card decided it and what that did, and reads both back for the card’s line', (): void => {
+    const stored = approvedResultWords.decidedElsewhere('Priya', 'the relationship was changed');
+    expect(stored).toBe('decided on Priya’s card: the relationship was changed');
+    const read = decidedElsewhereOf(stored);
+    expect(read).toEqual({ name: 'Priya', result: 'the relationship was changed' });
+    expect(decidedElsewhereWords(read!, '13 October')).toBe(
+      'Decided on Priya’s card on 13 October: the relationship was changed. Nothing more to do here.',
+    );
+    // Any other outcome is not one.
+    expect(decidedElsewhereOf(approvedResultWords.dismissed)).toBeUndefined();
+    expect(decidedElsewhereOf(approvedResultWords.handedOver)).toBeUndefined();
+    expect(decidedElsewhereOf(undefined)).toBeUndefined();
+  });
+
+  it('says who opened a by-hand card a handover closed, and none of what they typed (D-5’s remainder)', (): void => {
+    expect(closedByHandSummary('priya@acme.test')).toBe(
+      'A card priya@acme.test opened was closed at the handover',
+    );
+  });
+});
 
 describe('a conflict’s two pages named apart (W16-R12)', (): void => {
   it('gives the answer buttons two names when the pages share a title, as the question letters them', (): void => {

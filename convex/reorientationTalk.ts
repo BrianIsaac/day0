@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
-import { mutation, query, type MutationCtx } from './_generated/server';
+import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgent, getCallerOrThrow, ownedAgentOrNull } from './ownership';
+import { getCallerOrThrow } from './ownership';
 import { appendEvent } from './eventLog';
 import { proposalInputOf } from './reorientation';
 import {
@@ -120,16 +120,30 @@ const talkOutcomeValidator = v.object({
   quotes: v.array(v.string()),
 });
 
-/** The card a talk is about, owned by the caller: the caller first (the anonymous-caller guard). */
+/**
+ * The card, if the caller owns its employee, or null: for an id that names no card, a card whose
+ * employee is gone, and another owner's card alike, so a signed-in stranger cannot tell a card
+ * that exists from one that does not (W16-R35; the owner is checked before "gone" is said). The
+ * caller first, before anything is read about the card (the anonymous-caller guard).
+ */
+export async function callersCard(
+  ctx: QueryCtx | MutationCtx,
+  reorientationId: Id<'reorientations'>,
+): Promise<{ card: Doc<'reorientations'>; agent: Doc<'agents'> } | null> {
+  const caller = await getCallerOrThrow(ctx);
+  const card = await ctx.db.get(reorientationId);
+  if (card === null) return null;
+  const agent = await ctx.db.get(card.agentId);
+  if (agent === null || !agent.userId || agent.userId !== caller.ownerKey) return null;
+  return { card, agent };
+}
+
+/** The card a talk is about, owned by the caller, or null ({@link callersCard}). */
 async function ownedCard(
   ctx: MutationCtx,
   reorientationId: Id<'reorientations'>,
 ): Promise<Doc<'reorientations'> | null> {
-  await getCallerOrThrow(ctx);
-  const card = await ctx.db.get(reorientationId);
-  if (card === null) return null;
-  await assertOwnsAgent(ctx, card.agentId);
-  return card;
+  return (await callersCard(ctx, reorientationId))?.card ?? null;
 }
 
 /** A talk and its card, both owned by the caller, or why the talk cannot be written. */
@@ -141,12 +155,13 @@ async function ownedTalk(
   | { ok: true; talk: Doc<'reorientationTalks'>; card: Doc<'reorientations'> }
   | { ok: false; refusal: string }
 > {
+  // The caller first; then a talk that is gone, a talk of another owner's and a talk whose card
+  // is gone answer alike (W16-R35).
   await getCallerOrThrow(ctx);
   const talk = await ctx.db.get(talkId);
-  if (talk === null) return { ok: false, refusal: CARD_GONE };
-  await assertOwnsAgent(ctx, talk.agentId);
-  const card = await ctx.db.get(talk.reorientationId);
-  if (card === null) return { ok: false, refusal: CARD_GONE };
+  const owned = talk === null ? null : await callersCard(ctx, talk.reorientationId);
+  if (talk === null || owned === null) return { ok: false, refusal: CARD_GONE };
+  const { card } = owned;
   if (!TALKABLE_STATUSES.includes(card.status)) {
     await closeTalk(ctx, talk);
     return { ok: false, refusal: CARD_DECIDED };
@@ -565,10 +580,11 @@ export const forCard = query({
     await getCallerOrThrow(ctx);
     const reorientationId = ctx.db.normalizeId('reorientations', args.reorientationId);
     if (reorientationId === null) return null;
-    const card = await ctx.db.get(reorientationId);
-    if (card === null) return null;
-    // A stale link to a card whose employee is gone reads as no card (the second pass's m11).
-    if ((await ownedAgentOrNull(ctx, card.agentId)) === null) return null;
+    // A stale link to a card whose employee is gone reads as no card (the second pass's m11), and
+    // so does another owner's card (W16-R35).
+    const owned = await callersCard(ctx, reorientationId);
+    if (owned === null) return null;
+    const { card } = owned;
     // A decided card's talk is closed with it, whether or not a write has closed the row yet.
     const decided = !TALKABLE_STATUSES.includes(card.status);
     const talk = await ctx.db

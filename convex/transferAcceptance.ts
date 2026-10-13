@@ -400,7 +400,12 @@ async function recordMove(
   // A card's owner key is a copy of the employee's (16-K's F2): the cards opened before the move
   // follow the employee, closed where undecided and their talks' words cleared (W16-R1, D-5 (a)),
   // and the new manager's first view has the card about the rules it carries.
-  await moveCardsToOwner(ctx, agentId, transfer.toOwnerKey, now);
+  await moveCardsToOwner(ctx, {
+    agentId,
+    userId: transfer.toOwnerKey,
+    previousManager: transfer.fromAddress,
+    now,
+  });
   await clearTalksForHandover(ctx, agentId, now);
   await openCard(ctx, {
     agentId,

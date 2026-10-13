@@ -1,15 +1,17 @@
 import { ConvexError, v } from 'convex/values';
-import { mutation, query, type MutationCtx } from './_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { appendEvent } from './eventLog';
-import { closeTalkOfCard } from './reorientationTalk';
+import { callersCard, closeTalkOfCard } from './reorientationTalk';
+import { ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
 import {
   dismissAgreementInTransaction,
   editAgreementInTransaction,
   recheckAgreementInTransaction,
+  recheckOwedInTransaction,
   retireAgreementInTransaction,
 } from './workingAgreements';
 import { editRelationshipInTransaction, retireRelationshipInTransaction } from './people';
@@ -30,13 +32,23 @@ import {
 } from './reorientation';
 import type { Charter } from '../src/agent/charter';
 import {
+  BY_HAND_CARDS_A_DAY,
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
+  PROPOSAL_CHANGED,
   approvedResultWords,
+  byHandLimitWords,
+  proposalFingerprint,
   type HeldCounts,
 } from '../src/agent/reorientation-words';
+import { agentZone, dayKey } from '../src/lib/zone';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
-import { UNDECIDED_REORIENTATION_STATUSES } from '../src/agent/reorientation-vocabulary';
+import {
+  BOUND_MET,
+  REORIENTATION_BLOCKING_LIMIT,
+  UNDECIDED_REORIENTATION_STATUSES,
+} from '../src/agent/reorientation-vocabulary';
+import { log } from '../src/lib/logger';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 
 /*
@@ -57,6 +69,13 @@ const DAY_MS = 86_400_000;
 /** The cards a page draws: every standing card, and the decided ones newest first to this bound. */
 const DECIDED_CARDS_SHOWN = 20;
 
+/**
+ * The rows one read of an employee's cards resolves into names, across all of them (W16-R24: up
+ * to about sixty a card over about 170 cards, near the most reads a query may make). Ten cards
+ * with every list full fit; a card past the budget is drawn bare, with what it holds still read.
+ */
+const CARD_NAMES_READ = 600;
+
 /** The standings a card can be decided from: undecided, or deferred. */
 const DECIDABLE = [...UNDECIDED_REORIENTATION_STATUSES, 'deferred'] as const;
 
@@ -71,6 +90,12 @@ export interface CardView {
   readonly agreements: Array<{ _id: Id<'workingAgreements'>; statement: string }>;
   /** The edges it names, each as the person and what they are to the employee. */
   readonly people: Array<{ _id: Id<'relationships'>; words: string }>;
+  /**
+   * The lines of an organisation connection's ledger it rests on (`evidence.connectionEventIds`;
+   * wave 17), as stored, for the card to say in the record's words. None on a card opened before
+   * 0.21.0.
+   */
+  readonly ledger: Array<Pick<Doc<'connectionEvents'>, '_id' | 'type' | 'payload' | 'createdAt'>>;
   /** What the card holds, as the hold stops it: none once it is decided (M3). */
   readonly held: HeldCounts;
   /** The charter version an Approve of a charter change would amend, when there is one. */
@@ -87,11 +112,11 @@ async function decidableCard(
   ctx: MutationCtx,
   reorientationId: Id<'reorientations'>,
 ): Promise<{ card: Doc<'reorientations'>; agent: Doc<'agents'> }> {
-  // The caller first, before anything is read about the card (the anonymous-caller guard).
-  await getCallerOrThrow(ctx);
-  const card = await ctx.db.get(reorientationId);
-  if (card === null) throw new ConvexError(CARD_ACTION_REFUSALS.gone);
-  const agent = await assertOwnsAgent(ctx, card.agentId);
+  // The caller first, before anything is read about the card (the anonymous-caller guard); a card
+  // that is gone and another owner's answer alike (W16-R35).
+  const owned = await callersCard(ctx, reorientationId);
+  if (owned === null) throw new ConvexError(CARD_ACTION_REFUSALS.gone);
+  const { card, agent } = owned;
   if (!(DECIDABLE as readonly string[]).includes(card.status)) {
     throw new ConvexError(CARD_ACTION_REFUSALS.decided);
   }
@@ -107,6 +132,137 @@ async function releaseHeldWork(ctx: MutationCtx, card: Doc<'reorientations'>): P
   }
 }
 
+/** The employees whose sibling cards an Approve closes in its own transaction; the rest ride a chain. */
+const SIBLINGS_INLINE = 8;
+
+/** The employees one link of the sibling chain reads. */
+const SIBLINGS_PER_LINK = 25;
+
+/** An edge for everyone that one card's Approve decided, as its sibling cards are closed by it. */
+const siblingDecisionValidator = v.object({
+  relationshipId: v.id('relationships'),
+  /** What the sibling cards' outcome says: whose card decided the edge, and what that did. */
+  outcome: v.string(),
+  decidedBy: v.optional(v.string()),
+  now: v.number(),
+});
+
+type SiblingDecision = typeof siblingDecisionValidator.type;
+
+/**
+ * Close one employee's undecided cards about an edge for everyone that another employee's card
+ * decided (the pre-tag's row 6: Approve on a sibling met "This relationship has already ended",
+ * and the only way out was Dismiss, one card an employee). A card about that edge alone closes as
+ * decided there, its talk with it, and the work it held goes on; a card that also names something
+ * else stays, and a proposal on it that names the ended edge is asked for again.
+ */
+async function closeSiblingCards(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  decision: SiblingDecision,
+): Promise<void> {
+  for (const status of DECIDABLE) {
+    const cards = await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
+      .take(STANDING_CARDS_READ);
+    for (const card of cards) {
+      const edges = new Set([...card.evidence.relationshipIds, ...card.affected.relationships]);
+      if (!edges.has(decision.relationshipId)) continue;
+      const alone =
+        edges.size === 1 &&
+        card.affected.charterClauses.length === 0 &&
+        card.evidence.pageRefs.length === 0 &&
+        card.evidence.skillIds.length === 0 &&
+        card.evidence.correctionIds.length === 0;
+      if (alone) {
+        await ctx.db.patch(card._id, {
+          status: 'dismissed',
+          decidedAt: decision.now,
+          revisitAt: undefined,
+          ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
+          outcome: { summary: decision.outcome },
+        });
+        await closeTalkOfCard(ctx, card._id);
+        await releaseHeldWork(ctx, card);
+      } else if (
+        card.proposed.kind === 'relationship' &&
+        card.proposed.relationshipId === decision.relationshipId
+      ) {
+        await ctx.db.patch(card._id, { proposed: { kind: 'pending' } });
+        await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, {
+          reorientationId: card._id,
+        });
+      }
+    }
+  }
+}
+
+/** Close the sibling cards of the first employees of a list, and schedule one function for the rest. */
+async function closeSiblingsOf(
+  ctx: MutationCtx,
+  agentIds: readonly Id<'agents'>[],
+  decision: SiblingDecision,
+  take: number,
+): Promise<void> {
+  for (const agentId of agentIds.slice(0, take)) await closeSiblingCards(ctx, agentId, decision);
+  const rest = agentIds.slice(take);
+  if (rest.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.reorientationDecisions.closeSiblingCardsLater, {
+      agentIds: rest,
+      decision,
+    });
+  }
+}
+
+/**
+ * Close the sibling cards of the next employees an edge for everyone reaches, and pass the rest
+ * on (wave 17, 17-O): one function at a time, as the cards' own chain. Internal; scheduled by
+ * `approve` and by itself. Writes each closed card's standing and outcome, and its talk's close.
+ */
+export const closeSiblingCardsLater = internalMutation({
+  args: { agentIds: v.array(v.id('agents')), decision: siblingDecisionValidator },
+  handler: async (ctx, args): Promise<void> => {
+    await closeSiblingsOf(ctx, args.agentIds, args.decision, SIBLINGS_PER_LINK);
+  },
+});
+
+/**
+ * After a card's Approve changed or retired an edge that holds for everyone, close every other
+ * employee's undecided card about that edge as decided on this one.
+ */
+async function closeSiblingsAfterApprove(
+  ctx: MutationCtx,
+  card: Doc<'reorientations'>,
+  decided: {
+    readonly result: string;
+    readonly decidedBy: string | undefined;
+    readonly now: number;
+  },
+): Promise<void> {
+  if (card.proposed.kind !== 'relationship') return;
+  const edge = await ctx.db.get(card.proposed.relationshipId);
+  if (edge === null || edge.fromAgentId !== undefined || edge.fromPersonId !== undefined) return;
+  const approved = await ctx.db.get(card.agentId);
+  const others = (await ownerAgents(ctx, edge.userId))
+    .map((agent) => agent._id)
+    .filter((agentId) => agentId !== card.agentId);
+  await closeSiblingsOf(
+    ctx,
+    others,
+    {
+      relationshipId: edge._id,
+      outcome: approvedResultWords.decidedElsewhere(
+        approved?.name ?? 'another employee',
+        decided.result,
+      ),
+      ...(decided.decidedBy !== undefined ? { decidedBy: decided.decidedBy } : {}),
+      now: decided.now,
+    },
+    SIBLINGS_INLINE,
+  );
+}
+
 /** Apply a card's proposal through its target's transaction helper; what it did, in words. */
 async function applyProposal(
   ctx: MutationCtx,
@@ -118,8 +274,9 @@ async function applyProposal(
       return { result: approvedResultWords.none };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
-      // The charter's own refusals (no approved charter now, a clause gone, nothing left to change)
-      // are each the charter no longer taking the change: said in the card's words (m15).
+      // The charter's own refusals are each the charter no longer taking the change, said in the
+      // card's words (m15), and each in a sentence of its own (W16-R24): a change that changes
+      // nothing and a charter not approved yet were both said as "has moved on since".
       const amended = await amendCharterInTransaction(ctx, {
         agentId: card.agentId,
         changes: proposed.changes,
@@ -127,6 +284,13 @@ async function applyProposal(
         reason: card.triggerSummary,
       }).catch((error: unknown) => {
         if (error instanceof ConvexError) throw error;
+        // Read by the amendment's own words (`amendCharterInTransaction`'s three plain errors),
+        // which the two approve tests of these sentences hold end to end.
+        const said = error instanceof Error ? error.message : '';
+        if (said.includes('changes nothing')) throw new ConvexError(CARD_ACTION_REFUSALS.unchanged);
+        if (said.includes('not approved yet') || said.includes('no charter to amend')) {
+          throw new ConvexError(CARD_ACTION_REFUSALS.noCharter);
+        }
         throw new ConvexError(CARD_ACTION_REFUSALS.moved);
       });
       return { result: approvedResultWords.charter(amended.version), charterId: amended.charterId };
@@ -145,11 +309,18 @@ async function applyProposal(
           await editAgreementInTransaction(ctx, agreement, {
             agentId: card.agentId,
             statement: proposed.statement ?? '',
-            via: 'agreements-card',
+            via: 'reorientation',
           });
           break;
         case 'recheck':
-          await recheckAgreementInTransaction(ctx, agreement, card.agentId);
+          // An owed check's card checks every agreement it names that is still owed one (RM34 (a)).
+          if (card.trigger !== 'agreement-check-owed') {
+            await recheckAgreementInTransaction(ctx, agreement, card.agentId);
+          } else if (
+            !(await recheckOwedInTransaction(ctx, card.agentId, card.affected.agreements))
+          ) {
+            throw new ConvexError(CARD_ACTION_REFUSALS.checked);
+          }
           break;
         case 'retire':
           await retireAgreementInTransaction(ctx, agreement, card.agentId);
@@ -285,16 +456,30 @@ async function applyPageStatus(
  * amendment with `via: 'reorientation'`, an agreement's, an edge's, a page's status, a scope or a
  * skill), close the card `applied` with what it did and its talk with it, and release the work it
  * held. Public, guarded by the card's employee's owner. Writes the target's own rows and events,
- * the card's outcome, its talk's close and `reorientation.approved`.
+ * the card's outcome, its talk's close and `reorientation.approved`; and, where it changed or
+ * retired an edge that holds for everyone, the close of every other employee's undecided card
+ * about that edge as decided here (the first in this transaction, the rest by a chain).
  *
- * @throws ConvexError when the card is gone or decided, nothing is proposed yet, or the target
- *   refuses (gone, moved on, a successor not current).
+ * @throws ConvexError when the card is gone or decided, nothing is proposed yet, the proposal is
+ *   no longer the one the page showed, or the target refuses (gone, moved on, a successor not
+ *   current).
  */
 export const approve = mutation({
-  args: { reorientationId: v.id('reorientations') },
+  args: {
+    reorientationId: v.id('reorientations'),
+    /**
+     * The proposal the manager was shown (`proposalFingerprint`): the page sends it with the
+     * press, and Approve is refused when the card proposes something else by then (W16-R24).
+     * Absent from a caller that draws no card, which approves what the card holds.
+     */
+    shown: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<{ result: string }> => {
     const { card } = await decidableCard(ctx, args.reorientationId);
     if (card.proposed.kind === 'pending') throw new ConvexError(CARD_ACTION_REFUSALS.pending);
+    if (args.shown !== undefined && args.shown !== proposalFingerprint(card.proposed)) {
+      throw new ConvexError(PROPOSAL_CHANGED);
+    }
     const caller = await getCallerOrThrow(ctx);
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
@@ -328,6 +513,7 @@ export const approve = mutation({
       createdAt: now,
     });
     await releaseHeldWork(ctx, card);
+    await closeSiblingsAfterApprove(ctx, card, { result: applied.result, decidedBy, now });
     return { result: applied.result };
   },
 });
@@ -425,10 +611,26 @@ export const openByHand = mutation({
     asked: boolean;
     onCard: boolean;
   }> => {
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
     const now = Date.now();
+    // Three by-hand cards an employee a day (W16-R35): each asks the model for a proposal, and a
+    // card dismissed and opened again was one call each time. A change that joins the day's
+    // standing card opens none, and is not refused.
+    const today = await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_day_trigger', (q) =>
+        q
+          .eq('agentId', args.agentId)
+          .eq('day', dayKey(now, agentZone(agent)))
+          .eq('trigger', 'role-changed'),
+      )
+      .take(BY_HAND_CARDS_A_DAY + 1);
+    const standing = today.some((card) => (DECIDABLE as readonly string[]).includes(card.status));
+    if (!standing && today.length >= BY_HAND_CARDS_A_DAY) {
+      throw new ConvexError(byHandLimitWords(agent.name));
+    }
     const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,
@@ -516,18 +718,46 @@ export const listForAgent = query({
       return await read;
     };
     const views: CardView[] = [];
+    // The rows read into names so far, and the cards drawn bare once the budget was spent.
+    let spent = 0;
+    let leftBare = 0;
     for (const card of [
       ...standing.sort((left, right) => right.createdAt - left.createdAt),
       ...decided,
     ]) {
-      const ids = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
+      const holding =
+        card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
+      const workIds = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
+      const pageRefs = card.evidence.pageRefs.slice(0, 10);
+      const skillIds = [...new Set([...card.affected.skills, ...card.evidence.skillIds])].slice(
+        0,
+        10,
+      );
+      const agreementIds = card.affected.agreements.slice(0, 10);
+      const edgeIds = [
+        ...new Set([...card.affected.relationships, ...card.evidence.relationshipIds]),
+      ].slice(0, 10);
+      const ledgerIds = (card.evidence.connectionEventIds ?? []).slice(0, 10);
+      // An edge is two rows, itself and its person.
+      const wanted =
+        workIds.length +
+        pageRefs.length +
+        skillIds.length +
+        agreementIds.length +
+        2 * edgeIds.length +
+        ledgerIds.length;
+      const named = spent + wanted <= CARD_NAMES_READ;
+      if (named) spent += wanted;
+      else leftBare += 1;
+      // A bare card still reads the work it holds: its line says what waits on it.
+      const ids = named ? workIds : holding ? card.blockingWork.slice(0, 10) : [];
       const rows = await Promise.all(ids.map(async (id) => await ctx.db.get(id)));
       // Only rows of the card's own owner are named on it: after a handover the old manager's
       // graph, agreements and documentation stay theirs (W16-R1, `people.ts`' rule).
       const owned = <Row extends { readonly userId: string }>(row: Row | null): Row | null =>
         row !== null && row.userId === card.userId ? row : null;
       const pages = await Promise.all(
-        card.evidence.pageRefs.slice(0, 10).map(async (ref) => {
+        (named ? pageRefs : []).map(async (ref) => {
           if (owned(await sourceOf(ref.sourceId)) === null) return null;
           return await ctx.db
             .query('docPages')
@@ -536,17 +766,13 @@ export const listForAgent = query({
         }),
       );
       const skills = await Promise.all(
-        [...new Set([...card.affected.skills, ...card.evidence.skillIds])]
-          .slice(0, 10)
-          .map(async (id) => await ctx.db.get(id)),
+        (named ? skillIds : []).map(async (id) => await ctx.db.get(id)),
       );
       const agreements = await Promise.all(
-        card.affected.agreements.slice(0, 10).map(async (id) => owned(await ctx.db.get(id))),
+        (named ? agreementIds : []).map(async (id) => owned(await ctx.db.get(id))),
       );
       const edges = await Promise.all(
-        [...new Set([...card.affected.relationships, ...card.evidence.relationshipIds])]
-          .slice(0, 10)
-          .map(async (id) => owned(await ctx.db.get(id))),
+        (named ? edgeIds : []).map(async (id) => owned(await ctx.db.get(id))),
       );
       const people: CardView['people'] = [];
       for (const edge of edges) {
@@ -559,8 +785,13 @@ export const listForAgent = query({
           }`,
         });
       }
-      const holding =
-        card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
+      const ledger = await Promise.all(
+        (named ? ledgerIds : []).map(async (id) => await ctx.db.get(id)),
+      );
+      const notHeld =
+        holding && card.blockingWork.length >= REORIENTATION_BLOCKING_LIMIT
+          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id)).length
+          : 0;
       const stages = holding
         ? rows.flatMap((row) =>
             row !== null && card.blockingWork.includes(row._id) ? [heldStageOf(row)] : [],
@@ -571,6 +802,8 @@ export const listForAgent = query({
         held: {
           plans: stages.filter((stage) => stage === 'plan').length,
           runs: stages.filter((stage) => stage === 'run').length,
+          // The open work the change reached past what a card holds (W16-R22): said, not held.
+          ...(notHeld > 0 ? { notHeld } : {}),
         },
         workItems: rows.flatMap((row) =>
           row === null ? [] : [{ _id: row._id, title: row.title, state: row.state }],
@@ -585,10 +818,30 @@ export const listForAgent = query({
           agreement === null ? [] : [{ _id: agreement._id, statement: agreement.statement }],
         ),
         people,
+        ledger: ledger.flatMap((line) =>
+          line === null
+            ? []
+            : [
+                {
+                  _id: line._id,
+                  type: line.type,
+                  payload: line.payload as unknown,
+                  createdAt: line.createdAt,
+                },
+              ],
+        ),
         ...(charter?.approved ? { charterVersion: charter.version } : {}),
         ...(card.trigger === 'manager-changed' && charter?.approved
           ? { carriedRules: unboundReportingLines(charter.body as Charter) }
           : {}),
+      });
+    }
+    if (leftBare > 0) {
+      log.warn(BOUND_MET, {
+        bound: 'CARD_NAMES_READ',
+        limit: CARD_NAMES_READ,
+        agentId: args.agentId,
+        leftBare,
       });
     }
     return views;

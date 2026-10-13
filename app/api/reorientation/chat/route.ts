@@ -23,9 +23,10 @@ import { reorientationTalkBodyOf } from '@/agent/chat-turn-body';
 import { talkQuotes } from '@/agent/reorientation-talk-evidence';
 import {
   TALK_ANSWER_NOT_KEPT,
+  finishOutcome,
   keptTalkAnswer,
+  talkDeadline,
   talkOutcomeMiss,
-  talkOutcomeOfCalls,
   talkOutcomeSchema,
   type KeepTalkAnswer,
   type TalkOutcome,
@@ -40,12 +41,6 @@ import {
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
-
-/**
- * The route's own deadline, short of the platform's `maxDuration`, so a slow model leaves time to
- * say what happened and for the finish's write (W16-R19).
- */
-const TALK_DEADLINE_MS = 50_000;
 
 /** One turn of a talk: a short acknowledgement and one question, or the outcome's call. */
 const TALK_MAX_OUTPUT_TOKENS = 2000;
@@ -87,7 +82,7 @@ export async function POST(req: Request): Promise<Response> {
   // The route's own deadline. A turn also stops with the page that asked for it; Put this on the
   // card does not, since a manager who presses it and goes back to the card has asked for it whole
   // (the walk's W-1: the outcome was never written when the page left first).
-  const deadline = AbortSignal.timeout(TALK_DEADLINE_MS);
+  const deadline = talkDeadline();
   const abortSignal = AbortSignal.any([req.signal, deadline]);
   const crossOrigin = crossOriginRefusal(req);
   if (crossOrigin) return crossOrigin;
@@ -149,20 +144,34 @@ export async function POST(req: Request): Promise<Response> {
   if (body.request.kind === 'finish') {
     let outcome: TalkOutcome | undefined;
     try {
-      const answered = await generateText({
-        ...settings,
-        abortSignal: deadline,
-        model,
-        // The one system message in the list is the route's own note, never the manager's words.
-        messages: [...messages, { role: 'system', content: TALK_FINISH_NOTE }],
-        allowSystemInMessages: true,
-        tools: { [REORIENTATION_COMPLETE]: reorientationComplete },
-        toolChoice: 'required',
-      });
-      outcome = talkOutcomeOfCalls(answered.toolCalls);
-      if (outcome === undefined) {
+      // Asked once, and once more with the refused fields named when the first call was not in
+      // the tool's shape (17-O), before the room is told nothing was put on the card.
+      const finished = await finishOutcome(
+        async (repairNote) =>
+          await generateText({
+            ...settings,
+            abortSignal: deadline,
+            model,
+            // The system messages in the list are the route's own notes, never the manager's words.
+            messages: [
+              ...messages,
+              { role: 'system', content: TALK_FINISH_NOTE },
+              ...(repairNote === undefined
+                ? []
+                : [{ role: 'system' as const, content: repairNote }]),
+            ],
+            allowSystemInMessages: true,
+            tools: { [REORIENTATION_COMPLETE]: reorientationComplete },
+            toolChoice: 'required',
+          }),
+      );
+      outcome = finished.outcome;
+      for (const [ask, answered] of finished.answers.entries()) {
+        if (outcome !== undefined && ask === finished.answers.length - 1) break;
         // What the model answered instead, so a bed can say why (16-J's W1b): never its words.
         log.warn('reorientation talk: nothing was put on the card', {
+          ask: ask + 1,
+          repaired: outcome !== undefined,
           finishReason: answered.finishReason,
           ...talkOutcomeMiss(answered.toolCalls),
           textLength: answered.text.length,

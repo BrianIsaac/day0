@@ -6,7 +6,10 @@ import { heldByReorientation } from '../../convex/reorientation';
 import * as reorientationReachModule from '../../convex/reorientationReach';
 import {
   OPEN_WORK_STATES,
+  REACH_ROW_BUDGET,
   blockingWorkOf,
+  hasOpenWork,
+  openWorkCache,
   openWorkCiting,
   openWorkOf,
   openWorkUsingSkills,
@@ -15,11 +18,19 @@ import {
   scopeReach,
   skillReach,
   surfaceReach,
+  workRowsReadIn,
   type CardAffected,
 } from '../../convex/reorientationReach';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT } from './fakes/manager-identity';
-import { cardOf, openTestCard, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import {
+  cardOf,
+  openTestCard,
+  seedEmployee,
+  seedWork,
+  warnedBy,
+  type Harness,
+} from './fakes/reorientation';
 import { registeredIn } from './registered-functions';
 
 /*
@@ -199,7 +210,7 @@ describe('an employee’s open work', (): void => {
       await seedWork(harness, agentId, state, { externalId: `REVOPS-${state}` });
     }
     await seedWork(harness, other, 'plan-pending');
-    const rows = await harness.run(async (ctx) => await openWorkOf(ctx, agentId));
+    const rows = (await harness.run(async (ctx) => await openWorkOf(ctx, agentId))) ?? [];
     expect(rows.map((row) => row._id)).toEqual(open);
     expect(rows.map((row) => row.state)).toEqual([...OPEN_WORK_STATES]);
   });
@@ -326,13 +337,13 @@ describe('a card’s reach, as its writer names it', (): void => {
 
     expect(
       await harness.run(async (ctx) => await reachOf(ctx, agentId, { kind: 'open-work' })),
-    ).toEqual({ workItems: [cited, running] });
+    ).toEqual({ kind: 'reached', affected: { workItems: [cited, running] } });
     expect(
       await harness.run(
         async (ctx) =>
           await reachOf(ctx, agentId, { kind: 'citing', pageRefs: [{ sourceId, ref }] }),
       ),
-    ).toEqual({ workItems: [cited] });
+    ).toEqual({ kind: 'reached', affected: { workItems: [cited] } });
     expect(
       await harness.run(
         async (ctx) =>
@@ -341,19 +352,140 @@ describe('a card’s reach, as its writer names it', (): void => {
             pageRefs: [{ sourceId, ref: 'revops/glossary.md' }],
           }),
       ),
-    ).toBeNull();
+    ).toEqual({ kind: 'nothing' });
     expect(
       await harness.run(
         async (ctx) => await reachOf(ctx, agentId, { kind: 'skills', skillIds: [skillId] }),
       ),
-    ).toEqual({ skills: [skillId], workItems: [running] });
+    ).toEqual({ kind: 'reached', affected: { skills: [skillId], workItems: [running] } });
     // A system that is gone reaches nothing; the one still there reaches as `surfaceReach` reads it.
     expect(
       await harness.run(
         async (ctx) =>
           await reachOf(ctx, agentId, { kind: 'surfaces', surfaceIds: [gone, linear] }),
       ),
-    ).toEqual({ surfaces: [linear], skills: [skillId], workItems: [running] });
+    ).toEqual({
+      kind: 'reached',
+      affected: { surfaces: [linear], skills: [skillId], workItems: [running] },
+    });
+  });
+});
+
+describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): void => {
+  /** A database handle that counts the index reads of `workItems` and the rows they returned. */
+  function counting<Ctx extends { readonly db: { query: (table: never) => unknown } }>(
+    ctx: Ctx,
+  ): { readonly ctx: Ctx; readonly reads: () => number } {
+    let reads = 0;
+    const db = new Proxy(ctx.db, {
+      get(target, property, receiver): unknown {
+        const value: unknown = Reflect.get(target, property, receiver);
+        if (property !== 'query' || typeof value !== 'function') return value;
+        return (table: string): unknown => {
+          if (table === 'workItems') reads += 1;
+          return (value as (table: string) => unknown).call(target, table);
+        };
+      },
+    });
+    return { ctx: { ...ctx, db }, reads: () => reads };
+  }
+
+  it('finds that an employee has no open row for four index reads and no row, and opens no card on a page nothing of its cites', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    // Finished and parked work is not open work.
+    await seedWork(harness, agentId, 'completed');
+    await seedWork(harness, agentId, 'skipped', { externalId: 'REVOPS-2' });
+    const sourceId = await linkedSource(harness);
+    const read = await harness.run(async (base) => {
+      const { ctx, reads } = counting(base);
+      const reached = await reachOf(ctx, agentId, {
+        kind: 'citing',
+        pageRefs: [{ sourceId, ref: 'revops/escalation-paths.md' }],
+      });
+      // Asked again in the same transaction, the answer is remembered.
+      const again = await hasOpenWork(ctx, agentId);
+      return { reached, again, indexReads: reads(), rows: workRowsReadIn(ctx) };
+    });
+    expect(read).toEqual({ reached: { kind: 'nothing' }, again: false, indexReads: 4, rows: 0 });
+  });
+
+  it('reads an empty reach for an open-work change under an employee with no open row, with no row read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const read = await harness.run(async (ctx) => ({
+      reached: await reachOf(ctx, agentId, { kind: 'open-work' }),
+      rows: workRowsReadIn(ctx),
+    }));
+    expect(read).toEqual({ reached: { kind: 'reached', affected: { workItems: [] } }, rows: 0 });
+  });
+
+  it('counts the rows a reach reads, and answers over-budget where the employee’s open work is more than the room left', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let at = 0; at < 6; at += 1) {
+      await seedWork(harness, agentId, at < 3 ? 'plan-pending' : 'executing', {
+        externalId: `REVOPS-${at}`,
+      });
+    }
+    const read = await harness.run(async (ctx) => {
+      const within = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: 6 });
+      const afterFirst = workRowsReadIn(ctx);
+      const over = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: 5 });
+      return { within: within.kind, afterFirst, over, rows: workRowsReadIn(ctx) };
+    });
+    // The probe's one row and the six of the reach; the second reach stops one row past its room.
+    expect(read).toEqual({
+      within: 'reached',
+      afterFirst: 7,
+      over: { kind: 'over-budget' },
+      rows: 13,
+    });
+    expect(REACH_ROW_BUDGET).toBe(300);
+  });
+
+  it('reads an employee’s open work once for a list of cards, whatever each asks of it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const sourceId = await linkedSource(harness);
+    const cited = await seedWork(harness, agentId, 'plan-approved', {
+      plan: planCiting(sourceId, 'revops/escalation-paths.md'),
+    });
+    await seedWork(harness, agentId, 'executing', { externalId: 'REVOPS-2' });
+    const read = await harness.run(async (ctx) => {
+      const openWork = openWorkCache();
+      const reaches = [];
+      for (const ref of ['revops/escalation-paths.md', 'revops/glossary.md', 'revops/close.md']) {
+        reaches.push(
+          await reachOf(
+            ctx,
+            agentId,
+            { kind: 'citing', pageRefs: [{ sourceId, ref }] },
+            { openWork },
+          ),
+        );
+      }
+      return { reaches, rows: workRowsReadIn(ctx) };
+    });
+    expect(read.reaches).toEqual([
+      { kind: 'reached', affected: { workItems: [cited] } },
+      { kind: 'nothing' },
+      { kind: 'nothing' },
+    ]);
+    // The probe's one row and the employee's two, read once for the three pages.
+    expect(read.rows).toBe(3);
+  });
+
+  it('starts each transaction’s count at nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await seedWork(harness, agentId, 'plan-pending');
+    const first = await harness.run(async (ctx) => {
+      await reachOf(ctx, agentId, { kind: 'open-work' });
+      return workRowsReadIn(ctx);
+    });
+    const second = await harness.run(async (ctx) => workRowsReadIn(ctx));
+    expect([first, second]).toEqual([2, 0]);
   });
 });
 
@@ -374,5 +506,40 @@ describe('the functions convex/reorientationReach.ts registers', (): void => {
   // cards' registered functions stay in `convex/reorientation.ts`.
   it('are none', (): void => {
     expect(registeredIn(reorientationReachModule)).toEqual([]);
+  });
+});
+
+describe('an owner’s employees, as a fan-out reads them (W16-R24)', (): void => {
+  it('reads the first 200 and says in the log that the rest were left out', async (): Promise<void> => {
+    // The review's W16-R24: "silent caps with no record: `ownerAgents` 200".
+    const harness = convexTest(schema, allConvexModules());
+    const seed = async (count: number, userId: string): Promise<void> =>
+      await harness.run(async (ctx) => {
+        for (let index = 0; index < count; index += 1) {
+          await ctx.db.insert('agents', {
+            bossEmail: 'manager@acme.test',
+            name: `Employee ${index}`,
+            userId,
+            state: 'active',
+            createdAt: 1,
+          });
+        }
+      });
+    await seed(201, OWNER_SUBJECT);
+    await seed(200, 'another-owner');
+    const read = async (userId: string) =>
+      await warnedBy(
+        async () =>
+          await harness.run(async (ctx) => await reorientationReachModule.ownerAgents(ctx, userId)),
+      );
+    const cut = await read(OWNER_SUBJECT);
+    expect(cut.result).toHaveLength(200);
+    expect(cut.warnings).toEqual([
+      expect.objectContaining({ bound: 'OWNER_AGENTS_READ', limit: 200 }),
+    ]);
+    // An owner of exactly 200 is read whole, and nothing is said.
+    const whole = await read('another-owner');
+    expect(whole.result).toHaveLength(200);
+    expect(whole.warnings).toEqual([]);
   });
 });

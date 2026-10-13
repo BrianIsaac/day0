@@ -23,6 +23,13 @@ export const CARD_ACTION_REFUSALS = {
   targetGone: 'What this card proposes to change is no longer there: dismiss it.',
   moved: 'What this card proposes to change has moved on since: dismiss it.',
   successor: 'The page this card names as the successor is not current: dismiss it.',
+  /** A charter change that would change nothing: the charter already holds it (W16-R24). */
+  unchanged: 'The charter already says this. Dismiss the card.',
+  /** A charter change with no approved charter to amend (W16-R24). */
+  noCharter:
+    'The charter is not approved yet, so this card cannot amend it: approve the charter, or dismiss the card.',
+  /** An owed check's card whose agreements have all been checked since (RM34 (a)). */
+  checked: 'These agreements have been checked since this card opened: dismiss it.',
   date: 'Pick a date after today and within a year.',
   summary: 'Say what changed in up to 300 characters.',
 } as const;
@@ -33,6 +40,12 @@ export const approvedResultWords = {
   dismissed: 'nothing changed',
   /** A card still undecided when its employee was handed over (W16-R1, D-5 (a)). */
   handedOver: 'closed at the handover, as it was the previous manager’s to decide',
+  /**
+   * Another employee's card about an edge for everyone, closed when one card's Approve decided the
+   * edge (the pre-tag's row 6): read back by {@link decidedElsewhereOf}.
+   */
+  decidedElsewhere: (name: string, result: string): string =>
+    `decided on ${name}’s card: ${result}`,
   charter: (version: string): string => `the charter was amended to version ${version}`,
   agreement: {
     keep: 'the working agreement was kept as it is',
@@ -58,6 +71,50 @@ export const approvedResultWords = {
         ? `the skill “${name}” was retired`
         : `the skill “${name}” was withdrawn from every employee`,
 } as const;
+
+/**
+ * What a card the previous manager opened by hand says once a handover closed it (D-5's remainder,
+ * (a); section 7): their typed words are cleared with the talk's, and the card says who opened it.
+ */
+export function closedByHandSummary(previousManager: string): string {
+  return `A card ${previousManager} opened was closed at the handover`;
+}
+
+/** The most cards a manager opens by hand for one employee in a day (W16-R35). */
+export const BY_HAND_CARDS_A_DAY = 3;
+
+/**
+ * Why a fourth by-hand card of a day was refused (section 7): each one asks the model for a
+ * proposal, and on the hosted office a visitor could open, dismiss and open again without end.
+ */
+export function byHandLimitWords(name: string): string {
+  return `You have opened three cards for ${name} today. Decide one, or come back tomorrow.`;
+}
+
+/** What an owed check's card says changed (RM34 (a); section 9.1's words). */
+export const CHECK_OWED_SUMMARY = 'Its agreements could not be checked against the amended charter';
+
+/**
+ * Whose card decided a card closed as decided elsewhere, and what that decision did: the parts of
+ * `approvedResultWords.decidedElsewhere`, or undefined for any other outcome.
+ */
+export function decidedElsewhereOf(
+  summary: string | undefined,
+): { readonly name: string; readonly result: string } | undefined {
+  const match = /^decided on (.+?)’s card: (.+)$/u.exec(summary ?? '');
+  return match === null ? undefined : { name: match[1], result: match[2] };
+}
+
+/**
+ * A card closed as decided elsewhere, as its line says it (section 7): "Decided on {other}'s card
+ * on {date}: {outcome}. Nothing more to do here."
+ */
+export function decidedElsewhereWords(
+  decided: { readonly name: string; readonly result: string },
+  day: string,
+): string {
+  return `Decided on ${decided.name}’s card on ${day}: ${decided.result}. Nothing more to do here.`;
+}
 
 /** A card's summary without the full stop or other closing mark it may end with. */
 function withoutStop(summary: string): string {
@@ -237,9 +294,18 @@ export function revisitDay(ms: number, zone: string | undefined): string {
 export interface HeldCounts {
   readonly plans: number;
   readonly runs: number;
+  /**
+   * The open work the change reached that the card does not hold, because a card holds at most
+   * ten items (W16-R22). Absent or 0 where the card holds everything it reached.
+   */
+  readonly notHeld?: number;
 }
 
-/** What a card holds, as its line says it: "2 plans held, 1 run held before closing". */
+/**
+ * What a card holds, as its line says it: "2 plans held, 1 run held before closing", and where the
+ * change reached more open work than a card holds, "10 plans held, and 90 more not held: a card
+ * holds at most ten" (W16-R22; section 7).
+ */
 export function heldWords(held: HeldCounts): string {
   const parts = [
     held.plans > 0 ? (held.plans === 1 ? '1 plan held' : `${held.plans} plans held`) : undefined,
@@ -249,7 +315,29 @@ export function heldWords(held: HeldCounts): string {
         : `${held.runs} runs held before closing`
       : undefined,
   ].filter((part): part is string => part !== undefined);
-  return parts.length === 0 ? 'nothing held' : parts.join(', ');
+  if (parts.length === 0) return 'nothing held';
+  const more = held.notHeld ?? 0;
+  return more > 0
+    ? `${parts.join(', ')}, and ${more} more not held: a card holds at most ten`
+    : parts.join(', ');
+}
+
+/**
+ * What Defer says once it lands (section 7): its date, and for a card that holds plans or runs,
+ * that they stay held until then (W16-R24: a deferred high-risk card keeps its hold while it is
+ * out of the inbox, and Defer said only the date).
+ *
+ * @param revisit - The day the card opens again, as the card writes a day.
+ * @param held - What the card holds when it is deferred.
+ */
+export function deferredWords(revisit: string, held: HeldCounts): string {
+  const things = [
+    held.plans > 0 ? (held.plans === 1 ? '1 plan' : `${held.plans} plans`) : undefined,
+    held.runs > 0 ? (held.runs === 1 ? '1 run' : `${held.runs} runs`) : undefined,
+  ].filter((part): part is string => part !== undefined);
+  if (things.length === 0) return `Deferred until ${revisit}.`;
+  const stay = held.plans + held.runs === 1 ? 'stays' : 'stay';
+  return `Deferred until ${revisit}. Its ${things.join(' and ')} ${stay} held until then.`;
 }
 
 /**
@@ -272,9 +360,69 @@ export function pendingWords(name: string, held: HeldCounts): string {
   return `${opening} Nothing is held while it does.`;
 }
 
-/** What a card says when the judgement could not propose: the card stays, and Dismiss is the way on. */
-export function failedProposalWords(name: string): string {
-  return `${name} could not work out a proposal for this change. Nothing changes unless you act: dismiss the card, or amend the charter yourself.`;
+/** What the sweep stores on a card whose proposal stayed pending with nothing said (W16-R23). */
+export const PROPOSAL_DID_NOT_FINISH = 'did not finish';
+
+/**
+ * What a card says when the judgement could not propose (section 7): the card stays, and the ways
+ * on are named, Discuss first. "{name} could not work out a proposal ({reason}). Nothing changes
+ * unless you act: talk it through with {name}, dismiss the card, or amend the charter yourself."
+ * A judgement that never finished says so in place of a reason.
+ *
+ * @param failure - The stored reason, when there is one.
+ */
+export function failedProposalWords(name: string, failure?: string): string {
+  return `${failureOpening(name, failure)} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
+}
+
+/** That the judgement could not propose, and why, as a card's first sentence about it. */
+function failureOpening(name: string, failure: string | undefined): string {
+  const reason = failure?.trim().replace(/[.!?]+$/u, '');
+  return reason === PROPOSAL_DID_NOT_FINISH
+    ? `${name} did not finish working out a proposal.`
+    : reason === undefined || reason === ''
+      ? `${name} could not work out a proposal for this change.`
+      : `${name} could not work out a proposal (${reason}).`;
+}
+
+/**
+ * What a decided card says of a proposal that never came: that none was made, or that the
+ * judgement could not make one, with nothing about what the manager could still do. A dismissed
+ * card went on telling its reader to dismiss it, and a card another employee's Approve closed
+ * that the employee was still working one out (the bed day0-w17o, 13 October 2026).
+ *
+ * @param proposal - The card's proposal, still pending: when it failed and why, if it did.
+ */
+export function unproposedWords(
+  name: string,
+  proposal: { readonly failedAt?: number; readonly failure?: string },
+): string {
+  return proposal.failedAt !== undefined
+    ? failureOpening(name, proposal.failure)
+    : `${name} had proposed nothing when the card was decided.`;
+}
+
+/** Why Approve was refused for a card whose proposal changed since the page drew it (W16-R24). */
+export const PROPOSAL_CHANGED =
+  'The proposal changed while this card was open. Read it again, then approve.';
+
+/**
+ * A proposal as one string, the same for the same proposal whatever order its fields are stored
+ * in: what the page sends back with Approve, so a talk's finish in another tab cannot put another
+ * proposal under the press (W16-R24).
+ */
+export function proposalFingerprint(proposed: unknown): string {
+  const ordered = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : typeof value === 'object' && value !== null
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+              .map(([key, entry]) => [key, ordered(entry)]),
+          )
+        : value;
+  return JSON.stringify(ordered(proposed));
 }
 
 /**
