@@ -377,10 +377,10 @@ describe('docPages.storedForRevision', (): void => {
       sourceId,
       refs: ['split.md', 'unsplit.md', 'heading.md', 'missing.md'],
     });
+    // A page with no block is read as before, a page of headings alone among them: telling the
+    // two apart means splitting the page, which this read does for none (the second pass).
     expect(kept.map((page) => [page.ref, page.sourceRevision, page.datedBySource])).toEqual([
       ['split.md', '7', true],
-      // A page with no text under its heading has no block to miss.
-      ['heading.md', '7', true],
     ]);
   });
 });

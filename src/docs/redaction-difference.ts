@@ -23,22 +23,47 @@ const MAX_REDACTED_CHARS = 120;
 const MAX_LINE_CHARS = 4_096;
 const MAX_LINE_MARKERS = 16;
 
-/** A literal as a pattern matches it. */
-function escaped(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
  * Whether `other` is `marked` with each of its markers standing for a short run of text: the
  * same line before and after every marker, and between one and `MAX_REDACTED_CHARS` characters
  * where each marker is.
+ *
+ * Read by walking the places each stretch between two markers can end, never by a pattern: a
+ * pattern of bounded wildcards tries every way to place them on a line that does not match, and
+ * a page's author can write such a line (the second pass: sixteen markers a letter apart against
+ * fifteen hundred of that letter never returned). The walk is bounded by the line's length times
+ * the longest run a marker stands for, for each marker.
  */
 function matchesButForMarkers(marked: string, other: string): boolean {
   const literals = marked.split(MARKER);
-  if (literals.length === 1 || literals.length - 1 > MAX_LINE_MARKERS) return false;
+  const markers = literals.length - 1;
+  if (markers === 0 || markers > MAX_LINE_MARKERS) return false;
   if (marked.length > MAX_LINE_CHARS || other.length > MAX_LINE_CHARS) return false;
-  const value = `[\\s\\S]{1,${MAX_REDACTED_CHARS}}?`;
-  return new RegExp(`^${literals.map(escaped).join(value)}$`).test(other);
+  if (!other.startsWith(literals[0])) return false;
+  // Where in `other` the text matched so far may end, before the next marker's run begins.
+  let ends = new Set([literals[0].length]);
+  for (let index = 1; index <= markers; index += 1) {
+    const literal = literals[index];
+    const last = index === markers;
+    const next = new Set<number>();
+    for (const end of ends) {
+      for (let run = 1; run <= MAX_REDACTED_CHARS; run += 1) {
+        const at = end + run;
+        if (at + literal.length > other.length) break;
+        // The last stretch must close the line; the others may sit anywhere the run allows.
+        if (
+          last
+            ? at + literal.length === other.length && other.endsWith(literal)
+            : other.startsWith(literal, at)
+        ) {
+          next.add(at + literal.length);
+        }
+      }
+    }
+    if (next.size === 0) return false;
+    ends = next;
+  }
+  return true;
 }
 
 /**

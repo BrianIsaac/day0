@@ -3,7 +3,7 @@ import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { internalQuery, query, type QueryCtx } from './_generated/server';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
-import { splitLanded, storedPageStatus } from './docBlocks';
+import { firstBlockStatus, storedPageStatus } from './docBlocks';
 import { RELATIONS_OF_A_PAGE, statusSourceOf } from './docStatus';
 import { pageStatusOf, type PageStatus, type StatusSource } from '../src/docs/authority';
 
@@ -320,8 +320,8 @@ const STORED_REVISIONS_BYTES = 8 * 1024 * 1024;
 /**
  * The stored pages of a source a batch may keep by their revision without reading their bodies
  * (the reader contract by revision, X-13): each listed ref stored with a revision, with the
- * hash its split wrote (W15-R25) and with a block where its text has one (W16-R34), so its
- * blocks are its text's, at most `STORED_REVISIONS_BYTES`
+ * hash its split wrote (W15-R25) and with a block (W16-R34), so its blocks are its text's, at
+ * most `STORED_REVISIONS_BYTES`
  * of them, the rest left to be read. A source owed the 0.20.0 remeasure is a library as v0.19.0
  * left it, whose pages are read as before until a 0.20.0 sync has seen it. Internal; reads the
  * source and the listed pages' rows.
@@ -342,8 +342,11 @@ export const storedForRevision = internalQuery({
       bytes += 3 * (page.markdown.length + page.title.length);
       if (bytes > STORED_REVISIONS_BYTES) break;
       if (page.sourceRevision === undefined || page.contentHash === undefined) continue;
-      // A hash a v0.19.0 store wrote before a split that never landed vouches for no block.
-      if (!(await splitLanded(ctx, page))) continue;
+      // A hash a v0.19.0 store wrote before a split that never landed vouches for no block
+      // (W16-R34). A page with none is read as before, whatever its text: telling a page that
+      // should hold blocks from one of headings alone means splitting it, and this read answers
+      // for a whole listing page of refs in one query.
+      if ((await firstBlockStatus(ctx.db, args.sourceId, ref)) === undefined) continue;
       kept.push({
         ref: page.ref,
         title: page.title,

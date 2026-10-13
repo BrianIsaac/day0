@@ -1069,13 +1069,14 @@ const failedMeasuresValidator = v.array(v.object({ ref: v.string(), tries: v.num
 
 /** What measuring one read's pages came to. */
 interface MeasuredRead {
-  /** The pages measured, and the proposals the sync has written with them. */
-  readonly measured: number;
+  /** The pages this read measured or tried, for the step to count and not to measure twice. */
+  readonly refs: readonly string[];
+  /** The proposals the sync has written, this read's with them. */
   readonly proposed: number;
   /** Whether the sync's cap on new proposals ended the read, some of its pages unmeasured. */
   readonly capped: boolean;
   /** The pages whose measure threw and that are still to be tried, each with its tries so far. */
-  readonly failed: FailedMeasure[];
+  readonly failed: readonly FailedMeasure[];
 }
 
 /**
@@ -1088,7 +1089,7 @@ interface MeasuredRead {
  *
  * @param read - The read's page refs; `retry`, on the step that tries a read's failed pages
  *   again, names the only pages of it still to measure; `seen` holds the pages this step has
- *   measured, which a later read of it may name again.
+ *   measured, which a later read of it may name again and which are passed over.
  */
 async function measureRead(
   ctx: ActionCtx,
@@ -1098,21 +1099,19 @@ async function measureRead(
     readonly refs: readonly string[];
     readonly retry: readonly FailedMeasure[] | undefined;
     readonly proposed: number;
-    readonly seen: Set<string>;
+    readonly seen: ReadonlySet<string>;
   },
 ): Promise<MeasuredRead> {
   const { sourceId, runId, seen } = read;
   const tried = new Map(read.retry?.map((page) => [page.ref, page.tries]));
-  const refs = read.retry === undefined ? read.refs : read.refs.filter((ref) => tried.has(ref));
+  const owed = read.retry === undefined ? read.refs : read.refs.filter((ref) => tried.has(ref));
   const failed: FailedMeasure[] = [];
-  let measured = 0;
+  const refs: string[] = [];
   let { proposed } = read;
-  for (const ref of refs) {
-    if (proposed >= RELATION_PROPOSALS_PER_SYNC)
-      return { measured, proposed, capped: true, failed };
+  for (const ref of owed) {
+    if (proposed >= RELATION_PROPOSALS_PER_SYNC) return { refs, proposed, capped: true, failed };
     if (seen.has(ref)) continue;
-    seen.add(ref);
-    measured += 1;
+    refs.push(ref);
     let measure: PageMeasure;
     try {
       measure = await ctx.runMutation(internal.docRelations.measurePage, {
@@ -1134,9 +1133,9 @@ async function measureRead(
       continue;
     }
     proposed += measure.proposed;
-    if (measure.cut) return { measured, proposed, capped: true, failed };
+    if (measure.cut) return { refs, proposed, capped: true, failed };
   }
-  return { measured, proposed, capped: false, failed };
+  return { refs, proposed, capped: false, failed };
 }
 
 /**
@@ -1211,7 +1210,8 @@ export const proposeRelations = internalAction({
         seen,
       });
       retry = undefined;
-      measured += read.measured;
+      for (const ref of read.refs) seen.add(ref);
+      measured += read.refs.length;
       proposed = read.proposed;
       if (read.capped) {
         // The cap: this read's pages are owed from its start, since some of them are unmeasured.
@@ -1226,7 +1226,7 @@ export const proposeRelations = internalAction({
         await ctx.scheduler.runAfter(
           RELATION_MEASURE_RETRY_MS,
           internal.docSyncActions.proposeRelations,
-          { sourceId, runId, rest: { generations, cursor }, proposed, retry: read.failed },
+          { sourceId, runId, rest: { generations, cursor }, proposed, retry: [...read.failed] },
         );
         return { measured, proposed };
       }
@@ -1301,7 +1301,8 @@ async function remeasure(
       seen,
     });
     retry = undefined;
-    measured += read.measured;
+    for (const ref of read.refs) seen.add(ref);
+    measured += read.refs.length;
     proposed = read.proposed;
     if (read.capped) {
       await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
@@ -1315,7 +1316,7 @@ async function remeasure(
       await ctx.scheduler.runAfter(
         RELATION_MEASURE_RETRY_MS,
         internal.docSyncActions.remeasureRelations,
-        { sourceId, runId, proposed, retry: read.failed },
+        { sourceId, runId, proposed, retry: [...read.failed] },
       );
       return { measured, proposed };
     }

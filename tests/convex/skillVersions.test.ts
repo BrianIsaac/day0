@@ -1057,6 +1057,7 @@ describe('stampChangedPage (14-I)', (): void => {
       cursor: null,
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, holders.reads)).recheckReason).toBe(
       'its runbook “Runbook” changed on 8 October 2026',
     );
@@ -1072,15 +1073,19 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     expect(runbookReason({ ...page, change: 'changed' }, day)).toBe(
       changedRunbookReason('Refresh the tile', day),
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(runbookReason({ ...page, change: 'superseded' }, day)).toBe(
       'its runbook “Refresh the tile” was superseded on 8 October 2026',
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(runbookReason({ ...page, change: 'archived' }, day)).toBe(
       'its runbook “Refresh the tile” was archived on 8 October 2026',
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(runbookReason({ ...page, change: 'draft' }, day)).toBe(
       'its runbook “Refresh the tile” was marked a draft on 8 October 2026',
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(runbookReason({ ...page, change: 'removed', source: 'Handbook' }, day)).toBe(
       'its runbook “Refresh the tile” was removed from Handbook on 8 October 2026',
     );
@@ -1164,9 +1169,11 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     );
     expect(pending).toEqual(['skillVersions:stampChangedPages']);
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, holders.superseded)).recheckReason).toBe(
       'its runbook “Pipeline runbook” was superseded on 8 October 2026',
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, holders.removed)).recheckReason).toBe(
       'its runbook “Old escalation” was removed from Handbook on 8 October 2026',
     );
@@ -1260,11 +1267,13 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
 
     const textFirst = await skill(harness, holders.textFirst);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(textFirst.recheckReason).toBe(
       'its runbook “Close checklist” was archived on 8 October 2026',
     );
     // Still due since the first of the two stamps: one cause, said better.
     expect(textFirst.recheckDueAt).toBe(at);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, holders.statusFirst)).recheckReason).toBe(
       'its runbook “Bin page” was archived on 8 October 2026',
     );
@@ -1272,6 +1281,7 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     expect((await skill(harness, holders.otherCause)).recheckReason).toBe(
       'its Linear tools changed',
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, holders.otherRunbook)).recheckReason).toBe(
       'its runbook “Edited page” changed on 8 October 2026',
     );
@@ -1287,6 +1297,7 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
         .filter((event) => (event.payload as { skillId: string }).skillId === holders.textFirst)
         .map((event) => (event.payload as { reason: string }).reason),
     );
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(said).toEqual([
       'its runbook “Close checklist” changed on 8 October 2026',
       'its runbook “Close checklist” was archived on 8 October 2026',
@@ -1362,6 +1373,7 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     // On the base the archive of the other page took the change's place: one title, one day.
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, skillId)).recheckReason).toBe(
       'its runbook “Close checklist” changed on 8 October 2026',
     );
@@ -1375,6 +1387,7 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
       cursor: null,
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect((await skill(harness, skillId)).recheckReason).toBe(
       'its runbook “Close checklist” was archived on 8 October 2026',
     );

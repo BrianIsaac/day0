@@ -3205,6 +3205,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
       contentHash: 'c'.repeat(32),
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await stamped(holders.reads)).toBe(
       'its runbook “Refresh the tile” changed on 8 October 2026',
     );
@@ -3260,11 +3261,11 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
       syncRunId: runId,
       ref: 'refresh.md',
       title: 'Refresh the tile',
-      // The redaction now takes "dashboard" for a value. Re-taken at wave 17 (17-FD): the fixture
+      // The redaction now takes "refresh" for a name. Re-taken at wave 17 (17-FD): the fixture
       // appended `<person: name>`, which is no marker the redaction writes and stood where no
       // text had been; a page with no hash is now compared with its stored text (W16-R34), so
-      // the difference is written as the redaction writes one.
-      markdown: RUNBOOK.replace('Open the dashboard.', 'Open the <redacted: organisation>.'),
+      // the difference is written as the redaction writes one (`personalDataMarker('person')`).
+      markdown: RUNBOOK.replace('Press refresh twice.', 'Press <redacted: person> twice.'),
       updatedAt: 2,
       contentHash: 'a'.repeat(32),
     });
@@ -3607,6 +3608,7 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     await walk(harness, sourceId, ['kept.md']);
     expect(await reason()).toBeUndefined();
     await walk(harness, sourceId, ['kept.md']);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reason()).toBe(
       'its runbook “missed.md” was removed from Drive on 10 October 2026',
     );

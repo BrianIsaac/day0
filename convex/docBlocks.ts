@@ -283,8 +283,12 @@ function renamedBlocks(match: StoredBlockMatch): Map<string, string> {
   return renamed;
 }
 
-/** The most relations of one page, in each direction, a rename re-points: `RELATIONS_OF_A_PAGE`'s bound. */
-const RELATIONS_REPOINTED = 32;
+/**
+ * The most relations of one page, in each direction, a rename re-points: the bound every read of
+ * a page's relations keeps (`RELATIONS_OF_A_PAGE` in `convex/docStatus.ts`, which imports this
+ * module and so cannot be read here; the mirror test holds the two equal).
+ */
+export const RELATIONS_REPOINTED = 32;
 
 /**
  * Re-point the conflicts of a page whose title was renamed at the blocks they name (W15-R21): a
@@ -550,21 +554,6 @@ async function blocksAreThePages(
   return blocks.every(
     (block, index) => stored[index].hash === block.hash && stored[index].status === status,
   );
-}
-
-/**
- * Whether a stored page's split has landed: it holds a block, or its text has none to hold. Read
- * by what keeps a page as stored without reading it block for block (W16-R34).
- */
-export async function splitLanded(
-  ctx: QueryCtx,
-  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'markdown'>,
-): Promise<boolean> {
-  const first = await ctx.db
-    .query('docBlocks')
-    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
-    .first();
-  return first !== null || splitPage(page.markdown).length === 0;
 }
 
 /**

@@ -281,6 +281,10 @@ describe('headingFigures', (): void => {
       ['Revision 7.', 'Revision 8.'],
       ['更新于 2026年10月3日。', '更新于 2026年10月9日。'],
       ['版本 3', '版本 4'],
+      // The second pass: a full-width colon, a day and month with no year, a dotted date.
+      ['版本：3', '版本：4'],
+      ['Updated: 12/10', 'Updated: 14/10'],
+      ['Reviewed 3.10.2026 by the controller.', 'Reviewed 9.10.2026 by the controller.'],
     ]) {
       expect(headingFigures(...window(left, right)), left).toEqual([]);
     }

@@ -76,7 +76,9 @@ export interface MeasuredPage {
   readonly updatedAt: number;
   /**
    * Whether `updatedAt` is when the source says the page was edited, rather than when its reader
-   * read it (a list of URLs, an MCP server): only an edit time dates a successor (RM19 (a)).
+   * read it: what the page's row says, and for a row that does not say, its source's kind (a
+   * list of URLs, an MCP server, a git checkout). Only an edit time dates a successor (RM19 (a),
+   * D-8 (a)).
    */
   readonly edited: boolean;
 }
@@ -234,12 +236,18 @@ const FIGURE_DATE = /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/;
 const MONTH =
   '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
 
-/** A date in words: a day beside a month's name, a month's name beside a figure, a year, or 年月日. */
+/**
+ * A date that only a date word beside it makes one: a day beside a month's name, a month's name
+ * beside a figure, a year, a day and month in figures, or 年月日.
+ */
 const WORDED_DATE = new RegExp(
   [
     `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\b`,
     `\\b${MONTH}\\.?\\s+\\d{1,4}\\b`,
     '\\b(?:19|20)\\d{2}\\b',
+    // A day and a month in figures, with no year or with dots: "12/10", "12.10.2026".
+    '\\b\\d{1,2}\\/\\d{1,2}\\b',
+    '\\b\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}\\b',
     '\\d{4}\\s*年',
     '\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日',
   ].join('|'),
@@ -253,8 +261,8 @@ const MAY_DATE = /\b\d{1,2}(?:st|nd|rd|th)?\s+May\b|\bMay\s+\d{1,4}\b/;
 const DATE_WORD =
   /\b(?:updated|edited|reviewed|revised|as of|effective|copyright)\b|更新|修订|生效/i;
 
-/** A version or revision with its number: "Version 3", "revision: 7", "版本 4". */
-const VERSION_NUMBER = /\b(?:version|revision)\b\s*:?\s*\d|版本\s*:?\s*\d/i;
+/** A version or revision with its number: "Version 3", "revision: 7", "版本 4", "版本：4". */
+const VERSION_NUMBER = /\b(?:version|revision)\b\s*[:：]?\s*\d|版本\s*[:：]?\s*\d/i;
 
 /**
  * Whether a line dates or versions its page, so that its figures differ between any two pages: a

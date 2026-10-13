@@ -1197,6 +1197,7 @@ describe('the skills that read a page whose status changed', (): void => {
       status: 'superseded',
       supersededBy: successor,
     });
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, skillId)).toBe(
       'its runbook “Refreshing the tile” was superseded on 10 October 2026',
     );
@@ -1232,6 +1233,7 @@ describe('the skills that read a page whose status changed', (): void => {
         ...(nativeStatus !== undefined ? { nativeStatus } : {}),
       });
     }
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, archived)).toBe(
       'its runbook “Refreshing the tile” was archived on 10 October 2026',
     );

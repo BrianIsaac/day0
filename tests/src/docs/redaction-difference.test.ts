@@ -47,6 +47,24 @@ describe('sameButForRedaction', (): void => {
     ).toBe(false);
   });
 
+  it('answers a line built to make a pattern backtrack at once, as a change (the second pass)', (): void => {
+    // The reviewer's input: sixteen markers a letter apart against fifteen hundred of that
+    // letter and another ending. A pattern of sixteen bounded wildcards tries every way to place
+    // them before it gives up, which no sync would outlive; a page's author can write both lines.
+    const marker = personalDataMarker('person');
+    const stored = `${marker}${`b${marker}`.repeat(15)}Z`;
+    const incoming = `${'b'.repeat(1_500)}Y`;
+    const started = performance.now();
+    expect(sameButForRedaction(stored, incoming)).toBe(false);
+    expect(sameButForRedaction(incoming, stored)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    // And the same shape where the two do line up is still read as the redaction's.
+    const values = Array.from({ length: 16 }, (_, index) => `name${index}`);
+    expect(
+      sameButForRedaction(`${values.join('b')}Z`, `${values.map(() => marker).join('b')}Z`),
+    ).toBe(true);
+  }, 20_000);
+
   it('reads a line too long, or too full of markers, to compare as a change rather than guess', (): void => {
     const filler = 'x'.repeat(5_000);
     expect(

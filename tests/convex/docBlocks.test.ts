@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { copyPageStatusToBlocks, replacePageBlocks } from '../../convex/docBlocks';
+import {
+  RELATIONS_REPOINTED,
+  copyPageStatusToBlocks,
+  replacePageBlocks,
+} from '../../convex/docBlocks';
+import { RELATIONS_OF_A_PAGE } from '../../convex/docStatus';
 import type { PageStatus } from '../../src/docs/authority';
 import { allConvexModules } from './all-modules';
 
@@ -188,6 +193,11 @@ describe('replacePageBlocks', (): void => {
 });
 
 describe('replacePageBlocks and a page whose title is renamed (W15-R21)', (): void => {
+  it('re-points as many of a page’s relations as every other read of them takes', (): void => {
+    // The split cannot import the bound (`docStatus` imports `docBlocks`), so it keeps a copy.
+    expect(RELATIONS_REPOINTED).toBe(RELATIONS_OF_A_PAGE);
+  });
+
   const LIMITS = [
     '# Close limits',
     '',
