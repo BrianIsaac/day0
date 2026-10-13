@@ -136,18 +136,33 @@ describe('the Clerk appearance', () => {
   // image's `prefers-color-scheme` from the colour-scheme of the page that draws it (probed on
   // Chromium 1248, 12 October 2026), so the mark takes each set's values from the scheme the page
   // is in, whichever way the viewer chose it.
-  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour, in each theme", () => {
+  it("serves the mark from public/ in the brand's own geometry, the head in each theme's accent", () => {
     const mark = checkoutFile('public/day0-mark.svg');
     expect(rects(mark)).toEqual(rects(checkoutFile('app/icon.svg')));
     expect(mark).toMatch(/viewBox="0 0 16 16"/);
     const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
     const [dark, light] = style.split('@media (prefers-color-scheme: light)');
     expect(dark).toContain(`.head { fill: ${token('accent')}; }`);
-    expect(dark).toContain(`.eye { fill: ${token('card')}; }`);
     expect(light).toContain(`.head { fill: ${lightToken('accent')}; }`);
-    expect(light).toContain(`.eye { fill: ${lightToken('card')}; }`);
     expect(mark.match(/class="head"/g)).toHaveLength(2);
-    expect(mark.match(/class="eye"/g)).toHaveLength(2);
+  });
+
+  // Re-pinned (17-FX, V17-10): probed on the bed in Playwright's Firefox 155 and WebKit 2359 (13
+  // October 2026). Firefox answers the image's query from the page's colour-scheme, as Chromium
+  // does; WebKit answers it from the system, so a viewer who chose Light on a dark system met the
+  // dark set's eyes, two #18181b blocks on a white card, and one who chose Dark on a light system
+  // two white ones. A cut eye shows the card behind it in every engine, whatever answers the query.
+  it('cuts the eyes out of the head, so they are the colour of whatever the mark is drawn on, and names no eye colour for a scheme to pick', () => {
+    const mark = checkoutFile('public/day0-mark.svg');
+    const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
+    expect(style).not.toContain('.eye');
+    expect(mark).not.toContain(token('card'));
+    expect(mark).not.toContain(lightToken('card'));
+    const mask = /<mask id="eyes">([\s\S]*?)<\/mask>/.exec(mark)?.[1] ?? '';
+    // The two eyes of the icon, in its geometry, are what the mask takes out of the head.
+    expect(rects(mask)).toEqual(rects(checkoutFile('app/icon.svg')).slice(2));
+    expect(mask.match(/fill="#000"/g)).toHaveLength(2);
+    expect(mark).toMatch(/<g mask="url\(#eyes\)">\s*<rect [^>]*class="head"/);
   });
 });
 
