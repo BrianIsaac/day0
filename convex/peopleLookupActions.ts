@@ -156,7 +156,9 @@ async function slackUserByAddress(
   if (user === undefined || userId === undefined || user.is_bot === true || user.deleted === true) {
     return undefined;
   }
-  if (normaliseManagerAddress(text(asRecord(user.profile)?.email)) !== address) return undefined;
+  const asked = normaliseManagerAddress(address);
+  const members = normaliseManagerAddress(text(asRecord(user.profile)?.email));
+  if (asked === undefined || members !== asked) return undefined;
   const workspaceId = card.workspaceId ?? text(user.team_id);
   const handle = slackHandle(user);
   return {

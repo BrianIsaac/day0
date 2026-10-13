@@ -196,9 +196,25 @@ describe('peopleLookupActions.runLookups', (): void => {
       },
     });
     expect(await runLookups(runners(harness), [ines, kofi, sara], dependencies)).toBe(1);
-    expect(
+    // An address stored in another case is still the member's own (the second pass: the asked
+    // side is read as an address too, never compared raw).
+    await harness.run(
+      async (ctx) => await ctx.db.patch(kofi, { primaryEmail: 'Kofi.Mensah@Other.test' }),
+    );
+    const cased = slackFake({
+      'Kofi.Mensah@Other.test': member('U0KOFI', 'kofi', 'kofi.mensah@other.test'),
+    });
+    expect(await runLookups(runners(harness), [kofi], cased.dependencies)).toBe(1);
+    // Sara's, and Kofi's once his stored address is the member's own; never the manager's for Ines.
+    const recordedFor = new Map(
       (await graphRows(harness)).identities.map((row) => [row.personId, row.externalId]),
-    ).toEqual([[sara, 'U0SARA']]);
+    );
+    expect([recordedFor.get(ines), recordedFor.get(kofi), recordedFor.get(sara)]).toEqual([
+      undefined,
+      'U0KOFI',
+      'U0SARA',
+    ]);
+    expect(recordedFor.size).toBe(2);
   });
 
   it('records the Linear user get_user answers for the address, and nobody whose address is another', async (): Promise<void> => {
