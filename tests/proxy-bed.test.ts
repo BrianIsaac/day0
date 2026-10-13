@@ -245,3 +245,62 @@ describe("the bed's relay", (): void => {
     );
   }, 20_000);
 });
+
+describe('docs/running/proxy.md', (): void => {
+  const PAGE = readFileSync(path('docs/running/proxy.md'), 'utf8');
+
+  /** A configuration's lines that do something: no comment, no blank, one space between words. */
+  function directives(text: string): string[] {
+    return text
+      .split('\n')
+      .map((line) => line.trim().replace(/\s+/g, ' '))
+      .filter((line) => line !== '' && !line.startsWith('#'));
+  }
+
+  /** The page's one fenced block in a language. */
+  function printed(language: string): string {
+    const block = new RegExp(`\`\`\`${language}\\n([\\s\\S]*?)\\n\`\`\``).exec(PAGE);
+    expect(block, `a ${language} block`).not.toBeNull();
+    return block?.[1] ?? '';
+  }
+
+  // "Run on the same bed before it is printed": what the page prints is the file the bed ran,
+  // with a customer's names where the bed read its own from its environment.
+  it('prints the Caddy configuration the bed ran, with a customer’s names for the bed’s', (): void => {
+    // The bed's own: a throwaway certificate's two global options, in a block that is then empty,
+    // and an address to bind.
+    const own = directives(readFileSync(path('docker/proxy-bed/Caddyfile'), 'utf8')).filter(
+      (line) => !['auto_https off', 'admin off'].includes(line) && !/^bind /.test(line),
+    );
+    expect(own.slice(0, 2)).toEqual(['{', '}']);
+    const bed = own
+      .slice(2)
+      .map((line) =>
+        line
+          .replace('{$PROXY_BED_ADDRESS}:{$PROXY_BED_APP_PORT}', 'day0.acme.com')
+          .replace('{$PROXY_BED_ADDRESS}:{$PROXY_BED_BACKEND_PORT}', 'convex.day0.acme.com')
+          .replace('{$DAY0_APP_PORT}', '3000')
+          .replace('{$CONVEX_PORT}', '3210')
+          .replaceAll('/tls/', '/etc/day0/tls/'),
+      );
+    expect(directives(printed('caddyfile'))).toEqual(bed);
+  });
+
+  it('prints the nginx configuration the bed ran, its two servers told apart by name', (): void => {
+    const bed = directives(readFileSync(path('docker/proxy-bed/nginx.conf.template'), 'utf8'))
+      .flatMap((line) =>
+        line === 'listen ${PROXY_BED_ADDRESS}:${PROXY_BED_APP_PORT} ssl;'
+          ? ['listen 443 ssl;', 'server_name day0.acme.com;']
+          : line === 'listen ${PROXY_BED_ADDRESS}:${PROXY_BED_BACKEND_PORT} ssl;'
+            ? ['listen 443 ssl;', 'server_name convex.day0.acme.com;']
+            : [line],
+      )
+      .map((line) =>
+        line
+          .replace('${DAY0_APP_PORT}', '3000')
+          .replace('${CONVEX_PORT}', '3210')
+          .replace('/tls/', '/etc/day0/tls/'),
+      );
+    expect(directives(printed('nginx'))).toEqual(bed);
+  });
+});

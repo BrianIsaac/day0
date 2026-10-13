@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { egressHosts } from '../../../scripts/check-setup';
 import { PROFILES } from '../../../scripts/compose';
 import { REAL_MODE_PROFILES } from '../../../scripts/setup';
 
@@ -148,5 +149,85 @@ describe('the interfaces page', (): void => {
     expect(read('README.md').split(command).length - 1).toBe(2);
     expect(read('CONTRIBUTING.md')).toContain(`\`${command} <file>\``);
     expect(INTERFACES).toContain('`pnpm export:trace --owner`');
+  });
+});
+
+/**
+ * The three pages wave 17 added for a customer's IT (17-P): the reverse proxy, the way out and the
+ * upgrade with its way back. The checks and the setup send a reader to them by name and by
+ * section, so a page renamed, a heading reworded or a host added to the list has to reach the
+ * page before the gate is green.
+ */
+describe('the pages the checks send a reader to', (): void => {
+  const ROOT = new URL('../../../', import.meta.url);
+  const read = (file: string): string => readFileSync(new URL(file, ROOT), 'utf8');
+  /** Everything that prints a page's name to a person. */
+  const SOURCES = [
+    ...readdirSync(new URL('scripts/', ROOT))
+      .filter((name) => /\.(ts|sh)$/.test(name))
+      .map((name) => `scripts/${name}`),
+    ...readdirSync(new URL('scripts/lib/', ROOT)).map((name) => `scripts/lib/${name}`),
+    'docker-compose.yml',
+    'docker/proxy.bed.yml',
+    '.env.example',
+    'next.config.mjs',
+  ];
+  const TEXT = SOURCES.map(read).join('\n');
+
+  it('exist, each one a source names', (): void => {
+    const named = [
+      ...new Set([...TEXT.matchAll(/docs\/running\/([a-z-]+\.md)/g)].map(([, n]) => n!)),
+    ];
+    expect(named).toEqual(
+      expect.arrayContaining(['proxy.md', 'egress.md', 'upgrade-and-rollback.md']),
+    );
+    expect(named.filter((name) => !existsSync(new URL(`docs/running/${name}`, ROOT)))).toEqual([]);
+  });
+
+  it('carry every section of the proxy page a check names', (): void => {
+    const sections = [
+      ...new Set(
+        [
+          ...TEXT.replace(/'\s*\+\s*'/g, '').matchAll(
+            /docs\/running\/proxy\.md, \\?["']([^"'\\]+)/g,
+          ),
+        ].map(([, section]) => section!),
+      ),
+    ];
+    expect(sections.sort()).toEqual(['The app', 'The backend', 'The certificate']);
+    const page = read('docs/running/proxy.md');
+    for (const section of sections) expect(page).toContain(`\n## ${section}\n`);
+  });
+
+  it('list on the egress page every host the check can print', (): void => {
+    const page = read('docs/running/egress.md');
+    const everything = {
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      ELEVENLABS_API_KEY: 'k',
+      DAYTONA_API_KEY: 'k',
+    };
+    const bundled = {
+      DAY0_SURFACE_MODE: 'real',
+      CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+    };
+    const hosts = new Set(
+      [
+        ...egressHosts(everything, [], 'x64'),
+        ...egressHosts(everything, [], 'arm64'),
+        ...egressHosts(bundled, [], 'x64'),
+      ].map((row) => row.host),
+    );
+    expect(hosts.size).toBeGreaterThan(30);
+    expect([...hosts].filter((host) => !page.includes(`\`${host}\``))).toEqual([]);
+  });
+
+  it('give on the upgrade page the way back as the upgrade prints it', (): void => {
+    const page = read('docs/running/upgrade-and-rollback.md');
+    expect(read('scripts/setup.ts')).toContain("'Never start the old image over this volume.'");
+    expect(page).toContain('Never start the old image over this volume.');
+    expect(page).toMatch(
+      /\.\/setup\.sh restore \S+ from a checkout of v\d+\.\d+\.\d+ \(commit [0-9a-f]{12}\)\./,
+    );
   });
 });
