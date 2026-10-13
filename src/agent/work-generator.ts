@@ -9,6 +9,7 @@ import {
   NO_TEAM_ASK_FOR_ROLE,
   OFFICE_ASKS_CHANNEL,
   otherRolesAskThreads,
+  otherRolesTeamDocs,
 } from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
@@ -63,6 +64,10 @@ export const WORK_GEN_SYSTEM = [
   'Every ask of the action ticket is one the office lets the role finish in this one run: each fact it needs is in the snapshot, named as the snapshot names it (a row, a message or a document), and its contentRefs name those records; the work is a write in the office (a row appended to a tab, a message posted, a comment on the ticket), and the ticket closes once that is written. It never asks for a record, figure, reply or system the snapshot does not show, for anything done outside the office (buying, repairing, calling, meeting), or a draft to review before it closes: the manager approves every write before it lands.',
   '',
   '3. Beyond-the-office item: a second new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket", as a colleague would file it. Its ask needs one record or system the snapshot does not show (one the charter or the team docs name), as such tickets arrive in any office; the ticket never says the office lacks anything.',
+  '',
+  // Finding 3 of the v0.20.0 walk: an IT helpdesk role whose charter places hardware with the
+  // facilities team was filed a ticket to replace a desk monitor, and closed it as routed.
+  "Items 1 to 3 are this role's own work to do itself: none asks for anything a will-not-do clause excludes or the charter places with another person or team.",
   '',
   'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s will-do clauses as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
   '',
@@ -190,11 +195,25 @@ function shown(text: string): string {
 }
 
 /**
+ * The team documents a role is shown: every one but those that answer only another role's ask
+ * (`otherRolesTeamDocs`; 16-FW's F7, finding 3 of the v0.20.0 walk), so a ticket is drafted only
+ * from what the documents that reach the role say.
+ */
+function teamDocsShownTo(
+  env: MockSurfaceSnapshot,
+  charter: Charter,
+): MockSurfaceSnapshot['teamDocs'] {
+  const others = otherRolesTeamDocs(charterWords(charter), charter.proposedFunction);
+  return env.teamDocs.filter((doc) => !others.has(doc.slug));
+}
+
+/**
  * Render the mock environment snapshot as a compact, slug-forward
  * description the LLM can copy identifiers out of without hallucinating, with
  * what each record holds (13-FD): a tab's latest rows, a channel's latest
  * messages and each team document, so a ticket asks only for what is there.
- * A company-wide ask that is another role's work is not shown.
+ * A company-wide ask that is another role's work is not shown, and neither is the team document
+ * that answers it.
  */
 function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
@@ -234,9 +253,10 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
       }
     }
   }
-  if (env.teamDocs.length) {
+  const teamDocs = teamDocsShownTo(env, charter);
+  if (teamDocs.length) {
     lines.push('Team docs (read-only):');
-    env.teamDocs.forEach((d, index) => {
+    teamDocs.forEach((d, index) => {
       if (index >= TEAM_DOCS_SHOWN) {
         lines.push(`  - slug "${d.slug}" titled "${d.title}"`);
         return;
@@ -267,13 +287,14 @@ const RECORD_PREFIXES = ['mock-spreadsheet://', 'channel://', 'docs-fixture/', '
  * without a thread or a fragment: `mock-spreadsheet://<slug>`, `channel://<slug>`,
  * `docs-fixture/<slug>`, `twitter://<slug>`. The how-to guides are not among them: the snapshot
  * never shows them, and a ticket that names only one names nothing it asks for (the 13-FD second
- * pass). Naming a record is the floor of a ticket the office can back, not proof of it.
+ * pass); nor is a team document the role is not shown ({@link teamDocsShownTo}). Naming a record
+ * is the floor of a ticket the office can back, not proof of it.
  */
-function officeRecords(env: MockSurfaceSnapshot): ReadonlySet<string> {
+function officeRecords(env: MockSurfaceSnapshot, charter: Charter): ReadonlySet<string> {
   return new Set([
     ...env.spreadsheets.map((s) => `mock-spreadsheet://${s.slug}`),
     ...env.slackChannels.map((c) => `channel://${c.slug}`),
-    ...env.teamDocs.map((d) => `docs-fixture/${d.slug}`),
+    ...teamDocsShownTo(env, charter).map((d) => `docs-fixture/${d.slug}`),
     ...env.tweets.map((tw) => `twitter://${tw.slug}`),
   ]);
 }
@@ -428,7 +449,7 @@ export async function generateWorkItemsFromCharter(
     '',
     'Generate the 4 day-one work items now.',
   ].join('\n');
-  const records = officeRecords(mockEnv);
+  const records = officeRecords(mockEnv, charter);
   const threads = askThreadsBySender(
     mockEnv,
     otherRolesAskThreads(charterWords(charter), charter.proposedFunction),

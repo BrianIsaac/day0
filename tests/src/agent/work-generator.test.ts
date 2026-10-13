@@ -45,6 +45,7 @@ import {
   PIP_W19,
   PRIYA_ASK,
 } from '../../fixtures/agent/office-roles-2026-10-11';
+import { NELL_W20, OFFICE_TEAM_DOCS, PIP_W20 } from '../../fixtures/agent/office-roles-2026-10-13';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -696,6 +697,73 @@ describe("the revenue team's ask a role is shown (W19-3, the v0.19.0 walk)", ():
         '  - slug "revops-asks" (channel, displayed as "#revops-asks")\n      (no ask for this role is open here)',
       );
     }
+  });
+});
+
+describe('the team documents a role is shown (16-FW’s F7; finding 3 of the v0.20.0 walk)', (): void => {
+  const WHOLE_OFFICE = { ...OFFICE, teamDocs: OFFICE_TEAM_DOCS };
+  const shownTo = async (charter: Charter): Promise<string> => {
+    await generateWorkItemsFromCharter(charter, WHOLE_OFFICE as never);
+    return prompts.at(-1) ?? '';
+  };
+
+  it('shows the support triage role no example of a revenue operations ask: 16-FW’s "pipeline coverage figures" ticket', async (): Promise<void> => {
+    const prompt = await shownTo(PIP_W20);
+    expect(prompt).not.toContain('pipeline coverage');
+    expect(prompt).not.toContain('slug "team-overview"');
+    // Its own ask's page, whole, and the office's own pages.
+    expect(prompt).toContain('slug "billing-replies" titled "Customer billing replies":');
+    expect(prompt).toContain('billing reviews duplicate charges within two business days');
+    expect(prompt).toContain('slug "on-call" titled "On-call rotation":');
+    expect(prompt).toContain('slug "escalation-paths" titled "Escalation paths":');
+    expect(prompt).toContain('slug "onboarding" titled "Onboarding: first week":');
+  });
+
+  it('shows the IT helpdesk role no supplies page: the walk’s "desk monitor has failed" ticket, which its charter places with facilities', async (): Promise<void> => {
+    const prompt = await shownTo(NELL_W20);
+    expect(prompt).not.toContain('supply cupboard');
+    expect(prompt).not.toContain('Spare monitors');
+    expect(prompt).not.toContain('slug "office-supplies"');
+    expect(prompt).not.toContain('slug "billing-replies"');
+    expect(prompt).toContain('slug "it-access" titled "IT access and passwords":');
+    expect(prompt).toContain('Sign out of the drive app on every device.');
+  });
+
+  it('shows the revenue role its team overview whole, as before', async (): Promise<void> => {
+    const prompt = await shownTo(LARK_W19);
+    expect(prompt).toContain('slug "team-overview" titled "Team overview: RevOps":');
+    expect(prompt).toContain("What's our pipeline coverage on enterprise?");
+    expect(prompt).not.toContain('slug "it-access"');
+  });
+
+  it('asks again for an action ticket that names only a page the role is not shown', async (): Promise<void> => {
+    const onSupplies = {
+      ...ACTION,
+      title: 'Answer the routine access ticket about the spare monitor',
+      contentRefs: ['docs-fixture/office-supplies'],
+    };
+    const onAccess = { ...onSupplies, contentRefs: ['docs-fixture/it-access'] };
+    const read = { ...READ, title: 'Which wiki steps answer routine access questions?' };
+    const beyond = { ...BEYOND, title: 'Sort the routine access tickets against the CRM export' };
+    drafts.push(
+      [read, onSupplies, beyond, PLAIN_OUT_OF_SCOPE],
+      [read, onAccess, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const items = await generateWorkItemsFromCharter(NELL_W20, {
+      ...WHOLE_OFFICE,
+      spreadsheets: [],
+    } as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The action item in your last draft names no record the snapshot holds',
+    );
+    expect(items.map((item) => item.contentRefs)).toContainEqual(['docs-fixture/it-access']);
+  });
+
+  it('tells the generator that the three items of the role’s own work ask for nothing its will-not-do clauses exclude', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      "Items 1 to 3 are this role's own work to do itself: none asks for anything a will-not-do clause excludes or the charter places with another person or team.",
+    );
   });
 });
 
