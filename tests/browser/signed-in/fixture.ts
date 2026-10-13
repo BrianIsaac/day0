@@ -571,9 +571,13 @@ export function employeePage(): Record<string, unknown> {
   };
 }
 
-const month = (days: ReadonlyArray<readonly [string, number]>) => ({
+const month = (days: ReadonlyArray<readonly [string, number, number?]>) => ({
   month: '2026-10',
-  days: days.map(([day, landed]) => ({ day, landed })),
+  days: days.map(([day, landed, partly]) => ({
+    day,
+    landed,
+    ...(partly === undefined ? {} : { partly }),
+  })),
   atLeast: false,
 });
 
@@ -594,9 +598,11 @@ export function home(): Record<string, unknown> {
       stoppedCount: 1,
       needsYou: 2,
       docSourceCount: 2,
+      // The 9th is a busy day with partly done work named on its tint, so the contrast check
+      // measures that text where it was under the floor (the wave 17 bed's finding, 17-F).
       landedThisMonth: month([
         ['2026-10-03', 4],
-        ['2026-10-09', 2],
+        ['2026-10-09', 6, 2],
       ]),
     },
     {

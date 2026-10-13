@@ -95,7 +95,9 @@ export function MonthGrid({
                 </span>
               ) : null}
               {partlyDone > 0 ? (
-                <span className="block text-[var(--color-muted)] max-sm:sr-only">
+                // The secondary text colour, not the muted one: on a busy day's tint the muted grey
+                // was 4.05 to 1 in the dark theme (the wave 17 bed, 51 employees), under the floor.
+                <span className="block text-[var(--color-fg-2)] max-sm:sr-only">
                   {partlyDone} partly
                 </span>
               ) : null}
