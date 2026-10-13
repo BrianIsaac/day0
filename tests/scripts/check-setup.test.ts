@@ -1076,6 +1076,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     const lines = section.lines.join('\n');
     expect(lines).not.toContain('hunter2');
     expect(lines).toContain('the backend, the Slack socket bridge, the redactor and Nango');
+    expect(lines).toContain(
+      'The setup and the three checks start themselves with it, run by hand or not.',
+    );
     expect(lines).toContain('NO_PROXY also keeps out: day0.acme.test, login.acme.test.');
   });
 

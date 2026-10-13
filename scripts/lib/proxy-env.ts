@@ -5,7 +5,7 @@
  * direct route to the internet names its proxy once, in `.env.local`, by the names every HTTP
  * client already reads. The compose file hands them to each service that reaches out; this module
  * is what the processes started on this machine (the app under `pnpm start`, the setup's children,
- * the checks' probes) are given, since Node reads a proxy from its environment only when
+ * the checks and their probes) are given, since Node reads a proxy from its environment only when
  * `NODE_USE_ENV_PROXY=1` is set before it starts, and Next reads `.env.local` after.
  */
 
@@ -159,6 +159,30 @@ export function hostProxyEnvironment(settings: ProxySettings): Record<string, st
     NO_PROXY: mergedNoProxy(settings.noProxy, LOOPBACK_NO_PROXY),
     NODE_USE_ENV_PROXY: '1',
   };
+}
+
+/**
+ * What a command on this machine must be started again with so that it, and every child it
+ * starts, takes the way out the install names: undefined when it already holds it, or when no
+ * proxy is named.
+ *
+ * A check run by hand starts in a shell that names no proxy while `.env.local` does. Its own
+ * requests would then dial out directly, and its Convex CLI children, handed the file's values as
+ * written, would send their calls to this machine's backend to the proxy (found on the bed
+ * `day0-w17p`, 13 October 2026: nine refused, and two findings that were not so). Started by the
+ * setup, or once restarted, it holds exactly this and runs as it is.
+ *
+ * @param shell - The environment the command was started with.
+ * @param file - The env file's values.
+ */
+export function restartEnvironment(
+  shell: Readonly<Record<string, string | undefined>>,
+  file: Readonly<Record<string, string | undefined>>,
+): Record<string, string> | undefined {
+  const wanted = hostProxyEnvironment(
+    proxySettings((name) => (shell[name] ?? '').trim() || file[name]),
+  );
+  return Object.entries(wanted).some(([name, value]) => shell[name] !== value) ? wanted : undefined;
 }
 
 /**

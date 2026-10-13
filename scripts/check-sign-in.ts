@@ -56,6 +56,7 @@ import {
   type SignInCheckReport,
 } from '../src/lib/sign-in-check';
 import { readEnvValues } from './lib/env-file';
+import { runUnderProxy } from './lib/under-proxy';
 import { firstLine } from './model-reach';
 import { isLoopback } from './setup-route';
 
@@ -972,7 +973,23 @@ async function main(argv: readonly string[]): Promise<number> {
   return reportExitCode(report);
 }
 
+/**
+ * The env file the command line names, for the one read made before `main`: the default where
+ * the line does not parse, which `main` then says.
+ *
+ * @param argv - The arguments after the script.
+ */
+function envFileNamed(argv: readonly string[]): string {
+  try {
+    return parseArguments(argv).envFile;
+  } catch {
+    return '.env.local';
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Handed back rather than passed to process.exit so a piped stdout drains.
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode =
+    runUnderProxy(readEnvValues(envFileNamed(process.argv.slice(2)))) ??
+    (await main(process.argv.slice(2)));
 }

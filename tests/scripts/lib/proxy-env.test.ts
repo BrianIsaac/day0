@@ -11,6 +11,7 @@ import {
   proxyNodeGap,
   proxySettings,
   PROXY_VARIABLES,
+  restartEnvironment,
   SERVICE_NO_PROXY,
 } from '../../../scripts/lib/proxy-env';
 
@@ -138,5 +139,42 @@ describe('what the deployment must exclude', (): void => {
     ]);
     expect(missingFromDeployment(undefined, undefined)).toEqual([...SERVICE_NO_PROXY]);
     expect(noProxyEntries(' a , ,b,')).toEqual(['a', 'b']);
+  });
+});
+
+describe('a command run by hand on an install that names a proxy', (): void => {
+  // The bed's own file (day0-w17p, 13 October 2026): `pnpm check:setup` from a plain shell handed
+  // its Convex CLI children these three as written, and the CLI sent its calls to the backend at
+  // 127.0.0.1:5370 to the proxy, nine times refused, for two findings that were not so.
+  const BED = {
+    HTTPS_PROXY: 'http://10.117.246.30:3128',
+    HTTP_PROXY: 'http://10.117.246.30:3128',
+    NO_PROXY: '10.117.246.10,10.117.246.1',
+  };
+  const WANTED = {
+    HTTPS_PROXY: 'http://10.117.246.30:3128',
+    HTTP_PROXY: 'http://10.117.246.30:3128',
+    NO_PROXY: 'localhost,127.0.0.1,10.117.246.10,10.117.246.1',
+    NODE_USE_ENV_PROXY: '1',
+  };
+
+  it('is started again with the proxy the file names, this machine kept out of it', (): void => {
+    expect(restartEnvironment({ PATH: '/usr/bin' }, BED)).toEqual(WANTED);
+  });
+
+  it('runs as it is once it holds that, so the restart happens once and the setup’s children never restart', (): void => {
+    expect(restartEnvironment({ PATH: '/usr/bin', ...WANTED }, BED)).toBeUndefined();
+  });
+
+  it('runs as it is where no proxy is named', (): void => {
+    expect(restartEnvironment({ PATH: '/usr/bin' }, {})).toBeUndefined();
+    expect(restartEnvironment({}, { NO_PROXY: 'day0.acme.test' })).toBeUndefined();
+  });
+
+  it('takes the shell’s own proxy over the file’s, and still keeps this machine out of it', (): void => {
+    expect(restartEnvironment({ HTTPS_PROXY: 'http://other.acme.test:8080' }, BED)).toEqual({
+      ...WANTED,
+      HTTPS_PROXY: 'http://other.acme.test:8080',
+    });
   });
 });

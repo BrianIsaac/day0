@@ -113,6 +113,7 @@ import {
   proxyNodeGap,
   proxySettings,
 } from './lib/proxy-env';
+import { runUnderProxy } from './lib/under-proxy';
 import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -2035,7 +2036,7 @@ export function wayOutSection(
     title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
     lines.push(
       'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
-      'and `pnpm start` to the app. A setup or check command reads it from the shell it runs in.',
+      'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
       "Day0's own services and this machine are always kept out of it.",
     );
     // The customer's own names: the services' list is said in the line above, once.
@@ -2267,5 +2268,7 @@ function checkoutCommit(): string | undefined {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = main(ENV_FILE, { report: process.argv.includes('--report') });
+  process.exitCode =
+    runUnderProxy(readEnvFile(ENV_FILE)) ??
+    main(ENV_FILE, { report: process.argv.includes('--report') });
 }
