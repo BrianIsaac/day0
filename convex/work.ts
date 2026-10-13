@@ -38,6 +38,7 @@ import {
   PARKED_WORK_STATES,
   queueStep,
   resumeStalledStepsInTransaction,
+  ROW_BYTES_AT_MOST,
   scheduleApply,
   scheduleNextStep,
   stepMayRun,
@@ -343,9 +344,6 @@ const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'],
  * heavy rows read past what one query may. Half of that, which leaves the names their reads.
  */
 export const WORK_LIST_BYTES = 8 * 1024 * 1024;
-
-/** The most bytes one document holds (Convex's limit): what a row not yet read may weigh. */
-const ROW_BYTES_AT_MOST = 1024 * 1024;
 
 /** One read of an employee's work items, newest first: those created before a time, at most a count. */
 type NewestBefore = (before: number | undefined, count: number) => Promise<Doc<'workItems'>[]>;

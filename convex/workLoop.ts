@@ -1065,7 +1065,7 @@ export const SETTLE_WRITES_PER_SWEEP = 500;
 export const SETTLE_BYTES_PER_SWEEP = 4 * 1024 * 1024;
 
 /** The most bytes one document holds (Convex's limit): what a work item not yet read may weigh. */
-const ROW_BYTES_AT_MOST = 1024 * 1024;
+export const ROW_BYTES_AT_MOST = 1024 * 1024;
 
 /** What one transaction of the sweep may still write, counted as it writes. */
 interface SweepRoom {
