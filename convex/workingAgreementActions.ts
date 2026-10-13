@@ -451,8 +451,9 @@ export const checkForCharter = internalAction({
           await ctx.runMutation(internal.workingAgreements.recordChecked, settled);
         }
       } else {
+        // The value is not printed: it would carry the agreement's statement into the log.
         const unknown: never = outcome;
-        throw new Error(`unhandled check outcome ${JSON.stringify(unknown)}`);
+        throw new Error(`unhandled check outcome ${String(unknown)}`);
       }
       // The new watch first, then the old one ended: no moment is left unwatched (the second
       // pass).
