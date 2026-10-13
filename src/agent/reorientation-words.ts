@@ -317,14 +317,34 @@ export const PROPOSAL_DID_NOT_FINISH = 'did not finish';
  * @param failure - The stored reason, when there is one.
  */
 export function failedProposalWords(name: string, failure?: string): string {
+  return `${failureOpening(name, failure)} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
+}
+
+/** That the judgement could not propose, and why, as a card's first sentence about it. */
+function failureOpening(name: string, failure: string | undefined): string {
   const reason = failure?.trim().replace(/[.!?]+$/u, '');
-  const opening =
-    reason === PROPOSAL_DID_NOT_FINISH
-      ? `${name} did not finish working out a proposal.`
-      : reason === undefined || reason === ''
-        ? `${name} could not work out a proposal for this change.`
-        : `${name} could not work out a proposal (${reason}).`;
-  return `${opening} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
+  return reason === PROPOSAL_DID_NOT_FINISH
+    ? `${name} did not finish working out a proposal.`
+    : reason === undefined || reason === ''
+      ? `${name} could not work out a proposal for this change.`
+      : `${name} could not work out a proposal (${reason}).`;
+}
+
+/**
+ * What a decided card says of a proposal that never came: that none was made, or that the
+ * judgement could not make one, with nothing about what the manager could still do. A dismissed
+ * card went on telling its reader to dismiss it, and a card another employee's Approve closed
+ * that the employee was still working one out (the bed day0-w17o, 13 October 2026).
+ *
+ * @param proposal - The card's proposal, still pending: when it failed and why, if it did.
+ */
+export function unproposedWords(
+  name: string,
+  proposal: { readonly failedAt?: number; readonly failure?: string },
+): string {
+  return proposal.failedAt !== undefined
+    ? failureOpening(name, proposal.failure)
+    : `${name} had proposed nothing when the card was decided.`;
 }
 
 /** Why Approve was refused for a card whose proposal changed since the page drew it (W16-R24). */

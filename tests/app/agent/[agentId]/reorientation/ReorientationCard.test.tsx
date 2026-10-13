@@ -748,6 +748,31 @@ describe('a reorientation card', (): void => {
     deferred.unmount();
   });
 
+  it('tells a decided card’s reader nothing they could still do about a proposal that never came (the bed’s shot)', async (): Promise<void> => {
+    // The bed day0-w17o, 13 October (`cards-after-1440.png`): a dismissed card still read "Priya
+    // could not work out a proposal (Not Found). Nothing changes unless you act: talk it through
+    // with Priya, dismiss the card, or amend the charter yourself.", and fifty cards another
+    // employee's Approve closed would have read "is working out what to propose".
+    const decided = { status: 'dismissed', decidedAt: OPENED + 60_000 } as const;
+    const failed = drawn(
+      withCard({
+        ...decided,
+        proposed: { kind: 'pending', failedAt: OPENED + 30_000, failure: 'Not Found' },
+      }),
+    );
+    expect(failed.container.textContent).toContain(
+      'Mira could not work out a proposal (Not Found).',
+    );
+    expect(failed.container.textContent).not.toContain('Nothing changes unless you act');
+    failed.unmount();
+    const never = drawn(withCard({ ...decided, proposed: { kind: 'pending' } }));
+    expect(never.container.textContent).toContain(
+      'Mira had proposed nothing when the card was decided.',
+    );
+    expect(never.container.textContent).not.toContain('is working out what to propose');
+    never.unmount();
+  });
+
   it('offers no Discuss on a decided card', async (): Promise<void> => {
     const view = drawn(withCard({ status: 'applied', decidedAt: OPENED + 60_000 }));
     expect(view.container.querySelector('a[href$="/talk/card-1"]')).toBeNull();

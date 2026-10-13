@@ -14,6 +14,7 @@ import {
   pendingWords,
   proposalFingerprint,
   sentenceOf,
+  unproposedWords,
   PROPOSAL_DID_NOT_FINISH,
 } from '../../../src/agent/reorientation-words';
 
@@ -125,6 +126,18 @@ const SAME_TITLED = [
 ] as const;
 
 describe('a judgement that failed, and an Approve of what the manager was shown (17-O; W16-R23, W16-R24)', (): void => {
+  it('says of a decided card’s missing proposal only that none came, and why when the judgement failed', (): void => {
+    expect(unproposedWords('Mira', {})).toBe(
+      'Mira had proposed nothing when the card was decided.',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'Not Found' })).toBe(
+      'Mira could not work out a proposal (Not Found).',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: PROPOSAL_DID_NOT_FINISH })).toBe(
+      'Mira did not finish working out a proposal.',
+    );
+  });
+
   it('names the ways on from a failed judgement, Discuss first, with its reason or that it did not finish', (): void => {
     const ways =
       'Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';

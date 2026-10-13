@@ -18,6 +18,7 @@ import {
   pendingWords,
   proposalFingerprint,
   sentenceOf,
+  unproposedWords,
   revisitDay,
 } from '@/agent/reorientation-words';
 import { Button, ButtonLink } from '../../../components/Button';
@@ -343,9 +344,11 @@ export function ReorientationCard({
           <div className="mt-2 grid gap-2 rounded-lg border border-[var(--color-border)] p-3 [overflow-wrap:anywhere]">
             {proposed.kind === 'pending' ? (
               <p>
-                {proposed.failedAt !== undefined
-                  ? failedProposalWords(name, proposed.failure)
-                  : pendingWords(name, held)}
+                {decided
+                  ? unproposedWords(name, proposed)
+                  : proposed.failedAt !== undefined
+                    ? failedProposalWords(name, proposed.failure)
+                    : pendingWords(name, held)}
               </p>
             ) : (
               <ProposalBody view={view} proposed={proposed} />
