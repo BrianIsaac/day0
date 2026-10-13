@@ -1287,7 +1287,9 @@ describe('the approval line once the approved writes have applied (W19-8)', (): 
     const deployment = mount(element({ by: 'deployment' }));
     await press(deployment.container, 'Approve selected (2)');
     expect(said(deployment.container)).toEqual([
-      'Approved 2 actions: they apply once this deployment’s scheduled work runs again.',
+      // The apostrophe the card's own "Held while this deployment's scheduled work is paused"
+      // is written with, so the two lines beside each other read alike.
+      "Approved 2 actions: they apply once this deployment's scheduled work runs again.",
     ]);
     deployment.unmount();
   });

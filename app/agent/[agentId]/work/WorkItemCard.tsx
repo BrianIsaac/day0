@@ -201,7 +201,7 @@ function approvedActionsWords(approved: number, hold: RunHold | undefined): stri
     case 'employee':
       return `${head} when ${hold.employeeName} is unpaused.`;
     case 'deployment':
-      return `${head} once this deployment’s scheduled work runs again.`;
+      return `${head} once this deployment's scheduled work runs again.`;
   }
 }
 
