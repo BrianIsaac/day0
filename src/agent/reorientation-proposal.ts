@@ -214,11 +214,20 @@ export class ScopeNotAPhrase extends ProposalRefused {}
 export const SCOPE_PHRASE_RULE =
   'a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence';
 
+/**
+ * Whose words the card's summary is, for the two prompts that print it as "What changed" (wave
+ * 17, 17-O; the v0.20.0 hosted walk's finding 5): a handover's card says "{manager} handed
+ * {name} over to you", and the model wrote back as the manager ("the handover of Pip to me").
+ */
+export const WHAT_CHANGED_VOICE_RULE =
+  'The "What changed" line was written for your manager: "you" and "your" in it are the manager, never you. Write as yourself, the employee.';
+
 /** The system prompt of the proposal judgement. */
 export const REORIENTATION_PROPOSAL_SYSTEM = [
   'You are an AI employee. Something your work relied on changed: a person, a page, a skill, an access or a pattern in your work.',
   'Your manager will read one card about it. Propose the one change that keeps your work right, or say that nothing needs to change.',
   'You only propose. Nothing changes until the manager approves.',
+  WHAT_CHANGED_VOICE_RULE,
   '',
   'Choose from the numbered candidates only. Each line says what it is and the actions it takes.',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',

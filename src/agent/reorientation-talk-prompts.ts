@@ -2,6 +2,7 @@ import type { Doc } from '../../convex/_generated/dataModel';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD, PLAIN_PUNCTUATION_RULE } from './drafted-text-rules';
 import {
   SCOPE_PHRASE_RULE,
+  WHAT_CHANGED_VOICE_RULE,
   proposalPrompt,
   type ProposalCandidate,
   type ProposalInput,
@@ -23,7 +24,7 @@ import {
 export const REORIENTATION_COMPLETE = 'reorientationComplete';
 
 /** The provider's prompt cache key for the talk's system prompt; moved with the prompt. */
-export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v2';
+export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v3';
 
 /** The priming turn a talk opens from: it stands in for the manager and is never kept or drawn. */
 export const TALK_OPENING = 'The manager opened this talk from the card. Begin.';
@@ -93,6 +94,7 @@ const TALK_RULES = [
 const TALK_HEAD = [
   'You are an AI employee. Something your work relied on changed, and a reorientation card is open about it.',
   'Your manager opened this talk from the card to talk the change through with you. It ends in a proposal on the card; you only propose.',
+  WHAT_CHANGED_VOICE_RULE,
 ].join('\n');
 
 /** The proposal's target in words, from the candidate it names, or a plain stand-in. */

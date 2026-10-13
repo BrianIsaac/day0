@@ -280,7 +280,8 @@ describe('the talk’s route: a turn', (): void => {
     expect(sent[0]).toMatchObject({
       model: GLM,
       stream: true,
-      prompt_cache_key: 'day0-reorientation-talk-v2',
+      // Re-taken (17-O): the key moved with the talk's head (`WHAT_CHANGED_VOICE_RULE`).
+      prompt_cache_key: 'day0-reorientation-talk-v3',
       messages: [{ role: 'system', content: 'THE TALK SYSTEM PROMPT' }, { role: 'user' }],
     });
     expect(sent[0]).not.toHaveProperty('tools');
