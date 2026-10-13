@@ -392,6 +392,13 @@ export interface QuestionRequest {
   readonly ts: string | undefined;
 }
 
+/**
+ * The items one read of the question requests looks up, each row read whole for its request: a
+ * row carries its plan and its output, so the bound is on rows and not on questions (17-C's
+ * second pass; the cards read as many plans whole, `HELD_PLANS_READ`).
+ */
+const QUESTION_ITEMS_READ = 20;
+
 /** The remembered requests of one item a read looks through for its plan's: one a park, few. */
 const ITEM_REQUESTS_READ = 20;
 
@@ -434,7 +441,8 @@ async function planRequestOf(
  * The plan requests on one DM whose item has a conflict question still standing, newest question
  * first, each item once (17-C): the question holds steps of the plan until it is answered, so the
  * manager may answer long after the request was decided, by its code at the top of the DM or in
- * its thread. A question whose conflict no longer stands waits for nothing.
+ * its thread. A question whose conflict no longer stands waits for nothing. An item's row is read
+ * once whatever it was asked, and no more than {@link QUESTION_ITEMS_READ} items are looked up.
  *
  * @param ctx - The poll's query context.
  * @param surface - The manager channel's card.
@@ -453,31 +461,25 @@ export async function questionRequestsOn(
     .order('desc')
     .take(QUESTIONS_OWED_READ);
   const requests = new Map<Id<'workItems'>, QuestionRequest>();
+  const looked = new Map<Id<'workItems'>, QuestionRequest | undefined>();
   for (const question of questions) {
     if (requests.size >= most) break;
     if (question.type !== 'retrieval' || question.relationId === undefined) continue;
     if (!isOpenQuestion(question) || requests.has(question.workItemId)) continue;
-    const request = await planRequestOf(ctx, question.workItemId, surface, channel);
+    if (!looked.has(question.workItemId)) {
+      if (looked.size >= QUESTION_ITEMS_READ) continue;
+      looked.set(
+        question.workItemId,
+        await planRequestOf(ctx, question.workItemId, surface, channel),
+      );
+    }
+    const request = looked.get(question.workItemId);
     if (request === undefined) continue;
     if ((await standingConflictOf(ctx, await ctx.db.get(question.relationId))) !== undefined) {
       requests.set(question.workItemId, request);
     }
   }
   return [...requests.values()];
-}
-
-/**
- * Whether a conflict's question beside a plan whose request went to this DM still waits for its
- * answer (the second pass's M1): the question holds nothing of the plan's other steps, so the
- * manager may answer long after the request was decided, and the poll reads the DM until the
- * conflict is settled or answered.
- */
-export async function conflictAnswerOwedOn(
-  ctx: QueryCtx,
-  surface: Pick<Doc<'surfaces'>, 'agentId' | 'slug'>,
-  channel: string,
-): Promise<boolean> {
-  return (await questionRequestsOn(ctx, surface, channel, 1)).length > 0;
 }
 
 /** One of an item's conflict questions, with the number the manager answers it by. */
@@ -523,6 +525,15 @@ export async function numberedConflictQuestions(
   return numbered;
 }
 
+/**
+ * How far the deployment's clock may lead the provider's before a question a request carried is
+ * read as asked after it and posted a second time in the thread (17-C's second pass): a request
+ * is on its way out for well under a second, so a lead of that much was enough. Five seconds is
+ * past any clock a working deployment keeps, and far short of the time a manager takes to settle
+ * a conflict and confirm it again, which is the one way the same words are asked twice.
+ */
+export const QUESTION_CARRIED_SKEW_MS = 5_000;
+
 /** What becomes of a queued question notice when its send looks at it. */
 export type QuestionNoticeOwed =
   /** Posted now, in the request's thread; numbered where the plan has several standing. */
@@ -544,7 +555,9 @@ export type QuestionNoticeOwed =
  * resent with the question in it. Whether the body carried the question is read off the times: a
  * question asked after the provider took the request was not in it, and one asked while the
  * request was on its way out, when the body was built before or after it, is looked for in the
- * request's own text. Read by `work.prepareManagerReplyNotice`.
+ * request's own text. The two times are two machines' clocks, the deployment's and the
+ * provider's, so a question asked within {@link QUESTION_CARRIED_SKEW_MS} after the provider's
+ * stamp still counts as asked on the way out. Read by `work.prepareManagerReplyNotice`.
  */
 export async function questionNoticeOwed(
   ctx: QueryCtx,
@@ -565,7 +578,7 @@ export async function questionNoticeOwed(
   }
   const deliveredAt = providerTsToMs(decision.ts);
   if (
-    (deliveredAt === null || question._creationTime <= deliveredAt) &&
+    (deliveredAt === null || question._creationTime <= deliveredAt + QUESTION_CARRIED_SKEW_MS) &&
     decision.requestText?.includes(slackEscaped(question.question)) === true
   ) {
     return { state: 'drop' };

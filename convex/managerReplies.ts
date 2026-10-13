@@ -12,6 +12,7 @@ import {
 } from '../src/work/manager-channel';
 import { appendEvent } from './eventLog';
 import { providerTsToMs } from '../src/work/provider-ts';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 import { requestThreadOf } from './decisionRequests';
 import {
@@ -311,7 +312,8 @@ async function managerReplyNoticeAnchor(
 /**
  * What Day0 answers a bare `answer {code} B` while several of the plan's questions stand (17-C;
  * section 7's draft, with the open questions named after it so the reply can be acted on from a
- * message that showed no number): nothing is decided.
+ * message that showed no number): nothing is decided. A heading is a page's own words, so it is
+ * escaped as Slack asks and never read as a mention or a link.
  */
 export function whichQuestionText(
   id: string,
@@ -320,7 +322,7 @@ export function whichQuestionText(
   const example = open[1]?.number ?? open[0]?.number ?? 1;
   // Each carries a comma of its own, so the list is set off by semicolons.
   const named = open
-    .map((question) => `${question.number}, under “${question.heading}”`)
+    .map((question) => `${question.number}, under “${slackEscaped(question.heading)}”`)
     .join('; ');
   return `Which one? This plan has ${open.length} questions open: answer with its number, for example “answer ${id} ${example} B”. They are: ${named}.`;
 }
@@ -398,12 +400,16 @@ async function answerFromChannel(
     );
   }
   if (!target.standing) {
-    const { answer } = target.question;
+    const { answer, closed } = target.question;
     return await ignored(
       'question no longer open',
       answer !== undefined
-        ? `Question ${target.number} was already answered: ${answer.text}.`
-        : CONFLICT_QUESTION_CLOSED,
+        ? `Question ${target.number} was already answered: ${slackEscaped(answer.text)}.`
+        : closed?.reason === 'redrafted'
+          ? // Its pages may still disagree: the plan it was asked beside is gone, and the plan that
+            // stands now asks its own.
+            `Question ${target.number} was closed when the plan was drafted again.`
+          : CONFLICT_QUESTION_CLOSED,
     );
   }
   // The reply's sender was checked against the card's manager: the relation is decided in the
@@ -421,7 +427,7 @@ async function answerFromChannel(
   const notified = await notice(
     // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
     [
-      `Recorded${number === undefined ? '' : ` for question ${target.number}`}: ${text}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
+      `Recorded${number === undefined ? '' : ` for question ${target.number}`}: ${slackEscaped(text)}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
       ...(left === 0
         ? []
         : [
@@ -587,11 +593,15 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
         kept.channel === surface.managerDmChannelId
           ? await ctx.db.get(kept.workItemId)
           : null;
-      if (
-        kept !== null &&
-        item !== null &&
-        (await openConflictQuestions(ctx, item._id)).length > 0
-      ) {
+      // Only the questions asked beside the kept request's own plan are its to answer: one asked
+      // since it was kept belongs to a plan drafted after it, whose request has its own code.
+      const own =
+        kept === null || item === null
+          ? []
+          : (await openConflictQuestions(ctx, item._id)).filter(
+              (question) => question.askedAt <= kept.replacedAt,
+            );
+      if (kept !== null && item !== null && own.length > 0) {
         return await answerFromChannel(
           ctx,
           surface,

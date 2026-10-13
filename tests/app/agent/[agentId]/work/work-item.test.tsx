@@ -6,6 +6,7 @@ import {
   failedItemReason,
   heldQuestionOf,
   settledQuestionWords,
+  unreadQuestionWords,
   finishedAs,
   justLanded,
   landedPlaces,
@@ -133,9 +134,19 @@ describe('the stop beside a conflict’s question says what is true of it now (1
     expect(failedItemReason(stopped(conflict), [{ relationId: 'r1', pages: null }])).toBe(
       'The question this run waited on is no longer open. Retry runs it.',
     );
-    // Not among the card's questions at all.
+  });
+
+  it('says where a question past the ones the page reads is decided, and not that it is settled (17-C’s second pass)', (): void => {
+    const stop = openQuestionStopReason(conflict);
+    // Not among the card's questions at all: whether it stands is not known here.
     expect(failedItemReason(stopped(conflict), [])).toBe(
-      'The question this run waited on is no longer open. Retry runs it.',
+      `stopped on a question about two pages that disagree, and the writes that wait on it were never sent; the question is past the ones this page reads, so if it is still open say which page is right on the Documentation tab, then Retry: ${stop}`,
+    );
+    expect(failedItemReason(stopped(conflict), [{ relationId: 'another', pages }])).not.toContain(
+      'answer the question above',
+    );
+    expect(unreadQuestionWords(stop, true)).toContain(
+      'were never sent; confirm what landed below; the question is past the ones this page reads',
     );
   });
 

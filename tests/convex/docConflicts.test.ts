@@ -290,6 +290,15 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     );
     expect(rest.standing.map((found) => found.conflict.relationId)).toEqual([relation._id]);
     expect(walked.unread).toEqual({ standing: [], next: null });
+    // The read by the blocks a reader carries counts the same bytes: both conflicts within the
+    // bound, and past it the read stops with what it has (17-C's second pass).
+    const carried = new Set(conflictBlocks(relation));
+    const byBlock = await harness.run(async (ctx) => ({
+      whole: await standingConflictsOn(ctx, 'owner', carried, () => []),
+      bounded: await standingConflictsOn(ctx, 'owner', carried, () => [], 1),
+    }));
+    expect(byBlock.whole).toHaveLength(2);
+    expect(byBlock.bounded).toHaveLength(1);
   });
 
   it('gives both of two conflicts that share a block, each once (17-C: keyed by block, the second was lost)', async (): Promise<void> => {
@@ -1221,6 +1230,53 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(after.threads).toBeUndefined();
   });
 
+  it('looks up the newest twenty items with an open question for their requests, and no further (17-C’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const [asked] = await questionsOf(harness, workItemId);
+    // Newer items, each with an open question of its own and no request on this DM.
+    const newer = async (count: number): Promise<void> => {
+      await harness.run(async (ctx) => {
+        for (let n = 0; n < count; n += 1) {
+          const other = await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `REVOPS-${100 + n}`,
+            title: 'Another plan',
+            contentSummary: 'A plan with a question and no request yet.',
+            contentRefs: [],
+            observedAt: 1,
+            createdAt: 1,
+            state: 'plan-pending',
+          });
+          await ctx.db.insert('managerQuestions', {
+            agentId,
+            key: `conflict:${relationId}:${other}`,
+            question: asked.question,
+            context: asked.context,
+            askedAt: asked.askedAt + 1 + n,
+            workItemId: other,
+            charterId: asked.charterId,
+            blocking: false,
+            type: 'retrieval',
+            relationId,
+          });
+        }
+      });
+    };
+    await newer(19);
+    expect((await harness.query(internal.work.openDecisions, { surfaceId })).threads).toEqual([
+      REQUEST_TS,
+    ]);
+    await newer(1);
+    expect(
+      (await harness.query(internal.work.openDecisions, { surfaceId })).threads,
+    ).toBeUndefined();
+  });
+
   it('keeps the plan’s request answerable by its code, and its thread read, after a park cleared it from the item (17-C, C-3)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
@@ -1276,6 +1332,54 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
       }),
     ).resolves.toMatchObject({ status: 'replaced' });
+  });
+
+  it('answers the kept code of a plan since drafted again as replaced, never as a question of the new plan (17-C’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
+    const cited = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.plan as {
+      cites: unknown[];
+    };
+    // Approved, its first set parked (the request kept with its question open), then stopped.
+    await harness.run(async (ctx) => {
+      const row = (await ctx.db.get(workItemId))!;
+      const decided = { ...row.decision!, decidedAt: Date.now(), outcome: 'approved' as const };
+      await rememberRequestWithQuestion(ctx, { ...row, decision: decided }, Date.now());
+      await ctx.db.patch(workItemId, { state: 'cancelled', decision: undefined });
+    });
+    // Retry drafts the plan again an hour on: the old question closes, and the new plan, citing
+    // the disputed passage too, is asked a question of its own before its request has gone out.
+    vi.setSystemTime(Date.UTC(2026, 9, 1, 1));
+    await asManager(harness).mutation(api.workRuns.retryFailed, { workItemId });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'plan-pending',
+        plan: {
+          summary: 'Escalate the variance to the finance lead.',
+          steps: ['Message the finance lead when the variance passes the threshold'],
+          cites: cited.cites,
+        },
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    const [old, fresh] = await questionsOf(harness, workItemId);
+    expect(old.closed?.reason).toBe('redrafted');
+    expect(fresh.closed).toBeUndefined();
+    // The old request's code, typed from the old message, decides nothing of the new plan's.
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790003600.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'both' },
+      }),
+    ).resolves.toMatchObject({ status: 'replaced' });
+    expect((await questionsOf(harness, workItemId))[1].answer).toBeUndefined();
+    expect((await relations(harness)).find((row) => row._id === relationId)?.status).toBe(
+      'confirmed',
+    );
   });
 
   it('answers a code a redraft replaced with the replaced notice, not as unknown (the second pass’s M1)', async (): Promise<void> => {
@@ -1664,7 +1768,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).resolves.toMatchObject({
       prepared: true,
       threadTs: REQUEST_TS,
-      text: `${NOTICE}\nAnswer each by its number: “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.`,
+      text: `${NOTICE}\nThis is question 2 of the plan: answer with “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.`,
     });
     expect(first.answer).toBeUndefined();
   });
@@ -1698,6 +1802,30 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       inFlight.mutation(internal.work.prepareManagerReplyNotice, { noticeId: waiting._id }),
     ).resolves.toEqual({ prepared: false, dropped: true });
     expect(await notices(inFlight)).toEqual([]);
+
+    // The deployment's clock a second ahead of the provider's: the request that carried the
+    // question is stamped before the question's own time, and the notice is dropped all the same.
+    const skewed = convexTest(schema, allConvexModules());
+    const ahead = await plannedBeforeConfirmation(skewed, {});
+    await asManager(skewed).mutation(api.docRelations.decide, {
+      relationId: ahead.relationId,
+      decision: 'disagree',
+    });
+    await ranAsks(skewed);
+    await skewed.run(async (ctx) => {
+      const row = await ctx.db.get(ahead.workItemId);
+      await ctx.db.patch(ahead.workItemId, {
+        decision: {
+          ...row!.decision!,
+          ts: `${Date.UTC(2026, 9, 1) / 1000 - 1}.000100`,
+          requestText: `Plan.\n\n${ASKED}`,
+        },
+      });
+    });
+    const [carried] = await notices(skewed);
+    await expect(
+      skewed.mutation(internal.work.prepareManagerReplyNotice, { noticeId: carried._id }),
+    ).resolves.toEqual({ prepared: false, dropped: true });
 
     // The same race the other way: the request's text was built before the question was asked,
     // so the thread asks it.
@@ -1824,7 +1952,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
     const harness = convexTest(schema, allConvexModules());
-    const { relationId, workItemId } = await askedInRequest(harness);
+    const { relationId, surfaceId, workItemId } = await askedInRequest(harness);
     const cited = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.plan as {
       cites: unknown[];
     };
@@ -1873,6 +2001,68 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(
       await harness.query(internal.managerQuestions.conflictQuestionsForRequest, { workItemId }),
     ).toEqual([{ text: ASKED, number: 2 }]);
+    // A reply that numbers the old question is told what became of it: its pages still disagree,
+    // so it is not said that they do not (17-C's second pass).
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'cd4xyz',
+          kind: 'plan',
+          requestedAt: Date.now(),
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+          ts: '1790000100.000100',
+        },
+      });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000200.000100',
+        reply: { verb: 'answer', id: 'cd4xyz', choice: 'to', number: 1 },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'question no longer open' });
+    expect((await notices(harness)).map((notice) => notice.text)).toEqual([
+      'Question 1 was closed when the plan was drafted again.',
+    ]);
+    expect((await relations(harness)).find((row) => row._id === relationId)?.status).toBe(
+      'confirmed',
+    );
+  });
+
+  it('writes a page’s own words into its replies escaped, so Slack reads no mention in a title (17-C’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, workItemId } = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      for (const page of await ctx.db.query('docPages').collect()) {
+        if (page.title === 'Pipeline runbook') {
+          await ctx.db.patch(page._id, { title: 'Pipeline <!channel> runbook' });
+        }
+      }
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000000.000100',
+      reply: { verb: 'answer', id: 'ab3xyz', choice: 'to' },
+    });
+    await harness.mutation(internal.work.resolveChannelDecision, {
+      surfaceId,
+      userId: 'UMANAGER',
+      messageTs: '1790000001.000100',
+      reply: { verb: 'answer', id: 'ab3xyz', choice: 'to', number: 1 },
+    });
+    expect((await questionsOf(harness, workItemId))[0].answer?.text).toBe(
+      'B, Pipeline <!channel> runbook (Handbook) is right',
+    );
+    expect((await notices(harness)).map((notice) => notice.text)).toEqual([
+      'Recorded: B, Pipeline &lt;!channel&gt; runbook (Handbook) is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
+      'Question 1 was already answered: B, Pipeline &lt;!channel&gt; runbook (Handbook) is right.',
+    ]);
   });
 
   it('closes a question whose conflict is settled by another’s answer, where it is refused, unlisted and owed nothing (17-C)', async (): Promise<void> => {

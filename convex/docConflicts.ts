@@ -231,12 +231,15 @@ async function confirmedConflictsOfPages(
  * @param userId - The owner's key.
  * @param hashes - The hashes of the blocks the reader may carry.
  * @param carried - The pages those blocks are of, asked for only when the owner's window is full.
+ * @param bytesMost - The page bytes one read draws before it stops with what it has
+ *   ({@link CONFLICT_WALK_BYTES}): a standing conflict's two page rows are read whole.
  */
 export async function standingConflictsOn(
   ctx: QueryCtx,
   userId: string,
   hashes: ReadonlySet<string>,
   carried: () => Promise<readonly CarriedPage[]> | readonly CarriedPage[],
+  bytesMost: number = CONFLICT_WALK_BYTES,
 ): Promise<StandingConflict[]> {
   if (hashes.size === 0) return [];
   const newest = await confirmedConflicts(ctx, userId);
@@ -247,10 +250,22 @@ export async function standingConflictsOn(
     }
   }
   const standing: StandingConflict[] = [];
+  let bytes = 0;
   for (const relation of relations.values()) {
     if (!conflictBlocks(relation).some((hash) => hashes.has(hash))) continue;
-    const conflict = await standingConflictOf(ctx, relation);
-    if (conflict !== undefined) standing.push(conflict);
+    const found = await standingWithPages(ctx, relation);
+    if (found === undefined) continue;
+    standing.push(found.conflict);
+    // Each standing conflict cost its two page rows whole: past the bound the rest are left
+    // untagged and unasked by this read, and the record says the read was in part.
+    bytes += rowBytes(found.from) + rowBytes(found.to);
+    if (bytes > bytesMost) {
+      log.warn('conflicts read in part', {
+        reason: 'the conflicts on the blocks carried pass one read’s byte bound',
+        read: standing.length,
+      });
+      break;
+    }
   }
   return standing;
 }

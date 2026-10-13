@@ -28,7 +28,7 @@ import { settleHandoverAfterRun } from './transferInFlight';
 import { firstTicketRejection } from './corrections';
 import { conflictsUnderPlan } from './docConflicts';
 import { questionNoticeOwed, questionRequestsOn } from './managerQuestions';
-import { conflictReplyLine } from '../src/agent/reorientation-words';
+import { conflictNoticeReplyLine } from '../src/agent/reorientation-words';
 import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
@@ -2495,7 +2495,7 @@ export const prepareManagerReplyNotice = internalMutation({
         ? notice.text
         : `${slackEscaped(notice.text)}\n${
             typedCodeReaches(await typedCodeReachOf(ctx, surface))
-              ? conflictReplyLine(notice.decisionId, owed.number)
+              ? conflictNoticeReplyLine(notice.decisionId, owed.number)
               : 'Answer it on the plan’s card in Day0.'
           }`;
     return {

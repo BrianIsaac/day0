@@ -11,8 +11,8 @@ import { isOpenQuestion, type ManagerQuestionCloseReason } from '../src/agent/ma
  *
  * This module is a floor: it imports no `convex/` module, so every site that sends a plan back to
  * drafting (`planRedraft`, `workApply`, `skillControls`, `workRuns`), the relation's decision
- * (`docRelations`) and a page's change of status (`docStatus`) can call it without an edge towards
- * `work`. It registers no function.
+ * (`docRelations`) and the run's own read (`managerQuestions.closeSettled`) call it without an
+ * edge towards `work`, and a page's change of status (`docStatus`) can. It registers no function.
  */
 
 /** The questions one item's close reads: one a conflict under its plans, a handful in practice. */
@@ -96,7 +96,10 @@ export async function closeQuestionsOfRelation(
 /**
  * Close the open questions of every confirmed conflict one page is an end of, because the page
  * stopped being current (superseded, archived, gone) and no conflict stands on a page that is not
- * (`docConflicts.standingConflictOf`). Called where a page's status leaves `active`.
+ * (`docConflicts.standingConflictOf`). Called by the relation's decision for the page an answer
+ * takes out of use. A page that leaves `active` by another path (the Documentation tab's status,
+ * the sync) closes nothing at that moment: its questions hold nothing and draw no button from
+ * then on, and are closed by the next run that reads them (`managerQuestions.closeSettled`).
  *
  * @param ctx - The transaction that changed the page.
  * @param page - The page that is no longer current.

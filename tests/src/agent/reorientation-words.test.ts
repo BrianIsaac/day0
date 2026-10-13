@@ -5,6 +5,7 @@ import {
   conflictChoiceWords,
   conflictNoticeText,
   conflictQuestionText,
+  conflictNoticeReplyLine,
   conflictReplyLine,
   decisionWords,
   heldWords,
@@ -161,6 +162,13 @@ describe('the question as the thread of a delivered request asks it (17-C; secti
     );
     expect(conflictReplyLine('ab3xyz', 2)).toBe(
       'Answer each by its number: “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
+    );
+  });
+
+  it('says which question a thread’s message asks, where the plan has several, in the words to type', (): void => {
+    expect(conflictNoticeReplyLine('ab3xyz')).toBe(conflictReplyLine('ab3xyz'));
+    expect(conflictNoticeReplyLine('ab3xyz', 2)).toBe(
+      'This is question 2 of the plan: answer with “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
     );
   });
 });

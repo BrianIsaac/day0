@@ -195,6 +195,17 @@ export function conflictReplyLine(id: string, number?: number): string {
 }
 
 /**
+ * How a question posted on its own in a request's thread asks for the answer (17-C; flagged: the
+ * draft of section 7 gives the request's line only): the thread's message asks one question, so
+ * where the plan has several standing it says which of them this is, in the words to type.
+ */
+export function conflictNoticeReplyLine(id: string, number?: number): string {
+  if (number === undefined) return conflictReplyLine(id);
+  const code = `${id} ${number}`;
+  return `This is question ${number} of the plan: answer with “answer ${code} A”, “answer ${code} B” or “answer ${code} both”.`;
+}
+
+/**
  * What is said of a question closed without an answer because its conflict stopped standing
  * (17-C; section 7): on the plan's card, and in answer to a reply that names it.
  */

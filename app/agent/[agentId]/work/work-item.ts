@@ -397,6 +397,17 @@ export function settledQuestionWords(
     : `The question this run waited on is no longer open. ${retry}`;
 }
 
+/**
+ * What a run that stopped on a conflict's question says when that question is past the ones the
+ * page reads (17-C's second pass): whether it still stands is not known here, so the card neither
+ * sends the manager to buttons it does not draw nor says the question is settled; the conflict's
+ * own card on the Documentation tab decides it either way.
+ */
+export function unreadQuestionWords(detail: string, unconfirmed: boolean): string {
+  const first = unconfirmed ? 'confirm what landed below; ' : '';
+  return `stopped on a question about two pages that disagree, and the writes that wait on it were never sent; ${first}the question is past the ones this page reads, so if it is still open say which page is right on the Documentation tab, then Retry: ${detail}`;
+}
+
 /** What Retry does on a skip no rule waives: the item is evaluated again from the start. */
 export const SKIP_RETRY_NOTE =
   'Retry evaluates this item again from the start; the employee may set it aside again for the same reason.';
@@ -533,6 +544,11 @@ export function failedItemReason(
         return unconfirmed
           ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, answer the question above, then Retry: ${detail}`
           : `stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry: ${detail}`;
+      }
+      // None of the stop's questions is among those the page read (the card reads the employee's
+      // newest): nothing is known of it, so nothing is said of it but where it is decided.
+      if (!own && asked.every((question) => question === undefined)) {
+        return unreadQuestionWords(detail, unconfirmed);
       }
       // Every conflict's question is settled: with none of the executor's own beside it, Retry
       // runs it; with one, the words below ask for that answer alone.

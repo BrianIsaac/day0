@@ -8,6 +8,7 @@ import {
   queueManagerReplyNotice,
   REPLACED_DECISION_REASON,
   resolveManagerReply,
+  whichQuestionText,
   type ManagerReply,
 } from '../../convex/managerReplies';
 import { allConvexModules } from './all-modules';
@@ -239,6 +240,28 @@ describe('resolveManagerReply', (): void => {
       { status: 'already-decided', notified: true },
       { status: 'already-decided', notified: false },
     ]);
+  });
+});
+
+describe('whichQuestionText', (): void => {
+  it('names each open question by its number and heading, and shows a numbered answer (17-C)', (): void => {
+    expect(
+      whichQuestionText('ab3xyz', [
+        { number: 1, heading: 'Thresholds' },
+        { number: 3, heading: 'Owners' },
+      ]),
+    ).toBe(
+      'Which one? This plan has 2 questions open: answer with its number, for example “answer ab3xyz 3 B”. They are: 1, under “Thresholds”; 3, under “Owners”.',
+    );
+  });
+
+  it('escapes a heading’s own words, so Slack reads no mention or link in them (17-C’s second pass)', (): void => {
+    expect(
+      whichQuestionText('ab3xyz', [
+        { number: 1, heading: 'Fees <!channel> & caps' },
+        { number: 2, heading: 'Owners' },
+      ]),
+    ).toContain('1, under “Fees &lt;!channel&gt; &amp; caps”; 2, under “Owners”.');
   });
 });
 
