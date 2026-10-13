@@ -7,6 +7,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
@@ -485,7 +486,7 @@ export async function decideRelationInTransaction(
   // A conflict confirmed asks which page is right beside every drafted plan citing either page
   // (section 3's conflict row: a question, never a card; D-4 (c)); a conflict settled here answers
   // the questions asked about it, so nothing waits on them (the second pass's B1).
-  if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (decision === 'disagree') await scheduleConfirmationAsks(ctx, relation);
   if (relation.kind === 'possible_conflict') {
     // Each page by its letter, title and source, as the question named them (W16-R12).
     const pages = [named(from, fromSource), named(to, toSource)] as const;
@@ -538,46 +539,92 @@ async function answerConflictQuestions(
   }
 }
 
-/** The drafted plans of one reader a confirmation looks through for the conflict's question. */
-const PENDING_PLANS_READ = 100;
+/** The drafted plans one step of a confirmation's asking looks through. */
+const ASK_PLANS_PAGE = 10;
 
 /**
- * Ask a confirmed conflict's question beside each reader's drafted plan that rests on it, read as
- * the plan's own decision reads it (`conflictsUnderPlan`): by its cites, or where it cites nothing
- * by its kept selection (W16-R9). Matching the plans that cite either page missed a plan that cites
- * nothing, which was then asked nothing and stopped after its approval; and it asked a plan citing
- * another passage of either page, which its decision does not.
+ * Start asking a confirmed conflict's question beside the drafted plans that rest on it, out of
+ * the transaction that confirmed it (17-C; the pre-tag's second pass: the confirmation read a
+ * hundred drafted plans a reader, each through `conflictsUnderPlan`, inside `decide`). Schedules
+ * the first step for the employees that read either page; with none, nothing.
  */
-async function askAtConfirmation(
+async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
-  now: number,
 ): Promise<void> {
-  const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
-  if (standing === undefined) return;
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
     ctx.db.get(relation.to.sourceId),
   ]);
   if (fromSource === null || toSource === null) return;
-  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-    const drafted = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
-      .take(PENDING_PLANS_READ);
-    for (const row of drafted) {
+  const readers = (await readersOfEither(ctx, [fromSource, toSource])).map((agent) => agent._id);
+  if (readers.length === 0) return;
+  await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+    relationId: relation._id,
+    readers,
+    cursor: null,
+  });
+}
+
+/**
+ * One step of asking a confirmed conflict's question beside the drafted plans that rest on it:
+ * a page of the first reader's drafted plans, each read as its own decision reads it
+ * (`conflictsUnderPlan`): by its cites, or where it cites nothing by its kept selection (W16-R9).
+ * Matching the plans that cite either page missed a plan that cites nothing, which was then asked
+ * nothing and stopped after its approval; and it asked a plan citing another passage of either
+ * page, which its decision does not. Internal; scheduled by `decide` and by itself until every
+ * reader's drafted plans are read. Writes the questions, their events and, for a plan whose
+ * request is already out, the notice for its thread; nothing once the conflict no longer stands.
+ */
+export const askConfirmed = internalMutation({
+  args: {
+    relationId: v.id('docRelations'),
+    /** The employees whose drafted plans are still to be read, the first being read now. */
+    readers: v.array(v.id('agents')),
+    /** Where in the first reader's drafted plans this step goes on from. */
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<{ asked: number }> => {
+    const [reader, ...rest] = args.readers;
+    const relation = await ctx.db.get(args.relationId);
+    if (reader === undefined || (await standingConflictOf(ctx, relation)) === undefined) {
+      return { asked: 0 };
+    }
+    const agent = await ctx.db.get(reader);
+    const drafted =
+      agent === null
+        ? { page: [], isDone: true, continueCursor: '' }
+        : await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
+            .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
+    const now = Date.now();
+    let asked = 0;
+    for (const row of drafted.page) {
+      if (agent === null) break;
       const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
-        (under) => under.relationId === relation._id,
+        (under) => under.relationId === args.relationId,
       );
       if (conflict === undefined) continue;
-      await askConflictQuestion(ctx, {
+      const questionId = await askConflictQuestion(ctx, {
         row,
-        conflict: { ...conflict, relationId: relation._id },
+        conflict: { ...conflict, relationId: args.relationId },
         now,
       });
+      if (questionId !== null) asked += 1;
     }
-  }
-}
+    const next = drafted.isDone
+      ? { readers: rest, cursor: null }
+      : { readers: args.readers, cursor: drafted.continueCursor };
+    if (next.readers.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+        relationId: args.relationId,
+        ...next,
+      });
+    }
+    return { asked };
+  },
+});
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
 type CardPage = NamedPage & {
