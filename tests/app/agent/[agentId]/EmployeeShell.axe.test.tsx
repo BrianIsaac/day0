@@ -288,6 +288,7 @@ function populated(): Record<string, unknown> {
         skills: [],
         agreements: [],
         people: [{ _id: 'edge-1', words: 'Aman Rao, its approver' }],
+        ledger: [],
         held: { plans: 1, runs: 0 },
         charterVersion: '0.1',
       },
