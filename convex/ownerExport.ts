@@ -22,7 +22,8 @@ import type {
  *
  * The two registered queries stay in `convex/events.ts` (`exportOwnerHead`, `exportOwnerPage`),
  * which authorise the caller, read a page through `OWNER_SECTION_PAGES` and redact it there, as
- * the employee's trace is redacted; `exportActions.exportForOwner` and `exportOwnerPage` run them.
+ * the employee's trace is redacted; `exportActions.exportForOwner` and
+ * `exportActions.exportOwnerPage` run them.
  */
 
 /**

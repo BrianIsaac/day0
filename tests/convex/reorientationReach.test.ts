@@ -23,8 +23,8 @@ import { cardOf, openTestCard, seedEmployee, seedWork, type Harness } from './fa
 import { registeredIn } from './registered-functions';
 
 /*
- * What a card reaches and holds (`convex/reorientationReach.ts`; wave 17, 17-s). The hold's test
- * is `tests/convex/reorientation.test.ts`'s own, moved as it stood; the rest read the module's
+ * What a card reaches and holds (`convex/reorientationReach.ts`; wave 17, 17-s). The hold's first
+ * test came from `tests/convex/reorientation.test.ts` as it stood; the rest read the module's
  * exports directly, where the card's and the triggers' tests read them through `openCard`.
  */
 
