@@ -65,3 +65,26 @@ export function relationWords(
   }
   return `share ${share ?? 0} percent of their text`;
 }
+
+/**
+ * The figures two pages say under one heading, as a conflict's card says them (16-J's W9a): only
+ * the ones that differ, place for place. The measure keeps every figure of the differing line, so
+ * "at most 60 words on a Q3 close ticket" against "120 words" read "3 60 against 3 120". Lines
+ * whose figures do not line up one for one, or that do not differ, are said as they are.
+ *
+ * @param figures - Each page's figures on the line, space-separated, as the measure kept them.
+ */
+export function differingFigures(figures: { readonly from: string; readonly to: string }): {
+  from: string;
+  to: string;
+} {
+  const from = figures.from.split(/\s+/).filter((figure) => figure !== '');
+  const to = figures.to.split(/\s+/).filter((figure) => figure !== '');
+  if (from.length !== to.length) return { from: figures.from, to: figures.to };
+  const differing = from.flatMap((figure, index) => (figure === to[index] ? [] : [index]));
+  if (differing.length === 0) return { from: figures.from, to: figures.to };
+  return {
+    from: differing.map((index) => from[index]).join(' '),
+    to: differing.map((index) => to[index]).join(' '),
+  };
+}

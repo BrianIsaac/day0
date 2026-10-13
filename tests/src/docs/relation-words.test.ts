@@ -3,6 +3,7 @@ import {
   RELATION_MEASURES,
   SHARED_TEXT_DUPLICATE,
   relationWords,
+  differingFigures,
 } from '../../../src/docs/relation-words';
 
 describe('the measures\u2019 names and the card\u2019s words for each', (): void => {
@@ -64,5 +65,23 @@ describe('the measures\u2019 names and the card\u2019s words for each', (): void
     expect(relationWords([{ measure: 'a-later-measure', value: 1 }])).toBe(
       'share 0 percent of their text',
     );
+  });
+});
+
+describe('differingFigures: what a conflict card says the two pages say (W9a)', (): void => {
+  it('says only the figures that differ, not every figure of the line', (): void => {
+    // 16-J's walk: "An audit comment on a Q3 close ticket is at most 60 words." against
+    // "... 120 words." read "3 60 against 3 120" (the 3 is Q3's).
+    expect(differingFigures({ from: '3 60', to: '3 120' })).toEqual({ from: '60', to: '120' });
+    expect(differingFigures({ from: '3 5', to: '3 2' })).toEqual({ from: '5', to: '2' });
+    expect(differingFigures({ from: '10,000', to: '5,000' })).toEqual({
+      from: '10,000',
+      to: '5,000',
+    });
+  });
+
+  it('keeps the lines as they are when their figures do not line up one for one', (): void => {
+    expect(differingFigures({ from: '3 60', to: '120' })).toEqual({ from: '3 60', to: '120' });
+    expect(differingFigures({ from: '3 60', to: '3 60' })).toEqual({ from: '3 60', to: '3 60' });
   });
 });

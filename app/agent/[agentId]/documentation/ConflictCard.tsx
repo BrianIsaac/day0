@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
+import { differingFigures } from '@/docs/relation-words';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
@@ -71,9 +72,9 @@ export function ConflictCard({
       ? 'Nothing is held until you say they disagree.'
       : `Nothing is held for it: “${more.title}” is in ${TRUST_SOURCE[more.authority]} source and “${less.title}” in ${TRUST_SOURCE[less.authority]} one, so an employee that reads both weighs the first above the second. Say which is right to take the other out of what your employees read.`;
   const under = disagreement ? ` under “${disagreement.heading}”` : '';
-  const figures = disagreement
-    ? `: ${disagreement.figures.from} against ${disagreement.figures.to}`
-    : '';
+  // Only the figures that differ: the line's other figures are the same on both pages (W9a).
+  const said = disagreement ? differingFigures(disagreement.figures) : undefined;
+  const figures = said ? `: ${said.from} against ${said.to}` : '';
   return (
     <Card
       title={
