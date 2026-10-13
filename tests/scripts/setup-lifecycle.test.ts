@@ -1033,7 +1033,7 @@ describe('backup, restore and upgrade (step 15)', (): void => {
       writeFileSync(join(directory, '.env.local'), PROXY, 'utf8');
       expect(childProxyEnvironment(directory, {})).toEqual({
         HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
-        NO_PROXY: 'localhost,127.0.0.1,[::1],day0.acme.test',
+        NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
         NODE_USE_ENV_PROXY: '1',
       });
       // The shell that ran the command names its own proxy over the file's.

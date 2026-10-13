@@ -3,7 +3,9 @@ import {
   deploymentNoProxy,
   hostProxyEnvironment,
   mergedNoProxy,
+  missingFromDeployment,
   nodeReadsEnvProxy,
+  noProxyEntries,
   proxyConfigured,
   proxyForDisplay,
   proxyNodeGap,
@@ -63,7 +65,7 @@ describe('what a Node process on this machine is started with', (): void => {
       ),
     ).toEqual({
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
-      NO_PROXY: 'localhost,127.0.0.1,[::1],day0.acme.test',
+      NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
       NODE_USE_ENV_PROXY: '1',
     });
   });
@@ -122,5 +124,19 @@ describe('what never takes the proxy from inside a container', (): void => {
     expect(deploymentNoProxy(' day0.acme.test,.acme.test ')).toBe(
       `${SERVICE_NO_PROXY.join(',')},day0.acme.test,.acme.test`,
     );
+  });
+});
+
+describe('what the deployment must exclude', (): void => {
+  it('is every name of the services and of the list as configured, in any order and however often', (): void => {
+    const held = deploymentNoProxy('day0.acme.test');
+    expect(missingFromDeployment(held, 'day0.acme.test')).toEqual([]);
+    // The same list as a check started by the setup sees it: this machine's names first.
+    expect(missingFromDeployment(held, 'localhost,127.0.0.1,DAY0.acme.test')).toEqual([]);
+    expect(missingFromDeployment(held, 'day0.acme.test,login.acme.test')).toEqual([
+      'login.acme.test',
+    ]);
+    expect(missingFromDeployment(undefined, undefined)).toEqual([...SERVICE_NO_PROXY]);
+    expect(noProxyEntries(' a , ,b,')).toEqual(['a', 'b']);
   });
 });

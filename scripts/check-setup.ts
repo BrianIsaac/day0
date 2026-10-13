@@ -104,7 +104,9 @@ import {
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import {
-  deploymentNoProxy,
+  missingFromDeployment,
+  noProxyEntries,
+  SERVICE_NO_PROXY,
   PROXY_VARIABLES,
   proxyConfigured,
   proxyForDisplay,
@@ -2036,10 +2038,10 @@ export function wayOutSection(
       'and `pnpm start` to the app. A setup or check command reads it from the shell it runs in.',
       "Day0's own services and this machine are always kept out of it.",
     );
-    const listed = (settings.noProxy ?? '')
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter((entry) => entry !== '');
+    // The customer's own names: the services' list is said in the line above, once.
+    const listed = noProxyEntries(settings.noProxy).filter(
+      (entry) => !SERVICE_NO_PROXY.some((name) => name === entry.toLowerCase()),
+    );
     const own = [ownHost(v.DAY0_PUBLIC_URL), ownHost(v.DAY0_OIDC_ISSUER)].filter(
       (host): host is string => host !== undefined && !isLoopback(`http://${host}`),
     );
@@ -2062,16 +2064,19 @@ export function wayOutSection(
         `The deployment's NO_PROXY could not be read (${deployment.error}): run this again with the backend up.`,
       );
     } else if (deployment !== undefined) {
-      if ((deployment.values.NO_PROXY ?? '') === deploymentNoProxy(settings.noProxy)) {
+      const lacking = missingFromDeployment(deployment.values.NO_PROXY, settings.noProxy);
+      if (lacking.length === 0) {
         lines.push(
-          'The deployment holds NO_PROXY as this file gives it, which a Node action reads.',
+          'The deployment holds every name NO_PROXY keeps out, which is where a Node action reads it.',
         );
       } else {
         worsen('gap');
         lines.push(
-          'The deployment does not hold NO_PROXY as this file gives it: run `pnpm sync:env`.',
-          'A Node action reads it from the deployment, never the container; without it every request',
-          'one makes takes the proxy, its own calls back to the backend among them, and fails there.',
+          'The deployment does not hold every name NO_PROXY keeps out: run `pnpm sync:env`.',
+          `It lacks ${lacking.join(', ')}.`,
+          'A Node action reads the list from the deployment, never the container; without it every',
+          'request one makes takes the proxy, its own calls back to the backend among them, and',
+          'fails there.',
         );
       }
     }

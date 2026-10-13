@@ -50,7 +50,7 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
       PATH: '/usr/bin',
       PORT: '3000',
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
-      NO_PROXY: 'localhost,127.0.0.1,[::1],day0.acme.test',
+      NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
       NODE_USE_ENV_PROXY: '1',
     });
   });

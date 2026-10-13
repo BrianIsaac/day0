@@ -1122,7 +1122,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
     });
     expect(held.status).toBe('ok');
-    expect(held.lines.join(' ')).toContain('The deployment holds NO_PROXY as this file gives it');
+    expect(held.lines.join(' ')).toContain(
+      'The deployment holds every name NO_PROXY keeps out, which is where a Node action reads it',
+    );
     const stale: ReadonlyArray<Readonly<Record<string, string>>> = [
       {},
       { NO_PROXY: deploymentNoProxy(undefined) },
@@ -1131,10 +1133,28 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       const missing = wayOutSection(proxied, [], 'v22.23.2', 'x64', { values });
       expect(missing.status).toBe('gap');
       expect(missing.lines.join(' ')).toContain(
-        'The deployment does not hold NO_PROXY as this file gives it: run `pnpm sync:env`.',
+        'The deployment does not hold every name NO_PROXY keeps out: run `pnpm sync:env`.',
       );
       expect(missing.lines.join(' ')).toContain('its own calls back to the backend');
     }
+    // The bed's case: run as a child of the setup, this check's own NO_PROXY is the file's with
+    // this machine's names put before it, and the deployment holds what `pnpm sync:env` pushed
+    // from the file. Every name the two need is there, so it passes, and names only IT's own.
+    const asChild = wayOutSection(
+      { ...proxied, NO_PROXY: 'localhost,127.0.0.1,day0.acme.test' },
+      [],
+      'v22.23.2',
+      'x64',
+      { values: { NO_PROXY: deploymentNoProxy('day0.acme.test') } },
+    );
+    expect(asChild.status).toBe('ok');
+    expect(asChild.lines).toContain('NO_PROXY also keeps out: day0.acme.test.');
+    // What is missing is named.
+    expect(
+      wayOutSection(proxied, [], 'v22.23.2', 'x64', {
+        values: { NO_PROXY: deploymentNoProxy(undefined) },
+      }).lines.join(' '),
+    ).toContain('It lacks day0.acme.test.');
     // Not asked (the backend is down), or unreadable: said, never failed.
     expect(wayOutSection(proxied, [], 'v22.23.2', 'x64').status).toBe('ok');
     expect(

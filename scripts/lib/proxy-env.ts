@@ -20,8 +20,13 @@ export const PROXY_VARIABLES = [
 /** The first Node on the 22 line that reads a proxy from the environment. */
 export const ENV_PROXY_NODE = '22.21.0';
 
-/** This machine's own names, which never go through a proxy: the backend's published port is here. */
-export const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '[::1]'] as const;
+/**
+ * This machine's own names, which never go through a proxy: the backend's published port is here.
+ * The two every address Day0 writes for this machine uses, and both are among the services' own
+ * list, so a check run with this in its environment still asks no more of the deployment than
+ * `pnpm sync:env` put there.
+ */
+export const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1'] as const;
 
 /**
  * What never takes the proxy from inside a container: the container itself, this machine as a
@@ -65,6 +70,33 @@ export function deploymentNoProxy(named: string | undefined): string {
   return `${SERVICE_NO_PROXY.join(',')}${given === '' ? '' : `,${given}`}`;
 }
 
+/** The names an exclusion list holds, trimmed, none empty. */
+export function noProxyEntries(list: string | undefined): string[] {
+  return (list ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+}
+
+/**
+ * The names the deployment's `NO_PROXY` lacks: every one of the services' own list and of the
+ * list as configured must be there, in any order and however often. Compared by what is
+ * excluded rather than letter for letter, since the same list reaches a check through the
+ * setup with this machine's names put before it.
+ *
+ * @param held - `NO_PROXY` as the deployment holds it.
+ * @param named - `NO_PROXY` as configured.
+ */
+export function missingFromDeployment(
+  held: string | undefined,
+  named: string | undefined,
+): string[] {
+  const present = new Set(noProxyEntries(held).map((entry) => entry.toLowerCase()));
+  return [...new Set([...SERVICE_NO_PROXY, ...noProxyEntries(named)])].filter(
+    (entry) => !present.has(entry.toLowerCase()),
+  );
+}
+
 /** The way out as configured; a name that is unset or empty is absent. */
 export interface ProxySettings {
   readonly httpsProxy?: string;
@@ -106,11 +138,7 @@ export function proxyConfigured(settings: ProxySettings): boolean {
  * @param always - The names Day0 itself never proxies.
  */
 export function mergedNoProxy(named: string | undefined, always: readonly string[]): string {
-  const given = (named ?? '')
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '');
-  const kept = given.filter(
+  const kept = noProxyEntries(named).filter(
     (entry) => !always.some((name) => name.toLowerCase() === entry.toLowerCase()),
   );
   return [...always, ...kept].join(',');
