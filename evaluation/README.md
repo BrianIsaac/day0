@@ -10,7 +10,7 @@ actions. The method is under [Controlled arms](#controlled-arms) and
 [Programmatic grading](#programmatic-grading); how to run it again is under
 [Reproduce](#reproduce).
 
-**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面可能使部分通过由固定文本满足（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。
+**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面可能使部分通过由固定文本满足（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。2026 年 10 月 13 日：上述三个冻结环境已按超范围任务的两种读法（“已决定”与“以 Agent 自己的文字说明”）重新读取，并在 v0.20.0 发布提交上以 GLM 5.3 Flash 重新评测（Day0 三次、普通 arm 六次）；表中数字本身未重新评分，详见下文 Evidence status 各节。
 
 - [Fixed task specifications](tasks/comparison.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
@@ -105,7 +105,9 @@ and a fresh GLM bed was graded with them
 The Qwen, Terra and Sol beds of this table were read again for those two readings on
 13 October 2026
 ([the re-reads](#stored-beds-read-again-for-the-two-out-of-scope-readings---13-october-2026));
-their other figures were not re-scored.
+their other figures were not re-scored. The comparison was graded again that day on a fresh
+GLM bed at the release commit of v0.20.0, with the ordinary arm at six runs a task:
+[`results/2026-10-13T03-18-41Z/`](#glm-bed-on-v0200-with-the-ordinary-arm-at-six-runs---13-october-2026).
 
 Separately (P6-8), the ordinary arm's fixed harness note ("Ordinary-agent control:
 direct tool loop; no charter, plan, gate, or skill.") met the reason word `charter`:
@@ -867,11 +869,20 @@ Only Day0 receives it, so since 27 September 2026 (decision N16) no answer carri
 a word any task's grader looks for; the earlier text carried "hiring decisions",
 "marketing-facing", "destructive", "access", "escalate", "remit", the tracker slug,
 all four citation titles and the on-call contact's name, and said team guidance
-lived in Notion, which the mock office does not have. The
+lived in Notion, which the mock office does not have. ~~The
 harness deliberately does not call `postCharterApproval`, because that action
 generates three model-authored queue items and would contaminate the fixed task
-set; `seedDemo` still installs the shipped documentation skill and the identical
-mock office.
+set~~ REFUTED BY the function log of the 13 October 2026 bed
+(`results/2026-10-13T03-18-41Z/function-metrics.jsonl.gz`), 13 Oct 2026. The harness
+does not call `postCharterApproval`, but approving a charter schedules it on the
+server, so it ran on that bed for every agent of both arms and seeded four
+model-written work items for each; the function metrics of the 9 and 11 October
+beds show the same stage. The harness drives only its own fifteen seeded tasks:
+all 36 generated items on the 13 October bed were still `discovered` when it
+ended, never evaluated, planned or run, and no grade reads them. An evidence
+file's `postCharterApprovalSkipped: true` therefore records what the harness
+does and not what its bed did. `seedDemo` still installs the shipped documentation
+skill and the identical mock office.
 
 ### The scripted manager
 
@@ -1099,6 +1110,16 @@ Useful subsets:
 ```bash
 pnpm eval:comparison -- --arms day0
 pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
+```
+
+To read the ordinary arm at more runs than Day0, run it again on the same bed into the
+first run's directory under another file name, as the 13 October 2026 bed did; each file
+keeps its own report, and the two files' ordinary runs are read together by the report
+generator's rules (a test holds that bed's six-run figures):
+
+```bash
+pnpm eval:comparison -- --arms baseline --runs 3 \
+  --out evaluation/results/<timestamp>/ordinary-runs-4-to-6.json
 ```
 
 `--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
