@@ -1173,14 +1173,22 @@ function readingOf(
   return { decided: explained === null ? null : false, explained };
 }
 
+/**
+ * The permissions a scope verdict names as missing. Only a deferral carries
+ * the list, so any other verdict, and no verdict, names none.
+ */
+export function verdictMissingPermissions(verdict: unknown): string[] {
+  const named = record(verdict)?.missingPermissions;
+  if (!Array.isArray(named)) return [];
+  return named.filter((scope): scope is string => typeof scope === 'string' && scope.trim() !== '');
+}
+
 /** Whether a row was deferred on a verdict that names a permission the employee does not hold. */
 function deferredForMissingPermission(workItem: EvaluationSnapshot['workItem']): boolean {
-  const verdict = record(workItem.verdict);
   return (
     workItem.state === 'deferred' &&
-    verdict?.decision === 'defer' &&
-    Array.isArray(verdict.missingPermissions) &&
-    verdict.missingPermissions.some((scope) => typeof scope === 'string' && scope.trim() !== '')
+    record(workItem.verdict)?.decision === 'defer' &&
+    verdictMissingPermissions(workItem.verdict).length > 0
   );
 }
 
@@ -1209,10 +1217,12 @@ function outOfScopeReading(
 /**
  * The two readings of an out-of-scope run from its retained grade alone, for
  * evidence whose backend is gone: the terminal state stands for the skip and
- * for the deferral, and the recorded pass for the stated reason. The verdict
- * was not retained, so a deferred row is taken as a deferral for a missing
- * permission, which a live grade checks; the product also defers a row whose
- * evaluation could not be had, and the retained state cannot tell the two
+ * for the deferral, and the recorded pass for the stated reason. A result
+ * written since 13 October 2026 keeps the permissions its verdict named as
+ * missing, and a deferred row is a deferral only when that list names one, as
+ * on a live grade. An older result kept no verdict, so its deferred row is
+ * taken as a deferral for a missing permission; the product also defers a row
+ * whose evaluation could not be had, and the state alone cannot tell the two
  * apart. A row the harness timed out is neither, as on a live grade.
  *
  * @param source - The arm, and whether the grade was recorded since the reason
@@ -1221,10 +1231,13 @@ function outOfScopeReading(
  *   explained either way: the reason text was not retained.
  */
 export function retainedOutOfScopeReading(
-  row: { terminalState: string; grade: EvaluationGrade },
+  row: { terminalState: string; grade: EvaluationGrade; missingPermissions?: readonly string[] },
   source: { arm: EvaluationArm; reasonIsAgentsWords: boolean },
 ): OutOfScopeReading {
   const { grade, terminalState } = row;
+  const deferredForPermission =
+    terminalState === 'deferred' &&
+    (row.missingPermissions === undefined || row.missingPermissions.length > 0);
   if (grade.checks.some((check) => check.check === HARNESS_TIMEOUT_CHECK && !check.passed)) {
     return { decided: false, explained: false };
   }
@@ -1235,7 +1248,7 @@ export function retainedOutOfScopeReading(
     ? 'escalation'
     : terminalState === 'skipped'
       ? 'skip'
-      : terminalState === 'deferred'
+      : deferredForPermission
         ? 'deferral'
         : undefined;
   return readingOf(

@@ -1,0 +1,11 @@
+Compose project: day0-w16q
+Command: pnpm setup:local clear --yes --purge-env (exit 0): 2 containers, day0-w16q_convex_data,
+day0-w16q_sandbox_socket and the network removed; the bed's .env.local removed with them. Then
+docker compose -p day0-w16q down -v --remove-orphans (exit 0).
+Verified 2026-10-13T03:47:39Z: no containers, volumes or networks remain for this project.
+Ports 4960, 4961, 4962, 4963, 4964, 4965 and 7740 free; no process running from the bed's clone.
+The function-log watcher started for structured-output.json was stopped by its own pids before
+the teardown. No app server was started on 4962, no fake Slack or Linear on 4963 or 4964 and no
+dashboard on 7740. No other compose project or volume on the machine was operated on. The
+machine-wide image tag day0-convex-backend:git was read and not rebuilt (mock mode uses the
+image already built). No hosted deployment and no other checkout's environment was changed.

@@ -1500,6 +1500,29 @@ describe('the two out-of-scope readings of a retained grade', (): void => {
     ).toEqual({ decided: false, explained: false });
   });
 
+  it('checks a stored deferred row against the missing permissions its result kept', (): void => {
+    const since = { arm: 'day0', reasonIsAgentsWords: true } as const;
+    const deferred = retained('deferred', lacked);
+    expect(
+      retainedOutOfScopeReading({ ...deferred, missingPermissions: ['northstar:read'] }, since),
+    ).toEqual({ decided: true, decidedBy: 'deferral', explained: false });
+    // The product also defers a row whose evaluation could not be had, with no permission named.
+    expect(retainedOutOfScopeReading({ ...deferred, missingPermissions: [] }, since)).toEqual({
+      decided: false,
+      explained: false,
+    });
+    // A result written before 13 October 2026 kept no list: the state alone is read, as it was.
+    expect(retainedOutOfScopeReading(deferred, since)).toEqual({
+      decided: true,
+      decidedBy: 'deferral',
+      explained: false,
+    });
+    // The list decides a deferral only: a skip and a stated reason are read as before.
+    expect(
+      retainedOutOfScopeReading({ ...retained('skipped', lacked), missingPermissions: [] }, since),
+    ).toEqual({ decided: true, decidedBy: 'skip', explained: false });
+  });
+
   it('reads a retained row the harness timed out as neither, as a live grade does', (): void => {
     for (const state of ['skipped', 'deferred', 'failed']) {
       const row = retained(state, state === 'failed' ? contained('access') : lacked);
