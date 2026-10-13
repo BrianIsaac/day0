@@ -25,6 +25,7 @@ import {
   writeEnvValues,
   type SetupCommand,
   wayBackLine,
+  childProxyEnvironment,
 } from '../../scripts/setup';
 import { parseCloudArguments } from '../../scripts/setup-cloud';
 import {
@@ -1021,6 +1022,64 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     expect(failed.output.join('\n')).toContain('nothing is installed or pushed without a backup');
     expect(ran(failed)).not.toContain('pnpm install');
     rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  describe('the way out through a proxy, for the setup itself (wave 17, 17-P; RM31 (a))', (): void => {
+    const PROXY = 'HTTPS_PROXY=http://day0:hunter2@proxy.acme.test:3128\nNO_PROXY=day0.acme.test\n';
+
+    it('hands its children the proxy .env.local names, with this machine kept out of it', (): void => {
+      const directory = mkdtempSync(join(tmpdir(), 'day0-setup-proxy-'));
+      expect(childProxyEnvironment(directory, {})).toEqual({});
+      writeFileSync(join(directory, '.env.local'), PROXY, 'utf8');
+      expect(childProxyEnvironment(directory, {})).toEqual({
+        HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
+        NO_PROXY: 'localhost,127.0.0.1,[::1],day0.acme.test',
+        NODE_USE_ENV_PROXY: '1',
+      });
+      // The shell that ran the command names its own proxy over the file's.
+      expect(
+        childProxyEnvironment(directory, { HTTPS_PROXY: 'http://other.acme.test:8080' })
+          .HTTPS_PROXY,
+      ).toBe('http://other.acme.test:8080');
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    it('says what a Node that would ignore the proxy needs, before the verb runs, and never the proxy’s password', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ services: ['backend'], environment: { HOME: homeDirectory } });
+      writeFileSync(
+        join(h.directory, '.env.local'),
+        `${readFileSync(join(h.directory, '.env.local'), 'utf8')}${PROXY}`,
+        'utf8',
+      );
+      expect(
+        await runCommand(verb('backup', { dryRun: true }), { ...h.io, nodeVersion: 'v22.12.0' }),
+      ).toBe(0);
+      expect(h.output[0]).toBe(
+        'note: HTTPS_PROXY names a proxy, and this Node (v22.12.0) does not read one from the ' +
+          'environment: Node 22.21.0 or later does. Its requests would go out directly. ' +
+          '(docs/running/egress.md)',
+      );
+      expect(h.output.join('\n')).not.toContain('hunter2');
+
+      const current = configured({
+        services: ['backend'],
+        environment: { HOME: homeDirectory },
+      });
+      writeFileSync(
+        join(current.directory, '.env.local'),
+        `${readFileSync(join(current.directory, '.env.local'), 'utf8')}${PROXY}`,
+        'utf8',
+      );
+      expect(
+        await runCommand(verb('backup', { dryRun: true }), {
+          ...current.io,
+          nodeVersion: 'v22.23.2',
+        }),
+      ).toBe(0);
+      expect(current.output.join('\n')).not.toContain('does not read one');
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
   });
 
   describe('the way back and the install record (wave 17, 17-P)', (): void => {

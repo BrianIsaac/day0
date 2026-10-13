@@ -169,6 +169,7 @@ import {
   type SignInCheck,
 } from './check-sign-in';
 import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
+import { hostProxyEnvironment, proxyNodeGap, proxySettings } from './lib/proxy-env';
 
 /** The env file helpers, where the setup's callers and tests have always found them. */
 export { readEnvValues, writeEnvValues };
@@ -462,6 +463,8 @@ export interface SetupIo {
    * strict: the app is up by then). Absent, `install` asks nothing and says so.
    */
   checkProxy?(values: Readonly<Record<string, string>>): readonly SignInCheck[];
+  /** The Node this command and its children run on; absent means this process's. */
+  readonly nodeVersion?: string;
 }
 
 /** Whether the app answered `install`'s wait, and the last attempt's failure when it never did. */
@@ -5908,6 +5911,32 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
   return 0;
 }
 
+/** The way out as the shell names it, else as the checkout's `.env.local` does, one name at a time. */
+function wayOutSettings(
+  cwd: string,
+  shell: Readonly<Record<string, string | undefined>>,
+): ReturnType<typeof proxySettings> {
+  const file = readEnvValues(join(cwd, ENV_FILE));
+  return proxySettings((name) => (shell[name] ?? '').trim() || file[name]);
+}
+
+/**
+ * What every child the setup starts is given when `.env.local` (or the shell) names a proxy on
+ * the way out: the proxy, this machine's own names kept out of it, and Node's switch for reading
+ * it (wave 17, 17-P; RM31 (a)). So the checks an install runs, the Convex CLI and pnpm take the
+ * customer's proxy from the one place it is written, and the pushes to the backend's own port on
+ * this machine never go through it. Nothing when no proxy is named.
+ *
+ * @param cwd - The checkout, whose `.env.local` is read.
+ * @param shell - The environment the command was run from.
+ */
+export function childProxyEnvironment(
+  cwd: string,
+  shell: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  return hostProxyEnvironment(wayOutSettings(cwd, shell));
+}
+
 /**
  * Run the verb the command line named, or the setup itself.
  *
@@ -5919,6 +5948,13 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
  *   The exit status.
  */
 export async function runCommand(options: SetupOptions, io: SetupIo): Promise<number> {
+  // A proxy on the way out that this Node would ignore: said before anything runs, since what
+  // follows would otherwise dial out directly and meet a proxy-only network as bare timeouts.
+  const nodeGap = proxyNodeGap(
+    io.nodeVersion ?? process.version,
+    wayOutSettings(io.cwd, io.environment),
+  );
+  if (nodeGap !== undefined) io.log(`note: ${nodeGap} (docs/running/egress.md)`);
   switch (options.command) {
     case 'stop':
       return runStop(options, io);
@@ -6178,7 +6214,7 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
       const result = spawnSync(command, [...args], {
         cwd,
         encoding: 'utf8',
-        env: { ...process.env, ...(options.env ?? {}) },
+        env: { ...process.env, ...childProxyEnvironment(cwd, process.env), ...(options.env ?? {}) },
         timeout: options.timeoutMs,
         input: options.input,
         stdio: [
