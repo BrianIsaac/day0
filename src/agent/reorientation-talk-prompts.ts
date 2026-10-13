@@ -2,6 +2,7 @@ import type { Doc } from '../../convex/_generated/dataModel';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD, PLAIN_PUNCTUATION_RULE } from './drafted-text-rules';
 import {
   SCOPE_PHRASE_RULE,
+  WHAT_CHANGED_VOICE_RULE,
   proposalPrompt,
   type ProposalCandidate,
   type ProposalInput,
@@ -23,7 +24,7 @@ import {
 export const REORIENTATION_COMPLETE = 'reorientationComplete';
 
 /** The provider's prompt cache key for the talk's system prompt; moved with the prompt. */
-export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v2';
+export const REORIENTATION_TALK_PROMPT_CACHE_KEY = 'day0-reorientation-talk-v3';
 
 /** The priming turn a talk opens from: it stands in for the manager and is never kept or drawn. */
 export const TALK_OPENING = 'The manager opened this talk from the card. Begin.';
@@ -31,6 +32,24 @@ export const TALK_OPENING = 'The manager opened this talk from the card. Begin.'
 /** The note a finish adds after the talk: the manager asked for the outcome now. */
 export const TALK_FINISH_NOTE =
   'The manager asked you to put this on the card now. Call reorientationComplete with the change the manager agreed to, or with `none` if the manager said nothing needs to change. Say nothing else.';
+
+/**
+ * The note a finish adds when its first ask carried no outcome the tool takes (wave 17, 17-O; the
+ * v0.20.0 pre-tag's row 6: three finishes in four were refused on the hosted model, one with
+ * `closingLine` not in the tool's shape): one more ask, naming the fields the schema refused and
+ * never their words, which are the model's and may quote the manager.
+ *
+ * @param refusedFields - The paths the schema refused; none when no call was made at all.
+ */
+export function talkRepairNote(refusedFields: readonly string[]): string {
+  const what =
+    refusedFields.length === 0
+      ? 'You did not call reorientationComplete.'
+      : `Your call of reorientationComplete was not taken: ${refusedFields.join(', ')} ${
+          refusedFields.length === 1 ? 'was' : 'were'
+        } not in the shape the tool takes.`;
+  return `${what} Call reorientationComplete once more, every field as the tool describes it. Say nothing else.`;
+}
 
 /** The `reorientationComplete` tool's words: its description and each field's. */
 export const REORIENTATION_COMPLETE_TOOL = {
@@ -75,6 +94,7 @@ const TALK_RULES = [
 const TALK_HEAD = [
   'You are an AI employee. Something your work relied on changed, and a reorientation card is open about it.',
   'Your manager opened this talk from the card to talk the change through with you. It ends in a proposal on the card; you only propose.',
+  WHAT_CHANGED_VOICE_RULE,
 ].join('\n');
 
 /** The proposal's target in words, from the candidate it names, or a plain stand-in. */

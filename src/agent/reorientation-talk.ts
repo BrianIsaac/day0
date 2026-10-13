@@ -13,7 +13,11 @@ import {
   type TurnRequest,
 } from './one-to-one-conversation';
 import { proposalReplySchema, type ProposalReply } from './reorientation-proposal';
-import { REORIENTATION_COMPLETE, REORIENTATION_COMPLETE_TOOL } from './reorientation-talk-prompts';
+import {
+  REORIENTATION_COMPLETE,
+  REORIENTATION_COMPLETE_TOOL,
+  talkRepairNote,
+} from './reorientation-talk-prompts';
 import { errorMessage } from '../lib/errors';
 import { log } from '../lib/logger';
 
@@ -280,6 +284,51 @@ export function talkOutcomeMiss(
         toolCalls,
         refusedFields: [...new Set(parsed.error.issues.map((issue) => issue.path.join('.')))],
       };
+}
+
+/**
+ * The talk route's own deadline, short of the platform's `maxDuration` of 60 seconds, so a slow
+ * model leaves time to say what happened and for the finish's write (W16-R19).
+ */
+export const TALK_DEADLINE_MS = 50_000;
+
+/**
+ * A signal that aborts once the talk route's deadline has passed. On a timer of its own, where the
+ * route used `AbortSignal.timeout`: a test's clock moves a timer and not that, so the deadline had
+ * no test (the pre-tag's item 9). The timer never keeps the process alive.
+ *
+ * @param ms - The deadline; the route's own unless a test gives one.
+ */
+export function talkDeadline(ms: number = TALK_DEADLINE_MS): AbortSignal {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("The talk route's deadline passed", 'TimeoutError'));
+  }, ms);
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  return controller.signal;
+}
+
+/** What a finish's ask answered, as far as its outcome is read from it. */
+export interface FinishAnswer {
+  readonly toolCalls: ReadonlyArray<{ readonly toolName: string; readonly input: unknown }>;
+}
+
+/**
+ * The outcome of Put this on the card: asked once, and once more with the refused fields named
+ * when the first ask carried none the tool takes (wave 17, 17-O), before the room is told that
+ * nothing was put on the card.
+ *
+ * @param ask - One ask of the model: with no note first, then with the repair's note.
+ * @returns The outcome, if either ask carried one, and every answer in the order it was given.
+ */
+export async function finishOutcome<Answer extends FinishAnswer>(
+  ask: (repairNote: string | undefined) => Promise<Answer>,
+): Promise<{ readonly outcome: TalkOutcome | undefined; readonly answers: readonly Answer[] }> {
+  const first = await ask(undefined);
+  const taken = talkOutcomeOfCalls(first.toolCalls);
+  if (taken !== undefined) return { outcome: taken, answers: [first] };
+  const second = await ask(talkRepairNote(talkOutcomeMiss(first.toolCalls).refusedFields ?? []));
+  return { outcome: talkOutcomeOfCalls(second.toolCalls), answers: [first, second] };
 }
 
 /**

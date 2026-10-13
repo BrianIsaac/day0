@@ -326,7 +326,10 @@ export function useReorientationTalk(reorientationId: string, name: string): Tal
     note,
     finishing,
     streamError,
-    finishFailure,
+    // Once the talk is on the card, an earlier press's refusal is no longer true of it: a press
+    // answered 503 while the proposal reached the card left the room saying both (the v0.20.0
+    // hosted walk's finding 5).
+    finishFailure: onCard ? null : finishFailure,
     draft,
     setDraft,
     send,

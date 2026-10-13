@@ -10,7 +10,7 @@ import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { graphRows, seedEdge, seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { proposePersonInTransaction, type ProposedPerson } from '../../convex/peopleProposals';
-import { resolvePerson } from '../../convex/people';
+import { edgeChangeWords, resolvePerson } from '../../convex/people';
 import { PERSON_NOT_YOURS } from '../../src/people/vocabulary';
 import {
   CONFIRM_BEFORE_RELATING,
@@ -1611,5 +1611,64 @@ describe('the people graph past its read bound (14-FX, W13-R23)', (): void => {
       .withIdentity(managerIdentity())
       .query(api.people.collaboratorsOf, { agentId });
     expect(answer).toMatchObject([{ displayName: 'Mei Ling', scope: 'the month-end close' }]);
+  });
+});
+
+describe('what a card says became of an edge (wave 17, 17-O; the pre-tag’s re-walk)', (): void => {
+  const approver = { type: 'approval-authority' as const };
+
+  it('summarises a widened scope as a scope change, naming what it covered and covers', (): void => {
+    // The pre-tag's row 5b: Ines Duarte's approval edge for everyone was widened from "NetLedger
+    // journal changes" to add the Q3 close sign-off; three cards said "Ines Duarte, its approver,
+    // changed", and two proposed retiring the edge ("has changed, so this ... no longer holds").
+    expect(
+      edgeChangeWords(
+        'Ines Duarte',
+        'edited',
+        { ...approver, scope: 'NetLedger journal changes and the Q3 close sign-off' },
+        { ...approver, scope: 'NetLedger journal changes' },
+      ),
+    ).toBe(
+      'Ines Duarte, its approver: now for “NetLedger journal changes and the Q3 close sign-off”, where it was “NetLedger journal changes”',
+    );
+  });
+
+  it('says a scope given or taken away, and a change of what the person is to the employee', (): void => {
+    expect(
+      edgeChangeWords('Ines Duarte', 'edited', { ...approver, scope: 'refunds' }, approver),
+    ).toBe('Ines Duarte, its approver: now for “refunds”, where it had no stated scope');
+    expect(
+      edgeChangeWords('Ines Duarte', 'edited', approver, { ...approver, scope: 'refunds' }),
+    ).toBe('Ines Duarte, its approver: now with no stated scope, where it was for “refunds”');
+    expect(
+      edgeChangeWords(
+        'Ines Duarte',
+        'edited',
+        { type: 'escalation-contact', scope: 'refunds' },
+        { type: 'collaborator', scope: 'refunds' },
+      ),
+    ).toBe('Ines Duarte is now its escalation contact, where it was its collaborator');
+    expect(
+      edgeChangeWords(
+        'Ines Duarte',
+        'edited',
+        { type: 'escalation-contact', scope: 'refunds over 500' },
+        { type: 'collaborator', scope: 'refunds' },
+      ),
+    ).toBe(
+      'Ines Duarte is now its escalation contact, where it was its collaborator; now for “refunds over 500”, where it was “refunds”',
+    );
+  });
+
+  it('keeps an added and a retired edge as they were said, and an edit that moved nothing', (): void => {
+    expect(edgeChangeWords('Ines Duarte', 'added', approver)).toBe(
+      'Ines Duarte is now its approver',
+    );
+    expect(edgeChangeWords('Ines Duarte', 'retired', approver)).toBe(
+      'Ines Duarte is no longer its approver',
+    );
+    expect(edgeChangeWords('Ines Duarte', 'edited', approver, approver)).toBe(
+      'Ines Duarte, its approver, changed',
+    );
   });
 });

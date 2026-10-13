@@ -10,7 +10,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { assertOwnsAgent, assertOwnsSkill, getCallerOrThrow, ownerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
-import { openCard } from './reorientation';
+import { openCard, openCards, type CardTrigger } from './reorientation';
 import { readRefValidator } from './schema';
 import { isEventOf } from '../src/events/contract';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';
@@ -226,19 +226,38 @@ function sameReason(left: string, right: string): boolean {
  *   there is one.
  * @returns Whether the row was stamped by this call.
  */
-export async function stampRecheckDue(
-  ctx: MutationCtx,
-  stamp: {
-    readonly skillId: Id<'skills'>;
-    readonly reason: string;
-    readonly now: number;
-    readonly page?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
-    readonly saysBetter?: string;
-  },
-): Promise<boolean> {
+export async function stampRecheckDue(ctx: MutationCtx, stamp: RecheckStamp): Promise<boolean> {
+  const { fresh, card } = await stampOwingCard(ctx, stamp);
+  if (card !== undefined) await openCard(ctx, card);
+  return fresh;
+}
+
+/** A re-check stamp: the holder row, why it is due, when, and the page the reason is about. */
+interface RecheckStamp {
+  readonly skillId: Id<'skills'>;
+  readonly reason: string;
+  readonly now: number;
+  readonly page?: { readonly sourceId: Id<'docSources'>; readonly ref: string };
+  readonly saysBetter?: string;
+}
+
+/** What a stamp did, with the card it owes its employee, not yet handed over. */
+interface StampOwed {
+  /** Whether the row was stamped by this call. */
+  readonly fresh: boolean;
+  /** The card for `openCards`; none for a row that is not registered. */
+  readonly card?: CardTrigger;
+}
+
+/**
+ * {@link stampRecheckDue} with its card left to the caller: a trigger that stamps many rows in one
+ * transaction (a changed page's readers, a surface's skills, a newer version's older holders)
+ * hands every card over once, so it schedules one function for them (wave 17, 17-O; W16-R5).
+ */
+async function stampOwingCard(ctx: MutationCtx, stamp: RecheckStamp): Promise<StampOwed> {
   const { skillId, reason, now } = stamp;
   const row = await ctx.db.get(skillId);
-  if (row?.state !== 'registered') return false;
+  if (row?.state !== 'registered') return { fresh: false };
   const fresh = row.recheckDueAt === undefined;
   const checking = row.authoringRunId !== undefined;
   const samePage =
@@ -277,21 +296,40 @@ export async function stampRecheckDue(
     },
     createdAt: now,
   });
-  await openCard(ctx, {
-    agentId: row.agentId,
-    trigger: 'skill-recheck-due',
-    triggerKey: eventId,
-    summary: `The skill “${row.name}” is due a re-check: ${reason}`,
-    evidence: {
-      eventIds: [eventId],
-      skillIds: [skillId],
-      skillVersionIds: row.versionId !== undefined ? [row.versionId] : [],
-      pageRefs: stamp.page !== undefined ? [stamp.page] : [],
+  return {
+    fresh,
+    card: {
+      agentId: row.agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: eventId,
+      summary: `The skill “${row.name}” is due a re-check: ${reason}`,
+      evidence: {
+        eventIds: [eventId],
+        skillIds: [skillId],
+        skillVersionIds: row.versionId !== undefined ? [row.versionId] : [],
+        pageRefs: stamp.page !== undefined ? [stamp.page] : [],
+      },
+      reach: { kind: 'skills', skillIds: [skillId] },
+      now,
     },
-    reach: { kind: 'skills', skillIds: [skillId] },
-    now,
-  });
-  return fresh;
+  };
+}
+
+/**
+ * Stamp every row of a list and hand their cards over once.
+ *
+ * @returns How many rows these stamps stamped.
+ */
+async function stampEach(ctx: MutationCtx, stamps: readonly RecheckStamp[]): Promise<number> {
+  const cards: CardTrigger[] = [];
+  let stamped = 0;
+  for (const stamp of stamps) {
+    const owed = await stampOwingCard(ctx, stamp);
+    if (owed.fresh) stamped += 1;
+    if (owed.card !== undefined) cards.push(owed.card);
+  }
+  await openCards(ctx, cards);
+  return stamped;
 }
 
 /**
@@ -317,15 +355,14 @@ export async function stampRecheckDueOnSurfaces(
     .query('skills')
     .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', 'registered'))
     .collect();
-  let stamped = 0;
-  for (const row of registered) {
-    if (row.targetSurface === undefined || !slugs.has(row.targetSurface)) continue;
-    const reason = args.reasonFor(row.targetSurface);
-    if (await stampRecheckDue(ctx, { skillId: row._id, reason, now: args.now })) {
-      stamped += 1;
-    }
-  }
-  return stamped;
+  return await stampEach(
+    ctx,
+    registered.flatMap((row) =>
+      row.targetSurface === undefined || !slugs.has(row.targetSurface)
+        ? []
+        : [{ skillId: row._id, reason: args.reasonFor(row.targetSurface), now: args.now }],
+    ),
+  );
 }
 
 /** One page of an owner's versions the changed-page trigger reads: bounded by bytes too. */
@@ -432,7 +469,7 @@ async function stampReaders(
     .query('skillVersions')
     .withIndex('by_owner_name_version', (q) => q.eq('userId', scan.userId))
     .paginate({ ...CHANGED_PAGE_SCAN, cursor: scan.cursor });
-  let stamped = 0;
+  const stamps: RecheckStamp[] = [];
   for (const version of page.page) {
     if (version.revokedAt !== undefined) continue;
     const read = scan.pages.find((changed) =>
@@ -444,19 +481,19 @@ async function stampReaders(
     for (const holder of await holdersOf(ctx.db, version._id)) {
       const agent = await ctx.db.get(holder.agentId);
       const day = dayLabelAt(scan.changedAt, agentZone(agent ?? {}));
-      const stamp = {
+      stamps.push({
         skillId: holder._id,
         reason: runbookReason(read, day),
         now: scan.changedAt,
         page: { sourceId: read.sourceId, ref: read.ref },
         ...(read.change === 'changed' ? {} : { saysBetter: changedRunbookReason(read.title, day) }),
-      };
-      if (await stampRecheckDue(ctx, stamp)) {
-        stamped += 1;
-      }
+      });
     }
   }
-  return { stamped, next: page.isDone ? null : page.continueCursor };
+  return {
+    stamped: await stampEach(ctx, stamps),
+    next: page.isDone ? null : page.continueCursor,
+  };
 }
 
 /**
@@ -693,14 +730,15 @@ async function insertNextVersion(
     createdAt: now,
   });
   if (replaced !== undefined) await ctx.db.patch(replaced._id, { supersededAt: now });
+  const stamps: RecheckStamp[] = [];
   for (const older of content.stampsOlderHolders ? existing : []) {
     if (older.revokedAt !== undefined) continue;
     for (const holder of await holdersOf(ctx.db, older._id)) {
       if (holder._id === row._id || holder._id === row.revisionOf) continue;
-      const reason = newerVersionReason(version, older.version);
-      await stampRecheckDue(ctx, { skillId: holder._id, reason, now });
+      stamps.push({ skillId: holder._id, reason: newerVersionReason(version, older.version), now });
     }
   }
+  await stampEach(ctx, stamps);
   return {
     kind: 'inserted',
     versionId,
@@ -959,6 +997,7 @@ export async function backfillLibraryPage(
   const now = Date.now();
   const page = await ctx.db.query('skills').paginate({ cursor, numItems: LIBRARY_BACKFILL_PAGE });
   let changed = 0;
+  const stamps: RecheckStamp[] = [];
   for (const row of page.page) {
     if (row.state !== 'registered' || row.versionId !== undefined || row.body === '') continue;
     const recorded = await recordRegisteredVersion(ctx, row, {
@@ -971,9 +1010,10 @@ export async function backfillLibraryPage(
     });
     if (recorded.kind === 'outside') continue;
     await ctx.db.patch(row._id, { versionId: recorded.versionId });
-    await stampRecheckDue(ctx, { skillId: row._id, reason: CHECK_NOT_KEPT_REASON, now });
+    stamps.push({ skillId: row._id, reason: CHECK_NOT_KEPT_REASON, now });
     changed += 1;
   }
+  await stampEach(ctx, stamps);
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 

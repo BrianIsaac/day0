@@ -911,6 +911,7 @@ export async function revokeConnection(
     trigger: 'connection-revoked',
     triggerKey: lineId,
     summary: `The organisation's ${connection.displayName} connection was revoked: ${reason}`,
+    evidence: { connectionEventIds: [lineId] },
     now,
   });
 }

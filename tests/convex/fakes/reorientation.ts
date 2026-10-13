@@ -1,6 +1,8 @@
 import type { TestConvex } from 'convex-test';
+import { vi } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type schema from '../../../convex/schema';
+import { internal } from '../../../convex/_generated/api';
 import { openCard, proposalBasis, type CardTrigger } from '../../../convex/reorientation';
 import { MANAGER_ADDRESS, OWNER_SUBJECT } from './manager-identity';
 
@@ -149,4 +151,76 @@ export async function eventTypesOf(harness: Harness, agentId: Id<'agents'>): Pro
       .filter((event) => event.agentId === agentId)
       .map((event) => event.type),
   );
+}
+
+/** One function the scheduler holds, as the tests read it. */
+export interface ScheduledJob {
+  readonly _id: string;
+  readonly scheduledTime: number;
+  readonly args: unknown[];
+}
+
+/** The functions of one name the scheduler holds, oldest first, with their arguments. */
+export async function scheduledAs(harness: Harness, name: string): Promise<ScheduledJob[]> {
+  return await harness.run(
+    async (ctx) =>
+      await ctx.db.system
+        .query('_scheduled_functions')
+        .filter((q) => q.eq(q.field('name'), name))
+        .collect(),
+  );
+}
+
+/**
+ * Run a fan-out's chain of cards to its end, one link at a time, as the scheduler would: each
+ * `reorientation.openCardsLater` once, and nothing else the scheduler holds (the judgements stay
+ * unasked, so no test reaches a model).
+ *
+ * @returns How many links ran, and the most functions for cards found waiting at one time.
+ */
+export async function runCardChain(
+  harness: Harness,
+): Promise<{ links: number; mostWaiting: number }> {
+  const ran = new Set<string>();
+  let mostWaiting = 0;
+  for (;;) {
+    const waiting = (await scheduledAs(harness, 'reorientation:openCardsLater')).filter(
+      (job) => !ran.has(job._id),
+    );
+    mostWaiting = Math.max(mostWaiting, waiting.length);
+    const [next] = waiting;
+    if (next === undefined) return { links: ran.size, mostWaiting };
+    ran.add(next._id);
+    await harness.mutation(
+      internal.reorientation.openCardsLater,
+      next.args[0] as { cards: never[]; judged: number },
+    );
+  }
+}
+
+/**
+ * Run something and hand back, beside its result, the warnings the logger wrote meanwhile, each
+ * parsed from its line.
+ *
+ * @param run - What to run with the log read.
+ */
+export async function warnedBy<Result>(
+  run: () => Promise<Result>,
+): Promise<{ result: Result; warnings: Array<Record<string, unknown>> }> {
+  const written = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+  try {
+    const result = await run();
+    const warnings = written.mock.calls.flatMap(([line]): Array<Record<string, unknown>> => {
+      try {
+        const parsed = JSON.parse(String(line)) as Record<string, unknown>;
+        return parsed.level === 'warn' ? [parsed] : [];
+      } catch {
+        // Not one of the logger's lines: something else wrote to the console.
+        return [];
+      }
+    });
+    return { result, warnings };
+  } finally {
+    written.mockRestore();
+  }
 }

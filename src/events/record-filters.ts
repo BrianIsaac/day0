@@ -224,6 +224,7 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'reorientation.opened': CHARTER,
   'reorientation.proposed': CHARTER,
   'reorientation.reopened': CHARTER,
+  'reorientation.card-not-opened': CHARTER,
   'reorientation.approved': ['charter', 'decisions'],
   'reorientation.dismissed': ['charter', 'decisions'],
   'reorientation.deferred': ['charter', 'decisions'],
