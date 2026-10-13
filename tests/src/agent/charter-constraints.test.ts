@@ -1791,6 +1791,55 @@ describe('withRoutingRules (RM27)', (): void => {
     ]);
   });
 
+  // W16-R31 (reader 4's p10, the opener case): the manager answers a question of their own, and
+  // the answer's opening word was written into the clause, "Yes, run it by the manager."
+  it('writes a routing answer as the clause without the word it answers with, and keeps the manager’s sentence as the rule’s quote (W16-R31)', (): void => {
+    const drawn = withRoutingRules(
+      charter(['Escalate to product when an ask is a bug.']),
+      { collaborators: 'Should I run it by finance? Yes, run it by me.' },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Escalate to product when an ask is a bug.',
+      'Run it by the manager.',
+    ]);
+    expect(drawn.rules).toEqual([
+      {
+        kind: 'reporting-line',
+        quote: 'Yes, run it by me.',
+        wording: [],
+        origin: 'derived',
+        binds: [{ field: 'escalationTriggers', index: 1 }],
+      },
+    ]);
+  });
+
+  it.each([
+    ['No, go through me for both.', 'Go through the manager for both.'],
+    [
+      'Yes, yes: always check with me before sending.',
+      'Always check with the manager before sending.',
+    ],
+    ['OK, anything over 10k, go through me.', 'Anything over 10k, go through the manager.'],
+    ['Yes. Through me for now.', 'Go through the manager for now.'],
+  ])('writes %j as %j (W16-R31)', (said, clause): void => {
+    const drawn = withRoutingRules(charter([]), { collaborators: said }, [], []);
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
+  });
+
+  it('keeps a clause’s own first word where it is no answer: "Right-size it, then run it by me." (W16-R31)', (): void => {
+    const drawn = withRoutingRules(
+      charter([]),
+      { collaborators: 'Now run it by me. Yesterday’s numbers: run them by me.' },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers[0]).toBe(
+      'Now run it by the manager.',
+    );
+  });
+
   it('binds a route through the manager no other rule binds, and draws nothing for a question', (): void => {
     const drawn = withRoutingRules(
       charter(['Contact any rep only via the manager.']),
