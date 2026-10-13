@@ -3537,4 +3537,82 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
       }),
     ).rejects.toThrow();
   });
+
+  it("keeps the organisation's ledger lines a card rests on beside its other evidence; a card opened before 0.21.0 has none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    /** A card of the organisation's revoked connection, resting on the evidence a test gives it. */
+    const card = (
+      agentId: Id<'agents'>,
+      evidence: Partial<Doc<'reorientations'>['evidence']>,
+    ): WithoutSystemFields<Doc<'reorientations'>> => ({
+      agentId,
+      userId: 'owner',
+      trigger: 'connection-revoked',
+      triggerKey: 'connection-event:1',
+      triggerSummary: 'IT ended the Linear connection',
+      evidence: {
+        eventIds: [],
+        pageRefs: [],
+        relationIds: [],
+        correctionIds: [],
+        relationshipIds: [],
+        skillIds: [],
+        skillVersionIds: [],
+        ...evidence,
+      },
+      affected: {
+        charterClauses: [],
+        agreements: [],
+        relationships: [],
+        skills: [],
+        surfaces: [],
+        workItems: [],
+      },
+      proposed: { kind: 'pending' },
+      risk: 'low',
+      blockingWork: [],
+      status: 'open',
+      day: '2026-10-13',
+      createdAt: 1,
+    });
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = await ctx.db.insert('reorientations', card(agentId, {}));
+      const revokedId = (await insertMinimalRow(
+        ctx as never,
+        'connectionEvents',
+        agentId,
+      )) as Id<'connectionEvents'>;
+      const failedId = (await insertMinimalRow(
+        ctx as never,
+        'connectionEvents',
+        agentId,
+      )) as Id<'connectionEvents'>;
+      const cardId = await ctx.db.insert(
+        'reorientations',
+        card(agentId, { connectionEventIds: [revokedId, failedId] }),
+      );
+      return {
+        agentId,
+        older: await ctx.db.get(olderId),
+        card: await ctx.db.get(cardId),
+        lines: [revokedId, failedId],
+      };
+    });
+    expect(read.older?.evidence).not.toHaveProperty('connectionEventIds');
+    expect(read.older?.evidence.connectionEventIds ?? []).toEqual([]);
+    expect(read.card?.evidence.connectionEventIds).toEqual(read.lines);
+    expect(read.card?.evidence.eventIds).toEqual([]);
+    // An employee's own row is not a line of the organisation's ledger.
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'reorientations',
+          card(read.agentId, {
+            connectionEventIds: [read.agentId as unknown as Id<'connectionEvents'>],
+          }),
+        );
+      }),
+    ).rejects.toThrow();
+  });
 });

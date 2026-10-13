@@ -1885,6 +1885,13 @@ export default defineSchema({
       relationshipIds: v.array(v.id('relationships')),
       skillIds: v.array(v.id('skills')),
       skillVersionIds: v.array(v.id('skillVersions')),
+      /**
+       * The organisation's ledger lines the card rests on (wave 17, 17-K for 17-O): a connection
+       * revoked or a revocation that failed at the vendor is a `connectionEvents` line, never an
+       * employee's event, so `eventIds` cannot hold it. Optional where every other list is
+       * required: a card opened before 0.21.0 has none, and reads as an empty list.
+       */
+      connectionEventIds: v.optional(v.array(v.id('connectionEvents'))),
     }),
     /** What the change reaches, computed by index when the card opens. */
     affected: v.object({
