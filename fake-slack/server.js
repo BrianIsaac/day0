@@ -712,9 +712,28 @@ const server = createServer(async (request, response) => {
     }
     const ts = given.get('ts');
     if (!ts) return json(response, 200, { ok: false, error: 'invalid_arguments' });
+    // The parent first, as Slack always gives it, then what the manager typed under it to this
+    // bot's app, oldest first, after `oldest` when given (17-C: an answer typed in a request's
+    // thread).
+    const after = Number(given.get('oldest') || 0);
+    const replies = managerMessages
+      .filter(
+        (message) =>
+          message.appId === bot.appId &&
+          message.channel === given.get('channel') &&
+          message.threadTs === ts &&
+          Number(message.ts) > after,
+      )
+      .map((message) => ({
+        type: 'message',
+        user: message.user,
+        text: message.text,
+        ts: message.ts,
+        thread_ts: ts,
+      }));
     return json(response, 200, {
       ok: true,
-      messages: [{ type: 'message', user: 'U_DAY0_MANAGER', ts, thread_ts: ts }],
+      messages: [{ type: 'message', user: 'U_DAY0_MANAGER', ts, thread_ts: ts }, ...replies],
       has_more: false,
     });
   }

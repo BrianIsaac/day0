@@ -175,6 +175,61 @@ describe('fake Slack: the messages tab', (): void => {
     expect(later.messages).toEqual([]);
   });
 
+  it('gives a reply the manager typed in a message’s thread to that thread’s read, after the parent, and not to the DM’s history (17-C)', async (): Promise<void> => {
+    const { appId, bot } = await installedApp(WRITABLE);
+    const request = await api(
+      'chat.postMessage',
+      bot,
+      { channel: 'D_DAY0_MANAGER', text: 'Decide.' },
+      true,
+    );
+    const other = await api(
+      'chat.postMessage',
+      bot,
+      { channel: 'D_DAY0_MANAGER', text: 'Decide another.' },
+      true,
+    );
+    const typed = await proof('/proof/manager-message', {
+      appId,
+      text: 'answer uacgcm 2 B',
+      threadTs: request.ts,
+    });
+    expect(typed).toMatchObject({ ok: true, channel: 'D_DAY0_MANAGER' });
+    const thread = await api('conversations.replies', bot, {
+      channel: 'D_DAY0_MANAGER',
+      ts: String(request.ts),
+    });
+    expect(thread.messages).toEqual([
+      { type: 'message', user: 'U_DAY0_MANAGER', ts: request.ts, thread_ts: request.ts },
+      {
+        type: 'message',
+        user: 'U_DAY0_MANAGER',
+        text: 'answer uacgcm 2 B',
+        ts: typed.ts,
+        thread_ts: request.ts,
+      },
+    ]);
+    // Another message's thread holds none of it, a read after it finds nothing new under its
+    // parent, and the DM's own history never carries a threaded reply, as Slack's does not.
+    const elsewhere = await api('conversations.replies', bot, {
+      channel: 'D_DAY0_MANAGER',
+      ts: String(other.ts),
+    });
+    expect(elsewhere.messages).toEqual([
+      { type: 'message', user: 'U_DAY0_MANAGER', ts: other.ts, thread_ts: other.ts },
+    ]);
+    const later = await api('conversations.replies', bot, {
+      channel: 'D_DAY0_MANAGER',
+      ts: String(request.ts),
+      oldest: String(typed.ts),
+    });
+    expect(later.messages).toEqual([
+      { type: 'message', user: 'U_DAY0_MANAGER', ts: request.ts, thread_ts: request.ts },
+    ]);
+    const history = await api('conversations.history', bot, { channel: 'D_DAY0_MANAGER' });
+    expect(history.messages).toEqual([]);
+  });
+
   it('exports an app’s manifest and opens its tab by an update with the configuration token', async (): Promise<void> => {
     const { appId } = await installedApp();
     const exported = await api('apps.manifest.export', CONFIGURATION_TOKEN, { app_id: appId });
