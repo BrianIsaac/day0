@@ -10,7 +10,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runExportTrace, writeWhole, type ConvexRun } from '../../scripts/export-trace';
+import {
+  runExportTrace,
+  stoppedExport,
+  writeWhole,
+  type ConvexRun,
+} from '../../scripts/export-trace';
 import {
   isAgentTrace,
   OWNER_SECTIONS,
@@ -288,6 +293,46 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
     expect(errors[0]).toMatch(/^Export failed: /);
     expect(readdirSync(directory)).toEqual(['owner.json']);
     expect(readdirSync(out)).toEqual(['kept.txt']);
+  });
+});
+
+describe('tidying up after an owner export that stopped (the second pass of the fixes, 17-F)', (): void => {
+  const refused = new Error('exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS');
+
+  it('answers the reason the export stopped, itself, when the tidying goes through', (): void => {
+    const done: string[] = [];
+    const error = stoppedExport('owner.json.partial', refused, {
+      close: (): void => void done.push('closed'),
+      remove: (): void => void done.push('removed'),
+    });
+    expect(error).toBe(refused);
+    expect(done).toEqual(['closed', 'removed']);
+  });
+
+  it('still removes the unfinished file when closing it is refused, and says both after the reason', (): void => {
+    const done: string[] = [];
+    const error = stoppedExport('owner.json.partial', refused, {
+      close: (): void => {
+        throw new Error('EIO: i/o error, close');
+      },
+      remove: (): void => void done.push('removed'),
+    });
+    expect(done).toEqual(['removed']);
+    expect(error.message).toBe(
+      'exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS; and closing owner.json.partial was refused (EIO: i/o error, close)',
+    );
+    expect(error.cause).toBe(refused);
+  });
+
+  it('says which file to delete when it cannot be removed, after the reason the export stopped', (): void => {
+    const error = stoppedExport('owner.json.partial', refused, {
+      remove: (): void => {
+        throw new Error('EACCES: permission denied, unlink');
+      },
+    });
+    expect(error.message).toBe(
+      'exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS; and owner.json.partial could not be removed (EACCES: permission denied, unlink): delete it yourself',
+    );
   });
 });
 

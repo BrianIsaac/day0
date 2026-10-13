@@ -105,27 +105,42 @@ export function writeWhole(
   }
 }
 
+/** How an unfinished file is tidied away: closed where it is still open, then removed. */
+export interface PartialTidying {
+  /** Closes the file; absent once it is closed. */
+  readonly close?: () => void;
+  /** Removes the file. */
+  readonly remove: () => void;
+}
+
 /**
- * Remove what an export that stopped left on disk, keeping the reason it stopped as the error
- * thrown: what the tidying itself refuses is said after it, never in its place.
+ * Tidy away what an export that stopped left on disk, keeping the reason it stopped as the error
+ * thrown: the file is removed whether or not closing it went through, and what either step
+ * refuses is said after the reason, never in its place.
  *
- * @param partial - The unfinished file.
- * @param file - Its descriptor while it is still open, undefined once closed.
+ * @param partial - The unfinished file's path, for the message.
  * @param error - Why the export stopped.
- * @returns The error to throw.
+ * @param tidy - The two steps.
+ * @returns The error to throw: the reason itself when the tidying went through.
  */
-function stoppedExport(partial: string, file: number | undefined, error: unknown): Error {
+export function stoppedExport(partial: string, error: unknown, tidy: PartialTidying): Error {
   const stopped = error instanceof Error ? error : new Error(String(error));
+  const refused: string[] = [];
+  const reasonOf = (tidying: unknown): string =>
+    tidying instanceof Error ? tidying.message : String(tidying);
   try {
-    if (file !== undefined) closeSync(file);
-    rmSync(partial, { force: true });
-    return stopped;
-  } catch (tidying) {
-    return new Error(
-      `${stopped.message}; and ${partial} could not be removed (${tidying instanceof Error ? tidying.message : String(tidying)}): delete it yourself`,
-      { cause: stopped },
-    );
+    tidy.close?.();
+  } catch (closing) {
+    refused.push(`closing ${partial} was refused (${reasonOf(closing)})`);
   }
+  try {
+    tidy.remove();
+  } catch (removing) {
+    refused.push(`${partial} could not be removed (${reasonOf(removing)}): delete it yourself`);
+  }
+  return refused.length === 0
+    ? stopped
+    : new Error(`${stopped.message}; and ${refused.join('; and ')}`, { cause: stopped });
 }
 
 /**
@@ -183,7 +198,11 @@ export async function exportOwner(
     renameSync(partial, out);
     return manifest;
   } catch (error) {
-    throw stoppedExport(partial, open, error);
+    const stillOpen = open;
+    throw stoppedExport(partial, error, {
+      ...(stillOpen === undefined ? {} : { close: (): void => closeSync(stillOpen) }),
+      remove: (): void => rmSync(partial, { force: true }),
+    });
   }
 }
 
