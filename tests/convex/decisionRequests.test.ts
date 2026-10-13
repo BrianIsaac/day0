@@ -13,6 +13,9 @@ import {
   CLOSE_EDIT_IN_FLIGHT_MS,
   rememberDecidedUnmarked,
   rememberReplacedRequest,
+  rememberRequestWithQuestion,
+  QUESTION_THREADS_READ,
+  RECENT_THREADS_READ,
   rememberRetriedRequest,
   requestThreadOf,
   resendDecisionsAfterManagerChange,
@@ -25,6 +28,7 @@ import {
   voidDecisionRequestsForHandover,
 } from '../../convex/decisionRequests';
 import { allConvexModules } from './all-modules';
+import { seedConflictQuestion } from './fakes/conflict-question';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 
 /**
@@ -303,6 +307,83 @@ describe('rememberDecidedUnmarked', (): void => {
   });
 });
 
+describe('rememberRequestWithQuestion (17-C, C-3)', (): void => {
+  const decided = request({
+    id: 'PLAN',
+    ts: '1787770800.000100',
+    requestText: 'Approve the plan?',
+    decidedAt: 5,
+    outcome: 'approved',
+    decidedVia: 'channel',
+  });
+
+  it('keeps a plan’s delivered request, with how it was decided, while a conflict question of the item is open, and edits nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const row = await seedItem(harness, agentId, 'executing', { decision: decided });
+    await seedConflictQuestion(harness, { agentId, workItemId: row._id });
+
+    await harness.run(async (ctx) => {
+      await rememberRequestWithQuestion(ctx, row, 9);
+      // A second park of the same request keeps nothing more.
+      await rememberRequestWithQuestion(ctx, row, 10);
+    });
+
+    expect(await replaced(harness)).toMatchObject([
+      {
+        agentId,
+        workItemId: row._id,
+        decisionId: 'PLAN',
+        kind: 'plan',
+        surfaceSlug: 'team-chat',
+        channel: DM,
+        ts: '1787770800.000100',
+        requestText: 'Approve the plan?',
+        replacedAt: 9,
+        outcome: 'approved',
+        decidedAt: 5,
+        decidedVia: 'channel',
+      },
+    ]);
+    // The request's message already says how it was decided: no edit is scheduled for it.
+    expect(await scheduled(harness)).toEqual([]);
+  });
+
+  it('keeps nothing without an open question, for a set’s request, or for a request that never reached the DM', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const unasked = await seedItem(harness, agentId, 'executing', { decision: decided });
+    const answered = await seedItem(harness, agentId, 'executing', { decision: decided });
+    await seedConflictQuestion(
+      harness,
+      { agentId, workItemId: answered._id },
+      { answer: { text: 'Both hold', answeredAt: 5, via: 'dashboard' } },
+    );
+    const closed = await seedItem(harness, agentId, 'executing', { decision: decided });
+    await seedConflictQuestion(
+      harness,
+      { agentId, workItemId: closed._id },
+      { closed: { reason: 'settled', at: 5 } },
+    );
+    const actions = await seedItem(harness, agentId, 'executing', {
+      decision: { ...decided, kind: 'actions' },
+    });
+    await seedConflictQuestion(harness, { agentId, workItemId: actions._id });
+    const undelivered = await seedItem(harness, agentId, 'executing', {
+      decision: request({ id: 'LOST' }),
+    });
+    await seedConflictQuestion(harness, { agentId, workItemId: undelivered._id });
+
+    await harness.run(async (ctx) => {
+      for (const row of [unasked, answered, closed, actions, undelivered]) {
+        await rememberRequestWithQuestion(ctx, row, 9);
+      }
+    });
+
+    expect(await replaced(harness)).toEqual([]);
+  });
+});
+
 describe('nameReplacement', (): void => {
   it('names the new request on every earlier request of its kind for the item', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -528,5 +609,38 @@ describe('requestThreadOf, scheduleRequestClose and recentThreadsOn', (): void =
         args: { workItemId: row._id, decisionId: 'NOW' },
       },
     ]);
+  });
+
+  it('reads the threads of the requests with a standing question beside the window’s, each bounded by its own count (17-C)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surface = await seedChat(harness, agentId);
+    const stamp = (n: number): string => `17877708${String(n).padStart(2, '0')}.000100`;
+    // More decided requests in the window than it reads, and more standing questions than theirs.
+    const decidedLately = Array.from({ length: RECENT_THREADS_READ + 2 }, (_unused, n) => stamp(n));
+    const asking = Array.from({ length: QUESTION_THREADS_READ + 2 }, (_unused, n) => stamp(50 + n));
+
+    const threads = await harness.run(
+      async (ctx) =>
+        await recentThreadsOn(ctx, surface, DM, 0, {
+          decided: decidedLately,
+          // An open request's own thread is read already, whichever list names it.
+          open: [stamp(71), stamp(11)],
+          questions: asking,
+        }),
+    );
+
+    // The standing questions' threads first, newest first, then the window's.
+    expect(threads).toEqual([
+      ...asking
+        .filter((ts) => ts !== stamp(71))
+        .reverse()
+        .slice(0, QUESTION_THREADS_READ),
+      ...decidedLately
+        .filter((ts) => ts !== stamp(11))
+        .reverse()
+        .slice(0, RECENT_THREADS_READ),
+    ]);
+    expect(threads).toHaveLength(QUESTION_THREADS_READ + RECENT_THREADS_READ);
   });
 });

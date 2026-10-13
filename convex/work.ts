@@ -27,7 +27,8 @@ import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
 import { conflictsUnderPlan } from './docConflicts';
-import { conflictAnswerOwedOn } from './managerQuestions';
+import { questionNoticeOwed, questionRequestsOn } from './managerQuestions';
+import { conflictReplyLine } from '../src/agent/reorientation-words';
 import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
@@ -97,7 +98,11 @@ import { socketBridgeStateOf } from './socketHeartbeats';
 
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
-import { isEventOf } from '../src/events/contract';
+import {
+  isEventOf,
+  type DecisionAcknowledgementKind,
+  type DecisionNoticeKind,
+} from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
@@ -142,8 +147,10 @@ import {
   OPEN_BATCH_SCAN,
   openRequestsOn,
   RECENT_THREADS_READ,
+  QUESTION_THREADS_READ,
   recentThreadsOn,
   rememberDecidedUnmarked,
+  rememberRequestWithQuestion,
   rememberReplacedRequest,
   requestThreadOf,
   scheduleDecisionRequest,
@@ -1992,15 +1999,18 @@ export const openDecisions = internalQuery({
       )
       .order('desc')
       .take(RECENT_THREADS_READ);
+    // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1), and
+    // its request's thread is read for as long, whatever the window (17-C).
+    const asking = await questionRequestsOn(ctx, surface, channel, QUESTION_THREADS_READ);
     const threads = await recentThreadsOn(ctx, surface, channel, since, {
       decided: decidedLately.flatMap((row) => (row.decision?.ts ? [row.decision.ts] : [])),
       open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
+      questions: asking.flatMap((request) => (request.ts ? [request.ts] : [])),
     });
     return {
       requests,
       batches,
-      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
-      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
+      noticeOwed: decidedLately.length > 0 || asking.length > 0,
       ...(threads.length > 0 ? { threads } : {}),
     };
   },
@@ -2414,15 +2424,31 @@ export const recordDecisionNotice = internalMutation({
   },
 });
 
-/** Claim one manager-reply acknowledgement before its provider call. */
+/** A notice's kind as an acknowledgement's: every kind but the question, which has its own claim. */
+function acknowledgementKindOf(kind: DecisionNoticeKind): DecisionAcknowledgementKind {
+  if (kind === 'question') throw new Error('a question notice is claimed as a question');
+  return kind;
+}
+
+/**
+ * Claim one notice in the manager's DM before its provider call: the acknowledgement of a reply,
+ * or a conflict's question for the thread of a request already delivered (17-C). A question is
+ * claimed only while it is still owed (`managerQuestions.questionNoticeOwed`): one its request
+ * carried, or whose question closed meanwhile, is dropped, and one whose request is still on its
+ * way out is left for the next look (`wait`). Internal; writes the claim and
+ * `work.decision-acknowledging`.
+ */
 export const prepareManagerReplyNotice = internalMutation({
   args: { noticeId: v.id('managerDecisionNotices') },
   handler: async (ctx, args) => {
     const notice = await ctx.db.get(args.noticeId);
     if (!notice || notice.claimedAt) return { prepared: false as const };
-    // A `question` notice (the schema's kind since wave 17) is no acknowledgement of a reply: this
-    // path leaves it unclaimed, and no writer queues one until its own send lands (17-C).
-    if (notice.kind === 'question') return { prepared: false as const };
+    const owed = notice.kind === 'question' ? await questionNoticeOwed(ctx, notice) : undefined;
+    if (owed?.state === 'wait') return { prepared: false as const, wait: true as const };
+    if (owed?.state === 'drop') {
+      await ctx.db.delete(notice._id);
+      return { prepared: false as const, dropped: true as const };
+    }
     const [workItem, agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(notice.workItemId),
       ctx.db.get(notice.agentId),
@@ -2443,19 +2469,35 @@ export const prepareManagerReplyNotice = internalMutation({
         !!candidate.managerDmChannelId,
     );
     if (!workItem || !agent || !surface) return { prepared: false as const };
+    const named = {
+      workItemId: notice.workItemId,
+      decisionId: notice.decisionId,
+      messageTs: notice.messageTs,
+    };
     const requestRunId = await appendEvent(ctx, {
       agentId: notice.agentId,
       type: 'work.decision-acknowledging',
-      payload: {
-        workItemId: notice.workItemId,
-        decisionId: notice.decisionId,
-        messageTs: notice.messageTs,
-        kind: notice.kind,
-      },
+      payload:
+        owed?.state === 'send'
+          ? { ...named, kind: 'question', questionId: owed.questionId }
+          : { ...named, kind: acknowledgementKindOf(notice.kind) },
       createdAt: Date.now(),
     });
     await ctx.db.patch(notice._id, { claimedAt: Date.now() });
-    const threadTs = await requestThreadOf(ctx, workItem, notice.decisionId);
+    const threadTs =
+      owed?.state === 'send'
+        ? owed.threadTs
+        : await requestThreadOf(ctx, workItem, notice.decisionId);
+    // A question is followed by how to answer it: by its number where the plan has several, on
+    // the card where the employee's app takes no typed reply (W12V-7).
+    const text =
+      owed?.state !== 'send'
+        ? notice.text
+        : `${slackEscaped(notice.text)}\n${
+            typedCodeReaches(await typedCodeReachOf(ctx, surface))
+              ? conflictReplyLine(notice.decisionId, owed.number)
+              : 'Answer it on the plan’s card in Day0.'
+          }`;
     return {
       prepared: true as const,
       ...(threadTs ? { threadTs } : {}),
@@ -2466,12 +2508,12 @@ export const prepareManagerReplyNotice = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
-      text: notice.text,
+      text,
     };
   },
 });
 
-/** Store provider evidence for one manager-reply acknowledgement. */
+/** Store provider evidence for one notice in the manager's DM: its timestamp, or why it failed. */
 export const recordManagerReplyNotice = internalMutation({
   args: {
     noticeId: v.id('managerDecisionNotices'),
@@ -3231,6 +3273,9 @@ export const setAwaitingApproval = internalMutation({
       reason,
     }));
     if (afterApproval) await rememberDecidedUnmarked(ctx, row, Date.now());
+    // The plan's request goes with this park; while a conflict's question of the plan is open its
+    // code and its thread are still the way to answer (17-C, C-3).
+    await rememberRequestWithQuestion(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

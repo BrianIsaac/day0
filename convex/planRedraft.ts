@@ -2,6 +2,7 @@ import type { MutationCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
 import { rememberReplacedRequest } from './decisionRequests';
 import { appendEvent } from './eventLog';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { scheduleNextStep } from './workLoop';
 
 /**
@@ -42,7 +43,8 @@ export async function redraftPlansDraftedWithout(
 /**
  * Send one row back to drafting because the system its plan could not read
  * is connected now, as a Retry's re-draft resets it: no plan, no request, no
- * answers, and the draft scheduled in the same transaction.
+ * answers, its conflict questions closed (17-C: the new plan is asked on what
+ * it cites), and the draft scheduled in the same transaction.
  */
 export async function sendBackToDrafting(
   ctx: MutationCtx,
@@ -51,6 +53,7 @@ export async function sendBackToDrafting(
   now: number,
 ): Promise<void> {
   await rememberReplacedRequest(ctx, row, now);
+  await closeQuestionsAtRedraft(ctx, row._id, now);
   await ctx.db.patch(row._id, {
     state: 'claimed',
     plan: undefined,

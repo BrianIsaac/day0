@@ -169,8 +169,12 @@ export function heldReplyCodes(
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string }
-  /** The answer to a conflict's question in a plan's request (RM20 (a)): the first page, the second, or both. */
-  | { verb: 'answer'; id: string; choice: ConflictChoice };
+  /**
+   * The answer to a conflict's question in a plan's request (RM20 (a)): the first page, the second,
+   * or both, and the question's number where the manager gave one (17-C). A bare answer names none
+   * and is taken when exactly one question stands.
+   */
+  | { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
 
 /**
  * The longest manager reason kept in full, from the card or from chat alike.
@@ -205,14 +209,16 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
     .replace(/^[\s"'“”‘’`*_]+/, '')
     .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
-  const answer = /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})\s+(a|b|both)$/i.exec(
-    flat,
-  );
+  const answer =
+    /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+([1-9]\d{0,2}))?\s+(a|b|both)$/i.exec(
+      flat,
+    );
   if (answer) {
-    const letter = answer[2].toLowerCase();
+    const letter = answer[3].toLowerCase();
     return {
       verb: 'answer',
       id: answer[1].toLowerCase(),
+      ...(answer[2] === undefined ? {} : { number: Number(answer[2]) }),
       choice: letter === 'a' ? 'from' : letter === 'b' ? 'to' : 'both',
     };
   }
@@ -471,10 +477,11 @@ export function decisionRequestText(args: {
    */
   leftForCard?: { readonly indexes: readonly number[]; readonly clause?: string };
   /**
-   * The questions a plan's conflicts ask beside it (RM20 (a)), each with its answer line: the plan
-   * goes on meanwhile, so they never stop the approval.
+   * The questions a plan's conflicts ask beside it (RM20 (a)), with their answer line: the plan
+   * goes on meanwhile, so they never stop the approval. Each with its number on the plan (17-C); a
+   * question given as its words alone takes its place in the list as its number.
    */
-  questions?: readonly string[];
+  questions?: ReadonlyArray<string | RequestQuestion>;
 }): string {
   const closes = args.kind === 'actions' ? (args.leftForCard?.indexes ?? []) : [];
   if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
@@ -570,19 +577,43 @@ export function decisionRequestText(args: {
   return frame(lines.slice(0, shown), lines.length - shown);
 }
 
+/** One conflict question as a message asks it: its words, and its number on the plan. */
+export interface RequestQuestion {
+  readonly text: string;
+  /** Its place among the plan's conflict questions, which the typed answer names (17-C). */
+  readonly number: number;
+}
+
 /**
  * A plan's conflict questions as the request asks them, and how to answer: a typed answer where
- * the employee's app takes messages, the plan's card in Day0 otherwise.
+ * the employee's app takes messages, the plan's card in Day0 otherwise. More than one is numbered,
+ * each by its own number on the plan, and the answer line shows the first's; one alone is asked
+ * without its number and answered without it (17-C; section 7).
  */
-function questionLines(questions: readonly string[], id: string, typedCode: boolean): string[] {
+function questionLines(
+  questions: ReadonlyArray<string | RequestQuestion>,
+  id: string,
+  typedCode: boolean,
+): string[] {
   if (questions.length === 0) return [];
-  const asked = questions.slice(0, REQUEST_QUESTIONS_SHOWN);
-  const more = questions.length - asked.length;
+  const numbered = questions.map(
+    (question, index): RequestQuestion =>
+      typeof question === 'string' ? { text: question, number: index + 1 } : question,
+  );
+  const asked = numbered.slice(0, REQUEST_QUESTIONS_SHOWN);
+  const more = numbered.length - asked.length;
+  const several = numbered.length > 1;
   return [
     '',
-    ...asked.map((question) => slackEscaped(question)),
+    ...asked.map((question) =>
+      slackEscaped(several ? `${question.number}. ${question.text}` : question.text),
+    ),
     ...(more > 0 ? [`And ${more} more on the plan’s card in day0.`] : []),
-    typedCode ? conflictReplyLine(id) : 'Answer it on the plan’s card in day0.',
+    typedCode
+      ? conflictReplyLine(id, several ? asked[0].number : undefined)
+      : several
+        ? 'Answer them on the plan’s card in day0.'
+        : 'Answer it on the plan’s card in day0.',
   ];
 }
 

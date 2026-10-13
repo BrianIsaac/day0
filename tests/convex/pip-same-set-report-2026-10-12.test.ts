@@ -7,6 +7,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { WITHHELD_REPORTED_WRITE_NOT_LANDED } from '../../src/surfaces/policy';
 import { allConvexModules } from './all-modules';
+import { seedConflictQuestion } from './fakes/conflict-question';
 import { managerIdentity, MANAGER_ADDRESS } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
@@ -165,6 +166,38 @@ describe("Pip's REVOPS-204 set, its comment held with the post it reports (RM22 
     expect(row.state).toBe('completed');
     const applied = (row.output as { applied: Array<{ ok: boolean; held?: boolean }> }).applied;
     expect(applied.map((entry) => entry.ok && entry.held !== true)).toEqual([true, true, true]);
+  });
+
+  it('keeps the plan’s request when the set parks while a conflict question of the plan is open (17-C, C-3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId, runId } = await seed(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'dm-manager',
+          surfaceName: 'DM · Manager',
+          ts: '1787770800.000100',
+          decidedAt: 2,
+          outcome: 'approved',
+        },
+      });
+    });
+    await seedConflictQuestion(harness, { agentId, workItemId });
+
+    await harness.mutation(internal.workRuns.setActionsPending, {
+      workItemId,
+      runId,
+      output: { draft: PIP_SAME_SET_DRAFT, notes: '', actions: PIP_SAME_SET },
+    });
+
+    expect((await readItem(harness, workItemId)).state).toBe('actions-pending');
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('replacedDecisionRequests').collect()),
+    ).toMatchObject([{ workItemId, decisionId: 'ab3xyz', kind: 'plan', outcome: 'approved' }]);
   });
 
   it('holds the comment and the DM back with the post when the manager leaves the post out, and the ticket stays open', async (): Promise<void> => {

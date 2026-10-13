@@ -12,6 +12,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
 import { openCard } from './reorientation';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { assertNotBeingHandedOver } from './handoverFence';
 import {
   holdersOf,
@@ -194,6 +195,8 @@ async function parkForSkill(
   wait: SkillWait,
 ): Promise<Id<'skills'> | undefined> {
   const behind = await liveSkillNamed(ctx, item.agentId, wait.name);
+  // The plan goes, and its conflict questions with it: the next plan is asked on what it cites.
+  await closeQuestionsAtRedraft(ctx, item._id, wait.now);
   await ctx.db.patch(item._id, {
     state: 'needs-skill',
     // A wait on a skill is stamped as every wait is (wave 12, 12-W).

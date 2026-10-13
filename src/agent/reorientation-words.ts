@@ -130,7 +130,6 @@ export function conflictQuestionText(
   pages: readonly [NamedPageWords, NamedPageWords],
   holds?: readonly string[] | 'every',
 ): string {
-  const [a, b] = pages;
   // What the hold withholds is every write to a surface a held step writes (W16-R10), so the
   // question names those surfaces, or says every write where the plan cannot tell them apart.
   const held =
@@ -139,7 +138,33 @@ export function conflictQuestionText(
       : holds !== undefined && holds.length > 0
         ? `${name} runs the other steps now and holds its writes to ${SURFACE_LIST.format(holds)} until you answer and Retry.`
         : `${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
-  return `Two pages disagree under “${heading}”: ${pageWords('A', a)}, and ${pageWords('B', b)}. Which is right? ${held}`;
+  return `Two pages disagree under ${conflictFacts(heading, pages)} Which is right? ${held}`;
+}
+
+/** What a conflict is, as every sentence about it says it: the heading and the two lettered pages. */
+function conflictFacts(heading: string, pages: readonly [NamedPageWords, NamedPageWords]): string {
+  return `“${heading}”: ${pageWords('A', pages[0])}, and ${pageWords('B', pages[1])}.`;
+}
+
+/**
+ * The question as the thread of a plan's request asks it once the request is already out (17-C;
+ * section 7): "Since I asked you about this plan, you confirmed that two pages disagree under
+ * “{heading}”: A, ..., and B, .... Which is right? {name} holds {what is held} until you answer."
+ * The request itself is never edited; this is posted under it, once.
+ */
+export function conflictNoticeText(
+  name: string,
+  heading: string,
+  pages: readonly [NamedPageWords, NamedPageWords],
+  holds?: readonly string[] | 'every',
+): string {
+  const held =
+    holds === 'every'
+      ? 'every write of the plan'
+      : holds !== undefined && holds.length > 0
+        ? `its writes to ${SURFACE_LIST.format(holds)}`
+        : 'the steps that may rely on this';
+  return `Since I asked you about this plan, you confirmed that two pages disagree under ${conflictFacts(heading, pages)} Which is right? ${name} holds ${held} until you answer.`;
 }
 
 /**
@@ -156,10 +181,25 @@ export function conflictChoiceWords(
     : `${pageWords('B', pages[1])} is right`;
 }
 
-/** How a Slack request asks for the answer: the decision's code and a letter. */
-export function conflictReplyLine(id: string): string {
-  return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
+/**
+ * How a Slack request asks for the answer: the decision's code and a letter, and between them the
+ * question's number where the message asks more than one (17-C; section 7, flagged: "each by its
+ * number" is added to the draft, so the one line reads as the way to answer every question above).
+ */
+export function conflictReplyLine(id: string, number?: number): string {
+  if (number === undefined) {
+    return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
+  }
+  const code = `${id} ${number}`;
+  return `Answer each by its number: “answer ${code} A”, “answer ${code} B” or “answer ${code} both”.`;
 }
+
+/**
+ * What is said of a question closed without an answer because its conflict stopped standing
+ * (17-C; section 7): on the plan's card, and in answer to a reply that names it.
+ */
+export const CONFLICT_QUESTION_CLOSED =
+  'These two pages no longer disagree, so this question is closed.';
 
 /** A card's title (the prototype's): "Something {name}'s charter assumed has changed". */
 export function cardTitle(name: string): string {

@@ -17,6 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
@@ -33,7 +34,11 @@ import {
   surfaceAwaitingConnection,
 } from './workApply';
 import { managerText } from './managerDecisions';
-import { rememberRetriedRequest, scheduleDecisionRequest } from './decisionRequests';
+import {
+  rememberRequestWithQuestion,
+  rememberRetriedRequest,
+  scheduleDecisionRequest,
+} from './decisionRequests';
 import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';
@@ -44,7 +49,11 @@ import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { isConflictQuestion, isOpenQuestionStop } from '../src/work/obligations';
+import {
+  isConflictQuestion,
+  isOpenQuestionStop,
+  noteAnswersQuestion,
+} from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   type MockAction,
@@ -293,6 +302,8 @@ export const retryFailed = mutation({
     // answered landed is never sent again however its row reads (P4-1).
     const carried = carriedIntoRetry(resume ?? row.output, row);
     if (redraft) await rememberRetriedRequest(ctx, row, Date.now());
+    // The plan goes, and its conflict questions with it: the next plan is asked on what it cites.
+    if (redraft) await closeQuestionsAtRedraft(ctx, row._id, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
       // A retried item begins a new run, which the queue orders by (x4); one sent back to
@@ -340,11 +351,12 @@ export const retryFailed = mutation({
               at: Date.now(),
               kind: 'retry-note' as const,
               // Only a note on a question stop answers the question (review D2), and never a
-              // documentation conflict's, which is answered on the question itself (W16-R8).
+              // documentation conflict's, which is answered on the question itself (W16-R8): the
+              // note answers the executor's own question, alone or beside a conflict's (17-C).
               ...(row.state === 'failed' &&
               row.skipReason !== undefined &&
               isOpenQuestionStop(stopDetail(row.skipReason)) &&
-              !isConflictQuestion(row.output)
+              noteAnswersQuestion(row.output)
                 ? { answersQuestion: true }
                 : {}),
             },
@@ -989,6 +1001,9 @@ export const setActionsPending = internalMutation({
       });
       return { pending: false };
     }
+    // The plan's request goes with this park; while a conflict's question of the plan is open its
+    // code and its thread are still the way to answer (17-C, C-3).
+    await rememberRequestWithQuestion(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

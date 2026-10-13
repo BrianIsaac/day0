@@ -32,9 +32,11 @@ import {
 } from '../src/agent/reorientation-vocabulary';
 import {
   approvedResultWords,
+  conflictNoticeText,
   conflictQuestionText,
   type NamedPageWords,
 } from '../src/agent/reorientation-words';
+import { isOpenQuestion } from '../src/agent/manager-questions';
 import {
   COUNTED_EVENTS_SHOWN,
   agreementActionsOf,
@@ -622,9 +624,11 @@ export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
 /**
  * What a conflict's hold would withhold of a plan, in the manager's words (W16-R10): the display
  * names of the surfaces its held steps write, or `every` where the plan declares no writes. A
- * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)).
+ * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)). Read
+ * where the question is asked and again wherever the dashboard draws it, from the plan as it
+ * stands then (17-C).
  */
-async function heldSurfaceNames(
+export async function heldSurfaceNames(
   ctx: QueryCtx,
   row: Doc<'workItems'>,
   conflict: ConflictAsked,
@@ -676,8 +680,9 @@ export async function askConflictQuestion(
     .withIndex('by_relation', (q) => q.eq('relationId', conflict.relationId))
     .take(QUESTIONS_PER_RELATION_READ);
   // Asked once while its question is open; a conflict settled and confirmed again is asked again,
-  // since the answer given was to the conflict as it stood then (W16-R27).
-  if (asked.some((question) => question.workItemId === row._id && question.answer === undefined)) {
+  // since the answer given was to the conflict as it stood then (W16-R27), and so is the plan
+  // drafted after a redraft closed the question its predecessor was asked (17-C).
+  if (asked.some((question) => question.workItemId === row._id && isOpenQuestion(question))) {
     return null;
   }
   const [agent, charter] = await Promise.all([
@@ -685,12 +690,8 @@ export async function askConflictQuestion(
     approvedCharter(ctx, row.agentId),
   ]);
   if (agent === null || charter === undefined) return null;
-  const question = conflictQuestionText(
-    agent.name,
-    conflict.heading,
-    conflict.pages,
-    await heldSurfaceNames(ctx, row, conflict),
-  );
+  const holds = await heldSurfaceNames(ctx, row, conflict);
+  const question = conflictQuestionText(agent.name, conflict.heading, conflict.pages, holds);
   const questionId = await ctx.db.insert('managerQuestions', {
     agentId: row.agentId,
     key: conflictQuestionKey(conflict.relationId),
@@ -716,7 +717,71 @@ export async function askConflictQuestion(
     },
     createdAt: ask.now,
   });
+  await queueQuestionNotice(ctx, {
+    row,
+    questionId,
+    text: conflictNoticeText(agent.name, conflict.heading, conflict.pages, holds),
+    now: ask.now,
+  });
   return questionId;
+}
+
+/** A question notice's replay key: one notice a question, and never a provider's timestamp. */
+export function questionNoticeKey(questionId: Id<'managerQuestions'>): string {
+  return `question:${questionId}`;
+}
+
+/**
+ * Queue a conflict's question for the thread of its plan's request, when a request is already out
+ * (17-C; 16-O's design): a request delivered to the manager is never edited, so a question asked
+ * after it is posted under it, once. A plan with no request yet carries the question in the
+ * request's own body, and one whose request failed carries it in the resend. The notice is keyed
+ * by its question ({@link questionNoticeKey}), so asking again queues nothing; whether it is still
+ * owed is read again when it is sent (`managerQuestions.questionNoticeOwed`). Writes the notice
+ * and schedules its send.
+ */
+async function queueQuestionNotice(
+  ctx: MutationCtx,
+  asked: {
+    readonly row: Doc<'workItems'>;
+    readonly questionId: Id<'managerQuestions'>;
+    readonly text: string;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { row, questionId } = asked;
+  const decision = row.decision;
+  if (decision === undefined || decision.kind !== 'plan') return;
+  if (decision.requestFailedAt !== undefined) return;
+  const surface = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent_slug', (q) =>
+      q.eq('agentId', row.agentId).eq('slug', decision.surfaceSlug),
+    )
+    .unique();
+  if (surface === null || surface.managerDmChannelId !== decision.channel) return;
+  const messageTs = questionNoticeKey(questionId);
+  const queued = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_surface_message', (q) =>
+      q.eq('surfaceId', surface._id).eq('messageTs', messageTs),
+    )
+    .unique();
+  if (queued !== null) return;
+  const noticeId = await ctx.db.insert('managerDecisionNotices', {
+    agentId: row.agentId,
+    surfaceId: surface._id,
+    workItemId: row._id,
+    decisionId: decision.id,
+    messageTs,
+    kind: 'question',
+    questionId,
+    text: asked.text,
+    createdAt: asked.now,
+  });
+  await ctx.scheduler.runAfter(0, internal.managerChannelActions.sendManagerReplyNotice, {
+    noticeId,
+  });
 }
 
 /** The questions about one relation one read takes: one a work item, few items a relation. */
