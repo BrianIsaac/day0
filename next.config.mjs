@@ -1,3 +1,12 @@
+/*
+ * Next.js sends its maker anonymous usage figures from a build and a start unless told not to,
+ * and it reads this file before it would send any. Off here, so no command that builds or starts
+ * the app dials telemetry.nextjs.org: a host no list Day0 prints names, which a customer's proxy
+ * would log from the machine all the same (found on the bed day0-w17p, 13 October 2026;
+ * docs/running/egress.md). A shell that names the variable itself is left as it is.
+ */
+process.env.NEXT_TELEMETRY_DISABLED ??= '1';
+
 /**
  * Sent with every response. The dashboard carries approve, reject and
  * autonomy controls, so no other page may frame it (`X-Frame-Options` for
