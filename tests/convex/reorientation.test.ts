@@ -655,6 +655,49 @@ describe('proposalInputOf: what a proposal is drawn from (the judgement and Disc
   });
 });
 
+describe('a change of a kind whose card is deferred (W16-R24)', (): void => {
+  it('joins the deferred card on a later day, where it opened a second card beside it', async (): Promise<void> => {
+    // The review's W16-R24: a deferred card counted as standing on its own day only, so the same
+    // trigger a day later opened a second card beside it, and both opened again.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const deferred = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-1',
+      summary: 'A skill is due a re-check',
+      now: MORNING_UTC,
+    }))!;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(deferred, {
+        status: 'deferred',
+        revisitAt: MORNING_UTC + 7 * 86_400_000,
+      });
+    });
+    const later = await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-2',
+      summary: 'Another skill is due a re-check',
+      now: MORNING_UTC + 2 * 86_400_000,
+    });
+    expect(later).toBe(deferred);
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+    // A decided card of an earlier day is joined by nothing: the later change opens its own.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(deferred, { status: 'dismissed' });
+    });
+    const fresh = await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-3',
+      summary: 'A third skill is due a re-check',
+      now: MORNING_UTC + 3 * 86_400_000,
+    });
+    expect(fresh).not.toBe(deferred);
+  });
+});
+
 describe('reopenDeferred: the Defer sweep', (): void => {
   it('opens again every deferred card whose date has come, and leaves the rest', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

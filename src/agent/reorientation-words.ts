@@ -23,6 +23,11 @@ export const CARD_ACTION_REFUSALS = {
   targetGone: 'What this card proposes to change is no longer there: dismiss it.',
   moved: 'What this card proposes to change has moved on since: dismiss it.',
   successor: 'The page this card names as the successor is not current: dismiss it.',
+  /** A charter change that would change nothing: the charter already holds it (W16-R24). */
+  unchanged: 'The charter already says this. Dismiss the card.',
+  /** A charter change with no approved charter to amend (W16-R24). */
+  noCharter:
+    'The charter is not approved yet, so this card cannot amend it: approve the charter, or dismiss the card.',
   /** An owed check's card whose agreements have all been checked since (RM34 (a)). */
   checked: 'These agreements have been checked since this card opened: dismiss it.',
   date: 'Pick a date after today and within a year.',
@@ -73,6 +78,17 @@ export const approvedResultWords = {
  */
 export function closedByHandSummary(previousManager: string): string {
   return `A card ${previousManager} opened was closed at the handover`;
+}
+
+/** The most cards a manager opens by hand for one employee in a day (W16-R35). */
+export const BY_HAND_CARDS_A_DAY = 3;
+
+/**
+ * Why a fourth by-hand card of a day was refused (section 7): each one asks the model for a
+ * proposal, and on the hosted office a visitor could open, dismiss and open again without end.
+ */
+export function byHandLimitWords(name: string): string {
+  return `You have opened three cards for ${name} today. Decide one, or come back tomorrow.`;
 }
 
 /** What an owed check's card says changed (RM34 (a); section 9.1's words). */

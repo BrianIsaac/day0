@@ -32,13 +32,16 @@ import {
 } from './reorientation';
 import type { Charter } from '../src/agent/charter';
 import {
+  BY_HAND_CARDS_A_DAY,
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
   PROPOSAL_CHANGED,
   approvedResultWords,
+  byHandLimitWords,
   proposalFingerprint,
   type HeldCounts,
 } from '../src/agent/reorientation-words';
+import { agentZone, dayKey } from '../src/lib/zone';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
 import {
   REORIENTATION_BLOCKING_LIMIT,
@@ -262,8 +265,9 @@ async function applyProposal(
       return { result: approvedResultWords.none };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
-      // The charter's own refusals (no approved charter now, a clause gone, nothing left to change)
-      // are each the charter no longer taking the change: said in the card's words (m15).
+      // The charter's own refusals are each the charter no longer taking the change, said in the
+      // card's words (m15), and each in a sentence of its own (W16-R24): a change that changes
+      // nothing and a charter not approved yet were both said as "has moved on since".
       const amended = await amendCharterInTransaction(ctx, {
         agentId: card.agentId,
         changes: proposed.changes,
@@ -271,6 +275,13 @@ async function applyProposal(
         reason: card.triggerSummary,
       }).catch((error: unknown) => {
         if (error instanceof ConvexError) throw error;
+        // Read by the amendment's own words (`amendCharterInTransaction`'s three plain errors),
+        // which the two approve tests of these sentences hold end to end.
+        const said = error instanceof Error ? error.message : '';
+        if (said.includes('changes nothing')) throw new ConvexError(CARD_ACTION_REFUSALS.unchanged);
+        if (said.includes('not approved yet') || said.includes('no charter to amend')) {
+          throw new ConvexError(CARD_ACTION_REFUSALS.noCharter);
+        }
         throw new ConvexError(CARD_ACTION_REFUSALS.moved);
       });
       return { result: approvedResultWords.charter(amended.version), charterId: amended.charterId };
@@ -591,10 +602,26 @@ export const openByHand = mutation({
     asked: boolean;
     onCard: boolean;
   }> => {
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
     const now = Date.now();
+    // Three by-hand cards an employee a day (W16-R35): each asks the model for a proposal, and a
+    // card dismissed and opened again was one call each time. A change that joins the day's
+    // standing card opens none, and is not refused.
+    const today = await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_day_trigger', (q) =>
+        q
+          .eq('agentId', args.agentId)
+          .eq('day', dayKey(now, agentZone(agent)))
+          .eq('trigger', 'role-changed'),
+      )
+      .take(BY_HAND_CARDS_A_DAY + 1);
+    const standing = today.some((card) => (DECIDABLE as readonly string[]).includes(card.status));
+    if (!standing && today.length >= BY_HAND_CARDS_A_DAY) {
+      throw new ConvexError(byHandLimitWords(agent.name));
+    }
     const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,

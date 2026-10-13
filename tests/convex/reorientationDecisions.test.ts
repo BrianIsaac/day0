@@ -706,11 +706,40 @@ describe('approve: the proposal applied through its target', (): void => {
       const [charter] = await ctx.db.query('charters').collect();
       await ctx.db.patch(charter._id, { approved: false });
     });
+    // Re-taken (17-O; W16-R24): every plain refusal of the amendment read "has moved on since",
+    // and a charter not approved yet is not a change that moved.
     await expect(
       harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
         reorientationId: card,
       }),
-    ).rejects.toThrow('What this card proposes to change has moved on since: dismiss it.');
+    ).rejects.toThrow(
+      'The charter is not approved yet, so this card cannot amend it: approve the charter, or dismiss the card.',
+    );
+    expect((await cardOf(harness, card)).status).toBe('open');
+  });
+
+  it('says a charter change that changes nothing as the charter already saying it (W16-R24)', async (): Promise<void> => {
+    // The review's W16-R24: "the amendment changes nothing" was reworded "has moved on since:
+    // dismiss it", which is untrue of a clause the charter already holds word for word.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const card = await proposedCard(harness, agentId, {
+      kind: 'charter-change',
+      changes: [
+        {
+          kind: 'edit-clause',
+          field: 'willDo',
+          index: 0,
+          text: 'Triage tier-2 asks in #revops-asks',
+        },
+      ],
+      rationale: 'Say it as it is.',
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card,
+      }),
+    ).rejects.toThrow('The charter already says this. Dismiss the card.');
     expect((await cardOf(harness, card)).status).toBe('open');
   });
 
@@ -1269,6 +1298,42 @@ describe('the hold: the seventh reason at the plan’s decision', (): void => {
     });
   });
 
+  it.fails(
+    // V17-9, traced and not fixed here: under the autonomy switch, the plan a card held is
+    // approved by Day0 itself once Approve has changed what the plan was drafted under. The fix
+    // is a gate of `work.decidePlan` (convex/work.ts), which this unit does not own; the work
+    // loop's recovery re-runs the same decision, so holding it at the release alone would not hold.
+    'does not approve on its own a plan drafted before the change that Approve made (V17-9)',
+    async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const { agentId, workItemId } = await autonomous(harness);
+      const cardId = await proposedCard(
+        harness,
+        agentId,
+        {
+          kind: 'charter-change',
+          changes: [
+            {
+              kind: 'edit-clause',
+              field: 'willNotDo',
+              index: 0,
+              text: 'Reply to a tier-2 ask without the manager',
+            },
+          ],
+          rationale: 'The manager now answers tier-2 asks.',
+        },
+        { affected: { workItems: [workItemId] } },
+      );
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+      // The release asks the plan's decision again, as the scheduler runs it.
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+      const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+      expect(row?.state).toBe('plan-pending');
+    },
+  );
+
   it('lets the plan go on Dismiss, and keeps the hold while the card is deferred', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await autonomous(harness);
@@ -1291,6 +1356,63 @@ describe('the hold: the seventh reason at the plan’s decision', (): void => {
 });
 
 describe('openByHand and listForAgent', (): void => {
+  it('opens three cards by hand for an employee in a day, and refuses the fourth in the page’s words (W16-R35)', async (): Promise<void> => {
+    // The review's W16-R35: a hosted visitor could open a by-hand card, dismiss it and open
+    // another without end, each one a call of the hosted model.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    vi.setSystemTime(Date.UTC(2026, 9, 13, 2, 0));
+    for (const summary of ['Covers renewals too', 'Covers refunds too', 'Covers dunning too']) {
+      const { reorientationId } = await owner.mutation(api.reorientationDecisions.openByHand, {
+        agentId,
+        summary,
+      });
+      await owner.mutation(api.reorientationDecisions.dismiss, {
+        reorientationId: reorientationId!,
+      });
+    }
+    await expect(
+      owner.mutation(api.reorientationDecisions.openByHand, {
+        agentId,
+        summary: 'Covers churn too',
+      }),
+    ).rejects.toThrow(
+      'You have opened three cards for Mira today. Decide one, or come back tomorrow.',
+    );
+    expect(await cardsOf(harness, agentId)).toHaveLength(3);
+    // The next day in the employee's zone opens again.
+    vi.setSystemTime(Date.UTC(2026, 9, 14, 2, 0));
+    await expect(
+      owner.mutation(api.reorientationDecisions.openByHand, {
+        agentId,
+        summary: 'Covers churn too',
+      }),
+    ).resolves.toMatchObject({ joined: false });
+  });
+
+  it('joins a second change to the day’s standing by-hand card whatever the day’s count', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    vi.setSystemTime(Date.UTC(2026, 9, 13, 2, 0));
+    for (const summary of ['Covers renewals too', 'Covers refunds too']) {
+      const { reorientationId } = await owner.mutation(api.reorientationDecisions.openByHand, {
+        agentId,
+        summary,
+      });
+      await owner.mutation(api.reorientationDecisions.dismiss, {
+        reorientationId: reorientationId!,
+      });
+    }
+    await owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary: 'Third' });
+    // A minute on: a by-hand change is keyed by its instant, and two of one instant are one change.
+    vi.setSystemTime(Date.now() + 60_000);
+    await expect(
+      owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary: 'Fourth' }),
+    ).resolves.toMatchObject({ joined: true });
+  });
+
   it('opens a card about a change of role, reaching the whole charter', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

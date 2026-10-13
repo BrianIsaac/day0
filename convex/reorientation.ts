@@ -366,7 +366,8 @@ export interface OneCardLimits extends ReachLimits {
 }
 
 /**
- * Open a card for one report, or join it to the card of its kind already standing that day (C6).
+ * Open a card for one report, or join it to the card of its kind already standing that day (C6)
+ * or deferred on an earlier one (W16-R24).
  * A change the employee's standing cards already carry (by its key, or a joined event's id) writes
  * nothing; an employee that is gone, or has no owner key, gets no card. Every read comes before the
  * first write, so a report whose reach needs more work rows than `room` leaves nothing behind.
@@ -404,9 +405,12 @@ async function openOne(
       q.eq('agentId', agent._id).eq('day', day).eq('trigger', input.trigger),
     )
     .take(DAY_CARDS_READ);
-  const joinable = today.find((card) =>
-    (STANDING_STATUSES as readonly string[]).includes(card.status),
-  );
+  // The day's standing card of the kind, or a card of the kind deferred on an earlier day: left
+  // out, the same trigger on a later day opened a second card beside the deferred one, and both
+  // opened again (W16-R24).
+  const joinable =
+    today.find((card) => (STANDING_STATUSES as readonly string[]).includes(card.status)) ??
+    standing.find((card) => card.status === 'deferred' && card.trigger === input.trigger);
   if (joinable !== undefined) return await joinCard(ctx, joinable, input, limits.judgeAfterMs);
   const evidence = joinedEvidence(NO_EVIDENCE, input.evidence);
   const affected = joinedAffected(NOTHING_AFFECTED, input.affected);
