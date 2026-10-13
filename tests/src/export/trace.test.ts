@@ -1,3 +1,5 @@
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import {
   assembleOwnerExport,
@@ -477,6 +479,56 @@ describe('the owner export streamed to its file (wave 17, 17-F)', (): void => {
     );
     expect(manifest.counts).toMatchObject({ people: 1, employees: 51 });
   });
+
+  /** The engine's collector, run on demand: a context made after the flag is set is handed it. */
+  function collector(): (() => void) | undefined {
+    try {
+      setFlagsFromString('--expose-gc');
+      const collect: unknown = runInNewContext('gc');
+      return typeof collect === 'function' ? (collect as () => void) : undefined;
+    } catch {
+      // Not this engine: one that will not expose its collector cannot run the test below.
+      return undefined;
+    }
+  }
+  const collect = collector();
+
+  // Needs the engine's collector on demand, which Node hands a new context once the flag is set.
+  it.skipIf(collect === undefined)(
+    'lets the owner’s rows go once they are written: none is still held when an employee is read (the bed’s heap, 17-F)',
+    async (): Promise<void> => {
+      const calls = company(3);
+      const rows: Array<WeakRef<object>> = [];
+      const heldWhenAnEmployeeIsRead: number[] = [];
+      await streamOwnerExport(
+        {
+          ...calls,
+          page: async (cursor) => {
+            const page = await calls.page(cursor);
+            for (const row of page.rows) rows.push(new WeakRef(row as object));
+            return page;
+          },
+          employee: {
+            ...calls.employee,
+            head: async (request) => {
+              // A turn of the loop first, so nothing of the piece just written is still on its way.
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
+              collect?.();
+              heldWhenAnEmployeeIsRead.push(rows.filter((row) => row.deref() !== undefined).length);
+              return await calls.employee.head(request);
+            },
+          },
+        },
+        {
+          write: async (): Promise<void> => {
+            await Promise.resolve();
+          },
+        },
+      );
+      expect(rows).toHaveLength(1);
+      expect(heldWhenAnEmployeeIsRead).toEqual([0, 0, 0]);
+    },
+  );
 
   it('writes, piece by piece, the file the assembled export printed whole, byte for byte', async (): Promise<void> => {
     for (const count of [0, 1, 3]) {

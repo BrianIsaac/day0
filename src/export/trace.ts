@@ -690,12 +690,70 @@ function printedAt(value: unknown, depth: number): string {
   return JSON.stringify(value, null, 2).replace(/\n/g, `\n${FILE_INDENT.repeat(depth)}`);
 }
 
+/** What the first piece of the file is written from, beside the calls and the sink. */
+interface OwnerRowsRequest {
+  readonly head: OwnerExportHead;
+  /** How many employees' traces follow, for the manifest's counts. */
+  readonly employees: number;
+  /** Throws once the export is cancelled. */
+  readonly live: () => void;
+}
+
+/**
+ * Read the owner's rows page by page and write the file's first piece: the manifest, which
+ * carries their counts, the rows, and the opening of the employees' list. The rows are this
+ * function's own, so they are let go when it returns, before the first employee is read: on the
+ * wave 17 bed they were 8 MB of an 11 MB file, held to the export's end while they were the
+ * stream's.
+ *
+ * @returns The manifest as written.
+ * @throws Error when a page answers for a section other than the one asked for.
+ */
+async function writeOwnerRows(
+  call: OwnerExportCalls,
+  sink: OwnerExportSink,
+  { head, employees, live }: OwnerRowsRequest,
+): Promise<OwnerExport['manifest']> {
+  const owner = Object.fromEntries(
+    OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
+  ) as Record<OwnerSection, unknown[]>;
+  const seen = new Set<string>();
+  let next: OwnerCursor | null = head.next;
+  while (next !== null) {
+    live();
+    const page: OwnerPage = await call.page(next);
+    if (page.section !== next.section) {
+      throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
+    }
+    for (const row of page.rows) {
+      const id = String((row as { _id?: unknown })._id);
+      if (seen.has(`${page.section}:${id}`)) continue;
+      seen.add(`${page.section}:${id}`);
+      owner[page.section].push(row);
+    }
+    next = page.next;
+  }
+  const counts = Object.fromEntries(
+    OWNER_SECTIONS.map((section) => [section, owner[section].length]),
+  ) as Record<OwnerSection, number>;
+  const manifest: OwnerExport['manifest'] = {
+    ...head.manifest,
+    counts: { ...counts, employees },
+  };
+  live();
+  await sink.write(
+    `{\n${FILE_INDENT}"manifest": ${printedAt(manifest, 1)},\n${FILE_INDENT}"owner": ${printedAt(owner, 1)},\n${FILE_INDENT}"employees": [`,
+  );
+  return manifest;
+}
+
 /**
  * Write the owner export to a sink as it is read (wave 17, 17-F; decision F-1): the head and the
  * rest of the owner's agents, the owner's rows page by page, then each employee's trace through
  * the employee's own export, its owner-scoped sections left to the owner's rows. The owner's rows
- * are held until they are written, since the manifest that goes first carries their counts: they
- * hold no stored page's text, and the skill library's bodies are the heaviest thing among them.
+ * are held until they are written, since the manifest that goes first carries their counts, and
+ * let go before the first employee is read ({@link writeOwnerRows}): they hold no stored page's
+ * text, and the skill library's bodies are the heaviest thing among them.
  * An employee's trace is written the moment it is whole and let go before the next is read, so
  * the export holds one trace however many employees there are. The pieces together are the file
  * `JSON.stringify(file, null, 2)` and a line break would print of the whole {@link OwnerExport},
@@ -723,37 +781,8 @@ export async function streamOwnerExport(
     live();
     return await call.agents(cursor);
   });
-  const owner = Object.fromEntries(
-    OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
-  ) as Record<OwnerSection, unknown[]>;
-  const seen = new Set<string>();
-  let next: OwnerCursor | null = head.next;
-  while (next !== null) {
-    live();
-    const page: OwnerPage = await call.page(next);
-    if (page.section !== next.section) {
-      throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
-    }
-    for (const row of page.rows) {
-      const id = String((row as { _id?: unknown })._id);
-      if (seen.has(`${page.section}:${id}`)) continue;
-      seen.add(`${page.section}:${id}`);
-      owner[page.section].push(row);
-    }
-    next = page.next;
-  }
-  const counts = Object.fromEntries(
-    OWNER_SECTIONS.map((section) => [section, owner[section].length]),
-  ) as Record<OwnerSection, number>;
   const employees = named.employees.length;
-  const manifest: OwnerExport['manifest'] = {
-    ...head.manifest,
-    counts: { ...counts, employees },
-  };
-  live();
-  await sink.write(
-    `{\n${FILE_INDENT}"manifest": ${printedAt(manifest, 1)},\n${FILE_INDENT}"owner": ${printedAt(owner, 1)},\n${FILE_INDENT}"employees": [`,
-  );
+  const manifest = await writeOwnerRows(call, sink, { head, employees, live });
   options.onProgress?.({ written: 0, employees });
   const guarded: TraceCalls = {
     head: async (request) => {
