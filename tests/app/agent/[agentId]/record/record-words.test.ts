@@ -586,6 +586,24 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan is drafted again because a card changed what it was drafted under (V17-9, the joins)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-redrafting',
+          payload: {
+            workItemId: 'w1',
+            reorientationId: 'card-1',
+            summary: 'Dana Whitfield, its approver, changed',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for \u201cDraft response for new tier-two RevOps ask\u201d is drafted again: the card about \u201cDana Whitfield, its approver, changed\u201d changed what it was drafted under.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',

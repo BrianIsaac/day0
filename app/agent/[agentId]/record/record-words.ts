@@ -1192,9 +1192,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} read what the plan${forItem(subject)} rests on`,
   'work.plan-drafted': (_, subject) => `${subject.name} drafted a plan${forItem(subject)}`,
   'work.plan-redrafting': (p, subject) =>
-    `The plan${forItem(subject)} is drafted again: ${
-      text(p.slug) ?? 'its system'
-    } is connected, so the ticket can be read`,
+    p.reorientationId !== undefined
+      ? `The plan${forItem(subject)} is drafted again: ${
+          text(p.summary) !== undefined ? `the card about “${text(p.summary)}”` : 'a card'
+        } changed what it was drafted under`
+      : `The plan${forItem(subject)} is drafted again: ${
+          text(p.slug) ?? 'its system'
+        } is connected, so the ticket can be read`,
   'work.plan-redraft': (p, subject) =>
     `The plan${forItem(subject)} is drafted again. ${
       text(p.reason) ?? 'Documentation the plan followed has since been changed or removed.'
