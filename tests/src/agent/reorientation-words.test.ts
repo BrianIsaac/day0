@@ -9,6 +9,7 @@ import {
   decidedElsewhereWords,
   decisionWords,
   failedProposalWords,
+  deferredWords,
   heldWords,
   pendingWords,
   proposalFingerprint,
@@ -40,6 +41,16 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
       ]),
     ).toBe(
       'Two pages disagree under “Thresholds”: A, Pipeline variance runbook (Company folder), and B, Finance variance escalation (Company folder). Which is right? Mira runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
+    );
+  });
+
+  it('says how long a deferred card’s plans stay held, and only the date where it holds none (W16-R24; section 7)', (): void => {
+    expect(deferredWords('3 October', { plans: 0, runs: 0 })).toBe('Deferred until 3 October.');
+    expect(deferredWords('3 October', { plans: 1, runs: 0 })).toBe(
+      'Deferred until 3 October. Its 1 plan stays held until then.',
+    );
+    expect(deferredWords('3 October', { plans: 2, runs: 1 })).toBe(
+      'Deferred until 3 October. Its 2 plans and 1 run stay held until then.',
     );
   });
 

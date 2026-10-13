@@ -33,11 +33,29 @@ describe('ReorientationView', () => {
     expect(html).toContain('Open a card');
   });
 
-  it('says a handover opens a card in the hosted office, whose pages do not change', () => {
+  it('says what opens a card in the hosted office, where a skill or an access can change and a page or a person cannot', () => {
+    // Re-taken (17-O; the v0.20.0 hosted walk's finding 5): the sentence said a card opens here
+    // "when Lark is handed over to you, or when you open one below", and Lark had a card opened
+    // automatically when another employee wrote a new version of a skill it runs.
     backend.queries['reorientationDecisions:listForAgent'] = [];
     const html = renderToStaticMarkup(asEmployee(<ReorientationView />));
-    expect(html).toContain('pages do not change, so a card opens here when Mira');
-    expect(html).toContain('is handed over to you');
+    expect(html).toContain(
+      'The hosted office&#x27;s pages and people do not change, so a card opens here when a skill or an access Mira relies on changes, when Mira is handed over to you, or when you open one below.',
+    );
+    expect(html).toContain('href="/agent/agent-1/charter"');
+  });
+
+  it('chooses neither sentence until the mode answers (W16-R24)', () => {
+    // The review's W16-R24: the page tested `surfaceMode === 'real'` and sent an unanswered mode
+    // to the hosted sentence, so a local install read the hosted office's words first.
+    backend.queries['reorientationDecisions:listForAgent'] = [];
+    const html = renderToStaticMarkup(
+      asEmployee(<ReorientationView />, { surfaceMode: undefined }),
+    );
+    expect(html).not.toContain('hosted office');
+    expect(html).not.toContain('A card opens when a person');
+    expect(html).toContain('Loading the reorientation cards');
+    expect(html).not.toContain('Open a card');
   });
 
   it('says it is loading until the cards are read, and draws nothing else', () => {

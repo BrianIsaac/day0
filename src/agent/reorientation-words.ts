@@ -268,6 +268,24 @@ export function heldWords(held: HeldCounts): string {
 }
 
 /**
+ * What Defer says once it lands (section 7): its date, and for a card that holds plans or runs,
+ * that they stay held until then (W16-R24: a deferred high-risk card keeps its hold while it is
+ * out of the inbox, and Defer said only the date).
+ *
+ * @param revisit - The day the card opens again, as the card writes a day.
+ * @param held - What the card holds when it is deferred.
+ */
+export function deferredWords(revisit: string, held: HeldCounts): string {
+  const things = [
+    held.plans > 0 ? (held.plans === 1 ? '1 plan' : `${held.plans} plans`) : undefined,
+    held.runs > 0 ? (held.runs === 1 ? '1 run' : `${held.runs} runs`) : undefined,
+  ].filter((part): part is string => part !== undefined);
+  if (things.length === 0) return `Deferred until ${revisit}.`;
+  const stay = held.plans + held.runs === 1 ? 'stays' : 'stay';
+  return `Deferred until ${revisit}. Its ${things.join(' and ')} ${stay} held until then.`;
+}
+
+/**
  * The card's waiting line while the judgement works (section 7): "{name} is working out what to
  * propose. Nothing is held while it does." A high-risk card holds its plans and runs meanwhile,
  * and says what of them waits (flagged: the draft's second sentence would be untrue there).

@@ -5,12 +5,14 @@ import { useMutation } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { nextCharterVersion } from '@/agent/charter-amendment';
+import { CLAUSE_WORDS } from '@/agent/reorientation-proposal';
 import {
   approvedResultWords,
   cardTitle,
   decidedElsewhereOf,
   decidedElsewhereWords,
   decisionWords,
+  deferredWords,
   failedProposalWords,
   heldWords,
   pendingWords,
@@ -30,6 +32,12 @@ export type CardView = FunctionReturnType<typeof api.reorientationDecisions.list
 
 /** A card's proposal, once there is one. */
 type Proposed = CardView['card']['proposed'];
+
+/**
+ * The most charter clauses a card names in full. Past it the card only counts them: a card opened
+ * by hand reaches the whole charter, which the Charter tab already draws.
+ */
+const CLAUSES_NAMED = 5;
 
 /** A week, as Defer sets it by default (A21). */
 const WEEK_MS = 7 * 86_400_000;
@@ -269,6 +277,14 @@ export function ReorientationCard({
     // A decided card holds nothing, and a standing one says what its hold stops (M3).
     decided ? undefined : held.plans + held.runs > 0 ? heldWords(held) : '0 plans held',
   ].filter((words): words is string => words !== undefined);
+  // The clauses it reaches, each under its list's name and in the words it had when the card
+  // opened (the v0.20.0 hosted walk's finding 5: a handover's card counted two and named none).
+  const clauses =
+    card.affected.charterClauses.length <= CLAUSES_NAMED
+      ? card.affected.charterClauses
+          .filter((clause) => clause.text.trim() !== '')
+          .map((clause) => `${CLAUSE_WORDS[clause.field]}: “${clause.text}”`)
+      : [];
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),
     ...view.people.map((edge) => edge.words),
@@ -299,6 +315,12 @@ export function ReorientationCard({
             <>
               <dt className="text-[var(--color-muted)]">Affected</dt>
               <dd className="[overflow-wrap:anywhere]">{affected.join(' · ')}</dd>
+            </>
+          ) : null}
+          {clauses.length > 0 ? (
+            <>
+              <dt className="text-[var(--color-muted)]">Clauses</dt>
+              <dd className="[overflow-wrap:anywhere]">{clauses.join(' · ')}</dd>
             </>
           ) : null}
           {evidence.length > 0 ? (
@@ -361,7 +383,7 @@ export function ReorientationCard({
                   disabled={change.busy}
                   onClick={() =>
                     change.run(() => defer({ reorientationId }), {
-                      done: (outcome) => `Deferred until ${revisitDay(outcome.revisitAt, zone)}.`,
+                      done: (outcome) => deferredWords(revisitDay(outcome.revisitAt, zone), held),
                       refused: 'The card was not deferred.',
                     })
                   }

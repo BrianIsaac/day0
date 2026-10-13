@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { getFunctionName } from 'convex/server';
+import { ConvexError } from 'convex/values';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../../convex/_generated/dataModel';
@@ -19,6 +20,8 @@ const backend = vi.hoisted(() => ({
    * query the mutation changed is drawn again before the call's promise settles.
    */
   lands: undefined as ((name: string) => void) | undefined,
+  /** The sentence the next by-hand card is refused with, when it is. */
+  refuses: undefined as string | undefined,
   listeners: new Set<() => void>(),
   version: 0,
 }));
@@ -58,6 +61,7 @@ function answerOf(name: string): unknown {
   }
   if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
   if (name === 'reorientationDecisions:openByHand') {
+    if (backend.refuses !== undefined) throw new ConvexError(backend.refuses);
     return {
       reorientationId: 'card-1',
       joined: backend.joins,
@@ -172,6 +176,7 @@ beforeEach((): void => {
   backend.onCard = true;
   backend.asks = true;
   backend.lands = undefined;
+  backend.refuses = undefined;
   backend.listeners.clear();
 });
 
@@ -625,6 +630,56 @@ describe('a reorientation card', (): void => {
     }
   });
 
+  it('names the clauses a card reaches, and only counts them where it reaches the whole charter (the v0.20.0 hosted walk’s finding 5)', async (): Promise<void> => {
+    // The walk's row `B-Pip-reorientation-first.txt`: the handover's card read "Affected 2 charter
+    // clauses · 0 plans held" with no Evidence row, and the rule it carried was named only in the
+    // take-on dialog.
+    const clause = (
+      field: 'willDo' | 'willNotDo' | 'escalationTriggers',
+      index: number,
+      text: string,
+    ): CardView['card']['affected']['charterClauses'][number] => ({ field, index, text });
+    const carried = [
+      clause(
+        'escalationTriggers',
+        0,
+        'Send all first replies and escalations through the manager first.',
+      ),
+      clause('willNotDo', 1, 'Reply to a customer without the manager.'),
+    ];
+    const handover = drawn(
+      withCard(
+        {
+          trigger: 'manager-changed',
+          triggerSummary: 'a@acme.test handed Mira over to you',
+          affected: { ...BASE.card.affected, charterClauses: carried },
+        },
+        { pages: [] },
+      ),
+    );
+    expect(handover.container.textContent).toContain('2 charter clauses');
+    expect(handover.container.textContent).toContain(
+      'Escalates when: “Send all first replies and escalations through the manager first.” · Will not do: “Reply to a customer without the manager.”',
+    );
+    await floor(handover.container);
+    handover.unmount();
+    // A card opened by hand reaches the whole charter: its clauses are counted, not listed.
+    const whole = drawn(
+      withCard({
+        trigger: 'role-changed',
+        affected: {
+          ...BASE.card.affected,
+          charterClauses: [0, 1, 2, 3, 4, 5].map((index) =>
+            clause('willDo', index, `Clause ${index}`),
+          ),
+        },
+      }),
+    );
+    expect(whole.container.textContent).toContain('6 charter clauses');
+    expect(whole.container.textContent).not.toContain('Clause 0');
+    whole.unmount();
+  });
+
   it('names on a handover’s card the reporting-line rule that binds no clause (W16-R21, W7a)', async (): Promise<void> => {
     const view = drawn(
       withCard(
@@ -733,6 +788,62 @@ describe('a decision leaves the manager on the card and says what it did (the v0
   );
 });
 
+describe('the by-hand form’s line once the proposal is in (the v0.20.0 hosted walk’s finding 5)', (): void => {
+  it('stops saying the employee is working out what to propose once the card has its proposal', async (): Promise<void> => {
+    // The walk's row `A-Nell-reorientation-byhand.txt`: four minutes after Nell's by-hand card had
+    // its proposal, the line under the form still read "A card is open. Nell is working out what
+    // to propose."
+    const list = 'reorientationDecisions:listForAgent';
+    backend.queries[list] = [];
+    backend.lands = (): void => {
+      backend.queries[list] = [withCard({ proposed: { kind: 'pending' } })];
+    };
+    const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+    typeInto(view.container.querySelector('input[type="text"]')!, 'Mira now covers renewals too');
+    await press(view.container, 'Open a card');
+    expect(said(view.container).at(-1)).toBe(
+      'A card is open. Mira is working out what to propose.',
+    );
+    // The judgement answers, and the card draws its proposal.
+    await act(async (): Promise<void> => {
+      backend.queries[list] = [BASE];
+      backend.version += 1;
+      for (const listener of backend.listeners) listener();
+    });
+    expect(view.container.textContent).not.toContain('is working out what to propose');
+    view.unmount();
+  });
+
+  it('keeps a refusal said after an earlier card was opened', async (): Promise<void> => {
+    const list = 'reorientationDecisions:listForAgent';
+    backend.queries[list] = [BASE];
+    const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+    typeInto(view.container.querySelector('input[type="text"]')!, 'Mira now covers renewals too');
+    await press(view.container, 'Open a card');
+    backend.refuses =
+      'You have opened three cards for Mira today. Decide one, or come back tomorrow.';
+    typeInto(view.container.querySelector('input[type="text"]')!, 'Mira now covers refunds too');
+    await press(view.container, 'Open a card');
+    expect(said(view.container).at(-1)).toBe(
+      'You have opened three cards for Mira today. Decide one, or come back tomorrow.',
+    );
+    view.unmount();
+  });
+});
+
+describe('Defer on a card that holds plans (W16-R24; section 7)', (): void => {
+  it('says how long the plans stay held', async (): Promise<void> => {
+    // The review's W16-R24: a deferred high-risk card keeps its hold while absent from the inbox,
+    // and Defer said only its date.
+    const view = drawn(withCard({ risk: 'high' }, { held: { plans: 2, runs: 0 } }));
+    await press(view.container, 'Defer a week');
+    expect(said(view.container).at(-1)).toBe(
+      'Deferred until 3 October. Its 2 plans stay held until then.',
+    );
+    view.unmount();
+  });
+});
+
 describe('an address naming a card lands on it once the cards are drawn (16-D’s W-3)', (): void => {
   it('brings the card into view and focus on a client-side arrival, and again when the hash changes', async (): Promise<void> => {
     // The bed's probe: Back to the card and the inbox's Review navigate on the client, where the
@@ -790,6 +901,11 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
       view.unmount();
       return outcome;
     };
+    // The card the change is on is being worked out, as the backend leaves it (17-O: the form's
+    // line is said only while that is so).
+    backend.queries['reorientationDecisions:listForAgent'] = [
+      withCard({ proposed: { kind: 'pending' } }),
+    ];
     expect(await typed()).toBe('A card is open. Mira is working out what to propose.');
     backend.joins = true;
     expect(await typed()).toBe(

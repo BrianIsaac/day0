@@ -305,8 +305,8 @@ function candidateLine(candidate: ProposalCandidate): string {
   }
 }
 
-/** A charter list in the charter's own words. */
-const CLAUSE_WORDS: Readonly<Record<ClauseField, string>> = {
+/** A charter list in the charter's own words, as the judgement's prompt and the card name it. */
+export const CLAUSE_WORDS: Readonly<Record<ClauseField, string>> = {
   willDo: 'Will do',
   willNotDo: 'Will not do',
   escalationTriggers: 'Escalates when',
