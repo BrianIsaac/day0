@@ -32,6 +32,7 @@ import {
   CONFLICT_CHOICES,
   CONFLICT_QUESTION_CLOSED,
   conflictChoiceWords,
+  conflictQuestionText,
   type ConflictChoice,
 } from '../src/agent/reorientation-words';
 import type { CharterAnswerVia } from '../src/events/contract';
@@ -41,7 +42,9 @@ import {
   managerOpenQuestions,
   questionKey,
   sharedContentWords,
+  type ManagerQuestionCloseReason,
 } from '../src/agent/manager-questions';
+import { heldSurfaceNames } from './reorientation';
 import { closeQuestionsOfRelation } from './questionCloses';
 import { appendEvent } from './eventLog';
 
@@ -688,40 +691,95 @@ export const conflictConfirmedSince = internalQuery({
 export interface ConflictQuestionView {
   readonly _id: Id<'managerQuestions'>;
   readonly workItemId: Id<'workItems'>;
+  /** The relation it asks about, by which a run's stop names the question it waited on. */
+  readonly relationId: Id<'docRelations'>;
+  /**
+   * The question in words. While its conflict stands, what Day0 holds meanwhile is said from the
+   * plan as it stands now (17-C: the words stored when it was asked went stale beside the live
+   * hold); a message already in Slack stays as it was sent.
+   */
   readonly question: string;
   /** The two pages, first and second, while the conflict still stands; null once it does not. */
   readonly pages: readonly [CiteConflictPage, CiteConflictPage] | null;
+  /**
+   * How it stopped waiting, once it has: the answer it was given, or why it was closed without
+   * one. Absent while it is open. The card draws no settled question; the stop beside one reads
+   * this to say Retry runs it (17-C).
+   */
+  readonly settled?: { readonly answer?: string; readonly closed?: ManagerQuestionCloseReason };
 }
 
 /** The conflict questions one read of an employee's takes: one a plan and conflict, few open. */
 const OPEN_CONFLICTS_READ = 50;
 
 /**
- * The conflict questions still waiting beside an employee's plans (RM20 (a)), each with the two
- * pages its answers name, for the Work tab's cards. Public, guarded by the employee's owner.
+ * The plans one read of the cards reads whole to say what each question holds now: a plan's row
+ * carries its whole plan and output, so past these the question is said as it was asked (W16-R6).
+ */
+const HELD_PLANS_READ = 20;
+
+/**
+ * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards: those
+ * still open, each with the two pages its answers name and what Day0 holds for it now, and those
+ * among the newest that were answered or closed, which no card draws and a stopped run's words
+ * read. Public, guarded by the employee's owner. Reads the newest questions' small rows, the
+ * relation and blocks of each open one, and at most `HELD_PLANS_READ` plans whole.
  */
 export const conflictsForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ConflictQuestionView[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .take(OPEN_CONFLICTS_READ * 4);
     const views: ConflictQuestionView[] = [];
+    const plans = new Map<Id<'workItems'>, Doc<'workItems'> | null>();
+    let open = 0;
+    let settled = 0;
     for (const row of rows) {
-      if (row.type !== 'retrieval' || row.relationId === undefined || !isOpenQuestion(row)) {
+      const relationId = row.relationId;
+      if (row.type !== 'retrieval' || relationId === undefined) continue;
+      const named = { _id: row._id, workItemId: row.workItemId, relationId };
+      if (!isOpenQuestion(row)) {
+        if (settled >= OPEN_CONFLICTS_READ) continue;
+        settled += 1;
+        views.push({
+          ...named,
+          question: row.question,
+          pages: null,
+          settled:
+            row.answer !== undefined
+              ? { answer: row.answer.text }
+              : { closed: row.closed?.reason ?? 'settled' },
+        });
         continue;
       }
-      if (views.length >= OPEN_CONFLICTS_READ) break;
-      const standing = await standingConflictOf(ctx, await ctx.db.get(row.relationId));
-      const pages = standing === undefined ? null : citeConflictOf(standing).pages;
+      if (open >= OPEN_CONFLICTS_READ) continue;
+      open += 1;
+      const standing = await standingConflictOf(ctx, await ctx.db.get(relationId));
+      if (standing === undefined) {
+        views.push({ ...named, question: row.question, pages: null });
+        continue;
+      }
+      const conflict = citeConflictOf(standing);
+      if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
+        plans.set(row.workItemId, await ctx.db.get(row.workItemId));
+      }
+      const plan = plans.get(row.workItemId);
       views.push({
-        _id: row._id,
-        workItemId: row.workItemId,
-        question: row.question,
-        pages: pages === null ? null : [pages[0], pages[1]],
+        ...named,
+        question:
+          plan === undefined || plan === null
+            ? row.question
+            : conflictQuestionText(
+                agent.name,
+                conflict.heading,
+                conflict.pages,
+                await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
+              ),
+        pages: [conflict.pages[0], conflict.pages[1]],
       });
     }
     return views;

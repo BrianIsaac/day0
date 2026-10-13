@@ -432,7 +432,18 @@ export interface WithheldAction {
  * to the manager's answer: those writes were withheld, and the run stops with
  * the question as its reason once the rest of its set has settled.
  */
-export interface OpenQuestion {
+export interface OpenQuestion extends StandingQuestion {
+  /**
+   * The other questions the same set waits on, each with its own steps and its own mark (17-C,
+   * C-2): the executor's question and a conflict's stand side by side, so the run stops once with
+   * both and neither's mark is lost. Absent where one question stands, as on every row stored
+   * before 0.21.0, which reads as that one question.
+   */
+  also?: StandingQuestion[];
+}
+
+/** One question a set waits on: its words, the steps that wait on it, and what kind it is. */
+export interface StandingQuestion {
   question: string;
   /** The one-based plan steps that wait on the answer. */
   steps: number[];

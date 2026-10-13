@@ -31,6 +31,7 @@ import { AgentZoneContext } from '../../../../../app/components/time';
 import { StatusRegion } from '../../../../../app/components/StatusRegion';
 import { useChange } from '../../../../../app/components/use-change';
 import { DRAWN, EMPLOYEE, SURFACES, ZONE } from '../../../../fixtures/work/drawn-states';
+import { openQuestionStopReason } from '../../../../../src/work/obligations';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { focusedName, mount, press, said } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
@@ -40,6 +41,7 @@ import { underTarget } from '../../../../fixtures/dom/targets';
 const QUESTION: ConflictQuestionRow = {
   _id: 'q1' as Id<'managerQuestions'>,
   workItemId: 'w1' as Id<'workItems'>,
+  relationId: 'r1' as Id<'docRelations'>,
   question:
     'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
   pages: [
@@ -91,10 +93,80 @@ describe('the conflict question on a plan’s card', (): void => {
   it('offers no answer once the conflict no longer stands, and says nothing waits on it (the second pass’s m4)', async (): Promise<void> => {
     const view = mount(<OnCard question={{ ...QUESTION, pages: null }} />);
     expect(view.container.querySelectorAll('button')).toHaveLength(0);
+    // Re-pinned by 17-C to section 7's sentence for a question closed unanswered.
     expect(view.container.textContent).toContain(
-      'The two pages no longer disagree as they did, so nothing waits on this question.',
+      'These two pages no longer disagree, so this question is closed.',
     );
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    view.unmount();
+  });
+});
+
+describe('a settled question on the card of the run it stopped (17-C)', (): void => {
+  const nothing = async (): Promise<void> => undefined;
+  const question =
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right?';
+  /** The card of a run that stopped on the question, with the questions the card has. */
+  function stopped(conflicts: readonly ConflictQuestionRow[] | undefined) {
+    return (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={
+            {
+              ...DRAWN.planPending,
+              state: 'failed',
+              skipReason: `stopped: ${openQuestionStopReason({ question, steps: [1] })}`,
+              output: {
+                draft: '',
+                notes: '',
+                actions: [],
+                applied: [],
+                openQuestion: { question, steps: [1], relationId: 'r1' },
+              },
+            } as never
+          }
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          conflicts={conflicts}
+          onApprovePlan={nothing}
+          onCancelPlan={nothing}
+          onRetryFailed={nothing}
+          onReconcileFailed={nothing}
+          onApproveActions={nothing}
+          onRejectActions={nothing}
+          onResendDecision={nothing}
+        />
+      </AgentZoneContext>
+    );
+  }
+
+  it('draws the standing question with its answers and sends the manager to it', (): void => {
+    const view = mount(stopped([QUESTION]));
+    expect(
+      view.container.querySelector('section[aria-label="A question beside the plan"]'),
+    ).not.toBeNull();
+    expect(view.container.textContent).toContain('answer the question above, then Retry');
+    view.unmount();
+  });
+
+  it('draws no settled question, and says it is answered and that Retry runs it, with no dead line', (): void => {
+    const view = mount(
+      stopped([
+        {
+          ...QUESTION,
+          pages: null,
+          settled: { answer: 'A, Finance escalation (Finance wiki) is right' },
+        },
+      ]),
+    );
+    expect(
+      view.container.querySelector('section[aria-label="A question beside the plan"]'),
+    ).toBeNull();
+    expect(view.container.textContent).toContain(
+      'The question this run waited on is answered (A, Finance escalation (Finance wiki) is right). Retry runs it.',
+    );
+    expect(view.container.textContent).not.toContain('answer the question above');
     view.unmount();
   });
 });

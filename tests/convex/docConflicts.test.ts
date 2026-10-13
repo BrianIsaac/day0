@@ -1478,6 +1478,62 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await notices(answered)).toEqual([]);
   });
 
+  it('draws the question with what Day0 holds now, by its relation, and gives a settled one to the stop’s words (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
+    const drawn = async () =>
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId });
+    // As asked: the plan declared no writes, so every write waits.
+    expect(await drawn()).toEqual([
+      {
+        _id: expect.any(String),
+        workItemId,
+        relationId,
+        question: ASKED,
+        pages: [
+          { title: 'Finance escalation', source: 'Finance wiki' },
+          { title: 'Pipeline runbook', source: 'Handbook' },
+        ],
+      },
+    ]);
+    // The plan as it stands now declares what its cited step writes: the card says that, where
+    // the stored words still say every write (the pre-tag's "a question's stored words").
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        plan: {
+          ...(row!.plan as object),
+          obligations: {
+            source: 'planner',
+            steps: [{ kind: 'write', reads: [], writes: ['team-chat'] }],
+          },
+        },
+      });
+    });
+    const [live] = await drawn();
+    expect(live.question).toBe(
+      'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds its writes to Team chat until you answer and Retry.',
+    );
+    expect((await questionsOf(harness, workItemId))[0].question).toBe(ASKED);
+    // Answered: no card draws it, and the stop beside it reads the answer.
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: live._id,
+      choice: 'from',
+    });
+    expect(await drawn()).toEqual([
+      {
+        _id: live._id,
+        workItemId,
+        relationId,
+        question: ASKED,
+        pages: null,
+        settled: { answer: 'A, Finance escalation (Finance wiki) is right' },
+      },
+    ]);
+  });
+
   it('closes the item’s open question at a redraft, and asks the new plan afresh on what it cites (17-C; W16-R27)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
@@ -1502,7 +1558,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
         agentId: old.agentId,
       }),
-    ).toEqual([]);
+    ).toMatchObject([{ _id: old._id, pages: null, settled: { closed: 'redrafted' } }]);
     // A new plan that rests on nothing of the conflict is asked nothing.
     await harness.run(async (ctx) => {
       await ctx.db.patch(workItemId, {
@@ -1579,11 +1635,14 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect((await noticeTexts(harness)).at(-1)).toBe(
       'These two pages no longer disagree, so this question is closed.',
     );
+    // Neither waits: the card draws no settled question.
     expect(
-      await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
-        agentId: first.agentId,
-      }),
-    ).toEqual([]);
+      (
+        await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
+          agentId: first.agentId,
+        })
+      ).map((view) => view.settled),
+    ).toEqual([{ answer: 'B, Pipeline runbook (Handbook) is right' }, { closed: 'settled' }]);
     expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
       [],
     );
@@ -1675,6 +1734,8 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       {
         _id: question._id,
         workItemId,
+        // Re-pinned by 17-C: the view names the relation, by which a stop finds its question.
+        relationId,
         question: ASKED,
         pages: [
           { title: 'Finance escalation', source: 'Finance wiki' },
@@ -1697,9 +1758,13 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         choice: 'from',
       }),
     ).rejects.toThrow('That question has already been answered.');
-    expect(
-      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId }),
-    ).toEqual([]);
+    // Re-pinned by 17-C: the answered question is no longer among those waiting (no card draws a
+    // settled one, W16-R26), and is given with its answer for the words of a run that stopped on it.
+    const after = await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
+      agentId,
+    });
+    expect(after.filter((view) => view.settled === undefined)).toEqual([]);
+    expect(after).toMatchObject([{ _id: question._id, settled: { answer: 'Both hold' } }]);
   });
 
   it('refuses an answer to a question whose conflict no longer stands, recording nothing (W16-R27)', async (): Promise<void> => {

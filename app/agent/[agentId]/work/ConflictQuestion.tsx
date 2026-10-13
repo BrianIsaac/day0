@@ -3,7 +3,11 @@
 import { useMutation } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
-import { conflictChoiceWords, type ConflictChoice } from '@/agent/reorientation-words';
+import {
+  CONFLICT_QUESTION_CLOSED,
+  conflictChoiceWords,
+  type ConflictChoice,
+} from '@/agent/reorientation-words';
 import { Button } from '../../../components/Button';
 import type { Change } from '../../../components/use-change';
 import { ItemSection } from './ItemParts';
@@ -61,9 +65,7 @@ export function ConflictQuestion({
             ))}
           </div>
         ) : (
-          <p className="text-[13px] text-[var(--color-muted)]">
-            The two pages no longer disagree as they did, so nothing waits on this question.
-          </p>
+          <p className="text-[13px] text-[var(--color-muted)]">{CONFLICT_QUESTION_CLOSED}</p>
         )}
       </section>
     </ItemSection>

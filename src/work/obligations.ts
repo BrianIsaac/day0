@@ -15,7 +15,14 @@ import {
 } from '../surfaces/policy';
 import type { SurfaceRecord } from '../surfaces/types';
 import { verdictFor } from '../surfaces/verdict';
-import type { ExecutionPlan, MockAction, PlanObligations, PlanTransition } from './types';
+import type {
+  ExecutionPlan,
+  MockAction,
+  OpenQuestion,
+  PlanObligations,
+  PlanTransition,
+  StandingQuestion,
+} from './types';
 
 /** A surface the run can act on, by slug, with the name the card shows. */
 export interface ObligationSurface {
@@ -384,12 +391,60 @@ export function isWithheldForAnswer(reason: string): boolean {
  *   wherever it was asked: the manager DM, or the notes when no chat surface
  *   was connected.
  */
-export function openQuestionStopReason(
-  open: Pick<OpenManagerQuestion, 'question' | 'steps'>,
-): string {
-  const numbers = STEP_LIST.format(open.steps.map(String));
-  const steps = open.steps.length === 1 ? `step ${numbers}` : `steps ${numbers}`;
-  return `${OPEN_QUESTION_STOP_START}${steps}${OPEN_QUESTION_STOP_TURN}${open.question}`;
+export function openQuestionStopReason(open: OpenQuestion): string {
+  const questions = standingQuestionsOf(open);
+  const waiting = [...new Set(questions.flatMap((question) => question.steps))].sort(
+    (a, b) => a - b,
+  );
+  const numbers = STEP_LIST.format(waiting.map(String));
+  const steps = waiting.length === 1 ? `step ${numbers}` : `steps ${numbers}`;
+  // Each further question the set waits on is said after the first, so one stop names them all.
+  const asked = questions.map((question) => question.question).join(OPEN_QUESTION_ALSO);
+  return `${OPEN_QUESTION_STOP_START}${steps}${OPEN_QUESTION_STOP_TURN}${asked}`;
+}
+
+/** What joins a second standing question to the first in a stop's reason. */
+const OPEN_QUESTION_ALSO = ' Also open: ';
+
+/**
+ * Every question an open question carries, itself first (17-C, C-2): one for a row stored before
+ * the shape widened.
+ */
+export function standingQuestionsOf(open: OpenQuestion): StandingQuestion[] {
+  const { also, ...first } = open;
+  return [first, ...(also ?? [])];
+}
+
+/**
+ * An open question with one more question joined to it (17-C; the pre-tag's second pass, where
+ * the conflict's mark was dropped beside the executor's question and the set stopped once more).
+ * The same question, by its relation or by its words where it has none, joins its steps; another
+ * stands beside it with its own steps and mark.
+ */
+export function joinedOpenQuestion(
+  standing: OpenQuestion | undefined,
+  question: StandingQuestion,
+): OpenQuestion {
+  if (standing === undefined) return question;
+  const same = (asked: StandingQuestion): boolean =>
+    asked.relationId !== undefined || question.relationId !== undefined
+      ? asked.relationId === question.relationId
+      : asked.question === question.question;
+  const joined = standingQuestionsOf(standing);
+  const at = joined.findIndex(same);
+  const merged =
+    at === -1
+      ? [...joined, question]
+      : joined.map((asked, index) =>
+          index === at
+            ? {
+                ...asked,
+                steps: [...new Set([...asked.steps, ...question.steps])].sort((a, b) => a - b),
+              }
+            : asked,
+        );
+  const [first, ...also] = merged;
+  return also.length === 0 ? first : { ...first, also };
 }
 
 const STEP_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
@@ -411,18 +466,71 @@ export function isOpenQuestionStop(detail: string): boolean {
   return detail.startsWith(OPEN_QUESTION_STOP_START) && detail.includes(OPEN_QUESTION_STOP_TURN);
 }
 
+/** The questions a run's stored output stopped on, of either phase; none for any other output. */
+function stoppedQuestionsOf(output: unknown): StandingQuestion[] {
+  if (typeof output !== 'object' || output === null) return [];
+  const run = output as {
+    openQuestion?: Partial<OpenQuestion>;
+    initial?: { openQuestion?: Partial<OpenQuestion> };
+  };
+  const open = run.openQuestion ?? run.initial?.openQuestion;
+  if (typeof open !== 'object' || open === null) return [];
+  return [open, ...(Array.isArray(open.also) ? open.also : [])].flatMap((asked) =>
+    typeof asked?.question === 'string'
+      ? [
+          {
+            question: asked.question,
+            steps: Array.isArray(asked.steps) ? asked.steps : [],
+            ...(typeof asked.relationId === 'string' && asked.relationId !== ''
+              ? { relationId: asked.relationId }
+              : {}),
+          },
+        ]
+      : [],
+  );
+}
+
 /**
- * Whether the question a run's output stopped on is a documentation conflict's (W16-R8): its
- * answer is given on the question, never by a note with Retry.
+ * Whether a documentation conflict's question is among those a run's output stopped on (W16-R8):
+ * its answer is given on the question, never by a note with Retry.
  *
  * @param output - The run's stored output, of either phase.
  */
 export function isConflictQuestion(output: unknown): boolean {
-  if (typeof output !== 'object' || output === null) return false;
-  const run = output as {
-    openQuestion?: { relationId?: unknown };
-    initial?: { openQuestion?: { relationId?: unknown } };
-  };
-  const relationId = run.openQuestion?.relationId ?? run.initial?.openQuestion?.relationId;
-  return typeof relationId === 'string' && relationId !== '';
+  return conflictRelationsOf(output).length > 0;
+}
+
+/** The relations of the conflict questions a run's output stopped on, each once (17-C). */
+export function conflictRelationsOf(output: unknown): string[] {
+  return [
+    ...new Set(
+      stoppedQuestionsOf(output).flatMap((asked) =>
+        asked.relationId === undefined ? [] : [asked.relationId],
+      ),
+    ),
+  ];
+}
+
+/**
+ * Whether a note given with Retry on a question stop answers a question (review D2; 17-C): it
+ * answers the executor's own, alone or beside a conflict's, and the one a stop's reason carries
+ * where the output names none. Only a stop on conflicts' questions alone takes no note as its
+ * answer, since each is answered on the question itself (W16-R8).
+ *
+ * @param output - The run's stored output, of either phase.
+ */
+export function noteAnswersQuestion(output: unknown): boolean {
+  return ownQuestionOf(output) !== undefined || !isConflictQuestion(output);
+}
+
+/**
+ * The executor's own question among those a run's output stopped on, in its words, or undefined
+ * when every question it stopped on is a conflict's (17-C): the one a note given with Retry
+ * answers, beside a conflict's question or alone.
+ *
+ * @param output - The run's stored output, of either phase.
+ */
+export function ownQuestionOf(output: unknown): string | undefined {
+  const own = stoppedQuestionsOf(output).find((asked) => asked.relationId === undefined);
+  return own !== undefined && own.question.trim() !== '' ? own.question : undefined;
 }

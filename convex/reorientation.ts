@@ -624,9 +624,11 @@ export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
 /**
  * What a conflict's hold would withhold of a plan, in the manager's words (W16-R10): the display
  * names of the surfaces its held steps write, or `every` where the plan declares no writes. A
- * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)).
+ * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)). Read
+ * where the question is asked and again wherever the dashboard draws it, from the plan as it
+ * stands then (17-C).
  */
-async function heldSurfaceNames(
+export async function heldSurfaceNames(
   ctx: QueryCtx,
   row: Doc<'workItems'>,
   conflict: ConflictAsked,
