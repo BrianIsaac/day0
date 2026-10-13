@@ -3436,6 +3436,54 @@ describe('whether a page’s source dated it, in the page store (D-8 (a), K-2)',
     expect(unsaid.updatedAt).toBe(9);
     expect(unsaid).not.toHaveProperty('datedBySource');
   });
+
+  it('fills what the reader says of an unchanged page’s time where its row does not say, and never over a stored word (the second pass)', async (): Promise<void> => {
+    // The reviewer's case: a deployment with no credential key takes no page hash, so no page is
+    // ever kept by its hash and every one comes here at each sync. An unchanged page was left as
+    // it was, its row never said, and a page dated by its read went on dating successors by its
+    // source's kind until its text next changed.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+    };
+    const stored = async (): Promise<Doc<'docPages'>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'refresh.md'))
+            .unique())!,
+      );
+    // Stored by 0.20.0, whose reader said nothing of the time.
+    await harness.mutation(internal.docSources.upsertPage, page);
+    expect(await stored()).not.toHaveProperty('datedBySource');
+    // Unchanged, and a reader that still does not say: nothing is claimed.
+    await harness.mutation(internal.docSources.upsertPage, { ...page, updatedAt: 5 });
+    expect(await stored()).not.toHaveProperty('datedBySource');
+    // Unchanged, read with no date from its source: the row says so, its time as stored (P5-18).
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      updatedAt: 6,
+      datedBySource: false,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: false });
+    // The stored word is about the stored time: a later read of the same text does not move it.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      updatedAt: 8,
+      datedBySource: true,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: false });
+  });
 });
 
 describe('the finish’s prune over a provider that lists in no fixed order (14-D ruling 1 (b), 8 October)', (): void => {

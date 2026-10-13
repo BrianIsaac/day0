@@ -1930,7 +1930,8 @@ export const syncReport = internalQuery({
  * a page the newer sync removed.
  *
  * A page it writes takes its reader's word on whether its time is its source's
- * (`datedBySource`; D-8 (a)) with the time; an unchanged page keeps both as stored.
+ * (`datedBySource`; D-8 (a)) with the time; an unchanged page keeps both as stored, but for a
+ * row that does not say, which takes the reader's word once (K-2).
  *
  * It schedules the split of every page it writes into blocks (`docBlocks.splitStoredPage`),
  * which stores the page's hash before redaction once the blocks are the page's, and, when a stored
@@ -2000,6 +2001,12 @@ export const upsertPage = internalMutation({
         // with its body and time left as they were; and an unchanged page the sync stores again
         // (its split never landed, or it was redacted again) is split again.
         if (args.contentHash !== undefined) await splitStored();
+        // What its reader says of its time is filled where the row does not say, once, and never
+        // over a stored word, as for a page kept by its hash (K-2, `docStatus.recordRead`): with
+        // no credential key no page is kept that way, and every unchanged page comes here.
+        if (existing.datedBySource === undefined && args.datedBySource !== undefined) {
+          await ctx.db.patch(existing._id, { datedBySource: args.datedBySource });
+        }
         return existing._id;
       }
       await ctx.db.patch(existing._id, page);
