@@ -11,11 +11,14 @@ import {
   isEventType,
   type AmendmentVia,
   type CharterQuestionAnsweredPayload,
+  type DecisionAcknowledgementKind,
+  type DecisionNoticeKind,
+  type DecisionQuestionNoticePayload,
   type EventPayloads,
   type PlanHeldForReorientation,
   type ReorientationNamed,
 } from '../../../src/events/contract';
-import type { Id } from '../../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type { ManagerQuestionType } from '../../../src/agent/manager-questions';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
@@ -213,5 +216,25 @@ describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): v
     expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
     expectTypeOf<'none'>().toMatchTypeOf<EventPayloads['reorientation.approved']['kind']>();
     expectTypeOf<EventPayloads['reorientation.dismissed']>().toEqualTypeOf<ReorientationNamed>();
+  });
+});
+
+describe('the wave 17 types, declared by the schema step for 17-O and 17-C (17-K)', (): void => {
+  it("types a notice's kind as the schema stores it, an acknowledgement as the three kinds that answer a reply, and a question notice by its question", (): void => {
+    expectTypeOf<Doc<'managerDecisionNotices'>['kind']>().toEqualTypeOf<DecisionNoticeKind>();
+    expectTypeOf<DecisionAcknowledgementKind>().toEqualTypeOf<
+      'received' | 'unknown' | 'replaced'
+    >();
+    // The acknowledgement's event keeps its three kinds until 17-C joins the question's payload.
+    expectTypeOf<
+      EventPayloads['work.decision-acknowledging']['kind']
+    >().toEqualTypeOf<DecisionAcknowledgementKind>();
+    expectTypeOf<DecisionQuestionNoticePayload['kind']>().toEqualTypeOf<'question'>();
+    expectTypeOf<DecisionQuestionNoticePayload['questionId']>().toEqualTypeOf<
+      Id<'managerQuestions'>
+    >();
+    expectTypeOf<DecisionQuestionNoticePayload['questionId']>().toEqualTypeOf<
+      NonNullable<Doc<'managerDecisionNotices'>['questionId']>
+    >();
   });
 });

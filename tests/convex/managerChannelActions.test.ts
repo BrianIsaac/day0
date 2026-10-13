@@ -575,6 +575,84 @@ describe('the outbound manager-channel action', (): void => {
     ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
     expect(sent).toHaveLength(2);
   });
+
+  it("leaves a conflict's question notice unsent and unclaimed: it is no acknowledgement of a reply (17-K, for 17-C's send)", async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({
+          url: input.href,
+          authorization: new Headers(init.headers).get('authorization') ?? '',
+          body: String(init.body),
+        });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    await harness.action(internal.managerChannelActions.requestDecision, {
+      workItemId,
+      kind: 'plan',
+    });
+    const noticeId = await harness.run(async (ctx) => {
+      const workItem = await ctx.db.get(workItemId);
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
+        .unique();
+      if (!workItem?.decision || !surface) throw new Error('decision fixture missing');
+      const charterId = await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        createdAt: 1,
+      });
+      const questionId = await ctx.db.insert('managerQuestions', {
+        agentId,
+        key: 'conflict:refund-window',
+        question: 'Two pages disagree under "Refund window". Which is right?',
+        context: { touchedBy: 'plan', text: 'Refund window', words: ['refund', 'window'] },
+        askedAt: 2,
+        workItemId,
+        charterId,
+        blocking: false,
+        type: 'retrieval',
+      });
+      return await ctx.db.insert('managerDecisionNotices', {
+        agentId,
+        surfaceId: surface._id,
+        workItemId,
+        decisionId: workItem.decision.id,
+        messageTs: `question:${questionId}`,
+        kind: 'question',
+        questionId,
+        text: 'Two pages disagree under "Refund window". Which is right?',
+        createdAt: 3,
+      });
+    });
+
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, { noticeId }),
+    ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
+    // The request went out; the question did not follow it as an acknowledgement.
+    expect(sent).toHaveLength(1);
+    const after = await harness.run(async (ctx) => ({
+      notice: await ctx.db.get(noticeId),
+      acknowledging: await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .filter((q) => q.eq(q.field('type'), 'work.decision-acknowledging'))
+        .collect(),
+    }));
+    expect(after.notice).not.toHaveProperty('claimedAt');
+    expect(after.notice).not.toHaveProperty('providerTs');
+    expect(after.acknowledging).toEqual([]);
+  });
 });
 
 describe('where an acknowledgement lands once its item has moved on (W13V-3)', (): void => {

@@ -1647,11 +1647,38 @@ export type WorkDecisionRequestReplacingPayload = DecisionNamed;
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
+/**
+ * What a notice in the manager's DM is, as `managerDecisionNotices.kind` stores it: the
+ * acknowledgement of a decision reply (`received`), the answer to a reply naming no open request
+ * (`unknown`) or a request a newer one replaced (`replaced`, 12-M; F2 D14), and a conflict's
+ * question posted in the thread of a request already delivered (`question`; wave 17, 17-K for
+ * 17-C).
+ */
+export type DecisionNoticeKind = 'received' | 'unknown' | 'replaced' | 'question';
+
+/** The notice kinds that answer a reply of the manager's: every kind but the question Day0 asks. */
+export type DecisionAcknowledgementKind = Exclude<DecisionNoticeKind, 'question'>;
+
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
   /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
-  readonly kind: 'received' | 'unknown' | 'replaced';
+  readonly kind: DecisionAcknowledgementKind;
+}
+
+/**
+ * A `question` notice as its event records it (wave 17, 17-K for 17-C): the conflict's question
+ * posted in the thread of a request already delivered, with the question it asks. Declared, not
+ * yet joined to an event type: the contract's test fails a payload no writer writes and the
+ * record's maps take words for every kind, so 17-C joins it in the commit that queues, sends and
+ * renders the notice (to {@link WorkDecisionAcknowledgingPayload} as a second member, or to a
+ * type of its own).
+ */
+export interface DecisionQuestionNoticePayload extends DecisionNamed {
+  /** The notice's replay key, as `managerDecisionNotices.messageTs` holds it. */
+  readonly messageTs: string;
+  readonly kind: Extract<DecisionNoticeKind, 'question'>;
+  readonly questionId: Id<'managerQuestions'>;
 }
 
 /** The payload of `work.decision-ignored`. */

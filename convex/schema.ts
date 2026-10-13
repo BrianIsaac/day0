@@ -2084,9 +2084,19 @@ export default defineSchema({
     messageTs: v.string(),
     /**
      * `replaced` answers a reply or a press naming a request a newer one replaced, with the code
-     * that replaced it (wave 12, 12-M; F2 D14).
+     * that replaced it (wave 12, 12-M; F2 D14). `question` is not an answer to a reply: it is a
+     * conflict's question posted in the thread of a request already delivered (wave 17, 17-K for
+     * 17-C), naming its question in `questionId`. The kinds are `DecisionNoticeKind` in
+     * `src/events/contract.ts`.
      */
-    kind: v.union(v.literal('received'), v.literal('unknown'), v.literal('replaced')),
+    kind: v.union(
+      v.literal('received'),
+      v.literal('unknown'),
+      v.literal('replaced'),
+      v.literal('question'),
+    ),
+    /** The question a `question` notice asks; absent on the three kinds that answer a reply. */
+    questionId: v.optional(v.id('managerQuestions')),
     text: v.string(),
     createdAt: v.number(),
     claimedAt: v.optional(v.number()),

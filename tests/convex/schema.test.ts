@@ -3615,4 +3615,56 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
       }),
     ).rejects.toThrow();
   });
+
+  it("queues a conflict's question as a notice of its own kind, naming the question; the three acknowledgements name none", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      // The first kind the union lists, with no optional field: a notice as 0.20.0 queued it.
+      const olderId = (await insertMinimalRow(
+        ctx as never,
+        'managerDecisionNotices',
+        agentId,
+      )) as Id<'managerDecisionNotices'>;
+      const older = await ctx.db.get(olderId);
+      const questionId = (await insertMinimalRow(
+        ctx as never,
+        'managerQuestions',
+        agentId,
+      )) as Id<'managerQuestions'>;
+      const notice = {
+        agentId,
+        surfaceId: older!.surfaceId,
+        workItemId: older!.workItemId,
+        decisionId: 'D-7K2',
+        text: 'Two pages disagree under "Refund window". Which is right?',
+        createdAt: 2,
+      };
+      const askedId = await ctx.db.insert('managerDecisionNotices', {
+        ...notice,
+        messageTs: 'question:1',
+        kind: 'question',
+        questionId,
+      });
+      for (const kind of ['unknown', 'replaced'] as const) {
+        await ctx.db.insert('managerDecisionNotices', { ...notice, messageTs: kind, kind });
+      }
+      const all = await ctx.db
+        .query('managerDecisionNotices')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .collect();
+      return { older, asked: await ctx.db.get(askedId), questionId, kinds: all.map((n) => n.kind) };
+    });
+    expect(read.older?.kind).toBe('received');
+    expect(read.older).not.toHaveProperty('questionId');
+    expect(read.asked).toMatchObject({ kind: 'question', questionId: read.questionId });
+    expect(read.kinds).toEqual(['received', 'question', 'unknown', 'replaced']);
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.asked!._id, {
+          kind: 'reminder' as Doc<'managerDecisionNotices'>['kind'],
+        });
+      }),
+    ).rejects.toThrow();
+  });
 });
