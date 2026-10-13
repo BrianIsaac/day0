@@ -6,6 +6,7 @@ import { api } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
 import * as ownerExportModule from '../../convex/ownerExport';
 import { OWNER_SECTION_PAGES, withoutOwner } from '../../convex/ownerExport';
+import { MANAGER_TRANSFER_STATES } from '../../src/agent/manager-transfer';
 import { OWNER_SECTIONS } from '../../src/export/trace';
 import { allConvexModules } from './all-modules';
 import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
@@ -15,8 +16,8 @@ import { registeredIn } from './registered-functions';
 /*
  * The owner export's helpers (`convex/ownerExport.ts`; wave 17, 17-s): what a row of each section
  * carries and leaves out, the walk of stored pages, and the readers of one page of a section. The
- * first two regions are `tests/convex/exportActions.test.ts`'s own, moved as they stood: they read
- * the file a signed-in owner's browser assembles. The readers' cases read the module directly.
+ * first two regions came from `tests/convex/exportActions.test.ts` as they stood: they read the
+ * file a signed-in owner's browser assembles. The readers' cases read the module directly.
  */
 
 describe('the owner export’s rows (wave 16, 16-F)', (): void => {
@@ -283,6 +284,89 @@ describe('the readers of the owner export’s sections', (): void => {
         await OWNER_SECTION_PAGES.retirements(ctx, 'owner-a', { cursor: null, numItems: 5 }),
     );
     expect(page).toEqual({ rows: [rest], next: null });
+  });
+
+  it('give a departure for a handover accepted or being accepted, and none for any other request', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    await harness.run(async (ctx) => {
+      for (const [index, state] of MANAGER_TRANSFER_STATES.entries()) {
+        await ctx.db.insert('managerTransfers', {
+          agentId: a.agentId,
+          agentName: `Alpha Employee ${state}`,
+          fromOwnerKey: 'owner-a',
+          fromAddress: fixtureAddressOf('owner-a'),
+          toAddress: fixtureAddressOf('owner-b'),
+          toOwnerKey: 'owner-b',
+          state,
+          requestedAt: 100 + index,
+          expiresAt: 1_000_000,
+        });
+      }
+    });
+
+    const page = await harness.run(
+      async (ctx) =>
+        await OWNER_SECTION_PAGES.departures(ctx, 'owner-a', { cursor: null, numItems: 50 }),
+    );
+
+    // Read through the owner's index, which orders by state.
+    expect(page.rows).toEqual([
+      expect.objectContaining({ agentName: 'Alpha Employee accepted', state: 'accepted' }),
+      expect.objectContaining({ agentName: 'Alpha Employee accepting', state: 'accepting' }),
+    ]);
+    // Neither manager's address or owner key is on a departure, before any redaction.
+    for (const row of page.rows) {
+      expect(Object.keys(row as object).sort()).toEqual([
+        '_id',
+        'agentId',
+        'agentName',
+        'requestedAt',
+        'state',
+      ]);
+    }
+  });
+});
+
+describe('a cursor of the stored pages’ walk the export did not hand out', (): void => {
+  it.each(['{}', 'null', '[]', '{"sourceId":5,"linkedAt":1,"cursor":null}'])(
+    'is refused when it is JSON of another shape: %s',
+    async (cursor): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      await expect(
+        harness.run(
+          async (ctx) =>
+            await OWNER_SECTION_PAGES.docPages(ctx, 'owner-a', { cursor, numItems: 5 }),
+        ),
+      ).rejects.toThrow('not a cursor of the owner export’s stored pages');
+    },
+  );
+
+  it('reads nothing of another owner’s source when it names one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness, 'owner-a', 'Alpha');
+    await seedOwner(harness, 'owner-b', 'Bravo');
+    const [own, foreign] = await harness.run(
+      async (ctx) => await ctx.db.query('docSources').collect(),
+    );
+    expect([own!.userId, foreign!.userId]).toEqual(['owner-a', 'owner-b']);
+    const pagesFrom = async (linkedAt: number): Promise<{ rows: unknown[]; next: string | null }> =>
+      await harness.run(
+        async (ctx) =>
+          await OWNER_SECTION_PAGES.docPages(ctx, 'owner-a', {
+            cursor: JSON.stringify({ sourceId: foreign!._id, linkedAt, cursor: null }),
+            numItems: 5,
+          }),
+      );
+
+    // The walk goes on from when the named source was linked, among the caller's own sources.
+    const fromTheStart = await pagesFrom(-1);
+    expect(fromTheStart.rows.map((row) => (row as { sourceId: string }).sourceId)).toEqual([
+      own!._id,
+      own!._id,
+    ]);
+    expect(JSON.stringify(fromTheStart)).not.toContain('Bravo');
+    expect(await pagesFrom(foreign!._creationTime)).toEqual({ rows: [], next: null });
   });
 });
 
