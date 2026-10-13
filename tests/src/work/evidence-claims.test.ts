@@ -1574,6 +1574,71 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
     expect(boundEarlierWrites(two, [plain, worded])).toEqual([0, 1]);
   });
 
+  // The continuation's second pass: a number before a message plural is a count only where it
+  // counts the messages. A share ("12 of 40 replies"), a time ("the 3 pm notes", "the 10:30
+  // notes") and a date ("the 12 October notes") count none, so each binds the one post that
+  // carries the sentence's words, as before this unit.
+  it('reads a share, a time and a date before a message plural as no count of messages (the continuation’s second pass)', (): void => {
+    for (const words of [
+      'Posted the result: 12 of 40 replies were positive, see the stop-drill note.',
+      'Posted the result: 12 of the 40 replies were positive, see the stop-drill note.',
+      'Posted the 3 pm stop-drill notes in #revops.',
+      'Posted the 10:30 stop-drill notes in #revops.',
+      'Posted the 12 October stop-drill notes in #revops.',
+      'Posted the stop-drill note: 40% of 12 replies agreed.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
+    }
+    // A count that counts the messages still widens, in a word or in digits.
+    for (const words of [
+      'Posted 2 stop-drill notes in #revops.',
+      'Posted all three stop-drill notes in #revops.',
+      'Posted the two stop-drill notes at 3 pm in #revops.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([
+        0, 1,
+      ]);
+    }
+    // A declaration that names the one post is not asked for twelve.
+    const share: MockAction = {
+      ...commentOn('REVOPS-6', 'Posted the stop-drill note: 12 of 40 replies were positive.'),
+      reports: [1],
+    };
+    expect(reportsFindings([plain, worded, share])).toEqual([]);
+  });
+
+  // The continuation's second pass asked whether one sentence that reports a row and a message
+  // ("Added the Acme row and posted the note") binds the post, which carries none of its words.
+  // It binds the row alone, as at v0.20.0; the same words in two sentences bind both, as they did
+  // there too. The seam is recorded in the unit's handover for a ruling, and pinned here so that
+  // no change of the binding moves it unseen (this unit's first form widened it and its second
+  // pass narrowed it again, neither with a test).
+  it('binds one sentence that reports a row and a message to the write its words name, as v0.20.0 did', (): void => {
+    const row: MockAction = {
+      tool: 'spreadsheet.appendRow',
+      args: {
+        sheetSlug: 'q4-tracker',
+        tabName: 'Closed-won',
+        cells: [{ header: 'Account', value: 'Acme' }],
+      },
+    };
+    const recap: MockAction = {
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'revops', body: 'Standup recap is up.' },
+    };
+    const dm = (body: string): MockAction => ({
+      tool: 'slack.postMessage',
+      args: { channelSlug: 'dm-manager', body },
+      reports: null,
+    });
+    expect(
+      boundEarlierWrites(dm('Added the Acme row and posted the note in #revops.'), [row, recap]),
+    ).toEqual([0]);
+    expect(
+      boundEarlierWrites(dm('Added the Acme row. Posted the note in #revops.'), [row, recap]),
+    ).toEqual([0, 1]);
+  });
+
   it('asks a declaration that names the one post sharing a word for the other as well (W15-R2)', (): void => {
     const findings = unsupportedClaimFindings([plain, worded, both([1])], empty);
     expect(findings.map((finding) => finding.index)).toEqual([2]);

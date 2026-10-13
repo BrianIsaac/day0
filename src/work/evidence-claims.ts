@@ -620,19 +620,38 @@ const COUNT_WORDS: Readonly<Record<string, number>> = {
   nine: 9,
   ten: 10,
 };
+/**
+ * A word after a number that makes it something other than a count of the messages named next: a
+ * share's "of" before its whole ("12 of 40 replies", "12 of the 40 replies"), a time's half
+ * ("the 3 pm notes"), a month ("the 12 October notes") or another number.
+ */
+const NOT_COUNTING_AFTER =
+  'of\\s+(?:the\\s+)?\\d|[ap]m\\b|percent\\b|\\d|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b';
 const COUNTED_MESSAGES = new RegExp(
-  `\\b(${Object.keys(COUNT_WORDS).join('|')}|\\d{1,2})\\s+(?:[\\w-]+\\s+){0,3}?(?:${MESSAGES_PLURAL})\\b`,
-  'i',
+  `\\b(${Object.keys(COUNT_WORDS).join('|')}|\\d{1,2})\\s+(?:(?!${NOT_COUNTING_AFTER})[\\w-]+\\s+){0,3}?(?:${MESSAGES_PLURAL})\\b`,
+  'gi',
 );
+/**
+ * What stands before a number that is part of something larger: a share's whole ("of 40
+ * replies"), or the rest of a time, a decimal, a date or an issue key ("10:30", "REVOPS-6").
+ */
+const NOT_COUNTING_BEFORE = /(?:\bof\s+(?:the\s+)?|[\d:.,/%-])$/i;
 const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
 
 /**
  * The count of messages a report sentence gives in so many words ("both stop-drill notes", "all
- * three posts", "2 notes"), or undefined when it gives none.
+ * three posts", "2 notes"), or undefined when it gives none. A number that counts something else
+ * is passed over: a share of the messages ("12 of 40 replies were positive"), a time ("the 3 pm
+ * notes", "the 10:30 notes") and a date ("the 12 October notes") say nothing of how many the run
+ * wrote.
  */
 function messagesCounted(said: string): number | undefined {
-  const counted = COUNTED_MESSAGES.exec(said)?.[1]?.toLowerCase();
-  return counted === undefined ? undefined : (COUNT_WORDS[counted] ?? Number(counted));
+  for (const match of said.matchAll(COUNTED_MESSAGES)) {
+    if (NOT_COUNTING_BEFORE.test(said.slice(0, match.index))) continue;
+    const counted = match[1]!.toLowerCase();
+    return COUNT_WORDS[counted] ?? Number(counted);
+  }
+  return undefined;
 }
 
 /**
