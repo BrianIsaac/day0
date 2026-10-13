@@ -12,10 +12,12 @@
 export const ROSTER_CLOCK_STEP_MS = 15 * 60_000;
 
 /**
- * The last step at or before a moment.
+ * The last step at or before a moment, never before the calendar's first instant: a machine whose
+ * clock reads earlier than 1970 is asked for the roster at that instant, where the backend would
+ * refuse the read and the home would show nothing.
  *
  * @param now - The viewer's clock.
  */
 export function rosterClock(now: number): number {
-  return Math.floor(now / ROSTER_CLOCK_STEP_MS) * ROSTER_CLOCK_STEP_MS;
+  return Math.max(0, Math.floor(now / ROSTER_CLOCK_STEP_MS) * ROSTER_CLOCK_STEP_MS);
 }
