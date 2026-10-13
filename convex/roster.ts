@@ -138,7 +138,6 @@ async function landedThisMonth(
   }
   const byDay = new Map<string, { landed: number; partly: number }>();
   for (const { at, answer } of firstFinished.values()) {
-    if (answer === 'not-done') continue;
     const day = dayKey(at, zone);
     const counted = byDay.get(day) ?? { landed: 0, partly: 0 };
     byDay.set(

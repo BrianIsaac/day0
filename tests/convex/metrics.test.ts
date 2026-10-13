@@ -2768,6 +2768,65 @@ describe('today in the employee’s zone (16-F)', (): void => {
     expect(metrics.today?.decisions.medianLatencyMs).toBe(1_469.5 * 60_000);
   });
 
+  it('carries every ask still open at the day’s start, a resend with its first ask, and a wait only where something was held (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const at = (iso: string): number => Date.parse(iso);
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'UTC',
+        createdAt: 1,
+      });
+      const event = async (type: string, workItemId: string, iso: string, extra = {}) =>
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, ...extra },
+          createdAt: at(iso),
+        });
+      // Two sets asked of one item before the day, neither decided: both are still owed.
+      await event('work.decision-requesting', 'w1', '2026-10-03T00:00:00Z', {
+        kind: 'actions',
+        decisionId: 'a',
+      });
+      await event('work.decision-requesting', 'w1', '2026-10-03T06:00:00Z', {
+        kind: 'actions',
+        decisionId: 'b',
+      });
+      await event('work.actions-approved', 'w1', '2026-10-04T01:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      await event('work.actions-approved', 'w1', '2026-10-04T02:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      // A wait that began with a held set, then a later set that held nothing: the wait stands.
+      await event('work.actions-pending', 'w2', '2026-10-03T12:00:00Z', { heldIndexes: [0] });
+      await event('work.actions-pending', 'w2', '2026-10-03T18:00:00Z', { heldIndexes: [] });
+      await event('work.actions-approved', 'w2', '2026-10-04T00:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-04' });
+
+    // The two asks of w1 are both requests, paired oldest first as the whole record pairs them:
+    // 25 hours and 20 hours; w2 waited 12 hours from its held set. The median is 20 hours.
+    expect(metrics.today?.decisions).toMatchObject({ requested: 2, approved: 3 });
+    expect(metrics.today?.decisions.medianLatencyMs).toBe(20 * 3_600_000);
+  });
+
   it('answers no day’s figures when none is asked, and refuses a day that is not one', async (): Promise<void> => {
     const { harness, agentId } = await singaporeEmployee();
     const owner = harness.withIdentity(managerIdentity());

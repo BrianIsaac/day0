@@ -469,12 +469,16 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     }
     const guide = file.owner.docPages.find((page) => page.title === 'Guide')!;
     const second = file.owner.docPages.find((page) => page.title === 'Guide, version 2')!;
-    expect(guide.supersededBy).toEqual({ sourceId: guide.sourceId, page: second._id });
+    // Each page carries an opaque key of its own, which a relation's ends and the page that
+    // superseded it name: nothing is read to make it, and it says nothing of the address.
+    expect(guide.page).toMatch(/^[0-9a-f]{24}$/);
+    expect(guide.page).not.toBe(second.page);
+    expect(guide.supersededBy).toEqual({ sourceId: guide.sourceId, page: second.page });
     const successor = file.owner.docRelations.find(
       (relation) => relation.kind === 'possible_successor',
     )!;
-    expect(successor.from).toEqual({ sourceId: second.sourceId, page: second._id });
-    expect(successor.to).toEqual({ sourceId: guide.sourceId, page: guide._id });
+    expect(successor.from).toEqual({ sourceId: second.sourceId, page: second.page });
+    expect(successor.to).toEqual({ sourceId: guide.sourceId, page: guide.page });
   });
 
   it('carries the people graph once, among the owner’s rows, and fills it back into each trace', async (): Promise<void> => {

@@ -1403,9 +1403,10 @@ export function recordsOfDay(records: EmployeeRecords, day: string, zone: string
 
 /**
  * The asks of the items decided on a day that were still open at its start (W16-R16): for each item
- * and kind, the latest request and the latest start of a wait before the day, unless a decision or
- * a redraft before the day closed it. Carrying every earlier ask paired the day's decision with an
- * ask an earlier decision had already answered, so a re-asked decision read days long.
+ * and kind, the requests no decision or redraft before the day closed, oldest first as
+ * `decisionTotals` pairs them, and the start of the wait where one is still running. Carrying every
+ * earlier ask paired the day's decision with an ask an earlier decision had already answered, so a
+ * re-asked decision read days long.
  *
  * @param events - The employee's records' events.
  * @param from - The day's start.
@@ -1416,40 +1417,48 @@ function asksStillOpen(
   from: number,
   decided: ReadonlySet<string>,
 ): Doc<'events'>[] {
-  const open = new Map<string, { request?: Doc<'events'>; wait?: Doc<'events'> }>();
+  const open = new Map<string, { requests: Doc<'events'>[]; wait?: Doc<'events'> }>();
   for (const event of [...events].sort(byWriteOrder)) {
     if (event.createdAt >= from) continue;
     const payload = asRecord(event.payload);
     const workItemId = asString(payload?.workItemId);
     if (workItemId === undefined || !decided.has(workItemId)) continue;
     if (isEventOf(event, 'work.plan-redrafting')) {
+      // A redraft withdraws every plan ask that was open.
       open.delete(`${workItemId}:plan`);
       continue;
     }
     const result = decisionResult(event);
     if (result !== undefined) {
-      open.delete(`${workItemId}:${result.kind}`);
+      // A decision answers the oldest request, as the fold pairs them, and ends the wait.
+      const key = `${workItemId}:${result.kind}`;
+      const requests = (open.get(key)?.requests ?? []).slice(1);
+      if (requests.length === 0) open.delete(key);
+      else open.set(key, { requests });
       continue;
     }
     if (!isEventType(event.type) || !WAIT_EVENTS.has(event.type)) continue;
-    const kind = isEventOf(event, 'work.decision-requesting')
-      ? payload?.kind
-      : isEventOf(event, 'work.plan-drafted')
-        ? 'plan'
-        : 'actions';
-    if (kind !== 'plan' && kind !== 'actions') continue;
-    const key = `${workItemId}:${kind}`;
-    const ask = open.get(key) ?? {};
-    // A resend after an undelivered DM is the same ask as the request it supersedes.
     if (isEventOf(event, 'work.decision-requesting')) {
-      if (asString(payload?.supersedes) === undefined) open.set(key, { ...ask, request: event });
-    } else {
-      open.set(key, { ...ask, wait: event });
+      const kind = payload?.kind;
+      // A resend after an undelivered DM is the same ask as the request it supersedes.
+      if ((kind !== 'plan' && kind !== 'actions') || asString(payload?.supersedes) !== undefined) {
+        continue;
+      }
+      const key = `${workItemId}:${kind}`;
+      const ask = open.get(key) ?? { requests: [] };
+      open.set(key, { ...ask, requests: [...ask.requests, event] });
+      continue;
     }
+    // Only a set holding something for the manager starts a wait, as the fold reads it.
+    const held = isEventOf(event, 'work.actions-pending');
+    if (held && asIndexes(payload?.heldIndexes).length === 0) continue;
+    const key = `${workItemId}:${held ? 'actions' : 'plan'}`;
+    open.set(key, { requests: open.get(key)?.requests ?? [], wait: event });
   }
-  return [...open.values()].flatMap((ask) =>
-    [ask.wait, ask.request].filter((event): event is Doc<'events'> => event !== undefined),
-  );
+  return [...open.values()].flatMap((ask) => [
+    ...(ask.wait === undefined ? [] : [ask.wait]),
+    ...ask.requests,
+  ]);
 }
 
 /** A day as the page names it, `YYYY-MM-DD`, that is a day of the calendar. */

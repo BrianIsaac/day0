@@ -11,6 +11,7 @@ import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { agentZone, dayKey, deploymentZone } from '../src/lib/zone';
+import { sha256OfText } from '../src/lib/sha256';
 import {
   OWNER_EXPORT_FORMAT,
   OWNER_SECTIONS,
@@ -799,7 +800,7 @@ const RELATION_FIELDS_LEFT_OUT = new Set(['decidedBy']);
 /**
  * The fields of a stored page the owner export never carries: its text and what is read off it,
  * and its locators, the ref and the address (W16-R18), which for a list of URLs is the address
- * with any query-string credential; the page that superseded it is named by its row instead.
+ * with any query-string credential; the page carries an opaque key in their place.
  */
 const PAGE_FIELDS_LEFT_OUT = new Set([
   'markdown',
@@ -811,45 +812,51 @@ const PAGE_FIELDS_LEFT_OUT = new Set([
   'supersededBy',
 ]);
 
-/** A page named by its source and ref, as the file names it: by its stored row (W16-R18). */
-async function ownerPageRef(
-  ctx: QueryCtx,
+/** How many hex characters of the digest a page's key keeps: 96 bits, unique over any library. */
+const OWNER_PAGE_KEY_CHARS = 24;
+
+/**
+ * A page's opaque key in one owner's exports (W16-R18): a digest of the owner, the source and the
+ * ref, so the same page has the same key wherever the file names it, with nothing read to find
+ * it and nothing of the ref or the address left in the file.
+ */
+function ownerPageRef(
+  ownerKey: string,
   named: { readonly sourceId: Id<'docSources'>; readonly ref: string },
-): Promise<OwnerPageRef> {
-  const page = await ctx.db
-    .query('docPages')
-    .withIndex('by_source_ref', (q) => q.eq('sourceId', named.sourceId).eq('ref', named.ref))
-    .first();
-  return { sourceId: named.sourceId, ...(page !== null ? { page: page._id } : {}) };
+): OwnerPageRef {
+  return {
+    sourceId: named.sourceId,
+    page: sha256OfText(
+      `day0-owner-export-page\0${ownerKey}\0${named.sourceId}\0${named.ref}`,
+    ).slice(0, OWNER_PAGE_KEY_CHARS),
+  };
 }
 
 /** One stored page without its text, its keyed hash, a marker's words, who decided it or its ref. */
-async function pageWithoutText(ctx: QueryCtx, page: Doc<'docPages'>): Promise<OwnerDocPage> {
-  const kept = withoutKeys(page, PAGE_FIELDS_LEFT_OUT) as OwnerDocPage;
+function pageWithoutText(ownerKey: string, page: Doc<'docPages'>): OwnerDocPage {
+  const kept = withoutKeys(page, PAGE_FIELDS_LEFT_OUT) as Omit<OwnerDocPage, 'page'>;
   return {
     ...kept,
+    page: ownerPageRef(ownerKey, page).page,
     ...(page.marker !== undefined
       ? { marker: { status: page.marker.status, judgedAt: page.marker.judgedAt } }
       : {}),
     ...(page.supersededBy !== undefined
-      ? { supersededBy: await ownerPageRef(ctx, page.supersededBy) }
+      ? { supersededBy: ownerPageRef(ownerKey, page.supersededBy) }
       : {}),
   };
 }
 
-/** One relation without who decided it, its ends named by their pages' rows (W16-R18). */
-async function relationWithoutRefs(
-  ctx: QueryCtx,
-  relation: Doc<'docRelations'>,
-): Promise<OwnerDocRelation> {
+/** One relation without who decided it, its ends named by their pages' keys (W16-R18). */
+function relationWithoutRefs(ownerKey: string, relation: Doc<'docRelations'>): OwnerDocRelation {
   const kept = withoutKeys(relation, RELATION_FIELDS_LEFT_OUT) as Omit<
     Doc<'docRelations'>,
     'decidedBy'
   >;
   return {
     ...kept,
-    from: await ownerPageRef(ctx, relation.from),
-    to: await ownerPageRef(ctx, relation.to),
+    from: ownerPageRef(ownerKey, relation.from),
+    to: ownerPageRef(ownerKey, relation.to),
   };
 }
 
@@ -904,7 +911,7 @@ async function ownerPagesPage(
           cursor: following === source ? page.continueCursor : null,
         };
   return {
-    rows: await Promise.all(page.page.map(async (row) => await pageWithoutText(ctx, row))),
+    rows: page.page.map((row) => pageWithoutText(ownerKey, row)),
     next: next === null ? null : JSON.stringify(next),
   };
 }
@@ -980,18 +987,14 @@ const OWNER_SECTION_PAGES: Readonly<
     ),
   docPages: async (ctx, ownerKey, options) => await ownerPagesPage(ctx, ownerKey, options.cursor),
   // Who decided a relation is the manager's address, left out as a page's is.
-  docRelations: async (ctx, ownerKey, options) => {
-    const page = await ctx.db
-      .query('docRelations')
-      .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
-      .paginate(options);
-    return {
-      rows: await Promise.all(
-        page.page.map(async (relation) => await relationWithoutRefs(ctx, relation)),
-      ),
-      next: page.isDone ? null : page.continueCursor,
-    };
-  },
+  docRelations: async (ctx, ownerKey, options) =>
+    asOwnerPage(
+      await ctx.db
+        .query('docRelations')
+        .withIndex('by_user_status', (q) => q.eq('userId', ownerKey))
+        .paginate(options),
+      (relation) => [relationWithoutRefs(ownerKey, relation)],
+    ),
   skillVersions: async (ctx, ownerKey, options) =>
     asOwnerPage(
       await ctx.db
