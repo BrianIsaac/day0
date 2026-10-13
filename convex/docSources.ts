@@ -1928,6 +1928,9 @@ export const syncReport = internalQuery({
  * generation has superseded that one, so a stale action can never write back
  * a page the newer sync removed.
  *
+ * A page it writes takes its reader's word on whether its time is its source's
+ * (`datedBySource`; D-8 (a)) with the time; an unchanged page keeps both as stored.
+ *
  * It schedules the split of every page it writes into blocks (`docBlocks.splitStoredPage`),
  * which stores the page's hash before redaction once the blocks are the page's, and, when a stored
  * page's body changed, the Re-check due stamp on the skills whose version read
@@ -1944,6 +1947,11 @@ export const upsertPage = internalMutation({
     url: v.optional(v.string()),
     markdown: v.string(),
     updatedAt: v.number(),
+    /**
+     * Whether `updatedAt` is the source's own edit time (D-8 (a)): written with it. Absent where
+     * the reader does not say, and then nothing is claimed of the time it gave.
+     */
+    datedBySource: v.optional(v.boolean()),
     /** The page's hash before redaction (`pageContentHash`); absent where the deployment has no key. */
     contentHash: v.optional(v.string()),
   },
@@ -1962,6 +1970,8 @@ export const upsertPage = internalMutation({
       url: args.url,
       markdown: args.markdown,
       updatedAt: args.updatedAt,
+      // Said of this time, so stored with it; a reader that does not say clears an older word.
+      datedBySource: args.datedBySource,
       contentHash: undefined,
     };
     // The page's blocks are split from the page as stored, in a job of their own that reads it
@@ -2027,6 +2037,7 @@ export const upsertPage = internalMutation({
       url: page.url,
       markdown: page.markdown,
       updatedAt: page.updatedAt,
+      ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     });
     await splitStored();
     return pageId;

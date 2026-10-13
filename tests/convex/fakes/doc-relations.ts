@@ -113,7 +113,13 @@ export async function syncingSource(
 export async function storedPage(
   harness: Harness,
   source: Source,
-  page: { ref: string; title: string; markdown: string; updatedAt?: number },
+  page: {
+    ref: string;
+    title: string;
+    markdown: string;
+    updatedAt?: number;
+    datedBySource?: boolean;
+  },
 ): Promise<Id<'docPages'>> {
   return await harness.run(async (ctx) => {
     const owner = (await ctx.db.get(source.sourceId))!.userId;

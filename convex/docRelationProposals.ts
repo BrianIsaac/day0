@@ -70,7 +70,8 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
 /**
  * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
  * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
- * and its card says "last read".
+ * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
+ * which its time is ({@link editedAtSource}).
  */
 export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
   'urls',
@@ -79,9 +80,24 @@ export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = n
 ]);
 
 /**
+ * Whether a stored page's time is when its source says it was edited (wave 17, 17-FD; D-8 (a)):
+ * what its row says (`datedBySource`, the reader's own word, false where it fell back to the time
+ * it read the page; a folder's file time counts as its source's, X-3), and for a row that does
+ * not say, the rule by its source's kind. Only an edit time dates a successor, and a card says
+ * "edited" of nothing else.
+ */
+export function editedAtSource(
+  page: Pick<Doc<'docPages'>, 'datedBySource'>,
+  source: Pick<Doc<'docSources'>, 'kind'>,
+): boolean {
+  return page.datedBySource ?? !KINDS_WITHOUT_EDIT_TIME.has(source.kind);
+}
+
+/**
  * A stored page as the measures read it, with its blocks in document order.
  *
- * @param source - The page's source: whether its reader gives an edit time (RM19 (a)).
+ * @param source - The page's source: whether its reader gives an edit time, for a page whose
+ *   row does not say (RM19 (a); {@link editedAtSource}).
  */
 export async function measured(
   ctx: QueryCtx,
@@ -98,7 +114,7 @@ export async function measured(
     title: page.title,
     markdown: page.markdown,
     updatedAt: page.updatedAt,
-    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
+    edited: editedAtSource(page, source),
     blocks: rows.map(
       (row): MeasuredBlock => ({ hash: row.hash, headingPath: row.headingPath, text: row.text }),
     ),
@@ -195,6 +211,17 @@ function namesSuccessor(relation: {
   return relation.evidence.some((entry) => entry.measure === 'names-successor');
 }
 
+/** Whether a relation was proposed as a successor by its pages' edit dates alone (RM19 (a)). */
+function datedSuccessor(relation: Pick<Doc<'docRelations'>, 'kind' | 'evidence'>): boolean {
+  const measures = new Set(relation.evidence.map((entry) => entry.measure));
+  return (
+    relation.kind === 'possible_successor' &&
+    measures.has('edit-dates') &&
+    !measures.has('names-successor') &&
+    !measures.has('title-version')
+  );
+}
+
 /** The block hashes a conflict's evidence names. */
 export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>): string[] {
   return relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
@@ -205,7 +232,9 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * versions of one document (a duplicate or a successor) once, whatever the manager decided, but
  * for a duplicate nobody answered, which gives way to a successor the measures now find (RM19
  * (a): a copy its source dated later, measured again by the remeasure, is deleted here and
- * proposed as the successor), and for an answer of "Not the same" or "Keep both" given before a
+ * proposed as the successor), for a successor nobody answered that rested on the pages' dates
+ * alone, which gives way to the duplicate the measures find once a page is known to be dated by
+ * the time it was read (D-8 (a)), and for an answer of "Not the same" or "Keep both" given before a
  * page's front matter named the other, which a successor so named is proposed over (W15-R22); a
  * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
  * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
@@ -226,6 +255,14 @@ export async function alreadyHeld(
         proposed.kind === 'possible_successor' &&
         row.kind === 'possible_duplicate' &&
         row.status === 'proposed'
+      ) {
+        await ctx.db.delete(row._id);
+        continue;
+      }
+      if (
+        proposed.kind === 'possible_duplicate' &&
+        row.status === 'proposed' &&
+        datedSuccessor(row)
       ) {
         await ctx.db.delete(row._id);
         continue;

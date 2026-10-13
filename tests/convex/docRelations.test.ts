@@ -554,6 +554,31 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_successor', false, true],
       ['possible_conflict', false, true],
     ]);
+    // A page that says which its time is overrules its kind (D-8 (a)): read from a list of URLs
+    // and dated by its source, it is "edited" and says so; from a folder and dated by the time
+    // Day0 read it, "last read". A page stored before it could say reads by its kind, and its
+    // card makes no claim.
+    const dated = async (ref: string, datedBySource: boolean): Promise<void> =>
+      await harness.run(async (ctx) => {
+        const page = await ctx.db
+          .query('docPages')
+          .filter((q) => q.eq(q.field('ref'), ref))
+          .unique();
+        await ctx.db.patch(page!._id, { datedBySource });
+      });
+    await dated('escalation.md', true);
+    await dated('runbooks/pipeline-runbook.md', false);
+    const said = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(
+      said.map((card) => [
+        card.kind,
+        [card.from.edited, card.from.dated],
+        [card.to.edited, card.to.dated],
+      ]),
+    ).toEqual([
+      ['possible_successor', [false, false], [false, false]],
+      ['possible_conflict', [true, true], [false, false]],
+    ]);
     // Another manager sees none of them.
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),

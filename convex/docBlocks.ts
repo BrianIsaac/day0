@@ -443,6 +443,8 @@ export interface UnchangedPage {
   readonly markdown: string;
   readonly nativeStatus?: PageStatus;
   readonly sourceRevision?: string;
+  /** Whether the row says its source dated it; absent on a page stored before it could (K-2). */
+  readonly datedBySource?: boolean;
 }
 
 /**
@@ -515,6 +517,7 @@ export const unchangedPage = internalQuery({
       markdown: page.markdown,
       ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
       ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+      ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     };
   },
 });

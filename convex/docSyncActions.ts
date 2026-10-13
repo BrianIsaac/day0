@@ -82,6 +82,18 @@ export const MAX_LISTING_RESTARTS = 3;
 export const LISTING_RESTARTS_REASON =
   'The source kept changing while it was read: its listing changed under the sync and again after each of three fresh starts, so this sync stopped. The next scheduled sync reads it again from the first page.';
 
+/**
+ * A page as its reader returned it, with whether the reader was given the page's time by its
+ * source (`docPages.datedBySource`; D-8 (a)): true for a source's own edit time (a folder's file
+ * time counts, X-3), false for the time the reader read the page, absent where a reader does not
+ * say. The field is the readers' (wave 17, 17-X adds it to `DocPage`); the store reads it through
+ * this type until the two are one.
+ */
+export type DatedDocPage = DocPage & { readonly datedBySource?: boolean };
+
+/** A page a reader kept by its revision ({@link DatedDocPage}; 17-X adds the field to `KeptPage`). */
+export type DatedKeptPage = KeptPage & { readonly datedBySource?: boolean };
+
 /** What one batch persisted, and the pages it could not. */
 export interface PersistedBatch {
   refs: string[];
@@ -208,6 +220,12 @@ async function mirrorPages(
  * page stored again, and for a page kept as stored whose source now says otherwise, so a page
  * archived at its source with no edit is archived here (15-A; A-2).
  *
+ * Whether the source dated the page (`datedBySource`; D-8 (a)) is said of the page's time, so it
+ * is written with the time: by `upsertPage` for a page stored again, and for a page kept as
+ * stored, whose stored time stands, once only, by `recordRead` the first time a sync meets the
+ * row without it (K-2: one small write a page at the first sync after the upgrade, no body
+ * redacted or stored again).
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -229,7 +247,7 @@ async function mirrorPages(
 export async function persistPageBatch(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  pages: DocPage[],
+  pages: DatedDocPage[],
   agents: Doc<'agents'>[],
   model: SpanModel | undefined = spanModelFromEnv(),
   knownValues?: readonly string[],
@@ -300,7 +318,7 @@ function pageHashKey(key: string | undefined): string | undefined {
 async function persistPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  page: DocPage,
+  page: DatedDocPage,
   syncRunId: Id<'docSyncRuns'>,
   redaction: {
     readonly model: SpanModel | undefined;
@@ -325,6 +343,7 @@ async function persistPage(
     ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
     // A revision the reader could not read this time keeps the stored one (W15-R30).
     ...(page.revisionUnread === true ? { keepRevision: true } : {}),
+    ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
   };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
@@ -361,7 +380,7 @@ async function persistPage(
     });
     credentialRefs.push(ref);
   }
-  const safePage: DocPage = {
+  const safePage: DatedDocPage = {
     ...page,
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
@@ -375,6 +394,7 @@ async function persistPage(
     ...(safePage.url !== undefined ? { url: safePage.url } : {}),
     markdown: safePage.markdown,
     updatedAt: safePage.updatedAt,
+    ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
   });
@@ -388,12 +408,13 @@ async function persistPage(
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
  * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
- * revision) is no longer the one the row holds.
+ * revision) is no longer the one the row holds, or that the row does not yet say whether its
+ * source dated it and the reader does (K-2).
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  page: DocPage,
+  page: DatedDocPage,
   contentHash: string,
   known: readonly string[],
 ): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
@@ -423,7 +444,8 @@ async function keptUnchangedPage(
     credentialRefs,
     saidOtherwise:
       stored.nativeStatus !== page.nativeStatus ||
-      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision),
+      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision) ||
+      (stored.datedBySource === undefined && page.datedBySource !== undefined),
   };
 }
 
@@ -464,29 +486,32 @@ async function keptUnreadPages(
 /**
  * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
  * for the source's readers from its stored text, as a page kept by its hash is, and, where its
- * listing now says another status than the one stored, that is recorded (`recordRead`) with its
- * revision as stored. Its refs and stored credentials are added to the batch's by the caller.
+ * listing now says another status than the one stored, or the row does not yet say whether its
+ * source dated it and the listing does (K-2), that is recorded (`recordRead`) with its revision
+ * as stored. Its refs and stored credentials are added to the batch's by the caller.
  *
  * @returns The refs of the pages kept.
  */
-async function keptByRevision(
+export async function keptByRevision(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
   agents: Doc<'agents'>[],
   syncRunId: Id<'docSyncRuns'>,
-  kept: readonly KeptPage[],
+  kept: readonly DatedKeptPage[],
   stored: ReadonlyMap<string, StoredForRevision>,
 ): Promise<Array<{ ref: string }>> {
   const pages: DocPage[] = [];
   for (const entry of kept) {
     const row = stored.get(entry.ref);
     if (row === undefined) continue;
-    if (row.nativeStatus !== entry.nativeStatus) {
+    const undated = row.datedBySource === undefined && entry.datedBySource !== undefined;
+    if (row.nativeStatus !== entry.nativeStatus || undated) {
       await ctx.runMutation(internal.docStatus.recordRead, {
         sourceId: source._id,
         syncRunId,
         ref: row.ref,
         ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
+        ...(entry.datedBySource !== undefined ? { datedBySource: entry.datedBySource } : {}),
         keepRevision: true,
       });
     }

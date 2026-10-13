@@ -310,6 +310,8 @@ export interface StoredForRevision {
   readonly updatedAt: number;
   readonly sourceRevision: string;
   readonly nativeStatus?: Doc<'docPages'>['nativeStatus'];
+  /** Whether the row says its source dated it; absent on a page stored before it could (K-2). */
+  readonly datedBySource?: boolean;
 }
 
 /** The most bytes of page rows one answer of stored revisions reads: a page row holds its text. */
@@ -347,6 +349,7 @@ export const storedForRevision = internalQuery({
         updatedAt: page.updatedAt,
         sourceRevision: page.sourceRevision,
         ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
+        ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
       });
     }
     return kept;

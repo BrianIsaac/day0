@@ -236,6 +236,33 @@ describe('recordRead: what a page’s source says of it, beside its hash', (): v
     ]);
   });
 
+  it('fills whether the source dated the page where the row does not say, with its text, its time and its hash as they were, and leaves what a row says standing (K-2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const before = await pageOf(harness, pageId);
+    expect(before).not.toHaveProperty('datedBySource');
+    const record = async (datedBySource: boolean): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'runbooks/refresh.md',
+        datedBySource,
+      });
+    // Not a change of status.
+    expect(await record(true)).toBe(false);
+    const after = await pageOf(harness, pageId);
+    expect(after.datedBySource).toBe(true);
+    expect([after.markdown, after.contentHash, after.updatedAt]).toEqual([
+      before.markdown,
+      before.contentHash,
+      before.updatedAt,
+    ]);
+    // The row's time is the stored read's: a later read's word is not about it.
+    await record(false);
+    expect((await pageOf(harness, pageId)).datedBySource).toBe(true);
+  });
+
   it('returns a page to its source’s default once the source stops saying anything of it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);

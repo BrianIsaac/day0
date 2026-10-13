@@ -384,6 +384,11 @@ export async function stampRemovedPages(
  * generation, as `upsertPage` is. Writes the row only when an input changed, then restates the
  * page (`restatePage`).
  *
+ * Whether the source dated the page (`datedBySource`; D-8 (a)) is filled here only where the row
+ * does not say: a page stored again took the reader's word with its time in `upsertPage`, and a
+ * page kept as stored keeps the time it was stored with, so what a later read says of its own
+ * time is written the first time a sync meets the row without the field and never over it (K-2).
+ *
  * @returns Whether the page's status changed.
  */
 export const recordRead = internalMutation({
@@ -398,6 +403,8 @@ export const recordRead = internalMutation({
      * page was stored with stands, where none would clear it (W15-R30).
      */
     keepRevision: v.optional(v.boolean()),
+    /** Whether the reader was given the page's time by its source; absent, it does not say. */
+    datedBySource: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const source = await ctx.db.get(args.sourceId);
@@ -411,11 +418,16 @@ export const recordRead = internalMutation({
       nativeStatus: args.nativeStatus,
       sourceRevision: args.keepRevision === true ? page.sourceRevision : args.sourceRevision,
     };
+    const dated =
+      page.datedBySource === undefined && args.datedBySource !== undefined
+        ? { datedBySource: args.datedBySource }
+        : {};
     if (
       page.nativeStatus !== inputs.nativeStatus ||
-      page.sourceRevision !== inputs.sourceRevision
+      page.sourceRevision !== inputs.sourceRevision ||
+      dated.datedBySource !== undefined
     ) {
-      await ctx.db.patch(page._id, inputs);
+      await ctx.db.patch(page._id, { ...inputs, ...dated });
     }
     const now = Date.now();
     const change = await restatePage(ctx, { source, page: { ...page, ...inputs }, now });

@@ -10,10 +10,10 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
-  KINDS_WITHOUT_EDIT_TIME,
   alreadyHeld,
   candidatesOf,
   disagreementOf,
+  editedAtSource,
   generationsOf,
   measured,
   named,
@@ -585,11 +585,17 @@ async function askAtConfirmation(
 type CardPage = NamedPage & {
   readonly updatedAt: number;
   /**
-   * Whether `updatedAt` is when the source says the page was edited. False for a kind whose
-   * reader is given no edit time and stamps the page with when it read it (a list of URLs, an
-   * MCP server), so a card says "last read", not "edited" (W15-R45).
+   * Whether `updatedAt` is when the source says the page was edited (`editedAtSource`). False
+   * for a page its reader stamped with when it read it, so a card says "last read", not "edited"
+   * (W15-R45).
    */
   readonly edited: boolean;
+  /**
+   * Whether the page's row says its source dated it (`docPages.datedBySource`; D-8 (a)): the card
+   * of a successor proposed by the pages' dates says so beside each date. False for a page
+   * stored before 0.21.0, of whose time the card claims nothing more than its kind does.
+   */
+  readonly dated: boolean;
   readonly authority: SourceAuthority;
 };
 
@@ -598,7 +604,8 @@ function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
   return {
     ...named(page, source),
     updatedAt: page.updatedAt,
-    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
+    edited: editedAtSource(page, source),
+    dated: page.datedBySource === true,
     authority: authorityOf(page, source),
   };
 }

@@ -3271,6 +3271,53 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
   });
 });
 
+describe('whether a page’s source dated it, in the page store (D-8 (a), K-2)', (): void => {
+  const RUNBOOK = '# Refresh the tile\n\nOpen the dashboard.';
+
+  it('stores what the reader says of a page’s time with the time, and takes the reader’s new word when the page changes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+    };
+    const stored = async (): Promise<Doc<'docPages'>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'refresh.md'))
+            .unique())!,
+      );
+    await harness.mutation(internal.docSources.upsertPage, { ...page, datedBySource: true });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: true });
+    // Changed, and read this time with no date from its source: the new time is the read's.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: `${RUNBOOK}\n\nThen post.`,
+      updatedAt: 7,
+      datedBySource: false,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 7, datedBySource: false });
+    // Changed again by a reader that does not say: nothing is claimed of the new time.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: `${RUNBOOK}\n\nThen post twice.`,
+      updatedAt: 9,
+    });
+    const unsaid = await stored();
+    expect(unsaid.updatedAt).toBe(9);
+    expect(unsaid).not.toHaveProperty('datedBySource');
+  });
+});
+
 describe('the finish’s prune over a provider that lists in no fixed order (14-D ruling 1 (b), 8 October)', (): void => {
   /** A source whose last complete walk (listing 1) named `kept.md` and `missed.md`, each mirrored. */
   async function walkedSource(harness: TestConvex<typeof schema>): Promise<{

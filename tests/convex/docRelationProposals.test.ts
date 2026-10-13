@@ -660,6 +660,7 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
   async function twoCopies(
     harness: Harness,
     copyKind: 'folder' | 'urls' | 'git' = 'folder',
+    dated: { runbook?: boolean; copy?: boolean } = {},
   ): Promise<{ folder: Source; copies: Source }> {
     const folder = await syncingSource(harness, 'Company folder');
     const copies = await syncingSource(harness, 'Team copies');
@@ -669,6 +670,7 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
       title: 'How to refresh the Looker pipeline tile',
       markdown: RUNBOOK,
       updatedAt: 10 * DAY,
+      ...(dated.runbook !== undefined ? { datedBySource: dated.runbook } : {}),
     });
     await storedPage(harness, copies, {
       ref: 'tile-refresh.md',
@@ -678,6 +680,7 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
         '# Refreshing the pipeline tile',
       ),
       updatedAt: 13 * DAY,
+      ...(dated.copy !== undefined ? { datedBySource: dated.copy } : {}),
     });
     return { folder, copies };
   }
@@ -721,6 +724,68 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
     const { folder } = await twoCopies(harness, 'git');
     expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
     expect(await relations(harness)).toMatchObject([{ kind: 'possible_duplicate' }]);
+  });
+
+  it('proposes no successor for a pair one of whose pages is dated by the time it was read, though its kind gives edit times (D-8 (a))', async (): Promise<void> => {
+    // 16-FD's bed's team copy, read by a reader that fell back to the time it read the page.
+    const harness = convexTest(schema, allConvexModules());
+    const { folder } = await twoCopies(harness, 'folder', { runbook: true, copy: false });
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    const [relation] = await relations(harness);
+    expect(relation).toMatchObject({ kind: 'possible_duplicate', status: 'proposed' });
+    expect(relation.evidence.map(({ measure }) => measure)).toEqual(['shared-text']);
+  });
+
+  it('proposes the successor between two pages their sources dated, whatever their kinds (D-8 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder } = await twoCopies(harness, 'urls', { runbook: true, copy: true });
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    const [relation] = await relations(harness);
+    expect(relation).toMatchObject({ kind: 'possible_successor', status: 'proposed' });
+    expect(relation.evidence.map(({ measure, value }) => ({ measure, value }))).toEqual([
+      { measure: 'shared-text', value: 100 },
+      { measure: 'edit-dates', value: 3 },
+    ]);
+  });
+
+  it('gives an unanswered dated successor way to the duplicate once a page turns out dated by its read, and leaves one the manager answered', async (): Promise<void> => {
+    for (const answered of [undefined, 'confirmed', 'dismissed'] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const { folder, copies } = await twoCopies(harness, 'folder', { copy: false });
+      // What 0.20.0's measure proposed for the pair by its sources' kinds: a dated successor.
+      const earlier = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('docRelations', {
+            userId: 'owner',
+            from: { sourceId: copies.sourceId, ref: 'tile-refresh.md' },
+            to: { sourceId: folder.sourceId, ref: 'revops/runbooks/how-to-refresh-the-tile.md' },
+            kind: 'possible_successor',
+            evidence: [
+              { measure: 'shared-text', value: 100 },
+              { measure: 'edit-dates', value: 3 },
+            ],
+            status: answered ?? 'proposed',
+            createdAt: 1,
+            ...(answered !== undefined ? { decidedAt: 2 } : {}),
+          }),
+      );
+      const measuredNow = await measure(
+        harness,
+        folder,
+        'revops/runbooks/how-to-refresh-the-tile.md',
+      );
+      const rows = await relations(harness);
+      if (answered === undefined) {
+        expect(measuredNow).toBe(1);
+        expect(rows).toMatchObject([{ kind: 'possible_duplicate', status: 'proposed' }]);
+        expect(rows[0]._id).not.toBe(earlier);
+      } else {
+        expect(measuredNow).toBe(0);
+        expect(rows).toMatchObject([
+          { _id: earlier, kind: 'possible_successor', status: answered },
+        ]);
+      }
+    }
   });
 
   it('gives an unanswered duplicate of the pair way to the successor, and leaves one the manager answered', async (): Promise<void> => {
