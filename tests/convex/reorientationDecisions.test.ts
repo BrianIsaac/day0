@@ -446,6 +446,20 @@ describe('approve: the proposal applied through its target', (): void => {
         outcome: { summary: 'decided on Priya’s card: the relationship was changed' },
       });
     }
+    // Each sibling's own record says how its card closed (17-O's F6: the record held only the
+    // card opened, and the pilot figure counted a deferred one as still deferred).
+    for (const [agentId, cardId] of [
+      [mateo, mateos],
+      [aiko, aikos],
+    ] as const) {
+      expect(await payloadsOf(harness, agentId, 'reorientation.dismissed')).toEqual([
+        {
+          reorientationId: cardId,
+          summary: 'Priya, its approver, changed',
+          outcome: 'decided on Priya’s card: the relationship was changed',
+        },
+      ]);
+    }
     // The red input's own press: Approve on Aiko's card is refused as decided, and no longer
     // reaches the ended edge.
     await expect(

@@ -199,6 +199,16 @@ async function closeSiblingCards(
           ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
           outcome: { summary: decision.outcome },
         });
+        await appendEvent(ctx, {
+          agentId,
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: card._id,
+            summary: card.triggerSummary,
+            outcome: decision.outcome,
+          },
+          createdAt: decision.now,
+        });
         await closeTalkOfCard(ctx, card._id);
         // Another card's Approve changed the edge this card's plans were drafted under.
         await releaseHeldWork(ctx, card, true);

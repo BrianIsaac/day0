@@ -216,7 +216,11 @@ describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): v
     // A proposal an event records is never the pending one.
     expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
     expectTypeOf<'none'>().toMatchTypeOf<EventPayloads['reorientation.approved']['kind']>();
-    expectTypeOf<EventPayloads['reorientation.dismissed']>().toEqualTypeOf<ReorientationNamed>();
+    // A card closed from another employee's card carries that card's outcome (17-O's F6; the joins).
+    expectTypeOf<EventPayloads['reorientation.dismissed']>().toMatchTypeOf<ReorientationNamed>();
+    expectTypeOf<EventPayloads['reorientation.dismissed']['outcome']>().toEqualTypeOf<
+      string | undefined
+    >();
   });
 });
 

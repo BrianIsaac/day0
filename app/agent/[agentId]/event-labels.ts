@@ -861,7 +861,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'reorientation.approved': (payload) =>
     `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
-  'reorientation.dismissed': 'reorientation card dismissed; nothing changed',
+  'reorientation.dismissed': (payload) =>
+    payload.outcome !== undefined
+      ? 'reorientation card closed: decided on another employee’s card'
+      : 'reorientation card dismissed; nothing changed',
   'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,

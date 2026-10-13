@@ -604,6 +604,24 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a card closed from another employee’s card as decided there, not as dismissed (17-O’s F6)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: 'card-1',
+            summary: 'Dana Whitfield, its approver, changed',
+            outcome: 'decided on Priya’s card: the relationship was retired',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The reorientation card about \u201cDana Whitfield, its approver, changed\u201d closed as decided on Priya\u2019s card: the relationship was retired.',
+    );
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',

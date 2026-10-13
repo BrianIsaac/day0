@@ -2004,7 +2004,14 @@ export interface ReorientationApprovedPayload extends ReorientationNamed {
 }
 
 /** The payload of `reorientation.dismissed`: the card closed and nothing changed. */
-export type ReorientationDismissedPayload = ReorientationNamed;
+/**
+ * The payload of `reorientation.dismissed`: the manager dismissed the card, or (with `outcome`)
+ * it closed because another employee's card decided the edge for everyone it was about, in that
+ * card's words ("decided on {name}'s card: {result}"; 17-O's F6, the joins).
+ */
+export interface ReorientationDismissedPayload extends ReorientationNamed {
+  readonly outcome?: string;
+}
 
 /** The payload of `reorientation.deferred`: the card set aside until a date (A21). */
 export interface ReorientationDeferredPayload extends ReorientationNamed {

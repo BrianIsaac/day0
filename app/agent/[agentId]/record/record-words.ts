@@ -1431,7 +1431,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.result) ? `, and ${text(p.result)}` : ''
     }`,
   'reorientation.dismissed': (p, subject) =>
-    `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
+    text(p.outcome) !== undefined
+      ? `The reorientation card${text(p.summary) !== undefined ? ` about “${text(p.summary)}”` : ''} closed as ${text(p.outcome)}`
+      : `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
   'reorientation.deferred': (p, subject) =>
     `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
   'manager.question-asked': (p, subject) =>
