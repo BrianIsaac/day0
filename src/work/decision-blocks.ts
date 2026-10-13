@@ -1,5 +1,6 @@
 import {
   BUTTONS_DAY0_LEAD,
+  BUTTONS_DAY0_LEAD_BEFORE_0_21,
   BUTTONS_REPLY_LEAD,
   DAY0_ONLY_LEAD,
   DECISION_ID_ALPHABET,
@@ -133,6 +134,8 @@ export function pressFreeText(text: string): string {
     .split(BUTTONS_REPLY_LEAD)
     .join('Reply ')
     .split(BUTTONS_DAY0_LEAD)
+    .join(DAY0_ONLY_LEAD)
+    .split(BUTTONS_DAY0_LEAD_BEFORE_0_21)
     .join(DAY0_ONLY_LEAD);
 }
 

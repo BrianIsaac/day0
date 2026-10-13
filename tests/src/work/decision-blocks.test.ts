@@ -149,13 +149,23 @@ describe('pressFreeText', (): void => {
     expect(pressFreeText('Reply “approve ab3xyz”.')).toBe('Reply “approve ab3xyz”.');
   });
 
-  it('leaves day0 as the only way on once the buttons of an app that takes no messages are gone (W12V-7)', (): void => {
+  it('leaves Day0 as the only way on once the buttons of an app that takes no messages are gone (W12V-7)', (): void => {
+    expect(
+      pressFreeText(
+        'Decide this.\n\nPress Approve or Reject below, or decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      ),
+    ).toBe(
+      'Decide this.\n\nDecide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+  });
+
+  it('takes the buttons out of a request sent before 0.21.0, which named the product in lower case (17-C)', (): void => {
     expect(
       pressFreeText(
         'Decide this.\n\nPress Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
       ),
     ).toBe(
-      'Decide this.\n\nDecide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Decide this.\n\nDecide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
   });
 });

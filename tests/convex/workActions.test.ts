@@ -10051,7 +10051,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       await approveInSlack(harness, surfaceId, route);
       expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
       expect(await acknowledgement(harness, surfaceId)).toBe(
-        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.',
       );
 
       // The comment and the post land; the close does not, and waits on its card alone.
@@ -10241,7 +10241,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect(row.state).toBe('actions-pending');
     expect(row.approvedIndexes).toBeUndefined();
     expect(await acknowledgement(harness, surfaceId, '1789000003.000100')).toBe(
-      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
+      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in Day0.',
     );
   });
 
@@ -10302,7 +10302,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
     expect((await readItem(harness, second.workItemId)).approvedIndexes).toEqual([0]);
     expect(await acknowledgement(harness, surfaceId)).toBe(
-      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.',
     );
     const approved = (await events(harness, agentId)).filter(
       (event) => event.type === 'work.actions-approved',
@@ -10388,7 +10388,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect(posts.some((text) => text.startsWith('Approval gh6npq received.'))).toBe(true);
     const closeOnly = posts.find((text) => text.startsWith('Priya’s ticket close')) ?? '';
     expect(closeOnly.split('\n')[0]).toBe(
-      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in day0.',
+      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in Day0.',
     );
     expect(closeOnly).toContain('wrote “I could not find the close summary”.');
     expect(closeOnly).not.toContain(parked.decision?.id ?? 'no code');

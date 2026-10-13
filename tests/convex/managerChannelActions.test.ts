@@ -955,7 +955,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     expect((JSON.parse(sent[0]!.body) as { blocks?: unknown }).blocks).toBeUndefined();
   });
 
-  it('asks for no typed reply from an app that takes no messages, its buttons and day0 the only ways (W12V-7)', async (): Promise<void> => {
+  it('asks for no typed reply from an app that takes no messages, its buttons and Day0 the only ways (W12V-7)', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);
@@ -973,7 +973,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     };
     expect(body.text).not.toMatch(/reply “|“approve|“reject/i);
     expect(body.text.split('\n').at(-1)).toBe(
-      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Press Approve or Reject below, or decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
     const reject = body.blocks
       .find((block) => block.type === 'actions')
@@ -983,7 +983,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     );
   });
 
-  it('asks for no typed reply from an app that takes no messages and has no buttons: day0 alone (W12V-7)', async (): Promise<void> => {
+  it('asks for no typed reply from an app that takes no messages and has no buttons: Day0 alone (W12V-7)', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);
@@ -996,7 +996,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     const body = JSON.parse(sent[0]!.body) as { text: string; blocks?: unknown };
     expect(body.blocks).toBeUndefined();
     expect(body.text.split('\n').at(-1)).toBe(
-      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
   });
 
