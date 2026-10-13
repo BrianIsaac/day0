@@ -726,6 +726,14 @@ export function wayOutOf(env, nodeVersion) {
     : env.NODE_USE_ENV_PROXY !== '1'
       ? 'NODE_USE_ENV_PROXY is not 1'
       : undefined;
+  if (why === undefined && (env.HTTPS_PROXY ?? '').trim() === '') {
+    return {
+      wayOut: 'direct',
+      ignored:
+        'Only HTTP_PROXY names a proxy, and the socket to Slack is https, which HTTPS_PROXY ' +
+        'carries. It is dialled directly, which a network with no direct route out refuses.',
+    };
+  }
   if (why !== undefined) {
     const name = (env.HTTPS_PROXY ?? '').trim() !== '' ? 'HTTPS_PROXY' : 'HTTP_PROXY';
     return {

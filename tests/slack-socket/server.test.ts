@@ -256,6 +256,20 @@ describe('the way out the bridge reports', (): void => {
     ).toEqual({ wayOut: 'the proxy at proxy.acme.test:3128' });
   });
 
+  it('is direct, said loudly, when only HTTP_PROXY names one: the socket to Slack is https', (): void => {
+    expect(
+      wayOutOf(
+        { HTTP_PROXY: 'http://u:p@proxy.acme.test:3128', NODE_USE_ENV_PROXY: '1' },
+        'v22.23.2',
+      ),
+    ).toEqual({
+      wayOut: 'direct',
+      ignored:
+        'Only HTTP_PROXY names a proxy, and the socket to Slack is https, which HTTPS_PROXY ' +
+        'carries. It is dialled directly, which a network with no direct route out refuses.',
+    });
+  });
+
   it('is direct, with the reason, on a Node too old to read one', (): void => {
     expect(
       wayOutOf({ HTTPS_PROXY: 'http://proxy.acme.test:3128', NODE_USE_ENV_PROXY: '1' }, 'v22.12.0'),

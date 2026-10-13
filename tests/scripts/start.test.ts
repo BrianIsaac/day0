@@ -1,5 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   resolveStartHost,
   START_HOST,
@@ -26,8 +29,69 @@ describe('the address pnpm start binds (P-1)', (): void => {
       JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
     ).scripts;
     expect(scripts.start).toBe('tsx scripts/start.ts');
-    const source = readFileSync('scripts/start.ts', 'utf8');
-    expect(source).toContain("spawn('next', startArguments(host, port)");
+  });
+});
+
+describe('pnpm start, run (wave 17, 17-P)', (): void => {
+  const ROOT = resolve(__dirname, '../..');
+  const directory = mkdtempSync(join(tmpdir(), 'day0-start-'));
+  const bin = join(directory, 'bin');
+  // tsx by its own entry and this Node, so the child's PATH holds the stand-in and nothing else.
+  const TSX = join(ROOT, 'node_modules/tsx/dist/cli.mjs');
+
+  beforeAll((): void => {
+    mkdirSync(bin);
+    // A stand-in for Next that says what it was started with and exits as a server never does.
+    writeFileSync(
+      join(bin, 'next'),
+      '#!/bin/sh\necho "next $* PORT=$PORT TELEMETRY=$NEXT_TELEMETRY_DISABLED"\nexit 7\n',
+      { mode: 0o755 },
+    );
+  });
+
+  afterAll((): void => {
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  /** Run `scripts/start.ts` in a checkout whose `.env.local` is given, with a chosen PATH. */
+  function start(
+    envText: string,
+    path: string,
+  ): { status: number | null; out: string; err: string } {
+    writeFileSync(join(directory, '.env.local'), envText, 'utf8');
+    const ran = spawnSync(process.execPath, [TSX, join(ROOT, 'scripts/start.ts')], {
+      cwd: directory,
+      encoding: 'utf8',
+      env: { PATH: path, HOME: directory, NODE_ENV: 'test' },
+      timeout: 60_000,
+    });
+    return { status: ran.status, out: ran.stdout, err: ran.stderr };
+  }
+
+  it('starts Next on this machine’s own address and the file’s port, and exits as it does', (): void => {
+    const ran = start('DAY0_APP_PORT=4123\n', bin);
+    expect(ran.out.trim()).toBe('next start -H 127.0.0.1 -p 4123 PORT=4123 TELEMETRY=1');
+    expect(ran.status).toBe(7);
+  });
+
+  it('says that only plain http is proxied when HTTP_PROXY alone is named', (): void => {
+    const ran = start('HTTP_PROXY=http://day0:hunter2@proxy.acme.test:3128\n', bin);
+    expect(ran.out).toContain(
+      'Only HTTP_PROXY is named (proxy.acme.test:3128): every vendor Day0 reaches is https, which ' +
+        'HTTPS_PROXY carries, so the app’s requests go out directly. Name the proxy in ' +
+        'HTTPS_PROXY as well (docs/running/egress.md).',
+    );
+    expect(ran.out).not.toContain('hunter2');
+    expect(ran.out).not.toContain('go out through the proxy');
+  });
+
+  it('says so in one line when Next is not there to start, and starts nothing', (): void => {
+    const ran = start('', join(directory, 'nothing-here'));
+    expect(ran.status).toBe(1);
+    expect(ran.err.trim().split('\n')).toEqual([
+      'error: Next could not be started (spawn next ENOENT). Run `pnpm start` from the checkout, ' +
+        'after `pnpm install`.',
+    ]);
   });
 });
 

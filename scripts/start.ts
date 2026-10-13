@@ -21,7 +21,6 @@ import { pathToFileURL } from 'node:url';
 import { fromEnvText, resolveAppPort } from './dev';
 import {
   hostProxyEnvironment,
-  proxyConfigured,
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
@@ -113,16 +112,29 @@ function main(): void {
   const port = resolveAppPort(process.env.PORT, envText);
   const host = resolveStartHost(process.env[APP_HOST_VAR], envText);
   const proxy = wayOut(process.env, envText);
-  if (proxyConfigured(proxy)) {
-    const address = proxy.httpsProxy ?? proxy.httpProxy ?? '';
+  if (proxy.httpsProxy !== undefined) {
     console.log(
-      `The app's requests go out through the proxy at ${proxyForDisplay(address)} ` +
+      `The app's requests go out through the proxy at ${proxyForDisplay(proxy.httpsProxy)} ` +
         '(docs/running/egress.md).',
+    );
+  } else if (proxy.httpProxy !== undefined) {
+    console.log(
+      `Only HTTP_PROXY is named (${proxyForDisplay(proxy.httpProxy)}): every vendor Day0 reaches ` +
+        'is https, which HTTPS_PROXY carries, so the app’s requests go out directly. Name the ' +
+        'proxy in HTTPS_PROXY as well (docs/running/egress.md).',
     );
   }
   const server = spawn('next', startArguments(host, port), {
     stdio: 'inherit',
     env: startEnvironment(process.env, envText, port),
+  });
+  // Next is this checkout's own, on the PATH pnpm gives a script: missing, it was never installed.
+  server.on('error', (error: Error): void => {
+    console.error(
+      `error: Next could not be started (${error.message}). Run \`pnpm start\` from the checkout, ` +
+        'after `pnpm install`.',
+    );
+    process.exit(1);
   });
   // Ctrl-C reaches both processes as the foreground group; a service manager's
   // stop reaches this one, which hands it on and reports the server's exit.
