@@ -16,6 +16,7 @@ import {
 import { amendCharterInTransaction } from './charters';
 import {
   citeConflictOf,
+  conflictsLeanedOn,
   conflictsOnPlanBlocks,
   planLeansOnConflict,
   standingConflictOf,
@@ -465,7 +466,8 @@ export const conflictHoldsFor = internalQuery({
  * about beside it (D-4 (b)): confirmed since the plan was approved, so the run stops with the two
  * pages named and Retry drafts it again. The blocks are the plan's cited ones, or, where it cites
  * nothing, those its selection recorded, or, where the planner read the whole mirror, every pair of
- * pages the employee reads. Internal; read by `workActions.refuseGoneCites`.
+ * pages the employee reads; and a conflict the plan names in its own words and cites nowhere
+ * (D-1 (c)). Internal; read by `workActions.refuseGoneCites`.
  */
 export const conflictConfirmedSince = internalQuery({
   args: { workItemId: v.id('workItems') },
@@ -484,7 +486,10 @@ export const conflictConfirmedSince = internalQuery({
         question.relationId === undefined ? [] : [question.relationId],
       ),
     );
-    for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent)) {
+    for (const conflict of [
+      ...(await conflictsOnPlanBlocks(ctx, row, agent)),
+      ...(await conflictsLeanedOn(ctx, row, agent)),
+    ]) {
       if (asked.has(conflict.relationId as Id<'docRelations'>)) continue;
       return { heading: conflict.heading, pages: [conflict.pages[0], conflict.pages[1]] };
     }

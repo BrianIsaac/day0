@@ -338,9 +338,10 @@ export function planLeansOnConflict(plan: unknown, conflict: CiteConflict): bool
  * on the blocks its selection showed the planner (`workItems.selectedBlocks`, each printed
  * `[conflict]`) that its words lean on. Read only for a plan with cites, since a plan that cites
  * nothing is asked about its whole selection already; an item selected before the blocks were kept
- * has none to read, and is asked by its cites alone.
+ * has none to read, and is asked by its cites alone. Read at a drafted plan's decision and, for an
+ * approved plan, by the run before it writes (`managerQuestions.conflictConfirmedSince`).
  */
-async function conflictsLeanedOn(
+export async function conflictsLeanedOn(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, 'plan' | 'selectedBlocks'>,
   agent: Pick<Doc<'agents'>, 'userId'>,

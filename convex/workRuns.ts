@@ -38,6 +38,7 @@ import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';
 import { isGoneCitesReason } from '../src/work/plan-cites';
+import { planLeansOn } from '../src/work/conflict-hold';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { toSurfaceRecord } from '../src/surfaces/records';
@@ -151,7 +152,9 @@ const ITEM_QUESTIONS_READ = 50;
  * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
  * cites, or for a plan that cites nothing a page of the conflict it was asked about, is no longer
  * current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on resuming and stop
- * again on its gone cite, so the first Retry drafts the plan again.
+ * again on its gone cite, so the first Retry drafts the plan again. A plan that named the dispute in
+ * its own words and cited neither passage (D-1 (c)) is drafted again whichever page gave way: its
+ * steps were written round a question that is now answered.
  */
 async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
   const cites =
@@ -165,19 +168,33 @@ async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Pr
     if (question.relationId === undefined || question.answer === undefined) continue;
     const relation = await ctx.db.get(question.relationId);
     if (relation === null) continue;
-    for (const end of [relation.from, relation.to]) {
+    const ends = [relation.from, relation.to];
+    const pages = await Promise.all(
+      ends.map(
+        async (end) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', end.sourceId).eq('ref', end.ref))
+            .first(),
+      ),
+    );
+    // The heading is the question's own context, kept when it was asked: the conflict no longer
+    // stands to be read once its answer superseded a page.
+    const leaned = planLeansOn((row.plan ?? {}) as Partial<ExecutionPlan>, {
+      heading: question.context.text,
+      titles: pages.flatMap((page) => (page === null ? [] : [page.title])),
+    });
+    for (const [index, end] of ends.entries()) {
       // A plan that cites nothing was asked from its selection, which holds both pages: either
       // page no longer current is one it was drafted from (the second pass).
       if (
         cites.length > 0 &&
+        !leaned &&
         !cites.some((cite) => cite.sourceId === end.sourceId && cite.pageRef === end.ref)
       ) {
         continue;
       }
-      const page = await ctx.db
-        .query('docPages')
-        .withIndex('by_source_ref', (q) => q.eq('sourceId', end.sourceId).eq('ref', end.ref))
-        .first();
+      const page = pages[index] ?? null;
       if (page === null || (page.status ?? 'active') !== 'active') return true;
     }
   }
