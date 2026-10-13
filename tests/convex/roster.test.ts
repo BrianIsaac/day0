@@ -178,6 +178,35 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
   });
 });
 
+describe('what an employee landed this month, at exactly the send-backs it reads (the second pass of the fixes, 17-F)', (): void => {
+  it('leaves nothing out and says no floor in a month of exactly a hundred send-backs', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const nell = await employee(harness, 'owner', 'Nell');
+    // Done on the 2nd and never sent back: older than every send-back, and still landed.
+    const early = await finishedItem(harness, nell);
+    await early('work.completed', '2026-10-02T06:00:00Z', 'done');
+    const busy = await finishedItem(harness, nell);
+    for (let minute = 0; minute < 100; minute += 1) {
+      await busy(
+        'work.retry',
+        new Date(Date.parse('2026-10-05T00:00:00Z') + minute * 60_000).toISOString(),
+      );
+    }
+
+    const [row] = await harness
+      .withIdentity(managerIdentity('owner'))
+      .query(api.agents.rosterForUser, {});
+
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-02', landed: 1 }],
+      atLeast: false,
+    });
+  });
+});
+
 describe('clipRoleLine', (): void => {
   it('clips a long role line at a word boundary to 90 characters', (): void => {
     const cases: Array<[string, string]> = [
