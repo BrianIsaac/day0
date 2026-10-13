@@ -74,6 +74,9 @@ export const WORK_GEN_SYSTEM = [
   '4. Out-of-scope item: sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its will-do clauses leave out or its will-not-do clauses exclude, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
   '',
   'Discipline:',
+  // Finding 2 of the v0.20.0 walk: one ask drafted as the read item and a ticket was answered
+  // three times in its thread, and the read item's run closed the ticket the other item held.
+  '  - The four items are four different requests: no two quote, answer or act on the same message or ask.',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
   '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>"); the two tickets never share one.',
@@ -308,6 +311,37 @@ function namesAnOfficeRecord(item: DraftedWorkItem, records: ReadonlySet<string>
   );
 }
 
+/** A request an item quotes, in either kind of quotation marks, long enough to be a sentence. */
+const QUOTED_REQUEST = /"([^"]{24,})"|\u201c([^\u201d]{24,})\u201d/g;
+
+/** The requests an item quotes, each in lower case with its spaces folded, so two copies match. */
+function quotedRequests(item: DraftedWorkItem): ReadonlySet<string> {
+  return new Set(
+    [...item.contentSummary.matchAll(QUOTED_REQUEST)].map((match) =>
+      (match[1] ?? match[2] ?? '').toLowerCase().replace(/\s+/g, ' ').trim(),
+    ),
+  );
+}
+
+/**
+ * The pairs of drafted items that quote the same request (finding 2 of the v0.20.0 hosted walk):
+ * one ask drafted as the read-and-answer item and as a ticket is worked twice, each run answering
+ * in the same thread, and in the hosted office one item's run can close the other's ticket.
+ */
+function quotingOneRequest(
+  items: readonly DraftedWorkItem[],
+): Array<readonly [DraftedWorkItem, DraftedWorkItem]> {
+  const quoted = items.map((item) => quotedRequests(item));
+  return items.flatMap((first, at) =>
+    items
+      .slice(at + 1)
+      .filter((_second, offset) =>
+        [...quoted[at]!].some((request) => quoted[at + 1 + offset]!.has(request)),
+      )
+      .map((second) => [first, second] as const),
+  );
+}
+
 /** An out-of-scope item that reads as the role's work, with the words that make it so. */
 interface RoleReading {
   readonly item: DraftedWorkItem;
@@ -318,8 +352,8 @@ interface RoleReading {
  * How a draft reads against the scope rule mock mode judges by (`sharedCharterWords`) and against
  * the office: the out-of-scope items that share a word with the role, which would be judged its
  * work; the in-scope items that share none, which would be skipped; the purposes it left out; the
- * tickets it filed somewhere other than the queue; and whether its action ticket names no record
- * the office holds.
+ * tickets it filed somewhere other than the queue; whether its action ticket names no record the
+ * office holds; and the items that quote one request between them.
  */
 interface DraftReading {
   readonly asTheRole: readonly RoleReading[];
@@ -329,6 +363,8 @@ interface DraftReading {
   readonly offTheQueue: readonly DraftedWorkItem[];
   /** Whether the action ticket names no record of an office that holds some (13-FD). */
   readonly actionUngrounded: boolean;
+  /** The pairs of items that quote one request ({@link quotingOneRequest}). */
+  readonly oneRequest: ReadonlyArray<readonly [DraftedWorkItem, DraftedWorkItem]>;
 }
 
 function readDraft(
@@ -354,6 +390,7 @@ function readDraft(
     actionUngrounded:
       records.size > 0 &&
       items.some((item) => item.purpose === 'action' && !namesAnOfficeRecord(item, records)),
+    oneRequest: quotingOneRequest(items),
   };
 }
 
@@ -364,7 +401,8 @@ function readsAsIntended(reading: DraftReading): boolean {
     reading.untied.length === 0 &&
     reading.missing.length === 0 &&
     reading.offTheQueue.length === 0 &&
-    !reading.actionUngrounded
+    !reading.actionUngrounded &&
+    reading.oneRequest.length === 0
   );
 }
 
@@ -393,6 +431,11 @@ function askAgain(reading: DraftReading): string {
   if (reading.actionUngrounded) {
     lines.push(
       "The action item in your last draft names no record the snapshot holds: ask only for work the snapshot's rows, messages or documents let the role finish, and name those records in its contentRefs.",
+    );
+  }
+  for (const [first, second] of reading.oneRequest) {
+    lines.push(
+      `The ${first.purpose} item and the ${second.purpose} item in your last draft quote the same request, so one ask would be worked twice: each item is its own request, from its own message.`,
     );
   }
   lines.push(
@@ -507,6 +550,12 @@ export async function generateWorkItemsFromCharter(
   if (reading.actionUngrounded) {
     log.warn('mock work generator kept an action ticket that names no record of the office', {
       attempts,
+    });
+  }
+  if (reading.oneRequest.length > 0) {
+    log.warn('mock work generator seeded two items that quote one request', {
+      attempts,
+      purposes: reading.oneRequest.map(([first, second]) => [first.purpose, second.purpose]),
     });
   }
   if (reading.missing.length > 0) {

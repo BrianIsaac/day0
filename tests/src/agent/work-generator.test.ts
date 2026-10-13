@@ -767,6 +767,84 @@ describe('the team documents a role is shown (16-FW’s F7; finding 3 of the v0.
   });
 });
 
+describe('one ask drafted as more than one item (finding 2 of the v0.20.0 hosted walk)', (): void => {
+  // Rows `A-Pip-docs-full.txt` and `A-Pip-tB-full.txt`: the docs item and the P1 ticket both
+  // quote Hana's one ask, so it was answered three times in her thread and the docs item's run
+  // closed the ticket that the other item held.
+  const HANA_QUOTED =
+    '"Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?"';
+  const docsItem = {
+    ...drafted(
+      'read-and-answer',
+      'Question on the first reply to a duplicate charge',
+      `Hana asked in the thread: ${HANA_QUOTED} She wants to know what the approved wording should cover before it goes to the customer. Please answer in the thread where she asked, following the customer billing replies document.`,
+    ),
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    requesterLabel: 'Hana',
+  };
+  const ticket = {
+    ...ACTION,
+    title: 'Log and work the Northwind duplicate charge ask',
+    contentSummary: `Hana reported: ${HANA_QUOTED} Please log this ask on the ticket queue, post the first reply in her thread following the customer billing replies document, and close the ticket once the reply is written.`,
+    externalId: 'ticket-northwind-double-charge',
+    requesterLabel: 'Hana',
+  };
+  const ownTicket = {
+    ...ticket,
+    title: 'Log the social mention about the late invoice email',
+    contentSummary:
+      'Manager: "Please log the open social mention about the late invoice email on the ticket queue and note what was replied." Close the ticket once it is logged.',
+    externalId: 'ticket-social-mention',
+  };
+  const beyond = {
+    ...BEYOND,
+    title: 'Check the CRM record behind the Northwind invoice query',
+    contentSummary:
+      'Hana added: "While you are on the Northwind duplicate charge, it would help to confirm what the CRM shows for that account before billing reviews it." Please log each finding on the ticket queue.',
+  };
+
+  it('asks again, naming the two items, when two of them quote the same request', async (): Promise<void> => {
+    drafts.push(
+      [docsItem, ticket, beyond, PLAIN_OUT_OF_SCOPE],
+      [docsItem, ownTicket, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const items = await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The read-and-answer item and the action item in your last draft quote the same request, so one ask would be worked twice: each item is its own request, from its own message.',
+    );
+    expect(items.map((item) => item.title)).toContain(
+      'Log the social mention about the late invoice email',
+    );
+  });
+
+  it('takes a draft whose items each quote their own request, the same asker or not', async (): Promise<void> => {
+    drafts.push([docsItem, ownTicket, beyond, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('keeps both items when every draft still quotes one request twice, and says so in the log', async (): Promise<void> => {
+    const warned = vi.spyOn(log, 'warn').mockImplementation((): void => undefined);
+    for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+      drafts.push([docsItem, ticket, beyond, PLAIN_OUT_OF_SCOPE]);
+    }
+    const items = await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(items).toHaveLength(4);
+    expect(warned.mock.calls.map((call) => call[0])).toContain(
+      'mock work generator seeded two items that quote one request',
+    );
+    warned.mockRestore();
+  });
+
+  it('tells the generator that the four items are four requests', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      'The four items are four different requests: no two quote, answer or act on the same message or ask.',
+    );
+  });
+});
+
 describe('a read-and-answer item names the thread its asker asks in (W19-4, the v0.19.0 walk)', (): void => {
   /** Pip's office: Hana's ask in #office-asks and the billing replies page. */
   const PIPS_OFFICE = {
