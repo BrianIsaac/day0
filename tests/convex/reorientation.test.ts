@@ -5,13 +5,21 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   CARD_LIST_LIMIT,
+  CHAIN_CARDS_PER_LINK,
   INLINE_CARDS_PER_TRANSACTION,
+  JUDGEMENTS_AT_ONCE,
+  JUDGEMENT_STAGGER_MS,
+  continueCardChain,
   heldByReorientation,
   openCard,
+  openCards,
   moveCardsToOwner,
   proposalInputOf,
   riskOf,
+  type CardOpener,
+  type CardTrigger,
 } from '../../convex/reorientation';
+import { REACH_ROW_BUDGET, workRowsReadIn } from '../../convex/reorientationReach';
 import * as reorientationModule from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
 import { registeredIn } from './registered-functions';
@@ -21,6 +29,8 @@ import {
   cardsOf,
   eventTypesOf,
   openTestCard,
+  runCardChain,
+  scheduledAs,
   seedEmployee,
   seedWork,
   type Harness,
@@ -264,48 +274,241 @@ describe('openCard: a card for a change under an employee', (): void => {
   });
 });
 
-describe('a change reaching many employees (the second pass’s M5)', (): void => {
-  it('opens the first cards in the writer’s transaction and each further one in a transaction of its own, reading its work there', async (): Promise<void> => {
+/** Seed employees of the owner, each with open plans. */
+async function seedEmployeesWithWork(
+  harness: Harness,
+  employees: number,
+  plansEach = 1,
+): Promise<Id<'agents'>[]> {
+  const agents: Id<'agents'>[] = [];
+  for (let at = 0; at < employees; at += 1) {
+    const agentId = await seedEmployee(harness, { name: `Employee ${at}` });
+    for (let plan = 0; plan < plansEach; plan += 1) {
+      await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${at}-${plan}` });
+    }
+    agents.push(agentId);
+  }
+  return agents;
+}
+
+/** One change reported for each employee, as an approver's edge for everyone reaches them. */
+function edgeChangeFor(agents: readonly Id<'agents'>[]): CardTrigger[] {
+  return agents.map((agentId) => ({
+    agentId,
+    trigger: 'relationship-changed' as const,
+    triggerKey: 'edge-change-1',
+    summary: 'Priya, its approver, changed',
+    reach: { kind: 'open-work' as const },
+    now: MORNING_UTC,
+  }));
+}
+
+describe('a change reaching many employees: one list handed over once (wave 17, D-9 (a))', (): void => {
+  it('opens the first cards in the writer’s transaction and hands the rest to one scheduled function, which opens each reading its work there', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const reached = INLINE_CARDS_PER_TRANSACTION + 4;
-    const agents: Id<'agents'>[] = [];
-    for (let at = 0; at < reached; at += 1) {
-      const agentId = await seedEmployee(harness, { name: `Employee ${at}` });
-      await seedWork(harness, agentId, 'plan-pending');
-      agents.push(agentId);
-    }
-    // One change, as an approver's edge for everyone reaches every employee of the owner.
+    const agents = await seedEmployeesWithWork(harness, reached);
     await harness.run(async (ctx) => {
-      for (const agentId of agents) {
-        await openCard(ctx, {
-          agentId,
-          trigger: 'relationship-changed',
-          triggerKey: 'edge-change-1',
-          summary: 'Priya, its approver, changed',
-          reach: { kind: 'open-work' },
-          now: MORNING_UTC,
-        });
-      }
+      await openCards(ctx, edgeChangeFor(agents));
     });
     const opened = async (): Promise<number> =>
       (await harness.run(async (ctx) => await ctx.db.query('reorientations').collect())).length;
     expect(await opened()).toBe(INLINE_CARDS_PER_TRANSACTION);
-    const later = await harness.run(
-      async (ctx) =>
-        await ctx.db.system
-          .query('_scheduled_functions')
-          .filter((q) => q.eq(q.field('name'), 'reorientation:openCardLater'))
-          .collect(),
-    );
-    expect(later).toHaveLength(4);
-    for (const job of later) {
-      await harness.mutation(internal.reorientation.openCardLater, job.args[0] as { card: never });
-    }
+    // One function carries every card the writer's transaction left, and none rides alone.
+    const later = await scheduledAs(harness, 'reorientation:openCardsLater');
+    expect(later).toHaveLength(1);
+    expect((later[0].args[0] as { cards: unknown[] }).cards).toHaveLength(4);
+    expect(await scheduledAs(harness, 'reorientation:openCardLater')).toEqual([]);
+    expect(await runCardChain(harness)).toEqual({ links: 1, mostWaiting: 1 });
     const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
     expect(cards).toHaveLength(reached);
     // Each card read its employee's open work where it opened.
     expect(cards.every((card) => card.affected.workItems.length === 1)).toBe(true);
     expect(new Set(cards.map((card) => card.agentId)).size).toBe(reached);
+  });
+
+  it('is a chain of single functions however many employees the change reaches', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const reached = INLINE_CARDS_PER_TRANSACTION + 2 * CHAIN_CARDS_PER_LINK + 5;
+    const agents = await seedEmployeesWithWork(harness, reached);
+    await harness.run(async (ctx) => {
+      await openCards(ctx, edgeChangeFor(agents));
+    });
+    // Eight in the writer's transaction, fifty a link, and never two functions waiting at once.
+    expect(await runCardChain(harness)).toEqual({ links: 3, mostWaiting: 1 });
+    const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(new Set(cards.map((card) => card.agentId)).size).toBe(reached);
+    // A second report of the same change, handed over again, opens nothing more.
+    await harness.run(async (ctx) => {
+      await openCards(ctx, edgeChangeFor(agents));
+    });
+    await runCardChain(harness);
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('reorientations').collect()),
+    ).toHaveLength(reached);
+  });
+
+  it('leaves a card whose reach would pass the transaction’s budget of work rows to the chain, which opens it (W16-R6)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // A hundred open plans an employee: the third card's read would pass three hundred rows.
+    const agents = await seedEmployeesWithWork(harness, 4, 100);
+    const rowsRead = await harness.run(async (ctx) => {
+      await openCards(ctx, edgeChangeFor(agents));
+      return workRowsReadIn(ctx);
+    });
+    const inline = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(inline.map((card) => card.agentId)).toEqual(agents.slice(0, 2));
+    // Each opened card read its probe's row, its hundred rows and the ten it holds; the third stopped one row past its room.
+    expect(rowsRead).toBeLessThanOrEqual(REACH_ROW_BUDGET + 2);
+    const [later] = await scheduledAs(harness, 'reorientation:openCardsLater');
+    expect(
+      (later.args[0] as { cards: Array<{ agentId: string }> }).cards.map((card) => card.agentId),
+    ).toEqual(agents.slice(2));
+    await runCardChain(harness);
+    const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(cards.map((card) => card.agentId)).toEqual(agents);
+    expect(cards.every((card) => card.affected.workItems.length === 100)).toBe(true);
+  });
+
+  it('opens a card whose employee alone has more open work than the budget, in a link of its own', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [agentId] = await seedEmployeesWithWork(harness, 1, 100);
+    for (let at = 0; at < 100; at += 1) {
+      await seedWork(harness, agentId, 'executing', { externalId: `REVOPS-run-${at}` });
+      await seedWork(harness, agentId, 'plan-approved', { externalId: `REVOPS-approved-${at}` });
+      await seedWork(harness, agentId, 'actions-pending', { externalId: `REVOPS-held-${at}` });
+    }
+    await harness.run(async (ctx) => {
+      await openCards(ctx, edgeChangeFor([agentId]));
+    });
+    // Four hundred open rows: past the writer's room, so the card waits for the chain.
+    expect(await cardsOf(harness, agentId)).toEqual([]);
+    expect(await runCardChain(harness)).toEqual({ links: 1, mostWaiting: 1 });
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.affected.workItems).toHaveLength(CARD_LIST_LIMIT);
+    expect(card.blockingWork).toHaveLength(10);
+  });
+
+  it('starts a fan-out’s judgements eight at a time, five seconds apart (W16-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agents = await seedEmployeesWithWork(harness, 2 * JUDGEMENTS_AT_ONCE + 4);
+    vi.setSystemTime(MORNING_UTC);
+    await harness.run(async (ctx) => {
+      await openCards(ctx, edgeChangeFor(agents));
+    });
+    await runCardChain(harness);
+    const judgements = await scheduledAs(harness, 'reorientationActions:propose');
+    const startingAfter = new Map<number, number>();
+    for (const job of judgements) {
+      const after = job.scheduledTime - MORNING_UTC;
+      startingAfter.set(after, (startingAfter.get(after) ?? 0) + 1);
+    }
+    expect([...startingAfter].sort(([left], [right]) => left - right)).toEqual([
+      [0, JUDGEMENTS_AT_ONCE],
+      [JUDGEMENT_STAGGER_MS, JUDGEMENTS_AT_ONCE],
+      [2 * JUDGEMENT_STAGGER_MS, 4],
+    ]);
+  });
+
+  it('records a card that throws in a link of the chain, with its reason scrubbed, and opens the next (W16-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [first, broken, last] = await seedEmployeesWithWork(harness, 3);
+    const [carriedCard] = await (async (): Promise<Array<{ cards: never[]; judged: number }>> => {
+      // The cards as a chain carries them: handed over past the writer's own eight.
+      const fill = await seedEmployeesWithWork(harness, INLINE_CARDS_PER_TRANSACTION);
+      await harness.run(async (ctx) => {
+        await openCards(ctx, edgeChangeFor([...fill, first, broken, last]));
+      });
+      return (await scheduledAs(harness, 'reorientation:openCardsLater')).map(
+        (job) => job.args[0] as { cards: never[]; judged: number },
+      );
+    })();
+    const opener: CardOpener = async (ctx, card) => {
+      if (card.agentId === broken) {
+        throw new Error('the card could not be written with xoxb-1234567890-abcdefghijkl');
+      }
+      const reorientationId = await openCard(ctx, card);
+      return reorientationId === null
+        ? { kind: 'nothing' }
+        : { kind: 'opened', reorientationId, judging: true };
+    };
+    await harness.run(async (ctx) => {
+      await continueCardChain(ctx, carriedCard, opener);
+    });
+    expect(await cardsOf(harness, first)).toHaveLength(1);
+    expect(await cardsOf(harness, last)).toHaveLength(1);
+    expect(await cardsOf(harness, broken)).toEqual([]);
+    const events = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter((event) => event.agentId === broken),
+    );
+    expect(events.map((event) => [event.type, event.payload])).toEqual([
+      [
+        'reorientation.card-not-opened',
+        {
+          trigger: 'relationship-changed',
+          triggerKey: 'edge-change-1',
+          summary: 'Priya, its approver, changed',
+          reason: expect.stringMatching(
+            /^the card could not be written with (?!xoxb-1234)/,
+          ) as string,
+        },
+      ],
+    ]);
+  });
+});
+
+describe('a card opened one at a time (O-2)', (): void => {
+  it('throws at the ninth in one transaction, naming openCards, and opens eight', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agents = await seedEmployeesWithWork(harness, INLINE_CARDS_PER_TRANSACTION + 1);
+    const reports = edgeChangeFor(agents);
+    await harness.run(async (ctx) => {
+      for (const report of reports.slice(0, INLINE_CARDS_PER_TRANSACTION)) {
+        await openCard(ctx, report);
+      }
+    });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('reorientations').collect()),
+    ).toHaveLength(INLINE_CARDS_PER_TRANSACTION);
+    await expect(
+      harness.run(async (ctx) => {
+        for (const report of reports) await openCard(ctx, { ...report, triggerKey: 'edge-2' });
+      }),
+    ).rejects.toThrow(/hands its whole list to openCards/);
+  });
+
+  it('still opens the one card a job scheduled before 0.21.0 carries', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [agentId] = await seedEmployeesWithWork(harness, 1);
+    await harness.mutation(internal.reorientation.openCardLater, {
+      card: {
+        agentId,
+        trigger: 'relationship-changed',
+        triggerKey: 'edge-change-1',
+        summary: 'Priya, its approver, changed',
+        evidence: {
+          eventIds: [],
+          pageRefs: [],
+          relationIds: [],
+          correctionIds: [],
+          relationshipIds: [],
+          skillIds: [],
+          skillVersionIds: [],
+        },
+        affected: {
+          charterClauses: [],
+          agreements: [],
+          relationships: [],
+          skills: [],
+          surfaces: [],
+          workItems: [],
+        },
+        reach: { kind: 'open-work' },
+        now: MORNING_UTC,
+      },
+    });
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.affected.workItems).toHaveLength(1);
   });
 });
 
@@ -534,10 +737,13 @@ describe('the functions convex/reorientation.ts registers', (): void => {
   // S-1) moves no registered function: each `internal.reorientation.*` path is a string the
   // scheduler, the judgement's action and the closing phase hold. The list as `v0.20.0`
   // registered it.
-  it('are the ones it registered at v0.20.0, each of the same kind and visibility', (): void => {
+  it('are the ones it registered at v0.20.0, each of the same kind and visibility, and the chain’s one (17-O)', (): void => {
+    // Re-taken for `openCardsLater` (wave 17, 17-O; D-9 (a)): the one function a fan-out's chain
+    // schedules. `openCardLater` stays for a job 0.20.0 scheduled before the upgrade.
     expect(registeredIn(reorientationModule)).toEqual([
       'holdingCard internal query',
       'openCardLater internal mutation',
+      'openCardsLater internal mutation',
       'proposalInput internal query',
       'recordProposalFailure internal mutation',
       'reopenDeferred internal mutation',

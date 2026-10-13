@@ -28,6 +28,20 @@ describe('the live feed labels', (): void => {
     ).toBe('reorientation card proposes nothing needs to change');
   });
 
+  it('labels a card a fan-out could not open by what it was about (17-O; W16-R23)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.card-not-opened',
+        payload: {
+          trigger: 'page-status-changed',
+          triggerKey: 'event-1',
+          summary: '“Escalation paths” was archived',
+          reason: 'the card could not be written',
+        },
+      }),
+    ).toBe('reorientation card not opened: “Escalation paths” was archived');
+  });
+
   it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
     const holder = { name: 'Mateo', title: 'Post the September close status note' };
     expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(

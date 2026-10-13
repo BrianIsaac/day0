@@ -4,7 +4,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
 import { appendEvent } from './eventLog';
-import { openCard } from './reorientation';
+import { openCards, type CardTrigger } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { reevaluatePendingInTransaction } from './workReevaluation';
 import { RUNBOOKS_A_SCAN, type ChangedRunbook } from './skillVersions';
@@ -200,31 +200,52 @@ async function noLongerCurrentSummary(
   }`;
 }
 
+/** What `writeStatus` is told of one page's decided status. */
+interface StatusWrite {
+  readonly source: Doc<'docSources'>;
+  readonly page: Doc<'docPages'>;
+  readonly decided: DecidedStatus;
+  readonly supersededBy: PageName | undefined;
+  readonly manager?: { readonly decidedBy: string | undefined; readonly decidedAt: number };
+  readonly now: number;
+  /**
+   * False when the change is a relation's own answer (16-O): the plans citing the page are the
+   * relation's to settle (its question, or the run's stop), so no card opens about it.
+   */
+  readonly opensCard?: boolean;
+}
+
+/** A page's change of status with the cards it owes its readers, not yet handed over. */
+interface StatusWritten {
+  readonly change: StatusChange | null;
+  /** One report a reader, for `openCards`: a card opens where an open plan cites the page. */
+  readonly cards: readonly CardTrigger[];
+}
+
 /**
  * Write a decided status on a page's row when it differs, and set off what a change of status
- * sets off: the blocks, each reading employee's record and parked work.
+ * sets off: the blocks, each reading employee's record and parked work, and a card on each
+ * reader whose open plan cites the page, handed over as one list (wave 17, 17-O).
  *
  * @param args - The page, the status decided for it with its successor, and, when the manager
  *   decided it by hand, who and when (written even when the status itself stands).
  * @returns The change, or null when the page's status itself stands.
  */
-async function writeStatus(
-  ctx: MutationCtx,
-  args: {
-    readonly source: Doc<'docSources'>;
-    readonly page: Doc<'docPages'>;
-    readonly decided: DecidedStatus;
-    readonly supersededBy: PageName | undefined;
-    readonly manager?: { readonly decidedBy: string | undefined; readonly decidedAt: number };
-    readonly now: number;
-    /**
-     * False when the change is a relation's own answer (16-O): the plans citing the page are the
-     * relation's to settle (its question, or the run's stop), so no card opens about it.
-     */
-    readonly opensCard?: boolean;
-  },
-): Promise<StatusChange | null> {
+async function writeStatus(ctx: MutationCtx, args: StatusWrite): Promise<StatusChange | null> {
+  const { change, cards } = await writeStatusOwingCards(ctx, args);
+  await openCards(ctx, cards);
+  return change;
+}
+
+/**
+ * {@link writeStatus} with its cards left to the caller: the status walk writes many pages in one
+ * transaction and hands every page's cards over once, so the transaction schedules one function
+ * for them however many pages change and however many employees read them (W16-R5).
+ */
+async function writeStatusOwingCards(ctx: MutationCtx, args: StatusWrite): Promise<StatusWritten> {
   const { source, page, decided, supersededBy, now } = args;
+  const cards: CardTrigger[] = [];
+  const unchanged: StatusWritten = { change: null, cards };
   const from = pageStatusOf(page);
   if (
     args.manager === undefined &&
@@ -232,7 +253,7 @@ async function writeStatus(
     statusSourceOf(page) === decided.statusSource &&
     samePage(page.supersededBy, supersededBy)
   ) {
-    return null;
+    return unchanged;
   }
   await ctx.db.patch(page._id, {
     status: decided.status,
@@ -241,7 +262,7 @@ async function writeStatus(
     decidedBy: args.manager?.decidedBy,
     decidedAt: args.manager?.decidedAt,
   });
-  if (from === decided.status) return null;
+  if (from === decided.status) return unchanged;
   await copyPageStatusToBlocks(ctx, {
     sourceId: page.sourceId,
     pageRef: page.ref,
@@ -270,7 +291,7 @@ async function writeStatus(
     // A card for a reader whose open plan cites the page; a page no open plan cites opens none
     // here, and the skills that read it are stamped for a re-check, which opens its own.
     if (cardSummary !== undefined) {
-      await openCard(ctx, {
+      cards.push({
         agentId: agent._id,
         trigger: 'page-status-changed',
         triggerKey: eventId,
@@ -290,12 +311,15 @@ async function writeStatus(
     });
   }
   return {
-    sourceId: page.sourceId,
-    ref: page.ref,
-    title: page.title,
-    from,
-    to: decided.status,
-    statusSource: decided.statusSource,
+    change: {
+      sourceId: page.sourceId,
+      ref: page.ref,
+      title: page.title,
+      from,
+      to: decided.status,
+      statusSource: decided.statusSource,
+    },
+    cards,
   };
 }
 
@@ -523,6 +547,7 @@ export const restatePages = internalMutation({
     const toJudge: MarkerToJudge[] = [];
     const toRestate: string[] = [];
     const changes: Array<StatusChange | null> = [];
+    const cards: CardTrigger[] = [];
     let flipped = 0;
     for (const stored of walked.page) {
       let page = stored;
@@ -552,8 +577,18 @@ export const restatePages = internalMutation({
         }
         flipped += blockBytes(page);
       }
-      changes.push(await writeStatus(ctx, { source, page, decided, supersededBy, now }));
+      const written = await writeStatusOwingCards(ctx, {
+        source,
+        page,
+        decided,
+        supersededBy,
+        now,
+      });
+      changes.push(written.change);
+      cards.push(...written.cards);
     }
+    // Every card the walk page owes, handed over once after its last page (17-O; W16-R5).
+    await openCards(ctx, cards);
     await stampStatusChanges(ctx, source, changes, now);
     const position = finishingCursor(
       walked.isDone

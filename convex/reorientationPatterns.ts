@@ -1,7 +1,14 @@
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { eventsOfType } from './eventLog';
-import { REFUSAL_KEY_PREFIX, charterClausesWhere, isWriteScope, openCard } from './reorientation';
+import {
+  REFUSAL_KEY_PREFIX,
+  charterClausesWhere,
+  isWriteScope,
+  openCard,
+  openCards,
+  type CardTrigger,
+} from './reorientation';
 import { scopeReach } from './reorientationReach';
 import type { ReorientationTrigger } from '../src/agent/reorientation-vocabulary';
 
@@ -128,6 +135,7 @@ export async function openRepeatedRefusalCards(
       ]);
     }
   }
+  const cards: CardTrigger[] = [];
   for (const [scope, refusals] of byScope) {
     const triggerKey = `${REFUSAL_KEY_PREFIX}${scope}`;
     const counted = await crossing(
@@ -137,7 +145,7 @@ export async function openRepeatedRefusalCards(
       refusals,
     );
     if (counted === undefined) continue;
-    await openCard(ctx, {
+    cards.push({
       agentId,
       trigger: 'repeated-refusal',
       triggerKey,
@@ -148,6 +156,8 @@ export async function openRepeatedRefusalCards(
       now,
     });
   }
+  // One list for every scope that crossed in this run: a run can cross more than one (17-O; O-2).
+  await openCards(ctx, cards);
 }
 
 /**

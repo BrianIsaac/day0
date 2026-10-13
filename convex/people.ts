@@ -18,7 +18,7 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
-import { openCard, personAgreements } from './reorientation';
+import { openCards, personAgreements, type CardTrigger } from './reorientation';
 import { ownerAgents } from './reorientationReach';
 import {
   EVIDENCE_SHOWN,
@@ -460,13 +460,14 @@ export const dismiss = mutation({
     const agreements = await personAgreements(ctx, person.userId, person._id);
     const reached = new Set<Id<'agents'>>([args.agentId]);
     for (const edge of proposed) if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+    const cards: CardTrigger[] = [];
     for (const agentId of reached) {
       const retired = proposed
         .filter((edge) => edge.fromAgentId === undefined || edge.fromAgentId === agentId)
         .map((edge) => edge._id);
       // A dismissal that took no edge of the employee's and no agreement reaches nothing of its.
       if (retired.length === 0 && agreements.length === 0) continue;
-      await openCard(ctx, {
+      cards.push({
         agentId,
         trigger: 'person-dismissed',
         triggerKey: eventId,
@@ -476,6 +477,8 @@ export const dismiss = mutation({
         now,
       });
     }
+    // One list for every employee an edge to the person was proposed from (17-O; O-2).
+    await openCards(ctx, cards);
     return { edgesRetired: proposed.length };
   },
 });
@@ -748,21 +751,24 @@ async function openEdgeCards(
     for (const agent of await ownerAgents(ctx, edge.userId)) reached.add(agent._id);
   }
   const agreements = await personAgreements(ctx, edge.userId, person._id);
-  for (const agentId of reached) {
-    await openCard(ctx, {
+  const summary = edgeChangeWords(person.displayName, RELATIONSHIP_NOUNS[edge.type], change.change);
+  // One list for every employee the edge concerns, up to all of the owner's (17-O; W16-R5).
+  await openCards(
+    ctx,
+    [...reached].map((agentId) => ({
       agentId,
-      trigger: 'relationship-changed',
+      trigger: 'relationship-changed' as const,
       triggerKey: change.eventId,
-      summary: edgeChangeWords(person.displayName, RELATIONSHIP_NOUNS[edge.type], change.change),
+      summary,
       evidence: {
         eventIds: agentId === change.agentId ? [change.eventId] : [],
         relationshipIds: [edge._id],
       },
       affected: { relationships: [edge._id], agreements },
-      reach: { kind: 'open-work' },
+      reach: { kind: 'open-work' as const },
       now: change.now,
-    });
-  }
+    })),
+  );
 }
 
 /** A scope the manager typed, trimmed and bounded, or undefined for none. */
