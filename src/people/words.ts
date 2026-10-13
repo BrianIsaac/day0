@@ -368,14 +368,35 @@ export function proposedChangeLine(where: string, change: ProposedChangeWords): 
   return `${where} proposes a change: ${parts.join(', ')}. What you confirmed stays until you take it.${lookup}`;
 }
 
+/** The systems a lookup by address asks, each with what of a person's it names (13-P). */
+const LOOKED_UP_SYSTEMS = [
+  { provider: 'slack', name: 'Slack', carries: 'message' },
+  { provider: 'linear', name: 'Linear', carries: 'ticket' },
+] as const;
+
 /**
- * The line a confirmed person's row says a failed lookup in (W13-R25, wording draft).
+ * The line a confirmed person's row says a failed lookup in (W13-R25, wording draft), or nothing
+ * when no line is true. It names only the systems Day0 holds no account of the person's in
+ * (W16-R35; the joins' W1d: "Day0 could not look Ines Duarte up in Slack or Linear" stood beside
+ * "Identities: Slack @..."): a lookup that failed on one system's card says nothing of a system
+ * whose account was found, and a person found in both has no line.
  *
  * @param name - The person.
  * @param when - When it failed, in the employee's zone.
+ * @param identities - The accounts of the person's the row lists.
  */
-export function lookupFailedLine(name: string, when: string): string {
-  return `Day0 could not look ${name} up in Slack or Linear on ${when}, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.`;
+export function lookupFailedLine(
+  name: string,
+  when: string,
+  identities: ReadonlyArray<{ readonly provider: 'email' | 'oidc' | 'slack' | 'linear' }>,
+): string | undefined {
+  const held = new Set(identities.map((identity) => identity.provider));
+  const missing = LOOKED_UP_SYSTEMS.filter((system) => !held.has(system.provider));
+  if (missing.length === 0) return undefined;
+  const systems = missing.map((system) => system.name).join(' or ');
+  const carried = missing.map((system) => system.carries).join(' or ');
+  const check = missing.length === 1 ? 'that connection' : 'those connections';
+  return `Day0 could not look ${name} up in ${systems} on ${when}, so a ${carried} from them may show an id instead of their name. If it stays so, check ${check} on the Surfaces tab.`;
 }
 
 /**

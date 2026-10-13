@@ -3,6 +3,7 @@ import {
   edgeLine,
   evidenceText,
   identityLabel,
+  lookupFailedLine,
   possiblySameLine,
   proposedChangeLine,
   proposedEdgeLine,
@@ -66,6 +67,35 @@ describe('people words', (): void => {
     );
     expect(relationshipNoun('approval-authority')).toBe('approver');
     expect(relationshipNoun(undefined)).toBe('relationship');
+  });
+});
+
+describe('the line of a failed lookup (W13-R25; W16-R35)', (): void => {
+  const WHEN = '6 Oct 2026, 03:00';
+
+  it('names Slack and Linear for a person Day0 holds no account of in either', (): void => {
+    expect(lookupFailedLine('Priya Shah', WHEN, [])).toBe(
+      'Day0 could not look Priya Shah up in Slack or Linear on 6 Oct 2026, 03:00, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.',
+    );
+    // An address or a sign-in account is not one a lookup finds.
+    expect(
+      lookupFailedLine('Priya Shah', WHEN, [{ provider: 'email' }, { provider: 'oidc' }]),
+    ).toBe(lookupFailedLine('Priya Shah', WHEN, []));
+  });
+
+  it('never says it could not look a person up in a system whose account of theirs it holds (the joins’ W1d: “Identities: Slack @...” beside “could not look ... up in Slack or Linear”)', (): void => {
+    expect(lookupFailedLine('Ines Duarte', WHEN, [{ provider: 'slack' }])).toBe(
+      'Day0 could not look Ines Duarte up in Linear on 6 Oct 2026, 03:00, so a ticket from them may show an id instead of their name. If it stays so, check that connection on the Surfaces tab.',
+    );
+    expect(lookupFailedLine('Ines Duarte', WHEN, [{ provider: 'linear' }])).toBe(
+      'Day0 could not look Ines Duarte up in Slack on 6 Oct 2026, 03:00, so a message from them may show an id instead of their name. If it stays so, check that connection on the Surfaces tab.',
+    );
+  });
+
+  it('says nothing for a person whose Slack and Linear accounts Day0 both holds', (): void => {
+    expect(
+      lookupFailedLine('Ines Duarte', WHEN, [{ provider: 'linear' }, { provider: 'slack' }]),
+    ).toBeUndefined();
   });
 });
 

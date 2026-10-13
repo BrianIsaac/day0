@@ -66,6 +66,15 @@ function runners(harness: GraphHarness): Parameters<typeof runLookups>[0] {
   } as unknown as Parameters<typeof runLookups>[0];
 }
 
+/**
+ * A member as Slack's `users.lookupByEmail` answers one: with the address it matched in
+ * `profile.email`, which the method's own scope (`users:read.email`) returns, and which the lookup
+ * compares with the address asked (W16-R35, 17-FX: the fixtures carried none before).
+ */
+function member(id: string, name: string, email: string): Record<string, unknown> {
+  return { id, name, profile: { email } };
+}
+
 /** Slack answering `users.lookupByEmail` with one member per address it knows. */
 function slackFake(members: Record<string, Record<string, unknown>>): {
   dependencies: LookupDependencies;
@@ -108,7 +117,7 @@ describe('peopleLookupActions.runLookups', (): void => {
         id: 'U0SARA',
         name: 'sara',
         real_name: 'Sara Lim',
-        profile: { display_name: 'sara' },
+        profile: { display_name: 'sara', email: 'sara.lim@kestrel.test' },
       },
     });
     expect(await runLookups(runners(harness), [sara], dependencies)).toBe(1);
@@ -136,7 +145,12 @@ describe('peopleLookupActions.runLookups', (): void => {
       ),
     );
     const { dependencies } = slackFake({
-      'bot@kestrel.test': { id: 'U0BOT', name: 'bot', is_bot: true },
+      'bot@kestrel.test': {
+        id: 'U0BOT',
+        name: 'bot',
+        is_bot: true,
+        profile: { email: 'bot@kestrel.test' },
+      },
     });
     expect(await runLookups(runners(harness), people, dependencies)).toBe(0);
     const refused: LookupDependencies = {
@@ -147,6 +161,44 @@ describe('peopleLookupActions.runLookups', (): void => {
     const { identities, people: rows } = await graphRows(harness);
     expect(identities).toEqual([]);
     expect(rows.every((row) => row.status === 'unverified')).toBe(true);
+  });
+
+  it('refuses a member whose address is not the one asked (W16-R35; the joins’ W1d: the fake Slack answered its one user for any address)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await card(harness, agentId, {});
+    const addresses = [
+      'ines.duarte@kestrel.test',
+      'kofi.mensah@kestrel.test',
+      'sara.lim@kestrel.test',
+    ];
+    const [ines, kofi, sara] = await Promise.all(
+      addresses.map(
+        async (primaryEmail) =>
+          await seedPerson(harness, primaryEmail, { status: 'unverified', primaryEmail }),
+      ),
+    );
+    if (!ines || !kofi || !sara) throw new Error('the people were not seeded');
+    const { dependencies } = slackFake({
+      // W1d, the fake's own answer for an address it does not know: its one user, no address.
+      'ines.duarte@kestrel.test': { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator' },
+      // A member Slack matched on something other than the address asked.
+      'kofi.mensah@kestrel.test': {
+        id: 'U0KOFI',
+        name: 'kofi',
+        profile: { email: 'kofi.mensah@other.test' },
+      },
+      // The member whose address it is, however Slack cases it.
+      'sara.lim@kestrel.test': {
+        id: 'U0SARA',
+        name: 'sara',
+        profile: { email: 'Sara.Lim@Kestrel.test' },
+      },
+    });
+    expect(await runLookups(runners(harness), [ines, kofi, sara], dependencies)).toBe(1);
+    expect(
+      (await graphRows(harness)).identities.map((row) => [row.personId, row.externalId]),
+    ).toEqual([[sara, 'U0SARA']]);
   });
 
   it('records the Linear user get_user answers for the address, and nobody whose address is another', async (): Promise<void> => {
@@ -206,7 +258,7 @@ describe('peopleLookupActions.runLookups', (): void => {
       primaryEmail: 'sara.lim@kestrel.test',
     });
     const { dependencies, asked } = slackFake({
-      'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' },
+      'sara.lim@kestrel.test': member('U0SARA', 'sara', 'sara.lim@kestrel.test'),
     });
     expect(await runLookups(runners(harness), [sara], dependencies)).toBe(0);
     expect(asked).toEqual([]);
@@ -245,7 +297,9 @@ describe('peopleLookupActions.runLookups', (): void => {
     expect(await runLookups(runners(harness), [sara], limited, LOOKUP_ATTEMPTS)).toBe(0);
     expect(retries).toHaveLength(1);
     expect((await graphRows(harness)).people[0]?.lookupFailedAt).toEqual(expect.any(Number));
-    const { dependencies } = slackFake({ 'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' } });
+    const { dependencies } = slackFake({
+      'sara.lim@kestrel.test': member('U0SARA', 'sara', 'sara.lim@kestrel.test'),
+    });
     expect(await runLookups(runners(harness), [sara], dependencies)).toBe(1);
     expect((await graphRows(harness)).people[0]?.lookupFailedAt).toBeUndefined();
   });
@@ -287,7 +341,9 @@ describe('peopleLookupActions.runLookups', (): void => {
       status: 'unverified',
       primaryEmail: 'sara.lim@kestrel.test',
     });
-    const { dependencies } = slackFake({ 'sara.lim@kestrel.test': { id: 'U0SARA', name: 'sara' } });
+    const { dependencies } = slackFake({
+      'sara.lim@kestrel.test': member('U0SARA', 'sara', 'sara.lim@kestrel.test'),
+    });
     expect(await runLookups(runners(harness), [sara], dependencies)).toBe(0);
     expect((await graphRows(harness)).people.find((row) => row._id === sara)?.possiblySameAs).toBe(
       held,
@@ -308,7 +364,9 @@ describe('peopleLookupActions.runLookups', (): void => {
       status: 'unverified',
       primaryEmail: 'mei.ling@kestrel.test',
     });
-    const { dependencies } = slackFake({ 'mei.ling@kestrel.test': { id: 'U0BOSS', name: 'boss' } });
+    const { dependencies } = slackFake({
+      'mei.ling@kestrel.test': member('U0BOSS', 'boss', 'mei.ling@kestrel.test'),
+    });
     await runLookups(runners(harness), [mei], dependencies);
     expect(
       (await graphRows(harness)).people.find((row) => row._id === mei)?.possiblySameAs,
@@ -350,7 +408,8 @@ describe('peopleLookupActions.runLookups', (): void => {
     await runLookups(
       runners(harness),
       [proposal],
-      slackFake({ 'sara.l@kestrel.test': { id: 'U0SARA', name: 'sara' } }).dependencies,
+      slackFake({ 'sara.l@kestrel.test': member('U0SARA', 'sara', 'sara.l@kestrel.test') })
+        .dependencies,
     );
     expect(
       (await graphRows(harness)).people.find((row) => row._id === proposal)?.possiblySameAs,

@@ -117,7 +117,10 @@ function slackHandle(user: Record<string, unknown>): string | undefined {
 
 /**
  * The Slack user an address is, by `users.lookupByEmail` on the card's own bot token: none for an
- * address Slack does not know, a bot or a deactivated member.
+ * address Slack does not know, a bot or a deactivated member, and none for a member whose own
+ * address (`profile.email`, which the method's scope returns) is not the one asked, as Linear's
+ * lookup compares it (W16-R35; the joins' W1d: a server that answered its one user for any address
+ * gave every person that user's account).
  *
  * @throws Error for any other refusal, for the caller to log.
  */
@@ -153,6 +156,7 @@ async function slackUserByAddress(
   if (user === undefined || userId === undefined || user.is_bot === true || user.deleted === true) {
     return undefined;
   }
+  if (normaliseManagerAddress(text(asRecord(user.profile)?.email)) !== address) return undefined;
   const workspaceId = card.workspaceId ?? text(user.team_id);
   const handle = slackHandle(user);
   return {

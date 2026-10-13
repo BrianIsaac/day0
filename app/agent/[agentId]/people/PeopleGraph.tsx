@@ -425,6 +425,11 @@ function ConfirmedRow({
   const [form, setForm] = useState<RowForm>({ kind: 'none' });
   const row = useRef<HTMLLIElement>(null);
   const { name } = person;
+  // Said only of the systems the row lists no account in (W16-R35).
+  const failedLookup =
+    person.lookupFailedAt === undefined
+      ? undefined
+      : lookupFailedLine(name, clockTime(person.lookupFailedAt, zone), person.identities);
   // A form closed by Cancel hands focus back to the row it was opened on.
   const close = (): void => {
     setForm({ kind: 'none' });
@@ -504,9 +509,9 @@ function ConfirmedRow({
       {person.evidence !== undefined ? (
         <EvidenceList evidence={[person.evidence]} zone={zone} />
       ) : null}
-      {person.lookupFailedAt !== undefined ? (
+      {failedLookup !== undefined ? (
         <p className="text-[13px] text-[var(--color-muted)] [overflow-wrap:anywhere]">
-          {lookupFailedLine(name, clockTime(person.lookupFailedAt, zone))}
+          {failedLookup}
         </p>
       ) : null}
       {person.proposedChange !== undefined ? (

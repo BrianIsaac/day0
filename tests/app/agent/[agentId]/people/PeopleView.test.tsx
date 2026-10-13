@@ -1081,9 +1081,13 @@ describe('PeopleView: the people graph (wave 13, 13-P)', () => {
     expect(confirmed.textContent).toContain(
       'Evidence: “Priya Shah, Head of revenue operations, priya.shah@kestrel.test” (Team directory, 6 Oct 2026, 02:00).',
     );
+    // Re-taken (W16-R35, 17-FX): the row holds Priya's Slack account ("Identities: Slack @priya"),
+    // and the line beside it said Day0 could not look her up "in Slack or Linear" (the joins' W1d).
+    expect(confirmed.textContent).toContain('Identities: Slack @priya.');
     expect(confirmed.textContent).toContain(
-      'Day0 could not look Priya Shah up in Slack or Linear on 6 Oct 2026, 03:00, so a message or ticket from them may show an id instead of their name. If it stays so, check those connections on the Surfaces tab.',
+      'Day0 could not look Priya Shah up in Linear on 6 Oct 2026, 03:00, so a ticket from them may show an id instead of their name. If it stays so, check that connection on the Surfaces tab.',
     );
+    expect(confirmed.textContent).not.toContain('look Priya Shah up in Slack');
     await press(confirmed, 'Take the proposed change for Priya Shah');
     expect(backend.calls.at(-1)).toEqual({
       name: 'personChanges:take',

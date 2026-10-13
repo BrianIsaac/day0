@@ -651,8 +651,16 @@ const server = createServer(async (request, response) => {
     const person = people.get(email.trim().toLowerCase());
     return json(response, 200, {
       ok: true,
+      // A listed person carries the address asked, as Slack's own answer does (profile.email);
+      // the one manager, answered for every other address, carries none, so the people lookup,
+      // which compares it, takes the manager for nobody else (wave 17, 17-FX; the joins' W1d).
       user: person
-        ? { id: person.id, real_name: person.name, deleted: false }
+        ? {
+            id: person.id,
+            real_name: person.name,
+            deleted: false,
+            profile: { email: email.trim().toLowerCase() },
+          }
         : { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator', deleted: false },
     });
   }
