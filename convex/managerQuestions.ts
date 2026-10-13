@@ -22,6 +22,7 @@ import {
   standingConflictOf,
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
+import type { RequestQuestion } from '../src/work/manager-channel';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
 import {
@@ -359,24 +360,6 @@ export async function openConflictQuestions(
   );
 }
 
-/**
- * The questions one item's plan raised that nobody has answered and whose conflict still stands,
- * oldest first: what a typed answer answers and what the plan's request asks (the second pass's
- * m3 and m4). A question whose conflict no longer stands (a page archived or gone since, the
- * relation no longer confirmed) holds nothing and is asked no more.
- */
-export async function standingConflictQuestions(
-  ctx: QueryCtx,
-  workItemId: Id<'workItems'>,
-): Promise<Doc<'managerQuestions'>[]> {
-  const standing: Doc<'managerQuestions'>[] = [];
-  for (const question of await openConflictQuestions(ctx, workItemId)) {
-    const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
-    if ((await standingConflictOf(ctx, relation)) !== undefined) standing.push(question);
-  }
-  return standing;
-}
-
 /** The agent's questions the poll's check reads back, newest first (standard 10.4). */
 const QUESTIONS_OWED_READ = 100;
 
@@ -413,14 +396,59 @@ export async function conflictAnswerOwedOn(
   return false;
 }
 
+/** One of an item's conflict questions, with the number the manager answers it by. */
+export interface NumberedConflictQuestion {
+  /**
+   * Its place among the conflict questions asked beside the item's plans, in the order they were
+   * asked and whatever became of them (17-C, decision C-4): answering or closing one never
+   * renumbers another, so a number typed from an old message still names the question it named.
+   */
+  readonly number: number;
+  readonly question: Doc<'managerQuestions'>;
+  /** Whether it still waits for its answer and its conflict still stands. */
+  readonly standing: boolean;
+}
+
 /**
- * The conflict questions a plan's decision request carries, by their text. Internal; read by
- * `managerChannelActions.requestDecision`.
+ * Every conflict question asked beside an item's plans, oldest first, each with its number and
+ * whether it still stands: what a numbered answer names and what a request numbers (17-C;
+ * W16-R27, where a typed answer went to the first standing question whatever the manager meant).
+ */
+export async function numberedConflictQuestions(
+  ctx: QueryCtx,
+  workItemId: Id<'workItems'>,
+): Promise<NumberedConflictQuestion[]> {
+  const asked = (
+    await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+      .take(ITEM_QUESTIONS_READ)
+  ).filter((question) => question.type === 'retrieval' && question.relationId !== undefined);
+  const numbered: NumberedConflictQuestion[] = [];
+  for (const [index, question] of asked.entries()) {
+    const relation =
+      question.answer === undefined && question.relationId !== undefined
+        ? await ctx.db.get(question.relationId)
+        : null;
+    numbered.push({
+      number: index + 1,
+      question,
+      standing: relation !== null && (await standingConflictOf(ctx, relation)) !== undefined,
+    });
+  }
+  return numbered;
+}
+
+/**
+ * The conflict questions a plan's decision request carries, each with its words and its number.
+ * Internal; read by `managerChannelActions.requestDecision`.
  */
 export const conflictQuestionsForRequest = internalQuery({
   args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args): Promise<string[]> =>
-    (await standingConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
+  handler: async (ctx, args): Promise<RequestQuestion[]> =>
+    (await numberedConflictQuestions(ctx, args.workItemId))
+      .filter((numbered) => numbered.standing)
+      .map((numbered) => ({ text: numbered.question.question, number: numbered.number })),
 });
 
 /**

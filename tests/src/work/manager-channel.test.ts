@@ -934,4 +934,80 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
     expect(parseDecisionReply('I think the answer ab3xyz A is right')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz')).toEqual({ verb: 'approve', id: 'ab3xyz' });
   });
+
+  it('numbers each question when more than one is asked, and shows how to answer one by its number (17-C; W16-R27)', (): void => {
+    const second =
+      'Two pages disagree under “Owners”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds every write of the plan until you answer and Retry.';
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [
+        { text: question, number: 1 },
+        { text: second, number: 2 },
+      ],
+    });
+    expect(text.split('\n').slice(4, 7)).toEqual([
+      `1. ${question}`,
+      `2. ${second}`,
+      'Answer each by its number: “answer ab3xyz 1 A”, “answer ab3xyz 1 B” or “answer ab3xyz 1 both”.',
+    ]);
+    // The numbers are the questions' own, not their place in the message: the plan's third and
+    // fourth questions are asked as 3 and 4 once the first two are closed.
+    const later = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [
+        { text: question, number: 3 },
+        { text: second, number: 4 },
+      ],
+    });
+    expect(later).toContain(
+      `3. ${question}\n4. ${second}\nAnswer each by its number: “answer ab3xyz 3 A”`,
+    );
+  });
+
+  it('leaves the number out of a request that asks one question, whatever its number (section 7)', (): void => {
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [{ text: question, number: 3 }],
+    });
+    expect(text).toContain(
+      `${question}\nAnswer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.`,
+    );
+    expect(text).not.toContain('3. ');
+  });
+
+  it('reads the question’s number between the code and the letter, and a bare answer as naming none (17-C)', (): void => {
+    expect(parseDecisionReply('answer ab3xyz 2 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 2,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('“Answer: AB3XYZ 12 both”.')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 12,
+      choice: 'both',
+    });
+    expect(parseDecisionReply('answer ab3xyz A')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      choice: 'from',
+    });
+    // No question is numbered nought, and a number is not a letter.
+    expect(parseDecisionReply('answer ab3xyz 0 A')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 2')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 2 3')).toBeUndefined();
+  });
 });

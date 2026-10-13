@@ -1013,6 +1013,123 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect((await harness.run(async (ctx) => await ctx.db.get(second)))?.answer).toBeUndefined();
   });
 
+  /** A second conflict between the same two pages, standing, and its question beside the plan. */
+  async function secondQuestion(
+    harness: Harness,
+    asked: { relationId: Id<'docRelations'>; workItemId: Id<'workItems'> },
+  ) {
+    const [first] = await questionsOf(harness, asked.workItemId);
+    return await harness.run(async (ctx) => {
+      const relation = await ctx.db.get(asked.relationId);
+      const relationId = await ctx.db.insert('docRelations', fieldsOf(relation!));
+      const questionId = await ctx.db.insert('managerQuestions', {
+        agentId: first.agentId,
+        key: `conflict:${relationId}`,
+        question: first.question,
+        context: { ...first.context, text: 'Owners' },
+        askedAt: first.askedAt + 1,
+        workItemId: asked.workItemId,
+        charterId: first.charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId,
+      });
+      return { relationId, questionId };
+    });
+  }
+
+  /** The acknowledgements queued for the manager's replies, oldest first. */
+  async function noticeTexts(harness: Harness): Promise<string[]> {
+    return await harness.run(async (ctx) =>
+      (await ctx.db.query('managerDecisionNotices').collect()).map((notice) => notice.text),
+    );
+  }
+
+  it('decides the second question from “answer {code} 2 B”, and nothing from a bare answer while two stand (17-C; W16-R27)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { surfaceId, workItemId } = asked;
+    const second = await secondQuestion(harness, asked);
+    const reply = (messageTs: string, answer: { choice: 'from' | 'to'; number?: number }) =>
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'answer', id: 'ab3xyz', ...answer },
+      });
+    // Bare, with two standing: which one is asked, and nothing is decided.
+    await expect(reply('1790000000.000100', { choice: 'to' })).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'several questions open',
+      notified: true,
+    });
+    expect(await noticeTexts(harness)).toEqual([
+      'Which one? This plan has 2 questions open: answer with its number, for example “answer ab3xyz 2 B”. They are: 1, under “Thresholds”; 2, under “Owners”.',
+    ]);
+    expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    const pages = async () =>
+      await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect((await pages()).every((page) => page.status === undefined)).toBe(true);
+    // A number that names no question of the plan decides nothing either.
+    await expect(reply('1790000001.000100', { choice: 'to', number: 5 })).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'no such question',
+    });
+    // By its number: the second question is the one decided, in the manager's name.
+    await expect(reply('1790000002.000100', { choice: 'to', number: 2 })).resolves.toMatchObject({
+      status: 'answered',
+      notified: true,
+    });
+    const [first, answered] = await questionsOf(harness, workItemId);
+    expect(answered).toMatchObject({
+      _id: second.questionId,
+      answer: { text: 'B, Pipeline runbook (Handbook) is right', via: 'slack' },
+    });
+    expect(first.answer).toBeUndefined();
+    expect((await pages()).find((page) => page.title === 'Finance escalation')?.status).toBe(
+      'superseded',
+    );
+    expect((await noticeTexts(harness)).slice(1)).toEqual([
+      'This plan has no question 5: its questions are numbered 1 to 2.',
+      'Recorded for question 2: B, Pipeline runbook (Handbook) is right. Retry runs the steps that waited on it, drafted again where they relied on the other page.',
+    ]);
+    // The answered question's number still names it, and says what it was answered.
+    await expect(reply('1790000003.000100', { choice: 'from', number: 2 })).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'question no longer open',
+    });
+    expect((await noticeTexts(harness)).at(-1)).toBe(
+      'Question 2 was already answered: B, Pipeline runbook (Handbook) is right.',
+    );
+  });
+
+  it('takes a numbered answer to the first question while a second stands, and says one more is open (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    await secondQuestion(harness, asked);
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: asked.surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'both', number: 1 },
+      }),
+    ).resolves.toMatchObject({ status: 'answered' });
+    expect(await noticeTexts(harness)).toEqual([
+      'Recorded for question 1: Both hold. Retry runs the steps that waited on it, drafted again where they relied on the other page. 1 more question of this plan is still open.',
+    ]);
+    const [first, second] = await questionsOf(harness, asked.workItemId);
+    expect(first.answer).toMatchObject({ text: 'Both hold', via: 'slack' });
+    expect(second.answer).toBeUndefined();
+  });
+
   it('closes the question when the conflict is settled on the Documentation tab, so nothing waits on it (second pass B1)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

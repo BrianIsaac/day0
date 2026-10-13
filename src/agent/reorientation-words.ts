@@ -156,10 +156,25 @@ export function conflictChoiceWords(
     : `${pageWords('B', pages[1])} is right`;
 }
 
-/** How a Slack request asks for the answer: the decision's code and a letter. */
-export function conflictReplyLine(id: string): string {
-  return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
+/**
+ * How a Slack request asks for the answer: the decision's code and a letter, and between them the
+ * question's number where the message asks more than one (17-C; section 7, flagged: "each by its
+ * number" is added to the draft, so the one line reads as the way to answer every question above).
+ */
+export function conflictReplyLine(id: string, number?: number): string {
+  if (number === undefined) {
+    return `Answer with “answer ${id} A”, “answer ${id} B” or “answer ${id} both”.`;
+  }
+  const code = `${id} ${number}`;
+  return `Answer each by its number: “answer ${code} A”, “answer ${code} B” or “answer ${code} both”.`;
 }
+
+/**
+ * What is said of a question closed without an answer because its conflict stopped standing
+ * (17-C; section 7): on the plan's card, and in answer to a reply that names it.
+ */
+export const CONFLICT_QUESTION_CLOSED =
+  'These two pages no longer disagree, so this question is closed.';
 
 /** A card's title (the prototype's): "Something {name}'s charter assumed has changed". */
 export function cardTitle(name: string): string {
