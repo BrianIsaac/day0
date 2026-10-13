@@ -3,10 +3,12 @@
 import Link from 'next/link';
 import { useRouter, useSelectedLayoutSegment } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQuery } from 'convex/react';
+import { useQueries, useQuery, type RequestForQueries } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { oneToOnePhase } from '@/agent/one-to-one-phase';
+import { log } from '@/lib/logger';
+import type { AgentMetrics } from '@/metrics/types';
 import { agentZone } from '@/lib/zone';
 import { toSurfaceRecord } from '@/surfaces/records';
 import { isManagerLookupFailure } from '@/surfaces/manager-lookup';
@@ -196,7 +198,27 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   // A claim stops being live without any write, so the badge's count is read against the clock
   // the Skills tab reads its cards against.
   const now = useNow();
-  const metrics = useQuery(api.metrics.forAgent, present);
+  // The figures are read without a throw: an employee whose rows pass one function's read limit
+  // still has its page, its rail and its tabs, and its figures' cards say they could not be read
+  // (C1, 17-FW; W16-R31). Made once per employee, as `useQueries` subscribes by identity.
+  const hasAgent = agent !== undefined;
+  const figuresQuery = useMemo(
+    (): RequestForQueries =>
+      hasAgent ? { figures: { query: api.metrics.forAgent, args: { agentId } } } : {},
+    [hasAgent, agentId],
+  );
+  const { figures }: Record<string, AgentMetrics | undefined | Error> = useQueries(figuresQuery);
+  const figuresFailed = figures instanceof Error;
+  const metrics = figuresFailed ? undefined : figures;
+  const figuresFailure = figuresFailed ? figures.message : undefined;
+  useEffect(() => {
+    if (figuresFailure !== undefined) {
+      log.warn("employee page's figures read failed; the page drew without them", {
+        agentId,
+        reason: figuresFailure,
+      });
+    }
+  }, [agentId, figuresFailure]);
   const session = useQuery(api.voice.latest, present);
   const standing = useQuery(api.agents.managerStanding, present);
   const phase = oneToOnePhase(session).kind;
@@ -243,8 +265,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
     : [];
   // The step counts once everything it is read from has loaded, so the rail filling in as the
   // page loads is never played as the employee moving on.
+  const figuresAnswered = metrics !== undefined || figuresFailed;
   const settled =
-    agent !== undefined && latest !== undefined && workItems !== undefined && metrics !== undefined;
+    agent !== undefined && latest !== undefined && workItems !== undefined && figuresAnswered;
   const step = settled ? currentStep(steps) : UNSETTLED;
   const advanced = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS), step);
   const exiting = movedOn(usePreviousValue(step, RAIL_ADVANCE_MS + RAIL_EXIT_MS), step);
@@ -257,7 +280,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   // figures that say a write landed: until they load its page draws neither, so a working
   // employee's page never shows the whole rail and then takes it away. Any other employee's rail
   // is drawn at once, from the row until the charter is read, as it always was.
-  const stageKnown = shownState !== 'active' || (latest !== undefined && metrics !== undefined);
+  const stageKnown = shownState !== 'active' || (latest !== undefined && figuresAnswered);
   // The week moving on to Working in front of the manager plays on the whole rail first, where
   // the step it moves from is on screen; the rail then fades out, and the card settles in where
   // it was, so the page does not cut from one to the other.
