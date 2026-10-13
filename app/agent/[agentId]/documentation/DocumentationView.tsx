@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { LinkSourceForm } from '../../../documentation/LinkSourceForm';
@@ -27,7 +28,9 @@ import { RelationCard } from './RelationCard';
  * status with who or what decided it, and a card for every relation the manager has still to
  * answer: two pages that read as versions of one runbook, or two that disagree. An answered
  * card leaves the tab, so the tab keeps the last answer where the cards are, with "Undo". The
- * hosted office links nothing and says where its pages are.
+ * hosted office links nothing: its Sources card says so in the one sentence the home, the
+ * Documentation page and the take-on dialog say it in (`MOCK_OFFICE_DOCUMENTATION`; W16-R35), and
+ * the aside says where this employee's pages are.
  */
 export function DocumentationView() {
   const { agent, surfaceMode, arriving } = useEmployee();
@@ -51,8 +54,7 @@ export function DocumentationView() {
           {surfaceMode === 'mock' ? (
             <>
               In the hosted office {agent.name} reads the office’s wiki and how-to guides, on the{' '}
-              <Link href={surfaces}>Surfaces tab</Link> under Docs. Linking your own documentation
-              is part of running Day0 on your own systems.
+              <Link href={surfaces}>Surfaces tab</Link> under Docs.
             </>
           ) : (
             <>
@@ -76,9 +78,7 @@ export function DocumentationView() {
       <Columns arriving={arriving} aside={aside}>
         <Card title="Sources">
           <p className="text-sm text-[var(--color-muted)]">
-            {surfaceMode === undefined
-              ? 'Loading'
-              : 'The hosted office links no documentation of yours; its pages are disclosed and synthetic.'}
+            {surfaceMode === undefined ? 'Loading' : MOCK_OFFICE_DOCUMENTATION}
           </p>
         </Card>
       </Columns>

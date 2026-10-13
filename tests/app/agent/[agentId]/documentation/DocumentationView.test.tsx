@@ -54,6 +54,7 @@ import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import { choose, mount, press, said, settle } from '../../../../fixtures/dom/press';
+import { MOCK_OFFICE_DOCUMENTATION } from '../../../../../src/surfaces/mock-office';
 
 /** Two linked sources, the second left out when the employee was deployed. */
 const SOURCES = [
@@ -211,6 +212,29 @@ describe('DocumentationView', () => {
     expect(html).toContain('In the hosted office Mira reads the office’s wiki and how-to guides');
     expect(html).not.toContain('href="/documentation"');
     expect(html).not.toContain('Link a location');
+  });
+
+  it("says the documentation sentence in the one wording the home, the Documentation page and the take-on dialog use (W16-R35; the v0.20.0 walk's finding 8: three wordings)", () => {
+    const view = mount(asEmployee(<DocumentationView />));
+    const text = view.container.textContent ?? '';
+    expect(MOCK_OFFICE_DOCUMENTATION).toBe(
+      'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+    );
+    // The Sources card said "The hosted office links no documentation of yours; its pages are
+    // disclosed and synthetic.", the second wording.
+    const sources = [...view.container.querySelectorAll('section')].find(
+      (section) => section.querySelector('h2')?.textContent === 'Sources',
+    );
+    expect(sources?.textContent).toBe(`Sources${MOCK_OFFICE_DOCUMENTATION}`);
+    // The aside said it a third way ("Linking your own documentation is part of running Day0 on
+    // your own systems."): it keeps what only it says, where this employee's reading is.
+    expect(text).toContain(
+      'In the hosted office Mira reads the office’s wiki and how-to guides, on the Surfaces tab under Docs.',
+    );
+    expect(text.match(/Linking your/g)).toHaveLength(1);
+    expect(text).not.toContain('disclosed and synthetic');
+    expect(text).not.toContain('on your own systems');
+    view.unmount();
   });
 
   it('lists every linked source with its state and whether this employee reads it', () => {
