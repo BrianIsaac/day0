@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
+  closedByHandSummary,
   closingHeldReason,
   conflictChoiceWords,
   conflictQuestionText,
+  decidedElsewhereOf,
+  decidedElsewhereWords,
   decisionWords,
   heldWords,
   pendingWords,
@@ -106,6 +109,28 @@ const SAME_TITLED = [
   { title: 'Close escalation window', source: 'Policies folder' },
   { title: 'Close escalation window', source: 'Revops folder' },
 ] as const;
+
+describe('a card decided on another employee’s card, and one closed at a handover (17-O)', (): void => {
+  it('stores whose card decided it and what that did, and reads both back for the card’s line', (): void => {
+    const stored = approvedResultWords.decidedElsewhere('Priya', 'the relationship was changed');
+    expect(stored).toBe('decided on Priya’s card: the relationship was changed');
+    const read = decidedElsewhereOf(stored);
+    expect(read).toEqual({ name: 'Priya', result: 'the relationship was changed' });
+    expect(decidedElsewhereWords(read!, '13 October')).toBe(
+      'Decided on Priya’s card on 13 October: the relationship was changed. Nothing more to do here.',
+    );
+    // Any other outcome is not one.
+    expect(decidedElsewhereOf(approvedResultWords.dismissed)).toBeUndefined();
+    expect(decidedElsewhereOf(approvedResultWords.handedOver)).toBeUndefined();
+    expect(decidedElsewhereOf(undefined)).toBeUndefined();
+  });
+
+  it('says who opened a by-hand card a handover closed, and none of what they typed (D-5’s remainder)', (): void => {
+    expect(closedByHandSummary('priya@acme.test')).toBe(
+      'A card priya@acme.test opened was closed at the handover',
+    );
+  });
+});
 
 describe('a conflict’s two pages named apart (W16-R12)', (): void => {
   it('gives the answer buttons two names when the pages share a title, as the question letters them', (): void => {

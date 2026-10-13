@@ -318,6 +318,22 @@ describe('a reorientation card', (): void => {
     edge.unmount();
   });
 
+  it('says a card another employee’s card decided was decided there, on its date, with nothing more to do (the pre-tag’s row 6)', (): void => {
+    const sibling = drawn(
+      withCard({
+        status: 'dismissed',
+        decidedAt: Date.UTC(2026, 9, 13, 2, 4),
+        outcome: { summary: 'decided on Priya’s card: the relationship was changed' },
+      }),
+    );
+    expect(sibling.container.textContent).toContain(
+      'Decided on Priya’s card on 13 October: the relationship was changed. Nothing more to do here.',
+    );
+    expect(sibling.container.textContent).toContain('decided on another card');
+    expect(sibling.container.textContent).not.toContain('Dismissed:');
+    sibling.unmount();
+  });
+
   it('draws the organisation’s ledger line a card rests on as evidence, in the record’s words (17-O)', (): void => {
     const revoked = drawn(
       withCard(

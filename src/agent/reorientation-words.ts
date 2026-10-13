@@ -35,6 +35,12 @@ export const approvedResultWords = {
   dismissed: 'nothing changed',
   /** A card still undecided when its employee was handed over (W16-R1, D-5 (a)). */
   handedOver: 'closed at the handover, as it was the previous manager’s to decide',
+  /**
+   * Another employee's card about an edge for everyone, closed when one card's Approve decided the
+   * edge (the pre-tag's row 6): read back by {@link decidedElsewhereOf}.
+   */
+  decidedElsewhere: (name: string, result: string): string =>
+    `decided on ${name}’s card: ${result}`,
   charter: (version: string): string => `the charter was amended to version ${version}`,
   agreement: {
     keep: 'the working agreement was kept as it is',
@@ -71,6 +77,28 @@ export function closedByHandSummary(previousManager: string): string {
 
 /** What an owed check's card says changed (RM34 (a); section 9.1's words). */
 export const CHECK_OWED_SUMMARY = 'Its agreements could not be checked against the amended charter';
+
+/**
+ * Whose card decided a card closed as decided elsewhere, and what that decision did: the parts of
+ * `approvedResultWords.decidedElsewhere`, or undefined for any other outcome.
+ */
+export function decidedElsewhereOf(
+  summary: string | undefined,
+): { readonly name: string; readonly result: string } | undefined {
+  const match = /^decided on (.+?)’s card: (.+)$/u.exec(summary ?? '');
+  return match === null ? undefined : { name: match[1], result: match[2] };
+}
+
+/**
+ * A card closed as decided elsewhere, as its line says it (section 7): "Decided on {other}'s card
+ * on {date}: {outcome}. Nothing more to do here."
+ */
+export function decidedElsewhereWords(
+  decided: { readonly name: string; readonly result: string },
+  day: string,
+): string {
+  return `Decided on ${decided.name}’s card on ${day}: ${decided.result}. Nothing more to do here.`;
+}
 
 /** A card's summary without the full stop or other closing mark it may end with. */
 function withoutStop(summary: string): string {

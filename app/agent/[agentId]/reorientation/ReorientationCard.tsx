@@ -8,6 +8,8 @@ import { nextCharterVersion } from '@/agent/charter-amendment';
 import {
   approvedResultWords,
   cardTitle,
+  decidedElsewhereOf,
+  decidedElsewhereWords,
   decisionWords,
   failedProposalWords,
   heldWords,
@@ -189,7 +191,18 @@ function closedAtHandover(card: CardView['card']): boolean {
 /** How a decided card was decided, as its muted line says it. */
 function decidedWords(card: CardView['card']): string {
   if (card.status === 'applied') return 'approved';
+  if (decidedElsewhereOf(card.outcome?.summary) !== undefined) return 'decided on another card';
   return closedAtHandover(card) ? 'closed at the handover' : 'dismissed';
+}
+
+/** A decided card's outcome line: what its decision did, or where it was decided. */
+function outcomeWords(card: CardView['card'], zone: string | undefined): string {
+  if (closedAtHandover(card)) return `Closed at the handover: ${handedOverReason}.`;
+  const elsewhere = decidedElsewhereOf(card.outcome?.summary);
+  if (elsewhere !== undefined) {
+    return decidedElsewhereWords(elsewhere, revisitDay(card.decidedAt ?? card.createdAt, zone));
+  }
+  return `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome?.summary ?? ''}.`;
 }
 
 /** The card's muted line: when it opened, how much it can hold up, and what it holds now. */
@@ -321,11 +334,7 @@ export function ReorientationCard({
         </div>
         {decided ? (
           card.outcome !== undefined ? (
-            <p className="text-[var(--color-fg-2)]">
-              {closedAtHandover(card)
-                ? `Closed at the handover: ${handedOverReason}.`
-                : `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome.summary}.`}
-            </p>
+            <p className="text-[var(--color-fg-2)]">{outcomeWords(card, zone)}</p>
           ) : null
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-4">

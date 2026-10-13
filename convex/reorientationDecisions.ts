@@ -1,10 +1,11 @@
 import { ConvexError, v } from 'convex/values';
-import { mutation, query, type MutationCtx } from './_generated/server';
+import { internalMutation, mutation, query, type MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { appendEvent } from './eventLog';
 import { closeTalkOfCard } from './reorientationTalk';
+import { ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
 import {
   dismissAgreementInTransaction,
@@ -115,6 +116,137 @@ async function releaseHeldWork(ctx: MutationCtx, card: Doc<'reorientations'>): P
     if (row?.state !== 'plan-pending') continue;
     await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
   }
+}
+
+/** The employees whose sibling cards an Approve closes in its own transaction; the rest ride a chain. */
+const SIBLINGS_INLINE = 8;
+
+/** The employees one link of the sibling chain reads. */
+const SIBLINGS_PER_LINK = 25;
+
+/** An edge for everyone that one card's Approve decided, as its sibling cards are closed by it. */
+const siblingDecisionValidator = v.object({
+  relationshipId: v.id('relationships'),
+  /** What the sibling cards' outcome says: whose card decided the edge, and what that did. */
+  outcome: v.string(),
+  decidedBy: v.optional(v.string()),
+  now: v.number(),
+});
+
+type SiblingDecision = typeof siblingDecisionValidator.type;
+
+/**
+ * Close one employee's undecided cards about an edge for everyone that another employee's card
+ * decided (the pre-tag's row 6: Approve on a sibling met "This relationship has already ended",
+ * and the only way out was Dismiss, one card an employee). A card about that edge alone closes as
+ * decided there, its talk with it, and the work it held goes on; a card that also names something
+ * else stays, and a proposal on it that names the ended edge is asked for again.
+ */
+async function closeSiblingCards(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  decision: SiblingDecision,
+): Promise<void> {
+  for (const status of DECIDABLE) {
+    const cards = await ctx.db
+      .query('reorientations')
+      .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
+      .take(STANDING_CARDS_READ);
+    for (const card of cards) {
+      const edges = new Set([...card.evidence.relationshipIds, ...card.affected.relationships]);
+      if (!edges.has(decision.relationshipId)) continue;
+      const alone =
+        edges.size === 1 &&
+        card.affected.charterClauses.length === 0 &&
+        card.evidence.pageRefs.length === 0 &&
+        card.evidence.skillIds.length === 0 &&
+        card.evidence.correctionIds.length === 0;
+      if (alone) {
+        await ctx.db.patch(card._id, {
+          status: 'dismissed',
+          decidedAt: decision.now,
+          revisitAt: undefined,
+          ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
+          outcome: { summary: decision.outcome },
+        });
+        await closeTalkOfCard(ctx, card._id);
+        await releaseHeldWork(ctx, card);
+      } else if (
+        card.proposed.kind === 'relationship' &&
+        card.proposed.relationshipId === decision.relationshipId
+      ) {
+        await ctx.db.patch(card._id, { proposed: { kind: 'pending' } });
+        await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, {
+          reorientationId: card._id,
+        });
+      }
+    }
+  }
+}
+
+/** Close the sibling cards of the first employees of a list, and schedule one function for the rest. */
+async function closeSiblingsOf(
+  ctx: MutationCtx,
+  agentIds: readonly Id<'agents'>[],
+  decision: SiblingDecision,
+  take: number,
+): Promise<void> {
+  for (const agentId of agentIds.slice(0, take)) await closeSiblingCards(ctx, agentId, decision);
+  const rest = agentIds.slice(take);
+  if (rest.length > 0) {
+    await ctx.scheduler.runAfter(0, internal.reorientationDecisions.closeSiblingCardsLater, {
+      agentIds: rest,
+      decision,
+    });
+  }
+}
+
+/**
+ * Close the sibling cards of the next employees an edge for everyone reaches, and pass the rest
+ * on (wave 17, 17-O): one function at a time, as the cards' own chain. Internal; scheduled by
+ * `approve` and by itself. Writes each closed card's standing and outcome, and its talk's close.
+ */
+export const closeSiblingCardsLater = internalMutation({
+  args: { agentIds: v.array(v.id('agents')), decision: siblingDecisionValidator },
+  handler: async (ctx, args): Promise<void> => {
+    await closeSiblingsOf(ctx, args.agentIds, args.decision, SIBLINGS_PER_LINK);
+  },
+});
+
+/**
+ * After a card's Approve changed or retired an edge that holds for everyone, close every other
+ * employee's undecided card about that edge as decided on this one.
+ */
+async function closeSiblingsAfterApprove(
+  ctx: MutationCtx,
+  card: Doc<'reorientations'>,
+  decided: {
+    readonly result: string;
+    readonly decidedBy: string | undefined;
+    readonly now: number;
+  },
+): Promise<void> {
+  if (card.proposed.kind !== 'relationship') return;
+  const edge = await ctx.db.get(card.proposed.relationshipId);
+  if (edge === null || edge.fromAgentId !== undefined || edge.fromPersonId !== undefined) return;
+  const approved = await ctx.db.get(card.agentId);
+  const others = (await ownerAgents(ctx, edge.userId))
+    .map((agent) => agent._id)
+    .filter((agentId) => agentId !== card.agentId);
+  await closeSiblingsOf(
+    ctx,
+    others,
+    {
+      relationshipId: edge._id,
+      outcome: approvedResultWords.decidedElsewhere(
+        approved?.name ?? 'another employee',
+        decided.result,
+      ),
+      ...(decided.decidedBy !== undefined ? { decidedBy: decided.decidedBy } : {}),
+      now: decided.now,
+    },
+    SIBLINGS_INLINE,
+  );
 }
 
 /** Apply a card's proposal through its target's transaction helper; what it did, in words. */
@@ -302,7 +434,9 @@ async function applyPageStatus(
  * amendment with `via: 'reorientation'`, an agreement's, an edge's, a page's status, a scope or a
  * skill), close the card `applied` with what it did and its talk with it, and release the work it
  * held. Public, guarded by the card's employee's owner. Writes the target's own rows and events,
- * the card's outcome, its talk's close and `reorientation.approved`.
+ * the card's outcome, its talk's close and `reorientation.approved`; and, where it changed or
+ * retired an edge that holds for everyone, the close of every other employee's undecided card
+ * about that edge as decided here (the first in this transaction, the rest by a chain).
  *
  * @throws ConvexError when the card is gone or decided, nothing is proposed yet, or the target
  *   refuses (gone, moved on, a successor not current).
@@ -345,6 +479,7 @@ export const approve = mutation({
       createdAt: now,
     });
     await releaseHeldWork(ctx, card);
+    await closeSiblingsAfterApprove(ctx, card, { result: applied.result, decidedBy, now });
     return { result: applied.result };
   },
 });

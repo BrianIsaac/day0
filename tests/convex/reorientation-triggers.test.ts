@@ -675,7 +675,10 @@ describe('approver or escalation contact changed (relationship.changed)', (): vo
     expect(await cardsSaid(harness, agentId)).toEqual([
       {
         trigger: 'relationship-changed',
-        triggerSummary: 'Priya, its approver, changed',
+        // Re-taken (17-O; the pre-tag's re-walk): the card said "Priya, its approver, changed"
+        // whatever changed, and the judgement read a changed scope as Priya having left.
+        triggerSummary:
+          'Priya, its approver: now for “renewals only”, where it was “committee-deck numbers”',
         risk: 'high',
         userId: OWNER_SUBJECT,
       },
