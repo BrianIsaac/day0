@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { conflictsUnderPlan, decisionsOffered } from '../../convex/docConflicts';
+import { askConflictQuestion } from '../../convex/reorientation';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
@@ -1128,6 +1129,264 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     const [first, second] = await questionsOf(harness, asked.workItemId);
     expect(first.answer).toMatchObject({ text: 'Both hold', via: 'slack' });
     expect(second.answer).toBeUndefined();
+  });
+
+  /** A drafted plan citing the disputed passage, the conflict still only proposed, with its request as given. */
+  async function plannedBeforeConfirmation(
+    harness: Harness,
+    decision: Record<string, unknown> | undefined,
+  ) {
+    const { agentId, relationId } = await disagreement(harness);
+    const surfaceId = await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('surfaces', {
+        agentId,
+        slug: 'team-chat',
+        displayName: 'Team chat',
+        class: 'chat',
+        verdict: 'connected',
+        whereFound: [],
+        managerDmChannelId: 'D0MANAGER',
+        managerUserId: 'UMANAGER',
+        providerIdentityId: 'U0DAY0BOT',
+        credentialLanded: true,
+        createdAt: 1,
+      });
+    });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const label = 'Finance wiki/escalation.md#Finance escalation > Thresholds';
+    const { citations } = await selection(harness, agentId);
+    const cited = citations.find((citation) => citation.label === label)!;
+    const workItemId = await planned(harness, agentId, {
+      cites: [
+        {
+          step: 1,
+          label,
+          sourceId: relation.from.sourceId,
+          pageRef: relation.from.ref,
+          blocks: cited.blocks.map((block) => ({ id: block.id, hash: block.hash! })),
+        },
+      ],
+    });
+    if (decision !== undefined) {
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(workItemId, {
+          decision: {
+            id: 'ab3xyz',
+            kind: 'plan',
+            requestedAt: 1,
+            channel: 'D0MANAGER',
+            surfaceSlug: 'team-chat',
+            surfaceName: 'Team chat',
+            ...decision,
+          },
+        });
+      });
+    }
+    return { agentId, relationId, surfaceId, workItemId };
+  }
+
+  /** The notices queued for the manager's DM, as stored. */
+  async function notices(harness: Harness) {
+    return await harness.run(async (ctx) => await ctx.db.query('managerDecisionNotices').collect());
+  }
+
+  const REQUEST_TS = '1787770800.000100';
+  const NOTICE =
+    'Since I asked you about this plan, you confirmed that two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds every write of the plan until you answer.';
+
+  it('queues the question for the thread of a request already delivered when the conflict is confirmed after it, once (17-C; O-23)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, surfaceId, workItemId } = await plannedBeforeConfirmation(
+      harness,
+      { ts: REQUEST_TS, requestText: 'Priya needs your decision on “Escalate the variance”.' },
+    );
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const [question] = await questionsOf(harness, workItemId);
+    expect(await notices(harness)).toEqual([
+      expect.objectContaining({
+        agentId,
+        surfaceId,
+        workItemId,
+        decisionId: 'ab3xyz',
+        kind: 'question',
+        questionId: question._id,
+        messageTs: `question:${question._id}`,
+        text: NOTICE,
+      }),
+    ]);
+    // The plan's decision looks again (the stalled-step sweep, a card's Approve): the question is
+    // open, so nothing is asked and nothing more is queued.
+    await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
+    expect(await notices(harness)).toHaveLength(1);
+    // Its claim: the request's own thread, the question, and how to answer it. One question
+    // stands, so it is asked and answered without a number.
+    const [notice] = await notices(harness);
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, { noticeId: notice._id }),
+    ).resolves.toMatchObject({
+      prepared: true,
+      threadTs: REQUEST_TS,
+      text: `${NOTICE}\nAnswer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.`,
+    });
+    expect(await eventsOf(harness, agentId, 'work.decision-acknowledging')).toEqual([
+      {
+        workItemId,
+        decisionId: 'ab3xyz',
+        messageTs: `question:${question._id}`,
+        kind: 'question',
+        questionId: question._id,
+      },
+    ]);
+    // Claimed once: a second look sends nothing.
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, { noticeId: notice._id }),
+    ).resolves.toEqual({ prepared: false });
+  });
+
+  it('numbers the thread’s question, and its answer line, when the plan already has one standing (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    // A second conflict under the plan comes to stand after the request went out, and is asked
+    // as a confirmation asks it.
+    const second = await harness.run(async (ctx) => {
+      const relation = await ctx.db.get(asked.relationId);
+      const row = await ctx.db.get(asked.workItemId);
+      await ctx.db.patch(asked.workItemId, {
+        decision: { ...row!.decision!, requestText: `1 question.\n${ASKED}` },
+      });
+      const relationId = await ctx.db.insert('docRelations', fieldsOf(relation!));
+      await askConflictQuestion(ctx, {
+        row: (await ctx.db.get(asked.workItemId))!,
+        conflict: {
+          relationId,
+          heading: 'Thresholds',
+          pages: [
+            { title: 'Finance escalation', source: 'Finance wiki' },
+            { title: 'Pipeline runbook', source: 'Handbook' },
+          ],
+        },
+        now: Date.now(),
+      });
+      return relationId;
+    });
+    const [first, later] = await questionsOf(harness, asked.workItemId);
+    expect(later.relationId).toBe(second);
+    // The first question rode the request's own body, so it has no notice; the second has one.
+    const queued = await notices(harness);
+    expect(queued.map((notice) => notice.questionId)).toEqual([later._id]);
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, { noticeId: queued[0]._id }),
+    ).resolves.toMatchObject({
+      prepared: true,
+      threadTs: REQUEST_TS,
+      text: `${NOTICE}\nAnswer each by its number: “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.`,
+    });
+    expect(first.answer).toBeUndefined();
+  });
+
+  it('posts nothing in the thread for a question its request carried, a request that failed, or a question answered meanwhile (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    // A request still on its way out: its body was built before or after the question was asked.
+    const inFlight = convexTest(schema, allConvexModules());
+    const flying = await plannedBeforeConfirmation(inFlight, {});
+    await asManager(inFlight).mutation(api.docRelations.decide, {
+      relationId: flying.relationId,
+      decision: 'disagree',
+    });
+    const [waiting] = await notices(inFlight);
+    await expect(
+      inFlight.mutation(internal.work.prepareManagerReplyNotice, { noticeId: waiting._id }),
+    ).resolves.toEqual({ prepared: false, wait: true });
+    expect(await notices(inFlight)).toHaveLength(1);
+    // It lands after the question was asked, and its text carries the question: the notice is
+    // dropped unsent.
+    const landed = `${Date.UTC(2026, 9, 1) / 1000 + 2}.000100`;
+    await inFlight.run(async (ctx) => {
+      const row = await ctx.db.get(flying.workItemId);
+      await ctx.db.patch(flying.workItemId, {
+        decision: { ...row!.decision!, ts: landed, requestText: `Plan.\n\n${ASKED}` },
+      });
+    });
+    await expect(
+      inFlight.mutation(internal.work.prepareManagerReplyNotice, { noticeId: waiting._id }),
+    ).resolves.toEqual({ prepared: false, dropped: true });
+    expect(await notices(inFlight)).toEqual([]);
+
+    // The same race the other way: the request's text was built before the question was asked,
+    // so the thread asks it.
+    const raced = convexTest(schema, allConvexModules());
+    const built = await plannedBeforeConfirmation(raced, {});
+    await asManager(raced).mutation(api.docRelations.decide, {
+      relationId: built.relationId,
+      decision: 'disagree',
+    });
+    await raced.run(async (ctx) => {
+      const row = await ctx.db.get(built.workItemId);
+      await ctx.db.patch(built.workItemId, {
+        decision: { ...row!.decision!, ts: landed, requestText: 'Plan.' },
+      });
+    });
+    const [owed] = await notices(raced);
+    await expect(
+      raced.mutation(internal.work.prepareManagerReplyNotice, { noticeId: owed._id }),
+    ).resolves.toMatchObject({ prepared: true, threadTs: landed });
+
+    // A request that failed is resent with the question in it: nothing is queued.
+    const failed = convexTest(schema, allConvexModules());
+    const undelivered = await plannedBeforeConfirmation(failed, {
+      requestFailedAt: 5,
+      requestFailure: 'channel_not_found',
+    });
+    await asManager(failed).mutation(api.docRelations.decide, {
+      relationId: undelivered.relationId,
+      decision: 'disagree',
+    });
+    expect(await questionsOf(failed, undelivered.workItemId)).toHaveLength(1);
+    expect(await notices(failed)).toEqual([]);
+
+    // A plan with no request yet asks in the request's own body.
+    const unasked = convexTest(schema, allConvexModules());
+    const drafted = await plannedBeforeConfirmation(unasked, undefined);
+    await asManager(unasked).mutation(api.docRelations.decide, {
+      relationId: drafted.relationId,
+      decision: 'disagree',
+    });
+    expect(await questionsOf(unasked, drafted.workItemId)).toHaveLength(1);
+    expect(await notices(unasked)).toEqual([]);
+
+    // Answered on the card before the notice is sent: nothing is posted.
+    const answered = convexTest(schema, allConvexModules());
+    const settled = await plannedBeforeConfirmation(answered, { ts: REQUEST_TS });
+    await asManager(answered).mutation(api.docRelations.decide, {
+      relationId: settled.relationId,
+      decision: 'disagree',
+    });
+    const [question] = await questionsOf(answered, settled.workItemId);
+    await asManager(answered).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: 'both',
+    });
+    const [stale] = await notices(answered);
+    await expect(
+      answered.mutation(internal.work.prepareManagerReplyNotice, { noticeId: stale._id }),
+    ).resolves.toEqual({ prepared: false, dropped: true });
+    expect(await notices(answered)).toEqual([]);
   });
 
   it('closes the item’s open question at a redraft, and asks the new plan afresh on what it cites (17-C; W16-R27)', async (): Promise<void> => {

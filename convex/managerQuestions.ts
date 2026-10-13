@@ -24,6 +24,8 @@ import {
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
 import type { RequestQuestion } from '../src/work/manager-channel';
+import { slackEscaped } from '../src/surfaces/slack-markup';
+import { providerTsToMs } from '../src/work/provider-ts';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
 import {
@@ -453,6 +455,62 @@ export async function numberedConflictQuestions(
     });
   }
   return numbered;
+}
+
+/** What becomes of a queued question notice when its send looks at it. */
+export type QuestionNoticeOwed =
+  /** Posted now, in the request's thread; numbered where the plan has several standing. */
+  | {
+      readonly state: 'send';
+      readonly questionId: Id<'managerQuestions'>;
+      readonly threadTs: string;
+      readonly number?: number;
+    }
+  /** The request is still on its way out: looked at again shortly. */
+  | { readonly state: 'wait' }
+  /** Nothing to post: the notice is dropped. */
+  | { readonly state: 'drop' };
+
+/**
+ * Whether a queued question notice is still owed (17-C): posted when its question is open, its
+ * conflict stands, and the request it was queued for is the item's own, delivered, and did not
+ * carry the question in its body. A request still in flight is waited for; one that failed is
+ * resent with the question in it. Whether the body carried the question is read off the times: a
+ * question asked after the provider took the request was not in it, and one asked while the
+ * request was on its way out, when the body was built before or after it, is looked for in the
+ * request's own text. Read by `work.prepareManagerReplyNotice`.
+ */
+export async function questionNoticeOwed(
+  ctx: QueryCtx,
+  notice: Pick<Doc<'managerDecisionNotices'>, 'questionId' | 'workItemId' | 'decisionId'>,
+): Promise<QuestionNoticeOwed> {
+  const [question, row] = await Promise.all([
+    notice.questionId === undefined ? null : ctx.db.get(notice.questionId),
+    ctx.db.get(notice.workItemId),
+  ]);
+  const decision = row?.decision;
+  if (question === null || decision === undefined) return { state: 'drop' };
+  if (decision.id !== notice.decisionId || decision.kind !== 'plan') return { state: 'drop' };
+  const numbered = await numberedConflictQuestions(ctx, notice.workItemId);
+  const asked = numbered.find((entry) => entry.question._id === question._id);
+  if (asked === undefined || !asked.standing) return { state: 'drop' };
+  if (decision.ts === undefined) {
+    return decision.requestFailedAt === undefined ? { state: 'wait' } : { state: 'drop' };
+  }
+  const deliveredAt = providerTsToMs(decision.ts);
+  if (
+    (deliveredAt === null || question._creationTime <= deliveredAt) &&
+    decision.requestText?.includes(slackEscaped(question.question)) === true
+  ) {
+    return { state: 'drop' };
+  }
+  const several = numbered.filter((entry) => entry.standing).length > 1;
+  return {
+    state: 'send',
+    questionId: question._id,
+    threadTs: decision.ts,
+    ...(several ? { number: asked.number } : {}),
+  };
 }
 
 /**

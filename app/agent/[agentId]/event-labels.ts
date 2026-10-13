@@ -3,7 +3,7 @@ import {
   isEventType,
   type EventPayloads,
   type EventType,
-  type WorkDecisionAcknowledgingPayload,
+  type DecisionNoticeKind,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
@@ -87,10 +87,11 @@ function decisionNoun(kind: unknown): string {
 }
 
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
-const ACKNOWLEDGEMENT_LABELS: Readonly<Record<WorkDecisionAcknowledgingPayload['kind'], string>> = {
+const ACKNOWLEDGEMENT_LABELS: Readonly<Record<DecisionNoticeKind, string>> = {
   received: 'a decision reply acknowledged',
   unknown: 'a reply with no open request answered',
   replaced: 'a reply to a replaced request answered with the request that replaced it',
+  question: 'a question about two pages asked in the request’s thread',
 };
 
 /** Why a row was sent back to be evaluated again, in words. */

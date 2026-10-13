@@ -443,6 +443,8 @@ describe('the live feed labels', (): void => {
     expect(answered('replaced')).toBe(
       'a reply to a replaced request answered with the request that replaced it',
     );
+    // A conflict's question posted under a request already delivered rides the same event (17-C).
+    expect(answered('question')).toBe('a question about two pages asked in the request’s thread');
   });
 
   it('says which credential the documentation dropped and how many cards need one again', (): void => {

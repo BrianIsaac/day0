@@ -4,7 +4,7 @@ import {
   type EventPayloads,
   type EventType,
   type GrantSource,
-  type WorkDecisionAcknowledgingPayload,
+  type DecisionNoticeKind,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
@@ -667,8 +667,10 @@ const DOCUMENTATION_SITE: Readonly<Record<string, string>> = {
 
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
 const ACKNOWLEDGEMENT_WORDS: Readonly<
-  Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
+  Record<DecisionNoticeKind, (subject: RecordSubject) => string>
 > = {
+  question: (subject) =>
+    `${subject.name} asked ${addressee(subject)} which of two pages is right, in the thread of the plan’s request${forItem(subject)}`,
   received: (subject) => `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
   unknown: () => 'A reply with no open request was answered',
   replaced: (subject) =>

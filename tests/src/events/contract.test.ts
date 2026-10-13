@@ -228,10 +228,11 @@ describe('the wave 17 types, declared by the schema step for 17-O and 17-C (17-K
     expectTypeOf<DecisionAcknowledgementKind>().toEqualTypeOf<
       'received' | 'unknown' | 'replaced'
     >();
-    // The acknowledgement's event keeps its three kinds until 17-C joins the question's payload.
+    // Re-taken by 17-C, which joined the question's payload to the event as its second member
+    // in the commit that queues, sends and renders the notice: the event names all four kinds.
     expectTypeOf<
       EventPayloads['work.decision-acknowledging']['kind']
-    >().toEqualTypeOf<DecisionAcknowledgementKind>();
+    >().toEqualTypeOf<DecisionNoticeKind>();
     expectTypeOf<DecisionQuestionNoticePayload['kind']>().toEqualTypeOf<'question'>();
     expectTypeOf<DecisionQuestionNoticePayload['questionId']>().toEqualTypeOf<
       Id<'managerQuestions'>
