@@ -26,7 +26,7 @@ const APP_HOST_VAR = 'DAY0_APP_HOST';
 const DEFAULT_APP_HOST = 'localhost';
 
 /** One name's value in the env file's text, unquoted, or undefined when unset or empty. */
-function fromEnvText(envText: string | undefined, name: string): string | undefined {
+export function fromEnvText(envText: string | undefined, name: string): string | undefined {
   for (const line of (envText ?? '').split('\n')) {
     const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
     if (match && match[1] === name) {

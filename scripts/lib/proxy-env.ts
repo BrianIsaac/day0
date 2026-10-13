@@ -1,0 +1,138 @@
+/// <reference types="node" />
+
+/*
+ * The way out through a customer's HTTP proxy (wave 17, 17-P; RM31 (a)). A site that allows no
+ * direct route to the internet names its proxy once, in `.env.local`, by the names every HTTP
+ * client already reads. The compose file hands them to each service that reaches out; this module
+ * is what the processes started on this machine (the app under `pnpm start`, the setup's children,
+ * the checks' probes) are given, since Node reads a proxy from its environment only when
+ * `NODE_USE_ENV_PROXY=1` is set before it starts, and Next reads `.env.local` after.
+ */
+
+/** The names the way out is given by: the three every client reads, and Node's own switch. */
+export const PROXY_VARIABLES = [
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'NO_PROXY',
+  'NODE_USE_ENV_PROXY',
+] as const;
+
+/** The first Node on the 22 line that reads a proxy from the environment. */
+export const ENV_PROXY_NODE = '22.21.0';
+
+/** This machine's own names, which never go through a proxy: the backend's published port is here. */
+export const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '[::1]'] as const;
+
+/** The way out as configured; a name that is unset or empty is absent. */
+export interface ProxySettings {
+  readonly httpsProxy?: string;
+  readonly httpProxy?: string;
+  readonly noProxy?: string;
+  /** `NODE_USE_ENV_PROXY` as given, which only `1` turns on. */
+  readonly useEnvProxy?: string;
+}
+
+/**
+ * The way out as the environment names it.
+ *
+ * @param read - One name's value: the shell's, the env file's, or the two layered.
+ */
+export function proxySettings(read: (name: string) => string | undefined): ProxySettings {
+  const value = (name: string): string | undefined => read(name)?.trim() || undefined;
+  const httpsProxy = value('HTTPS_PROXY');
+  const httpProxy = value('HTTP_PROXY');
+  const noProxy = value('NO_PROXY');
+  const useEnvProxy = value('NODE_USE_ENV_PROXY');
+  return {
+    ...(httpsProxy === undefined ? {} : { httpsProxy }),
+    ...(httpProxy === undefined ? {} : { httpProxy }),
+    ...(noProxy === undefined ? {} : { noProxy }),
+    ...(useEnvProxy === undefined ? {} : { useEnvProxy }),
+  };
+}
+
+/** Whether a proxy is named at all: an exclusion list alone sends nothing anywhere. */
+export function proxyConfigured(settings: ProxySettings): boolean {
+  return settings.httpsProxy !== undefined || settings.httpProxy !== undefined;
+}
+
+/**
+ * An exclusion list holding the names that must always be reached directly, then the ones the
+ * customer's IT gave, each once.
+ *
+ * @param named - `NO_PROXY` as configured.
+ * @param always - The names Day0 itself never proxies.
+ */
+export function mergedNoProxy(named: string | undefined, always: readonly string[]): string {
+  const given = (named ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+  const kept = given.filter(
+    (entry) => !always.some((name) => name.toLowerCase() === entry.toLowerCase()),
+  );
+  return [...always, ...kept].join(',');
+}
+
+/**
+ * What a Node process on this machine is started with so its requests take the proxy: the proxy's
+ * address, this machine's own names kept out of it, and Node's switch. Nothing when no proxy is
+ * named, so an install without one starts exactly as before.
+ *
+ * @param settings - The way out as configured.
+ */
+export function hostProxyEnvironment(settings: ProxySettings): Record<string, string> {
+  if (!proxyConfigured(settings)) return {};
+  return {
+    ...(settings.httpsProxy === undefined ? {} : { HTTPS_PROXY: settings.httpsProxy }),
+    ...(settings.httpProxy === undefined ? {} : { HTTP_PROXY: settings.httpProxy }),
+    NO_PROXY: mergedNoProxy(settings.noProxy, LOOPBACK_NO_PROXY),
+    NODE_USE_ENV_PROXY: '1',
+  };
+}
+
+/**
+ * Whether a Node reads `NODE_USE_ENV_PROXY`: 22.21.0 or later on the 22 line, and 24 or later (the
+ * 23 line ended without it).
+ *
+ * @param version - `process.version`.
+ */
+export function nodeReadsEnvProxy(version: string): boolean {
+  const match = /^v?(\d+)\.(\d+)\.\d+/.exec(version.trim());
+  if (match === null) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major >= 24 || (major === 22 && minor >= 21);
+}
+
+/**
+ * Why a proxy that is named would be ignored by this Node, or undefined when it is read (or none
+ * is named). A process that ignored it would dial out directly, which a site with no direct route
+ * meets as timeouts with no cause.
+ *
+ * @param version - `process.version`.
+ * @param settings - The way out as configured.
+ */
+export function proxyNodeGap(version: string, settings: ProxySettings): string | undefined {
+  if (!proxyConfigured(settings) || nodeReadsEnvProxy(version)) return undefined;
+  const name = settings.httpsProxy !== undefined ? 'HTTPS_PROXY' : 'HTTP_PROXY';
+  return (
+    `${name} names a proxy, and this Node (${version}) does not read one from the ` +
+    `environment: Node ${ENV_PROXY_NODE} or later does. Its requests would go out directly.`
+  );
+}
+
+/**
+ * A proxy's address for a line a person reads: its host and port, never the user and password an
+ * authenticating proxy's address carries.
+ *
+ * @param address - The proxy's URL as configured.
+ */
+export function proxyForDisplay(address: string): string {
+  try {
+    return new URL(address).host;
+  } catch {
+    // Not a URL: said as that, so the value (which may hold a password) is never echoed.
+    return 'an address that is not a URL';
+  }
+}

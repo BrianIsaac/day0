@@ -37,7 +37,7 @@
     "test": "vitest run",
     "test:browser": "playwright test",
     "build": "next build",
-    "start": "next start -p 3000",
+    "start": "tsx scripts/start.ts",
     "lint": "eslint . && prettier --check src convex app scripts tests",
     "typecheck": "tsc --noEmit",
     "gate": "tsx scripts/gate.ts",
