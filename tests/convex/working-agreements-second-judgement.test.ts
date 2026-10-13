@@ -178,7 +178,10 @@ async function plannerReads(
   );
 }
 
-/** The check of an employee's charter against the owner's agreements, as its approval schedules it. */
+/**
+ * The check of an employee's charter against the owner's agreements, as its approval schedules
+ * it.
+ */
 async function checkCharter(harness: Harness, agentId: Id<'agents'>): Promise<void> {
   await harness.action(internal.workingAgreementActions.checkForCharter, { agentId, attempt: 0 });
   await drain(harness);
@@ -343,7 +346,7 @@ describe('a charter’s refusal of an agreement for every employee, judged twice
     expect(await plannerReads(harness, mateo, 'LOG-1')).toEqual([]);
   });
 
-  it('reads the disputed marker once a stale window at the sweep, not at every pass (the second pass)', async (): Promise<void> => {
+  it('stamps a disputed hold the sweep passes over, so it is not stale again until the next window, and judges nothing (the second pass)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { ines, agreementId } = await f1Office(harness);
     recorded.verdicts.push('widens-scope', 'keep');

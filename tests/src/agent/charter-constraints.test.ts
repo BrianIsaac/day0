@@ -1924,7 +1924,8 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
   it('writes nothing for a sentence that forbids twice, an idiom, or a statement with no subject: each would read as the opposite, or as nonsense, under Will not do (the second pass)', (): void => {
     const before = charter([DUTY], []);
     const rules = [
-      // "Edit booked figures and never delete invoices." under Will not do says the second half backwards.
+      // "Edit booked figures and never delete invoices." under Will not do says the second half
+      // backwards.
       rule('Never edit booked figures and never delete invoices.', []),
       rule("Never promise a refund, don't even hint at one.", []),
       rule('Never mind the old process.', []),

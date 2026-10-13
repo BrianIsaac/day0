@@ -1169,8 +1169,9 @@ async function holdInTransaction(
     ...(row.personId !== undefined ? { personId: row.personId } : {}),
     sourceType: row.sourceType,
     status: 'refused',
-    // When a check last tried it: 0 for one no check has tried, which the sweep and the next
-    // stored plan check at once (`scheduleDueHoldChecks`).
+    // When a check last tried it, or the sweep last passed it over as disputed (RM32 (a)): 0 for
+    // one no check has tried, which the sweep and the next stored plan check at once
+    // (`scheduleDueHoldChecks`).
     refusal: { reason, judgedAt: tried ? now : 0 },
     supersedes: row._id,
     createdAt: now,
@@ -1241,11 +1242,11 @@ async function disputedHolds(
  * employee's planner and runs read, until an act of the manager's judges it again (Check now, a
  * newly approved charter, or the employee's resume, which checks every agreement its pause held):
  * `checkForCharter` lifts the hold when its first judgement allows the agreement, and ends the
- * agreement for everyone only when both refuse. The sweep and a stored plan do not judge it. A hold that already stands is kept,
- * stamped as tried now. Nothing for a row no longer active for every employee, or an employee the
- * owner no longer has. Writes `agreement.refused` on the employee, naming the agreement, the hold
- * and the one refusal (`refusedOnce`), which is how the card and the sweep know the hold from one
- * nothing has checked.
+ * agreement for everyone only when both refuse. The sweep and a stored plan do not judge it. A
+ * hold that already stands is kept, stamped as tried now. Nothing for a row no longer active for
+ * every employee, or an employee the owner no longer has. Writes `agreement.refused` on the
+ * employee, naming the agreement, the hold and the one refusal (`refusedOnce`), which is how the
+ * card and the sweep know the hold from one nothing has checked.
  */
 export const holdDisputed = internalMutation({
   args: {
@@ -1706,9 +1707,9 @@ function disputedView(view: AgreementView, refusedOnce: RefusedOnce | undefined)
  * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
  * check reads) and, when two judgements of this employee's charter disagreed on it, the one
  * refusal (`refusal.refusedOnce`, RM32 (a)); a hold whose agreement is in effect for nobody any
- * more is left out; an
- * agreement for every employee whose check against this employee's amended charter is owed says
- * since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`; writes nothing.
+ * more is left out; an agreement for every employee whose check against this employee's amended
+ * charter is owed says since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`;
+ * writes nothing.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
