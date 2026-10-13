@@ -35,22 +35,6 @@
         "ancestors": "",
         "descendants": "/rest/api/content/4587521/descendant",
         "space": "/rest/api/space/OPS"
-      },
-      "body": {
-        "storage": {
-          "value": "<ac:structured-macro ac:name=\"toc\" ac:schema-version=\"1\" /><h2>Steps</h2><table><tbody><tr><th>Step</th><th>Owner</th></tr><tr><td>Lock the ledger</td><td>Finance</td></tr></tbody></table><ac:structured-macro ac:name=\"code\" ac:schema-version=\"1\"><ac:parameter ac:name=\"language\">bash</ac:parameter><ac:plain-text-body><![CDATA[day0 close --quarter Q3]]></ac:plain-text-body></ac:structured-macro>",
-          "representation": "storage",
-          "_expandable": {
-            "content": "/rest/api/content/4587521"
-          }
-        },
-        "_expandable": {
-          "editor": "",
-          "view": "",
-          "export_view": "",
-          "styled_view": "",
-          "anonymous_export_view": ""
-        }
       }
     },
     {
@@ -88,22 +72,6 @@
         "ancestors": "",
         "descendants": "/rest/api/content/4587522/descendant",
         "space": "/rest/api/space/OPS"
-      },
-      "body": {
-        "storage": {
-          "value": "<h2>每周检查</h2><p>每周一上午检查备份。</p>",
-          "representation": "storage",
-          "_expandable": {
-            "content": "/rest/api/content/4587522"
-          }
-        },
-        "_expandable": {
-          "editor": "",
-          "view": "",
-          "export_view": "",
-          "styled_view": "",
-          "anonymous_export_view": ""
-        }
       }
     }
   ],
@@ -111,9 +79,9 @@
   "limit": 2,
   "size": 2,
   "_links": {
-    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=current&expand=body.storage,version",
+    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=current&expand=version",
     "base": "https://wiki.acme.corp/confluence",
     "context": "/confluence",
-    "next": "/rest/api/content?spaceKey=OPS&type=page&status=current&expand=body.storage,version&limit=2&start=2"
+    "next": "/rest/api/content?spaceKey=OPS&type=page&status=current&expand=version&limit=2&start=2"
   }
 }

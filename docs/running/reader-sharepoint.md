@@ -24,6 +24,52 @@ SharePoint.
 - The site is read again on the same schedule as every other source. When Graph says it is busy
   (HTTP 429), day0 waits the time Graph names before it asks again.
 
+## What a read asks of Microsoft
+
+day0 lists the library and the site's pages at every read, twenty-five entries a request, and
+asks for a file or a page only when its listing says it changed since day0 last read it: its
+revision moved, or its name or address did. A read that finds nothing changed therefore asks for
+no file and no page. Each listing asks Graph only for the fields day0 reads (`$select`), so its
+answers are small. One exception: a page whose title holds a value day0 takes out of what it
+stores (a password written into a title) is asked for at every read, because the title it was
+stored under is no longer the one its listing gives.
+
+Counted on the test double of Graph that day0's own tests use, not on a tenant. The bed is a
+running day0 in real mode reading a library of 240 Markdown files and 10 site pages; the second
+column is the same double at 960 files and 40 pages, a thousand pages, read by the reader's
+tests:
+
+| Read                          | Requests, 250 pages (the bed) | Requests, 1,000 pages (the tests) |
+| ----------------------------- | ----------------------------- | --------------------------------- |
+| The first read                | 513                           | 2,043                             |
+| A read with nothing changed   | 23                            | 83                                |
+| A read after one file changed | 25                            | 85                                |
+
+The 83 are 41 sign-ins (day0 signs in again for every twenty-five entries), one lookup of the
+site, 39 requests that list the library and 2 that list the pages. A file that changed adds two
+(Graph's redirect, then the download), a page that changed one. The first read asks for every
+file and every page once.
+
+Microsoft's page on throttling in SharePoint (updated 10 August 2026) charges a request that
+lists several items two resource units, or one where it is a library listing that carries a
+token, and allows an app 1,250 units a minute in a tenant of up to 1,000 licences, so the 41
+listings of the thousand-page read are at most 82 units. What a tenant in fact allows is known
+only on a tenant.
+
+**The revision day0 goes by.** For a file it is the tag Graph gives its content (`cTag`), which
+moves only when the content does. Graph's reference says a library's listing may leave that tag
+out for a file that was created or changed; day0 then goes by the file's own tag (`eTag`), which
+also moves when the file is renamed or its properties change, so such a file is read again more
+often than its text changes and never less often. The two tags are never compared with each
+other: a file last read under one and now listed under the other is read. For a site page it is
+the `eTag` its listing gives. Which tags a SharePoint library's listing sends is known only from
+the reference, and is to be confirmed on the first tenant.
+
+After an upgrade to 0.21.0 the first read asks for each of the site's pages once more, because a
+page's revision is kept differently from before. A library file read before the upgrade is not
+asked for again where its listing sent a `cTag` then; one whose listing sent none was stored
+without a revision and is asked for once more.
+
 ## 1. Register the app and grant it the site (IT)
 
 1. In the **Microsoft Entra admin centre**, register an application for day0 (single tenant).
@@ -127,5 +173,9 @@ Until one is, these are known only from the reference: whether a `Sites.Selected
 the library walk and the pages; the hosts of the 21Vianet cloud; the host a file's download
 address is on; what a page's publishing state says (the reference documents `published` and
 `checkout`, and its example answers `draft`; day0 reads anything but `published` as a draft);
-and whether a library's first walk lists the files in its recycle bin. If a first install finds
-any of them different, tell the day0 maintainers so this page can say what is true.
+whether a library's first walk lists the files in its recycle bin; whether a library's listing
+sends a file's `cTag` or only its `eTag`; and whether the listing of the site's pages answers
+each page's `eTag` and publishing state when asked for only those fields (where it leaves the
+publishing state out, day0 reads the page rather than keep it). The request counts above are
+from day0's own test double. If a first install finds any of them different, tell the day0
+maintainers so this page can say what is true.

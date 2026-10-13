@@ -47,11 +47,31 @@ export interface StoredMark {
  */
 export type StoredRevisions = (refs: readonly string[]) => Promise<ReadonlyMap<string, StoredMark>>;
 
+/**
+ * What the sync stored the named pages with, for a reader that asks once a listing page.
+ *
+ * @param stored - The sync's contract; none for a read with nothing to keep by.
+ * @param refs - The listed pages a reader could keep.
+ * @returns The marks the sync answers; none where there is no contract or no page to ask of.
+ */
+export async function storedMarks(
+  stored: StoredRevisions | undefined,
+  refs: readonly string[],
+): Promise<ReadonlyMap<string, StoredMark>> {
+  return stored === undefined || refs.length === 0 ? new Map() : await stored(refs);
+}
+
 /** A listed page kept as stored by its revision, its body unread (X-13). */
 export interface KeptPage {
   readonly ref: string;
   /** What the listing says of the page's status now; absent, it says nothing. */
   readonly nativeStatus?: PageStatus;
+  /**
+   * Whether the listing dates the page itself, so the `updatedAt` it was stored with at this
+   * revision is its source's own edit time (`DocPage.datedBySource`); absent where the listing
+   * cannot say. For the sync's one patch of a page stored before the field existed (wave 17, D-8).
+   */
+  readonly datedBySource?: boolean;
 }
 
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */

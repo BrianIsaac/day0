@@ -2060,6 +2060,10 @@ describe('documentation sync batching', (): void => {
           fetch: async (url: URL): Promise<Response> => {
             if (url.pathname.endsWith('/spaces'))
               return loopAnswer(200, { results: [{ id: '10' }] });
+            // Wave 17 (17-X): the reader asks a listing page's changed pages by id. Only a
+            // listing moves the probe's cursor; the pages asked for are answered as it listed them.
+            const ids = url.searchParams.get('id');
+            if (ids !== null) return loopAnswer(200, { results: ids.split(',').map(loopPage) });
             call += 1;
             return loopAnswer(
               200,
@@ -2082,13 +2086,16 @@ describe('documentation sync batching', (): void => {
     'a Confluence Data Center that ignores start and always names a next page': () => ({
       reader: new ConfluenceDataCenterReader({
         ...loopClock,
-        fetch: async (url: URL): Promise<Response> =>
-          url.pathname.includes('/rest/api/space/')
-            ? loopAnswer(200, { key: 'OPS' })
-            : loopAnswer(200, {
-                results: [loopPage('1'), loopPage('2')],
-                _links: { next: '/rest/api/content?start=2', base: 'https://wiki.acme.corp' },
-              }),
+        fetch: async (url: URL): Promise<Response> => {
+          if (url.pathname.includes('/rest/api/space/')) return loopAnswer(200, { key: 'OPS' });
+          // Wave 17 (17-X): the reader reads a listed page by its id, answered as it was listed.
+          const one = /\/rest\/api\/content\/(\d+)$/.exec(url.pathname);
+          if (one !== null) return loopAnswer(200, loopPage(one[1]));
+          return loopAnswer(200, {
+            results: [loopPage('1'), loopPage('2')],
+            _links: { next: '/rest/api/content?start=2', base: 'https://wiki.acme.corp' },
+          });
+        },
       }),
       record: {
         kind: 'confluence-dc',

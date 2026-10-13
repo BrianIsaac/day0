@@ -2,7 +2,7 @@
   "reference": [
     {
       "url": "https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json",
-      "read": "2026-10-10 (info.version 2.0.0: GET /spaces, GET /spaces/{id}/pages, PageBulk, Version, BodyBulk, MultiEntityLinks, the Link header)"
+      "read": "2026-10-10 (info.version 2.0.0: GET /spaces, GET /spaces/{id}/pages, PageBulk, Version, BodyBulk, MultiEntityLinks, the Link header); GET /pages as the wave 17 plan read it at this address on 2026-10-13 (its section 4.7; this unit called no vendor host): id (\"Filter the results based on page ids\", at most 250), body-format optional, limit default 25 and maximum 250"
     },
     {
       "url": "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/",
@@ -71,10 +71,6 @@
           "archived"
         ],
         [
-          "body-format",
-          "storage"
-        ],
-        [
           "sort",
           "id"
         ],
@@ -86,7 +82,7 @@
       "status": 200,
       "body": "pages-1.json",
       "headers": {
-        "link": "</wiki/api/v2/spaces/1048578/pages?cursor=fixture-cursor-2&status=current&status=archived&body-format=storage&sort=id&limit=3>; rel=\"next\", <https://acme.atlassian.net/wiki>; rel=\"base\""
+        "link": "</wiki/api/v2/spaces/1048578/pages?cursor=fixture-cursor-2&status=current&status=archived&sort=id&limit=3>; rel=\"next\", <https://acme.atlassian.net/wiki>; rel=\"base\""
       }
     },
     {
@@ -101,10 +97,6 @@
         [
           "status",
           "archived"
-        ],
-        [
-          "body-format",
-          "storage"
         ],
         [
           "sort",
@@ -124,6 +116,44 @@
       "headers": {
         "link": "<https://acme.atlassian.net/wiki>; rel=\"base\""
       }
+    },
+    {
+      "method": "GET",
+      "host": "api.atlassian.com",
+      "path": "/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/api/v2/pages",
+      "query": [
+        [
+          "id",
+          "*"
+        ],
+        [
+          "status",
+          "current"
+        ],
+        [
+          "status",
+          "archived"
+        ],
+        [
+          "body-format",
+          "storage"
+        ],
+        [
+          "limit",
+          "*"
+        ]
+      ],
+      "status": 200,
+      "body": "pages-by-id.json",
+      "pick": {
+        "query": "id",
+        "list": "results",
+        "by": "id"
+      },
+      "headers": {
+        "link": "<https://acme.atlassian.net/wiki>; rel=\"base\""
+      }
     }
-  ]
+  ],
+  "unverified": "That GET /pages takes its ids as one comma-separated id parameter (the OpenAPI document types it an array; the form is the style's default) and answers archived pages under status=archived is as the reference prints it, not as a site sent it."
 }

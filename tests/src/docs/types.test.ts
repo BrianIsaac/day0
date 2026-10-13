@@ -37,4 +37,19 @@ describe('documentation types', (): void => {
     expect(reported).toMatchObject({ nativeStatus: 'archived', sourceRevision: '7' });
     expect(base).not.toHaveProperty('nativeStatus');
   });
+
+  it("lets a reader say whether a page's date is its source's own, beside the date (wave 17, D-8)", (): void => {
+    const base: DocPage = {
+      sourceId: 'jd7source1234567890' as Id<'docSources'>,
+      ref: 'runbook.md',
+      title: 'Runbook',
+      markdown: '# Runbook',
+      updatedAt: 1,
+    };
+    const dated: DocPage = { ...base, datedBySource: true };
+    const datedByTheRead: DocPage = { ...base, datedBySource: false };
+    expect([dated.datedBySource, datedByTheRead.datedBySource]).toEqual([true, false]);
+    // A page object no reader made (the sync's own, for a mirror) carries none.
+    expect(base).not.toHaveProperty('datedBySource');
+  });
 });

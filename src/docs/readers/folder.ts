@@ -98,6 +98,8 @@ async function markdownFiles(directory: string): Promise<string[]> {
  *   directory: Absolute directory to read.
  *   cursor: Optional decimal file offset.
  *   limit: Maximum pages to read.
+ *   dating: Whether a file's modified time is its source's own edit time (`datedBySource`): true
+ *     for a mounted folder (X-3), false for a checkout, whose files are dated when it wrote them.
  *
  * Returns:
  *   Normalised pages, the files that could not be read, and the next safe offset.
@@ -107,6 +109,7 @@ export async function readMarkdownDirectoryBatch(
   directory: string,
   cursor: string | undefined,
   limit: number,
+  dating: { readonly datedBySource: boolean },
 ): Promise<ReadPageBatch> {
   const files = await markdownFiles(directory);
   const refs = files.map((path: string): string => relative(directory, path).split(sep).join('/'));
@@ -126,6 +129,7 @@ export async function readMarkdownDirectoryBatch(
           title: markdownPageTitle(markdown, fallback),
           markdown,
           updatedAt: details.mtimeMs,
+          datedBySource: dating.datedBySource,
           ...(nativeStatus !== undefined ? { nativeStatus } : {}),
         } satisfies DocPage;
       } catch (error) {
@@ -156,8 +160,11 @@ export async function readMarkdownDirectory(
   source: DocSourceRecord,
   directory: string,
 ): Promise<DocPage[]> {
-  return (await readMarkdownDirectoryBatch(source, directory, undefined, Number.MAX_SAFE_INTEGER))
-    .pages;
+  return (
+    await readMarkdownDirectoryBatch(source, directory, undefined, Number.MAX_SAFE_INTEGER, {
+      datedBySource: true,
+    })
+  ).pages;
 }
 
 /** Reader for Markdown mounted below `DAY0_DOCS_ROOT`. */
@@ -198,6 +205,7 @@ export class FolderReader implements DocumentationReader {
       resolveFolderLocator(this.root, source.locator),
       cursor,
       limit,
+      { datedBySource: true },
     );
   }
 }

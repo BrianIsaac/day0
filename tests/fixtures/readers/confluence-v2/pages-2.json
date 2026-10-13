@@ -20,12 +20,6 @@
         "minorEdit": false,
         "authorId": "712020:0f3b6a1c-fixture"
       },
-      "body": {
-        "storage": {
-          "representation": "storage",
-          "value": "<p>每周一上午刷新管道看板。</p>"
-        }
-      },
       "_links": {
         "webui": "/spaces/OPS/pages/98314",
         "editui": "/pages/resumedraft.action?draftId=98314",
@@ -52,7 +46,6 @@
         "minorEdit": false,
         "authorId": "712020:0f3b6a1c-fixture"
       },
-      "body": {},
       "_links": {
         "webui": "/spaces/OPS/pages/98315",
         "editui": "/pages/resumedraft.action?draftId=98315",
@@ -78,12 +71,6 @@
         "number": 12,
         "minorEdit": false,
         "authorId": "712020:0f3b6a1c-fixture"
-      },
-      "body": {
-        "storage": {
-          "representation": "storage",
-          "value": "<ac:structured-macro ac:name=\"children\" ac:schema-version=\"2\" />"
-        }
       },
       "_links": {
         "webui": "/spaces/OPS/pages/98316",

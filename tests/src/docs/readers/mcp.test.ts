@@ -572,6 +572,45 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     expect(ordinary).not.toHaveProperty('sourceRevision');
   });
 
+  it('says every page an MCP server gives is dated by the read, whatever time the server names (wave 17, D-8)', async (): Promise<void> => {
+    const edited = '2026-10-07T03:15:00.000Z';
+    const pagesOf = async (reader: McpReader, source: DocSourceRecord) =>
+      (await reader.listPageBatch(source, secret, undefined, 25)).pages;
+    const fromNotion = await pagesOf(
+      readerWith({
+        'API-post-search': () =>
+          textResult({ results: [{ id: 'page-1', last_edited_time: edited }], has_more: false }),
+        'API-retrieve-page-markdown': () => textResult({ markdown: '# Runbook' }),
+      }),
+      sourceOf('notion'),
+    );
+    const fromDrive = await pagesOf(
+      readerWith({
+        search_files: () =>
+          textResult({ files: [{ id: 'file-1', title: 'Runbook', modifiedTime: edited }] }),
+        read_file_content: () => textResult({ fileContent: '# Runbook' }),
+      }),
+      sourceOf('drive'),
+    );
+    const fromConfluence = await pagesOf(confluence({}), sourceOf('confluence'));
+    const fromResources = await pagesOf(
+      new McpReader(() => ({
+        listTools: async () => ({}),
+        resources: {
+          list: async () => ({ docs: [{ uri: 'docs://runbook', name: 'Runbook' }] }),
+          read: async () => ({ contents: [{ uri: 'docs://runbook', text: '# Runbook' }] }),
+        },
+        disconnect: async (): Promise<void> => undefined,
+      })),
+      { ...sourceOf('notion'), serverKind: 'generic' },
+    );
+    for (const pages of [fromNotion, fromDrive, fromConfluence, fromResources]) {
+      expect(pages.map((page) => page.datedBySource)).toEqual([false]);
+    }
+    // The time the server names still dates the page; the field says it is not held to be an edit time.
+    expect(fromNotion[0].updatedAt).toBe(Date.parse(edited));
+  });
+
   it('reads a Confluence page’s own status and version: archived, a draft, and nothing for a current page', async (): Promise<void> => {
     const pagesOf = async (content: Record<string, unknown>, page: Record<string, unknown> = {}) =>
       (

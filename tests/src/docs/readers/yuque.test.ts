@@ -3,7 +3,12 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { YuqueReader } from '../../../../src/docs/readers/yuque';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureJsonWithout,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -160,6 +165,8 @@ describe('the Yuque documentation reader', (): void => {
       markdown:
         '# Close the quarter\n\n## Steps\n\n1. Lock the ledger.\n2. Refresh the pipeline tile.',
       updatedAt: Date.UTC(2026, 9, 1, 9, 30, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '2026-10-01T09:30:00.000Z',
     });
     expect(pages[1].markdown).toBe(
@@ -192,6 +199,8 @@ describe('the Yuque documentation reader', (): void => {
       title: 'Old close process',
       markdown: '# Old close process\n\nThis document was deleted in Yuque.',
       updatedAt: Date.UTC(2026, 8, 30, 10, 0, 0),
+      // Re-pinned for wave 17 (D-8): Yuque says when it was deleted, which dates the page.
+      datedBySource: true,
       nativeStatus: 'archived',
     });
     for (const ref of ['210000001', '210000002', '210000005']) {
@@ -475,6 +484,36 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
     expect(requests.some((request) => request.url.pathname.endsWith('/docs/210000001'))).toBe(true);
   });
 
+  it('keeps a document whose title the store writes otherwise: its spaces closed up, a closing # dropped (wave 17, 17-X)', async (): Promise<void> => {
+    const { reader, requests } = readerOnSpace((request) => {
+      if (!request.url.pathname.endsWith('/docs')) return undefined;
+      if (request.url.searchParams.get('deleted') === 'true') return json(200, { data: [] });
+      return json(200, {
+        data: [
+          {
+            id: 230000001,
+            title: 'Q3  close plan #',
+            type: 'Doc',
+            status: 1,
+            content_updated_at: '2026-10-01T00:00:00.000Z',
+          },
+        ],
+        meta: { total: 1 },
+      });
+    });
+    // As the sync stores a page read under that title: by its first heading.
+    const stored = async (refs: readonly string[]) =>
+      new Map(
+        refs.map((ref) => [ref, { revision: '2026-10-01T00:00:00.000Z', title: 'Q3 close plan' }]),
+      );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(batch.pages).toEqual([]);
+    expect(batch.kept?.map((page) => page.ref)).toEqual(['230000001']);
+    expect(requests.some((request) => request.url.pathname.endsWith('/docs/230000001'))).toBe(
+      false,
+    );
+  });
+
   it('lists 1,200 unchanged documents inside Yuque’s hourly limit at the fifteen-minute schedule', async (): Promise<void> => {
     // 15-X's X-13: 1,200 documents cost 1,249 requests a sync, 4,996 an hour against 5,000, and
     // one sync took 14.99 minutes at the 720 ms spacing.
@@ -517,5 +556,58 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
     // The requests' own spacing is the sync's time with Yuque: well inside its fifteen minutes.
     const waited = sleeps.reduce((total, ms) => total + ms, 0);
     expect(waited).toBeLessThan(60_000);
+  });
+});
+
+describe("a Yuque document's date (wave 17, D-8)", (): void => {
+  it('says a document is dated by its source when Yuque gives its content time, and a deleted one by when it was deleted', async (): Promise<void> => {
+    const { reader } = readerOnSpace();
+    const { pages } = await wholeRepository(reader);
+    expect(pages.map((page) => [page.ref, page.datedBySource])).toEqual([
+      ['210000001', true],
+      ['210000002', true],
+      ['210000004', true],
+      ['210000005', true],
+      ['210000009', true],
+    ]);
+  });
+
+  it('says a document with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const undated = ['content_updated_at', 'updated_at', 'deleted_at'];
+    const { reader } = readerOnSpace((request) => {
+      const path = request.url.pathname;
+      if (path.endsWith('/docs/210000001')) {
+        return json(200, fixtureJsonWithout('yuque', 'doc-close.json', ...undated));
+      }
+      return path.endsWith('/docs') &&
+        request.url.searchParams.get('deleted') === 'false' &&
+        request.url.searchParams.get('offset') === '0'
+        ? json(200, fixtureJsonWithout('yuque', 'docs-0.json', ...undated))
+        : undefined;
+    });
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 1);
+    // The read's own clock: one request's spacing after the listing was asked for.
+    expect(batch.pages.map((page) => [page.ref, page.updatedAt, page.datedBySource])).toEqual([
+      ['210000001', T0 + 720, false],
+    ]);
+  });
+
+  it('says a document kept by its revision is dated by its source, since its revision is its content time', async (): Promise<void> => {
+    const { reader } = readerOnSpace();
+    const stored = async (refs: readonly string[]) =>
+      new Map(
+        refs
+          .filter((ref) => ref === '210000001')
+          .map((ref) => [
+            ref,
+            {
+              revision: '2026-10-01T09:30:00.000Z',
+              title: 'Close the quarter',
+              url: 'https://acme.yuque.com/revops/runbooks/close-the-quarter',
+            },
+          ]),
+      );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(batch.kept).toEqual([{ ref: '210000001', datedBySource: true }]);
   });
 });

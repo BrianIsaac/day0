@@ -17,7 +17,7 @@
       "read": "2026-10-10 (last modified 2025-03-21, context: the token as a bearer)"
     }
   ],
-  "unverified": "Whether Data Center answers status=archived (V15-1b): the reference documents current, trashed and any. content-archived-0.json encodes a server that lists archived pages; the reader's test also answers the request with a refusal.",
+  "unverified": "Whether Data Center answers status=archived (V15-1b): the reference documents current, trashed and any. content-archived-0.json encodes a server that lists archived pages; the reader's test also answers the request with a refusal. That GET /rest/api/content/{id} takes expand=body.storage,version and finds an archived page under status=archived (wave 17) is the reader's reading of the same reference's content resource, written on 13 October 2026 without re-opening the page (no vendor host is called, RM16) and not seen on a server: page-*.json encode a server that answers so.",
   "authorization": "Bearer fixture-confluence-pat",
   "unauthorised": {
     "status": 401,
@@ -54,7 +54,7 @@
         ],
         [
           "expand",
-          "body.storage,version"
+          "version"
         ],
         [
           "start",
@@ -87,7 +87,7 @@
         ],
         [
           "expand",
-          "body.storage,version"
+          "version"
         ],
         [
           "start",
@@ -120,7 +120,7 @@
         ],
         [
           "expand",
-          "body.storage,version"
+          "version"
         ],
         [
           "start",
@@ -133,6 +133,91 @@
       ],
       "status": 200,
       "body": "content-archived-0.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content/4587521",
+      "query": [
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "status",
+          "current"
+        ]
+      ],
+      "status": 200,
+      "body": "page-4587521.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content/4587522",
+      "query": [
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "status",
+          "current"
+        ]
+      ],
+      "status": 200,
+      "body": "page-4587522.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content/4587523",
+      "query": [
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "status",
+          "current"
+        ]
+      ],
+      "status": 200,
+      "body": "page-4587523.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content/4587524",
+      "query": [
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "status",
+          "current"
+        ]
+      ],
+      "status": 200,
+      "body": "page-4587524.json"
+    },
+    {
+      "method": "GET",
+      "host": "wiki.acme.corp",
+      "path": "/confluence/rest/api/content/4587530",
+      "query": [
+        [
+          "expand",
+          "body.storage,version"
+        ],
+        [
+          "status",
+          "archived"
+        ]
+      ],
+      "status": 200,
+      "body": "page-4587530.json"
     }
   ]
 }

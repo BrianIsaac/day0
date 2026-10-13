@@ -421,3 +421,40 @@ describe('a private repository read with its own secret (E-74)', (): void => {
     );
   });
 });
+
+describe("a git page's date (wave 17, D-8)", (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('says a page from a checkout is dated by the read: its file time is when the checkout wrote it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    const reader = new GitReader(
+      async (): Promise<string[]> => ['93.184.216.34'],
+      async (args: readonly string[]): Promise<GitRun> => {
+        if (args[0] === '--version') {
+          return { status: 0, stdout: 'git version 2.43.0\n', stderr: '' };
+        }
+        const checkout = args[args.length - 1];
+        await mkdir(checkout, { recursive: true });
+        await writeFile(join(checkout, 'runbook.md'), '# Refresh the tile\n\nOpen the tile.\n');
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    );
+    const batch = await reader.listPageBatch(
+      {
+        _id: 'source' as Id<'docSources'>,
+        kind: 'git',
+        label: 'Runbooks',
+        locator: 'https://gitee.com/acme/runbooks.git#main',
+      },
+      undefined,
+      undefined,
+      25,
+    );
+    expect(batch.pages.map((page) => [page.ref, page.datedBySource])).toEqual([
+      ['runbook.md', false],
+    ]);
+  });
+});
