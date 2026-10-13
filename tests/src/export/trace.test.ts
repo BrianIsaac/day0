@@ -12,6 +12,9 @@ import {
   readAgentTrace,
   sectionAfter,
   TRACE_SECTIONS,
+  type OwnerPage,
+  type OwnerSection,
+  type TraceAgent,
   type TraceHead,
   type TracePage,
 } from '../../../src/export/trace';
@@ -251,9 +254,10 @@ describe('assembling the owner export (wave 16, 16-F)', (): void => {
         manifest: { format: 'day0-owner-export', version: 8 } as never,
         employees: [{ id: 'a', name: 'Priya' }],
         setAside: [],
-        omittedAgents: 0,
+        moreAgents: null,
         next: { section: OWNER_SECTIONS[0], cursor: null },
       }),
+      agents: async () => await Promise.reject(new Error('the head named every agent')),
       page: async (cursor) => {
         asked.push(cursor.section);
         const following = ownerSectionAfter(cursor.section);
@@ -289,5 +293,56 @@ describe('assembling the owner export (wave 16, 16-F)', (): void => {
       readOwnerExport({ ...file, owner: { ...file.owner, people: undefined } }),
     ).toBeUndefined();
     expect(readAgentTrace(file)).toBeUndefined();
+  });
+
+  it('follows the pages of the owner’s agents, so every employee’s trace is in the file and none is left out (W16-R32)', async (): Promise<void> => {
+    const cursors: string[] = [];
+    const ownerPage = async (cursor: { section: OwnerSection }): Promise<OwnerPage> => {
+      const following = ownerSectionAfter(cursor.section);
+      return {
+        section: cursor.section,
+        rows: [],
+        next: following === undefined ? null : { section: following, cursor: null },
+      } as OwnerPage;
+    };
+    const aside = { id: 'eval', name: 'Day0 evaluation 1', evaluation: true } as TraceAgent;
+    const file = await assembleOwnerExport({
+      head: async () => ({
+        manifest: { format: 'day0-owner-export', version: 8 } as never,
+        employees: [{ id: 'a', name: 'Priya' }],
+        setAside: [],
+        moreAgents: 'after-a',
+        next: { section: OWNER_SECTIONS[0], cursor: null },
+      }),
+      agents: async (cursor) => {
+        cursors.push(cursor);
+        if (cursor === 'after-a') {
+          return {
+            employees: [{ id: 'b', name: 'Mateo' }],
+            setAside: [aside],
+            moreAgents: 'after-b',
+          };
+        }
+        // A page that names an employee again, as a deploy between two pages can: read once.
+        return {
+          employees: [
+            { id: 'b', name: 'Mateo' },
+            { id: 'c', name: 'Aiko' },
+          ],
+          setAside: [],
+          moreAgents: null,
+        };
+      },
+      page: ownerPage,
+      employee: {
+        head: async ({ agentId }) => ({ ...HEAD, agent: { ...HEAD.agent, id: agentId } }),
+        page: emptyPage,
+      },
+    });
+    expect(cursors).toEqual(['after-a', 'after-b']);
+    expect(file.employees.map((trace) => trace.agent.id)).toEqual(['a', 'b', 'c']);
+    expect(file.setAside).toEqual([aside]);
+    expect(file.manifest.counts.employees).toBe(3);
+    expect(file.omittedAgents).toBe(0);
   });
 });

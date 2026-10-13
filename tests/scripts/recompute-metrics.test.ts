@@ -536,6 +536,7 @@ async function exportedOwnerFile(
   const caller = harness.withIdentity(managerIdentity(owner));
   return await assembleOwnerExport({
     head: async () => await caller.action(api.exportActions.exportForOwner, {}),
+    agents: async (cursor) => await caller.action(api.exportActions.exportOwnerAgents, { cursor }),
     page: async (cursor) => await caller.action(api.exportActions.exportOwnerPage, cursor),
     employee: {
       head: async ({ agentId }) =>

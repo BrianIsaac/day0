@@ -320,10 +320,7 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
  */
 export async function assembleTrace(
   agentId: string,
-  call: {
-    head(request: TraceRequest): Promise<TraceHead>;
-    page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
-  },
+  call: TraceCalls,
   skip: ReadonlySet<TraceSection> = new Set(),
 ): Promise<AgentTrace> {
   const head = await call.head({ agentId });
@@ -562,17 +559,24 @@ export interface OwnerManifest {
 }
 
 /**
- * The first call's answer: the manifest, the employees whose traces follow (every one the owner
- * holds, by id), the agents set aside (evaluation agents and baseline arms, named only, as a
- * trace names an agent, so the figures set them aside as `metrics:forOwner` does), and where the
- * owner's rows start.
+ * One page of the owner's agents, in deploy order: the employees whose traces follow, by id, and
+ * the agents set aside (evaluation agents and baseline arms, named only, as a trace names an
+ * agent, so the figures set them aside as `metrics:forOwner` does).
  */
-export interface OwnerExportHead {
-  readonly manifest: OwnerManifest;
+export interface OwnerAgentsPage {
   readonly employees: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly setAside: readonly TraceAgent[];
-  /** How many more of the owner's agents there were than one export reads. */
-  readonly omittedAgents: number;
+  /** Where the next page of the owner's agents starts, or null after the last. */
+  readonly moreAgents: string | null;
+}
+
+/**
+ * The first call's answer: the manifest, the first page of the owner's agents (every one the
+ * owner holds is named, the rest through {@link OwnerAgentsPage}'s cursor, so none is left out:
+ * wave 17, W16-R32), and where the owner's rows start.
+ */
+export interface OwnerExportHead extends OwnerAgentsPage {
+  readonly manifest: OwnerManifest;
   readonly next: OwnerCursor;
 }
 
@@ -594,6 +598,11 @@ export interface OwnerExport {
   readonly owner: OwnerRows;
   readonly employees: readonly AgentTrace[];
   readonly setAside: readonly TraceAgent[];
+  /**
+   * How many of the owner's agents the head named and the file carries neither as a trace nor as
+   * set aside: none, since the head names every agent by pages and each employee's trace follows
+   * (wave 17; before it the head read at most five hundred and counted one past them).
+   */
   readonly omittedAgents: number;
 }
 
@@ -605,25 +614,57 @@ export function ownerSectionAfter(section: OwnerSection): OwnerSection | undefin
   return OWNER_SECTIONS[OWNER_SECTIONS.indexOf(section) + 1];
 }
 
+/** The calls of one employee's paged export, as {@link assembleTrace} takes them. */
+export interface TraceCalls {
+  head(request: TraceRequest): Promise<TraceHead>;
+  page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
+}
+
+/** The calls of the owner's paged export: its head, its later pages of agents, its rows. */
+export interface OwnerExportCalls {
+  head(): Promise<OwnerExportHead>;
+  /** One later page of the owner's agents, from the cursor the head or the page before gave. */
+  agents(cursor: string): Promise<OwnerAgentsPage>;
+  page(cursor: OwnerCursor): Promise<OwnerPage>;
+  readonly employee: TraceCalls;
+}
+
 /**
- * Assemble the owner export by calling the paged export until nothing is left: the head, the
- * owner's rows page by page, then each employee's trace through the employee's own export, its
- * owner-scoped sections left to the owner's rows.
+ * Every agent of the owner, read from the head's page and the pages after it until none is left,
+ * each named once.
+ *
+ * @param head - The head, which holds the first page.
+ * @param agents - One later page, from a cursor.
+ */
+async function everyOwnerAgent(
+  head: OwnerAgentsPage,
+  agents: OwnerExportCalls['agents'],
+): Promise<Pick<OwnerAgentsPage, 'employees' | 'setAside'>> {
+  const employees = new Map(head.employees.map((employee) => [employee.id, employee]));
+  const setAside = new Map(head.setAside.map((agent) => [agent.id, agent]));
+  let more = head.moreAgents;
+  while (more !== null) {
+    const page = await agents(more);
+    for (const employee of page.employees) employees.set(employee.id, employee);
+    for (const agent of page.setAside) setAside.set(agent.id, agent);
+    more = page.moreAgents;
+  }
+  return { employees: [...employees.values()], setAside: [...setAside.values()] };
+}
+
+/**
+ * Assemble the owner export by calling the paged export until nothing is left: the head and the
+ * rest of the owner's agents, the owner's rows page by page, then each employee's trace through
+ * the employee's own export, its owner-scoped sections left to the owner's rows.
  *
  * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
  *   takes them).
  * @returns The one file's contents, with the counts in its manifest.
  * @throws Error when a page answers for a section other than the one asked for.
  */
-export async function assembleOwnerExport(call: {
-  head(): Promise<OwnerExportHead>;
-  page(cursor: OwnerCursor): Promise<OwnerPage>;
-  employee: {
-    head(request: TraceRequest): Promise<TraceHead>;
-    page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
-  };
-}): Promise<OwnerExport> {
+export async function assembleOwnerExport(call: OwnerExportCalls): Promise<OwnerExport> {
   const head = await call.head();
+  const named = await everyOwnerAgent(head, call.agents);
   const owner = Object.fromEntries(
     OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
   ) as Record<OwnerSection, unknown[]>;
@@ -644,7 +685,7 @@ export async function assembleOwnerExport(call: {
   }
   const employees: AgentTrace[] = [];
   // One employee at a time, so a company's traces are never all in flight at once.
-  for (const { id } of head.employees) {
+  for (const { id } of named.employees) {
     employees.push(await assembleTrace(id, call.employee, OWNER_SCOPED_SECTIONS));
   }
   const counts = Object.fromEntries(
@@ -654,8 +695,8 @@ export async function assembleOwnerExport(call: {
     manifest: { ...head.manifest, counts: { ...counts, employees: employees.length } },
     owner: owner as unknown as OwnerRows,
     employees,
-    setAside: head.setAside,
-    omittedAgents: head.omittedAgents,
+    setAside: named.setAside,
+    omittedAgents: named.employees.length - employees.length,
   };
 }
 

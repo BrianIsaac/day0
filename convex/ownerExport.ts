@@ -4,33 +4,43 @@ import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { ownerScope } from './ownership';
 import { sha256OfText } from '../src/lib/sha256';
-import type {
-  OwnerDeparture,
-  OwnerDocPage,
-  OwnerDocRelation,
-  OwnerDocSource,
-  OwnerPageRef,
-  OwnerSection,
+import { dayKey, deploymentZone } from '../src/lib/zone';
+import {
+  OWNER_EXPORT_FORMAT,
+  OWNER_SECTIONS,
+  TRACE_PAGE_ROWS,
+  TRACE_VERSION,
+  type OwnerAgentsPage,
+  type OwnerDeparture,
+  type OwnerDocPage,
+  type OwnerDocRelation,
+  type OwnerDocSource,
+  type OwnerExportHead,
+  type OwnerPageRef,
+  type OwnerSection,
+  type TraceAgent,
 } from '../src/export/trace';
 
 /*
  * The owner export's helpers (wave 16, 16-F; a module of their own since wave 17, 17-s, the wave
- * 16 review's D-6 (a)): its limits, the readers of one page of each section of the owner's rows,
- * the fields a row leaves out, and the opaque key a page and a relation's ends are named by. It
- * reads rows and writes none, registers no function, and imports no other `convex/` module but
- * `ownership`, so it sits below `convex/events.ts` and below `convex/work.ts`.
+ * 16 review's D-6 (a)): its limits, its head and the pages of the owner's agents, the readers of
+ * one page of each section of the owner's rows, the fields a row leaves out, and the opaque key a
+ * page and a relation's ends are named by. It reads rows and writes none, registers no function,
+ * and imports no other `convex/` module but `ownership`, so it sits below `convex/events.ts` and
+ * below `convex/work.ts`.
  *
- * The two registered queries stay in `convex/events.ts` (`exportOwnerHead`, `exportOwnerPage`),
- * which authorise the caller, read a page through `OWNER_SECTION_PAGES` and redact it there, as
- * the employee's trace is redacted; `exportActions.exportForOwner` and
- * `exportActions.exportOwnerPage` run them.
+ * The three registered queries stay in `convex/events.ts` (`exportOwnerHead`,
+ * `exportOwnerAgents`, `exportOwnerPage`), which authorise the caller, read through here and
+ * redact a page there, as the employee's trace is redacted; `exportActions.exportForOwner`,
+ * `exportActions.exportOwnerAgents` and `exportActions.exportOwnerPage` run them.
  */
 
 /**
- * The most of an owner's agents one owner export reads: far above the twenty the figures count
- * and the 51 of a large bed (V16-4); past it the head says how many were left out.
+ * The most of an owner's agents one page of the export's head names. The head and the pages after
+ * it name every one, so the export leaves no agent out however many the owner holds (W16-R32,
+ * where one read of five hundred counted at most one past them).
  */
-export const OWNER_EXPORT_AGENT_LIMIT = 500;
+export const OWNER_EXPORT_AGENT_PAGE = 100;
 
 /** The most stored pages one page of the owner export reads: each row holds its page's text. */
 const OWNER_EXPORT_PAGE_ROWS = 25;
@@ -41,6 +51,73 @@ const OWNER_EXPORT_PAGE_ROWS = 25;
  * output) pages on before it nears the backend's bound on one read (W16-R32).
  */
 export const OWNER_EXPORT_PAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * One page of the owner's agents in deploy order: the employees by id and name, and the agents
+ * the figures set aside as a trace names an agent.
+ *
+ * @param ctx - Query context.
+ * @param ownerKey - The caller's own owner key.
+ * @param cursor - Where the page starts, or null for the first.
+ * @param setAsideOf - An agent the figures set aside as a trace names it, or undefined for an
+ *   employee; `convex/events.ts` passes the employee trace's own reading, which stays there.
+ */
+export async function ownerAgentsPage(
+  ctx: QueryCtx,
+  ownerKey: string,
+  cursor: string | null,
+  setAsideOf: (agent: Doc<'agents'>) => TraceAgent | undefined,
+): Promise<OwnerAgentsPage> {
+  const page = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+    .paginate({ cursor, numItems: OWNER_EXPORT_AGENT_PAGE });
+  const read = page.page.map((agent) => ({ agent, aside: setAsideOf(agent) }));
+  return {
+    employees: read.flatMap(({ agent, aside }) =>
+      aside === undefined ? [{ id: agent._id, name: agent.name }] : [],
+    ),
+    setAside: read.flatMap(({ aside }) => (aside === undefined ? [] : [aside])),
+    moreAgents: page.isDone ? null : page.continueCursor,
+  };
+}
+
+/**
+ * The head of an owner export (wave 16, 16-F; decision F-1): the manifest, the first page of the
+ * owner's agents and where the owner's rows start.
+ *
+ * @param ctx - Query context.
+ * @param ownerKey - The caller's own owner key, the one account the file names.
+ * @param exportedAt - The moment of the export (a query reads no clock).
+ * @param setAsideOf - As {@link ownerAgentsPage} takes it.
+ */
+export async function ownerExportHead(
+  ctx: QueryCtx,
+  ownerKey: string,
+  exportedAt: number,
+  setAsideOf: (agent: Doc<'agents'>) => TraceAgent | undefined,
+): Promise<OwnerExportHead> {
+  const [stamp, agents] = await Promise.all([
+    ctx.db.query('deploymentVersions').order('desc').first(),
+    ownerAgentsPage(ctx, ownerKey, null, setAsideOf),
+  ]);
+  const zone = deploymentZone();
+  return {
+    manifest: {
+      format: OWNER_EXPORT_FORMAT,
+      version: TRACE_VERSION,
+      exportedAt,
+      exportedOn: dayKey(exportedAt, zone),
+      zone,
+      release: stamp?.release ?? null,
+      commit: stamp?.commit ?? null,
+      pageRows: TRACE_PAGE_ROWS,
+      ownerKey,
+    },
+    ...agents,
+    next: { section: OWNER_SECTIONS[0], cursor: null },
+  };
+}
 
 /** A retirement row without its owner key, the one field the export never carries. */
 export function withoutOwner(row: Doc<'retirements'>): Omit<Doc<'retirements'>, 'userId'> {

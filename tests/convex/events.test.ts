@@ -1339,11 +1339,14 @@ describe('the people graph in the audit export (wave 13, 13-P)', (): void => {
 describe('the functions convex/events.ts registers', (): void => {
   // The move of the owner export's helpers into `convex/ownerExport.ts` (wave 17, 17-s; decision
   // S-1) moves no registered function: each `api.events.*` and `internal.events.*` path is a
-  // string the app and the export's actions hold. The list as `v0.20.0` registered it.
-  it('are the ones it registered at v0.20.0, each of the same kind and visibility', (): void => {
+  // string the app and the export's actions hold. The list as `v0.20.0` registered it, and the one
+  // function wave 17 adds beside them (17-F): `exportOwnerAgents`, the later pages of the owner's
+  // agents, so the export's head leaves none out (W16-R32).
+  it('are the ones it registered at v0.20.0, each of the same kind and visibility, and the agents’ pages', (): void => {
     expect(registeredIn(eventsModule)).toEqual([
       'autonomyChanges public query',
       'exportHead internal query',
+      'exportOwnerAgents internal query',
       'exportOwnerHead internal query',
       'exportOwnerPage internal query',
       'exportPage internal query',

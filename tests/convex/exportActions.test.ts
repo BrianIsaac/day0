@@ -10,7 +10,7 @@ import schema from '../../convex/schema';
 import { employeeTracesOf, readOwnerExport } from '../../src/export/trace';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
 import { ownerExportOf, seedOwner, type Harness } from './fakes/owner-export';
 
@@ -174,12 +174,60 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     expect(file.employees.map((trace) => trace.agent.id)).not.toContain(a.evaluationId);
   });
 
+  it('names every one of the owner’s agents across the pages of its head, each once, and none of another owner’s (W16-R32)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    const b = await seedOwner(harness, 'owner-b', 'Bravo');
+    // The review's input: more agents than the head once read (five hundred, counting at most
+    // one past them as left out).
+    const more = 505;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < more; index += 1) {
+        await ctx.db.insert('agents', {
+          bossEmail: fixtureAddressOf('owner-a'),
+          name: `Alpha hire ${index}`,
+          userId: 'owner-a',
+          state: 'active',
+          createdAt: 10 + index,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const head = await caller.action(api.exportActions.exportForOwner, {});
+    const employees = [...head.employees];
+    const setAside = [...head.setAside];
+    let cursor = head.moreAgents;
+    let pages = 1;
+    while (cursor !== null) {
+      const page = await caller.action(api.exportActions.exportOwnerAgents, { cursor });
+      employees.push(...page.employees);
+      setAside.push(...page.setAside);
+      cursor = page.moreAgents;
+      pages += 1;
+    }
+
+    expect(pages).toBeGreaterThan(5);
+    expect(employees).toHaveLength(more + 1);
+    expect(new Set(employees.map((employee) => employee.id)).size).toBe(more + 1);
+    // In deploy order, the seeded employee first.
+    expect(employees[0]).toEqual({ id: a.agentId, name: 'Alpha Employee' });
+    expect(employees.at(-1)?.name).toBe(`Alpha hire ${more - 1}`);
+    expect(setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    for (const id of [b.agentId, b.evaluationId]) {
+      expect([...employees, ...setAside].map((agent) => agent.id)).not.toContain(id);
+    }
+  });
+
   it('refuses a caller with no identity', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const refusal = await guardRefusal();
     await expect(harness.action(api.exportActions.exportForOwner, {})).rejects.toMatchObject(
       refusal,
     );
+    await expect(
+      harness.action(api.exportActions.exportOwnerAgents, { cursor: 'any' }),
+    ).rejects.toMatchObject(refusal);
     await expect(
       harness.action(api.exportActions.exportOwnerPage, { section: 'people', cursor: null }),
     ).rejects.toMatchObject(refusal);

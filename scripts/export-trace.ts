@@ -24,6 +24,7 @@ import {
   assembleOwnerExport,
   assembleTrace,
   type AgentTrace,
+  type OwnerAgentsPage,
   type OwnerExport,
   type OwnerExportHead,
   type OwnerPage,
@@ -96,6 +97,8 @@ export async function exportOwner(
 ): Promise<OwnerExport> {
   return await assembleOwnerExport({
     head: async () => (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
+    agents: async (cursor) =>
+      (await run('exportActions:exportOwnerAgents', { cursor }, subject)) as OwnerAgentsPage,
     page: async (cursor) =>
       (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
     employee: {

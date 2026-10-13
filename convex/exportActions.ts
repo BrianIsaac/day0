@@ -10,6 +10,7 @@ import { redactFloorFor } from '../src/redaction/redact';
 import {
   OWNER_SECTIONS,
   TRACE_SECTIONS,
+  type OwnerAgentsPage,
   type OwnerExportHead,
   type OwnerPage,
   type TraceHead,
@@ -35,8 +36,9 @@ import {
  * nothing is left and writes the one file `metrics:recompute` reads.
  *
  * The owner export (wave 16, 16-F) is the same, one level up: `exportForOwner` returns its head,
- * `exportOwnerPage` the owner's own rows a page at a time, and each employee's trace follows
- * through the two above, assembled into one file (`assembleOwnerExport`).
+ * `exportOwnerAgents` the rest of the owner's agents a page at a time, `exportOwnerPage` the
+ * owner's own rows a page at a time, and each employee's trace follows through the two above,
+ * written into one file as it arrives (`streamOwnerExport`).
  */
 
 /**
@@ -151,12 +153,18 @@ async function knownValuesOfCaller(ctx: ActionCtx): Promise<readonly string[]> {
   return await ownerKnownValues(ctx, ownerKey);
 }
 
+/** The ids of the agents a page of the owner's agents names, employees and set aside. */
+function agentIdsOf(page: Pick<OwnerAgentsPage, 'employees' | 'setAside'>): Set<string> {
+  return new Set([...page.employees, ...page.setAside].map((agent) => agent.id));
+}
+
 /**
- * The head of the caller's owner export (wave 16, 16-F; decision F-1): its manifest, every
- * employee the caller holds, whose traces follow through `exportForAgent` and `exportPage`, the
- * agents the figures set aside, and where the owner's rows start. Public, any signed-in caller,
- * for the caller's own rows only (`getCallerOrThrow`; every read is keyed by the caller's owner
- * key); reads, writes nothing.
+ * The head of the caller's owner export (wave 16, 16-F; decision F-1): its manifest, the first
+ * page of the employees the caller holds, whose traces follow through `exportForAgent` and
+ * `exportPage`, and of the agents the figures set aside, with where the next page of them starts
+ * (`exportOwnerAgents`), and where the owner's rows start. Public, any signed-in caller, for the
+ * caller's own rows only (`getCallerOrThrow`; every read is keyed by the caller's owner key);
+ * reads, writes nothing.
  */
 export const exportForOwner = action({
   args: {},
@@ -165,13 +173,28 @@ export const exportForOwner = action({
     const head: OwnerExportHead = await ctx.runQuery(internal.events.exportOwnerHead, {
       exportedAt: Date.now(),
     });
-    const employeeIds = new Set([...head.employees, ...head.setAside].map((agent) => agent.id));
-    // The owner key and the cursor are the file's own bearings, never data to redact.
+    // The owner key and the cursors are the file's own bearings, never data to redact.
     return {
-      ...redactStrings(head, known, employeeIds),
+      ...redactStrings(head, known, agentIdsOf(head)),
       manifest: { ...redactStrings(head.manifest, known), ownerKey: head.manifest.ownerKey },
+      moreAgents: head.moreAgents,
       next: head.next,
     };
+  },
+});
+
+/**
+ * One later page of the caller's agents for the owner export, redacted, from the cursor the head
+ * or the page before handed out (null after the last), so the export names every agent the caller
+ * holds (wave 17, W16-R32). Public, any signed-in caller, for the caller's own rows only; reads,
+ * writes nothing.
+ */
+export const exportOwnerAgents = action({
+  args: { cursor: v.string() },
+  handler: async (ctx, args): Promise<OwnerAgentsPage> => {
+    const known = await knownValuesOfCaller(ctx);
+    const page: OwnerAgentsPage = await ctx.runQuery(internal.events.exportOwnerAgents, args);
+    return { ...redactStrings(page, known, agentIdsOf(page)), moreAgents: page.moreAgents };
   },
 });
 

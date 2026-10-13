@@ -32,6 +32,7 @@ function counted(count: number, noun: string): string {
  */
 export function ExportCard() {
   const head = useAction(api.exportActions.exportForOwner);
+  const agents = useAction(api.exportActions.exportOwnerAgents);
   const page = useAction(api.exportActions.exportOwnerPage);
   const employeeHead = useAction(api.exportActions.exportForAgent);
   const employeePage = useAction(api.exportActions.exportPage);
@@ -42,6 +43,7 @@ export function ExportCard() {
       async () => {
         const file = await assembleOwnerExport({
           head: async () => await head({}),
+          agents: async (cursor) => await agents({ cursor }),
           page: async (cursor) => await page({ section: cursor.section, cursor: cursor.cursor }),
           employee: {
             head: async ({ agentId }) => await employeeHead({ agentId: agentId as Id<'agents'> }),

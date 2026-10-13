@@ -150,7 +150,7 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
           },
           employees: [{ id: 'agent-1', name: 'Priya' }],
           setAside: [],
-          omittedAgents: 0,
+          moreAgents: null,
           next: { section: OWNER_SECTIONS[0], cursor: null },
         };
       }
