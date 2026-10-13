@@ -17,6 +17,7 @@ import {
   withClauseRemoved,
   withoutProvenanceSuffixes,
   willNotDoAsAct,
+  withProhibitionClauses,
   withRoutingRules,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
@@ -1806,6 +1807,197 @@ describe('withRoutingRules (RM27)', (): void => {
     ]);
     expect(drawn.rules.map((rule) => [rule.quote, rule.binds])).toEqual([
       ['Everything via me.', [{ field: 'escalationTriggers', index: 0 }]],
+    ]);
+  });
+});
+
+describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
+  const charter = (willDo: string[], willNotDo: string[], proposedFunction?: string): Charter =>
+    ({
+      ...runThrough(),
+      ...(proposedFunction === undefined ? {} : { proposedFunction }),
+      proposedBoundaries: { willDo, willNotDo, escalationTriggers: [] },
+    }) as Charter;
+  const rule = (quote: string, binds: CharterConstraint['binds']): CharterConstraint => ({
+    kind: 'system-boundary',
+    quote,
+    wording: [],
+    origin: 'synthesis',
+    ...(binds === undefined ? {} : { binds }),
+  });
+  const PASSWORD = 'Never share a password in a ticket comment.';
+  const DUTY = 'Draft replies for routine tickets this week.';
+
+  it('writes the act a prohibition rules out as a Will not do clause and binds the rule to it alone, where the draft bound it to a will-do that says nothing of it', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Own hardware.']),
+      [rule(PASSWORD, [{ field: 'willDo', index: 0 }])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries).toEqual({
+      willDo: [DUTY],
+      willNotDo: ['Own hardware.', 'Share a password in a ticket comment.'],
+      escalationTriggers: [],
+    });
+    expect(drawn.rules).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: PASSWORD,
+        wording: ['Share a password in a ticket comment.'],
+        origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 1 }],
+      },
+    ]);
+  });
+
+  it("writes the clause for a rule the draft bound to nothing, the manager's first person in the third", (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('Slack is where people ask. Do not post in my channel without asking.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      "Post in the manager's channel without asking.",
+    ]);
+    expect(drawn.rules[0]?.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+  });
+
+  it('binds the rule to a Will not do clause the draft already wrote for it, and writes no second one', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Share passwords in any ticket comment.']),
+      [rule(PASSWORD, [{ field: 'willDo', index: 0 }])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share passwords in any ticket comment.',
+    ]);
+    expect(drawn.rules[0]).toMatchObject({
+      wording: ['Share passwords in any ticket comment.'],
+      binds: [{ field: 'willNotDo', index: 0 }],
+    });
+  });
+
+  it('leaves a rule a clause already carries exactly as the reply bound it', (): void => {
+    const bound = rule(PASSWORD, [{ field: 'willNotDo', index: 0 }]);
+    const before = charter([DUTY], ['Share a password in a ticket comment.']);
+    const drawn = withProhibitionClauses(before, [bound], []);
+    expect(drawn.charter).toBe(before);
+    expect(drawn.rules).toEqual([bound]);
+  });
+
+  it("writes nothing beside a will-do, or a function, that grants the forbidden act: the card keeps its check, and the manager asks for changes (W14-R14's drafts)", (): void => {
+    const edit = rule('Never edit a booked figure.', [{ field: 'willDo', index: 0 }]);
+    const granted = charter(['Edit booked figures without asking.'], []);
+    expect(withProhibitionClauses(granted, [edit], [])).toEqual({
+      charter: granted,
+      rules: [edit],
+    });
+    const inFunction = charter([DUTY], [], 'Edit any booked figure in the tracker for the team.');
+    const unbound = rule('Never edit a booked figure.', []);
+    expect(withProhibitionClauses(inFunction, [unbound], [])).toEqual({
+      charter: inFunction,
+      rules: [unbound],
+    });
+  });
+
+  it('leaves to the card a rule that forbids in softer words, one the manager struck, and one drafted before rules were bound', (): void => {
+    const before = charter([DUTY], []);
+    const soft = rule('Only the security lead approves access policy changes.', []);
+    const struck = rule(PASSWORD, []);
+    const unbound = rule('Never promise a refund.', undefined);
+    expect(withProhibitionClauses(before, [soft, struck, unbound], [PASSWORD])).toEqual({
+      charter: before,
+      rules: [soft, struck, unbound],
+    });
+  });
+
+  it("writes nothing for a sentence the manager says of themself, which rules out no act of the employee's", (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule("I won't be in on Fridays.", []),
+      rule('I never check the queue after six.', []),
+      rule('I do not approve refunds over 50.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes nothing for a sentence that forbids twice, an idiom, or a statement with no subject: each would read as the opposite, or as nonsense, under Will not do (the second pass)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      // "Edit booked figures and never delete invoices." under Will not do says the second half
+      // backwards.
+      rule('Never edit booked figures and never delete invoices.', []),
+      rule("Never promise a refund, don't even hint at one.", []),
+      rule('Never mind the old process.', []),
+      rule("Don't worry about the backlog.", []),
+      rule("Don't hesitate to ask the security lead.", []),
+      rule("Won't be in on Fridays.", []),
+      rule('Does not apply to contractors.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes nothing for a sentence whose second half is another instruction, which would stand under Will not do as an act ruled out (the second pass, continued)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      // "Delete tickets, archive them instead." under Will not do forbids the archiving asked for.
+      rule('Never delete tickets, archive them instead.', []),
+      rule('Never approve a refund, tell me.', []),
+      rule('Never delete tickets, archive them, then tell me.', []),
+      rule('Never delete tickets, archive them, and tell me.', []),
+      rule('Never close a ticket, if in doubt ask me.', []),
+      rule('Do not close the ticket but leave a note on it.', []),
+      rule('Never share passwords?', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes nothing for an idiom the opening is followed by after two spaces, or one that forbids no act (the second pass, continued)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule('Never  mind the old process.', []),
+      rule("Don't stress about the backlog.", []),
+      rule("Don't be shy about asking.", []),
+      rule("Don't sweat the small tickets.", []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes the one act of a sentence with a qualifier, a list of acts, a redirect it can join, an "ever", and keeps a redirect it cannot join as the manager wrote it', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [
+        rule('Never share customer data, even with another team.', []),
+        rule('Never change prices, run discounts, or send quotes.', []),
+        rule('Do not contact finance directly, go through me.', []),
+        rule('Never ever share a password in a ticket comment.', []),
+        rule('Never post in #general, use #revops.', []),
+      ],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share customer data, even with another team.',
+      'Change prices, run discounts, or send quotes.',
+      'Contact finance directly without going through the manager.',
+      'Share a password in a ticket comment.',
+      'Never post in #general, use #revops.',
+    ]);
+  });
+
+  it("writes one clause for each of two prohibitions, each rule bound to its own, the draft's clauses kept in their places", (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Own hardware.']),
+      [rule(PASSWORD, []), rule('Do not close a ticket the requester has not confirmed.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Own hardware.',
+      'Share a password in a ticket comment.',
+      'Close a ticket the requester has not confirmed.',
+    ]);
+    expect(drawn.rules.map((drawnRule) => drawnRule.binds)).toEqual([
+      [{ field: 'willNotDo', index: 1 }],
+      [{ field: 'willNotDo', index: 2 }],
     ]);
   });
 });

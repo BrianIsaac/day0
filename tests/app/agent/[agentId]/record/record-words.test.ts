@@ -1524,6 +1524,24 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
       // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
       'A working agreement for every employee is not in effect for Mira: Day0 has not checked it against its charter.',
     );
+    // RM32 (a), wave 17: a hold two judgements disagreed on says so, where it said "not checked".
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: {
+            agreementId: 'a2',
+            everyEmployee: true,
+            reason: 'unchecked-for-employee',
+            holdId: 'h1',
+            refusedOnce: { reason: 'widens-scope' },
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement for every employee is not in effect for Mira: Day0 checked it against its charter twice and the two checks disagreed.',
+    );
     expect(
       recordWords(
         {

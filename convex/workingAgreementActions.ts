@@ -9,8 +9,10 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { ownerKnownValues } from '../src/redaction/known-values';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import {
+  checkAgainstCharter,
   checkStatement,
   judgeSameness,
+  type CharterChecked,
   type CheckedStatement,
 } from '../src/work/agreement-judgements';
 import type { CharterBounds } from '../src/work/agreements';
@@ -53,6 +55,18 @@ async function checked(
   known: readonly string[],
 ): Promise<CheckedStatement> {
   return await checkStatement(text, { charters, model: spanModelFromEnv(), known });
+}
+
+/**
+ * An agreement in effect for every employee checked against one employee's charter, a refusal
+ * judged a second time (RM32 (a)), with the owner's values and the span model.
+ */
+async function checkedTwice(
+  text: string,
+  charters: readonly CharterBounds[],
+  known: readonly string[],
+): Promise<CharterChecked> {
+  return await checkAgainstCharter(text, { charters, model: spanModelFromEnv(), known });
 }
 
 /** One proposal the run would show: the corrections it came from and the words it would keep. */
@@ -204,18 +218,26 @@ export const proposeFromCorrections = internalAction({
 /**
  * The check of a kept agreement, or `unavailable` when it could not be had: no charter to check
  * against (it fails closed), the owner's values unreadable, or the redaction or the model failing.
+ *
+ * @param check - The check itself: one judgement for a keep ({@link checked}), a refusal judged
+ * twice for an agreement already in effect for every employee ({@link checkedTwice}).
  */
-async function checkedOrUnavailable(
+async function checkedOrUnavailable<Outcome extends CharterChecked>(
   ctx: ActionCtx,
   inputs: CheckInputs,
-): Promise<CheckedStatement> {
+  check: (
+    text: string,
+    charters: readonly CharterBounds[],
+    known: readonly string[],
+  ) => Promise<Outcome>,
+): Promise<Outcome | Extract<CheckedStatement, { outcome: 'unavailable' }>> {
   const statement = inputs.agreement.statement;
   if (inputs.charters.length === 0) {
     return { outcome: 'unavailable', statement, reason: 'no approved charter to check against' };
   }
   try {
     const known = await knownValuesOf(ctx, inputs.agreement.userId);
-    return await checked(statement, inputs.charters, known);
+    return await check(statement, inputs.charters, known);
   } catch (err: unknown) {
     const reason = err instanceof Error ? err.message : String(err);
     return { outcome: 'unavailable', statement, reason };
@@ -255,7 +277,7 @@ export const settleKept = internalAction({
       });
       return;
     }
-    const outcome = await checkedOrUnavailable(ctx, inputs);
+    const outcome = await checkedOrUnavailable(ctx, inputs, checked);
     if (outcome.outcome === 'unavailable') {
       const delay = CHECK_RETRY_DELAYS_MS[args.attempt];
       log.warn('working agreements: a kept agreement waits on its check', {
@@ -343,6 +365,14 @@ async function endWatch(ctx: ActionCtx, watch: Id<'_scheduled_functions'> | null
  * (`scheduleDueHoldChecks`), or Check now on its card; an owed check one allows is ended
  * (`recordChecked`).
  *
+ * A refusal here would end an agreement for every employee on one model call, so it is judged a
+ * second time (RM32 (a); 16-FX's F1: the hosted model allowed one statement against one charter
+ * and refused it against another with the same body): the agreement ends for everyone only when
+ * both judgements refuse, on a first charter and on an amendment alike. One refusal of two holds
+ * it for this employee alone and says so (`holdDisputed`), until an act of the manager's judges it
+ * again (Check now, the next approved charter, the employee's resume); a second judgement that
+ * could not be had is a check that could not be had.
+ *
  * One run reads at most `CHECK_BATCH` agreements with the model, one at a time, and hands the rest
  * to the next run, and it keeps a watch on itself ({@link watchOver}), so a run that dies mid-way
  * leaves the record a run the model could not answer leaves (W15-R34: it wrote neither the retry
@@ -383,13 +413,13 @@ export const checkForCharter = internalAction({
     const unavailable: Id<'workingAgreements'>[] = [];
     let watch = await watchOver(ctx, args, asked);
     for (const [at, agreement] of batch.entries()) {
-      const outcome: CheckedStatement = paused
+      const outcome: CharterChecked = paused
         ? { outcome: 'unavailable', statement: agreement.statement, reason: 'the work is paused' }
-        : await checkedOrUnavailable(ctx, {
-            agreement,
-            charters: [inputs.charter],
-            pastTheCheck: false,
-          });
+        : await checkedOrUnavailable(
+            ctx,
+            { agreement, charters: [inputs.charter], pastTheCheck: false },
+            checkedTwice,
+          );
       if (outcome.outcome === 'unavailable') {
         unavailable.push(agreement._id);
         log.warn('working agreements: a charter waits on its check', {
@@ -398,21 +428,32 @@ export const checkForCharter = internalAction({
           reason: outcome.reason,
         });
       } else if (outcome.outcome === 'refused') {
+        // Both judgements refused it (RM32 (a)): only then does it end for every employee.
         await ctx.runMutation(internal.workingAgreements.settleCharterCheck, {
           agreementId: agreement._id,
           agentId: args.agentId,
           refusal: outcome.refusal,
         });
-      } else if (inputs.held.includes(agreement._id)) {
-        await ctx.runMutation(internal.workingAgreements.liftHold, {
+      } else if (outcome.outcome === 'disputed') {
+        await ctx.runMutation(internal.workingAgreements.holdDisputed, {
           agreementId: agreement._id,
           agentId: args.agentId,
+          refusal: outcome.refusal,
         });
-      } else if (inputs.owed.includes(agreement._id)) {
-        await ctx.runMutation(internal.workingAgreements.recordChecked, {
-          agreementId: agreement._id,
-          agentId: args.agentId,
-        });
+      } else if (outcome.outcome === 'kept') {
+        const settled = { agreementId: agreement._id, agentId: args.agentId };
+        if (inputs.held.includes(agreement._id)) {
+          await ctx.runMutation(internal.workingAgreements.liftHold, settled);
+        }
+        // Held and owed both since a disputed check can hold an established employee's (RM32
+        // (a)): the check that lifts the hold is also the owed one, had.
+        if (inputs.owed.includes(agreement._id)) {
+          await ctx.runMutation(internal.workingAgreements.recordChecked, settled);
+        }
+      } else {
+        // The value is not printed: it would carry the agreement's statement into the log.
+        const unknown: never = outcome;
+        throw new Error(`unhandled check outcome ${String(unknown)}`);
       }
       // The new watch first, then the old one ended: no moment is left unwatched (the second
       // pass).

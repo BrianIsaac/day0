@@ -346,6 +346,33 @@ export function refusalOf(
   return clause === undefined ? { reason: reply.verdict } : { reason: reply.verdict, clause };
 }
 
+/**
+ * What a charter's two judgements of one agreement for every employee come to (RM32 (a)): refused,
+ * which ends the agreement for every employee, only when both refuse; disputed, which holds it for
+ * that charter's employee alone, when the second keeps what the first refused. Either way with the
+ * first judgement's refusal: its reason, and the clause it quoted.
+ */
+export interface TwiceJudged {
+  readonly outcome: 'refused' | 'disputed';
+  readonly refusal: StatementRefusal;
+}
+
+/**
+ * Read a refusal beside the second judgement of the same statement against the same charter (RM32
+ * (a); 16-FX's F1: the hosted model allowed "Name the vessel in every customer comment." against
+ * one charter and refused it against another with the same body, and the one refusal ended the
+ * agreement for fifty-one employees).
+ *
+ * @param first - The refusal the first judgement answered.
+ * @param second - The refusal the second answered, or undefined when it kept the statement.
+ */
+export function judgedTwice(
+  first: StatementRefusal,
+  second: StatementRefusal | undefined,
+): TwiceJudged {
+  return { outcome: second === undefined ? 'disputed' : 'refused', refusal: first };
+}
+
 /** One correction as the sameness judgement reads it. */
 export interface JudgedCorrection {
   readonly id: string;

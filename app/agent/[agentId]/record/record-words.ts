@@ -1218,7 +1218,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.reason === 'every-employee-too-many'
       ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : p.reason === 'unchecked-for-employee'
-        ? `A working agreement for every employee is not in effect for ${subject.name}: Day0 has not checked it against its charter`
+        ? p.refusedOnce !== undefined
+          ? `A working agreement for every employee is not in effect for ${subject.name}: Day0 checked it against its charter twice and the two checks disagreed`
+          : `A working agreement for every employee is not in effect for ${subject.name}: Day0 has not checked it against its charter`
         : text(p.clause)
           ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
           : `A working agreement was refused: it would go beyond the charter`,

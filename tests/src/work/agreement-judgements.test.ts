@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkAgainstCharter,
   checkStatement,
   judgeSameness,
   type RefusalJudgementCall,
@@ -138,5 +139,96 @@ describe('judging whether two corrections say the same thing (F10)', (): void =>
         throw new Error('model down');
       }),
     ).resolves.toEqual({ outcome: 'unavailable', reason: 'model down' });
+  });
+});
+
+/**
+ * RM32 (a), wave 17: 16-FX's F1, on its bed. "Name the vessel in every customer comment." was
+ * allowed against Mateo's charter and refused, `widens-scope`, against Ines's, the same run-through
+ * body, and the one refusal ended the agreement for every employee. The two answers below are the
+ * bed's own, in the order a second judgement of the same statement can meet them.
+ */
+describe('a charter’s check of an agreement for every employee, judged twice (RM32 (a); 16-FX’s F1)', (): void => {
+  const STATEMENT = 'Name the vessel in every customer comment.';
+  const runThrough = {
+    willDo: [
+      'Handle owned, prioritized Linear tickets in the Q3 close project.',
+      'Draft replies to asks in #revops-asks.',
+    ],
+    willNotDo: ['Post to public Slack channels.'],
+  };
+  const ines = [{ name: 'Ines', ...runThrough }];
+
+  /** A model that answers each call with the next of the scripted verdicts. */
+  function scripted(
+    verdicts: ReadonlyArray<'keep' | 'widens-scope' | 'contradicts-will-not-do' | Error>,
+  ): { call: RefusalJudgementCall; seen: string[] } {
+    const seen: string[] = [];
+    const call: RefusalJudgementCall = async (user) => {
+      const verdict = verdicts[seen.length];
+      seen.push(user);
+      if (verdict === undefined) throw new Error('asked more often than scripted');
+      if (verdict instanceof Error) throw verdict;
+      return { verdict, clause: verdict === 'contradicts-will-not-do' ? 1 : null };
+    };
+    return { call, seen };
+  }
+
+  it('asks once for a statement the first judgement keeps', async (): Promise<void> => {
+    const { call, seen } = scripted(['keep']);
+    expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toMatchObject(
+      { outcome: 'kept', statement: STATEMENT },
+    );
+    expect(seen).toHaveLength(1);
+  });
+
+  it('judges a refusal a second time, with the same prompt, and refuses only when both judgements refuse', async (): Promise<void> => {
+    const { call, seen } = scripted(['widens-scope', 'widens-scope']);
+    expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toMatchObject(
+      { outcome: 'refused', statement: STATEMENT, refusal: { reason: 'widens-scope' } },
+    );
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+  });
+
+  it('answers disputed, with the one refusal, when the second judgement keeps what the first refused', async (): Promise<void> => {
+    const { call, seen } = scripted(['widens-scope', 'keep']);
+    expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toEqual({
+      outcome: 'disputed',
+      statement: STATEMENT,
+      refusal: { reason: 'widens-scope' },
+      redaction: 'structural-only',
+    });
+    expect(seen).toHaveLength(2);
+  });
+
+  it('keeps the clause the refusing judgement quoted on a disputed check', async (): Promise<void> => {
+    const { call } = scripted(['contradicts-will-not-do', 'keep']);
+    expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toMatchObject(
+      {
+        outcome: 'disputed',
+        refusal: { reason: 'contradicts-will-not-do', clause: 'Post to public Slack channels.' },
+      },
+    );
+  });
+
+  it('answers unavailable when the second judgement cannot be had, so the check is tried again rather than settled on one', async (): Promise<void> => {
+    const { call } = scripted(['widens-scope', new Error('model down')]);
+    expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toEqual({
+      outcome: 'unavailable',
+      statement: STATEMENT,
+      reason: 'model down',
+    });
+  });
+
+  it('refuses a statement naming a credential at once, with no judgement: the redaction found it', async (): Promise<void> => {
+    const { call, seen } = scripted([]);
+    const checked = await checkAgainstCharter(
+      'Sign in to the carrier portal with hunter2 every time.',
+      { charters: ines, known: ['hunter2'] },
+      call,
+    );
+    expect(checked).toMatchObject({ outcome: 'refused', refusal: { reason: 'names-credential' } });
+    expect(seen).toEqual([]);
   });
 });
