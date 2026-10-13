@@ -348,6 +348,43 @@ describe('the Discuss room', (): void => {
     view.unmount();
   });
 
+  it('says only that the talk is on the card once it is, whatever an earlier press was told (the v0.20.0 hosted walk’s finding 5)', async (): Promise<void> => {
+    // The walk's shot `signedin-B-Pip-talk-transfer`: a press was answered 503 while the proposal
+    // reached the card, and the page read "Pip put a new proposal on the card. Nothing changes
+    // until you approve it there." above "Pip put nothing on the card. Try again."
+    backend.status = 'discussing';
+    backend.talk = {
+      state: 'active',
+      turns: [
+        kept('e0', 'employee', 'Should committee-deck drafts go to Priya first?'),
+        kept('m0', 'manager', 'Yes.'),
+        kept('e1', 'employee', 'Shall I put that on the card?'),
+      ],
+    };
+    finishAnswer = { error: 'Mira put nothing on the card. Try again.' };
+    const view = room();
+    await streamed();
+    await press(view.container, 'Put this on the card');
+    await streamed();
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Mira put nothing on the card',
+    );
+    // The proposal reached the card all the same, and the room reads the talk again.
+    backend.talk.state = 'finished';
+    backend.status = 'open';
+    backend.proposedKind = 'charter-change';
+    act((): void =>
+      view.root.render(
+        <TalkRoom reorientationId="card-1" agentId={'agent-1' as Id<'agents'>} name="Mira" />,
+      ),
+    );
+    await streamed();
+    expect(view.container.textContent).toContain('Mira put a new proposal on the card.');
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    expect(view.container.textContent).not.toContain('put nothing on the card');
+    view.unmount();
+  });
+
   it('offers Put this on the card only once the manager has answered', async (): Promise<void> => {
     answers = [spoken('e0', 'Should committee-deck drafts go to Priya first?')];
     const view = room();
