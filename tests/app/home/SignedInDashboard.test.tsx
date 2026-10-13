@@ -582,6 +582,30 @@ describe('the company home', (): void => {
     expect(page).not.toMatch(/\bcontents\b|\border-1\b/);
   });
 
+  it('counts what waits for an employee the inbox does not reach from that employee’s own row (the second pass, 17-F)', (): void => {
+    // The inbox reads the newest employees only (twenty; here two), where the roster now lists
+    // every one: the third employee's two things were a 0 in its column and missing from the count.
+    const markup = render(
+      [roster[0], roster[2], { ...roster[1], name: 'Earlier colleague', needsYou: 2 }],
+      {
+        entries: [inbox.entries[1]],
+        total: 1,
+        waitingByEmployee: [
+          { agentId: 'synthetic-owner-agent', waiting: 1 },
+          { agentId: 'synthetic-new-agent', waiting: 0 },
+        ],
+      },
+    );
+    const page = readAs(markup);
+    expect(page).toContain('3 things need you');
+    expect(page).toContain('2 more on your employees’ pages.');
+    // Its own row's Needs you cell says two, in the colour of something waiting.
+    const row = markup.slice(markup.indexOf('Earlier colleague'));
+    expect(row.slice(0, row.indexOf('</tr>'))).toContain(
+      '<span class="text-[var(--color-warn)]">2</span>',
+    );
+  });
+
   it('keeps the hosted one-employee home under a snapshot', (): void => {
     const page = render([roster[0]], {
       entries: [inbox.entries[1]],

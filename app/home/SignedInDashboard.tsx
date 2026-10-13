@@ -82,6 +82,10 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         .map(({ agentId, name }) => ({ agentId: String(agentId), name })),
     [roster],
   );
+  // The inbox reaches the newest employees only (`work.needsYou`, twenty), where the roster lists
+  // every one: what waits for the rest is counted from their own rows, which the same reader
+  // fills, so the page's count, the roster's column and the inbox's last line agree.
+  const beyondInbox = useMemo(() => waitingBeyondInbox(roster, inbox), [roster, inbox]);
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
   // and one who handed over their only employee still reads where it went (7.4): for them the
@@ -97,7 +101,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           </h1>
           <p className="text-sm text-[var(--color-muted)]">
             {staffed
-              ? companyLine(roster, inbox)
+              ? companyLine(roster, inbox, beyondInbox.total)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
           <AuthorisationUnfinished />
@@ -133,7 +137,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {!staffed && showInbox ? (
-            <NeedsYouList inbox={inboxRead} now={now} paused={paused} />
+            <NeedsYouList inbox={inboxRead} now={now} paused={paused} beyond={beyondInbox.total} />
           ) : null}
           {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
@@ -154,8 +158,13 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               focusOnMount={staffed}
             />
           ) : null}
-          {staffed ? <NeedsYouList inbox={inboxRead} now={now} paused={paused} /> : null}
-          <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
+          {staffed ? (
+            <NeedsYouList inbox={inboxRead} now={now} paused={paused} beyond={beyondInbox.total} />
+          ) : null}
+          <EmployeeRoster
+            employees={roster}
+            waiting={waitingByEmployee(inbox, beyondInbox.byEmployee)}
+          />
           {staffed ? <HandedOver held={held} /> : null}
           <OfficeWorld
             agents={roster}
@@ -166,7 +175,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               roster={roster}
               figures={company.figures}
               coverage={company.coverage}
-              waiting={inbox?.total ?? 0}
+              waiting={(inbox?.total ?? 0) + beyondInbox.total}
               now={now}
             />
           ) : null}
@@ -197,18 +206,58 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
  * print, and how much waits on the manager, counted by the inbox the roster's column reads, so
  * the line and the roster below it say the same thing (the production walk's 6d).
  */
-function companyLine(roster: readonly RosterRow[], inbox: NeedsYouInbox | undefined): string {
+function companyLine(
+  roster: readonly RosterRow[],
+  inbox: NeedsYouInbox | undefined,
+  beyond: number,
+): string {
   const parts = employeeStateTally(roster).map(
     ({ text, count }) => `${count} ${text.charAt(0).toLocaleLowerCase('en-GB')}${text.slice(1)}`,
   );
-  if (inbox) parts.push(`${inbox.total} ${inbox.total === 1 ? 'thing needs' : 'things need'} you`);
+  if (inbox) {
+    const waiting = inbox.total + beyond;
+    parts.push(`${waiting} ${waiting === 1 ? 'thing needs' : 'things need'} you`);
+  }
   return parts.join(' · ');
 }
 
-/** The inbox's count per employee, for the roster's column. */
-function waitingByEmployee(inbox: NeedsYouInbox | undefined): Map<string, number> | undefined {
+/** What waits on the manager for the employees the inbox does not reach, each and in all. */
+interface BeyondInbox {
+  readonly byEmployee: ReadonlyMap<string, number>;
+  readonly total: number;
+}
+
+/**
+ * What waits for the employees the roster lists and the inbox does not reach (it reads the
+ * newest twenty), counted from each one's own row: nothing until both are read.
+ */
+function waitingBeyondInbox(
+  roster: readonly RosterRow[] | undefined,
+  inbox: NeedsYouInbox | undefined,
+): BeyondInbox {
+  if (roster === undefined || inbox === undefined) return { byEmployee: new Map(), total: 0 };
+  const reached = new Set<string>(inbox.waitingByEmployee.map(({ agentId }) => agentId));
+  const byEmployee = new Map(
+    roster
+      .filter((employee) => !reached.has(employee.agentId))
+      .map((employee): [string, number] => [employee.agentId, employee.needsYou]),
+  );
+  return { byEmployee, total: [...byEmployee.values()].reduce((sum, count) => sum + count, 0) };
+}
+
+/** The count per employee for the roster's column: the inbox's, and beyond it each row's own. */
+function waitingByEmployee(
+  inbox: NeedsYouInbox | undefined,
+  beyond: ReadonlyMap<string, number>,
+): Map<string, number> | undefined {
   return inbox
-    ? new Map(inbox.waitingByEmployee.map(({ agentId, waiting }) => [agentId, waiting]))
+    ? new Map<string, number>([
+        ...beyond,
+        ...inbox.waitingByEmployee.map(({ agentId, waiting }): [string, number] => [
+          agentId,
+          waiting,
+        ]),
+      ])
     : undefined;
 }
 

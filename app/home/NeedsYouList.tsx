@@ -27,19 +27,23 @@ export const NEEDS_YOU_UNREADABLE =
  *   `Error` the backend answered with when the read failed.
  * @param now - The page's clock, so the waits age.
  * @param paused - The manager's paused employees; none by default.
+ * @param beyond - What waits for employees the inbox does not reach (it reads the newest twenty,
+ *   the roster every one): counted in the last line, since their entries are on their own pages.
  */
 export function NeedsYouList({
   inbox: read,
   now,
   paused = [],
+  beyond = 0,
 }: {
   inbox: NeedsYouInbox | undefined | Error;
   now: number;
   paused?: readonly PausedEmployee[];
+  beyond?: number;
 }) {
   const failed = read instanceof Error;
   const inbox = failed ? undefined : read;
-  const more = inbox ? inbox.total - inbox.entries.length : 0;
+  const more = inbox ? inbox.total - inbox.entries.length + beyond : 0;
   const waitingOf = new Map(
     (inbox?.waitingByEmployee ?? []).map(({ agentId, waiting }) => [String(agentId), waiting]),
   );
@@ -62,7 +66,10 @@ export function NeedsYouList({
       ) : inbox === undefined ? (
         <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Loading</p>
       ) : inbox.entries.length === 0 ? (
-        <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Nothing is waiting on you.</p>
+        // With something waiting on a page this list does not reach, the last line says so alone.
+        more > 0 ? null : (
+          <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Nothing is waiting on you.</p>
+        )
       ) : (
         <>
           {pausedLines.length > 0 ? (
@@ -94,7 +101,9 @@ export function NeedsYouList({
         </>
       )}
       {more > 0 ? (
-        <p className="border-t border-[var(--color-border)] px-5 py-3 text-xs text-[var(--color-muted)]">
+        <p
+          className={`px-5 py-3 text-xs text-[var(--color-muted)] ${inbox !== undefined && inbox.entries.length > 0 ? 'border-t border-[var(--color-border)]' : ''}`}
+        >
           {more} more on your employees’ pages.
         </p>
       ) : null}

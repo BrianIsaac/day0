@@ -150,6 +150,18 @@ describe('NeedsYouList', (): void => {
     expect(text).toContain('2 more on your employees’ pages');
   });
 
+  it('counts in its last line what waits for employees the inbox does not reach, and never says nothing waits while something does (17-F)', (): void => {
+    const listed = renderToStaticMarkup(
+      <NeedsYouList
+        inbox={{ entries: [], total: 0, waitingByEmployee: [] }}
+        now={NOW}
+        beyond={3}
+      />,
+    );
+    expect(listed).toContain('3 more on your employees’ pages.');
+    expect(listed).not.toContain('Nothing is waiting on you.');
+  });
+
   it('says so when nothing waits on the manager', (): void => {
     const empty = renderToStaticMarkup(
       <NeedsYouList inbox={{ entries: [], total: 0, waitingByEmployee: [] }} now={NOW} />,
