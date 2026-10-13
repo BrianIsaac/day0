@@ -1936,6 +1936,53 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
     expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
   });
 
+  it('writes nothing for a sentence whose second half is another instruction, which would stand under Will not do as an act ruled out (the second pass, continued)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      // "Delete tickets, archive them instead." under Will not do forbids the archiving asked for.
+      rule('Never delete tickets, archive them instead.', []),
+      rule('Never approve a refund, tell me.', []),
+      rule('Never delete tickets, archive them, then tell me.', []),
+      rule('Never delete tickets, archive them, and tell me.', []),
+      rule('Never close a ticket, if in doubt ask me.', []),
+      rule('Do not close the ticket but leave a note on it.', []),
+      rule('Never share passwords?', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes nothing for an idiom the opening is followed by after two spaces, or one that forbids no act (the second pass, continued)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule('Never  mind the old process.', []),
+      rule("Don't stress about the backlog.", []),
+      rule("Don't be shy about asking.", []),
+      rule("Don't sweat the small tickets.", []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes the one act of a sentence with a qualifier, a list of acts, a redirect it can join, an "ever", and keeps a redirect it cannot join as the manager wrote it', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [
+        rule('Never share customer data, even with another team.', []),
+        rule('Never change prices, run discounts, or send quotes.', []),
+        rule('Do not contact finance directly, go through me.', []),
+        rule('Never ever share a password in a ticket comment.', []),
+        rule('Never post in #general, use #revops.', []),
+      ],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share customer data, even with another team.',
+      'Change prices, run discounts, or send quotes.',
+      'Contact finance directly without going through the manager.',
+      'Share a password in a ticket comment.',
+      'Never post in #general, use #revops.',
+    ]);
+  });
+
   it("writes one clause for each of two prohibitions, each rule bound to its own, the draft's clauses kept in their places", (): void => {
     const drawn = withProhibitionClauses(
       charter([DUTY], ['Own hardware.']),

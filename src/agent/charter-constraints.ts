@@ -1690,33 +1690,84 @@ export function rulePlacement(
   };
 }
 
-/** A manager's prohibition as the Will not do clause it is written as: the act, closed by a full stop. */
+/**
+ * An emphatic "ever" after a prohibition's opening ("Never ever ...", "Don't ever ..."), which is
+ * no word of the act.
+ */
+const EMPHATIC_EVER = /^(never|do\s+not|don['\u2019]t)\s+ever\b/i;
+
+/**
+ * A manager's prohibition as the Will not do clause it is written as: the act, closed by a full
+ * stop, or the sentence as the manager wrote it where the act-writer keeps it so (a redirect to a
+ * destination it does not know, {@link willNotDoAsAct}).
+ */
 function prohibitionClause(sentence: string): string {
-  const act = willNotDoAsAct(inTheThirdPerson(sentence.trim().replace(/[.;!]+$/, '')));
-  return `${act}.`;
+  const said = sentence
+    .trim()
+    .replace(/[.;!]+$/, '')
+    .replace(EMPHATIC_EVER, '$1');
+  return `${willNotDoAsAct(inTheThirdPerson(said))}.`;
 }
 
 /**
  * How an instruction to the employee opens when it forbids an act, an idiom that forbids nothing
  * left out ("Never mind the old process.", "Don't worry about the backlog.", "Don't hesitate to
- * ask."). Narrower than `PROHIBITION_OPENING`, which also reads the clauses a model drafts: "I
- * won't be in on Fridays." is the manager speaking of themself, and "Won't be in on Fridays." or
- * "Does not apply to contractors." states a fact with its subject dropped.
+ * ask."), however many spaces stand before it. Narrower than `PROHIBITION_OPENING`, which also
+ * reads the clauses a model drafts: "I won't be in on Fridays." is the manager speaking of
+ * themself, and "Won't be in on Fridays." or "Does not apply to contractors." states a fact with
+ * its subject dropped. The idioms are the ones met and their near kin, not every one English has:
+ * one this list misses is written as an act and reads oddly on the card, where the manager can
+ * strike it.
  */
 const INSTRUCTION_FORBIDS =
-  /^(?:never|do\s+not|don['\u2019]t|must\s+not|mustn['\u2019]t|should\s+not|shouldn['\u2019]t)\s+(?!(?:mind|worry|bother|hesitate|forget|fear|fret|panic|be\s+afraid|feel)\b)/i;
+  /^(?:never|do\s+not|don['\u2019]t|must\s+not|mustn['\u2019]t|should\s+not|shouldn['\u2019]t)\s+(?!\s)(?!(?:mind|worry|bother|hesitate|forget|fear|fret|panic|stress|sweat|be\s+(?:afraid|shy)|feel)\b)/i;
 
 /**
- * Whether a manager's sentence forbids the employee one act, so that its words after the opening
- * are that act and nothing else: an instruction's opening ({@link INSTRUCTION_FORBIDS}) and no
- * second forbidding word after it. "Never edit booked figures and never delete invoices." would
- * read, under Will not do, "Edit booked figures and never delete invoices.", its second half the
+ * What a written clause's later part may open on and still be part of the one act: a qualifier of
+ * it ("Share customer data, even with another team.", "Send a quote, unless the manager has
+ * approved it.").
+ */
+const QUALIFIES_THE_ACT =
+  /^(?:even|not\s+even|unless|except|including|especially|regardless|no\s+matter|whatever|or|nor)\b/i;
+
+/**
+ * A turn to a second thing said ("... but leave a note.", "... archive them instead."); "instead
+ * of" compares and is none.
+ */
+const TURNS_TO_ANOTHER = /\bbut\b|\binstead\b(?!\s+of\b)/i;
+
+/**
+ * Whether a clause written for a prohibition says the forbidden act and nothing the manager asked
+ * for. Under Will not do every part of a clause reads as ruled out, so a second instruction left
+ * standing there says its opposite: "Never delete tickets, archive them instead." written as
+ * "Delete tickets, archive them instead." forbids the archiving (the second pass, continued). A
+ * clause passes when the act-writer kept the manager's sentence whole, when it has one part and
+ * no turn to another, when each later part qualifies the act, or when it is a list of acts closed
+ * by "or" or "nor" ("Change prices, run discounts, or send quotes."). A list closed by "and" is
+ * not taken for one: "Never delete tickets, archive them, and tell me." asks for the last two.
+ */
+function saysOnlyTheAct(clause: string): boolean {
+  if (PROHIBITION_OPENING.test(clause)) return true;
+  if (TURNS_TO_ANOTHER.test(clause)) return false;
+  const later = clause.split(/[,;]\s+/).slice(1);
+  const last = later.at(-1);
+  const listOfActs = later.length >= 2 && last !== undefined && /^(?:or|nor)\b/i.test(last);
+  return listOfActs || later.every((part: string): boolean => QUALIFIES_THE_ACT.test(part));
+}
+
+/**
+ * Whether a manager's sentence forbids the employee one act, so that the clause written for it
+ * says that act and nothing else: an instruction ({@link INSTRUCTION_FORBIDS}) that is no
+ * question, with no second forbidding word after its opening and no second instruction
+ * ({@link saysOnlyTheAct}). "Never edit booked figures and never delete invoices." would read,
+ * under Will not do, "Edit booked figures and never delete invoices.", its second half the
  * opposite of what was said (the second pass), so it is left to the card's check.
  */
 function forbidsOneAct(sentence: string): boolean {
   const said = sentence.trim();
-  if (!INSTRUCTION_FORBIDS.test(said)) return false;
-  return !FORBIDS.test(said.replace(PROHIBITION_OPENING, ''));
+  if (said.endsWith('?') || !INSTRUCTION_FORBIDS.test(said)) return false;
+  if (FORBIDS.test(said.replace(PROHIBITION_OPENING, ''))) return false;
+  return saysOnlyTheAct(prohibitionClause(said));
 }
 
 /**
@@ -1738,15 +1789,16 @@ function grantsTheAct(charter: Charter, sentence: string): boolean {
  * clause does not carry your words. The charter does not enforce it." and offered no Strike). A
  * listed rule with a sentence that forbids the employee one act ({@link forbidsOneAct}) and no
  * clause that carries it ({@link rulePlacement}) is bound to a Will not do clause holding that
- * sentence: one the draft already wrote that holds most of its words, else one written here as the
- * act the sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that carried
- * nothing are dropped with it, so a strike takes the prohibition and leaves the will-do. This is
- * the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the prompt
- * already asks for the clause. Left to the card's own check, which tells the manager to ask for
- * changes: a rule that forbids in softer words ("avoid", "only the security lead approves"), a
- * sentence that forbids twice, an idiom or one the manager says of themself, one
- * the manager struck on an earlier draft, one drafted before rules were bound, and one whose act
- * the draft grants ({@link grantsTheAct}: W14-R14's drafts), where the will-do is what is wrong.
+ * sentence: one the draft already wrote that holds most of its words, else one written here as
+ * the act the sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that
+ * carried nothing are dropped with it, so a strike takes the prohibition and leaves the will-do.
+ * This is the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the
+ * prompt already asks for the clause. Left to the card's own check, which tells the manager to
+ * ask for changes: a rule that forbids in softer words ("avoid", "only the security lead
+ * approves"), a sentence that forbids twice or goes on to a second instruction, a question, an
+ * idiom or a sentence the manager says of themself, one the manager struck on an earlier draft,
+ * one drafted before rules were bound, and one whose act the draft grants ({@link grantsTheAct}:
+ * W14-R14's drafts), where the will-do is what is wrong.
  *
  * @param charter - The assembled charter, its will-not-do clauses already written as acts.
  * @param listed - The rules the reply listed, verified.
