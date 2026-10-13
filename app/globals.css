@@ -22,6 +22,12 @@
      and 5.90 on danger-soft. The danger fill and line below keep the values mixed from the
      design's red: the chip's text moved, not its ground. */
   --color-danger: #f87171;
+  /* The red a solid fill is drawn in under white text, and the one a widget that takes a single
+     danger colour gets (Clerk: its destructive button's fill and its error text,
+     `clerk-appearance.ts`). The design's own red: white reads 3.76:1 on it and it reads 4.71:1 on
+     a card, as at v0.20.0. No one red does 4.5:1 both ways on the dark card, and the lighter text
+     step above put white on it at 2.77:1 (the second pass on 17-FX). */
+  --color-danger-solid: #ef4444;
   --color-ok: #34d399;
   --color-card: #18181b;
   --color-border: #27272a;
@@ -67,6 +73,7 @@
   --color-accent: #0e7490;
   --color-warn: #92400e;
   --color-danger: #991b1b;
+  --color-danger-solid: #991b1b;
   --color-ok: #065f46;
   --color-card: #ffffff;
   --color-border: #e4e4e7;

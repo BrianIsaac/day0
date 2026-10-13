@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { THEME_CSS, lightToken, token } from '../fixtures/theme-contrast';
+import { THEME_CSS, contrast, lightToken, token } from '../fixtures/theme-contrast';
 import {
   DAY0_MARK_URL,
   clerkAppearance,
@@ -84,12 +84,30 @@ describe('the Clerk appearance', () => {
       colorPrimary: 'var(--color-accent)',
       colorPrimaryForeground: 'var(--color-bg)',
       colorRing: 'var(--color-accent)',
-      colorDanger: 'var(--color-danger)',
+      colorDanger: 'var(--color-danger-solid)',
       colorSuccess: 'var(--color-ok)',
       colorWarning: 'var(--color-warn)',
       colorModalBackdrop: 'var(--color-scrim)',
       colorShadow: 'var(--color-shadow)',
     });
+  });
+
+  // The second pass on 17-FX: Clerk fills its destructive button with `colorDanger` and writes on
+  // it in white (`danger: {accent: $danger500, accentContrast: $white}` in `@clerk/ui` 1.36), and
+  // draws its error text in the same colour on the card. The dark danger token went one step
+  // lighter for the product's chips (D-7 (b)); given to Clerk, white on that fill fell from 3.76:1
+  // to 2.77:1, under the 3:1 a control is held to.
+  it("gives Clerk's destructive button and error text a red of their own, which keeps white on the fill and the text on the card as they were at v0.20.0", () => {
+    const WHITE = '#ffffff';
+    expect(clerkAppearance.variables.colorDanger).toBe('var(--color-danger-solid)');
+    for (const read of [token, lightToken]) {
+      expect(contrast(WHITE, read('danger-solid'))).toBeGreaterThanOrEqual(3.76);
+      expect(contrast(read('danger-solid'), read('card'))).toBeGreaterThanOrEqual(4.5);
+    }
+    // No one red holds white at 4.5:1 and reads at 4.5:1 on the dark card (the first needs a
+    // luminance under 0.184, the second over 0.216), so the dark value is the design's own.
+    expect(Number(contrast(WHITE, token('danger-solid')).toFixed(2))).toBe(3.76);
+    expect(contrast(WHITE, token('danger'))).toBeLessThan(3);
   });
 
   it('takes the neutral from the text and leaves the borders to it, so the social button and divider show in either theme', () => {
