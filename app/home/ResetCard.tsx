@@ -162,9 +162,14 @@ export function unlinkLabel(holdings: Holdings | null | undefined): string {
  * What the card says the deletion takes: in the hosted office, where no person and no working
  * agreement is kept, it names neither, as its dialog does not (the v0.17.0 redeploy's finding 4).
  *
- * @param mode - The deployment's mode, or undefined while it is read.
+ * @param mode - The deployment's mode, `loading` while it is read, or undefined for a local install.
  */
-export function whatItDeletes(mode: 'mock' | 'real' | undefined): string {
+export function whatItDeletes(mode: 'mock' | 'real' | 'loading' | undefined): string {
+  // Until the mode answers, only what both offices delete is said (W16-R35): the hosted office
+  // keeps no person and no working agreement, and never names them for a moment.
+  if (mode === 'loading') {
+    return 'Deletes your employees and everything they made. Your sign-in stays.';
+  }
   const takes =
     mode === 'mock'
       ? 'your employees and everything they made, your skill library and the notes on your handover requests'
@@ -219,9 +224,7 @@ export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' | 'loading
     <Card title="Your data" tone="danger" focusRef={card}>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm text-[var(--color-muted)]">
-            {whatItDeletes(mode === 'loading' ? undefined : mode)}
-          </p>
+          <p className="text-sm text-[var(--color-muted)]">{whatItDeletes(mode)}</p>
           <p id={storedId} className="mt-2 text-sm text-[var(--color-fg)]">
             {holdings
               ? heldNow(holdings, alsoUnlinkDocumentation)
