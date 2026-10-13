@@ -1697,6 +1697,29 @@ function prohibitionClause(sentence: string): string {
 }
 
 /**
+ * How an instruction to the employee opens when it forbids an act, an idiom that forbids nothing
+ * left out ("Never mind the old process.", "Don't worry about the backlog.", "Don't hesitate to
+ * ask."). Narrower than `PROHIBITION_OPENING`, which also reads the clauses a model drafts: "I
+ * won't be in on Fridays." is the manager speaking of themself, and "Won't be in on Fridays." or
+ * "Does not apply to contractors." states a fact with its subject dropped.
+ */
+const INSTRUCTION_FORBIDS =
+  /^(?:never|do\s+not|don['\u2019]t|must\s+not|mustn['\u2019]t|should\s+not|shouldn['\u2019]t)\s+(?!(?:mind|worry|bother|hesitate|forget|fear|fret|panic|be\s+afraid|feel)\b)/i;
+
+/**
+ * Whether a manager's sentence forbids the employee one act, so that its words after the opening
+ * are that act and nothing else: an instruction's opening ({@link INSTRUCTION_FORBIDS}) and no
+ * second forbidding word after it. "Never edit booked figures and never delete invoices." would
+ * read, under Will not do, "Edit booked figures and never delete invoices.", its second half the
+ * opposite of what was said (the second pass), so it is left to the card's check.
+ */
+function forbidsOneAct(sentence: string): boolean {
+  const said = sentence.trim();
+  if (!INSTRUCTION_FORBIDS.test(said)) return false;
+  return !FORBIDS.test(said.replace(PROHIBITION_OPENING, ''));
+}
+
+/**
  * Whether the draft grants the act a prohibition forbids: its function or a will-do names the act
  * in most of the manager's words and puts no limit on it ("Edit booked figures without asking."
  * beside "Never edit a booked figure."). Such a draft contradicts the manager, and a Will not do
@@ -1713,15 +1736,15 @@ function grantsTheAct(charter: Charter, sentence: string): boolean {
  * walk's finding 6: Nell's "Never share a password in a ticket comment." was listed as a rule and
  * bound to the will-do "Draft replies for routine tickets this week.", so the card said "This
  * clause does not carry your words. The charter does not enforce it." and offered no Strike). A
- * listed rule with a sentence that opens on a prohibition (`PROHIBITION_OPENING`) and no clause
- * that carries it ({@link rulePlacement}) is bound to a Will not do clause holding that sentence:
- * one the draft already wrote and bound to no such rule, else one written here as the act the
- * sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that carried
+ * listed rule with a sentence that forbids the employee one act ({@link forbidsOneAct}) and no
+ * clause that carries it ({@link rulePlacement}) is bound to a Will not do clause holding that
+ * sentence: one the draft already wrote that holds most of its words, else one written here as the
+ * act the sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that carried
  * nothing are dropped with it, so a strike takes the prohibition and leaves the will-do. This is
  * the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the prompt
  * already asks for the clause. Left to the card's own check, which tells the manager to ask for
  * changes: a rule that forbids in softer words ("avoid", "only the security lead approves"), a
- * sentence the manager says of themself ("I won't be in on Fridays."), one
+ * sentence that forbids twice, an idiom or one the manager says of themself, one
  * the manager struck on an earlier draft, one drafted before rules were bound, and one whose act
  * the draft grants ({@link grantsTheAct}: W14-R14's drafts), where the will-do is what is wrong.
  *
@@ -1737,12 +1760,7 @@ export function withProhibitionClauses(
 ): DrawnRules {
   let current = charter;
   const rules = listed.map((rule: CharterConstraint): CharterConstraint => {
-    // "I won't be in on Fridays." is the manager speaking of themself: it rules out no act of
-    // the employee's, though a clause the model drafts in the employee's first person opens so.
-    const forbidden = quoteSentences(rule.quote).filter(
-      (sentence: string): boolean =>
-        PROHIBITION_OPENING.test(sentence.trim()) && !/^i\b/i.test(sentence.trim()),
-    );
+    const forbidden = quoteSentences(rule.quote).filter(forbidsOneAct);
     if (forbidden.length === 0 || quotedBy(rule.quote, struck)) return rule;
     const placement = rulePlacement(current, rule);
     if (placement.kind === 'by-wording') return rule;

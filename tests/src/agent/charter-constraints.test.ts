@@ -1921,6 +1921,21 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
     expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
   });
 
+  it('writes nothing for a sentence that forbids twice, an idiom, or a statement with no subject: each would read as the opposite, or as nonsense, under Will not do (the second pass)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      // "Edit booked figures and never delete invoices." under Will not do says the second half backwards.
+      rule('Never edit booked figures and never delete invoices.', []),
+      rule("Never promise a refund, don't even hint at one.", []),
+      rule('Never mind the old process.', []),
+      rule("Don't worry about the backlog.", []),
+      rule("Don't hesitate to ask the security lead.", []),
+      rule("Won't be in on Fridays.", []),
+      rule('Does not apply to contractors.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
   it("writes one clause for each of two prohibitions, each rule bound to its own, the draft's clauses kept in their places", (): void => {
     const drawn = withProhibitionClauses(
       charter([DUTY], ['Own hardware.']),
