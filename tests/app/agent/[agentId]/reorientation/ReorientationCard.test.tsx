@@ -126,6 +126,7 @@ const BASE: CardView = {
   skills: [{ _id: 'skill-1' as Id<'skills'>, name: 'kanban-comment-and-close' }],
   agreements: [],
   people: [],
+  ledger: [],
   held: { plans: 0, runs: 0 },
   charterVersion: '0.1',
 };
@@ -315,6 +316,77 @@ describe('a reorientation card', (): void => {
     );
     expect(edge.container.textContent).not.toContain('escalations..');
     edge.unmount();
+  });
+
+  it('draws the organisation’s ledger line a card rests on as evidence, in the record’s words (17-O)', (): void => {
+    const revoked = drawn(
+      withCard(
+        {
+          trigger: 'connection-revoked',
+          triggerSummary: "The organisation's Linear connection was revoked: the app was replaced",
+        },
+        {
+          pages: [],
+          ledger: [
+            {
+              _id: 'line-1' as Id<'connectionEvents'>,
+              type: 'organisation.connection-revoked',
+              payload: {
+                organisationConnectionId: 'connection-1',
+                system: 'linear',
+                displayName: 'Linear',
+                via: 'setup-cli',
+                reason: 'the app was replaced',
+              },
+              createdAt: 1,
+            },
+          ],
+        },
+      ),
+    );
+    expect(revoked.container.textContent).toMatch(
+      /Evidence.*The organisation's Linear connection was revoked.*the app was replaced/,
+    );
+    revoked.unmount();
+  });
+
+  it('says ten plans held and the rest not held, and strikes no agreement a card only checks again (W16-R22, RM34 (a))', (): void => {
+    const busy = drawn(
+      withCard(
+        { risk: 'high', proposed: { kind: 'pending' } },
+        { held: { plans: 10, runs: 0, notHeld: 90 } },
+      ),
+    );
+    expect(busy.container.textContent).toContain(
+      '10 plans held, and 90 more not held: a card holds at most ten',
+    );
+    busy.unmount();
+    const owed = drawn(
+      withCard(
+        {
+          trigger: 'agreement-check-owed',
+          triggerSummary: 'Its agreements could not be checked against the amended charter',
+          proposed: {
+            kind: 'agreement',
+            agreementId: 'agreement-1' as Id<'workingAgreements'>,
+            action: 'recheck',
+            rationale: 'The check could not be had.',
+          },
+        },
+        {
+          agreements: [
+            {
+              _id: 'agreement-1' as Id<'workingAgreements'>,
+              statement: 'Name the vessel in every comment.',
+            },
+          ],
+        },
+      ),
+    );
+    expect(owed.container.querySelector('s')).toBeNull();
+    expect(owed.container.textContent).toContain('Name the vessel in every comment.');
+    expect(owed.container.textContent).toContain('Approve checks the working agreement again.');
+    owed.unmount();
   });
 
   it('says a running item is held only before its closing steps, and a decided card holds nothing (second pass M3)', async (): Promise<void> => {

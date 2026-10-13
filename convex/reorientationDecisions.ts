@@ -10,6 +10,7 @@ import {
   dismissAgreementInTransaction,
   editAgreementInTransaction,
   recheckAgreementInTransaction,
+  recheckOwedInTransaction,
   retireAgreementInTransaction,
 } from './workingAgreements';
 import { editRelationshipInTransaction, retireRelationshipInTransaction } from './people';
@@ -36,7 +37,10 @@ import {
   type HeldCounts,
 } from '../src/agent/reorientation-words';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
-import { UNDECIDED_REORIENTATION_STATUSES } from '../src/agent/reorientation-vocabulary';
+import {
+  REORIENTATION_BLOCKING_LIMIT,
+  UNDECIDED_REORIENTATION_STATUSES,
+} from '../src/agent/reorientation-vocabulary';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 
 /*
@@ -71,6 +75,12 @@ export interface CardView {
   readonly agreements: Array<{ _id: Id<'workingAgreements'>; statement: string }>;
   /** The edges it names, each as the person and what they are to the employee. */
   readonly people: Array<{ _id: Id<'relationships'>; words: string }>;
+  /**
+   * The lines of an organisation connection's ledger it rests on (`evidence.connectionEventIds`;
+   * wave 17), as stored, for the card to say in the record's words. None on a card opened before
+   * 0.21.0.
+   */
+  readonly ledger: Array<Pick<Doc<'connectionEvents'>, '_id' | 'type' | 'payload' | 'createdAt'>>;
   /** What the card holds, as the hold stops it: none once it is decided (M3). */
   readonly held: HeldCounts;
   /** The charter version an Approve of a charter change would amend, when there is one. */
@@ -145,11 +155,18 @@ async function applyProposal(
           await editAgreementInTransaction(ctx, agreement, {
             agentId: card.agentId,
             statement: proposed.statement ?? '',
-            via: 'agreements-card',
+            via: 'reorientation',
           });
           break;
         case 'recheck':
-          await recheckAgreementInTransaction(ctx, agreement, card.agentId);
+          // An owed check's card checks every agreement it names that is still owed one (RM34 (a)).
+          if (card.trigger !== 'agreement-check-owed') {
+            await recheckAgreementInTransaction(ctx, agreement, card.agentId);
+          } else if (
+            !(await recheckOwedInTransaction(ctx, card.agentId, card.affected.agreements))
+          ) {
+            throw new ConvexError(CARD_ACTION_REFUSALS.checked);
+          }
           break;
         case 'retire':
           await retireAgreementInTransaction(ctx, agreement, card.agentId);
@@ -559,8 +576,17 @@ export const listForAgent = query({
           }`,
         });
       }
+      const ledger = await Promise.all(
+        (card.evidence.connectionEventIds ?? [])
+          .slice(0, 10)
+          .map(async (id) => await ctx.db.get(id)),
+      );
       const holding =
         card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
+      const notHeld =
+        holding && card.blockingWork.length >= REORIENTATION_BLOCKING_LIMIT
+          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id)).length
+          : 0;
       const stages = holding
         ? rows.flatMap((row) =>
             row !== null && card.blockingWork.includes(row._id) ? [heldStageOf(row)] : [],
@@ -571,6 +597,8 @@ export const listForAgent = query({
         held: {
           plans: stages.filter((stage) => stage === 'plan').length,
           runs: stages.filter((stage) => stage === 'run').length,
+          // The open work the change reached past what a card holds (W16-R22): said, not held.
+          ...(notHeld > 0 ? { notHeld } : {}),
         },
         workItems: rows.flatMap((row) =>
           row === null ? [] : [{ _id: row._id, title: row.title, state: row.state }],
@@ -585,6 +613,18 @@ export const listForAgent = query({
           agreement === null ? [] : [{ _id: agreement._id, statement: agreement.statement }],
         ),
         people,
+        ledger: ledger.flatMap((line) =>
+          line === null
+            ? []
+            : [
+                {
+                  _id: line._id,
+                  type: line.type,
+                  payload: line.payload as unknown,
+                  createdAt: line.createdAt,
+                },
+              ],
+        ),
         ...(charter?.approved ? { charterVersion: charter.version } : {}),
         ...(card.trigger === 'manager-changed' && charter?.approved
           ? { carriedRules: unboundReportingLines(charter.body as Charter) }

@@ -2259,6 +2259,87 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     ).toEqual([[amended, { agreementId, everyEmployee: true }]]);
   }, 60_000);
 
+  it('opens one low card on the employee for the checks it owes, which offers the re-check alone and checks every one on Approve (RM34 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const vessel = await agreementSince(harness, 'Name the vessel in every comment.', 2);
+    const berth = await agreementSince(harness, 'Name the berth in every comment.', 3);
+    const amended = await establishedEmployee(harness);
+    recorded.refusalDown = true;
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: amended,
+      attempt: 3,
+    });
+    expect(await eventsOf(harness, 'agreement.check-owed')).toHaveLength(2);
+    const cards = await harness.run(async (ctx) =>
+      (await ctx.db.query('reorientations').collect()).filter((card) => card.agentId === amended),
+    );
+    // Two owed checks, one card: the second joined the first, and it holds nothing.
+    expect(
+      cards.map((card) => [card.trigger, card.triggerSummary, card.risk, card.blockingWork]),
+    ).toEqual([
+      [
+        'agreement-check-owed',
+        'Its agreements could not be checked against the amended charter',
+        'low',
+        [],
+      ],
+    ]);
+    const [card] = cards;
+    expect([...card.affected.agreements].sort()).toEqual([vessel, berth].sort());
+    await drain(harness);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    expect(
+      read?.input.candidates
+        .map((candidate) =>
+          candidate.kind === 'agreement'
+            ? `${candidate.agreementId}: ${candidate.actions.join(',')}`
+            : '?',
+        )
+        .sort(),
+    ).toEqual([`${vessel}: recheck`, `${berth}: recheck`].sort());
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: card._id,
+      proposed: {
+        kind: 'agreement',
+        agreementId: vessel,
+        action: 'recheck',
+        rationale: 'The check could not be had when the charter was amended.',
+      },
+      basis: read!.basis,
+    });
+    recorded.refusalDown = false;
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, { reorientationId: card._id }),
+    ).toEqual({ result: 'the working agreement is being checked again' });
+    await drain(harness);
+    // One Approve checked both agreements the card named, and neither check is owed any more.
+    expect(
+      (await eventsOf(harness, 'agreement.checked'))
+        .map((event) => (event.payload as { agreementId: string }).agreementId)
+        .sort(),
+    ).toEqual([vessel, berth].sort());
+    // A second Approve of the same proposal finds no check owed: said as moved on, not run twice.
+    const again = await harness.run(async (ctx) => {
+      const { _id, _creationTime, ...fields } = (await ctx.db.get(card._id))!;
+      void _id;
+      void _creationTime;
+      return await ctx.db.insert('reorientations', {
+        ...fields,
+        status: 'open',
+        triggerKey: 'again',
+      });
+    });
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, { reorientationId: again }),
+    ).rejects.toThrow('These agreements have been checked since this card opened: dismiss it.');
+  }, 60_000);
+
   it('records an owed check for an established employee amended past the bound, and refuses Check now there (RM28)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { first } = await heldOffice(harness);

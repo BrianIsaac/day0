@@ -37,6 +37,7 @@ import {
 } from '../src/agent/reorientation-vocabulary';
 import {
   approvedResultWords,
+  closedByHandSummary,
   conflictQuestionText,
   type NamedPageWords,
 } from '../src/agent/reorientation-words';
@@ -771,14 +772,22 @@ export const holdingCard = internalQuery({
  * list the moved employee's under the owner who has it. A card still undecided is closed as handed
  * over (W16-R1, D-5 (a); 16-K's option (b)): what it asks rests on the old manager's graph, words
  * and documentation, which stay theirs, so the new manager starts from the transfer's own card.
- * Its talk's words are cleared beside it (`reorientationTalk.clearTalksForHandover`).
+ * Its talk's words are cleared beside it (`reorientationTalk.clearTalksForHandover`), and the
+ * summary of a card the old manager opened by hand with them (D-5's remainder, (a)): the card's own
+ * line. The record's lines about the card move whole, as the record does (D10).
  */
 export async function moveCardsToOwner(
   ctx: MutationCtx,
-  agentId: Id<'agents'>,
-  userId: string,
-  now: number,
+  handover: {
+    readonly agentId: Id<'agents'>;
+    /** The new owner's key. */
+    readonly userId: string;
+    /** The previous manager, as a closed by-hand card names who opened it. */
+    readonly previousManager: string;
+    readonly now: number;
+  },
 ): Promise<void> {
+  const { agentId, userId, now } = handover;
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
     const cards = await ctx.db
       .query('reorientations')
@@ -795,6 +804,11 @@ export async function moveCardsToOwner(
           decidedAt: now,
           revisitAt: undefined,
           outcome: { summary: approvedResultWords.handedOver },
+          // A card opened by hand says what the previous manager typed: cleared with the talk's
+          // words, the card kept with who opened it (D-5's remainder, (a)).
+          ...(card.trigger === 'role-changed'
+            ? { triggerSummary: closedByHandSummary(handover.previousManager) }
+            : {}),
         });
       } else if (card.userId !== userId) {
         await ctx.db.patch(card._id, { userId });
@@ -857,12 +871,13 @@ export async function agreementsApplying(
 /**
  * Open one card on every employee among some of their systems' cards, each card naming that
  * employee's systems and what they reach: a change the organisation made to a connection several
- * employees' systems run on (section 3's revocation rows).
+ * employees' systems run on (section 3's revocation rows). The change's line on the connection's
+ * ledger rides as the card's evidence (`evidence.connectionEventIds`; wave 17).
  */
 export async function openCardsOnSurfaces(
   ctx: MutationCtx,
   surfaceIds: readonly Id<'surfaces'>[],
-  change: Pick<CardTrigger, 'trigger' | 'triggerKey' | 'summary' | 'now'>,
+  change: Pick<CardTrigger, 'trigger' | 'triggerKey' | 'summary' | 'now' | 'evidence'>,
 ): Promise<void> {
   const byAgent = new Map<Id<'agents'>, Doc<'surfaces'>[]>();
   for (const id of surfaceIds) {
@@ -1133,7 +1148,9 @@ async function candidatesOf(
         kind: 'agreement',
         agreementId: id,
         statement: agreement.statement,
-        actions: agreementActionsOf(agreement),
+        // An owed check's card offers the check and nothing else of the agreement (RM34 (a)).
+        actions:
+          card.trigger === 'agreement-check-owed' ? ['recheck'] : agreementActionsOf(agreement),
       });
     }
   }

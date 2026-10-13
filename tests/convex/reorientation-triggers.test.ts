@@ -891,6 +891,12 @@ describe('the revocation rows (credential.revoked-at-source failed; organisation
       organisationConnectionId: connectionId,
       reason: 'the app was replaced',
     });
+    const ledger = await harness.run(async (ctx) =>
+      (await ctx.db.query('connectionEvents').collect()).filter(
+        (line) => line.type === 'organisation.connection-revoked',
+      ),
+    );
+    expect(ledger).toHaveLength(1);
     for (const agentId of [mira, pip]) {
       expect(await cardsSaid(harness, agentId)).toEqual([
         {
@@ -900,8 +906,50 @@ describe('the revocation rows (credential.revoked-at-source failed; organisation
           userId: OWNER_SUBJECT,
         },
       ]);
+      // The revocation's line on the connection's ledger is the card's evidence (17-O), and the
+      // page is given the line to say in the record's words.
+      const [card] = await cardsOf(harness, agentId);
+      expect(card.evidence.connectionEventIds).toEqual([ledger[0]._id]);
+      const [view] = await harness
+        .withIdentity(OWNER)
+        .query(api.reorientationDecisions.listForAgent, { agentId });
+      expect(view.ledger.map((line) => [line._id, line.type])).toEqual([
+        [ledger[0]._id, 'organisation.connection-revoked'],
+      ]);
     }
     expect(await cardsOf(harness, nell)).toEqual([]);
+    // The same line reported again opens nothing more: a card carries it by its ledger id.
+    const { openCardsOnSurfaces } = await import('../../convex/reorientation');
+    const surfaces = await harness.run(async (ctx) => await ctx.db.query('surfaces').collect());
+    await harness.run(async (ctx) => {
+      await openCardsOnSurfaces(
+        ctx,
+        surfaces.map((surface) => surface._id),
+        {
+          trigger: 'connection-revoked',
+          triggerKey: 'a-second-report',
+          summary: 'A second report of the same line',
+          evidence: { connectionEventIds: [ledger[0]._id] },
+        },
+      );
+    });
+    const [joined] = await cardsOf(harness, mira);
+    // A different key joins the day's card, and its ledger line is kept once.
+    expect(joined.evidence.connectionEventIds).toEqual([ledger[0]._id]);
+    await harness.run(async (ctx) => {
+      await openCardsOnSurfaces(
+        ctx,
+        surfaces.map((surface) => surface._id),
+        {
+          trigger: 'connection-revoked',
+          triggerKey: ledger[0]._id,
+          summary: 'The line itself, reported again',
+        },
+      );
+    });
+    expect(
+      (await eventTypesOfAgent(harness, mira)).filter((type) => type === 'reorientation.opened'),
+    ).toHaveLength(2);
   });
 
   it('opens one card on every employee of the connection when its shared token could not be revoked', async (): Promise<void> => {

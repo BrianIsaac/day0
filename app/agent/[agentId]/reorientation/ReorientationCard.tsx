@@ -19,6 +19,7 @@ import { Button, ButtonLink } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
+import { recordWords } from '../record/record-words';
 import { useChange } from '../../../components/use-change';
 
 /** One card as the reorientation page draws it (`reorientationDecisions.listForAgent`). */
@@ -122,10 +123,13 @@ function ProposalBody({
       return (
         <>
           <p>
-            {agreement !== undefined ? (
-              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
-            ) : (
+            {agreement === undefined ? (
               'A working agreement.'
+            ) : proposed.action === 'keep' || proposed.action === 'recheck' ? (
+              // Kept or checked again, the agreement stands as written: nothing is struck.
+              agreement.statement
+            ) : (
+              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
             )}
           </p>
           {proposed.statement !== undefined ? <p>{proposed.statement}</p> : null}
@@ -254,6 +258,8 @@ export function ReorientationCard({
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),
     ...view.people.map((edge) => edge.words),
+    // The organisation's ledger lines an organisation's change rests on, in the record's words.
+    ...view.ledger.map((line) => recordWords(line, { name }).replace(/\.$/u, '')),
     // A rule drafted before rules were bound carries no clause, so its own words say it (W16-R21).
     ...(view.carriedRules ?? []).map((quote) => `Its reporting-line rule: “${quote}”`),
   ];

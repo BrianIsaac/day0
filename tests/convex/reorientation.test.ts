@@ -701,7 +701,15 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
       summary: 'Linear access ended',
     }))!;
     await harness.run(async (ctx) => await ctx.db.patch(applied, { status: 'applied' }));
-    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor', 5));
+    await harness.run(
+      async (ctx) =>
+        await moveCardsToOwner(ctx, {
+          agentId,
+          userId: 'successor',
+          previousManager: 'priya@acme.test',
+          now: 5,
+        }),
+    );
     expect((await cardOf(harness, open)).userId).toBe('successor');
     expect((await cardOf(harness, applied)).userId).toBe('successor');
     // The undecided card closes as handed over (W16-R1, D-5 (a)); the decided one keeps its standing.
@@ -711,6 +719,51 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
       outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
     });
     expect((await cardOf(harness, applied)).status).toBe('applied');
+  });
+
+  it('clears the summary of a card the previous manager opened by hand, which then says who opened it (D-5’s remainder, (a))', async (): Promise<void> => {
+    // The pre-tag's row 5: the closed card kept "Wren now covers renewals too", the old manager's
+    // typed words, on the new manager's page.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, { name: 'Wren' });
+    const byHand = (await openTestCard(harness, {
+      agentId,
+      trigger: 'role-changed',
+      triggerKey: 'role-changed:1',
+      summary: 'Wren now covers renewals too',
+    }))!;
+    const automatic = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-1',
+      summary: 'A skill is due a re-check',
+    }))!;
+    const decidedByHand = (await openTestCard(harness, {
+      agentId,
+      trigger: 'role-changed',
+      triggerKey: 'role-changed:0',
+      summary: 'Wren took on the weekly digest',
+      now: Date.UTC(2026, 8, 20),
+    }))!;
+    await harness.run(async (ctx) => await ctx.db.patch(decidedByHand, { status: 'applied' }));
+    await harness.run(
+      async (ctx) =>
+        await moveCardsToOwner(ctx, {
+          agentId,
+          userId: 'successor',
+          previousManager: 'priya@acme.test',
+          now: 5,
+        }),
+    );
+    expect(await cardOf(harness, byHand)).toMatchObject({
+      status: 'dismissed',
+      triggerSummary: 'A card priya@acme.test opened was closed at the handover',
+    });
+    // A card Day0 opened says what changed in Day0's own words, and a decided card is the record.
+    expect((await cardOf(harness, automatic)).triggerSummary).toBe('A skill is due a re-check');
+    expect((await cardOf(harness, decidedByHand)).triggerSummary).toBe(
+      'Wren took on the weekly digest',
+    );
   });
 
   it('closes a deferred card too, so it holds nothing and reopens nowhere under the new manager (the second pass)', async (): Promise<void> => {
@@ -725,7 +778,15 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
     await harness.run(
       async (ctx) => await ctx.db.patch(deferred, { status: 'deferred', revisitAt: 9_999 }),
     );
-    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor', 5));
+    await harness.run(
+      async (ctx) =>
+        await moveCardsToOwner(ctx, {
+          agentId,
+          userId: 'successor',
+          previousManager: 'priya@acme.test',
+          now: 5,
+        }),
+    );
     const card = await cardOf(harness, deferred);
     expect(card).toMatchObject({ status: 'dismissed', userId: 'successor', decidedAt: 5 });
     expect(card.revisitAt).toBeUndefined();

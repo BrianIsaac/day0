@@ -64,6 +64,14 @@ describe('the reorientation card’s words (section 7, RM24)', (): void => {
     expect(heldWords({ plans: 1, runs: 0 })).toBe('1 plan held');
     expect(heldWords({ plans: 2, runs: 1 })).toBe('2 plans held, 1 run held before closing');
     expect(heldWords({ plans: 0, runs: 3 })).toBe('3 runs held before closing');
+    // A change that reached more open work than a card holds says the rest (W16-R22; section 7).
+    expect(heldWords({ plans: 10, runs: 0, notHeld: 90 })).toBe(
+      '10 plans held, and 90 more not held: a card holds at most ten',
+    );
+    expect(heldWords({ plans: 7, runs: 3, notHeld: 1 })).toBe(
+      '7 plans held, 3 runs held before closing, and 1 more not held: a card holds at most ten',
+    );
+    expect(heldWords({ plans: 2, runs: 0, notHeld: 0 })).toBe('2 plans held');
     expect(pendingWords('Mira', { plans: 0, runs: 0 })).toBe(
       'Mira is working out what to propose. Nothing is held while it does.',
     );

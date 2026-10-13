@@ -23,6 +23,8 @@ export const CARD_ACTION_REFUSALS = {
   targetGone: 'What this card proposes to change is no longer there: dismiss it.',
   moved: 'What this card proposes to change has moved on since: dismiss it.',
   successor: 'The page this card names as the successor is not current: dismiss it.',
+  /** An owed check's card whose agreements have all been checked since (RM34 (a)). */
+  checked: 'These agreements have been checked since this card opened: dismiss it.',
   date: 'Pick a date after today and within a year.',
   summary: 'Say what changed in up to 300 characters.',
 } as const;
@@ -58,6 +60,17 @@ export const approvedResultWords = {
         ? `the skill “${name}” was retired`
         : `the skill “${name}” was withdrawn from every employee`,
 } as const;
+
+/**
+ * What a card the previous manager opened by hand says once a handover closed it (D-5's remainder,
+ * (a); section 7): their typed words are cleared with the talk's, and the card says who opened it.
+ */
+export function closedByHandSummary(previousManager: string): string {
+  return `A card ${previousManager} opened was closed at the handover`;
+}
+
+/** What an owed check's card says changed (RM34 (a); section 9.1's words). */
+export const CHECK_OWED_SUMMARY = 'Its agreements could not be checked against the amended charter';
 
 /** A card's summary without the full stop or other closing mark it may end with. */
 function withoutStop(summary: string): string {
@@ -182,9 +195,18 @@ export function revisitDay(ms: number, zone: string | undefined): string {
 export interface HeldCounts {
   readonly plans: number;
   readonly runs: number;
+  /**
+   * The open work the change reached that the card does not hold, because a card holds at most
+   * ten items (W16-R22). Absent or 0 where the card holds everything it reached.
+   */
+  readonly notHeld?: number;
 }
 
-/** What a card holds, as its line says it: "2 plans held, 1 run held before closing". */
+/**
+ * What a card holds, as its line says it: "2 plans held, 1 run held before closing", and where the
+ * change reached more open work than a card holds, "10 plans held, and 90 more not held: a card
+ * holds at most ten" (W16-R22; section 7).
+ */
 export function heldWords(held: HeldCounts): string {
   const parts = [
     held.plans > 0 ? (held.plans === 1 ? '1 plan held' : `${held.plans} plans held`) : undefined,
@@ -194,7 +216,11 @@ export function heldWords(held: HeldCounts): string {
         : `${held.runs} runs held before closing`
       : undefined,
   ].filter((part): part is string => part !== undefined);
-  return parts.length === 0 ? 'nothing held' : parts.join(', ');
+  if (parts.length === 0) return 'nothing held';
+  const more = held.notHeld ?? 0;
+  return more > 0
+    ? `${parts.join(', ')}, and ${more} more not held: a card holds at most ten`
+    : parts.join(', ');
 }
 
 /**

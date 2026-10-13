@@ -489,6 +489,7 @@ export const finishSharedRevocation = internalMutation({
           summary: `Day0 could not end the organisation's shared ${connection.displayName} token at ${connection.system}${
             args.reason !== undefined ? `: ${args.reason.slice(0, REASON_LIMIT)}` : ''
           }`,
+          evidence: { connectionEventIds: [lineId] },
           now,
         },
       );

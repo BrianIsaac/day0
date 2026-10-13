@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import { openCards } from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
 import {
@@ -167,6 +168,11 @@ describe('approve: the proposal applied through its target', (): void => {
     );
     expect(rows.find((row) => row._id === retired)?.status).toBe('retired');
     expect(rows.map((row) => row.statement)).toContain('Answer within two days.');
+    // The edit a card's Approve made says so on its row (O-15): it was recorded as the
+    // Agreements card's until 0.21.0.
+    expect(rows.find((row) => row.statement === 'Answer within two days.')?.approvedVia).toBe(
+      'reorientation',
+    );
   });
 
   it('keeps an active agreement, checks an approved one again, and sets a proposed one aside', async (): Promise<void> => {
@@ -1196,5 +1202,37 @@ describe('openByHand and listForAgent', (): void => {
       .query(api.reorientationDecisions.listForAgent, { agentId });
     expect(views.find((view) => view.card._id === holding)?.held).toEqual({ plans: 1, runs: 3 });
     expect(views.find((view) => view.card._id === decided)?.held).toEqual({ plans: 0, runs: 0 });
+  });
+
+  it('holds ten of a hundred open plans and says the ninety it does not hold (W16-R22)', async (): Promise<void> => {
+    // The review's W16-R22: a high-risk card for an employee with a hundred open plans holds ten
+    // and said "10 plans held", nothing of the rest.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (let at = 0; at < 100; at += 1) {
+      await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${at}` });
+    }
+    const few = await seedEmployee(harness, { name: 'Pip' });
+    await seedWork(harness, few, 'plan-pending');
+    await harness.run(async (ctx) => {
+      await openCards(
+        ctx,
+        [agentId, few].map((employee) => ({
+          agentId: employee,
+          trigger: 'relationship-changed' as const,
+          triggerKey: 'edge-change-1',
+          summary: 'Priya is now its approver',
+          reach: { kind: 'open-work' as const },
+        })),
+      );
+    });
+    const owner = harness.withIdentity(OWNER);
+    const [busy] = await owner.query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(busy.card.affected.workItems).toHaveLength(100);
+    expect(busy.card.blockingWork).toHaveLength(10);
+    expect(busy.held).toEqual({ plans: 10, runs: 0, notHeld: 90 });
+    // A card that holds everything it reached says nothing of a rest.
+    const [quiet] = await owner.query(api.reorientationDecisions.listForAgent, { agentId: few });
+    expect(quiet.held).toEqual({ plans: 1, runs: 0 });
   });
 });
