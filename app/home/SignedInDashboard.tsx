@@ -137,7 +137,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {!staffed && showInbox ? (
-            <NeedsYouList inbox={inboxRead} now={now} paused={paused} beyond={beyondInbox.total} />
+            <NeedsYouList
+              inbox={inboxRead}
+              now={now}
+              paused={paused}
+              beyond={beyondInbox.byEmployee}
+            />
           ) : null}
           {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
@@ -159,7 +164,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
             />
           ) : null}
           {staffed ? (
-            <NeedsYouList inbox={inboxRead} now={now} paused={paused} beyond={beyondInbox.total} />
+            <NeedsYouList
+              inbox={inboxRead}
+              now={now}
+              paused={paused}
+              beyond={beyondInbox.byEmployee}
+            />
           ) : null}
           <EmployeeRoster
             employees={roster}
