@@ -3449,3 +3449,41 @@ describe('the wave 16 schema step (16-K, N10: additive and optional)', (): void 
     ).rejects.toThrow();
   });
 });
+
+describe('the wave 17 schema step (17-K, N10: additive and optional, no table, no index, no pass)', (): void => {
+  /** An employee of the owner's. */
+  const insertAgent = async (ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> =>
+    await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Mira',
+      userId: 'owner',
+      state: 'deployed',
+      createdAt: 1,
+    });
+
+  it("says whether a page's date is its source's own or the time it was read; a page stored before 0.21.0 says neither (D-8 (a), K-1)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const older = await ctx.db.get(olderId);
+      const page = { sourceId: older!.sourceId, title: 'Refunds', markdown: '# Refunds' };
+      const datedId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds.md',
+        updatedAt: 5,
+        datedBySource: true,
+      });
+      const readId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds-copy.md',
+        updatedAt: 6,
+        datedBySource: false,
+      });
+      return { older, dated: await ctx.db.get(datedId), read: await ctx.db.get(readId) };
+    });
+    expect(read.older).not.toHaveProperty('datedBySource');
+    expect(read.dated).toMatchObject({ updatedAt: 5, datedBySource: true });
+    expect(read.read).toMatchObject({ updatedAt: 6, datedBySource: false });
+  });
+});

@@ -753,6 +753,15 @@ export default defineSchema({
     markdown: v.string(),
     updatedAt: v.number(),
     /**
+     * Whether `updatedAt` is the source's own edit time (wave 17, 17-K for 17-X and 17-FD; D-8 (a),
+     * K-1): true when the reader was given one, false when it fell back to the time it read the
+     * page, so a dated successor is proposed only between two pages their sources dated. Absent on
+     * a page stored before 0.21.0, where the measure keeps its rule by the source's kind; written
+     * at a page's next store and, for a page kept unchanged, the first time a sync meets it
+     * without the field (K-2: no pass, which could not know which stored dates were a source's).
+     */
+    datedBySource: v.optional(v.boolean()),
+    /**
      * A keyed hash of the page as its reader returned it, before redaction (wave 14, 14-I; P8-10):
      * `pageContentHash` (`src/docs/content-hash.ts`), an HMAC under the deployment's credential key
      * bound to the owner, so the row is no test of a guessed secret. Written by `upsertPage` with
