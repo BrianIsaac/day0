@@ -314,7 +314,7 @@ function firstElement(text: string, names: string): string | undefined {
  * Code is a fenced block in its language; a panel is a quotation under its kind and title; a
  * status is its word; an Include Page macro names the page it draws in (W15-R30); any other
  * macro is its rich text under its title, or its plain text as it was typed. A macro with no body
- * (a table of contents, a page tree) draws nothing: day0 reads the page's own text.
+ * (a table of contents, a page tree) draws nothing: Day0 reads the page's own text.
  */
 function macroHtml(tag: string, inner: string): string {
   const name = attribute(tag, 'ac:name') ?? '';
@@ -369,7 +369,7 @@ function linkHtml(inner: string): string {
 }
 
 /**
- * An image: a picture at an address stays one; an attached file is named, since day0 reads text.
+ * An image: a picture at an address stays one; an attached file is named, since Day0 reads text.
  * Each stands apart from what is beside it, so two images never run together (W15-R30).
  */
 function imageHtml(tag: string, inner: string): string {
