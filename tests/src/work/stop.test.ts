@@ -193,6 +193,12 @@ describe('a stop on the model’s reply, as the manager reads it (finding 1 of t
         'stopped: agentJson(day0-skill-x-initial): prompt: the model call reached its 300000ms budget',
       ),
     ).toBe('the model call reached its 300000ms budget');
+    // The other mode a structured call names itself with (`StructuredMode` in `src/lib/mastra.ts`).
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): native: the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
     expect(
       stopDetail('stopped: agentText(day0-voice): the model call reached its 60000ms budget'),
     ).toBe('the model call reached its 60000ms budget');
