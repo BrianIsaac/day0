@@ -1,15 +1,18 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
+import { OWNER_ROW_EMPLOYEE_ID_FIELDS } from '../../convex/exportActions';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { employeeTracesOf, readOwnerExport } from '../../src/export/trace';
+import { encrypt } from '../../src/lib/credential-crypto';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
-import { ownerExportOf, seedOwner } from './fakes/owner-export';
+import { ownerExportOf, seedOwner, type Harness } from './fakes/owner-export';
 
 describe('the export redacts by its own policy row (review M9)', (): void => {
   it("removes an e-mail, a phone number and a labelled address from a work item's text", async (): Promise<void> => {
@@ -180,5 +183,90 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     await expect(
       harness.action(api.exportActions.exportOwnerPage, { section: 'people', cursor: null }),
     ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe('an employee’s id in the export (W16-R32)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** One stored credential of the owner's, sealed as the store action seals it. */
+  async function storeValue(harness: Harness, owner: string, plaintext: string): Promise<void> {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('credentials', {
+        userId: owner,
+        kind: 'value',
+        label: 'A short tile code',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(plaintext, key),
+      });
+    });
+  }
+
+  it('is in the file unscrubbed when a stored value occurs inside it, and the value is still removed where it is data', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // The review's input: a short stored credential that occurs inside the employees' ids.
+    const inside = a.agentId.slice(0, 4);
+    expect(a.evaluationId).toContain(inside);
+    await storeValue(harness, 'owner-a', inside);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', {
+        agentId: a.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'Alpha-2',
+        title: `Rotate the tile code ${inside} before Friday`,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 2,
+        createdAt: 2,
+      });
+    });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+
+    // Wherever the file names the employee: the list its traces follow, its own trace, its rows
+    // and the owner's rows that are about it; and the agent set aside the same.
+    expect(file.employees.map((trace) => trace.agent.id)).toEqual([a.agentId]);
+    const [trace] = file.employees;
+    expect(trace?.sections.events.map((event) => event.agentId)).toEqual([a.agentId]);
+    expect(trace?.sections.workItems.map((item) => item.agentId)).toEqual([a.agentId, a.agentId]);
+    expect(file.owner.skillVersions.map((version) => version.authorAgentId)).toEqual([a.agentId]);
+    expect(file.owner.retirements.map((row) => row.agentId)).toEqual([a.evaluationId]);
+    expect(file.setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    // The stored value where it is data, in a ticket's title, is removed as before.
+    const titles = trace?.sections.workItems.map((item) => item.title) ?? [];
+    expect(titles.some((title) => title.startsWith('Rotate the tile code '))).toBe(true);
+    expect(titles.join(' ')).not.toContain(inside);
+  });
+
+  it('is kept in the owner’s rows in every field the schema types as an employee’s id', (): void => {
+    // The tables the owner's rows are read from (`OWNER_SECTION_PAGES`).
+    const tables = [
+      'retirements',
+      'managerTransfers',
+      'docSources',
+      'docPages',
+      'docRelations',
+      'skillVersions',
+      'people',
+      'personIdentities',
+      'relationships',
+      'workingAgreements',
+    ] as const;
+    const typed = new Set(
+      tables.flatMap((table) =>
+        Object.entries(schema.tables[table].validator.fields).flatMap(([field, validator]) =>
+          validator.kind === 'id' && validator.tableName === 'agents' ? [field] : [],
+        ),
+      ),
+    );
+    expect([...typed].sort()).toEqual([...OWNER_ROW_EMPLOYEE_ID_FIELDS].sort());
   });
 });

@@ -42,19 +42,62 @@ import {
 /**
  * Every string in a value with the owner's stored values, every structural
  * secret and the personal data the export's policy row redacts replaced.
+ *
+ * An employee's id is the file's own bearing, never data (W16-R32): a string that is one of
+ * `employeeIds`, whole, is left as it stands, so a short stored value that occurs inside an id
+ * cannot break the id the next call, the recompute and the file's own rows are keyed by.
+ *
+ * @param value - What a call answers, before it leaves.
+ * @param known - The owner's stored values.
+ * @param employeeIds - The ids of the employees the value is about.
  */
-function redactStrings<T>(value: T, known: readonly string[]): T {
-  const walk = (entry: unknown): unknown => {
-    if (typeof entry === 'string') return redactFloorFor(entry, 'export');
-    if (Array.isArray(entry)) return entry.map(walk);
+function redactStrings<T>(
+  value: T,
+  known: readonly string[],
+  employeeIds: ReadonlySet<string> = new Set(),
+): T {
+  // The scrub keeps the value's shape, so the two are walked side by side.
+  const walk = (entry: unknown, original: unknown): unknown => {
+    if (typeof original === 'string') {
+      return employeeIds.has(original) ? original : redactFloorFor(entry as string, 'export');
+    }
+    if (Array.isArray(entry)) {
+      return entry.map((item: unknown, index) =>
+        walk(item, (original as readonly unknown[])[index]),
+      );
+    }
     if (entry !== null && typeof entry === 'object') {
       return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>).map(([key, item]) => [key, walk(item)]),
+        Object.entries(entry as Record<string, unknown>).map(([key, item]) => [
+          key,
+          walk(item, (original as Record<string, unknown>)[key]),
+        ]),
       );
     }
     return entry;
   };
-  return walk(scrubKnownValues(value, known)) as T;
+  return walk(scrubKnownValues(value, known), value) as T;
+}
+
+/**
+ * The fields of the owner's rows that hold an employee's id, as the schema types them
+ * (`v.id('agents')` on `retirements`, `managerTransfers`, `skillVersions`, `relationships` and
+ * `workingAgreements`): the ids a page of the owner's rows is about.
+ */
+export const OWNER_ROW_EMPLOYEE_ID_FIELDS = ['agentId', 'authorAgentId', 'fromAgentId'] as const;
+
+/** The employees' ids a page of the owner's rows names, in the fields the schema keeps them in. */
+function employeeIdsOf(rows: readonly unknown[]): Set<string> {
+  return new Set(
+    rows.flatMap((row) =>
+      row === null || typeof row !== 'object'
+        ? []
+        : OWNER_ROW_EMPLOYEE_ID_FIELDS.flatMap((field) => {
+            const id = (row as Record<string, unknown>)[field];
+            return typeof id === 'string' ? [id] : [];
+          }),
+    ),
+  );
 }
 
 /** The owner's stored values, for an agent the caller owns. */
@@ -78,7 +121,7 @@ export const exportForAgent = action({
       agentId: args.agentId,
       exportedAt: Date.now(),
     });
-    return { ...redactStrings(head, known), next: head.next };
+    return { ...redactStrings(head, known, new Set([args.agentId])), next: head.next };
   },
 });
 
@@ -98,7 +141,7 @@ export const exportPage = action({
     const page: TracePage = await ctx.runQuery(internal.events.exportPage, args);
     // The cursor is the backend's own position, never data: redacting it
     // could turn it into one the next call cannot read.
-    return { ...page, rows: redactStrings(page.rows, known) };
+    return { ...page, rows: redactStrings(page.rows, known, new Set([args.agentId])) };
   },
 });
 
@@ -122,9 +165,10 @@ export const exportForOwner = action({
     const head: OwnerExportHead = await ctx.runQuery(internal.events.exportOwnerHead, {
       exportedAt: Date.now(),
     });
+    const employeeIds = new Set([...head.employees, ...head.setAside].map((agent) => agent.id));
     // The owner key and the cursor are the file's own bearings, never data to redact.
     return {
-      ...redactStrings(head, known),
+      ...redactStrings(head, known, employeeIds),
       manifest: { ...redactStrings(head.manifest, known), ownerKey: head.manifest.ownerKey },
       next: head.next,
     };
@@ -144,6 +188,6 @@ export const exportOwnerPage = action({
   handler: async (ctx, args): Promise<OwnerPage> => {
     const known = await knownValuesOfCaller(ctx);
     const page: OwnerPage = await ctx.runQuery(internal.events.exportOwnerPage, args);
-    return { ...page, rows: redactStrings(page.rows, known) };
+    return { ...page, rows: redactStrings(page.rows, known, employeeIdsOf(page.rows)) };
   },
 });
