@@ -284,7 +284,7 @@ export class ConfluenceCloudReader implements DocumentationReader {
       }
       let bodies: ReadonlyMap<string, ListedConfluencePage> | 'oversize';
       try {
-        bodies = await this.byId(session, changed);
+        bodies = await this.byId(session, changed, listed.base);
       } catch (error) {
         if (!(error instanceof AnswerTooLargeError)) throw error;
         if (changed.length > 1) continue;
@@ -305,17 +305,20 @@ export class ConfluenceCloudReader implements DocumentationReader {
    * An answer that says more of it follows gave a part of the pages asked for: the rest are asked
    * for again, so a page is named gone only by an answer that says nothing follows it.
    *
+   * @param base - The site's address as the listing named it, for an answer that names none: a
+   *   page's stored address is then the one its next listing is held against.
    * @returns Each page the answers carried, by id.
    * @throws AnswerTooLargeError when the pages together are past what one answer may hold.
    */
   private async byId(
     session: Session,
     changed: readonly ListedConfluencePage[],
+    base: string | undefined,
   ): Promise<ReadonlyMap<string, ListedConfluencePage>> {
     const read = new Map<string, ListedConfluencePage>();
     let wanted = changed.map((entry) => entry.id);
     while (wanted.length > 0) {
-      const answered = await this.askById(session, wanted);
+      const answered = await this.askById(session, wanted, base);
       for (const page of answered.pages) read.set(page.id, page);
       const left = wanted.filter((id) => !read.has(id));
       // Nothing follows, or the answer gave none of what was asked: what is left is gone.
@@ -329,6 +332,7 @@ export class ConfluenceCloudReader implements DocumentationReader {
   private async askById(
     session: Session,
     ids: readonly string[],
+    listingBase: string | undefined,
   ): Promise<{ readonly pages: readonly ListedConfluencePage[]; readonly more: boolean }> {
     const url = this.address(session.locator, '/wiki/api/v2/pages');
     url.searchParams.set('id', ids.join(','));
@@ -349,7 +353,7 @@ export class ConfluenceCloudReader implements DocumentationReader {
     if (!Array.isArray(results)) {
       throw new Error('Confluence answered pages asked for by id in a shape Day0 does not read.');
     }
-    const base = textField(field(body, '_links'), 'base');
+    const base = textField(field(body, '_links'), 'base') ?? listingBase;
     return {
       pages: results.map((result: unknown) => listedPage(result, base)),
       more:

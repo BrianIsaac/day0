@@ -709,6 +709,33 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
     ).toEqual([14, 7, 7]);
   }, 60_000);
 
+  it("holds a page read by id to the listing's own site address where the answer by id names none, so it is kept at the next sync", async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 3 });
+    const reader = new ConfluenceCloudReader({
+      // A site whose answer by id carries the pages and no `_links`.
+      fetch: async (input, init) => {
+        const answer = await library.fetch(input, init);
+        const url = new URL(input instanceof Request ? input.url : input);
+        if (!url.searchParams.has('id')) return answer;
+        const body = (await answer.json()) as { results: unknown[] };
+        return json(200, { results: body.results });
+      },
+      now: (): number => T0,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, space, TOKEN, marks);
+    expect(first.read.map((page) => page.url)).toEqual(
+      [0, 1, 2].map(
+        (index) =>
+          `https://acme.atlassian.net/wiki/spaces/OPS/pages/${libraryRef(index)}/runbook-0000${index}`,
+      ),
+    );
+    const again = await readWhole(reader, space, TOKEN, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(3);
+  });
+
   it('says a kept page with no date from its source was dated by the read, and reads as before with no contract to ask', async (): Promise<void> => {
     const library = libraryFake('confluence-v2', { pages: 3 });
     library.pages[1].editedAt = undefined;
