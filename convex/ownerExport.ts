@@ -35,8 +35,12 @@ export const OWNER_EXPORT_AGENT_LIMIT = 500;
 /** The most stored pages one page of the owner export reads: each row holds its page's text. */
 const OWNER_EXPORT_PAGE_ROWS = 25;
 
-/** The bytes one page of stored pages may read, so a library of long pages pages on. */
-const OWNER_EXPORT_PAGE_BYTES = 4 * 1024 * 1024;
+/**
+ * The bytes one page of the export may read, of the owner's rows or of an employee's trace, so a
+ * section of long rows (stored pages, skill versions with their bodies, finished work with its
+ * output) pages on before it nears the backend's bound on one read (W16-R32).
+ */
+export const OWNER_EXPORT_PAGE_BYTES = 4 * 1024 * 1024;
 
 /** A retirement row without its owner key, the one field the export never carries. */
 export function withoutOwner(row: Doc<'retirements'>): Omit<Doc<'retirements'>, 'userId'> {

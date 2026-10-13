@@ -186,6 +186,45 @@ describe('the owner export (wave 16, 16-F)', (): void => {
   });
 });
 
+describe('a page of an employee’s trace is bounded in bytes', (): void => {
+  it('ends a page of work items before it has read past the bound, and the trace still holds every one once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // Forty finished items whose runs each kept a 200 KB draft: 8 MB in one page of a hundred.
+    const draft = 'y'.repeat(200_000);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId: a.agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `Alpha-long-${index}`,
+          title: `Alpha long ticket ${index}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          output: { workDone: 'done', workDoneWhy: 'Posted.', draft },
+          observedAt: 3,
+          createdAt: 3,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const first = await caller.action(api.exportActions.exportPage, {
+      agentId: a.agentId,
+      section: 'workItems',
+      cursor: null,
+    });
+    expect(first.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(first.rows).length).toBeLessThan(5 * 1024 * 1024);
+    expect(first.next).toMatchObject({ section: 'workItems' });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+    expect(file.employees[0]?.sections.workItems).toHaveLength(41);
+  });
+});
+
 describe('an employee’s id in the export (W16-R32)', (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();

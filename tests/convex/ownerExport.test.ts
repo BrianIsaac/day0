@@ -167,6 +167,53 @@ describe('the owner export’s rows (wave 16, 16-F)', (): void => {
   });
 });
 
+describe('a page of the owner’s rows is bounded in bytes (W16-R32)', (): void => {
+  it('ends a page of skill versions before it has read past the bound, and the walk still reads every one once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId } = await seedOwner(harness, 'owner-a', 'Alpha');
+    // Forty versions of 200 KB each: 8 MB of bodies, where one page of a hundred rows was read
+    // whole whatever it weighed.
+    const body = `# A long runbook\n${'x'.repeat(200_000)}`;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let version = 2; version <= 41; version += 1) {
+        await ctx.db.insert('skillVersions', {
+          userId: 'owner-a',
+          name: 'Alpha-skill',
+          description: 'Comment on a ticket, then close it.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version,
+          body,
+          bodyHash: `sha256:${version}`,
+          requiredScopes: [],
+          harnessTools: [],
+          harnessToolsBySurface: [],
+          authorAgentId: agentId,
+          authorName: 'Alpha Employee',
+          readRefs: [],
+          verifiedAt: 2,
+          createdAt: 2,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const first = await caller.action(api.exportActions.exportOwnerPage, {
+      section: 'skillVersions',
+      cursor: null,
+    });
+    const bytes = JSON.stringify(first.rows).length;
+    expect(first.rows.length).toBeGreaterThan(0);
+    expect(bytes).toBeLessThan(5 * 1024 * 1024);
+    expect(first.next).toMatchObject({ section: 'skillVersions' });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+    expect(file.owner.skillVersions.map((row) => row.version).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 41 }, (_, index) => index + 1),
+    );
+  });
+});
+
 describe('the owner export’s walk of stored pages (the second pass’s finding 4)', (): void => {
   it('goes on to the next source when the one it is in is unlinked between two pages', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

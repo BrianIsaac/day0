@@ -9,7 +9,12 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, employeeOwnerScope, getCallerOrThrow } from './ownership';
 import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
-import { OWNER_EXPORT_AGENT_LIMIT, OWNER_SECTION_PAGES, withoutOwner } from './ownerExport';
+import {
+  OWNER_EXPORT_AGENT_LIMIT,
+  OWNER_EXPORT_PAGE_BYTES,
+  OWNER_SECTION_PAGES,
+  withoutOwner,
+} from './ownerExport';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { agentZone, dayKey, deploymentZone } from '../src/lib/zone';
 import {
@@ -662,7 +667,8 @@ const traceSection = v.union(...TRACE_SECTIONS.map((section) => v.literal(sectio
 /**
  * One page of one section of an agent's trace, redacted, with where the next
  * page starts. At most `TRACE_PAGE_ROWS` rows, so no call nears the
- * backend's 8,192-element return bound. Internal; the export action runs it
+ * backend's 8,192-element return bound, and fewer where the rows are long
+ * (`OWNER_EXPORT_PAGE_BYTES`). Internal; the export action runs it
  * under the caller's identity and the ownership check here runs again.
  */
 export const exportPage = internalQuery({
@@ -672,6 +678,7 @@ export const exportPage = internalQuery({
     const page = await SECTION_PAGES[args.section](ctx, args.agentId, {
       cursor: args.cursor,
       numItems: TRACE_PAGE_ROWS,
+      maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
     });
     const following = sectionAfter(args.section);
     return {
@@ -737,7 +744,8 @@ export const exportOwnerHead = internalQuery({
 
 /**
  * One page of one section of the owner's rows, redacted for export, with where the next page
- * starts. At most `TRACE_PAGE_ROWS` rows (stored pages fewer). Internal;
+ * starts. At most `TRACE_PAGE_ROWS` rows (stored pages fewer), and fewer where the rows are long
+ * (`OWNER_EXPORT_PAGE_BYTES`). Internal;
  * `exportActions.exportOwnerPage` runs it under the caller's identity, and every read is keyed by
  * the caller's own owner key.
  */
@@ -751,6 +759,7 @@ export const exportOwnerPage = internalQuery({
     const page = await OWNER_SECTION_PAGES[args.section](ctx, ownerKey, {
       cursor: args.cursor,
       numItems: TRACE_PAGE_ROWS,
+      maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
     });
     const following = ownerSectionAfter(args.section);
     return {
