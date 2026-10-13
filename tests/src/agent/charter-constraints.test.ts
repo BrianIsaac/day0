@@ -1721,6 +1721,17 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
   ])('reads %j as %j', (clause, act): void => {
     expect(willNotDoAsAct(clause)).toBe(act);
   });
+
+  // W16-R29 (reader 4's p10): a second half that sends the work elsewhere with no destination
+  // the rule knows left "Post in #general, use #revops." under Will not do, the opposite of the
+  // clause. Such a clause is returned as the manager wrote it.
+  it.each([
+    'Never post in #general, use #revops.',
+    'Never email customers directly, use the portal instead.',
+    'Never send quotes, ask Sam.',
+  ])('leaves %j as it is, its redirect naming no destination the rule knows', (clause): void => {
+    expect(willNotDoAsAct(clause)).toBe(clause);
+  });
 });
 
 describe('withRoutingRules (RM27)', (): void => {

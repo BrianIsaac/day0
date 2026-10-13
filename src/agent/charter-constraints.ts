@@ -167,7 +167,8 @@ const REDIRECT_GERUNDS: Readonly<Record<string, string>> = {
  * amount in the tracker.", and a second half that sends the work elsewhere is joined as what the
  * act skips: "Do not contact the sales lead directly, go through the manager for deal matters."
  * reads "Contact the sales lead directly without going through the manager for deal matters." A
- * clause that opens on no prohibition is returned as it is.
+ * clause that opens on no prohibition is returned as it is, and so is one whose second half
+ * redirects to a destination the rule does not recognise (W16-R29).
  */
 export function willNotDoAsAct(clause: string): string {
   const trimmed = clause.trim();
@@ -181,6 +182,10 @@ export function willNotDoAsAct(clause: string): string {
       : null;
   const gerund = split ? REDIRECT_GERUNDS[split[2]!.toLowerCase()] : undefined;
   const redirects = split !== null && REDIRECT_DESTINATION.test(split[3] ?? '');
+  // A second half that opens on a redirect's verb and names no destination the rule knows ("use
+  // #revops", "ask Sam") cannot be joined as what the act skips, and read as an act of its own it
+  // says the opposite of the clause, so the clause stays as the manager wrote it (W16-R29).
+  if (split && gerund && !redirects) return clause;
   const joined =
     split && gerund && redirects
       ? `${split[1]} without ${gerund}${split[3]!.replace(/\s+instead(?=[.!]?$)/i, '')}`
