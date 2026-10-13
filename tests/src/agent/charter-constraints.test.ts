@@ -1911,6 +1911,16 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
     });
   });
 
+  it("writes nothing for a sentence the manager says of themself, which rules out no act of the employee's", (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule("I won't be in on Fridays.", []),
+      rule('I never check the queue after six.', []),
+      rule('I do not approve refunds over 50.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
   it("writes one clause for each of two prohibitions, each rule bound to its own, the draft's clauses kept in their places", (): void => {
     const drawn = withProhibitionClauses(
       charter([DUTY], ['Own hardware.']),

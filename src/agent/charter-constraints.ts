@@ -1720,7 +1720,8 @@ function grantsTheAct(charter: Charter, sentence: string): boolean {
  * nothing are dropped with it, so a strike takes the prohibition and leaves the will-do. This is
  * the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the prompt
  * already asks for the clause. Left to the card's own check, which tells the manager to ask for
- * changes: a rule that forbids in softer words ("avoid", "only the security lead approves"), one
+ * changes: a rule that forbids in softer words ("avoid", "only the security lead approves"), a
+ * sentence the manager says of themself ("I won't be in on Fridays."), one
  * the manager struck on an earlier draft, one drafted before rules were bound, and one whose act
  * the draft grants ({@link grantsTheAct}: W14-R14's drafts), where the will-do is what is wrong.
  *
@@ -1736,8 +1737,11 @@ export function withProhibitionClauses(
 ): DrawnRules {
   let current = charter;
   const rules = listed.map((rule: CharterConstraint): CharterConstraint => {
-    const forbidden = quoteSentences(rule.quote).filter((sentence: string): boolean =>
-      PROHIBITION_OPENING.test(sentence.trim()),
+    // "I won't be in on Fridays." is the manager speaking of themself: it rules out no act of
+    // the employee's, though a clause the model drafts in the employee's first person opens so.
+    const forbidden = quoteSentences(rule.quote).filter(
+      (sentence: string): boolean =>
+        PROHIBITION_OPENING.test(sentence.trim()) && !/^i\b/i.test(sentence.trim()),
     );
     if (forbidden.length === 0 || quotedBy(rule.quote, struck)) return rule;
     const placement = rulePlacement(current, rule);
