@@ -25,11 +25,13 @@ import { accessEnded } from '../src/work/surface-access';
 import { log } from '../src/lib/logger';
 import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
+  ActionContractRefusal,
   ClosingGateRefusal,
   DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
   HELD_ITEM_REPLY_COMPLETED,
+  outputKeepingRefusedReply,
   removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
@@ -37,6 +39,7 @@ import {
   repairToolArguments,
   withArgumentRepairs,
   withholdActions,
+  withRefusedReply,
   withReportsOfWithheld,
   runDependentSkill,
   runSkill,
@@ -1460,6 +1463,15 @@ async function holdDay0Actions(
     // a provider error can echo the header it was sent, and a client library
     // appends its stack.
     const reason = safeFailureMessage(err, '', 'the execution failed');
+    // A reply the executor's contract refused after its one repair is kept on the row where the
+    // run stops, at once or once its resumes are spent (17-FW; 16-Q's write-priya-verification).
+    const kept =
+      err instanceof ActionContractRefusal
+        ? withCarriedWrites(outputKeepingRefusedReply(err), {
+            landedWrites: args.landedWrites ?? [],
+            unsentWrites: args.unsentWrites ?? [],
+          })
+        : undefined;
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
@@ -1473,6 +1485,7 @@ async function holdDay0Actions(
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
+        ...(kept === undefined ? {} : { output: kept }),
       });
       if (resumed.outcome === 'resumed') {
         return result({ ok: false, reason: `execution will be tried again: ${reason}` });
@@ -1485,6 +1498,8 @@ async function holdDay0Actions(
       runId: args.runId,
       // A conflict confirmed since the approval stops the run for the manager (D-4 (b)).
       ...(err instanceof ConflictConfirmedError ? { stopped: true } : {}),
+      // Nothing of a refused reply landed: the run stopped, as it did before the reply was kept.
+      ...(kept === undefined ? {} : { stopped: true, output: kept }),
     });
     return result({ ok: false, reason });
   }
@@ -3172,7 +3187,12 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         reason,
         ...(initial
-          ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) }
+          ? {
+              output: scrubKnownValues(
+                withRefusedReply(withRefusedClosing(initial, refused, reason), error),
+                knownValues,
+              ),
+            }
           : {}),
         ...(gateRefusal || heldByCard ? { stopped: true } : {}),
       });

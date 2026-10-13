@@ -23,6 +23,7 @@ import {
   validatePlanStepOutcomes,
 } from '../../convex/workActions';
 import { BROWSER_DRIVER_ABSENT } from '../../src/surfaces/browser';
+import { ActionContractRefusal } from '../../src/work/execute-skill';
 import { INTERRUPTED_APPLY_REASON } from '../../convex/work';
 import { CLOSE_ONLY_ON_CARD_REASON } from '../../src/work/manager-channel';
 import { NOT_APPLIED_AFTER_APPROVED_FAILURE } from '../../convex/workActions';
@@ -9584,6 +9585,84 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
     expect(returned.reason).not.toContain('node_modules');
   });
 
+  /** A reply the executor's contract refused after its one repair, as `runSkill` throws it. */
+  const refusedReply = (): ActionContractRefusal =>
+    new ActionContractRefusal(
+      'executor action contract remained invalid after one repair: procedure-trail action index does not identify the prescribed effect',
+      {
+        phase: 'initial',
+        reply: {
+          draft: 'Sent Priya the verification.',
+          notes: 'The DM is the one action.',
+          actions: [
+            { tool: 'slack.postMessage', args: { channelSlug: 'dm-priya', body: 'Verified.' } },
+          ],
+          procedureTrails: [{ trailId: 'trail-1', actionIndex: 3, inapplicabilityReason: null }],
+        },
+        issues: ['procedure-trail action index does not identify the prescribed effect'],
+        first: { draft: 'First try.', notes: '', actions: [] },
+        firstIssues: ['an applicable loaded procedure trail is not mapped to an action'],
+        at: 1_791_000_000_000,
+      },
+    );
+
+  it('keeps on the row the reply whose action set stayed invalid after its repair (16-Q, write-priya-verification)', async (): Promise<void> => {
+    // 16-Q's row: "stopped: executor action contract remained invalid after one repair: ...",
+    // no action, nothing held, and the failing reply kept nowhere, so the cause could not be read.
+    useSurfaceMode('mock');
+    const refusal = refusedReply();
+    recorded.skillFailure = refusal;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'mock');
+
+    const returned = await harness
+      .withIdentity(OWNER)
+      .action(api.workActions.executeApprovedPlan, { workItemId });
+    const failed = await readItem(harness, workItemId);
+
+    expect(returned.reason).toBe(refusal.message);
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toBe(`stopped: ${refusal.message}`);
+    expect(failed.output).toEqual({
+      draft: 'Sent Priya the verification.',
+      notes: 'The DM is the one action.',
+      actions: [],
+      applied: [],
+      refusedReply: refusal.refused,
+    });
+  });
+
+  it('keeps the refused reply in real mode once the resume ladder is spent, and nothing while a resume is owed (16-Q)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const refusal = refusedReply();
+    recorded.skillFailure = refusal;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    const { MAX_EXECUTION_RESUMES } = await import('../../convex/work');
+
+    for (let attempt = 1; attempt <= MAX_EXECUTION_RESUMES; attempt += 1) {
+      const resumed = await harness.action(internal.workActions.executeApprovedPlanInternal, {
+        workItemId,
+      });
+      expect(resumed.reason).toContain('execution will be tried again');
+      const waiting = await readItem(harness, workItemId);
+      expect(waiting.state).toBe('plan-approved');
+      expect(waiting.output).toBeUndefined();
+    }
+    await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(`failed ${MAX_EXECUTION_RESUMES + 1} times on the model`);
+    expect(failed.output).toMatchObject({
+      draft: 'Sent Priya the verification.',
+      actions: [],
+      applied: [],
+      refusedReply: refusal.refused,
+    });
+  });
+
   it('scrubs a closing phase that fails the same way, on the card and on the kept ledger', async (): Promise<void> => {
     useSurfaceMode('real');
     recorded.skillOutput = {
@@ -9625,6 +9704,48 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
       expect(said).not.toContain('node_modules');
     }
     expect(failed.skipReason).toContain('401 Unauthorized');
+  });
+
+  it('keeps a closing reply the contract refused beside the prerequisite ledger the row keeps (17-FW)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    recorded.skillOutput = {
+      draft: 'Asking the desk lead.',
+      notes: '',
+      needsDependentPhase: true,
+      actions: log1SecondSittingPhaseOne,
+    };
+    const refusal = new ActionContractRefusal(
+      'dependent executor procedure contract remained invalid after one repair: a procedure-trail row maps to an action index that does not exist',
+      { ...refusedReply().refused, phase: 'dependent' },
+    );
+    recorded.dependentFailure = refusal;
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { workItemId } = await seed(harness, 'real');
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.patch(workItemId, {
+        externalId: sitting4Log1Candidate.externalId,
+        title: sitting4Log1Candidate.title,
+        contentSummary: sitting4Log1Candidate.contentSummary,
+        contentRefs: sitting4Log1Candidate.contentRefs,
+        plan: log1SecondSittingPlan,
+      });
+    });
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+    const runId = (await readItem(harness, workItemId)).executionRunId;
+    if (!runId) throw new Error('execution run missing');
+
+    await harness.action(internal.workActions.authorDependentActions, { workItemId, runId });
+    const failed = await readItem(harness, workItemId);
+
+    expect(failed.state).toBe('failed');
+    expect(failed.skipReason).toContain(
+      'dependent executor procedure contract remained invalid after one repair',
+    );
+    const kept = failed.output as { applied?: unknown[]; refusedReply?: unknown };
+    // The prerequisite ledger stays, as for any closing failure, and the reply sits beside it.
+    expect(kept.applied?.length).toBe(log1SecondSittingPhaseOne.length);
+    expect(kept.refusedReply).toEqual(refusal.refused);
   });
 
   it('scrubs a re-read that threw before the closing set, against the owner values too', (): void => {

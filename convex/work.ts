@@ -2915,7 +2915,13 @@ async function executionResumesSinceRetry(
  * @returns `resumed`, `stopped`, or `moved-on` when the run is no longer the row's.
  */
 export const resumeExecution = internalMutation({
-  args: { workItemId: v.id('workItems'), runId: v.id('events'), reason: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    reason: v.string(),
+    /** What the row keeps of the run if its resumes are spent, as `setFailed`'s `output` (17-FW). */
+    output: v.optional(v.any()),
+  },
   handler: async (ctx, args): Promise<{ outcome: 'resumed' | 'stopped' | 'moved-on' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (
@@ -2933,6 +2939,7 @@ export const resumeExecution = internalMutation({
       await failInTransaction(ctx, row, {
         reason: `the execution failed ${attempt} times on the model (${args.reason}); Retry runs it again`,
         stopped: true,
+        ...(args.output !== undefined ? { output: args.output } : {}),
       });
       return { outcome: 'stopped' };
     }
