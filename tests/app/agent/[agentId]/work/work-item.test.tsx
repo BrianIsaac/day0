@@ -121,6 +121,29 @@ describe('the lead of a stop beside a read that landed (the real-Linear walk, M1
   });
 });
 
+describe('a stop on the model’s reply on the card (finding 1 of the v0.20.0 hosted walk)', (): void => {
+  it('says the stop in words, never "agentJson(day0-skill-...)" (row A-Pip-tB-stopped-full.txt)', (): void => {
+    const line = failedItemReason({
+      skipReason:
+        'stopped: agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-northwind-double-charge-initial): prompt reply did not satisfy the schema',
+    });
+    expect(line).toBe(
+      'stopped, nothing landed and nothing to decide: the model’s reply was not in the form Day0 reads',
+    );
+    expect(line).not.toContain('agentJson');
+    expect(line).not.toContain('day0-skill');
+  });
+
+  it('says a closing phase that failed on the model’s reply after work landed in the same words', (): void => {
+    expect(
+      failedItemReason({
+        skipReason:
+          'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-northwind-double-charge-dependent): prompt reply did not satisfy the schema',
+      }),
+    ).toBe('the model’s reply was not in the form Day0 reads');
+  });
+});
+
 describe('the landing moment’s key (M7)', (): void => {
   it('keys each landed row on its place in the ledger, held and failed rows left out', (): void => {
     expect(

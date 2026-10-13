@@ -511,7 +511,8 @@ export function failedItemReason(item: {
     }
     return `stopped, nothing landed and nothing to decide: ${stopDetail(item.skipReason)}`;
   }
-  return item.skipReason;
+  // A failure after work landed is no stop; its reason is said in the same words (17-FW).
+  return item.skipReason === undefined ? undefined : stopDetail(item.skipReason);
 }
 
 /** Name the winning control for a completed manager decision. */

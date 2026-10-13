@@ -1135,6 +1135,80 @@ export class ClosingGateRefusal extends Error {
   }
 }
 
+/** A reply as the executor read it: the words, the set and its trail accounting, as authored. */
+type AuthoredReply = Pick<ExecutionOutput, 'draft' | 'notes' | 'actions'> &
+  Partial<ExecutionOutput | DependentExecutionOutput>;
+
+/**
+ * A reply whose action set the executor's contract still refused after its one repair, kept so
+ * that what the model wrote can be read against why it was turned away (16-Q's
+ * `write-priya-verification`, 13 October 2026: the run stopped with the reason and the failing
+ * reply was kept nowhere). None of its actions reached the gate.
+ */
+export interface RefusedReply {
+  /** The phase that authored it: the run's first response, or its closing set. */
+  readonly phase: 'initial' | 'dependent';
+  /** The reply the repair turn returned, as the contract read it. */
+  readonly reply: AuthoredReply;
+  /** What the contract still refused in it. */
+  readonly issues: readonly string[];
+  /** The reply the repair turn was asked to correct. */
+  readonly first: AuthoredReply;
+  /** What that first reply was sent back for. */
+  readonly firstIssues: readonly string[];
+  /** When the run stopped on it. */
+  readonly at: number;
+}
+
+/**
+ * A run stopped because its action set still broke the executor's contract after the one repair.
+ * The message is the reason the row has always carried; the reply rides beside it, for the row.
+ */
+export class ActionContractRefusal extends Error {
+  /** The reply the contract refused, with the one before it. */
+  readonly refused: RefusedReply;
+
+  constructor(message: string, refused: RefusedReply) {
+    super(message);
+    this.name = 'ActionContractRefusal';
+    this.refused = refused;
+  }
+}
+
+/**
+ * What a stopped run keeps on its row for a reply the contract refused: the words the employee
+ * wrote, no action and an empty ledger, since none of the reply's actions reached the gate, and
+ * the reply itself beside them, where a reader that knows it finds what the model emitted.
+ *
+ * @param refusal - The stop, as `runSkill` or `runDependentSkill` threw it.
+ */
+export function outputKeepingRefusedReply(refusal: ActionContractRefusal): Pick<
+  ExecutionOutput,
+  'draft' | 'notes' | 'actions'
+> & {
+  applied: AppliedAction[];
+  refusedReply: RefusedReply;
+} {
+  const { draft, notes } = refusal.refused.reply;
+  return { draft, notes, actions: [], applied: [], refusedReply: refusal.refused };
+}
+
+/**
+ * An output a failed run keeps, with the reply the contract refused beside it when that is what
+ * failed the run ({@link ActionContractRefusal}); as it was for any other failure.
+ *
+ * @param output - What the row keeps of the run.
+ * @param failure - What the run threw.
+ */
+export function withRefusedReply<T extends object>(
+  output: T,
+  failure: unknown,
+): T & { refusedReply?: RefusedReply } {
+  return failure instanceof ActionContractRefusal
+    ? { ...output, refusedReply: failure.refused }
+    : output;
+}
+
 /** One action an audit withheld, by its index in the response, with the reason. */
 export interface AuditRefusal {
   index: number;
@@ -3158,8 +3232,16 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
       phase: 'initial',
     });
     if (remaining.issues.length > 0) {
-      throw new Error(
+      throw new ActionContractRefusal(
         `executor procedure contract remained invalid after one repair: ${remaining.issues.join('; ')}`,
+        {
+          phase: 'initial',
+          reply: repaired,
+          issues: remaining.issues,
+          first: output,
+          firstIssues: issues,
+          at: args.now ?? Date.now(),
+        },
       );
     }
     // Every other audit fails soft after its one repair, keeping the rest of
@@ -3236,8 +3318,16 @@ async function authorSkillRun(args: RunSkillArgs): Promise<ExecutionOutput> {
   };
   const remaining = mockActionContractIssues(repaired, candidate, plan, procedureContract);
   if (remaining.length > 0) {
-    throw new Error(
+    throw new ActionContractRefusal(
       `executor action contract remained invalid after one repair: ${remaining.join('; ')}`,
+      {
+        phase: 'initial',
+        reply: repaired,
+        issues: remaining,
+        first: output,
+        firstIssues: issues,
+        at: args.now ?? Date.now(),
+      },
     );
   }
   // After the one repair a message whose declaration still disagrees with its words is withheld
@@ -3970,6 +4060,7 @@ async function authorDependentSkillRun(
       user: repairPrompt,
       schema: runtimeSchema,
     });
+    const first = output;
     output = materialiseDependent(repairedRaw);
     trailAttention = procedureTrailAttentionIssues(output, candidate, procedureContract, {
       mode,
@@ -3977,8 +4068,16 @@ async function authorDependentSkillRun(
       phase: 'dependent',
     });
     if (trailAttention.issues.length > 0) {
-      throw new Error(
+      throw new ActionContractRefusal(
         `dependent executor procedure contract remained invalid after one repair: ${trailAttention.issues.join('; ')}`,
+        {
+          phase: 'dependent',
+          reply: output,
+          issues: trailAttention.issues,
+          first,
+          firstIssues: issues,
+          at: args.now ?? Date.now(),
+        },
       );
     }
     // After the one repair: a set the obligation gate still refuses stops

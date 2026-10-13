@@ -1496,9 +1496,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await seedEmployee(harness);
     const agreementId = await everyEmployeeAgreement(harness);
     const hired = await seedEmployee(harness, { name: 'Ines' });
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: hired,
+      agreementIds: [agreementId],
       tried: false,
     });
     for (let start = 0; start < 300; start += 100) {
@@ -1987,9 +1987,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     const ines = await seedEmployee(harness, { name: 'Ines' });
     const agreementId = await everyEmployeeAgreement(harness);
     await letGo(harness, ines);
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: ines,
+      agreementIds: [agreementId],
       tried: true,
     });
     await harness.mutation(internal.workingAgreements.settleCharterCheck, {
@@ -2205,6 +2205,66 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
       tried: false,
     });
     expect((await agreementsOf(harness)).filter((row) => row.agentId === hired)).toHaveLength(30);
+  }, 60_000);
+
+  it('records an established employee’s owed checks in one settle that reads its charters and checks once, not once an agreement (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review: `lastCheckedAt` read up to 50 charters and 100 events for each of up to
+    // 200 agreements in one transaction. Six charter versions and ten earlier checks here: read
+    // once an agreement, thirty agreements pass this limit; read once a settle, they do not.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 200 },
+    });
+    const ids: Id<'workingAgreements'>[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      ids.push(await agreementSince(harness, `Name vessel ${index} in every comment.`, 2 + index));
+    }
+    const amended = await establishedEmployee(harness);
+    await harness.run(async (ctx) => {
+      for (let draft = 0; draft < 4; draft += 1) {
+        await ctx.db.insert('charters', {
+          agentId: amended,
+          version: `v1.1-draft-${draft}`,
+          approved: false,
+          createdAt: 6 + draft,
+          body: {},
+        });
+      }
+      // Ten checks since: nine of the first agreement, the newest at 49, and one of the second.
+      for (let check = 0; check < 9; check += 1) {
+        await ctx.db.insert('events', {
+          agentId: amended,
+          type: 'agreement.checked',
+          payload: { agreementId: ids[0]!, everyEmployee: true },
+          createdAt: 41 + check,
+        });
+      }
+      await ctx.db.insert('events', {
+        agentId: amended,
+        type: 'agreement.checked',
+        payload: { agreementId: ids[1]!, everyEmployee: true },
+        createdAt: 60,
+      });
+    });
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
+      agentId: amended,
+      agreementIds: ids,
+      tried: true,
+    });
+    const owed = new Map(
+      (await eventsOf(harness, 'agreement.check-owed')).map((event) => {
+        const payload = event.payload as { agreementId: string; since: number };
+        return [payload.agreementId, payload.since];
+      }),
+    );
+    expect(owed.size).toBe(30);
+    // Each from when it was last checked: at a check of it since, as it took effect, or at the
+    // approval of the charter the newest amends (1), whichever is latest.
+    expect(owed.get(ids[0]!)).toBe(49);
+    expect(owed.get(ids[1]!)).toBe(60);
+    expect(owed.get(ids[2]!)).toBe(4);
+    expect(owed.get(ids[29]!)).toBe(31);
   }, 60_000);
 
   it('checks at most a batch of agreements an action and hands the rest to the next (W15-R34)', async (): Promise<void> => {

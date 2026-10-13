@@ -9,6 +9,7 @@ import {
   NO_TEAM_ASK_FOR_ROLE,
   OFFICE_ASKS_CHANNEL,
   otherRolesAskThreads,
+  otherRolesTeamDocs,
 } from '../work/office-asks';
 import { charterWords, sharedCharterWords } from '../work/scope';
 import type { MockSurfaceSnapshot } from '../work/types';
@@ -64,11 +65,18 @@ export const WORK_GEN_SYSTEM = [
   '',
   '3. Beyond-the-office item: a second new ticket filed for this role on the ticket queue: sourceCategory MUST be "ticket-queue" and sourceSystem MUST be "ticket", as a colleague would file it. Its ask needs one record or system the snapshot does not show (one the charter or the team docs name), as such tickets arrive in any office; the ticket never says the office lacks anything.',
   '',
+  // Finding 3 of the v0.20.0 walk: an IT helpdesk role whose charter places hardware with the
+  // facilities team was filed a ticket to replace a desk monitor, and closed it as routed.
+  "Items 1 to 3 are this role's own work to do itself: none asks for anything a will-not-do clause excludes or the charter places with another person or team.",
+  '',
   'An item from the ticket queue is a new ticket filed for this role: write it from the charter\'s will-do clauses as its sender filed it, give it no "ticket://" reference, and the office opens the ticket with the item\'s title and summary. The snapshot lists no tickets for this reason.',
   '',
   '4. Out-of-scope item: sourceSystem can be anything. A task that is plausibly forwarded by a colleague but lies outside the role described in the charter: one its will-do clauses leave out or its will-not-do clauses exclude, without assuming a particular team or profession, and the item itself never says so. May or may not reference an existing surface.',
   '',
   'Discipline:',
+  // Finding 2 of the v0.20.0 walk: one ask drafted as the read item and a ticket was answered
+  // three times in its thread, and the read item's run closed the ticket the other item held.
+  '  - The four items are four different requests: no two quote, answer or act on the same message or ask.',
   '  - Each contentSummary is 2-3 sentences and includes a direct quoted request from a named person (the named collaborators in the charter, or "Manager" for the boss).',
   '  - contentRefs must use slugs/IDs that appear verbatim in the snapshot. Format: "channel://<slug>", "channel://<slug>#thread-<key>", "twitter://<slug>", "mock-spreadsheet://<slug>", "docs-fixture/<slug>". If the surface doesn\'t exist in the snapshot, do not invent a contentRef for it.',
   '  - externalIds are unique stable strings derived from the surface and topic (e.g. "docs-<slug>", "sheet-<slug>", "tweet-<slug>", "ticket-<slug>"); the two tickets never share one.',
@@ -190,11 +198,25 @@ function shown(text: string): string {
 }
 
 /**
+ * The team documents a role is shown: every one but those that answer only another role's ask
+ * (`otherRolesTeamDocs`; 16-FW's F7, finding 3 of the v0.20.0 walk), so a ticket is drafted only
+ * from what the documents that reach the role say.
+ */
+function teamDocsShownTo(
+  env: MockSurfaceSnapshot,
+  charter: Charter,
+): MockSurfaceSnapshot['teamDocs'] {
+  const others = otherRolesTeamDocs(charterWords(charter), charter.proposedFunction);
+  return env.teamDocs.filter((doc) => !others.has(doc.slug));
+}
+
+/**
  * Render the mock environment snapshot as a compact, slug-forward
  * description the LLM can copy identifiers out of without hallucinating, with
  * what each record holds (13-FD): a tab's latest rows, a channel's latest
  * messages and each team document, so a ticket asks only for what is there.
- * A company-wide ask that is another role's work is not shown.
+ * A company-wide ask that is another role's work is not shown, and neither is the team document
+ * that answers it.
  */
 function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string {
   const lines: string[] = [];
@@ -234,9 +256,10 @@ function renderMockSnapshot(env: MockSurfaceSnapshot, charter: Charter): string 
       }
     }
   }
-  if (env.teamDocs.length) {
+  const teamDocs = teamDocsShownTo(env, charter);
+  if (teamDocs.length) {
     lines.push('Team docs (read-only):');
-    env.teamDocs.forEach((d, index) => {
+    teamDocs.forEach((d, index) => {
       if (index >= TEAM_DOCS_SHOWN) {
         lines.push(`  - slug "${d.slug}" titled "${d.title}"`);
         return;
@@ -267,13 +290,14 @@ const RECORD_PREFIXES = ['mock-spreadsheet://', 'channel://', 'docs-fixture/', '
  * without a thread or a fragment: `mock-spreadsheet://<slug>`, `channel://<slug>`,
  * `docs-fixture/<slug>`, `twitter://<slug>`. The how-to guides are not among them: the snapshot
  * never shows them, and a ticket that names only one names nothing it asks for (the 13-FD second
- * pass). Naming a record is the floor of a ticket the office can back, not proof of it.
+ * pass); nor is a team document the role is not shown ({@link teamDocsShownTo}). Naming a record
+ * is the floor of a ticket the office can back, not proof of it.
  */
-function officeRecords(env: MockSurfaceSnapshot): ReadonlySet<string> {
+function officeRecords(env: MockSurfaceSnapshot, charter: Charter): ReadonlySet<string> {
   return new Set([
     ...env.spreadsheets.map((s) => `mock-spreadsheet://${s.slug}`),
     ...env.slackChannels.map((c) => `channel://${c.slug}`),
-    ...env.teamDocs.map((d) => `docs-fixture/${d.slug}`),
+    ...teamDocsShownTo(env, charter).map((d) => `docs-fixture/${d.slug}`),
     ...env.tweets.map((tw) => `twitter://${tw.slug}`),
   ]);
 }
@@ -287,6 +311,75 @@ function namesAnOfficeRecord(item: DraftedWorkItem, records: ReadonlySet<string>
   );
 }
 
+/** A request an item quotes, in either kind of quotation marks, long enough to be a sentence. */
+const QUOTED_REQUEST = /"([^"]{24,})"|\u201c([^\u201d]{24,})\u201d/g;
+
+/** The requests an item quotes, each in lower case with its spaces folded, so two copies match. */
+function quotedRequests(item: DraftedWorkItem): ReadonlySet<string> {
+  return new Set(
+    [...item.contentSummary.matchAll(QUOTED_REQUEST)].map((match) =>
+      (match[1] ?? match[2] ?? '').toLowerCase().replace(/\s+/g, ' ').trim(),
+    ),
+  );
+}
+
+/** A thread an item names, as its reference writes it: `channel://<slug>#<thread>`. */
+const THREAD_REF = /^channel:\/\/[^#\s]+#\S+$/;
+
+/** Two drafted items that are one ask between them, and what shows it. */
+interface OneAsk {
+  readonly first: DraftedWorkItem;
+  readonly second: DraftedWorkItem;
+  /** The thread both name, or undefined when they quote the same request. */
+  readonly thread: string | undefined;
+}
+
+/**
+ * The pairs of drafted items that are one ask between them (finding 2 of the v0.20.0 hosted
+ * walk): they quote the same request, or they name the same thread, whatever each quotes. One ask
+ * drafted as the read-and-answer item and as a ticket is worked twice, each run answering in the
+ * same thread, and in the hosted office one item's run can close the other's ticket. On the walk
+ * the two quoted Hana's ask word for word; on this unit's bed, under the first form of this
+ * check, the ticket quoted the manager about Kofi's ask and named Kofi's thread.
+ *
+ * @param items - The draft, each read-and-answer item already given its asker's thread
+ *   ({@link withAskThread}), since that is the thread its answer goes to.
+ */
+function workingOneAsk(items: readonly DraftedWorkItem[]): OneAsk[] {
+  const quoted = items.map((item) => quotedRequests(item));
+  const threads = items.map((item) => item.contentRefs.filter((ref) => THREAD_REF.test(ref)));
+  return items.flatMap((first, at) =>
+    items.slice(at + 1).flatMap((second, offset): OneAsk[] => {
+      const other = at + 1 + offset;
+      const thread = threads[at]!.find((ref) => threads[other]!.includes(ref));
+      if (thread !== undefined) return [{ first, second, thread }];
+      return [...quoted[at]!].some((request) => quoted[other]!.has(request))
+        ? [{ first, second, thread: undefined }]
+        : [];
+    }),
+  );
+}
+
+/**
+ * What the generator is told of two items that are one ask between them, in words it can act on.
+ * A read-and-answer item is answered in its asker's thread whether or not its draft names it
+ * ({@link withAskThread}), so the line never says such an item named the thread: it says where
+ * the item's answer goes and asks for the other item again.
+ */
+function oneAskLine({ first, second, thread }: OneAsk): string {
+  const both = `The ${first.purpose} item and the ${second.purpose} item in your last draft`;
+  const twice = 'so one ask would be worked twice';
+  if (thread === undefined) {
+    return `${both} quote the same request, ${twice}: each item is its own request, from its own message.`;
+  }
+  const other = [first, second].filter((item) => item.purpose !== 'read-and-answer');
+  if (other.length !== 1) {
+    return `${both} both name the thread "${thread}", ${twice}: each item is its own request, from its own message.`;
+  }
+  const purpose = other[0]!.purpose;
+  return `The read-and-answer item in your last draft is answered in its asker's thread, "${thread}", and the ${purpose} item names that thread too, ${twice}: draft the ${purpose} item from another message, and leave that thread out of its contentRefs.`;
+}
+
 /** An out-of-scope item that reads as the role's work, with the words that make it so. */
 interface RoleReading {
   readonly item: DraftedWorkItem;
@@ -297,8 +390,8 @@ interface RoleReading {
  * How a draft reads against the scope rule mock mode judges by (`sharedCharterWords`) and against
  * the office: the out-of-scope items that share a word with the role, which would be judged its
  * work; the in-scope items that share none, which would be skipped; the purposes it left out; the
- * tickets it filed somewhere other than the queue; and whether its action ticket names no record
- * the office holds.
+ * tickets it filed somewhere other than the queue; whether its action ticket names no record the
+ * office holds; and the items that are one ask between them.
  */
 interface DraftReading {
   readonly asTheRole: readonly RoleReading[];
@@ -308,12 +401,15 @@ interface DraftReading {
   readonly offTheQueue: readonly DraftedWorkItem[];
   /** Whether the action ticket names no record of an office that holds some (13-FD). */
   readonly actionUngrounded: boolean;
+  /** The pairs of items that are one ask between them ({@link workingOneAsk}). */
+  readonly oneAsk: readonly OneAsk[];
 }
 
 function readDraft(
   items: readonly DraftedWorkItem[],
   charter: Charter,
   records: ReadonlySet<string>,
+  threads: ReadonlyMap<string, string>,
 ): DraftReading {
   return {
     asTheRole: items
@@ -333,6 +429,7 @@ function readDraft(
     actionUngrounded:
       records.size > 0 &&
       items.some((item) => item.purpose === 'action' && !namesAnOfficeRecord(item, records)),
+    oneAsk: workingOneAsk(items.map((item) => withAskThread(item, threads))),
   };
 }
 
@@ -343,7 +440,8 @@ function readsAsIntended(reading: DraftReading): boolean {
     reading.untied.length === 0 &&
     reading.missing.length === 0 &&
     reading.offTheQueue.length === 0 &&
-    !reading.actionUngrounded
+    !reading.actionUngrounded &&
+    reading.oneAsk.length === 0
   );
 }
 
@@ -374,6 +472,7 @@ function askAgain(reading: DraftReading): string {
       "The action item in your last draft names no record the snapshot holds: ask only for work the snapshot's rows, messages or documents let the role finish, and name those records in its contentRefs.",
     );
   }
+  for (const pair of reading.oneAsk) lines.push(oneAskLine(pair));
   lines.push(
     "Draft all four items again. The out-of-scope request uses none of the role's words and never compares itself with the role: it is only the request as its sender wrote it.",
   );
@@ -428,7 +527,7 @@ export async function generateWorkItemsFromCharter(
     '',
     'Generate the 4 day-one work items now.',
   ].join('\n');
-  const records = officeRecords(mockEnv);
+  const records = officeRecords(mockEnv, charter);
   const threads = askThreadsBySender(
     mockEnv,
     otherRolesAskThreads(charterWords(charter), charter.proposedFunction),
@@ -446,7 +545,7 @@ export async function generateWorkItemsFromCharter(
   let attempts = 1;
   let budgetRanOut = false;
   for (; attempts < GENERATION_ATTEMPTS; attempts += 1) {
-    const reading = readDraft(draft.items, charter, records);
+    const reading = readDraft(draft.items, charter, records, threads);
     if (readsAsIntended(reading)) {
       return seeded(draft.items.map((item) => withAskThread(item, threads)));
     }
@@ -461,7 +560,7 @@ export async function generateWorkItemsFromCharter(
   // role's work, which is left out rather than queued as the role's work with a skill to approve.
   // An in-scope item is never left out: the queue keeps its read and its tickets, an action ticket
   // that names no record of the office included (its run then says what it could not do).
-  const reading = readDraft(draft.items, charter, records);
+  const reading = readDraft(draft.items, charter, records, threads);
   // A draft in hand when the budget ran out was asked again for a reason: one missing a purpose,
   // with an in-scope item the scope rule would skip, or with an action ticket naming no record is
   // not seeded, and the seeding's next attempt drafts again (W13-R40).
@@ -486,6 +585,12 @@ export async function generateWorkItemsFromCharter(
   if (reading.actionUngrounded) {
     log.warn('mock work generator kept an action ticket that names no record of the office', {
       attempts,
+    });
+  }
+  if (reading.oneAsk.length > 0) {
+    log.warn('mock work generator seeded two items that are one ask', {
+      attempts,
+      purposes: reading.oneAsk.map((pair) => [pair.first.purpose, pair.second.purpose]),
     });
   }
   if (reading.missing.length > 0) {

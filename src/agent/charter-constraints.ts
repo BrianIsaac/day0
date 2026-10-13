@@ -607,13 +607,34 @@ function inTheThirdPerson(sentence: string): string {
 }
 
 /**
+ * The word or words an answer opens on before the instruction it gives, each closed by a mark:
+ * "Yes, run it by me.", "No: go through me for both.", "Yes, yes: always check with me first.",
+ * "Yes - run it by me.", "Yes- run it by me." A hyphen closes one only with a space on one side
+ * of it: the hyphen of "No-one" is the word's own. A long dash (U+2013, U+2014) is a mark
+ * wherever it stands, since no word holds one.
+ */
+const ANSWER_OPENER =
+  /^(?:(?:yes|yeah|yep|yup|no|nope|sure|ok|okay|right|correct|absolutely|exactly|definitely)(?:\s*[,.:;!\u2013\u2014]+|\s+-+|-+(?=\s))\s*)+/i;
+
+/** A sentence without the word it answers with, or as it was when nothing follows that word. */
+function withoutAnswerOpener(sentence: string): string {
+  const rest = sentence.replace(ANSWER_OPENER, '');
+  return rest === '' ? sentence : rest;
+}
+
+/**
  * The Escalates clause a routing sentence is written as when the draft carries it in no clause:
  * the manager's own sentence in the third person, "Go" put before a sentence that opens on the
  * route itself ("Through me for now." reads "Go through the manager for now."), closed by a full
- * stop.
+ * stop. The word an answer opens on is the answer's, not the clause's: "Yes, run it by me." reads
+ * "Run it by the manager." (W16-R31).
  */
 function routingClause(sentence: string): string {
-  const said = inTheThirdPerson(sentence.replace(/[.;!]+$/, '').trim());
+  const said = inTheThirdPerson(
+    withoutAnswerOpener(sentence.trim())
+      .replace(/[.;!]+$/, '')
+      .trim(),
+  );
   const clause = /^(?:through|via)\b/i.test(said)
     ? `Go ${said.replace(/^[A-Z]/, (c) => c.toLowerCase())}`
     : said;
@@ -663,12 +684,14 @@ const ROUTE_OPENERS: ReadonlySet<string> = new Set([
  * lifting a route or describing one (the second pass): the words before the route, back to the
  * clause's start, are an instruction's own ("Anything unusual, talk to me first.", "Go through me
  * for both.", "Everything via me."), never a negative ("You do not need to check with me first.",
- * "Don't ask me first.") or another subject ("Reps usually talk to me first.").
+ * "Don't ask me first.") or another subject ("Reps usually talk to me first."). The word an
+ * answer opens on is passed over first ("Yes, yes: always check with me before sending.").
  */
 function asksForARoute(sentence: string): boolean {
-  const route = THROUGH_ME.exec(sentence);
+  const instruction = withoutAnswerOpener(sentence.trim());
+  const route = THROUGH_ME.exec(instruction);
   if (route === null) return false;
-  const before = sentence.slice(0, route.index);
+  const before = instruction.slice(0, route.index);
   const lead = before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(';')) + 1);
   const words = lead.toLowerCase().match(/[a-z\u2019']+/g) ?? [];
   return words.every((word) => ROUTE_OPENERS.has(word));

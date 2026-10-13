@@ -45,6 +45,7 @@ import {
   PIP_W19,
   PRIYA_ASK,
 } from '../../fixtures/agent/office-roles-2026-10-11';
+import { NELL_W20, OFFICE_TEAM_DOCS, PIP_W20 } from '../../fixtures/agent/office-roles-2026-10-13';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
 import {
   GENERATION_ATTEMPTS,
@@ -696,6 +697,284 @@ describe("the revenue team's ask a role is shown (W19-3, the v0.19.0 walk)", ():
         '  - slug "revops-asks" (channel, displayed as "#revops-asks")\n      (no ask for this role is open here)',
       );
     }
+  });
+});
+
+describe('the team documents a role is shown (16-FW’s F7; finding 3 of the v0.20.0 walk)', (): void => {
+  const WHOLE_OFFICE = { ...OFFICE, teamDocs: OFFICE_TEAM_DOCS };
+  const shownTo = async (charter: Charter): Promise<string> => {
+    await generateWorkItemsFromCharter(charter, WHOLE_OFFICE as never);
+    return prompts.at(-1) ?? '';
+  };
+
+  it('shows the support triage role no example of a revenue operations ask: 16-FW’s "pipeline coverage figures" ticket', async (): Promise<void> => {
+    const prompt = await shownTo(PIP_W20);
+    expect(prompt).not.toContain('pipeline coverage');
+    expect(prompt).not.toContain('slug "team-overview"');
+    // Its own ask's page, whole, and the office's own pages.
+    expect(prompt).toContain('slug "billing-replies" titled "Customer billing replies":');
+    expect(prompt).toContain('billing reviews duplicate charges within two business days');
+    expect(prompt).toContain('slug "on-call" titled "On-call rotation":');
+    expect(prompt).toContain('slug "escalation-paths" titled "Escalation paths":');
+    expect(prompt).toContain('slug "onboarding" titled "Onboarding: first week":');
+  });
+
+  it('shows the IT helpdesk role no supplies page: the walk’s "desk monitor has failed" ticket, which its charter places with facilities', async (): Promise<void> => {
+    const prompt = await shownTo(NELL_W20);
+    expect(prompt).not.toContain('supply cupboard');
+    expect(prompt).not.toContain('Spare monitors');
+    expect(prompt).not.toContain('slug "office-supplies"');
+    expect(prompt).not.toContain('slug "billing-replies"');
+    expect(prompt).toContain('slug "it-access" titled "IT access and passwords":');
+    expect(prompt).toContain('Sign out of the drive app on every device.');
+  });
+
+  it('shows the revenue role its team overview whole, as before', async (): Promise<void> => {
+    const prompt = await shownTo(LARK_W19);
+    expect(prompt).toContain('slug "team-overview" titled "Team overview: RevOps":');
+    expect(prompt).toContain("What's our pipeline coverage on enterprise?");
+    expect(prompt).not.toContain('slug "it-access"');
+  });
+
+  it('asks again for an action ticket that names only a page the role is not shown', async (): Promise<void> => {
+    const onSupplies = {
+      ...ACTION,
+      title: 'Answer the routine access ticket about the spare monitor',
+      contentRefs: ['docs-fixture/office-supplies'],
+    };
+    const onAccess = { ...onSupplies, contentRefs: ['docs-fixture/it-access'] };
+    const read = { ...READ, title: 'Which wiki steps answer routine access questions?' };
+    const beyond = { ...BEYOND, title: 'Sort the routine access tickets against the CRM export' };
+    drafts.push(
+      [read, onSupplies, beyond, PLAIN_OUT_OF_SCOPE],
+      [read, onAccess, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const items = await generateWorkItemsFromCharter(NELL_W20, {
+      ...WHOLE_OFFICE,
+      spreadsheets: [],
+    } as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The action item in your last draft names no record the snapshot holds',
+    );
+    expect(items.map((item) => item.contentRefs)).toContainEqual(['docs-fixture/it-access']);
+  });
+
+  it('tells the generator that the three items of the role’s own work ask for nothing its will-not-do clauses exclude', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      "Items 1 to 3 are this role's own work to do itself: none asks for anything a will-not-do clause excludes or the charter places with another person or team.",
+    );
+  });
+});
+
+describe('one ask drafted as more than one item (finding 2 of the v0.20.0 hosted walk)', (): void => {
+  // Rows `A-Pip-docs-full.txt` and `A-Pip-tB-full.txt`: the docs item and the P1 ticket both
+  // quote Hana's one ask, so it was answered three times in her thread and the docs item's run
+  // closed the ticket that the other item held.
+  const HANA_QUOTED =
+    '"Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?"';
+  const docsItem = {
+    ...drafted(
+      'read-and-answer',
+      'Question on the first reply to a duplicate charge',
+      `Hana asked in the thread: ${HANA_QUOTED} She wants to know what the approved wording should cover before it goes to the customer. Please answer in the thread where she asked, following the customer billing replies document.`,
+    ),
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    requesterLabel: 'Hana',
+  };
+  const ticket = {
+    ...ACTION,
+    title: 'Log and work the Northwind duplicate charge ask',
+    contentSummary: `Hana reported: ${HANA_QUOTED} Please log this ask on the ticket queue, post the first reply in her thread following the customer billing replies document, and close the ticket once the reply is written.`,
+    externalId: 'ticket-northwind-double-charge',
+    requesterLabel: 'Hana',
+  };
+  const ownTicket = {
+    ...ticket,
+    title: 'Log the social mention about the late invoice email',
+    contentSummary:
+      'Manager: "Please log the open social mention about the late invoice email on the ticket queue and note what was replied." Close the ticket once it is logged.',
+    externalId: 'ticket-social-mention',
+  };
+  const beyond = {
+    ...BEYOND,
+    title: 'Check the CRM record behind the Northwind invoice query',
+    contentSummary:
+      'Hana added: "While you are on the Northwind duplicate charge, it would help to confirm what the CRM shows for that account before billing reviews it." Please log each finding on the ticket queue.',
+  };
+
+  it('asks again, naming the two items, when two of them quote the same request', async (): Promise<void> => {
+    drafts.push(
+      [docsItem, ticket, beyond, PLAIN_OUT_OF_SCOPE],
+      [docsItem, ownTicket, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const items = await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The read-and-answer item and the action item in your last draft quote the same request, so one ask would be worked twice: each item is its own request, from its own message.',
+    );
+    expect(items.map((item) => item.title)).toContain(
+      'Log the social mention about the late invoice email',
+    );
+  });
+
+  it('takes a draft whose items each quote their own request, the same asker or not', async (): Promise<void> => {
+    drafts.push([docsItem, ownTicket, beyond, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('keeps both items when every draft still quotes one request twice, and says so in the log', async (): Promise<void> => {
+    const warned = vi.spyOn(log, 'warn').mockImplementation((): void => undefined);
+    for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
+      drafts.push([docsItem, ticket, beyond, PLAIN_OUT_OF_SCOPE]);
+    }
+    const items = await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
+    expect(items).toHaveLength(4);
+    expect(warned.mock.calls.map((call) => call[0])).toContain(
+      'mock work generator seeded two items that are one ask',
+    );
+    warned.mockRestore();
+  });
+
+  // The bed day0-w17fw, 13 October 2026, on the hosted model with the first form of this check:
+  // the IT helpdesk role's read item quoted Kofi's ask and its ticket quoted the manager ("A
+  // helpdesk ticket came in from Kofi about the shared drive ..."), both naming Kofi's thread.
+  it('asks again when two items name one thread, whatever each quotes', async (): Promise<void> => {
+    const kofiRead = {
+      ...drafted(
+        'read-and-answer',
+        'Kofi is locked out of the shared drive after a password change',
+        'Kofi asked in #office-asks: "I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?" Please answer in his thread using the IT access and passwords doc. It is a routine access question.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-it-access',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks#thread-drive-access'],
+      requesterLabel: 'Kofi',
+    };
+    const kofiTicket = {
+      ...ACTION,
+      title: 'Reply to the shared drive lockout thread and close the ticket out',
+      contentSummary:
+        'Manager filed this one: "A helpdesk ticket came in from Kofi about the shared drive saying access denied after his password change. Post the reply in his thread using the wiki steps, comment on the ticket with what you sent, and close it."',
+      externalId: 'ticket-drive-lockout-reply',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks#thread-drive-access'],
+      requesterLabel: 'Manager',
+    };
+    const ownTicket = {
+      ...kofiTicket,
+      title: 'Post the shared drive sign-back steps in the office asks channel',
+      contentSummary:
+        'Manager filed this ticket: "The same access question keeps arriving each Monday, so please post the shared drive sign-back steps in #office-asks so the team can self-serve, then comment on this ticket and close it."',
+      externalId: 'ticket-shared-drive-self-serve-steps',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks'],
+    };
+    const beyond = { ...BEYOND, title: 'Add the new starter to the SSO group for ticket access' };
+    drafts.push(
+      [kofiRead, kofiTicket, beyond, PLAIN_OUT_OF_SCOPE],
+      [kofiRead, ownTicket, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const office = {
+      ...OFFICE,
+      teamDocs: OFFICE_TEAM_DOCS,
+      slackChannels: [
+        {
+          slug: 'office-asks',
+          displayName: '#office-asks',
+          kind: 'channel',
+          recentMessages: [{ sender: 'Kofi', threadKey: 'thread-drive-access', body: KOFI_ASK }],
+        },
+      ],
+    };
+    const items = await generateWorkItemsFromCharter(NELL_W20, office as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      `The read-and-answer item in your last draft is answered in its asker's thread, "channel://office-asks#thread-drive-access", and the action item names that thread too, so one ask would be worked twice: draft the action item from another message, and leave that thread out of its contentRefs.`,
+    );
+    expect(items.map((item) => item.externalId)).toContain('ticket-shared-drive-self-serve-steps');
+  });
+
+  it('reads the thread a read-and-answer item is given from its asker as that item’s thread', async (): Promise<void> => {
+    // The read item names no thread and its asker has one; the ticket names that thread.
+    const read = {
+      ...drafted(
+        'read-and-answer',
+        'How should we word a first reply to a duplicate charge ticket',
+        'Hana asked in the inbox, "Before I send anything to Northwind, what does our billing replies doc say a first reply to a duplicate charge should cover?" Please log each ask.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-billing-replies',
+      requesterLabel: 'Hana',
+    };
+    const ticket204 = {
+      ...ACTION,
+      title: 'Log the first reply for the Northwind duplicate charge ask',
+      contentSummary:
+        'Hana filed this ask: "Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?" Please log it.',
+      contentRefs: ['channel://office-asks#thread-double-charge', 'docs-fixture/billing-replies'],
+      requesterLabel: 'Hana',
+    };
+    const office = {
+      ...OFFICE,
+      teamDocs: OFFICE_TEAM_DOCS,
+      slackChannels: [
+        {
+          slug: 'office-asks',
+          displayName: '#office-asks',
+          kind: 'channel',
+          recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+        },
+      ],
+    };
+    drafts.push([read, ticket204, beyond, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, office as never);
+    expect(prompts.length).toBeGreaterThan(1);
+    // The read item named no thread, so the line does not say it did (the continuation's second
+    // pass): it says where the item's answer goes, and which item to draft again.
+    expect(prompts[1]).toContain(
+      `The read-and-answer item in your last draft is answered in its asker's thread, "channel://office-asks#thread-double-charge", and the action item names that thread too`,
+    );
+    expect(prompts[1]).not.toContain('both name the thread');
+  });
+
+  it('says two tickets that name one thread both name it', async (): Promise<void> => {
+    const first = {
+      ...ACTION,
+      title: 'Log the first reply for the Northwind duplicate charge ask',
+      contentSummary:
+        'Manager filed this: "Log what we told Northwind about invoice INV-2207 on the ticket queue."',
+      externalId: 'ticket-northwind-log',
+      contentRefs: ['channel://office-asks#thread-double-charge', 'docs-fixture/billing-replies'],
+      requesterLabel: 'Manager',
+    };
+    const second = {
+      ...BEYOND,
+      title: 'Check the Northwind renewal date for their billing question',
+      contentRefs: ['channel://office-asks#thread-double-charge'],
+    };
+    const read = {
+      ...drafted(
+        'read-and-answer',
+        'What does our billing replies doc say about refunds',
+        'Support lead asked, "What does our customer billing replies doc say we may promise about a refund?" Please read it and answer.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-billing-replies',
+      requesterLabel: 'Support lead',
+    };
+    drafts.push([read, first, second, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, { ...OFFICE, teamDocs: OFFICE_TEAM_DOCS } as never);
+    expect(prompts.length).toBeGreaterThan(1);
+    expect(prompts[1]).toContain(
+      'in your last draft both name the thread "channel://office-asks#thread-double-charge", so one ask would be worked twice: each item is its own request, from its own message.',
+    );
+  });
+
+  it('tells the generator that the four items are four requests', (): void => {
+    expect(WORK_GEN_SYSTEM).toContain(
+      'The four items are four different requests: no two quote, answer or act on the same message or ask.',
+    );
   });
 });
 

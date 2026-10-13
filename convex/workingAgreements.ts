@@ -1109,39 +1109,18 @@ async function holdOf(
 }
 
 /**
- * Internal: hold an active agreement for every employee for one employee alone, whose newly
- * approved charter it was never checked against: the charter came past the employees the check
- * reads (W14-R15), or the check could not be had after its last retry (15-FX: it fails closed,
- * where it left the agreement binding unchecked). The agreement stays in effect for every other
- * employee, and this employee's own refused row, which names it, takes it out of what this
- * employee's planner and runs read, until a check that can be had lifts it (`liftHold`). Nothing
- * for a row no longer active or no longer for every employee, one already held for the employee,
- * or an employee the owner no longer has. Writes `agreement.refused` on the employee, naming the
- * agreement and the hold.
- */
-export const holdForEmployee = internalMutation({
-  args: {
-    agreementId: v.id('workingAgreements'),
-    agentId: v.id('agents'),
-    /** Whether a check was tried: false past the bound or under a pause, where no model was asked. */
-    tried: v.boolean(),
-  },
-  handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db.get(args.agreementId);
-    if (!row || !(await stillTheOwners(ctx, row, args.agentId))) return null;
-    await holdInTransaction(ctx, row, args.agentId, {
-      tried: args.tried,
-      held: await heldForEmployee(ctx, row.userId, args.agentId),
-    });
-    return null;
-  },
-});
-
-/**
- * The body of {@link holdForEmployee}, in the caller's transaction, for an employee the caller has
- * found is still the agreement's owner's. `held` is the employee's holds, read once by the caller
- * and kept current here, so a settle of many agreements reads them once (the second pass: once an
- * agreement, a first charter with two hundred agreements read past the transaction's limit).
+ * Hold an active agreement for every employee for one employee alone, whose newly approved
+ * charter it was never checked against: the charter came past the employees the check reads
+ * (W14-R15), or the check could not be had after its last retry (15-FX: it fails closed, where it
+ * left the agreement binding unchecked). In the caller's transaction (`settleUncheckable`), for an
+ * employee the caller has found is still the agreement's owner's. The agreement stays in effect
+ * for every other employee, and this employee's own refused row, which names it, takes it out of
+ * what this employee's planner and runs read, until a check that can be had lifts it (`liftHold`).
+ * Nothing for a row no longer active or no longer for every employee, or one already held for the
+ * employee. Writes `agreement.refused` on the employee, naming the agreement and the hold.
+ * `held` is the employee's holds, read once by the caller and kept current here, so a settle of
+ * many agreements reads them once (the second pass: once an agreement, a first charter with two
+ * hundred agreements read past the transaction's limit).
  */
 async function holdInTransaction(
   ctx: MutationCtx,
@@ -1333,30 +1312,54 @@ async function owedChecksOf(
   return owing;
 }
 
+/** What every agreement's last check against one employee's charter is read from. */
+interface LastChecks {
+  /** When the charter the employee's newest approved one amends was approved. */
+  readonly amendedAt: number;
+  /** When each agreement an `agreement.checked` names was last checked, by the agreement's id. */
+  readonly checkedAt: ReadonlyMap<string, number>;
+}
+
+/**
+ * An established employee's last checks: its charters and its newest `agreement.checked` events,
+ * read once for every agreement a settle records (W16-R31: read once an agreement, two hundred
+ * agreements scanned about thirty thousand documents in one transaction). Undefined for an
+ * employee on its first approved charter, or none, whose agreements were never checked against an
+ * earlier one (`hasEarlierApprovedCharter`).
+ */
+async function lastChecksOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<LastChecks | undefined> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  const amended = versions.filter((charter) => charter.approved)[1];
+  if (amended === undefined) return undefined;
+  const checked = await eventsOfType(ctx, agentId, 'agreement.checked')
+    .order('desc')
+    .take(OWED_EVENTS_READ);
+  const checkedAt = new Map<string, number>();
+  // Newest first, so the first event that names an agreement is its last check.
+  for (const event of checked) {
+    const named = agreementNamed(event);
+    if (named !== undefined && !checkedAt.has(named)) checkedAt.set(named, event.createdAt);
+  }
+  return { amendedAt: amended.approvedAt ?? amended.createdAt, checkedAt };
+}
+
 /**
  * When an agreement for every employee was last checked against an employee's charter: as it took
  * effect (its own check read every charter then), or at the approval of the charter the newest
  * amends (whose check read every agreement then), or at a check of it since, whichever is latest.
  */
-async function lastCheckedAt(
-  ctx: Pick<QueryCtx, 'db'>,
-  agreement: Doc<'workingAgreements'>,
-  agentId: Id<'agents'>,
-): Promise<number> {
-  const [versions, checked] = await Promise.all([
-    ctx.db
-      .query('charters')
-      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-      .order('desc')
-      .take(CHARTER_VERSIONS),
-    eventsOfType(ctx, agentId, 'agreement.checked').order('desc').take(OWED_EVENTS_READ),
-  ]);
-  const amended = versions.filter((charter) => charter.approved)[1];
-  const lastCheck = checked.find((event) => agreementNamed(event) === agreement._id);
+function lastCheckedAt(agreement: Doc<'workingAgreements'>, checks: LastChecks): number {
   return Math.max(
     agreement.effectiveFrom ?? agreement.approvedAt ?? agreement.createdAt,
-    amended?.approvedAt ?? amended?.createdAt ?? 0,
-    lastCheck?.createdAt ?? 0,
+    checks.amendedAt,
+    checks.checkedAt.get(agreement._id) ?? 0,
   );
 }
 
@@ -1364,7 +1367,7 @@ async function lastCheckedAt(
  * Internal: what an employee's charter check that could not be had leaves on record, for the
  * agreements for every employee it did not check (W15-R34; RM28 (b)): after its last retry, when
  * the run died (its watch, `CHECK_OUTLIVED_MS` on), past the bound, or under a pause. On a first
- * charter each is held for the employee (`holdForEmployee`); on an amendment each stays in effect
+ * charter each is held for the employee (`holdInTransaction`); on an amendment each stays in effect
  * (D-2 (c)) and its check is owed: `agreement.check-owed` with when it was last checked, once, as
  * long as no check has since been had, which the Agreements card says with Check now. Nothing for
  * a row no longer in effect for every employee, or an employee the owner no longer has.
@@ -1380,7 +1383,8 @@ export const settleUncheckable = internalMutation({
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (userId === undefined) return null;
-    const established = await hasEarlierApprovedCharter(ctx, args.agentId);
+    const checks = await lastChecksOf(ctx, args.agentId);
+    const established = checks !== undefined;
     const owed = established ? await owedChecksOf(ctx, args.agentId) : new Map<string, number>();
     const held = established
       ? new Set<Id<'workingAgreements'>>()
@@ -1401,7 +1405,7 @@ export const settleUncheckable = internalMutation({
         payload: {
           agreementId: row._id,
           everyEmployee: true,
-          since: await lastCheckedAt(ctx, row, args.agentId),
+          since: lastCheckedAt(row, checks),
         },
         createdAt: now,
       });
