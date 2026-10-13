@@ -26,6 +26,37 @@ server** kind). Use one or the other for a folder, not both.
   limit is reached (HTTP 403 `userRateLimitExceeded` or `rateLimitExceeded`, or HTTP 429), day0
   waits one, two, then four seconds before it asks again.
 
+## What a read asks of Google
+
+day0 lists the folder at every read, twenty-five files a request, and exports or downloads a
+document only when its listing says it changed since day0 last read it: its version moved, or
+its name or address did. A read that finds nothing changed therefore exports and downloads
+nothing. Google moves a file's version with every change on its servers, among them one nobody
+sees in the text (a new share, a comment), so a document is read again more often than its text
+changes and never less often. One exception: a document whose name holds a value day0 takes out
+of what it stores (a password written into a name) is read at every read of the folder, because
+the name it was stored under is no longer the one its listing gives.
+
+Counted on the test double of the Drive API that day0's own tests use, not on a project. The bed
+is a running day0 in real mode reading a folder of 250 Google Docs; the second column is the same
+double at a thousand, read by the reader's tests:
+
+| Read                              | Requests, 250 documents (the bed) | Requests, 1,000 documents (the tests) |
+| --------------------------------- | --------------------------------- | ------------------------------------- |
+| The first read                    | 271                               | 1,081                                 |
+| A read with nothing changed       | 21                                | 81                                    |
+| A read after one document changed | 22                                | 82                                    |
+
+The 81 are 40 token requests (day0 asks for a token again for every twenty-five files), one check
+of the folder and 40 listings. A folder under it is listed in requests of its own: a token
+request and a listing for every twenty-five of its files, and one of each for an empty folder.
+The first read adds an export or a download for every document.
+
+Google's page on the Drive API's limits (last updated 11 September 2026) charges a listing 100
+quota units and allows 325,000 units a minute for each user of a project, so the 40 listings of
+the thousand-document read are 4,000 units. What a project in fact allows is known only on a
+project.
+
 ## 1. Create the service account (IT)
 
 1. In the **Google Cloud console**, in a project of your organisation, enable the **Google
@@ -99,6 +130,7 @@ The reader is built against Google's published reference for the Drive API and f
 accounts (read 10 October 2026), with test answers written from that reference, not recorded
 from a project: **no tenant read yet**. Until one is, these are known only from the reference:
 the word Google gives an export over 10 MB; whether a folder in a shared drive lists as one in
-My Drive does; and how Google's Markdown export writes a document's own title. If a first
-install finds any of them different, tell the day0 maintainers so this page can say what is
-true.
+My Drive does; how Google's Markdown export writes a document's own title; and how often a
+file's version moves with no change to its text. The request counts above are from day0's own
+test double. If a first install finds any of them different, tell the day0 maintainers so this
+page can say what is true.

@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  BED_REQUESTS,
+  THOUSAND_PAGE_REQUESTS,
+  type ReadCosts,
+} from '../../../fixtures/readers/guide-counts';
+import type { LibraryKind } from '../../../fixtures/readers/library';
 
 /** A guide under `docs/running`, on one line, as a quoted reason reads once its wrap is undone. */
 function guide(name: string): string {
@@ -9,10 +15,31 @@ function guide(name: string): string {
   );
 }
 
+/**
+ * The cells of the row a guide's table opens with a label, as the file has them.
+ *
+ * @throws Error when the guide has no such row.
+ */
+function tableRow(name: string, label: string): string[] {
+  const row = readFileSync(new URL(`../../../../docs/running/${name}`, import.meta.url), 'utf8')
+    .split('\n')
+    .find((line) => line.startsWith(`| ${label} `));
+  if (row === undefined) throw new Error(`${name} has no row "${label}"`);
+  return row
+    .split('|')
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+}
+
+/** A count as a guide prints it. */
+const printed = (count: number): string => count.toLocaleString('en-GB');
+
 /** Each reader's reasons and refusals, as its own tests pin them, that its guide quotes whole. */
 const QUOTED: Readonly<Record<string, readonly string[]>> = {
   'reader-confluence.md': [
     'Confluence gave no body in its storage format for "Quarter board", so Day0 does not read it.',
+    '"Quarter board" was deleted or moved in Confluence after it was listed.',
+    'Confluence listed "Escalation paths (2024)" among its archived pages and then answered HTTP 400 for the page itself, so Day0 keeps what it last read of it.',
     "Confluence refused the API token this source uses (HTTP 401): it may have expired (a token lasts a year at most) or been revoked. Ask IT to create a new API token for the service account with the scopes reader-confluence.md lists, then use Rotate on the source's row to enter it.",
     'Confluence refused this request for the service account (HTTP 403): ask IT to check that its API token has the scopes reader-confluence.md lists (read:space:confluence and read:page:confluence), that the service account has access to Confluence, and that it may view the space.',
     'Confluence found no space with the key "OPS" that the service account may view: check the key, and ask IT to give the service account View permission in the space.',
@@ -59,6 +86,49 @@ describe("wave 15's reader guides", (): void => {
       expect(text).toContain('no tenant read yet');
     },
   );
+
+  it.each<[string, string, string, readonly LibraryKind[]]>([
+    ['reader-sharepoint.md', 'What a read asks of Microsoft', 'file', ['sharepoint']],
+    [
+      'reader-confluence.md',
+      'What a read asks of Confluence',
+      'page',
+      ['confluence-v2', 'confluence-dc'],
+    ],
+    ['reader-drive.md', 'What a read asks of Google', 'document', ['drive']],
+  ])(
+    '%s says what a first read, an unchanged read and a read after one change cost, as the bed and the reader’s own test counted them (wave 17, 17-X)',
+    (name, heading, changed, kinds): void => {
+      // A kind's two columns: the bed's 250 pages, then the thousand each reader's own test holds
+      // to the same figure (`guide-counts.ts`).
+      const cells = (label: string, read: keyof ReadCosts): string[] => [
+        label,
+        ...kinds.flatMap((kind) => [
+          printed(BED_REQUESTS[kind][read]),
+          printed(THOUSAND_PAGE_REQUESTS[kind][read]),
+        ]),
+      ];
+      for (const [label, read] of [
+        ['The first read', 'first'],
+        ['A read with nothing changed', 'unchanged'],
+        [`A read after one ${changed} changed`, 'oneChanged'],
+      ] as const) {
+        expect(tableRow(name, label)).toEqual(cells(label, read));
+      }
+      const text = guide(name);
+      const section = text.slice(text.indexOf(`## ${heading}`), text.indexOf('## 1'));
+      expect(section).toContain(`## ${heading}`);
+      expect(section).toMatch(/test doubles? of .* that day0's own tests use, not on a/);
+    },
+  );
+
+  it('says which tag a SharePoint file is kept by, and that the two are never compared (X-1)', (): void => {
+    const sharepoint = guide('reader-sharepoint.md');
+    expect(sharepoint).toContain('`cTag`');
+    expect(sharepoint).toContain('`eTag`');
+    expect(sharepoint).toContain('The two tags are never compared with each other');
+    expect(sharepoint).toContain('to be confirmed on the first tenant');
+  });
 
   it('names Atlassian’s end of life for Data Center, and the unconfirmed Sites.Selected grant', (): void => {
     expect(guide('reader-confluence.md')).toContain('28 March 2029');
