@@ -1069,6 +1069,57 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).toEqual([]);
   });
 
+  it('refuses an answer to a question whose conflict no longer stands, recording nothing (W16-R27)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const [question] = await questionsOf(harness, workItemId);
+    // A card left open in another tab: the conflict was set aside on the Documentation tab by a
+    // row the decision did not close (a page archived there would leave the same stale card).
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(relationId, { status: 'dismissed' });
+    });
+    await expect(
+      asManager(harness).mutation(api.managerQuestions.answerConflict, {
+        questionId: question._id,
+        choice: 'from',
+      }),
+    ).rejects.toThrow('These two pages no longer disagree as they did, so nothing is recorded.');
+    expect((await questionsOf(harness, workItemId))[0].answer).toBeUndefined();
+  });
+
+  it('asks again, and stops an approved plan, when a conflict settled as both holding is confirmed again (W16-R27)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const decide = async (decision: 'both-hold' | 'undo' | 'disagree'): Promise<void> => {
+      await asManager(harness).mutation(api.docRelations.decide, { relationId, decision });
+    };
+    // The plan is still the manager's to approve when the pages come to disagree again.
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'plan-pending' }));
+    await decide('both-hold');
+    expect((await questionsOf(harness, workItemId)).map((row) => row.answer?.text)).toEqual([
+      'Both hold',
+    ]);
+    // "Both hold", Undo, "They disagree": the same pages disagree again under the same plan.
+    await decide('undo');
+    await decide('disagree');
+    const asked = await questionsOf(harness, workItemId);
+    expect(asked.map((row) => row.answer?.text)).toEqual(['Both hold', undefined]);
+    expect(
+      await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId }),
+    ).toHaveLength(1);
+    // The same again with the plan already approved: nobody is asked beside an approved plan, so
+    // the run stops on the conflict confirmed since.
+    await decide('both-hold');
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'plan-approved' }));
+    await decide('undo');
+    await decide('disagree');
+    expect(
+      await harness.query(internal.managerQuestions.conflictConfirmedSince, { workItemId }),
+    ).toMatchObject({ heading: 'Thresholds' });
+  });
+
   it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

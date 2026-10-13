@@ -254,6 +254,8 @@ export const CONFLICT_ANSWER_REFUSALS = {
   gone: 'That question is no longer stored.',
   notConflict: 'That question is not about two pages that disagree.',
   answered: 'That question has already been answered.',
+  /** The conflict stopped standing since the card was drawn: nothing is decided or recorded. */
+  settled: 'These two pages no longer disagree as they did, so nothing is recorded.',
 } as const;
 
 /** The decision of the relation an answer stands for. */
@@ -288,18 +290,16 @@ export async function answerConflictInTransaction(
   if (question.answer !== undefined) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.answered);
   const relation = await ctx.db.get(question.relationId);
   const standing = await standingConflictOf(ctx, relation);
-  const text =
-    standing === undefined
-      ? answer.choice === 'both'
-        ? 'Both hold'
-        : `${answer.choice === 'from' ? 'The first page' : 'The second page'} is right`
-      : conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
-  if (relation !== null && standing !== undefined) {
-    await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], {
-      decidedBy: answer.decidedBy,
-      via: answer.via,
-    });
+  // A card clicked after the conflict settled or a page left decides nothing, so it records
+  // nothing either: an answer kept with nothing decided read as a decision made (W16-R27).
+  if (relation === null || standing === undefined) {
+    throw new ConvexError(CONFLICT_ANSWER_REFUSALS.settled);
   }
+  const text = conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
+  await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], {
+    decidedBy: answer.decidedBy,
+    via: answer.via,
+  });
   await ctx.db.patch(question._id, {
     answer: { text, answeredAt: Date.now(), via: answer.via },
   });
@@ -459,13 +459,13 @@ export const conflictConfirmedSince = internalQuery({
     const row = await ctx.db.get(args.workItemId);
     const agent = row === null ? null : await ctx.db.get(row.agentId);
     if (row === null || agent?.userId === undefined) return null;
+    // A relation with a question still open is the hold's; one whose only questions are answered
+    // stands again (settled as both holding, taken back and confirmed anew), and nobody was asked
+    // about it as it stands now (W16-R27).
     const asked = new Set(
-      (
-        await ctx.db
-          .query('managerQuestions')
-          .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-          .take(ITEM_QUESTIONS_READ)
-      ).flatMap((question) => (question.relationId === undefined ? [] : [question.relationId])),
+      (await openConflictQuestions(ctx, row._id)).flatMap((question) =>
+        question.relationId === undefined ? [] : [question.relationId],
+      ),
     );
     for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent)) {
       if (asked.has(conflict.relationId as Id<'docRelations'>)) continue;

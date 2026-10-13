@@ -866,7 +866,11 @@ export async function askConflictQuestion(
     .query('managerQuestions')
     .withIndex('by_relation', (q) => q.eq('relationId', conflict.relationId))
     .take(QUESTIONS_PER_RELATION_READ);
-  if (asked.some((question) => question.workItemId === row._id)) return null;
+  // Asked once while its question is open; a conflict settled and confirmed again is asked again,
+  // since the answer given was to the conflict as it stood then (W16-R27).
+  if (asked.some((question) => question.workItemId === row._id && question.answer === undefined)) {
+    return null;
+  }
   const [agent, charter] = await Promise.all([
     ctx.db.get(row.agentId),
     approvedCharter(ctx, row.agentId),
