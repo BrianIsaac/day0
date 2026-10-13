@@ -1,5 +1,5 @@
 import type { ExecutionPlan } from '../src/work/types';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -338,30 +338,85 @@ const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'],
 ];
 
 /**
+ * Bytes of rows one read of an employee's list holds at most (W16-R31): the list was bounded in
+ * rows and not in bytes, and a row carries its run's output, so an employee with a few hundred
+ * heavy rows read past what one query may. Half of that, which leaves the names their reads.
+ */
+export const WORK_LIST_BYTES = 8 * 1024 * 1024;
+
+/** The most bytes one document holds (Convex's limit): what a row not yet read may weigh. */
+const ROW_BYTES_AT_MOST = 1024 * 1024;
+
+/** One read of an employee's work items, newest first: those created before a time, at most a count. */
+type NewestBefore = (before: number | undefined, count: number) => Promise<Doc<'workItems'>[]>;
+
+/**
+ * A reader of the rows of one list, which holds {@link WORK_LIST_BYTES} across its reads, counted
+ * as Convex counts them (a row two reads meet is read twice). Each read takes its rows a few at a
+ * time, never more than fit the room left at a document's largest size, so the bound holds
+ * whatever a row weighs, and a read ends at its count, at the index's end or with the room.
+ */
+function listReader(): (newestBefore: NewestBefore, limit: number) => Promise<Doc<'workItems'>[]> {
+  let room = WORK_LIST_BYTES;
+  return async (newestBefore, limit) => {
+    const taken: Doc<'workItems'>[] = [];
+    while (taken.length < limit && room > 0) {
+      const count = Math.min(
+        limit - taken.length,
+        Math.max(1, Math.floor(room / ROW_BYTES_AT_MOST)),
+      );
+      const rows = await newestBefore(taken.at(-1)?._creationTime, count);
+      for (const row of rows) room -= getDocumentSize(row);
+      taken.push(...rows);
+      if (rows.length < count) break;
+    }
+    return taken;
+  };
+}
+
+/**
  * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
  * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
  * order the page has always been given: by state, last first, and the newest first within one.
+ * The reads hold {@link WORK_LIST_BYTES} between them, the unfinished rows read first, since
+ * Needs you links to them, and the newest of all with what is left (W16-R31).
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ListedWorkItem[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const [newest, ...open] = await Promise.all([
-      ctx.db
-        .query('workItems')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .order('desc')
-        .take(WORK_LIST_LIMIT),
-      ...UNFINISHED_STATE_READS.map(
-        async ([state, limit]) =>
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', state))
-            .order('desc')
-            .take(limit),
-      ),
-    ]);
-    const byId = new Map([...newest, ...open.flat()].map((row) => [row._id, row]));
+    const read = listReader();
+    // One after another, not at once: each read is given what the reads before it left.
+    const open: Doc<'workItems'>[] = [];
+    for (const [state, limit] of UNFINISHED_STATE_READS) {
+      open.push(
+        ...(await read(
+          async (before, count) =>
+            await ctx.db
+              .query('workItems')
+              .withIndex('by_agent_state', (q) => {
+                const ofState = q.eq('agentId', args.agentId).eq('state', state);
+                return before === undefined ? ofState : ofState.lt('_creationTime', before);
+              })
+              .order('desc')
+              .take(count),
+          limit,
+        )),
+      );
+    }
+    const newest = await read(
+      async (before, count) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent', (q) => {
+            const ofAgent = q.eq('agentId', args.agentId);
+            return before === undefined ? ofAgent : ofAgent.lt('_creationTime', before);
+          })
+          .order('desc')
+          .take(count),
+      WORK_LIST_LIMIT,
+    );
+    const byId = new Map([...newest, ...open].map((row) => [row._id, row]));
     const items = [...byId.values()].sort((left, right) =>
       left.state === right.state
         ? right._creationTime - left._creationTime

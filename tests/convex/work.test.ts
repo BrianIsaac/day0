@@ -2,7 +2,7 @@
 
 import { convexTest, type TestConvex } from 'convex-test';
 import type { WithoutSystemFields } from 'convex/server';
-import { ConvexError } from 'convex/values';
+import { ConvexError, getDocumentSize } from 'convex/values';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
@@ -8756,6 +8756,60 @@ describe('work.listForAgent', (): void => {
     expect(listed).toHaveLength(WORK_LIST_LIMIT + 2);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it('reads no more bytes of rows than its bound, the unfinished rows first and then the newest (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review: the list was bounded in rows and not in bytes, and a row carries its
+    // run's output. Sixty finished rows of 300 KB are 18 MB, past what one query may read.
+    const { WORK_LIST_BYTES } = await import('../../convex/work');
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesRead: 16 * 1024 * 1024 },
+    });
+    const agentId = await seedEmployee(harness);
+    const row = (externalId: string, state: Doc<'workItems'>['state'], at: number) => ({
+      agentId,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      externalId,
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Synthetic.',
+      contentRefs: [],
+      state,
+      observedAt: at,
+      createdAt: at,
+    });
+    const output = { actions: [], applied: [], notes: 'x'.repeat(300 * 1024) };
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', row('REVOPS-OLD-PLAN', 'plan-pending', 0));
+    });
+    for (let start = 0; start < 60; start += 10) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let item = start; item < start + 10; item += 1) {
+          await ctx.db.insert('workItems', {
+            ...row(`REVOPS-${item}`, 'completed', 10 + item),
+            output,
+          });
+        }
+      });
+    }
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    const ids = listed.map((item) => item.externalId);
+    // The plan the manager has still to decide is read before any finished row, however old.
+    expect(ids).toContain('REVOPS-OLD-PLAN');
+    expect(ids).toContain('REVOPS-59');
+    expect(ids).not.toContain('REVOPS-0');
+    // The newest finished rows, in a row, as many as the bound holds: the last one read is the
+    // one that reached it.
+    const finished = ids.filter((id) => id !== 'REVOPS-OLD-PLAN');
+    expect(finished).toEqual(finished.map((_id, place) => `REVOPS-${59 - place}`));
+    const bytes = listed.reduce((sum, item) => sum + getDocumentSize(item), 0);
+    expect(bytes).toBeGreaterThan(WORK_LIST_BYTES - 400 * 1024);
+    expect(bytes).toBeLessThan(WORK_LIST_BYTES + 400 * 1024);
+  }, 60_000);
 
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
