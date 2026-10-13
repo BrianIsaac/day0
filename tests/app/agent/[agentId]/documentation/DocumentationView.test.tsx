@@ -710,6 +710,88 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('says beside each date that its source dated it, on a successor proposed by the pages’ dates (D-8 (a), X-3)', () => {
+    populated();
+    const byDates = {
+      ...RELATIONS[0],
+      from: {
+        ...RELATIONS[0].from,
+        title: 'Escalation paths for the close',
+        updatedAt: Date.UTC(2026, 8, 28, 16, 30),
+        edited: true,
+        dated: true,
+      },
+      to: { ...RELATIONS[0].to, edited: true, dated: true },
+      evidence: [
+        { measure: 'shared-text', value: 96 },
+        { measure: 'edit-dates', value: 3 },
+      ],
+    };
+    backend.queries['docRelations:listOpen'] = [byDates];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(view.container.textContent).toContain(
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00, dated by its source) and “Escalation paths for the close” (How-to guides, edited 28 Sep 2026, 16:30, dated by its source) share 96 percent of their text, and the second was edited 3 days after the first.',
+    );
+    view.unmount();
+    // A pair proposed before its rows could say (0.20.0): the card claims nothing of the dates.
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...byDates,
+        from: { ...byDates.from, dated: false },
+        to: { ...byDates.to, dated: false },
+      },
+    ];
+    const before = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(before.container.textContent).not.toContain('dated by its source');
+    before.unmount();
+    // A relation the dates did not propose says nothing of them either.
+    backend.queries['docRelations:listOpen'] = [
+      { ...byDates, evidence: [{ measure: 'title-version', value: 1 }] },
+    ];
+    const byTitle = mount(
+      asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }),
+    );
+    expect(byTitle.container.textContent).not.toContain('dated by its source');
+    byTitle.unmount();
+  });
+
+  it('says on a duplicate’s card which page Day0 has no edit date for, so the pair is not proposed as versions by date (D-8 (a))', () => {
+    populated();
+    const duplicate = {
+      ...RELATIONS[0],
+      kind: 'possible_duplicate',
+      evidence: [{ measure: 'shared-text', value: 96 }],
+    };
+    const drawn = (from: boolean, to: boolean, toSource?: string): string => {
+      backend.queries['docRelations:listOpen'] = [
+        {
+          ...duplicate,
+          from: { ...duplicate.from, edited: from, dated: from },
+          to: {
+            ...duplicate.to,
+            edited: to,
+            dated: to,
+            ...(toSource !== undefined ? { source: toSource } : {}),
+          },
+        },
+      ];
+      const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+      const text = view.container.textContent ?? '';
+      view.unmount();
+      return text;
+    };
+    expect(drawn(false, true)).toContain(
+      'share 96 percent of their text. Day0 has no edit date from How-to guides for “Escalation paths, draft v2”. Every employee that reads both sources',
+    );
+    expect(drawn(false, false)).toContain(
+      'share 96 percent of their text. Day0 has no edit date from RevOps team wiki or How-to guides for either page. Every employee',
+    );
+    expect(drawn(false, false, 'How-to guides')).toContain(
+      'Day0 has no edit date from How-to guides for either page.',
+    );
+    expect(drawn(true, true)).not.toContain('no edit date');
+  });
+
   it('has no axe violation and gives every control a 44 px target with both tables and both cards populated', async () => {
     populated();
     backend.queries['docRelations:listOpen'] = RELATIONS;

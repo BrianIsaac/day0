@@ -10,10 +10,10 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
-  KINDS_WITHOUT_EDIT_TIME,
   alreadyHeld,
   candidatesOf,
   disagreementOf,
+  editedAtSource,
   generationsOf,
   measured,
   named,
@@ -84,6 +84,17 @@ async function readersOfEither(
   return [...readers.values()];
 }
 
+/** What one page's measure wrote. */
+export interface PageMeasure {
+  /** How many relations it proposed. */
+  readonly proposed: number;
+  /**
+   * Whether its room ended it with candidates still unmeasured (W16-R34): the page is then
+   * measured again, where it was once counted measured and its last candidates never met.
+   */
+  readonly cut: boolean;
+}
+
 /**
  * Measure one page a sync stored or changed against the owner's other active pages, and write a
  * `proposed` relation for each pair the measures relate that holds none yet. Internal; the sync
@@ -95,7 +106,7 @@ async function readersOfEither(
  * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
  * most a sync proposes whatever its last page holds.
  *
- * @returns How many relations it proposed.
+ * @returns How many relations it proposed, and whether its room cut its candidates short.
  */
 export const measurePage = internalMutation({
   args: {
@@ -105,14 +116,14 @@ export const measurePage = internalMutation({
     /** The new proposals this call may still write; absent, every one its candidates hold. */
     room: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<number> => {
+  handler: async (ctx, args): Promise<PageMeasure> => {
     const source = await ctx.db.get(args.sourceId);
-    if (source === null) return 0;
+    if (source === null) return { proposed: 0, cut: false };
     if (source.activeSyncId !== args.syncRunId && source.lastCompletedSyncId !== args.syncRunId) {
-      return 0;
+      return { proposed: 0, cut: false };
     }
     const page = await pageAt(ctx, args);
-    if (page === null || pageStatusOf(page) !== 'active') return 0;
+    if (page === null || pageStatusOf(page) !== 'active') return { proposed: 0, cut: false };
     const sources = await ctx.db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
@@ -126,7 +137,7 @@ export const measurePage = internalMutation({
       page,
       self.blocks,
     )) {
-      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) break;
+      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) return { proposed, cut: true };
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
@@ -161,7 +172,7 @@ export const measurePage = internalMutation({
       }
       proposed += 1;
     }
-    return proposed;
+    return { proposed, cut: false };
   },
 });
 
@@ -574,11 +585,17 @@ async function askAtConfirmation(
 type CardPage = NamedPage & {
   readonly updatedAt: number;
   /**
-   * Whether `updatedAt` is when the source says the page was edited. False for a kind whose
-   * reader is given no edit time and stamps the page with when it read it (a list of URLs, an
-   * MCP server), so a card says "last read", not "edited" (W15-R45).
+   * Whether `updatedAt` is when the source says the page was edited (`editedAtSource`). False
+   * for a page its reader stamped with when it read it, so a card says "last read", not "edited"
+   * (W15-R45).
    */
   readonly edited: boolean;
+  /**
+   * Whether the page's row says its source dated it (`docPages.datedBySource`; D-8 (a)): the card
+   * of a successor proposed by the pages' dates says so beside each date. False for a page
+   * stored before 0.21.0, of whose time the card claims nothing more than its kind does.
+   */
+  readonly dated: boolean;
   readonly authority: SourceAuthority;
 };
 
@@ -587,7 +604,8 @@ function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
   return {
     ...named(page, source),
     updatedAt: page.updatedAt,
-    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
+    edited: editedAtSource(page, source),
+    dated: page.datedBySource === true,
     authority: authorityOf(page, source),
   };
 }

@@ -3205,8 +3205,9 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
       contentHash: 'c'.repeat(32),
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await stamped(holders.reads)).toBe(
-      'its runbook "Refresh the tile" changed on 8 October 2026',
+      'its runbook “Refresh the tile” changed on 8 October 2026',
     );
     expect(await stamped(holders.readsAnother)).toBeNull();
     const row = await harness.run(async (ctx) => await ctx.db.get(holders.reads));
@@ -3260,7 +3261,11 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
       syncRunId: runId,
       ref: 'refresh.md',
       title: 'Refresh the tile',
-      markdown: RUNBOOK.replace('Press refresh twice.', 'Press refresh twice. <person: name>'),
+      // The redaction now takes "refresh" for a name. Re-taken at wave 17 (17-FD): the fixture
+      // appended `<person: name>`, which is no marker the redaction writes and stood where no
+      // text had been; a page with no hash is now compared with its stored text (W16-R34), so
+      // the difference is written as the redaction writes one (`personalDataMarker('person')`).
+      markdown: RUNBOOK.replace('Press refresh twice.', 'Press <redacted: person> twice.'),
       updatedAt: 2,
       contentHash: 'a'.repeat(32),
     });
@@ -3268,6 +3273,216 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     expect(
       await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null),
     ).toBeNull();
+  });
+
+  /** A registered skill of the employee's whose verified version read `refresh.md`. */
+  async function holderOf(
+    harness: TestConvex<typeof schema>,
+    agentId: Id<'agents'>,
+    sourceId: Id<'docSources'>,
+  ): Promise<Id<'skills'>> {
+    return await harness.run(async (ctx) => {
+      await ctx.db.patch(agentId, { zone: 'Asia/Singapore' });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        surfaceClass: 'dashboard',
+        operation: 'refresh',
+        version: 1,
+        body: '# Refresh',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [{ sourceId, ref: 'refresh.md', title: 'Refresh the tile' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('skills', {
+        agentId,
+        name: 'refresh-the-tile',
+        description: 'Refresh the pipeline tile.',
+        body: '# Refresh',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+      });
+    });
+  }
+
+  it('stamps the skills of a page stored with no hash and then changed (W16-R34)', async (): Promise<void> => {
+    // A page whose split failed or never landed holds no hash; a change to it skipped the stamp.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 8, 3, 0, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'refresh.md',
+        title: 'Refresh the tile',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+      });
+    });
+    const holder = await holderOf(harness, agentId, sourceId);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK.replace('twice', 'three times'),
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null)).toBe(
+      Date.UTC(2026, 9, 8, 3, 0, 0),
+    );
+  });
+
+  it('stamps nothing where a page’s two texts differ only in what the redaction took out, though both hashes say it was stored again (W15-R42)', async (): Promise<void> => {
+    // The wave 15 review: the first sync after an upgrade that re-takes every hash stored `SEV1`
+    // as a credential marker and stamped "changed" on every skill that read the page.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const paging = `${RUNBOOK}\n\nPage the on-call with code SEV1.`;
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      updatedAt: 2,
+    };
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: paging,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const holder = await holderOf(harness, agentId, sourceId);
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: paging.replace('SEV1', '<credential: pager credential, stored>'),
+      contentHash: 'b'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const due = async () =>
+      await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null);
+    expect(await due()).toBeNull();
+    // And a word of the runbook changed under a third hash is a change.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: paging
+        .replace('SEV1', '<credential: pager credential, stored>')
+        .replace('twice', 'once'),
+      contentHash: 'c'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await due()).not.toBeNull();
+  });
+});
+
+describe('whether a page’s source dated it, in the page store (D-8 (a), K-2)', (): void => {
+  const RUNBOOK = '# Refresh the tile\n\nOpen the dashboard.';
+
+  it('stores what the reader says of a page’s time with the time, and takes the reader’s new word when the page changes', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+    };
+    const stored = async (): Promise<Doc<'docPages'>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'refresh.md'))
+            .unique())!,
+      );
+    await harness.mutation(internal.docSources.upsertPage, { ...page, datedBySource: true });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: true });
+    // Changed, and read this time with no date from its source: the new time is the read's.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: `${RUNBOOK}\n\nThen post.`,
+      updatedAt: 7,
+      datedBySource: false,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 7, datedBySource: false });
+    // Changed again by a reader that does not say: nothing is claimed of the new time.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      markdown: `${RUNBOOK}\n\nThen post twice.`,
+      updatedAt: 9,
+    });
+    const unsaid = await stored();
+    expect(unsaid.updatedAt).toBe(9);
+    expect(unsaid).not.toHaveProperty('datedBySource');
+  });
+
+  it('fills what the reader says of an unchanged page’s time where its row does not say, and never over a stored word (the second pass)', async (): Promise<void> => {
+    // The reviewer's case: a deployment with no credential key takes no page hash, so no page is
+    // ever kept by its hash and every one comes here at each sync. An unchanged page was left as
+    // it was, its row never said, and a page dated by its read went on dating successors by its
+    // source's kind until its text next changed.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown: RUNBOOK,
+      updatedAt: 2,
+    };
+    const stored = async (): Promise<Doc<'docPages'>> =>
+      await harness.run(
+        async (ctx) =>
+          (await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'refresh.md'))
+            .unique())!,
+      );
+    // Stored by 0.20.0, whose reader said nothing of the time.
+    await harness.mutation(internal.docSources.upsertPage, page);
+    expect(await stored()).not.toHaveProperty('datedBySource');
+    // Unchanged, and a reader that still does not say: nothing is claimed.
+    await harness.mutation(internal.docSources.upsertPage, { ...page, updatedAt: 5 });
+    expect(await stored()).not.toHaveProperty('datedBySource');
+    // Unchanged, read with no date from its source: the row says so, its time as stored (P5-18).
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      updatedAt: 6,
+      datedBySource: false,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: false });
+    // The stored word is about the stored time: a later read of the same text does not move it.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      updatedAt: 8,
+      datedBySource: true,
+    });
+    expect(await stored()).toMatchObject({ updatedAt: 2, datedBySource: false });
   });
 });
 
@@ -3441,8 +3656,9 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     await walk(harness, sourceId, ['kept.md']);
     expect(await reason()).toBeUndefined();
     await walk(harness, sourceId, ['kept.md']);
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reason()).toBe(
-      'its runbook "missed.md" was removed from Drive on 10 October 2026',
+      'its runbook “missed.md” was removed from Drive on 10 October 2026',
     );
   });
 

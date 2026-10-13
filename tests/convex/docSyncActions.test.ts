@@ -27,11 +27,13 @@ import { allConvexModules } from './all-modules';
 import { managerIdentity } from './fakes/manager-identity';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
-  LISTING_RESTARTS_REASON,
-  SYNC_BATCH_SIZE,
   categoryForPage,
+  type DatedDocPage,
+  keptByRevision,
+  LISTING_RESTARTS_REASON,
   persistPageBatch,
   safeSyncError,
+  SYNC_BATCH_SIZE,
 } from '../../convex/docSyncActions';
 import type { DocPage, DocSourceRecord } from '../../src/docs/types';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../../src/docs/status';
@@ -540,6 +542,135 @@ describe('the status a source gives a page, beside its hash (15-A; A-2)', (): vo
       nativeStatus: 'draft',
       sourceRevision: '3',
     });
+  });
+});
+
+describe('whether a page’s source dated it, at the persistence boundary (D-8 (a), K-2)', (): void => {
+  /** A fixed 32-byte credential key in standard base64. */
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A fake action context: the stored page the skip reads, and each write the batch asks for. */
+  function contextWith(
+    stored: { title: string; markdown: string; datedBySource?: boolean } | null,
+  ): { ctx: ActionCtx; writes: Array<{ name: string; args: Record<string, unknown> }> } {
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const ctx = {
+      runQuery: async (reference: unknown): Promise<unknown> =>
+        getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
+          ? stored
+          : [],
+      runAction: async (): Promise<string> => 'f'.repeat(32),
+      runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        writes.push({ name: getFunctionName(reference as never), args });
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    return { ctx, writes };
+  }
+
+  /** The page as a reader that does not say which its time is returns it. */
+  const unsaid: DocPage = {
+    sourceId: 'source-contract' as Id<'docSources'>,
+    ref: 'runbook.md',
+    title: 'Runbook',
+    markdown: '# Runbook\n\nPress refresh.',
+    updatedAt: 1,
+  };
+  const page: DatedDocPage = { ...unsaid, datedBySource: true };
+  const STORED = { title: 'Runbook', markdown: '# Runbook\n\nStored.' };
+  const UPSERT = getFunctionName(internal.docSources.upsertPage);
+  const RECORD = getFunctionName(internal.docStatus.recordRead);
+
+  it('records it for a page kept as stored the first time a sync meets the page without it: one small write, nothing redacted or stored again', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith(STORED);
+    await persistPageBatch(ctx, source(), [page], [], undefined, []);
+    expect(writes).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'runbook.md',
+          datedBySource: true,
+        },
+      },
+    ]);
+  });
+
+  it('writes nothing for a kept page that already says which its time is, whatever the reader says now', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    for (const datedBySource of [true, false]) {
+      // The stored time was the stored read's: a kept page keeps it, and what was said of it.
+      const { ctx, writes } = contextWith({ ...STORED, datedBySource });
+      await persistPageBatch(ctx, source(), [page], [], undefined, []);
+      expect(writes).toEqual([]);
+    }
+  });
+
+  it('writes nothing for a kept page whose reader does not say', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith(STORED);
+    await persistPageBatch(ctx, source(), [unsaid], [], undefined, []);
+    expect(writes).toEqual([]);
+  });
+
+  it('stores a page it reads again with what its reader says of its time, in the upsert that writes the time', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    for (const datedBySource of [true, false]) {
+      const { ctx, writes } = contextWith(null);
+      await persistPageBatch(ctx, source(), [{ ...page, datedBySource }], [], undefined, []);
+      expect(writes.map((write) => write.name)).toEqual([UPSERT, RECORD]);
+      expect(writes[0].args).toMatchObject({ updatedAt: 1, datedBySource });
+    }
+    const { ctx, writes } = contextWith(null);
+    await persistPageBatch(ctx, source(), [unsaid], [], undefined, []);
+    expect(writes[0].args).not.toHaveProperty('datedBySource');
+  });
+
+  it('records it for a page kept by its revision the first time, with its stored revision kept, and not again', async (): Promise<void> => {
+    const row = {
+      ref: 'runbook.md',
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      updatedAt: 1,
+      sourceRevision: '12',
+    };
+    const first = contextWith(null);
+    await keptByRevision(
+      first.ctx,
+      source(),
+      [],
+      'run-contract' as Id<'docSyncRuns'>,
+      [{ ref: 'runbook.md', datedBySource: true }],
+      new Map([['runbook.md', row]]),
+    );
+    expect(first.writes).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'runbook.md',
+          datedBySource: true,
+          keepRevision: true,
+        },
+      },
+    ]);
+    const again = contextWith(null);
+    await keptByRevision(
+      again.ctx,
+      source(),
+      [],
+      'run-contract' as Id<'docSyncRuns'>,
+      [{ ref: 'runbook.md', datedBySource: true }],
+      new Map([['runbook.md', { ...row, datedBySource: true }]]),
+    );
+    expect(again.writes).toEqual([]);
   });
 });
 

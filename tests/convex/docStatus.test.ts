@@ -236,6 +236,33 @@ describe('recordRead: what a page’s source says of it, beside its hash', (): v
     ]);
   });
 
+  it('fills whether the source dated the page where the row does not say, with its text, its time and its hash as they were, and leaves what a row says standing (K-2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const before = await pageOf(harness, pageId);
+    expect(before).not.toHaveProperty('datedBySource');
+    const record = async (datedBySource: boolean): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'runbooks/refresh.md',
+        datedBySource,
+      });
+    // Not a change of status.
+    expect(await record(true)).toBe(false);
+    const after = await pageOf(harness, pageId);
+    expect(after.datedBySource).toBe(true);
+    expect([after.markdown, after.contentHash, after.updatedAt]).toEqual([
+      before.markdown,
+      before.contentHash,
+      before.updatedAt,
+    ]);
+    // The row's time is the stored read's: a later read's word is not about it.
+    await record(false);
+    expect((await pageOf(harness, pageId)).datedBySource).toBe(true);
+  });
+
   it('returns a page to its source’s default once the source stops saying anything of it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
@@ -1170,8 +1197,9 @@ describe('the skills that read a page whose status changed', (): void => {
       status: 'superseded',
       supersededBy: successor,
     });
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, skillId)).toBe(
-      'its runbook "Refreshing the tile" was superseded on 10 October 2026',
+      'its runbook “Refreshing the tile” was superseded on 10 October 2026',
     );
     expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
   });
@@ -1205,8 +1233,9 @@ describe('the skills that read a page whose status changed', (): void => {
         ...(nativeStatus !== undefined ? { nativeStatus } : {}),
       });
     }
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, archived)).toBe(
-      'its runbook "Refreshing the tile" was archived on 10 October 2026',
+      'its runbook “Refreshing the tile” was archived on 10 October 2026',
     );
     expect((await pageOf(harness, back)).status).toBe('active');
     expect(await reasonOf(harness, returning)).toBeUndefined();

@@ -1,6 +1,6 @@
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
@@ -12,6 +12,7 @@ import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import {
   FINANCE,
+  PIPELINE_V1,
   asManager,
   employee,
   eventsOf,
@@ -23,6 +24,7 @@ import {
   twoThatDisagree,
   twoVersions,
   type Harness,
+  type Source,
 } from './fakes/doc-relations';
 
 // A decision that supersedes a page re-admits parked work, which schedules its next step.
@@ -554,6 +556,31 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_successor', false, true],
       ['possible_conflict', false, true],
     ]);
+    // A page that says which its time is overrules its kind (D-8 (a)): read from a list of URLs
+    // and dated by its source, it is "edited" and says so; from a folder and dated by the time
+    // Day0 read it, "last read". A page stored before it could say reads by its kind, and its
+    // card makes no claim.
+    const dated = async (ref: string, datedBySource: boolean): Promise<void> =>
+      await harness.run(async (ctx) => {
+        const page = await ctx.db
+          .query('docPages')
+          .filter((q) => q.eq(q.field('ref'), ref))
+          .unique();
+        await ctx.db.patch(page!._id, { datedBySource });
+      });
+    await dated('escalation.md', true);
+    await dated('runbooks/pipeline-runbook.md', false);
+    const said = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(
+      said.map((card) => [
+        card.kind,
+        [card.from.edited, card.from.dated],
+        [card.to.edited, card.to.dated],
+      ]),
+    ).toEqual([
+      ['possible_successor', [false, false], [false, false]],
+      ['possible_conflict', [true, true], [false, false]],
+    ]);
     // Another manager sees none of them.
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),
@@ -700,6 +727,87 @@ interface RegisteredFunction {
   readonly isPublic?: boolean;
   readonly exportArgs?: () => string;
 }
+
+describe('a conflict whose page’s title is renamed (W15-R21)', (): void => {
+  /** Store a page's new text and split it, as the sync does for a page that changed. */
+  async function restore(
+    harness: Harness,
+    source: Source,
+    pageId: Id<'docPages'>,
+    page: { title: string; markdown: string },
+  ): Promise<void> {
+    const { ref } = await harness.run(async (ctx) => {
+      await ctx.db.patch(pageId, page);
+      return (await ctx.db.get(pageId))!;
+    });
+    await harness.mutation(internal.docBlocks.splitStoredPage, {
+      sourceId: source.sourceId,
+      ref,
+      generation: source.runId,
+    });
+  }
+
+  const RENAMED = {
+    title: 'Pipeline runbook for RevOps',
+    markdown: PIPELINE_V1.replace('# Pipeline runbook', '# Pipeline runbook for RevOps'),
+  };
+
+  it('keeps the confirmed conflict standing, on its card and for the selection, when the H1 changes and the figures do not', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance, a } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [proposed] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: proposed._id,
+      decision: 'disagree',
+    });
+    await restore(harness, handbook, a, RENAMED);
+    const cards = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(cards).toMatchObject([
+      {
+        _id: proposed._id,
+        kind: 'possible_conflict',
+        status: 'confirmed',
+        to: { title: 'Pipeline runbook for RevOps' },
+        disagreement: { heading: 'Thresholds', figures: { from: '10,000', to: '5,000' } },
+      },
+    ]);
+    // Measured again, as the sync measures a page it stored: no second row for the pair.
+    expect(await measure(harness, handbook, 'runbooks/pipeline-runbook.md')).toBe(0);
+    expect(await relations(harness)).toMatchObject([{ _id: proposed._id, status: 'confirmed' }]);
+  });
+
+  it('does not propose again a conflict the manager set aside, for a rename alone', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance, a } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [proposed] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: proposed._id,
+      decision: 'both-hold',
+    });
+    await restore(harness, handbook, a, RENAMED);
+    expect(await measure(harness, handbook, 'runbooks/pipeline-runbook.md')).toBe(0);
+    expect(await relations(harness)).toMatchObject([{ _id: proposed._id, status: 'dismissed' }]);
+  });
+
+  it('asks again where the figure changed with the title: that is another disagreement', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance, a } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [proposed] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: proposed._id,
+      decision: 'both-hold',
+    });
+    await restore(harness, handbook, a, {
+      title: RENAMED.title,
+      markdown: RENAMED.markdown.replace('5,000', '7,000'),
+    });
+    expect(await measure(harness, handbook, 'runbooks/pipeline-runbook.md')).toBe(1);
+    expect((await relations(harness)).map((row) => row.status)).toEqual(['dismissed', 'proposed']);
+  });
+});
 
 describe('the functions convex/docRelations.ts registers', (): void => {
   // The split of its helpers (wave 16, 16-s; decision S-1) moves no registered function: each

@@ -68,9 +68,27 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
 }
 
 /**
+ * Whether a source holds a page under a ref that the measures can read: its first block, one small
+ * row. The test that a page a front matter names exists, which read the page's whole row from
+ * every source it looked in (W15-R20; the review's R2-K, 32 sources each holding a 700 KB
+ * `readme.md`, threw the measure over the read limit). A block, not the page's listing row: a
+ * page its source lists and Day0 could not store has a listing and nothing to measure, and would
+ * take one of a page's three candidates for nothing (the second pass). A stored page of headings
+ * alone has no block, shares no text and is no candidate either.
+ */
+async function holdsBlocks(ctx: QueryCtx, name: PageName): Promise<boolean> {
+  const first = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', name.sourceId).eq('pageRef', name.ref))
+    .first();
+  return first !== null;
+}
+
+/**
  * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
  * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
- * and its card says "last read".
+ * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
+ * which its time is ({@link editedAtSource}).
  */
 export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
   'urls',
@@ -79,9 +97,24 @@ export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = n
 ]);
 
 /**
+ * Whether a stored page's time is when its source says it was edited (wave 17, 17-FD; D-8 (a)):
+ * what its row says (`datedBySource`, the reader's own word, false where it fell back to the time
+ * it read the page; a folder's file time counts as its source's, X-3), and for a row that does
+ * not say, the rule by its source's kind. Only an edit time dates a successor, and a card says
+ * "edited" of nothing else.
+ */
+export function editedAtSource(
+  page: Pick<Doc<'docPages'>, 'datedBySource'>,
+  source: Pick<Doc<'docSources'>, 'kind'>,
+): boolean {
+  return page.datedBySource ?? !KINDS_WITHOUT_EDIT_TIME.has(source.kind);
+}
+
+/**
  * A stored page as the measures read it, with its blocks in document order.
  *
- * @param source - The page's source: whether its reader gives an edit time (RM19 (a)).
+ * @param source - The page's source: whether its reader gives an edit time, for a page whose
+ *   row does not say (RM19 (a); {@link editedAtSource}).
  */
 export async function measured(
   ctx: QueryCtx,
@@ -98,7 +131,7 @@ export async function measured(
     title: page.title,
     markdown: page.markdown,
     updatedAt: page.updatedAt,
-    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
+    edited: editedAtSource(page, source),
     blocks: rows.map(
       (row): MeasuredBlock => ({ hash: row.hash, headingPath: row.headingPath, text: row.text }),
     ),
@@ -129,7 +162,7 @@ export async function candidatesOf(
   for (const named of [...front.supersedes, ...front.supersededBy].slice(0, NAMED_PAGES)) {
     for (const source of owner.sources) {
       for (const ref of [named, `${named}.md`]) {
-        if ((await pageAt(ctx, { sourceId: source._id, ref })) !== null) {
+        if (await holdsBlocks(ctx, { sourceId: source._id, ref })) {
           hit({ sourceId: source._id, ref }, 1_000);
         }
       }
@@ -195,6 +228,17 @@ function namesSuccessor(relation: {
   return relation.evidence.some((entry) => entry.measure === 'names-successor');
 }
 
+/** Whether a relation was proposed as a successor by its pages' edit dates alone (RM19 (a)). */
+function datedSuccessor(relation: Pick<Doc<'docRelations'>, 'kind' | 'evidence'>): boolean {
+  const measures = new Set(relation.evidence.map((entry) => entry.measure));
+  return (
+    relation.kind === 'possible_successor' &&
+    measures.has('edit-dates') &&
+    !measures.has('names-successor') &&
+    !measures.has('title-version')
+  );
+}
+
 /** The block hashes a conflict's evidence names. */
 export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>): string[] {
   return relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
@@ -205,13 +249,18 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * versions of one document (a duplicate or a successor) once, whatever the manager decided, but
  * for a duplicate nobody answered, which gives way to a successor the measures now find (RM19
  * (a): a copy its source dated later, measured again by the remeasure, is deleted here and
- * proposed as the successor), and for an answer of "Not the same" or "Keep both" given before a
+ * proposed as the successor), for a successor nobody answered that rested on the pages' dates
+ * alone, which gives way to the duplicate the measures find once a page is known to be dated by
+ * the time it was read (D-8 (a)), and for an answer of "Not the same" or "Keep both" given before a
  * page's front matter named the other, which a successor so named is proposed over (W15-R22); a
  * conflict while one is open or confirmed and its blocks still disagree, or was set aside over
  * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
  * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
- * left unanswered, it is a proposal nobody can answer, and is deleted here.
+ * left unanswered, it is a proposal nobody can answer, and is deleted here. A duplicate of the
+ * pair nobody answered goes when its conflict has, or is about to have, a card (the joins' W3d:
+ * the tab drew two cards for one pair); where the conflict was set aside it stays, the pair's
+ * one card.
  */
 export async function alreadyHeld(
   ctx: MutationCtx,
@@ -226,6 +275,14 @@ export async function alreadyHeld(
         proposed.kind === 'possible_successor' &&
         row.kind === 'possible_duplicate' &&
         row.status === 'proposed'
+      ) {
+        await ctx.db.delete(row._id);
+        continue;
+      }
+      if (
+        proposed.kind === 'possible_duplicate' &&
+        row.status === 'proposed' &&
+        datedSuccessor(row)
       ) {
         await ctx.db.delete(row._id);
         continue;
@@ -248,14 +305,24 @@ export async function alreadyHeld(
     proposed.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [],
   );
   let held = false;
+  // Whether a conflict of the pair is drawn on a card as it stands.
+  let drawn = false;
   for (const row of existing) {
     if (row.kind !== 'possible_conflict') continue;
     if (row.status === 'dismissed') {
       held ||= conflictBlocks(row).every((hash) => blocks.has(hash));
     } else if ((await disagreementOf(ctx, row)) !== undefined) {
       held = true;
+      drawn = true;
     } else if (row.status === 'proposed') {
       await ctx.db.delete(row._id);
+    }
+  }
+  if (!held || drawn) {
+    for (const row of existing) {
+      if (row.kind === 'possible_duplicate' && row.status === 'proposed') {
+        await ctx.db.delete(row._id);
+      }
     }
   }
   return held;

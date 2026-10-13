@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { copyPageStatusToBlocks, replacePageBlocks } from '../../convex/docBlocks';
+import {
+  RELATIONS_REPOINTED,
+  copyPageStatusToBlocks,
+  replacePageBlocks,
+} from '../../convex/docBlocks';
+import { RELATIONS_OF_A_PAGE } from '../../convex/docStatus';
 import type { PageStatus } from '../../src/docs/authority';
 import { allConvexModules } from './all-modules';
 
@@ -184,6 +189,64 @@ describe('replacePageBlocks', (): void => {
       expect(idOf(block.text)).toBe(block._id);
       expect(after.find((row) => row._id === block._id)?.hash).toBe(block.hash);
     }
+  });
+});
+
+describe('replacePageBlocks and a page whose title is renamed (W15-R21)', (): void => {
+  it('re-points as many of a page’s relations as every other read of them takes', (): void => {
+    // The split cannot import the bound (`docStatus` imports `docBlocks`), so it keeps a copy.
+    expect(RELATIONS_REPOINTED).toBe(RELATIONS_OF_A_PAGE);
+  });
+
+  const LIMITS = [
+    '# Close limits',
+    '',
+    '## Thresholds',
+    '',
+    'Escalate any variance above 5,000 USD.',
+    '',
+    '## Comment length',
+    '',
+    'An audit comment is at most 60 words.',
+  ].join('\n');
+
+  it('re-points a conflict’s evidence at the blocks whose text and inner headings are what they were, and at no other', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const page = await sourceOf(harness);
+    await split(harness, page, LIMITS);
+    const [thresholds, comments] = (await blocksOf(harness, page.sourceId)).map(
+      (block) => block.hash,
+    );
+    const relationId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: page.sourceId, ref: 'runbooks/refresh.md' },
+          to: { sourceId: page.sourceId, ref: 'other.md' },
+          kind: 'possible_conflict',
+          evidence: [
+            { measure: 'heading-figures', value: 2, blockRefs: [thresholds, 'other-1', comments] },
+            { measure: 'shared-text', value: 40, blockRefs: [thresholds, 'other-2'] },
+          ],
+          status: 'confirmed',
+          createdAt: 1,
+        }),
+    );
+    // The H1 renamed, and the comment limit's figure changed with it.
+    await split(
+      harness,
+      page,
+      LIMITS.replace('# Close limits', '# Close limits for RevOps').replace('60 words', '90 words'),
+    );
+    const [renamed, changed] = (await blocksOf(harness, page.sourceId)).map((block) => block.hash);
+    expect(renamed).not.toBe(thresholds);
+    expect(changed).not.toBe(comments);
+    expect((await harness.run(async (ctx) => await ctx.db.get(relationId)))?.evidence).toEqual([
+      // The passage that only moved under a new title is named by its new hash; the one whose
+      // figure changed keeps the hash no block holds, so it is measured afresh.
+      { measure: 'heading-figures', value: 2, blockRefs: [renamed, 'other-1', comments] },
+      { measure: 'shared-text', value: 40, blockRefs: [thresholds, 'other-2'] },
+    ]);
   });
 });
 
@@ -603,6 +666,45 @@ describe('unchangedPage and a split that never landed (second pass)', (): void =
       });
     expect(await ask('runbooks/refresh.md')).toBeNull();
     // A page with no text under its headings has no block to miss.
+    expect(await ask('headings.md')).toMatchObject({ title: 'Headings' });
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    expect(await ask('runbooks/refresh.md')).toMatchObject({ title: 'Refresh' });
+  });
+});
+
+describe('unchangedPage and a page with no block (W16-R34)', (): void => {
+  it('does not keep a page whose text holds blocks and whose rows hold none, once its source is measured: it is stored and split again', async (): Promise<void> => {
+    // A v0.19.0 page whose split failed keeps the hash its store wrote. While its source is owed
+    // the remeasure it is checked block for block; after, one block's status vouched for it, and
+    // a page with no block passed that check for good.
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'headings.md',
+        title: 'Headings',
+        markdown: '# Only a heading',
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+    });
+    const ask = async (ref: string) =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref,
+        contentHash: 'a'.repeat(32),
+      });
+    expect(await ask('runbooks/refresh.md')).toBeNull();
+    // A page with no text under its headings has no block to miss, and is kept.
     expect(await ask('headings.md')).toMatchObject({ title: 'Headings' });
     await split(harness, { sourceId, runId }, RUNBOOK);
     expect(await ask('runbooks/refresh.md')).toMatchObject({ title: 'Refresh' });
