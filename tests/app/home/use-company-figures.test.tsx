@@ -107,13 +107,13 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     backend.byPages[0]!.resolve(figuresOf(51));
     await elapse(0);
 
-    // Three changes in a second: one read, two seconds after the last of them.
+    // Three changes in a second: one read, two seconds after the first of them.
     drawn(view, 'roster-2');
     await elapse(500);
     drawn(view, 'roster-3');
     await elapse(500);
     expect(drawn(view, 'roster-4')).toBe('51 {"kind":"every","employees":51}');
-    await elapse(WHOLE_COMPANY_REREAD_MS - 1);
+    await elapse(WHOLE_COMPANY_REREAD_MS - 1_000 - 1);
     expect(backend.byPages).toHaveLength(1);
     await elapse(1);
     expect(backend.byPages).toHaveLength(2);
@@ -121,6 +121,61 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     backend.byPages[1]!.resolve(figuresOf(52));
     await elapse(0);
     expect(drawn(view, 'roster-4')).toBe('52 {"kind":"every","employees":52}');
+    view.unmount();
+  });
+
+  it('keeps the answer of a read that a change overtook, and reads once more after it (the second pass)', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    expect(backend.byPages).toHaveLength(1);
+
+    // A row changes while the first read is still on its way: its answer is still the newest
+    // there is, and is drawn; one more read follows it.
+    drawn(view, 'roster-2');
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    expect(drawn(view, 'roster-2')).toBe('51 {"kind":"every","employees":51}');
+    await elapse(WHOLE_COMPANY_REREAD_MS);
+    expect(backend.byPages).toHaveLength(2);
+    view.unmount();
+  });
+
+  it('is not starved by changes that keep arriving: it reads again within the wait of the first of them', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-0" />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+
+    // A working company: a row changes every half second for ten seconds.
+    for (let tick = 1; tick <= 20; tick += 1) {
+      drawn(view, `roster-${tick}`);
+      await elapse(500);
+      // Each read answers at once, so only the waiting between reads is counted.
+      backend.byPages.at(-1)?.resolve(figuresOf(51 + backend.byPages.length));
+      await elapse(0);
+    }
+    // One read at the start and one every two seconds after: never none, never one a change.
+    expect(backend.byPages.length).toBeGreaterThanOrEqual(5);
+    expect(backend.byPages.length).toBeLessThanOrEqual(7);
+    view.unmount();
+  });
+
+  it('never has two reads on their way at once', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-0" />);
+    await elapse(0);
+    // The first read takes ten seconds while rows keep changing.
+    for (let tick = 1; tick <= 20; tick += 1) {
+      drawn(view, `roster-${tick}`);
+      await elapse(500);
+    }
+    expect(backend.byPages).toHaveLength(1);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    // The changes it missed are read once it is back.
+    expect(backend.byPages).toHaveLength(2);
     view.unmount();
   });
 
