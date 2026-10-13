@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { internalMutation } from './_generated/server';
+import { internalMutation, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL, TEAM_ASKS } from '../src/work/office-asks';
 
 /**
@@ -344,221 +345,251 @@ For social asks (which are typically out-of-scope for the RevOps role), if you d
   },
 ];
 
+/**
+ * Seed one employee's hosted office, or bring it up to the shipped text: its documents (a document
+ * whose words the release changed is rewritten, one that reads as shipped is left as it is, and
+ * one the manager's own documentation mirrors is never touched), and every other row only where
+ * it is missing. Called by `seedMockEnvironment` and, for an office seeded before a release that
+ * changed a guide, by the `mock-office-reseed` pass (W16-R15, D-10 (a)).
+ *
+ * @param ctx - The mutation's context.
+ * @param args - The employee whose office it is.
+ * @returns How many documents were written.
+ */
+export async function seedOffice(
+  ctx: MutationCtx,
+  args: { readonly agentId: Id<'agents'> },
+): Promise<{ documents: number }> {
+  let documents = 0;
+  const upsertDoc = async (
+    slug: string,
+    title: string,
+    body: string,
+    category: 'team-doc' | 'how-to-guide',
+  ) => {
+    const existing = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
+      .unique();
+    const payload = { title, body, category, updatedAt: Date.now() };
+    // A page the manager's own documentation mirrors under this slug is theirs: the seed never
+    // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
+    if (existing?.sourceId !== undefined) return;
+    if (existing) {
+      // A document that already reads as shipped is left, so a second seed writes nothing.
+      if (existing.title === title && existing.body === body && existing.category === category) {
+        return;
+      }
+      await ctx.db.patch(existing._id, payload);
+      documents += 1;
+      return;
+    }
+    await ctx.db.insert('mockDocs', { agentId: args.agentId, slug, ...payload });
+    documents += 1;
+  };
+
+  for (const d of TEAM_DOCS) await upsertDoc(d.slug, d.title, d.body, 'team-doc');
+  for (const g of HOW_TO_GUIDES) await upsertDoc(g.slug, g.title, g.body, 'how-to-guide');
+
+  // Spreadsheet - Q4 Revenue Tracker, two tabs
+  const sheetSlug = 'q4-revenue-tracker';
+  const sheetExisting = await ctx.db
+    .query('mockSpreadsheets')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', sheetSlug))
+    .unique();
+  if (!sheetExisting) {
+    await ctx.db.insert('mockSpreadsheets', {
+      agentId: args.agentId,
+      slug: sheetSlug,
+      title: 'Q4 Revenue Tracker',
+      tabs: [
+        {
+          name: 'closed-won',
+          headers: ['Account', 'Amount', 'Close date', 'Owner', 'Stage'],
+        },
+        {
+          name: 'pipeline',
+          headers: ['Account', 'Amount', 'Stage', 'Close date', 'Owner'],
+        },
+      ],
+      updatedAt: Date.now(),
+    });
+    // Seed a few existing rows so the sheet doesn't look empty
+    const seedRow = async (tab: string, cells: Record<string, string>) =>
+      ctx.db.insert('mockSpreadsheetRows', {
+        agentId: args.agentId,
+        sheetSlug,
+        tabName: tab,
+        cells,
+        addedBy: 'Priya',
+        addedAt: Date.now(),
+      });
+    await seedRow('closed-won', {
+      Account: 'Northwind',
+      Amount: '$120,000',
+      'Close date': '2026-04-12',
+      Owner: 'Priya',
+      Stage: 'closed-won',
+    });
+    await seedRow('closed-won', {
+      Account: 'Contoso',
+      Amount: '$58,000',
+      'Close date': '2026-04-19',
+      Owner: 'Aman',
+      Stage: 'closed-won',
+    });
+    await seedRow('pipeline', {
+      Account: 'Initech',
+      Amount: '$95,000',
+      Stage: 'negotiation',
+      'Close date': '2026-06-01',
+      Owner: 'Priya',
+    });
+  }
+
+  // Slack channels
+  const ensureChannel = async (slug: string, displayName: string, kind: 'channel' | 'dm') => {
+    const existing = await ctx.db
+      .query('mockSlackChannels')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
+      .unique();
+    if (existing) return;
+    await ctx.db.insert('mockSlackChannels', {
+      agentId: args.agentId,
+      slug,
+      displayName,
+      kind,
+      createdAt: Date.now(),
+    });
+  };
+  await ensureChannel('revops-asks', '#revops-asks', 'channel');
+  await ensureChannel('revops', '#revops', 'channel');
+  await ensureChannel('dm-manager', 'DM · Manager', 'dm');
+  await ensureChannel('dm-priya', 'DM · Priya', 'dm');
+  await ensureChannel('dm-aman', 'DM · Aman', 'dm');
+  await ensureChannel(OFFICE_ASKS_CHANNEL, '#office-asks', 'channel');
+
+  // Initial Slack messages - set the scene
+  const seedMessage = async (
+    channelSlug: string,
+    threadKey: string | undefined,
+    sender: string,
+    senderKind: 'agent-draft' | 'agent-posted' | 'manager' | 'teammate' | 'requester' | 'system',
+    body: string,
+  ) => {
+    const existingMsgs = await ctx.db
+      .query('mockSlackMessages')
+      .withIndex('by_agent_channel', (q) =>
+        q.eq('agentId', args.agentId).eq('channelSlug', channelSlug),
+      )
+      .collect();
+    if (existingMsgs.some((m) => m.body === body && m.sender === sender)) return;
+    await ctx.db.insert('mockSlackMessages', {
+      agentId: args.agentId,
+      channelSlug,
+      threadKey,
+      sender,
+      senderKind,
+      body,
+      timestamp: Date.now(),
+    });
+  };
+  // The revenue team's own ask, shown by the generator to a revenue role only (W19-3).
+  for (const ask of TEAM_ASKS) {
+    await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
+  }
+  await seedMessage(
+    'dm-manager',
+    undefined,
+    'Manager',
+    'manager',
+    "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker: Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
+  );
+  // Asks from across the company, each answered by a team document above, so an employee in any
+  // role has work the office lets it finish (13-FD: on the v0.16.0 redeploy no first ticket could).
+  // The generator shows each role only its own (`src/work/office-asks.ts`).
+  for (const ask of OFFICE_ASKS) {
+    await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
+  }
+
+  // Tweet
+  const tweetExisting = await ctx.db
+    .query('mockTweets')
+    .withIndex('by_agent_slug', (q) =>
+      q.eq('agentId', args.agentId).eq('slug', 'tweet-acme-feedback'),
+    )
+    .unique();
+  if (!tweetExisting) {
+    await ctx.db.insert('mockTweets', {
+      agentId: args.agentId,
+      slug: 'tweet-acme-feedback',
+      author: 'random_person',
+      handle: '@random_person',
+      body: '@AcmeCo your product is fine I guess',
+      createdAt: Date.now(),
+    });
+  }
+
+  // Tickets - REVOPS-201, REVOPS-202, REVOPS-203
+  const ensureTicket = async (
+    slug: string,
+    title: string,
+    body: string,
+    status: 'open' | 'in-progress' | 'blocked' | 'done',
+    priority: string,
+  ) => {
+    const existing = await ctx.db
+      .query('mockTickets')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
+      .unique();
+    if (existing) return;
+    await ctx.db.insert('mockTickets', {
+      agentId: args.agentId,
+      slug,
+      title,
+      body,
+      status,
+      priority,
+      comments: [],
+      updatedAt: Date.now(),
+    });
+  };
+  await ensureTicket(
+    'REVOPS-201',
+    'Reconcile Q3 closed-won totals against Salesforce',
+    'Numbers in the committee deck do not match Salesforce; gap of ~$30k. Trace and reconcile.',
+    'open',
+    'P2',
+  );
+  await ensureTicket(
+    'REVOPS-202',
+    'Refresh Q4 pipeline coverage view in Looker',
+    'Pipeline coverage tile is showing stale data. Look into the dbt model dependency.',
+    'open',
+    'P3',
+  );
+  // The closed-won deals from Friday's standup are asked for in the manager's DM above, and an
+  // employee files its own ticket for them; a seeded ticket for the same three deals stayed open
+  // beside the closed one (13-FD), so this one is the team's other backlog.
+  await ensureTicket(
+    'REVOPS-203',
+    'Backfill Q2 closed-won deals missing from the Q2 tracker',
+    'Deals that closed in the last week of Q2 never reached the Q2 tracker. Pull them from Salesforce and append them to its closed-won tab.',
+    'open',
+    'P3',
+  );
+
+  return { documents };
+}
+
+/**
+ * Seed one employee's hosted office (`seedOffice`). Internal; scheduled by `agents.deploy` in mock
+ * mode and run by the seed request and the baseline. Idempotent: a second run writes nothing.
+ */
 export const seedMockEnvironment = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    const upsertDoc = async (
-      slug: string,
-      title: string,
-      body: string,
-      category: 'team-doc' | 'how-to-guide',
-    ) => {
-      const existing = await ctx.db
-        .query('mockDocs')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      const payload = { title, body, category, updatedAt: Date.now() };
-      // A page the manager's own documentation mirrors under this slug is theirs: the seed never
-      // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
-      if (existing?.sourceId !== undefined) return;
-      if (existing) {
-        await ctx.db.patch(existing._id, payload);
-        return;
-      }
-      await ctx.db.insert('mockDocs', { agentId: args.agentId, slug, ...payload });
-    };
-
-    for (const d of TEAM_DOCS) await upsertDoc(d.slug, d.title, d.body, 'team-doc');
-    for (const g of HOW_TO_GUIDES) await upsertDoc(g.slug, g.title, g.body, 'how-to-guide');
-
-    // Spreadsheet - Q4 Revenue Tracker, two tabs
-    const sheetSlug = 'q4-revenue-tracker';
-    const sheetExisting = await ctx.db
-      .query('mockSpreadsheets')
-      .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', sheetSlug))
-      .unique();
-    if (!sheetExisting) {
-      await ctx.db.insert('mockSpreadsheets', {
-        agentId: args.agentId,
-        slug: sheetSlug,
-        title: 'Q4 Revenue Tracker',
-        tabs: [
-          {
-            name: 'closed-won',
-            headers: ['Account', 'Amount', 'Close date', 'Owner', 'Stage'],
-          },
-          {
-            name: 'pipeline',
-            headers: ['Account', 'Amount', 'Stage', 'Close date', 'Owner'],
-          },
-        ],
-        updatedAt: Date.now(),
-      });
-      // Seed a few existing rows so the sheet doesn't look empty
-      const seedRow = async (tab: string, cells: Record<string, string>) =>
-        ctx.db.insert('mockSpreadsheetRows', {
-          agentId: args.agentId,
-          sheetSlug,
-          tabName: tab,
-          cells,
-          addedBy: 'Priya',
-          addedAt: Date.now(),
-        });
-      await seedRow('closed-won', {
-        Account: 'Northwind',
-        Amount: '$120,000',
-        'Close date': '2026-04-12',
-        Owner: 'Priya',
-        Stage: 'closed-won',
-      });
-      await seedRow('closed-won', {
-        Account: 'Contoso',
-        Amount: '$58,000',
-        'Close date': '2026-04-19',
-        Owner: 'Aman',
-        Stage: 'closed-won',
-      });
-      await seedRow('pipeline', {
-        Account: 'Initech',
-        Amount: '$95,000',
-        Stage: 'negotiation',
-        'Close date': '2026-06-01',
-        Owner: 'Priya',
-      });
-    }
-
-    // Slack channels
-    const ensureChannel = async (slug: string, displayName: string, kind: 'channel' | 'dm') => {
-      const existing = await ctx.db
-        .query('mockSlackChannels')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      if (existing) return;
-      await ctx.db.insert('mockSlackChannels', {
-        agentId: args.agentId,
-        slug,
-        displayName,
-        kind,
-        createdAt: Date.now(),
-      });
-    };
-    await ensureChannel('revops-asks', '#revops-asks', 'channel');
-    await ensureChannel('revops', '#revops', 'channel');
-    await ensureChannel('dm-manager', 'DM · Manager', 'dm');
-    await ensureChannel('dm-priya', 'DM · Priya', 'dm');
-    await ensureChannel('dm-aman', 'DM · Aman', 'dm');
-    await ensureChannel(OFFICE_ASKS_CHANNEL, '#office-asks', 'channel');
-
-    // Initial Slack messages - set the scene
-    const seedMessage = async (
-      channelSlug: string,
-      threadKey: string | undefined,
-      sender: string,
-      senderKind: 'agent-draft' | 'agent-posted' | 'manager' | 'teammate' | 'requester' | 'system',
-      body: string,
-    ) => {
-      const existingMsgs = await ctx.db
-        .query('mockSlackMessages')
-        .withIndex('by_agent_channel', (q) =>
-          q.eq('agentId', args.agentId).eq('channelSlug', channelSlug),
-        )
-        .collect();
-      if (existingMsgs.some((m) => m.body === body && m.sender === sender)) return;
-      await ctx.db.insert('mockSlackMessages', {
-        agentId: args.agentId,
-        channelSlug,
-        threadKey,
-        sender,
-        senderKind,
-        body,
-        timestamp: Date.now(),
-      });
-    };
-    // The revenue team's own ask, shown by the generator to a revenue role only (W19-3).
-    for (const ask of TEAM_ASKS) {
-      await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
-    }
-    await seedMessage(
-      'dm-manager',
-      undefined,
-      'Manager',
-      'manager',
-      "Three closed-won deals from last Friday's standup need to land in the Q4 Revenue Tracker: Acme ($45k), Beta Corp ($72k), Gamma LLC ($28k). Closed-won tab.",
-    );
-    // Asks from across the company, each answered by a team document above, so an employee in any
-    // role has work the office lets it finish (13-FD: on the v0.16.0 redeploy no first ticket could).
-    // The generator shows each role only its own (`src/work/office-asks.ts`).
-    for (const ask of OFFICE_ASKS) {
-      await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
-    }
-
-    // Tweet
-    const tweetExisting = await ctx.db
-      .query('mockTweets')
-      .withIndex('by_agent_slug', (q) =>
-        q.eq('agentId', args.agentId).eq('slug', 'tweet-acme-feedback'),
-      )
-      .unique();
-    if (!tweetExisting) {
-      await ctx.db.insert('mockTweets', {
-        agentId: args.agentId,
-        slug: 'tweet-acme-feedback',
-        author: 'random_person',
-        handle: '@random_person',
-        body: '@AcmeCo your product is fine I guess',
-        createdAt: Date.now(),
-      });
-    }
-
-    // Tickets - REVOPS-201, REVOPS-202, REVOPS-203
-    const ensureTicket = async (
-      slug: string,
-      title: string,
-      body: string,
-      status: 'open' | 'in-progress' | 'blocked' | 'done',
-      priority: string,
-    ) => {
-      const existing = await ctx.db
-        .query('mockTickets')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      if (existing) return;
-      await ctx.db.insert('mockTickets', {
-        agentId: args.agentId,
-        slug,
-        title,
-        body,
-        status,
-        priority,
-        comments: [],
-        updatedAt: Date.now(),
-      });
-    };
-    await ensureTicket(
-      'REVOPS-201',
-      'Reconcile Q3 closed-won totals against Salesforce',
-      'Numbers in the committee deck do not match Salesforce; gap of ~$30k. Trace and reconcile.',
-      'open',
-      'P2',
-    );
-    await ensureTicket(
-      'REVOPS-202',
-      'Refresh Q4 pipeline coverage view in Looker',
-      'Pipeline coverage tile is showing stale data. Look into the dbt model dependency.',
-      'open',
-      'P3',
-    );
-    // The closed-won deals from Friday's standup are asked for in the manager's DM above, and an
-    // employee files its own ticket for them; a seeded ticket for the same three deals stayed open
-    // beside the closed one (13-FD), so this one is the team's other backlog.
-    await ensureTicket(
-      'REVOPS-203',
-      'Backfill Q2 closed-won deals missing from the Q2 tracker',
-      'Deals that closed in the last week of Q2 never reached the Q2 tracker. Pull them from Salesforce and append them to its closed-won tab.',
-      'open',
-      'P3',
-    );
-
+    await seedOffice(ctx, args);
     return { ok: true };
   },
 });

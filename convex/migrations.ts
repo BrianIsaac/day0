@@ -37,6 +37,7 @@ import {
 } from './credentials';
 import { ORGANISATION_SECRET_HOLD_MS } from './organisationSecrets';
 import { eventsOfType } from './eventLog';
+import { seedOffice } from './mockSeed';
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
@@ -103,6 +104,7 @@ export const MIGRATION_NAMES = [
   'docs-blocks-status',
   'docs-relations-remeasure',
   'work-selected-blocks',
+  'mock-office-reseed',
 ] as const;
 
 /** One migration's name. */
@@ -337,6 +339,11 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'keeps on every open work item whose plan cites nothing, and which has no kept selection, the blocks its newest plan selection record named, each at its hash now, so a conflict confirmed on them is asked and stops the run however many selections followed; an item whose record is no longer among the employee’s newest gets an empty list, which reads as none, an item with cites or a kept selection is left, and mock mode makes no selection',
     thenRemoves:
       'nothing: every plan selection from this release is kept on its item as it is made (16-FD)',
+  },
+  'mock-office-reseed': {
+    release: REORIENTATION_RELEASE,
+    does: 'seeds the hosted office of every mock-mode employee that has one again, so an office seeded before this release reads the shipped Slack guide and not the one that taught a draft held for the manager’s approval; a document that already reads as shipped, one the manager’s own documentation mirrors, and every other row of the office that is there are left, and a real-mode employee has no office',
+    thenRemoves: 'nothing: an office is seeded from the shipped text when its employee is deployed',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -961,6 +968,7 @@ const MIGRATION_PAGES: Readonly<
   'docs-blocks-status': stampBlockStatus,
   'docs-relations-remeasure': markRemeasureOwed,
   'work-selected-blocks': keepPlanSelections,
+  'mock-office-reseed': reseedMockOffices,
 };
 
 /**
@@ -1093,6 +1101,39 @@ async function keepPlanSelections(ctx: MutationCtx, cursor: string | null): Prom
     cursor: more ? (from ?? '') : page.continueCursor,
     isDone: more ? false : page.isDone,
   };
+}
+
+/**
+ * Employees one page of the office reseed reads: an office's seed looks up some thirty rows and
+ * reads each channel's messages, so a page stays well inside a transaction's reads.
+ */
+const OFFICE_RESEED_AGENTS = 10;
+
+/**
+ * One page of the hosted office reseed (16-PT; W16-R15, D-10 (a)): the office of every mock-mode
+ * employee that has one is seeded again through the seed itself (`mockSeed.seedOffice`), which rewrites a
+ * document whose shipped words moved and adds nothing that is there. 0.20.0 moved the seeded Slack
+ * guide (16-FW), and an office seeded before it kept the guide whose examples the approval-tense
+ * tripwire reads. An employee counts as changed when one of its documents was written.
+ */
+async function reseedMockOffices(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('agents').paginate({ numItems: OFFICE_RESEED_AGENTS, cursor });
+  let read = 0;
+  let changed = 0;
+  for (const agent of page.page) {
+    if ((agent.mode ?? SURFACE_MODE) !== 'mock') continue;
+    // An office is reseeded, never made: an employee that has none keeps none (its deploy, or the
+    // home's seed request, makes one).
+    const office = await ctx.db
+      .query('mockSlackChannels')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', agent._id))
+      .first();
+    if (office === null) continue;
+    read += 1;
+    const seeded = await seedOffice(ctx, { agentId: agent._id });
+    if (seeded.documents > 0) changed += 1;
+  }
+  return { read, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /** A migration's row, if it has started. */

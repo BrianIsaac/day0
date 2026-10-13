@@ -3472,3 +3472,99 @@ describe('the kept selection pass (16-PT; W16-R11)', (): void => {
     });
   });
 });
+
+describe('the hosted office reseed pass (16-PT; W16-R15, D-10 (a))', (): void => {
+  afterEach((): void => {
+    restoreSurfaceMode();
+  });
+
+  /** The office's documents of one employee, by slug. */
+  const documents = async (
+    harness: Harness,
+    agentId: Id<'agents'>,
+  ): Promise<Map<string, Doc<'mockDocs'>>> =>
+    new Map(
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('mockDocs')
+              .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+              .collect(),
+        )
+      ).map((row) => [row.slug, row]),
+    );
+
+  it('is registered at 0.20.0', (): void => {
+    expect(MIGRATIONS['mock-office-reseed'].release).toBe('0.20.0');
+    expect(MIGRATION_NAMES).toContain('mock-office-reseed');
+  });
+
+  it('gives an office seeded before 0.20.0 the shipped Slack guide, leaves its other rows and a page the manager’s documentation mirrors, and is safe to run twice', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const harness = limitedHarness();
+    const agentId = await agent(harness, { userId: 'owner' });
+    await harness.mutation(internal.mockSeed.seedMockEnvironment, { agentId });
+    const shipped = (await documents(harness, agentId)).get('how-to-post-slack')!;
+    const sourceId = await source(harness, 'owner');
+    // The office as v0.19.0 seeded it (16-FW's F7): the old guide's examples, which the
+    // approval-tense tripwire reads; and a guide the manager's own documentation mirrors.
+    const old = `${shipped.body}\n\nDraft for review. Will post here once approved.`;
+    const mirrored = (await documents(harness, agentId)).get('how-to-update-ticket')!;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(shipped._id, { body: old, updatedAt: 1 });
+      await ctx.db.patch(mirrored._id, { body: 'The manager’s own page.', sourceId, updatedAt: 1 });
+    });
+    const before = await harness.run(async (ctx) => ({
+      messages: await ctx.db.query('mockSlackMessages').collect(),
+      tickets: await ctx.db.query('mockTickets').collect(),
+      documents: (await ctx.db.query('mockDocs').collect()).filter(
+        (row) => row.slug !== 'how-to-post-slack',
+      ),
+    }));
+
+    await runAll(harness);
+
+    const after = await documents(harness, agentId);
+    expect(after.get('how-to-post-slack')?.body).toBe(shipped.body);
+    expect(after.get('how-to-post-slack')?.body).not.toContain('Draft for review');
+    expect(after.get('how-to-update-ticket')?.body).toBe('The manager’s own page.');
+    // Nothing else of the office moved: no second message or ticket, no other document rewritten.
+    expect(
+      await harness.run(async (ctx) => ({
+        messages: await ctx.db.query('mockSlackMessages').collect(),
+        tickets: await ctx.db.query('mockTickets').collect(),
+        documents: (await ctx.db.query('mockDocs').collect()).filter(
+          (row) => row.slug !== 'how-to-post-slack',
+        ),
+      })),
+    ).toEqual(before);
+    const row = async () =>
+      (await harness.query(internal.migrations.status, {})).migrations.find(
+        (entry) => entry.name === 'mock-office-reseed',
+      );
+    expect(await row()).toMatchObject({ release: '0.20.0', read: 1, changed: 1 });
+    await harness.run(async (ctx) => {
+      const done = await ctx.db
+        .query('migrations')
+        .withIndex('by_name', (q) => q.eq('name', 'mock-office-reseed'))
+        .unique();
+      if (done !== null) await ctx.db.delete(done._id);
+    });
+    await runAll(harness);
+    expect(await row()).toMatchObject({ read: 1, changed: 0 });
+  });
+
+  it('makes no office: a real-mode employee, and a mock-mode one that has none, keep none', async (): Promise<void> => {
+    const harness = limitedHarness();
+    const real = await agent(harness, { userId: 'owner' });
+    const bare = await agent(harness, { userId: 'owner' });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(real, { mode: 'real' });
+      await ctx.db.patch(bare, { mode: 'mock' });
+    });
+    await runAll(harness);
+    expect((await documents(harness, real)).size).toBe(0);
+    expect((await documents(harness, bare)).size).toBe(0);
+  });
+});
