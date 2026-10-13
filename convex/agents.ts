@@ -53,7 +53,8 @@ import {
 } from '../src/work/manager-notes';
 import { agentZone, canonicalZone, deploymentZone } from '../src/lib/zone';
 import { appendEvent } from './eventLog';
-import { isWriteScope, openCard, scopeReach } from './reorientation';
+import { isWriteScope, openCard } from './reorientation';
+import { scopeReach } from './reorientationReach';
 import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence';
 import schema from './schema';
 import { ROSTER_SCAN_LIMIT, rosterOf, rosterRowValidator, type RosterRow } from './roster';

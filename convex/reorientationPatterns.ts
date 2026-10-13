@@ -1,13 +1,8 @@
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { eventsOfType } from './eventLog';
-import {
-  REFUSAL_KEY_PREFIX,
-  charterClausesWhere,
-  isWriteScope,
-  openCard,
-  scopeReach,
-} from './reorientation';
+import { REFUSAL_KEY_PREFIX, charterClausesWhere, isWriteScope, openCard } from './reorientation';
+import { scopeReach } from './reorientationReach';
 import type { ReorientationTrigger } from '../src/agent/reorientation-vocabulary';
 
 /*

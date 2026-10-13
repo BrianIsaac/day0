@@ -2,7 +2,9 @@ import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
+import * as eventsModule from '../../convex/events';
 import { allConvexModules } from './all-modules';
+import { registeredIn } from './registered-functions';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import {
   assembleTrace,
@@ -1331,5 +1333,22 @@ describe('the people graph in the audit export (wave 13, 13-P)', (): void => {
     ]);
     expect(JSON.stringify(trace)).not.toContain('Their Person');
     expect(JSON.stringify(trace)).not.toContain('U0THEIRS');
+  });
+});
+
+describe('the functions convex/events.ts registers', (): void => {
+  // The move of the owner export's helpers into `convex/ownerExport.ts` (wave 17, 17-s; decision
+  // S-1) moves no registered function: each `api.events.*` and `internal.events.*` path is a
+  // string the app and the export's actions hold. The list as `v0.20.0` registered it.
+  it('are the ones it registered at v0.20.0, each of the same kind and visibility', (): void => {
+    expect(registeredIn(eventsModule)).toEqual([
+      'autonomyChanges public query',
+      'exportHead internal query',
+      'exportOwnerHead internal query',
+      'exportOwnerPage internal query',
+      'exportPage internal query',
+      'recent public query',
+      'record public query',
+    ]);
   });
 });

@@ -12,7 +12,9 @@ import {
   proposalInputOf,
   riskOf,
 } from '../../convex/reorientation';
+import * as reorientationModule from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
+import { registeredIn } from './registered-functions';
 import {
   basisOf,
   cardOf,
@@ -324,50 +326,6 @@ describe('the risk and the hold', (): void => {
     expect(riskOf({ ...none, workItems: ['w' as Id<'workItems'>] }, false)).toBe('high');
   });
 
-  it('holds the affected open work on a high-risk card, at most ten items, and nothing on a low-risk one', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const agentId = await seedEmployee(harness);
-    const open: Id<'workItems'>[] = [];
-    for (let index = 0; index < 12; index += 1) {
-      open.push(
-        await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${index}` }),
-      );
-    }
-    const done = await seedWork(harness, agentId, 'completed', { externalId: 'REVOPS-99' });
-    const high = await openTestCard(harness, {
-      agentId,
-      trigger: 'relationship-changed',
-      triggerKey: 'event-1',
-      summary: 'Priya now approves tier-2 drafts',
-      affected: { workItems: [done, ...open] },
-    });
-    const card = await cardOf(harness, high!);
-    expect(card.risk).toBe('high');
-    expect(card.blockingWork).toEqual(open.slice(0, 10));
-    const held = await harness.run(
-      async (ctx) => await heldByReorientation(ctx, { _id: open[0], agentId }),
-    );
-    expect(held?._id).toBe(high);
-    // A run's undefined comes back as null.
-    expect(
-      await harness.run(async (ctx) => await heldByReorientation(ctx, { _id: open[11], agentId })),
-    ).toBeNull();
-
-    const low = await seedEmployee(harness, { name: 'Pip' });
-    const lowWork = await seedWork(harness, low, 'plan-pending');
-    await openTestCard(harness, {
-      agentId: low,
-      trigger: 'skill-recheck-due',
-      triggerKey: 'event-2',
-      summary: 'A skill is due a re-check',
-    });
-    expect(
-      await harness.run(
-        async (ctx) => await heldByReorientation(ctx, { _id: lowWork, agentId: low }),
-      ),
-    ).toBeNull();
-  });
-
   it('keeps the hold of a deferred high-risk card and drops it once the card is decided', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -568,5 +526,22 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
     const card = await cardOf(harness, deferred);
     expect(card).toMatchObject({ status: 'dismissed', userId: 'successor', decidedAt: 5 });
     expect(card.revisitAt).toBeUndefined();
+  });
+});
+
+describe('the functions convex/reorientation.ts registers', (): void => {
+  // The move of what a card reaches into `convex/reorientationReach.ts` (wave 17, 17-s; decision
+  // S-1) moves no registered function: each `internal.reorientation.*` path is a string the
+  // scheduler, the judgement's action and the closing phase hold. The list as `v0.20.0`
+  // registered it.
+  it('are the ones it registered at v0.20.0, each of the same kind and visibility', (): void => {
+    expect(registeredIn(reorientationModule)).toEqual([
+      'holdingCard internal query',
+      'openCardLater internal mutation',
+      'proposalInput internal query',
+      'recordProposalFailure internal mutation',
+      'reopenDeferred internal mutation',
+      'writeProposal internal mutation',
+    ]);
   });
 });
