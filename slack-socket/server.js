@@ -1,11 +1,16 @@
 import { createServer } from 'node:http';
-import { createBridge } from './bridge.js';
+import { createBridge, wayOutOf } from './bridge.js';
 
 /**
  * The `slack-socket` compose service (wave 12, 12-M; RM7): the bridge, and a health check on the
  * compose network that says whether the app list was read and which apps hold a connection. It
  * publishes no port: only the compose healthcheck and `check:access` (through `docker compose
  * exec`) ask it anything.
+ *
+ * Its way out is Slack's Socket Mode hosts, directly or through the customer's HTTP proxy when the
+ * compose file hands it one (`HTTPS_PROXY`, with `NODE_USE_ENV_PROXY=1` so Node reads it; wave
+ * 17, 17-P). It says which at its start, and says loudly when a proxy is named that it would not
+ * read.
  */
 
 const secret = (process.env.DAY0_SOCKET_BRIDGE_SECRET ?? '').trim();
@@ -27,6 +32,9 @@ if (secret === '') {
   process.exit(1);
 }
 
+const { wayOut, ignored } = wayOutOf(process.env, process.version);
+if (ignored !== undefined) log({ level: 'error', message: ignored });
+
 const bridge = createBridge({ backendUrl, secret, log });
 
 const health = createServer((request, response) => {
@@ -42,7 +50,7 @@ const health = createServer((request, response) => {
 // Loopback only: the compose healthcheck and `docker compose exec` ask from inside the container.
 health.listen(healthPort, '127.0.0.1');
 await bridge.start();
-log({ level: 'info', message: 'started', backendUrl });
+log({ level: 'info', message: 'started', backendUrl, wayOut });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
