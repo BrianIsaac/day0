@@ -7,7 +7,7 @@ import {
   runProgress,
   skipSentence,
   sourceLine,
-  ticketNowSentence,
+  ticketAsLastSeen,
   workingFrom,
   waitsAtClaim,
   slackMentionIds,
@@ -342,18 +342,20 @@ describe('workingFrom', (): void => {
   });
 });
 
-describe('ticketNowSentence', (): void => {
-  it('says where the ticket stands and that someone holds it, never by its raw id', (): void => {
+describe('ticketAsLastSeen', (): void => {
+  // Re-pinned for W12a, 13 October 2026: the words are what intake last saw, for a line that says
+  // when it saw it, where "The ticket is in ..." read as the ticket's state now.
+  it('says where intake saw the ticket and that someone holds it, never by its raw id', (): void => {
     // Re-pinned for W12V-15: the walk's card named the delegate by its id.
     expect(
-      ticketNowSentence({
+      ticketAsLastSeen({
         assigned: true,
         assigneeId: 'user-7',
         state: 'In Progress',
         stateType: 'started',
         doNotAutomate: false,
       }),
-    ).toBe('The ticket is in In Progress, assigned to someone in the tracker.');
+    ).toEqual({ seen: 'in In Progress, assigned to someone in the tracker' });
   });
 
   it('names the employee’s own identity holding the ticket, never its raw id (W12V-15)', (): void => {
@@ -366,20 +368,21 @@ describe('ticketNowSentence', (): void => {
       doNotAutomate: false,
     };
     expect(
-      ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: true }),
-    ).toBe('The ticket is in Backlog, held by the account Iris works as in the tracker.');
+      ticketAsLastSeen(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: true }),
+    ).toEqual({ seen: 'in Backlog, held by the account Iris works as in the tracker' });
     expect(
-      ticketNowSentence(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: false }),
-    ).toBe('The ticket is in Backlog, assigned to someone other than Iris in the tracker.');
+      ticketAsLastSeen(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: false }),
+    ).toEqual({ seen: 'in Backlog, assigned to someone other than Iris in the tracker' });
   });
 
   it('says what the tracker did not name, the do-not-automate mark and a refusal', (): void => {
     expect(
-      ticketNowSentence({ assigned: false, doNotAutomate: true }, 'assigned to a person'),
-    ).toBe(
-      'The ticket is in a state the tracker did not name, unassigned, marked not to be automated. Intake refused it on that listing: Assigned to a person.',
-    );
-    expect(ticketNowSentence({ assigned: true, doNotAutomate: false })).toContain(
+      ticketAsLastSeen({ assigned: false, doNotAutomate: true }, 'assigned to a person'),
+    ).toEqual({
+      seen: 'in a state the tracker did not name, unassigned, marked not to be automated',
+      refusal: 'Intake refused it on that listing: Assigned to a person.',
+    });
+    expect(ticketAsLastSeen({ assigned: true, doNotAutomate: false }).seen).toContain(
       'assigned to someone the tracker did not identify',
     );
   });

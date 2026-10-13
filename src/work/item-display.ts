@@ -459,22 +459,32 @@ export interface TicketHolderView {
   readonly holderIsEmployee: boolean;
 }
 
+/** A ticket as intake last saw it, in the two parts the card's line puts its time between. */
+export interface TicketLastSeen {
+  /** Where it stood: "in Backlog, unassigned, marked not to be automated". */
+  readonly seen: string;
+  /** Why intake refused it on that listing, as a sentence, when it did. */
+  readonly refusal?: string;
+}
+
 /**
- * Where a ticket stands as intake last listed it (K D3): its state, who holds it and whether it
- * is marked not to be automated, so a retry after the ticket moved is an informed one. The holder
- * is never named by its raw id (W12V-15): the identity the employee acts as is said to be its,
- * anyone else is someone in the tracker; the export keeps the id.
+ * Where a ticket stood when intake last listed it (K D3): its state, who held it and whether it
+ * was marked not to be automated, so a retry after the ticket moved is an informed one. The words
+ * are of the listing and not of now: a line that said "The ticket is in Backlog" under a move the
+ * run had just landed read as the ticket's state (the joins' W12a), so the card says when intake
+ * saw it. The holder is never named by its raw id (W12V-15): the identity the employee acts as is
+ * said to be its, anyone else is someone in the tracker; the export keeps the id.
  *
  * @param tracker - The listing's snapshot, without the assignee's address.
  * @param refused - Why intake refused the ticket on that listing, when it did.
  * @param holder - Whether the holder is the employee's own identity, where the page knows.
- * @returns One sentence, without the listing's time.
+ * @returns What intake saw, without the listing's time, and its refusal if it refused.
  */
-export function ticketNowSentence(
+export function ticketAsLastSeen(
   tracker: Omit<TicketSnapshot, 'assigneeEmail'>,
   refused?: string,
   holder?: TicketHolderView,
-): string {
+): TicketLastSeen {
   const state = tracker.state ? `in ${tracker.state}` : 'in a state the tracker did not name';
   const held = tracker.assigneeId
     ? holder === undefined
@@ -486,6 +496,8 @@ export function ticketNowSentence(
       ? 'assigned to someone the tracker did not identify'
       : 'unassigned';
   const marked = tracker.doNotAutomate ? ', marked not to be automated' : '';
-  const refusal = refused ? ` Intake refused it on that listing: ${sentence(refused)}` : '';
-  return `The ticket is ${state}, ${held}${marked}.${refusal}`;
+  return {
+    seen: `${state}, ${held}${marked}`,
+    ...(refused ? { refusal: `Intake refused it on that listing: ${sentence(refused)}` } : {}),
+  };
 }
