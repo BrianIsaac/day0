@@ -35,6 +35,7 @@ import {
   conflictQuestionText,
   type NamedPageWords,
 } from '../src/agent/reorientation-words';
+import { isOpenQuestion } from '../src/agent/manager-questions';
 import {
   COUNTED_EVENTS_SHOWN,
   agreementActionsOf,
@@ -676,8 +677,9 @@ export async function askConflictQuestion(
     .withIndex('by_relation', (q) => q.eq('relationId', conflict.relationId))
     .take(QUESTIONS_PER_RELATION_READ);
   // Asked once while its question is open; a conflict settled and confirmed again is asked again,
-  // since the answer given was to the conflict as it stood then (W16-R27).
-  if (asked.some((question) => question.workItemId === row._id && question.answer === undefined)) {
+  // since the answer given was to the conflict as it stood then (W16-R27), and so is the plan
+  // drafted after a redraft closed the question its predecessor was asked (17-C).
+  if (asked.some((question) => question.workItemId === row._id && isOpenQuestion(question))) {
     return null;
   }
   const [agent, charter] = await Promise.all([

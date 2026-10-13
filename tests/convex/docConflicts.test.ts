@@ -1130,6 +1130,138 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(second.answer).toBeUndefined();
   });
 
+  it('closes the item’s open question at a redraft, and asks the new plan afresh on what it cites (17-C; W16-R27)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const cited = (await harness.run(async (ctx) => await ctx.db.get(workItemId)))!.plan as {
+      cites: unknown[];
+    };
+    // The manager turned the plan down: Retry drafts a new one.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'cancelled', decision: undefined });
+    });
+    await asManager(harness).mutation(api.workRuns.retryFailed, { workItemId });
+    const [old] = await questionsOf(harness, workItemId);
+    expect(old.closed).toEqual({ reason: 'redrafted', at: Date.UTC(2026, 9, 1) });
+    expect(old.answer).toBeUndefined();
+    // Nothing of the old plan's is asked in the next request, on the card or of the poll.
+    expect(
+      await harness.query(internal.managerQuestions.conflictQuestionsForRequest, { workItemId }),
+    ).toEqual([]);
+    expect(
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
+        agentId: old.agentId,
+      }),
+    ).toEqual([]);
+    // A new plan that rests on nothing of the conflict is asked nothing.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'plan-pending',
+        plan: { summary: 'Message the finance lead.', steps: ['Message the finance lead'] },
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    expect(await questionsOf(harness, workItemId)).toHaveLength(1);
+    // One that cites the disputed passage again is asked afresh, as the plan's second question.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'plan-pending',
+        plan: {
+          summary: 'Escalate the variance to the finance lead.',
+          steps: ['Message the finance lead when the variance passes the threshold'],
+          cites: cited.cites,
+        },
+      });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId });
+    const asked = await questionsOf(harness, workItemId);
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toMatchObject({ relationId, question: ASKED });
+    expect(asked[1].closed).toBeUndefined();
+    expect(
+      await harness.query(internal.managerQuestions.conflictQuestionsForRequest, { workItemId }),
+    ).toEqual([{ text: ASKED, number: 2 }]);
+  });
+
+  it('closes a question whose conflict is settled by another’s answer, where it is refused, unlisted and owed nothing (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { surfaceId, workItemId } = asked;
+    const second = await secondQuestion(harness, asked);
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        state: 'plan-approved',
+        decision: { ...row!.decision!, decidedAt: Date.now() - 2 * 60 * 60 * 1000 },
+      });
+    });
+    // On the Documentation tab the manager names one page right on the second conflict: the
+    // Finance page goes out of use, and with it the first conflict, which nobody answered.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: second.relationId,
+      decision: 'to-is-right',
+    });
+    const [first, answered] = await questionsOf(harness, workItemId);
+    expect(answered.answer).toMatchObject({
+      text: 'B, Pipeline runbook (Handbook) is right',
+      via: 'dashboard',
+    });
+    expect(answered.closed).toBeUndefined();
+    expect(first.answer).toBeUndefined();
+    expect(first.closed).toEqual({ reason: 'settled', at: Date.UTC(2026, 9, 1) });
+    // The closed question takes no answer, by the card or by its number, and is no longer drawn.
+    await expect(
+      asManager(harness).mutation(api.managerQuestions.answerConflict, {
+        questionId: first._id,
+        choice: 'from',
+      }),
+    ).rejects.toThrow('These two pages no longer disagree, so this question is closed.');
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from', number: 1 },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'question no longer open' });
+    expect((await noticeTexts(harness)).at(-1)).toBe(
+      'These two pages no longer disagree, so this question is closed.',
+    );
+    expect(
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, {
+        agentId: first.agentId,
+      }),
+    ).toEqual([]);
+    expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
+      [],
+    );
+    // With nothing open the DM is no longer read for it.
+    expect((await harness.query(internal.work.openDecisions, { surfaceId })).noticeOwed).toBe(
+      false,
+    );
+  });
+
+  it('closes, at the next run, a question whose conflict stopped standing by another path (17-C)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    // While the conflict stands the run's read closes nothing.
+    expect(await harness.mutation(internal.managerQuestions.closeSettled, { workItemId })).toBe(0);
+    // The relation is taken back to a proposal by a path that passes no decision.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(relationId, { status: 'proposed' });
+    });
+    expect(await harness.mutation(internal.managerQuestions.closeSettled, { workItemId })).toBe(1);
+    const [question] = await questionsOf(harness, workItemId);
+    expect(question.closed).toEqual({ reason: 'settled', at: Date.UTC(2026, 9, 1) });
+    expect(question.answer).toBeUndefined();
+  });
+
   it('closes the question when the conflict is settled on the Documentation tab, so nothing waits on it (second pass B1)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

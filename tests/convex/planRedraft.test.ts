@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import { questionOf, seedConflictQuestion } from './fakes/conflict-question';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -156,6 +157,34 @@ describe('sendBackToDrafting', (): void => {
     expect(events.map((event) => [event.type, event.payload, event.createdAt])).toEqual([
       ['work.plan-redrafting', { workItemId, surfaceId: surface._id, slug: 'team-chat' }, NOW],
     ]);
+  });
+
+  it('closes the conflict question asked beside the plan it sends back, and leaves an answered one (17-C)', async (): Promise<void> => {
+    const { sendBackToDrafting } = await redraftModule();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedAgent(harness);
+    const surface = await seedSurface(harness, agentId, 'team-chat');
+    const workItemId = await seedParked(harness, agentId, {
+      externalId: 'thread-1',
+      without: { surfaceSlug: 'team-chat', cause: 'not-connected' },
+      decision: openRequest('plan-7f3a'),
+    });
+    const open = await seedConflictQuestion(harness, { agentId, workItemId });
+    const answered = await seedConflictQuestion(
+      harness,
+      { agentId, workItemId },
+      { answer: { text: 'Both hold', answeredAt: 5, via: 'slack' } },
+    );
+
+    await harness.run(async (ctx) => {
+      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, surface, NOW);
+    });
+
+    expect((await questionOf(harness, open.questionId)).closed).toEqual({
+      reason: 'redrafted',
+      at: NOW,
+    });
+    expect((await questionOf(harness, answered.questionId)).closed).toBeUndefined();
   });
 
   it('schedules the draft in the same transaction in real mode', async (): Promise<void> => {

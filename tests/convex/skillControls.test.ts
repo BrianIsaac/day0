@@ -12,6 +12,7 @@ import { WAITING_BATCH } from '../../convex/waitingWork';
 import { allConvexModules } from './all-modules';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { questionOf, seedConflictQuestion } from './fakes/conflict-question';
 import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
 
 /**
@@ -342,6 +343,30 @@ describe('skillControls', (): void => {
       expect(await item(harness, executing)).toMatchObject({
         state: 'executing',
         skillId: office.mateoSkill,
+      });
+    });
+
+    it('closes the conflict question asked beside the approved plan it sends back to wait for a skill (17-C)', async (): Promise<void> => {
+      const harness = convexTest(schema, allConvexModules());
+      const office = await seedOffice(harness);
+      const returned = await seedItem(harness, office.priya, {
+        state: 'plan-approved',
+        externalId: 'REVOPS-1',
+        proposedSkillId: office.priyaSkill,
+        plan: APPROVED_PLAN,
+      });
+      const asked = await seedConflictQuestion(harness, {
+        agentId: office.priya,
+        workItemId: returned,
+      });
+
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.skillControls.retire, { skillId: office.priyaSkill });
+
+      expect((await item(harness, returned)).state).toBe('needs-skill');
+      expect((await questionOf(harness, asked.questionId)).closed).toMatchObject({
+        reason: 'redrafted',
       });
     });
 

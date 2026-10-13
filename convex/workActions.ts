@@ -1890,6 +1890,11 @@ async function withConflictsHeld<T extends QuestionableOutput>(
   },
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return output;
+  // A question whose conflict stopped standing by a path that did not pass the relation's own
+  // decision is closed first, so the run neither waits on it nor leaves it open (17-C).
+  await ctx.runMutation(internal.managerQuestions.closeSettled, {
+    workItemId: context.workItemId,
+  });
   const holds = await ctx.runQuery(internal.managerQuestions.conflictHoldsFor, {
     workItemId: context.workItemId,
   });

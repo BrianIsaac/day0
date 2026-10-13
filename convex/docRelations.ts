@@ -32,6 +32,7 @@ import {
   type RelationDecision,
 } from './docConflicts';
 import { askConflictQuestion } from './reorientation';
+import { closeQuestionsOnPage } from './questionCloses';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -51,6 +52,7 @@ import {
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
 import { conflictChoiceWords } from '../src/agent/reorientation-words';
+import { isOpenQuestion } from '../src/agent/manager-questions';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -496,8 +498,14 @@ export async function decideRelationInTransaction(
             ? conflictChoiceWords('both', pages)
             : undefined;
     if (settled !== undefined) {
-      await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
+      await answerConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
     }
+  }
+  // Naming one page right takes the other out of use, so every other conflict that page is an end
+  // of stops standing with nobody having answered it: its questions are closed, not left open on
+  // the plans that asked them (17-C). After the answers above, which this relation's own keep.
+  if (decision === 'from-is-right' || decision === 'to-is-right') {
+    await closeQuestionsOnPage(ctx, decision === 'from-is-right' ? to : from, now);
   }
   if (decision !== 'supersedes') return null;
   const older = (await ctx.db.get(to._id)) ?? to;
@@ -509,9 +517,10 @@ const QUESTIONS_SETTLED_READ = 500;
 
 /**
  * Answer every open question about a conflict the manager settled, in the card's words and by the
- * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O).
+ * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O). A
+ * question closed without an answer stays closed: it was not asked of the plan that stands (17-C).
  */
-async function closeConflictQuestions(
+async function answerConflictQuestions(
   ctx: MutationCtx,
   relationId: Id<'docRelations'>,
   answer: { readonly text: string; readonly via: 'dashboard' | 'slack' },
@@ -522,7 +531,7 @@ async function closeConflictQuestions(
     .withIndex('by_relation', (q) => q.eq('relationId', relationId))
     .take(QUESTIONS_SETTLED_READ);
   for (const question of questions) {
-    if (question.answer !== undefined) continue;
+    if (!isOpenQuestion(question)) continue;
     await ctx.db.patch(question._id, {
       answer: { text: answer.text, answeredAt: now, via: answer.via },
     });

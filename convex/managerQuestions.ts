@@ -1,5 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import {
+  internalMutation,
   internalQuery,
   mutation,
   query,
@@ -27,16 +28,19 @@ import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
 import {
   CONFLICT_CHOICES,
+  CONFLICT_QUESTION_CLOSED,
   conflictChoiceWords,
   type ConflictChoice,
 } from '../src/agent/reorientation-words';
 import type { CharterAnswerVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
 import {
+  isOpenQuestion,
   managerOpenQuestions,
   questionKey,
   sharedContentWords,
 } from '../src/agent/manager-questions';
+import { closeQuestionsOfRelation } from './questionCloses';
 import { appendEvent } from './eventLog';
 
 /**
@@ -153,6 +157,7 @@ export async function answerQuestionInTransaction(
   via: CharterAnswerVia,
 ): Promise<{ amendedCharterId: Id<'charters'> | null }> {
   if (record.answer) throw new Error('that question has already been answered');
+  if (record.closed) throw new Error('that question was closed without an answer');
   const answer = text.replace(/\s+/g, ' ').trim();
   if (!answer) throw new Error('the answer cannot be empty');
   const latest = await ctx.db
@@ -207,7 +212,7 @@ export async function answerQuestionInTransaction(
   return { amendedCharterId };
 }
 
-/** The questions asked at this work item's plan, unanswered first. */
+/** The questions asked at this work item's plan, those still open first. */
 export const forWorkItem = query({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<Doc<'managerQuestions'>[]> => {
@@ -215,8 +220,8 @@ export const forWorkItem = query({
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_work_item', (q) => q.eq('workItemId', args.workItemId))
-      .collect();
-    return rows.sort((a, b) => Number(Boolean(a.answer)) - Number(Boolean(b.answer)));
+      .take(ITEM_QUESTIONS_READ);
+    return rows.sort((a, b) => Number(!isOpenQuestion(a)) - Number(!isOpenQuestion(b)));
   },
 });
 
@@ -237,7 +242,7 @@ export const openForAgent = query({
     const open = new Set(
       charter?.approved ? managerOpenQuestions(charter.body as Charter).map(questionKey) : [],
     );
-    return rows.filter((row) => !row.answer && open.has(row.key));
+    return rows.filter((row) => isOpenQuestion(row) && open.has(row.key));
   },
 });
 
@@ -261,6 +266,10 @@ export const CONFLICT_ANSWER_REFUSALS = {
   gone: 'That question is no longer stored.',
   notConflict: 'That question is not about two pages that disagree.',
   answered: 'That question has already been answered.',
+  /** Closed when its plan was drafted again: the plan that stands now asks its own. */
+  redrafted: 'That question was closed when the plan was drafted again.',
+  /** Closed because its conflict stopped standing. */
+  closed: CONFLICT_QUESTION_CLOSED,
   /** The conflict stopped standing since the card was drawn: nothing is decided or recorded. */
   settled: 'These two pages no longer disagree as they did, so nothing is recorded.',
 } as const;
@@ -295,6 +304,13 @@ export async function answerConflictInTransaction(
     throw new ConvexError(CONFLICT_ANSWER_REFUSALS.notConflict);
   }
   if (question.answer !== undefined) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.answered);
+  if (question.closed !== undefined) {
+    throw new ConvexError(
+      question.closed.reason === 'redrafted'
+        ? CONFLICT_ANSWER_REFUSALS.redrafted
+        : CONFLICT_ANSWER_REFUSALS.closed,
+    );
+  }
   const relation = await ctx.db.get(question.relationId);
   const standing = await standingConflictOf(ctx, relation);
   // A card clicked after the conflict settled or a page left decides nothing, so it records
@@ -342,7 +358,7 @@ export const answerConflict = mutation({
  */
 const ITEM_QUESTIONS_READ = 100;
 
-/** The questions one item's plan raised and nobody has answered, oldest first. */
+/** The conflict questions one item's plans raised that are still open, oldest first. */
 export async function openConflictQuestions(
   ctx: Pick<QueryCtx, 'db'>,
   workItemId: Id<'workItems'>,
@@ -356,7 +372,7 @@ export async function openConflictQuestions(
     (question) =>
       question.type === 'retrieval' &&
       question.relationId !== undefined &&
-      question.answer === undefined,
+      isOpenQuestion(question),
   );
 }
 
@@ -385,7 +401,7 @@ export async function conflictAnswerOwedOn(
     .take(QUESTIONS_OWED_READ);
   for (const question of questions) {
     if (question.type !== 'retrieval' || question.relationId === undefined) continue;
-    if (question.answer !== undefined) continue;
+    if (!isOpenQuestion(question)) continue;
     const decision = (await ctx.db.get(question.workItemId))?.decision;
     if (decision?.kind !== 'plan' || decision.surfaceSlug !== surface.slug) continue;
     if (decision.channel !== channel) continue;
@@ -427,7 +443,7 @@ export async function numberedConflictQuestions(
   const numbered: NumberedConflictQuestion[] = [];
   for (const [index, question] of asked.entries()) {
     const relation =
-      question.answer === undefined && question.relationId !== undefined
+      isOpenQuestion(question) && question.relationId !== undefined
         ? await ctx.db.get(question.relationId)
         : null;
     numbered.push({
@@ -449,6 +465,28 @@ export const conflictQuestionsForRequest = internalQuery({
     (await numberedConflictQuestions(ctx, args.workItemId))
       .filter((numbered) => numbered.standing)
       .map((numbered) => ({ text: numbered.question.question, number: numbered.number })),
+});
+
+/**
+ * Close the item's open conflict questions whose conflict no longer stands (17-C): a page was
+ * archived, edited or removed since, or the two are no longer trusted alike, by a path that did
+ * not pass the relation's own decision. Internal; called by the run before it reads what it holds
+ * (`workActions.withConflictsHeld`), so a question nobody can answer is closed by the first run
+ * that would have waited on it. Writes `closed: settled` on each; returns how many.
+ */
+export const closeSettled = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<number> => {
+    const now = Date.now();
+    let closed = 0;
+    for (const question of await openConflictQuestions(ctx, args.workItemId)) {
+      const relationId = question.relationId;
+      if (relationId === undefined) continue;
+      if ((await standingConflictOf(ctx, await ctx.db.get(relationId))) !== undefined) continue;
+      closed += await closeQuestionsOfRelation(ctx, relationId, now);
+    }
+    return closed;
+  },
 });
 
 /**
@@ -552,7 +590,7 @@ export const conflictsForAgent = query({
       .take(OPEN_CONFLICTS_READ * 4);
     const views: ConflictQuestionView[] = [];
     for (const row of rows) {
-      if (row.type !== 'retrieval' || row.relationId === undefined || row.answer !== undefined) {
+      if (row.type !== 'retrieval' || row.relationId === undefined || !isOpenQuestion(row)) {
         continue;
       }
       if (views.length >= OPEN_CONFLICTS_READ) break;

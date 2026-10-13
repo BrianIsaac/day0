@@ -17,6 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
@@ -293,6 +294,8 @@ export const retryFailed = mutation({
     // answered landed is never sent again however its row reads (P4-1).
     const carried = carriedIntoRetry(resume ?? row.output, row);
     if (redraft) await rememberRetriedRequest(ctx, row, Date.now());
+    // The plan goes, and its conflict questions with it: the next plan is asked on what it cites.
+    if (redraft) await closeQuestionsAtRedraft(ctx, row._id, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: next,
       // A retried item begins a new run, which the queue orders by (x4); one sent back to
