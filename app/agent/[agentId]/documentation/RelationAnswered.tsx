@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useDeferredValue, useEffect, useRef } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -48,11 +48,14 @@ export function RelationAnswered({
   useEffect((): void => {
     if (cardGone && focusIsFree(null)) card.current?.focus();
   }, [cardGone, answered.relationId]);
+  // The live region mounts empty and is filled a render later, so the answer is announced: a
+  // region that mounts with its words in it is said by no screen reader (W15-R47).
+  const said = useDeferredValue(answered.text, '');
   return (
     <Card title="Your answer" focusRef={card}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <p role="status" aria-live="polite" className="text-sm text-[var(--color-fg-2)]">
-          {answered.text}
+          {said}
         </p>
         {answered.undo ? (
           <Button

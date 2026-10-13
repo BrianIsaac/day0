@@ -282,6 +282,9 @@ export const pagesWrittenBy = internalQuery({
 /** Why a decision was refused: the card it answers is no longer the relation's. */
 export const DECISION_NOT_OFFERED = 'That card has changed: this answer is no longer offered.';
 
+/** Why a reversed answer was refused: only a successor has a direction to turn. */
+export const REVERSE_IS_FOR_SUPERSEDES = 'Only “supersedes” can be answered the other way round.';
+
 /** What a decision makes of the relation's row. */
 function decided(
   decision: RelationDecision,
@@ -337,12 +340,25 @@ export const decide = mutation({
   args: {
     relationId: v.id('docRelations'),
     decision: v.union(...RELATION_DECISIONS.map((decision) => v.literal(decision))),
+    /**
+     * "{A} supersedes {B}", the proposed direction turned round (W15-R45's remainder): the
+     * measures name the later version by a date or a version word, which a reader that gives no
+     * edit time or a copied folder gets wrong, and the card offered no way to say so.
+     */
+    reversed: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<SupersedeOutcome | null> => {
     const caller = await getCallerOrThrow(ctx);
-    const relation = await ctx.db.get(args.relationId);
-    if (relation === null) throw new ConvexError('That relation is no longer stored.');
-    if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
+    const stored = await ctx.db.get(args.relationId);
+    if (stored === null) throw new ConvexError('That relation is no longer stored.');
+    if (stored.userId !== caller.ownerKey) throw new Error('forbidden');
+    let relation = stored;
+    if (args.reversed === true) {
+      if (args.decision !== 'supersedes') throw new ConvexError(REVERSE_IS_FOR_SUPERSEDES);
+      // Written with the answer or not at all: a refusal below rolls the swap back with it.
+      await ctx.db.patch(stored._id, { from: stored.to, to: stored.from });
+      relation = { ...stored, from: stored.to, to: stored.from };
+    }
     return await decideRelationInTransaction(ctx, relation, args.decision, {
       decidedBy: verifiedAddressOf(caller),
       via: 'dashboard',
