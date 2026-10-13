@@ -751,7 +751,12 @@ interface PilotTotals {
   partlyDone: number;
   answered: number;
   amended: number;
-  /** The reorientation cards opened (a joined trigger not again), approved, dismissed and deferred. */
+  /**
+   * The reorientation cards opened (a joined trigger not again), approved and dismissed, and the
+   * cards deferred now: a card deferred and since opened again, decided or closed at a handover is
+   * not counted deferred (the v0.20.0 hosted walk's finding 5: "1 card: 0 approved, 1 dismissed,
+   * 1 deferred").
+   */
   cards: { opened: number; approved: number; dismissed: number; deferred: number };
   estimatedItems: number;
   estimatedMinutes: number;
@@ -828,6 +833,8 @@ function pilotTotals(
   let answered = 0;
   let amended = 0;
   const cards = { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
+  /** The cards whose newest decision is a deferral, by id. */
+  const deferredCards = new Set<string>();
   const documentationChars = new Map<string, number>();
   const inputTokens = new Map<string, number>();
   for (const event of ordered) {
@@ -902,10 +909,23 @@ function pilotTotals(
       if (payload?.joined !== true) cards.opened += 1;
       continue;
     }
-    if (isEventOf(event, 'reorientation.approved')) cards.approved += 1;
-    else if (isEventOf(event, 'reorientation.dismissed')) cards.dismissed += 1;
-    else if (isEventOf(event, 'reorientation.deferred')) cards.deferred += 1;
+    // A handover closes every standing card with no line of the card's own, a deferred one too.
+    if (isEventOf(event, 'manager.transferred')) {
+      deferredCards.clear();
+      continue;
+    }
+    const cardId = asString(payload?.reorientationId) ?? '';
+    if (isEventOf(event, 'reorientation.deferred')) deferredCards.add(cardId);
+    else if (isEventOf(event, 'reorientation.reopened')) deferredCards.delete(cardId);
+    else if (isEventOf(event, 'reorientation.approved')) {
+      cards.approved += 1;
+      deferredCards.delete(cardId);
+    } else if (isEventOf(event, 'reorientation.dismissed')) {
+      cards.dismissed += 1;
+      deferredCards.delete(cardId);
+    }
   }
+  cards.deferred = deferredCards.size;
   const askedAt = new Map(discoveredAt);
   for (const item of workItems) askedAt.set(item._id, item.observedAt);
   const durations = (ends: Map<string, number>): number[] =>

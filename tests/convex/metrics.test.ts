@@ -2463,15 +2463,41 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       card('reorientation.deferred', 4_000, { revisitAt: 9_000 }),
       card('reorientation.reopened', 9_000, { revisitAt: 9_000 }),
       card('reorientation.approved', 10_000, { kind: 'none', result: 'nothing needed to change' }),
+      // The hosted walk's finding 5 at v0.20.0: Lark's card was deferred a week, then dismissed,
+      // and the figure read "1 card: 0 approved, 1 dismissed, 1 deferred".
+      card('reorientation.deferred', 10_500, { reorientationId: 'r2', revisitAt: 99_000 }),
       card('reorientation.dismissed', 11_000, { reorientationId: 'r2' }),
+      card('reorientation.deferred', 11_500, { reorientationId: 'r3', revisitAt: 99_000 }),
       event('charter.question-answered', { questionId: 'q1', amended: true }, 12_000),
     ];
+    // Re-taken (17-O; the walk's finding 5): `deferred` counted every deferral, so a card deferred
+    // and then decided was counted twice. It is the cards deferred now: r3 alone.
     expect(computeAgentMetrics(events, [], []).pilot.reorientation).toEqual({
       cards: { opened: 3, approved: 1, dismissed: 1, deferred: 1 },
       answered: 1,
       amended: 1,
       rate: 1,
     });
+    // The walk's own row: one card, deferred and then dismissed.
+    const larks = [
+      card('reorientation.opened', 1_000, { trigger: 'skill-recheck-due', triggerKey: 'k1' }),
+      card('reorientation.deferred', 2_000, { revisitAt: 9_000 }),
+      card('reorientation.dismissed', 3_000),
+    ];
+    expect(computeAgentMetrics(larks, [], []).pilot.reorientation.cards).toEqual({
+      opened: 1,
+      approved: 0,
+      dismissed: 1,
+      deferred: 0,
+    });
+    // A handover closes every standing card, a deferred one among them, with no line of the
+    // card's own (`moveCardsToOwner`): the handover's line is what ends the deferral.
+    const handedOver = [
+      card('reorientation.opened', 1_000, { trigger: 'skill-recheck-due', triggerKey: 'k1' }),
+      card('reorientation.deferred', 2_000, { revisitAt: 9_000 }),
+      event('manager.transferred', { transferId: 't1' }, 3_000),
+    ];
+    expect(computeAgentMetrics(handedOver, [], []).pilot.reorientation.cards?.deferred).toBe(0);
   });
 
   it('does not count a skip the manager overruled as the end of the item (review m36)', (): void => {
