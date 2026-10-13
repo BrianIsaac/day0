@@ -674,7 +674,7 @@ function asksForARoute(sentence: string): boolean {
   return words.every((word) => ROUTE_OPENERS.has(word));
 }
 
-/** A charter and the rules a step drew on it. */
+/** A charter and the rules a step drew, or rebound, on it. */
 export interface DrawnRules {
   readonly charter: Charter;
   readonly rules: CharterConstraint[];
@@ -1688,6 +1688,85 @@ export function rulePlacement(
       (boundToFunction && inFunction.length > 0) || listed.some(([, carries]) => carries),
     notCarrying: listed.flatMap(([clause, carries]) => (carries ? [] : [clause])),
   };
+}
+
+/** A manager's prohibition as the Will not do clause it is written as: the act, closed by a full stop. */
+function prohibitionClause(sentence: string): string {
+  const act = willNotDoAsAct(inTheThirdPerson(sentence.trim().replace(/[.;!]+$/, '')));
+  return `${act}.`;
+}
+
+/**
+ * Whether the draft grants the act a prohibition forbids: its function or a will-do names the act
+ * in most of the manager's words and puts no limit on it ("Edit booked figures without asking."
+ * beside "Never edit a booked figure."). Such a draft contradicts the manager, and a Will not do
+ * clause written beside the grant would hide that from the card.
+ */
+function grantsTheAct(charter: Charter, sentence: string): boolean {
+  return [charter.proposedFunction, ...charter.proposedBoundaries.willDo].some(
+    (grant: string): boolean => holdsMostOf(sentence, grant) && !limitsTheAct(sentence, grant),
+  );
+}
+
+/**
+ * The Will not do clauses the manager's prohibitions make where the draft wrote none (the v0.20.0
+ * walk's finding 6: Nell's "Never share a password in a ticket comment." was listed as a rule and
+ * bound to the will-do "Draft replies for routine tickets this week.", so the card said "This
+ * clause does not carry your words. The charter does not enforce it." and offered no Strike). A
+ * listed rule with a sentence that opens on a prohibition (`PROHIBITION_OPENING`) and no clause
+ * that carries it ({@link rulePlacement}) is bound to a Will not do clause holding that sentence:
+ * one the draft already wrote and bound to no such rule, else one written here as the act the
+ * sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that carried
+ * nothing are dropped with it, so a strike takes the prohibition and leaves the will-do. This is
+ * the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the prompt
+ * already asks for the clause. Left to the card's own check, which tells the manager to ask for
+ * changes: a rule that forbids in softer words ("avoid", "only the security lead approves"), one
+ * the manager struck on an earlier draft, one drafted before rules were bound, and one whose act
+ * the draft grants ({@link grantsTheAct}: W14-R14's drafts), where the will-do is what is wrong.
+ *
+ * @param charter - The assembled charter, its will-not-do clauses already written as acts.
+ * @param listed - The rules the reply listed, verified.
+ * @param struck - The quotes the manager struck on drafts sent back.
+ * @returns The charter with any clause written, and every listed rule, the rebound ones among them.
+ */
+export function withProhibitionClauses(
+  charter: Charter,
+  listed: readonly CharterConstraint[],
+  struck: readonly string[],
+): DrawnRules {
+  let current = charter;
+  const rules = listed.map((rule: CharterConstraint): CharterConstraint => {
+    const forbidden = quoteSentences(rule.quote).filter((sentence: string): boolean =>
+      PROHIBITION_OPENING.test(sentence.trim()),
+    );
+    if (forbidden.length === 0 || quotedBy(rule.quote, struck)) return rule;
+    const placement = rulePlacement(current, rule);
+    if (placement.kind === 'by-wording') return rule;
+    if (placement.kind === 'bound' && placement.carriesWords) return rule;
+    if (forbidden.some((sentence: string): boolean => grantsTheAct(current, sentence))) return rule;
+    const binds: ClauseRef[] = [];
+    const wording: string[] = [];
+    for (const sentence of forbidden) {
+      const willNotDo = current.proposedBoundaries.willNotDo;
+      const written = willNotDo.findIndex((clause: string): boolean =>
+        holdsMostOf(sentence, clause),
+      );
+      const clause = written >= 0 ? willNotDo[written]! : prohibitionClause(sentence);
+      if (written < 0) {
+        current = {
+          ...current,
+          proposedBoundaries: {
+            ...current.proposedBoundaries,
+            willNotDo: [...willNotDo, clause],
+          },
+        };
+      }
+      binds.push({ field: 'willNotDo', index: written >= 0 ? written : willNotDo.length });
+      wording.push(clause);
+    }
+    return { ...rule, wording, binds };
+  });
+  return { charter: current, rules };
 }
 
 /**

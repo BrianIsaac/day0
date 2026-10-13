@@ -17,6 +17,7 @@ import {
   withClauseRemoved,
   withoutProvenanceSuffixes,
   willNotDoAsAct,
+  withProhibitionClauses,
   withRoutingRules,
   type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
@@ -1806,6 +1807,124 @@ describe('withRoutingRules (RM27)', (): void => {
     ]);
     expect(drawn.rules.map((rule) => [rule.quote, rule.binds])).toEqual([
       ['Everything via me.', [{ field: 'escalationTriggers', index: 0 }]],
+    ]);
+  });
+});
+
+describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
+  const charter = (willDo: string[], willNotDo: string[], proposedFunction?: string): Charter =>
+    ({
+      ...runThrough(),
+      ...(proposedFunction === undefined ? {} : { proposedFunction }),
+      proposedBoundaries: { willDo, willNotDo, escalationTriggers: [] },
+    }) as Charter;
+  const rule = (quote: string, binds: CharterConstraint['binds']): CharterConstraint => ({
+    kind: 'system-boundary',
+    quote,
+    wording: [],
+    origin: 'synthesis',
+    ...(binds === undefined ? {} : { binds }),
+  });
+  const PASSWORD = 'Never share a password in a ticket comment.';
+  const DUTY = 'Draft replies for routine tickets this week.';
+
+  it('writes the act a prohibition rules out as a Will not do clause and binds the rule to it alone, where the draft bound it to a will-do that says nothing of it', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Own hardware.']),
+      [rule(PASSWORD, [{ field: 'willDo', index: 0 }])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries).toEqual({
+      willDo: [DUTY],
+      willNotDo: ['Own hardware.', 'Share a password in a ticket comment.'],
+      escalationTriggers: [],
+    });
+    expect(drawn.rules).toEqual([
+      {
+        kind: 'system-boundary',
+        quote: PASSWORD,
+        wording: ['Share a password in a ticket comment.'],
+        origin: 'synthesis',
+        binds: [{ field: 'willNotDo', index: 1 }],
+      },
+    ]);
+  });
+
+  it("writes the clause for a rule the draft bound to nothing, the manager's first person in the third", (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('Slack is where people ask. Do not post in my channel without asking.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      "Post in the manager's channel without asking.",
+    ]);
+    expect(drawn.rules[0]?.binds).toEqual([{ field: 'willNotDo', index: 0 }]);
+  });
+
+  it('binds the rule to a Will not do clause the draft already wrote for it, and writes no second one', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Share passwords in any ticket comment.']),
+      [rule(PASSWORD, [{ field: 'willDo', index: 0 }])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share passwords in any ticket comment.',
+    ]);
+    expect(drawn.rules[0]).toMatchObject({
+      wording: ['Share passwords in any ticket comment.'],
+      binds: [{ field: 'willNotDo', index: 0 }],
+    });
+  });
+
+  it('leaves a rule a clause already carries exactly as the reply bound it', (): void => {
+    const bound = rule(PASSWORD, [{ field: 'willNotDo', index: 0 }]);
+    const before = charter([DUTY], ['Share a password in a ticket comment.']);
+    const drawn = withProhibitionClauses(before, [bound], []);
+    expect(drawn.charter).toBe(before);
+    expect(drawn.rules).toEqual([bound]);
+  });
+
+  it("writes nothing beside a will-do, or a function, that grants the forbidden act: the card keeps its check, and the manager asks for changes (W14-R14's drafts)", (): void => {
+    const edit = rule('Never edit a booked figure.', [{ field: 'willDo', index: 0 }]);
+    const granted = charter(['Edit booked figures without asking.'], []);
+    expect(withProhibitionClauses(granted, [edit], [])).toEqual({
+      charter: granted,
+      rules: [edit],
+    });
+    const inFunction = charter([DUTY], [], 'Edit any booked figure in the tracker for the team.');
+    const unbound = rule('Never edit a booked figure.', []);
+    expect(withProhibitionClauses(inFunction, [unbound], [])).toEqual({
+      charter: inFunction,
+      rules: [unbound],
+    });
+  });
+
+  it('leaves to the card a rule that forbids in softer words, one the manager struck, and one drafted before rules were bound', (): void => {
+    const before = charter([DUTY], []);
+    const soft = rule('Only the security lead approves access policy changes.', []);
+    const struck = rule(PASSWORD, []);
+    const unbound = rule('Never promise a refund.', undefined);
+    expect(withProhibitionClauses(before, [soft, struck, unbound], [PASSWORD])).toEqual({
+      charter: before,
+      rules: [soft, struck, unbound],
+    });
+  });
+
+  it("writes one clause for each of two prohibitions, each rule bound to its own, the draft's clauses kept in their places", (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], ['Own hardware.']),
+      [rule(PASSWORD, []), rule('Do not close a ticket the requester has not confirmed.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Own hardware.',
+      'Share a password in a ticket comment.',
+      'Close a ticket the requester has not confirmed.',
+    ]);
+    expect(drawn.rules.map((drawnRule) => drawnRule.binds)).toEqual([
+      [{ field: 'willNotDo', index: 1 }],
+      [{ field: 'willNotDo', index: 2 }],
     ]);
   });
 });
