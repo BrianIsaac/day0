@@ -360,6 +360,26 @@ function workingOneAsk(items: readonly DraftedWorkItem[]): OneAsk[] {
   );
 }
 
+/**
+ * What the generator is told of two items that are one ask between them, in words it can act on.
+ * A read-and-answer item is answered in its asker's thread whether or not its draft names it
+ * ({@link withAskThread}), so the line never says such an item named the thread: it says where
+ * the item's answer goes and asks for the other item again.
+ */
+function oneAskLine({ first, second, thread }: OneAsk): string {
+  const both = `The ${first.purpose} item and the ${second.purpose} item in your last draft`;
+  const twice = 'so one ask would be worked twice';
+  if (thread === undefined) {
+    return `${both} quote the same request, ${twice}: each item is its own request, from its own message.`;
+  }
+  const other = [first, second].filter((item) => item.purpose !== 'read-and-answer');
+  if (other.length !== 1) {
+    return `${both} both name the thread "${thread}", ${twice}: each item is its own request, from its own message.`;
+  }
+  const purpose = other[0]!.purpose;
+  return `The read-and-answer item in your last draft is answered in its asker's thread, "${thread}", and the ${purpose} item names that thread too, ${twice}: draft the ${purpose} item from another message, and leave that thread out of its contentRefs.`;
+}
+
 /** An out-of-scope item that reads as the role's work, with the words that make it so. */
 interface RoleReading {
   readonly item: DraftedWorkItem;
@@ -452,13 +472,7 @@ function askAgain(reading: DraftReading): string {
       "The action item in your last draft names no record the snapshot holds: ask only for work the snapshot's rows, messages or documents let the role finish, and name those records in its contentRefs.",
     );
   }
-  for (const { first, second, thread } of reading.oneAsk) {
-    const shared =
-      thread === undefined ? 'quote the same request' : `both name the thread "${thread}"`;
-    lines.push(
-      `The ${first.purpose} item and the ${second.purpose} item in your last draft ${shared}, so one ask would be worked twice: each item is its own request, from its own message.`,
-    );
-  }
+  for (const pair of reading.oneAsk) lines.push(oneAskLine(pair));
   lines.push(
     "Draft all four items again. The out-of-scope request uses none of the role's words and never compares itself with the role: it is only the request as its sender wrote it.",
   );

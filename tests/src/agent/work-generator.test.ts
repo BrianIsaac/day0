@@ -890,7 +890,7 @@ describe('one ask drafted as more than one item (finding 2 of the v0.20.0 hosted
     const items = await generateWorkItemsFromCharter(NELL_W20, office as never);
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain(
-      'The read-and-answer item and the action item in your last draft both name the thread "channel://office-asks#thread-drive-access", so one ask would be worked twice: each item is its own request, from its own message.',
+      `The read-and-answer item in your last draft is answered in its asker's thread, "channel://office-asks#thread-drive-access", and the action item names that thread too, so one ask would be worked twice: draft the action item from another message, and leave that thread out of its contentRefs.`,
     );
     expect(items.map((item) => item.externalId)).toContain('ticket-shared-drive-self-serve-steps');
   });
@@ -930,8 +930,44 @@ describe('one ask drafted as more than one item (finding 2 of the v0.20.0 hosted
     drafts.push([read, ticket204, beyond, PLAIN_OUT_OF_SCOPE]);
     await generateWorkItemsFromCharter(PIP_W20, office as never);
     expect(prompts.length).toBeGreaterThan(1);
+    // The read item named no thread, so the line does not say it did (the continuation's second
+    // pass): it says where the item's answer goes, and which item to draft again.
     expect(prompts[1]).toContain(
-      'both name the thread "channel://office-asks#thread-double-charge"',
+      `The read-and-answer item in your last draft is answered in its asker's thread, "channel://office-asks#thread-double-charge", and the action item names that thread too`,
+    );
+    expect(prompts[1]).not.toContain('both name the thread');
+  });
+
+  it('says two tickets that name one thread both name it', async (): Promise<void> => {
+    const first = {
+      ...ACTION,
+      title: 'Log the first reply for the Northwind duplicate charge ask',
+      contentSummary:
+        'Manager filed this: "Log what we told Northwind about invoice INV-2207 on the ticket queue."',
+      externalId: 'ticket-northwind-log',
+      contentRefs: ['channel://office-asks#thread-double-charge', 'docs-fixture/billing-replies'],
+      requesterLabel: 'Manager',
+    };
+    const second = {
+      ...BEYOND,
+      title: 'Check the Northwind renewal date for their billing question',
+      contentRefs: ['channel://office-asks#thread-double-charge'],
+    };
+    const read = {
+      ...drafted(
+        'read-and-answer',
+        'What does our billing replies doc say about refunds',
+        'Support lead asked, "What does our customer billing replies doc say we may promise about a refund?" Please read it and answer.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-billing-replies',
+      requesterLabel: 'Support lead',
+    };
+    drafts.push([read, first, second, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, { ...OFFICE, teamDocs: OFFICE_TEAM_DOCS } as never);
+    expect(prompts.length).toBeGreaterThan(1);
+    expect(prompts[1]).toContain(
+      'in your last draft both name the thread "channel://office-asks#thread-double-charge", so one ask would be worked twice: each item is its own request, from its own message.',
     );
   });
 
