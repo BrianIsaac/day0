@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
 import { egressHosts } from '../../../scripts/check-setup';
 import { PROFILES } from '../../../scripts/compose';
@@ -229,5 +230,51 @@ describe('the pages the checks send a reader to', (): void => {
     expect(page).toMatch(
       /\.\/setup\.sh restore \S+ from a checkout of v\d+\.\d+\.\d+ \(commit [0-9a-f]{12}\)\./,
     );
+  });
+});
+
+describe('the runbook and the components page, on the two proxies (wave 17, 17-P)', (): void => {
+  const RUNBOOK = readFileSync(
+    new URL('../../../docs/running/install.md', import.meta.url),
+    'utf8',
+  );
+
+  it('asks IT about both before the day, and links the three pages', (): void => {
+    const before = RUNBOOK.slice(
+      RUNBOOK.indexOf('## Before the day'),
+      RUNBOOK.indexOf('## On the day'),
+    );
+    expect(before).toContain('](proxy.md)');
+    expect(before).toContain('**The way out.**');
+    expect(before).toContain('](egress.md)');
+    expect(RUNBOOK).toContain('](upgrade-and-rollback.md)');
+  });
+
+  it('gives the install’s proxy check as a step of its own, by the words of its two gaps', (): void => {
+    expect(RUNBOOK).toContain('**The reverse proxy**');
+    expect(RUNBOOK).toContain('"answered, and not as Day0"');
+    expect(RUNBOOK).toContain('"did not complete the WebSocket upgrade"');
+  });
+
+  it('says which components the compose file hands the proxy, and which reach out without it', (): void => {
+    const services = (
+      parse(COMPOSE) as { services: Record<string, { environment?: readonly string[] }> }
+    ).services;
+    const handed = Object.entries(services)
+      .filter(([, service]) =>
+        (service.environment ?? []).some((entry) => entry.startsWith('HTTPS_PROXY=')),
+      )
+      .map(([name]) => name);
+    expect(handed.sort()).toEqual(['backend', 'nango-server', 'redactor', 'slack-socket']);
+    const from = COMPONENTS.indexOf('## Which components reach out');
+    expect(from).toBeGreaterThan(0);
+    const section = COMPONENTS.slice(from, COMPONENTS.indexOf('\n---', from));
+    const [given, notGiven] = section.split('reach out too and are not handed it');
+    for (const name of handed) expect(given).toContain(`\`${name}\``);
+    for (const name of ['docs-notion-mcp', 'playwright-mcp']) {
+      expect(given).toContain(`\`${name}\``);
+      expect(handed).not.toContain(name);
+    }
+    expect(notGiven).toContain('](egress.md)');
   });
 });
