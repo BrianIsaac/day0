@@ -138,4 +138,15 @@ describe('the interfaces page', (): void => {
     ).scripts;
     expect(scripts['export:trace']).toBe('tsx scripts/export-trace.ts');
   });
+
+  it('names the owner export where a newcomer and a contributor read, in both languages of the README', (): void => {
+    // 16-F's `--owner` was in the interfaces page only: the README's recompute step and the
+    // contributing guide's commands named the one-employee export alone.
+    const read = (name: string): string =>
+      readFileSync(new URL(`../../../${name}`, import.meta.url), 'utf8');
+    const command = 'pnpm export:trace --owner --out';
+    expect(read('README.md').split(command).length - 1).toBe(2);
+    expect(read('CONTRIBUTING.md')).toContain(`\`${command} <file>\``);
+    expect(INTERFACES).toContain('`pnpm export:trace --owner`');
+  });
 });

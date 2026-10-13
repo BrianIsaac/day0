@@ -474,14 +474,36 @@ export interface OwnerDocSource {
 }
 
 /**
- * One stored page as the owner export carries it: its place, title and status with what decided
- * it, never its text, its keyed hash, the words a marker was read from or who decided it.
+ * A page as the owner export names it from elsewhere: its source and the opaque key its own row
+ * in the file's `docPages` carries as `page`, never its ref, which for a list of URLs is the
+ * address itself (W16-R18).
+ */
+export interface OwnerPageRef {
+  readonly sourceId: string;
+  readonly page: string;
+}
+
+/**
+ * One stored page as the owner export carries it: its title and status with what decided it,
+ * never its text, its keyed hash, the words a marker was read from, who decided it, or its ref
+ * and address (W16-R18: a locator, which for a list of URLs carries any query-string
+ * credential); it carries an opaque key in their place, and the page that superseded it is named
+ * by that page's key.
  */
 export type OwnerDocPage = Omit<
   Doc<'docPages'>,
-  'markdown' | 'contentHash' | 'marker' | 'decidedBy'
+  'markdown' | 'contentHash' | 'marker' | 'decidedBy' | 'ref' | 'url' | 'supersededBy'
 > & {
+  /** The page's opaque key in this owner's exports, which a relation's ends and a successor name. */
+  readonly page: string;
   readonly marker?: Omit<NonNullable<Doc<'docPages'>['marker']>, 'quote'>;
+  readonly supersededBy?: OwnerPageRef;
+};
+
+/** One relation between pages as the owner export carries it: its ends by their pages' keys. */
+export type OwnerDocRelation = Omit<Doc<'docRelations'>, 'decidedBy' | 'from' | 'to'> & {
+  readonly from: OwnerPageRef;
+  readonly to: OwnerPageRef;
 };
 
 /**
@@ -506,7 +528,7 @@ export interface OwnerRows {
   departures: OwnerDeparture[];
   docSources: OwnerDocSource[];
   docPages: OwnerDocPage[];
-  docRelations: Doc<'docRelations'>[];
+  docRelations: OwnerDocRelation[];
   skillVersions: Doc<'skillVersions'>[];
   people: Doc<'people'>[];
   personIdentities: Doc<'personIdentities'>[];

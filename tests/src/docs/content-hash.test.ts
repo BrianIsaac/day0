@@ -99,6 +99,12 @@ describe('pageContentHash', (): void => {
         .sort()
         .map((name) => `redaction/${name}`),
       'surfaces/secrets.ts',
+      // Since 16-PT (W15-R41's remainder): the two modules the redaction's own files import
+      // outside its directory, the organisation's owner key the exact-value matcher reads
+      // (`src/redaction/known-values.ts`) and the transport the span model's client calls
+      // through (`src/redaction/client.ts`).
+      'lib/organisation-key.ts',
+      'lib/transport-error.ts',
     ];
     const component = readdirSync(redactor)
       .filter((name) => name === 'server.py' || /^requirements.*\.txt$/.test(name))
@@ -114,9 +120,10 @@ describe('pageContentHash', (): void => {
     );
     expect({ revision: PAGE_REDACTION_REVISION, digest }).toEqual({
       revision: 2,
-      // Re-pinned for W15-R41: the digest takes two more files in (the redactor's requirement
-      // pins); none of the code it covered before changed, so no bump is owed.
-      digest: '43a03656a250d01ea17b4206fea77e2b676269810398d92691c55bf6d84e5ad0',
+      // Re-pinned for W15-R41's remainder (16-PT): the digest takes two more files in (the
+      // organisation key and the transport the redaction's files import); none of the code it
+      // covered before changed, so no bump is owed and no page is redacted again for it.
+      digest: '80aaa7b8f62f8a599c6531a968e65b6b49bf666d29d3a9fce8b451e6a2e9d2e9',
     });
   });
 });

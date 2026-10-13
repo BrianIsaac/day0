@@ -12,7 +12,11 @@ import { z } from 'zod';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { PageStatus } from '../docs/authority';
 import type { RelationshipType } from '../people/vocabulary';
+import { scopePhraseOf } from '../people/words';
+import { redactTokenShapes } from '../surfaces/redact';
+import { PLAN_CANCELLED_REASON } from '../work/stop';
 import { awaitingCheck } from '../work/agreement-words';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from './drafted-text-rules';
 import {
   PAGE_STATUS_PROPOSALS,
   RELATIONSHIP_PROPOSAL_ACTIONS,
@@ -72,6 +76,75 @@ export type ProposalCandidate =
       readonly held: boolean;
     }
   | { readonly kind: 'skill'; readonly skillId: Id<'skills'>; readonly name: string };
+
+/** The most events of one counted type a card's evidence shows the judgement (D-4 (a)). */
+export const COUNTED_EVENTS_SHOWN = 10;
+
+/** The most of one counted event's words an evidence line keeps. */
+const COUNTED_EVENT_CHARS = 300;
+
+/** One event a counted card rests on, as the judgement is shown it, with its item's title. */
+export type CountedEvent =
+  | { readonly type: 'work.cancelled'; readonly title: string; readonly reason: string }
+  | {
+      readonly type: 'work.skipped';
+      readonly title: string;
+      readonly clause?: string;
+      readonly reason?: string;
+    }
+  | {
+      readonly type: 'work.actions-withheld';
+      readonly title: string;
+      readonly reasons: readonly string[];
+    };
+
+/** Words of an event, scrubbed of token shapes and cut to the line's bound. */
+function eventWords(text: string): string {
+  const scrubbed = redactTokenShapes(text.replace(/\s+/g, ' ').trim());
+  return scrubbed.length > COUNTED_EVENT_CHARS
+    ? `${scrubbed.slice(0, COUNTED_EVENT_CHARS - 3).trimEnd()}...`
+    : scrubbed;
+}
+
+/**
+ * One event a counted card rests on as an evidence line (W16-R4, D-4 (a)): a rejection's reason, a
+ * skip's clause and reason, a run's withheld reasons, each by its item. Without them the judgement
+ * of a card about three rejections quoting one clause reads only "the change itself" and proposes
+ * nothing.
+ *
+ * @param event - The event and its item's title.
+ * @returns The line, or undefined when the event says nothing to show.
+ */
+export function countedEventLine(event: CountedEvent): string | undefined {
+  const title = eventWords(event.title);
+  switch (event.type) {
+    case 'work.cancelled': {
+      const given = event.reason.startsWith(`${PLAN_CANCELLED_REASON}: `)
+        ? event.reason.slice(PLAN_CANCELLED_REASON.length + 2)
+        : event.reason;
+      return given === PLAN_CANCELLED_REASON
+        ? `Plan rejected for “${title}”, with no reason given`
+        : `Plan rejected for “${title}”: ${eventWords(given)}`;
+    }
+    case 'work.skipped': {
+      const clause = event.clause === undefined ? '' : ` under “${eventWords(event.clause)}”`;
+      const reason = event.reason === undefined ? '' : `: ${eventWords(event.reason)}`;
+      return `Skipped “${title}”${clause}${reason}`;
+    }
+    case 'work.actions-withheld': {
+      const reasons = [...new Set(event.reasons.map((reason) => reason.trim()))].filter(
+        (reason) => reason !== '',
+      );
+      return reasons.length === 0
+        ? undefined
+        : `Held in a run of “${title}”: ${eventWords(reasons.join('; '))}`;
+    }
+    default: {
+      const unknown: never = event;
+      throw new Error(`unhandled event ${String(unknown)}`);
+    }
+  }
+}
 
 /** What the judgement is asked about one card. */
 export interface ProposalInput {
@@ -134,6 +207,13 @@ export type ProposalReply = z.infer<typeof proposalReplySchema>;
 /** Why a reply was refused: it named something the card does not hold, or an action it cannot take. */
 export class ProposalRefused extends Error {}
 
+/** A relationship's new scope written as a sentence or past the edge's bound (W16-R3). */
+export class ScopeNotAPhrase extends ProposalRefused {}
+
+/** What an edge's scope must be, as the two prompts ask for it and a refusal says it. */
+export const SCOPE_PHRASE_RULE =
+  'a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence';
+
 /** The system prompt of the proposal judgement. */
 export const REORIENTATION_PROPOSAL_SYSTEM = [
   'You are an AI employee. Something your work relied on changed: a person, a page, a skill, an access or a pattern in your work.',
@@ -143,7 +223,7 @@ export const REORIENTATION_PROPOSAL_SYSTEM = [
   'Choose from the numbered candidates only. Each line says what it is and the actions it takes.',
   '- `edit-clause`: rewrite one charter clause; `text` is the whole new clause, in the charter’s own voice; `action` is null.',
   '- `agreement`: `action` is one of the actions its line lists (keep, edit, retire, recheck or dismiss); `text` is the new statement for edit.',
-  '- `relationship`: `action` is edit or retire; `text` is the new scope for edit.',
+  `- \`relationship\`: \`action\` is edit or retire; \`text\` is the new scope for edit: ${SCOPE_PHRASE_RULE}.`,
   '- `page-status`: `action` is the status the page should have: active, archived, draft, clear, or superseded where its line names a successor.',
   '- `scope`: `action` is revoke for a scope held, grant for one not held.',
   '- `skill`: `action` is recheck, retire or withdraw.',
@@ -151,6 +231,7 @@ export const REORIENTATION_PROPOSAL_SYSTEM = [
   '',
   'Prefer the smallest change the evidence supports. Prefer `none` to a change the evidence does not ask for.',
   '`rationale`: one or two plain sentences for the manager, naming what changed and why your proposal follows from it. No field names, ids or internal labels.',
+  PLAIN_PUNCTUATION_IN_EVERY_FIELD,
 ].join('\n');
 
 /** The actions a candidate's line offers, in the words the prompt uses. */
@@ -298,6 +379,15 @@ function writtenText(reply: ProposalReply, what: string): string {
   return text;
 }
 
+/** The reply's new scope for an edge, refused unless it is a phrase the graph can match. */
+function scopePhrase(reply: ProposalReply): string {
+  const scope = scopePhraseOf(writtenText(reply, 'scope'));
+  if (scope === undefined) {
+    throw new ScopeNotAPhrase(`the new scope must be ${SCOPE_PHRASE_RULE}`);
+  }
+  return scope;
+}
+
 /**
  * The proposal a reply stands for, checked against the card's candidates: the change, its target
  * by the id the card holds, the action that target takes and the words it writes.
@@ -305,7 +395,8 @@ function writtenText(reply: ProposalReply, what: string): string {
  * @param reply - The model's answer.
  * @param candidates - The candidates the prompt numbered, in its order.
  * @throws ProposalRefused when the reply names a candidate the card does not hold, one of another
- *   kind, an action it does not take, or leaves out the words an edit writes.
+ *   kind, an action it does not take, or leaves out the words an edit writes; `ScopeNotAPhrase`
+ *   when an edge's new scope is a sentence or longer than the edge takes.
  */
 export function proposalOf(
   reply: ProposalReply,
@@ -346,7 +437,7 @@ export function proposalOf(
         kind: 'relationship',
         relationshipId: edge.relationshipId,
         action,
-        ...(action === 'edit' ? { type: edge.type, scope: writtenText(reply, 'scope') } : {}),
+        ...(action === 'edit' ? { type: edge.type, scope: scopePhrase(reply) } : {}),
         rationale,
       };
     }

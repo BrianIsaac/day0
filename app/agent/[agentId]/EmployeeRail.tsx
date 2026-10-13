@@ -39,16 +39,17 @@ export function railFigures(
   const decided = decidedCount(metrics.decisions);
   // A partial approval is one of the approvals, not a decision of its own.
   const inPart = partiallyApproved > 0 ? `, ${partiallyApproved} of them in part` : '';
-  const since = standing.tookOver ? ' since you took over' : '';
+  // A day's count is the day's: "since you took over" is said of the whole record only (W16-R32).
+  const since = standing.tookOver && standing.today !== true ? ' since you took over' : '';
   return [
     {
       label: 'Decisions',
       value:
         decided === 0
-          ? standing.tookOver
-            ? 'none since you took over'
-            : standing.today === true
-              ? 'none today'
+          ? standing.today === true
+            ? 'none today'
+            : standing.tookOver
+              ? 'none since you took over'
               : 'none yet'
           : `${decided} by you${since} (${approved} approved${inPart}, ${rejected} rejected)`,
     },

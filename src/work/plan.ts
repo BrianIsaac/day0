@@ -86,11 +86,13 @@ const SELECTION_RULE =
 
 /**
  * What the real planner is told of a cite line the selection printed `[conflict]` (15-A): a
- * confirmed conflict between two pages of equal trust. The plan that cites one is held for the
- * manager whatever it says (`work.decidePlan`); this keeps the draft from resting on the point.
+ * confirmed conflict between two pages of equal trust. The question is asked only beside a plan
+ * that cites the disputed passage, and only the steps citing it are held (16-O, RM20 (a)), so the
+ * planner is told to plan and cite such a step rather than plan round it (W16-R7, D-1 (a)): a plan
+ * that works round the point is asked nothing and would tell the manager a question was asked.
  */
 const CONFLICT_RULE =
-  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.';
+  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites` for that step, the one whose write the point decides: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, plan a step of your own that asks about it, or say that a question has been asked.';
 
 /**
  * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the

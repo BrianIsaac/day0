@@ -103,6 +103,38 @@ describe('withheldInWords: what a withheld write says to a manager (RM22 (a))', 
     );
   });
 
+  it('reads the approval tense in a message to the manager only, and its "once you approve" shape (W16-R14, reader 4’s p3)', (): void => {
+    const post = (channelSlug: string, body: string): MockAction => ({
+      tool: 'slack.postMessage',
+      args: { channelSlug, body },
+    });
+    // Ordinary messages to a colleague that the tripwire sent back, then withheld.
+    for (const body of [
+      'Here is the draft FAQ for your review: it covers refunds.',
+      'The draft for review by finance is in the shared folder.',
+      'I will post it once approved by finance.',
+    ]) {
+      expect(approvalTenseFindings([post('office-asks', body)]), body).toEqual([]);
+    }
+    // 16-FW's F7, the shape that landed, and Pip's DM, which it was built for.
+    expect(
+      approvalTenseFindings([post('dm-manager', 'Reply for Hana to send once you approve.')]),
+    ).toHaveLength(1);
+    expect(
+      approvalTenseFindings([post('dm-manager', 'I will send it to Hana when you approve it.')]),
+    ).toHaveLength(1);
+    expect(approvalTenseFindings([PIP_DOCS_DRAFT_DM])).toHaveLength(1);
+    // An escalation that holds something else for the manager is not a draft (the second pass):
+    // it names no reply or draft and sends nothing itself.
+    for (const body of [
+      'I have not issued the refund; I will issue it once you approve.',
+      'Confirm when you approve the plan and I will carry on.',
+      'The close can go ahead after you approve the journal.',
+    ]) {
+      expect(approvalTenseFindings([post('dm-manager', body)]), body).toEqual([]);
+    }
+  });
+
   it('says a message withheld with a write that waits on the answer waits on it too (the second pass)', (): void => {
     const [, dependent] = withReportsOfWithheld(
       [PIP_REPLY_POST, PIP_COMMENT_AND_CLOSE],

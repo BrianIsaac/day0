@@ -21,16 +21,19 @@ export function DocumentationPage(): React.ReactNode {
       <div className="flex items-start justify-between gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Documentation</h1>
-          <p className="text-sm text-[var(--color-muted)] mt-2">
-            {config?.mode === 'mock'
-              ? 'What your employees read for documentation.'
-              : 'Link read-only locations. Day0 learns systems and action shapes from their pages.'}
-          </p>
+          {/* Neither office's words until the mode answers (W16-R35): the page says Loading below. */}
+          {config === undefined ? null : (
+            <p className="text-sm text-[var(--color-muted)] mt-2">
+              {config.mode === 'mock'
+                ? 'What your employees read for documentation.'
+                : 'Link read-only locations. Day0 learns systems and action shapes from their pages.'}
+            </p>
+          )}
         </div>
         {/* The hosted office says what it is in the one sentence below, not in the mode's name. */}
-        {config?.mode === 'mock' ? null : (
+        {config === undefined || config.mode === 'mock' || !config.label ? null : (
           <span className="text-xs border border-[var(--color-border)] rounded-full px-3 py-1">
-            {config?.label || 'loading'}
+            {config.label}
           </span>
         )}
       </div>

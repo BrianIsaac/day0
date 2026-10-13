@@ -14,7 +14,13 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { amendCharterInTransaction } from './charters';
-import { citeConflictOf, conflictsOnPlanBlocks, standingConflictOf } from './docConflicts';
+import {
+  citeConflictOf,
+  conflictsLeanedOn,
+  conflictsOnPlanBlocks,
+  planLeansOnConflict,
+  standingConflictOf,
+} from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
@@ -254,6 +260,8 @@ export const CONFLICT_ANSWER_REFUSALS = {
   gone: 'That question is no longer stored.',
   notConflict: 'That question is not about two pages that disagree.',
   answered: 'That question has already been answered.',
+  /** The conflict stopped standing since the card was drawn: nothing is decided or recorded. */
+  settled: 'These two pages no longer disagree as they did, so nothing is recorded.',
 } as const;
 
 /** The decision of the relation an answer stands for. */
@@ -288,18 +296,16 @@ export async function answerConflictInTransaction(
   if (question.answer !== undefined) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.answered);
   const relation = await ctx.db.get(question.relationId);
   const standing = await standingConflictOf(ctx, relation);
-  const text =
-    standing === undefined
-      ? answer.choice === 'both'
-        ? 'Both hold'
-        : `${answer.choice === 'from' ? 'The first page' : 'The second page'} is right`
-      : conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
-  if (relation !== null && standing !== undefined) {
-    await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], {
-      decidedBy: answer.decidedBy,
-      via: answer.via,
-    });
+  // A card clicked after the conflict settled or a page left decides nothing, so it records
+  // nothing either: an answer kept with nothing decided read as a decision made (W16-R27).
+  if (relation === null || standing === undefined) {
+    throw new ConvexError(CONFLICT_ANSWER_REFUSALS.settled);
   }
+  const text = conflictChoiceWords(answer.choice, citeConflictOf(standing).pages);
+  await decideRelationInTransaction(ctx, relation, DECISION_OF[answer.choice], {
+    decidedBy: answer.decidedBy,
+    via: answer.via,
+  });
   await ctx.db.patch(question._id, {
     answer: { text, answeredAt: Date.now(), via: answer.via },
   });
@@ -420,23 +426,35 @@ export const conflictQuestionsForRequest = internalQuery({
 /**
  * What the apply holds for a plan's unanswered conflict questions (RM20 (a)): each question, its
  * relation and the hashes of the blocks its pages disagree in, by which the plan's steps that rely
- * on the passage are found. Internal; read by `workActions` before a set is gated.
+ * on the passage are found, and whether the plan's own words lean on the conflict, which holds
+ * every step where no cite carries it (D-1 (c)). Internal; read by `workActions` before a set is
+ * gated.
  */
 export const conflictHoldsFor = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (
     ctx,
     args,
-  ): Promise<Array<{ question: string; relationId: string; blocks: string[] }>> => {
-    const holds: Array<{ question: string; relationId: string; blocks: string[] }> = [];
+  ): Promise<
+    Array<{ question: string; relationId: string; blocks: string[]; leaned: boolean }>
+  > => {
+    const holds: Array<{
+      question: string;
+      relationId: string;
+      blocks: string[];
+      leaned: boolean;
+    }> = [];
+    const plan = (await ctx.db.get(args.workItemId))?.plan;
     for (const question of await openConflictQuestions(ctx, args.workItemId)) {
       const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
       // A conflict that no longer stands holds nothing, whatever became of its question.
-      if (relation === null || (await standingConflictOf(ctx, relation)) === undefined) continue;
+      const standing = relation === null ? undefined : await standingConflictOf(ctx, relation);
+      if (relation === null || standing === undefined) continue;
       holds.push({
         question: question.question,
         relationId: relation._id,
         blocks: [...conflictBlocks(relation)],
+        leaned: planLeansOnConflict(plan, citeConflictOf(standing)),
       });
     }
     return holds;
@@ -448,7 +466,8 @@ export const conflictHoldsFor = internalQuery({
  * about beside it (D-4 (b)): confirmed since the plan was approved, so the run stops with the two
  * pages named and Retry drafts it again. The blocks are the plan's cited ones, or, where it cites
  * nothing, those its selection recorded, or, where the planner read the whole mirror, every pair of
- * pages the employee reads. Internal; read by `workActions.refuseGoneCites`.
+ * pages the employee reads; and a conflict the plan names in its own words and cites nowhere
+ * (D-1 (c)). Internal; read by `workActions.refuseGoneCites`.
  */
 export const conflictConfirmedSince = internalQuery({
   args: { workItemId: v.id('workItems') },
@@ -459,15 +478,18 @@ export const conflictConfirmedSince = internalQuery({
     const row = await ctx.db.get(args.workItemId);
     const agent = row === null ? null : await ctx.db.get(row.agentId);
     if (row === null || agent?.userId === undefined) return null;
+    // A relation with a question still open is the hold's; one whose only questions are answered
+    // stands again (settled as both holding, taken back and confirmed anew), and nobody was asked
+    // about it as it stands now (W16-R27).
     const asked = new Set(
-      (
-        await ctx.db
-          .query('managerQuestions')
-          .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-          .take(ITEM_QUESTIONS_READ)
-      ).flatMap((question) => (question.relationId === undefined ? [] : [question.relationId])),
+      (await openConflictQuestions(ctx, row._id)).flatMap((question) =>
+        question.relationId === undefined ? [] : [question.relationId],
+      ),
     );
-    for (const conflict of await conflictsOnPlanBlocks(ctx, row, agent)) {
+    for (const conflict of [
+      ...(await conflictsOnPlanBlocks(ctx, row, agent)),
+      ...(await conflictsLeanedOn(ctx, row, agent)),
+    ]) {
       if (asked.has(conflict.relationId as Id<'docRelations'>)) continue;
       return { heading: conflict.heading, pages: [conflict.pages[0], conflict.pages[1]] };
     }

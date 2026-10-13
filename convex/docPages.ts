@@ -57,6 +57,8 @@ export interface DocPageRow {
    * ref when its row was outside what one read of the table takes (`SUCCESSOR_BYTES`).
    */
   readonly supersededBy?: string;
+  /** Set when `supersededBy` is the successor's ref, not its title, so the table says so (W15-R48). */
+  readonly supersededByRef?: true;
   /** Set when a relation still to answer proposes another page as its later version or its twin. */
   readonly possiblySuperseded?: true;
 }
@@ -109,9 +111,9 @@ function pageKey(page: { readonly sourceId: Id<'docSources'>; readonly ref: stri
 async function successorNames(
   ctx: QueryCtx,
   pages: readonly Doc<'docPages'>[],
-): Promise<Map<Id<'docPages'>, string>> {
+): Promise<Map<Id<'docPages'>, { name: string; byRef?: true }>> {
   const titles = new Map<string, string | null>(pages.map((page) => [pageKey(page), page.title]));
-  const names = new Map<Id<'docPages'>, string>();
+  const names = new Map<Id<'docPages'>, { name: string; byRef?: true }>();
   let bytes = 0;
   for (const page of pages) {
     const named = page.supersededBy;
@@ -119,7 +121,7 @@ async function successorNames(
     const key = pageKey(named);
     if (!titles.has(key)) {
       if (bytes >= SUCCESSOR_BYTES) {
-        names.set(page._id, named.ref);
+        names.set(page._id, { name: named.ref, byRef: true });
         continue;
       }
       const successor = await ctx.db
@@ -130,7 +132,7 @@ async function successorNames(
       titles.set(key, successor?.title ?? null);
     }
     const title = titles.get(key);
-    if (title !== undefined && title !== null) names.set(page._id, title);
+    if (title !== undefined && title !== null) names.set(page._id, { name: title });
   }
   return names;
 }
@@ -212,7 +214,8 @@ export const listForSource = query({
           status,
           statusSource: statusSourceOf(page),
           ...decision(page, callerAddress),
-          ...(supersededBy !== undefined ? { supersededBy } : {}),
+          ...(supersededBy !== undefined ? { supersededBy: supersededBy.name } : {}),
+          ...(supersededBy?.byRef === true ? { supersededByRef: true as const } : {}),
           ...(proposed ? { possiblySuperseded: true as const } : {}),
         };
       }),

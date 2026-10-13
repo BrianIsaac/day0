@@ -1912,6 +1912,7 @@ async function withConflictsHeld<T extends QuestionableOutput>(
   return withheldForQuestion(output, [...writes.values()], {
     question: boundedQuestion(first.question),
     steps: [...steps].sort((a, b) => a - b),
+    relationId: first.relationId,
   });
 }
 
@@ -4374,6 +4375,14 @@ async function siteSnapshot(
         reason: reason.slice(0, SELECTION_FAILURE_CHARS),
       },
     });
+    // A plan drafted from the whole mirror keeps no selection: an earlier draft's kept list would
+    // otherwise stand for it in the conflict checks (W16-R11, probes P2 and P3).
+    if (selection.site === 'plan') {
+      await ctx.runMutation(internal.docSelection.recordPlanSelection, {
+        workItemId: input.workItemId,
+        blocks: [],
+      });
+    }
   }
   if (snapshot.documentation !== undefined) {
     await logEvent(ctx, {

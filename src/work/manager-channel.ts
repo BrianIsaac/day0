@@ -572,7 +572,7 @@ export function decisionRequestText(args: {
 
 /**
  * A plan's conflict questions as the request asks them, and how to answer: a typed answer where
- * the employee's app takes messages, the plan's card in day0 otherwise.
+ * the employee's app takes messages, the plan's card in Day0 otherwise.
  */
 function questionLines(questions: readonly string[], id: string, typedCode: boolean): string[] {
   if (questions.length === 0) return [];

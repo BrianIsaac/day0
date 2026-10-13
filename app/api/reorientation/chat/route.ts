@@ -24,6 +24,7 @@ import { talkQuotes } from '@/agent/reorientation-talk-evidence';
 import {
   TALK_ANSWER_NOT_KEPT,
   keptTalkAnswer,
+  talkOutcomeMiss,
   talkOutcomeOfCalls,
   talkOutcomeSchema,
   type KeepTalkAnswer,
@@ -39,6 +40,12 @@ import {
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+/**
+ * The route's own deadline, short of the platform's `maxDuration`, so a slow model leaves time to
+ * say what happened and for the finish's write (W16-R19).
+ */
+const TALK_DEADLINE_MS = 50_000;
 
 /** One turn of a talk: a short acknowledgement and one question, or the outcome's call. */
 const TALK_MAX_OUTPUT_TOKENS = 2000;
@@ -80,7 +87,7 @@ export async function POST(req: Request): Promise<Response> {
   // The route's own deadline. A turn also stops with the page that asked for it; Put this on the
   // card does not, since a manager who presses it and goes back to the card has asked for it whole
   // (the walk's W-1: the outcome was never written when the page left first).
-  const deadline = AbortSignal.timeout(maxDuration * 1000);
+  const deadline = AbortSignal.timeout(TALK_DEADLINE_MS);
   const abortSignal = AbortSignal.any([req.signal, deadline]);
   const crossOrigin = crossOriginRefusal(req);
   if (crossOrigin) return crossOrigin;
@@ -153,6 +160,15 @@ export async function POST(req: Request): Promise<Response> {
         toolChoice: 'required',
       });
       outcome = talkOutcomeOfCalls(answered.toolCalls);
+      if (outcome === undefined) {
+        // What the model answered instead, so a bed can say why (16-J's W1b): never its words.
+        log.warn('reorientation talk: nothing was put on the card', {
+          finishReason: answered.finishReason,
+          ...talkOutcomeMiss(answered.toolCalls),
+          textLength: answered.text.length,
+          usage: answered.usage,
+        });
+      }
     } catch (err: unknown) {
       log.warn('reorientation talk: the outcome was not asked', {
         reason: errorMessage(err, err instanceof Error ? err.name : 'unknown error'),

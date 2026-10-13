@@ -97,6 +97,54 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     ]);
   });
 
+  it('supersedes the other way when the manager says the proposed direction is wrong (W15-R45’s reverse button)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { wiki, official, v1, v2 } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [relation] = await relations(harness);
+    // The measures proposed v2 as the later version; the manager says v1 is.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'supersedes',
+      reversed: true,
+    });
+    expect((await relations(harness))[0]).toMatchObject({
+      kind: 'possible_successor',
+      status: 'confirmed',
+      from: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+      to: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+    });
+    expect(await pageOf(harness, v2)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'relation',
+      supersededBy: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+    });
+    expect((await pageOf(harness, v1)).status).toBeUndefined();
+    // Undo takes the turn back with the answer: the card asks again as the measures proposed it
+    // (the second pass), and the page it had superseded is current again.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'undo',
+    });
+    const undone = (await relations(harness))[0];
+    expect(undone).toMatchObject({
+      status: 'proposed',
+      from: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+      to: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+    });
+    expect(undone.reversed).toBeUndefined();
+    const restated = await pageOf(harness, v2);
+    expect([restated.status, restated.supersededBy]).toEqual(['active', undefined]);
+    // Reversing is the duplicate card's alone: no other answer has a direction to turn.
+    await expect(
+      asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision: 'keep-both',
+        reversed: true,
+      }),
+    ).rejects.toThrow('Only “supersedes” can be answered the other way round.');
+  });
+
   it('answers what became of the older page, which a source’s own word or the manager’s keeps as it was', async (): Promise<void> => {
     // The second pass's minor 13: the card said "now supersedes" whatever the rules made of it,
     // and a page its source calls current, or the manager decided by hand, is not superseded by

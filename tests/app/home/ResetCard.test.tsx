@@ -77,6 +77,12 @@ describe('ResetCard', (): void => {
     // Nor while the mode is still being read, so the hosted office never shows it for a moment.
     const loading = mount(<ResetCard mode="loading" />);
     expect(loading.container.querySelector('input[type="checkbox"]')).toBeNull();
+    // Nor the local install's sentence, which names people and agreements the office keeps none of
+    // (W16-R35): what both offices delete is said until the mode answers.
+    expect(loading.container.textContent).toContain(
+      'Deletes your employees and everything they made. Your sign-in stays',
+    );
+    expect(loading.container.textContent).not.toContain('working agreements');
     const local = mount(<ResetCard mode="real" />);
     expect(local.container.textContent).toContain('Also unlink your documentation sources');
     // Nor does the line above it point at a box the card does not draw.

@@ -36,6 +36,8 @@ import {
   purgeCredential,
 } from './credentials';
 import { ORGANISATION_SECRET_HOLD_MS } from './organisationSecrets';
+import { planSelectionOf } from './docConflicts';
+import { reseedOfficeDocuments } from './mockSeed';
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
@@ -100,6 +102,8 @@ export const MIGRATION_NAMES = [
   'work-decision-closed',
   'docs-blocks-status',
   'docs-relations-remeasure',
+  'work-selected-blocks',
+  'mock-office-reseed',
 ] as const;
 
 /** One migration's name. */
@@ -328,6 +332,17 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'marks the relations measure owed, from its start, on every documentation source that stores a page, so the existing library is measured once by the dated successor signal; it measures nothing itself, a source with no stored page owes nothing, a source already owed keeps the place its measure reached, and mock mode stores no page',
     thenRemoves:
       'nothing: every page a sync stores from this release is measured by the signal as it is stored, and the measure clears each source’s mark as it reaches the end (16-FD)',
+  },
+  'work-selected-blocks': {
+    release: REORIENTATION_RELEASE,
+    does: 'keeps on every open work item whose plan cites nothing, and which has no kept selection, the blocks its newest plan selection record named, each at its hash now, so a conflict confirmed on them is asked and stops the run however many selections followed; an item whose record is no longer among the employee’s newest, or whose newer selection failed, gets an empty list, which reads as none, an item with cites or a kept selection is left, and mock mode makes no selection',
+    thenRemoves:
+      'nothing: every plan selection from this release is kept on its item as it is made (16-FD)',
+  },
+  'mock-office-reseed': {
+    release: REORIENTATION_RELEASE,
+    does: 'rewrites the documents each mock-mode employee’s hosted office already holds to the shipped text, so an office seeded before this release reads the shipped Slack guide and not the one that taught a draft held for the manager’s approval; a document that already reads as shipped, one the manager’s own documentation mirrors and every other row of the office are left, no document, message or channel is added, and a real-mode employee has no office',
+    thenRemoves: 'nothing: an office is seeded from the shipped text when its employee is deployed',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -951,6 +966,8 @@ const MIGRATION_PAGES: Readonly<
   'work-decision-closed': recordClaimedCloses,
   'docs-blocks-status': stampBlockStatus,
   'docs-relations-remeasure': markRemeasureOwed,
+  'work-selected-blocks': keepPlanSelections,
+  'mock-office-reseed': reseedMockOffices,
 };
 
 /**
@@ -1006,6 +1023,105 @@ async function markRemeasureOwed(ctx: MutationCtx, cursor: string | null): Promi
     changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/** The states of a work item whose plan may still run, so its selection may still be read. */
+const SELECTION_OWED_STATES: ReadonlySet<string> = new Set([
+  'plan-pending',
+  'plan-approved',
+  'executing',
+  'actions-pending',
+  'failed',
+]);
+
+/**
+ * The employee's newest plan selection records the selection pass looks through for an item's own:
+ * the decision read 64, which a busy employee's later selections pushed the item's past (W16-R11).
+ * A record names up to 512 block ids, so the read stays near 3.5 MiB.
+ */
+const SELECTION_RECORDS_READ = 200;
+
+/** The most block ids of one record the pass resolves: the selection's own bound. */
+const SELECTION_BLOCKS_READ = 512;
+
+/** Whether an item's plan cites nothing and no selection is kept on it, so the pass owes it one. */
+function selectionOwed(row: Doc<'workItems'>): boolean {
+  if (!SELECTION_OWED_STATES.has(row.state) || row.plan === undefined) return false;
+  if (row.selectedBlocks !== undefined) return false;
+  const cites = (row.plan as { cites?: unknown } | null)?.cites;
+  return !Array.isArray(cites) || cites.length === 0;
+}
+
+/**
+ * One page of the kept selection pass (16-PT; W16-R11): an open item whose plan cites nothing and
+ * that was selected before 0.20.0 has no kept selection, and the record its conflict checks fall
+ * back to drops out of the employee's newest 64 once later items are selected, after which it is
+ * asked nothing and never stopped. Each such item gets the blocks its newest plan-site record named,
+ * each at the block's hash now (the record holds ids only; a block rewritten in place reads at its
+ * new hash), or an empty list where no record is left among the newest or a newer selection failed (the plan
+ * read the whole mirror), which reads as none. One
+ * owed item is kept a call, since its record's blocks are read whole: a page with more is read
+ * again, and the items already kept are passed over.
+ */
+async function keepPlanSelections(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  if (SURFACE_MODE !== 'real') return { read: 0, changed: 0, cursor: '', isDone: true };
+  // An empty cursor is the first page read again: it held a second owed item (below).
+  const from = cursor === '' ? null : cursor;
+  const page = await ctx.db.query('workItems').paginate({ ...LARGE_ROWS_READ, cursor: from });
+  const owed = page.page.filter(selectionOwed);
+  const [first] = owed;
+  if (first === undefined) {
+    return { read: page.page.length, changed: 0, cursor: page.continueCursor, isDone: page.isDone };
+  }
+  // The item's newest plan-site selection as the conflict checks read it: a failure newer than the
+  // newest record means the plan was drafted from the whole mirror, and keeps no list.
+  const selection = await planSelectionOf(ctx, first, SELECTION_RECORDS_READ);
+  const blockIds =
+    selection === undefined || selection === 'fell-back'
+      ? []
+      : selection.blockIds.slice(0, SELECTION_BLOCKS_READ);
+  const selectedBlocks: NonNullable<Doc<'workItems'>['selectedBlocks']> = [];
+  for (const id of blockIds) {
+    const blockId = ctx.db.normalizeId('docBlocks', id);
+    const block = blockId === null ? null : await ctx.db.get(blockId);
+    if (block !== null) selectedBlocks.push({ id: block._id, hash: block.hash });
+  }
+  await ctx.db.patch(first._id, { selectedBlocks });
+  // The page is read again while it holds another owed item; the read is counted once, when it ends.
+  const more = owed.length > 1;
+  return {
+    read: more ? 0 : page.page.length,
+    changed: 1,
+    cursor: more ? (from ?? '') : page.continueCursor,
+    isDone: more ? false : page.isDone,
+  };
+}
+
+/** Employees one page of the office reseed reads: each rewrites at most its office's documents. */
+const OFFICE_RESEED_AGENTS = 25;
+
+/**
+ * One page of the hosted office reseed (16-PT; W16-R15, D-10 (a)): the documents the office of each
+ * mock-mode employee already holds are brought up to the shipped text
+ * (`mockSeed.reseedOfficeDocuments`). 0.20.0 moved the seeded Slack guide (16-FW), and an office
+ * seeded before it kept the guide whose examples the approval-tense tripwire reads. An employee
+ * counts as read when it has an office, and as changed when one of its documents was rewritten.
+ */
+async function reseedMockOffices(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('agents').paginate({ numItems: OFFICE_RESEED_AGENTS, cursor });
+  let read = 0;
+  let changed = 0;
+  for (const agent of page.page) {
+    if ((agent.mode ?? SURFACE_MODE) !== 'mock') continue;
+    const office = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', agent._id))
+      .first();
+    if (office === null) continue;
+    read += 1;
+    if ((await reseedOfficeDocuments(ctx, agent._id)) > 0) changed += 1;
+  }
+  return { read, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /** A migration's row, if it has started. */

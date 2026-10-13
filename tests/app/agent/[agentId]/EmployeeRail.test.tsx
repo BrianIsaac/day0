@@ -120,6 +120,29 @@ describe('railFigures for a manager who took the employee over (the v0.13.0 walk
     );
     expect(none[0]).toEqual({ label: 'Decisions', value: 'none since you took over' });
   });
+
+  it('says a day’s count as the day’s, never "since you took over" (W16-R32)', () => {
+    const metrics = dashboardMetrics();
+    const today = { tookOver: true, today: true };
+    expect(
+      railFigures(
+        {
+          ...metrics,
+          decisions: { ...metrics.decisions, approved: 1, rejected: 0, partiallyApproved: 0 },
+        },
+        today,
+      )[0],
+    ).toEqual({ label: 'Decisions', value: '1 by you (1 approved, 0 rejected)' });
+    expect(
+      railFigures(
+        {
+          ...metrics,
+          decisions: { ...metrics.decisions, approved: 0, rejected: 0, partiallyApproved: 0 },
+        },
+        today,
+      )[0],
+    ).toEqual({ label: 'Decisions', value: 'none today' });
+  });
 });
 
 describe('RecordLines', () => {
@@ -193,7 +216,7 @@ describe('EmployeeRail', () => {
     expect(html).toContain('Where decisions reach you');
   });
 
-  it('says the decisions count since the reader took over only when the employee came to them by a handover', () => {
+  it('says a day’s decisions as the day’s, whoever held the employee before', () => {
     const none = {
       ...dashboardMetrics(),
       decisions: {
@@ -211,8 +234,10 @@ describe('EmployeeRail', () => {
       };
       return text(renderToStaticMarkup(asEmployee(<EmployeeRail />)));
     };
+    // Re-pinned by W16-R32: the rail's card is "Today", and a day's count is not "since" a
+    // handover, so the card of an employee the reader took over says "none today" too.
     expect(decisionsLine([{ fromAddress: 'earlier@day0.local', decidedAt: 1 }])).toContain(
-      'none since you took over',
+      '>none today<',
     );
     // Re-pinned for 16-F: the rail's figures are today's, so no decision reads "none today".
     expect(decisionsLine([])).toContain('>none today<');

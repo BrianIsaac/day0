@@ -525,8 +525,8 @@ describe('keeping an agreement on a card', (): void => {
       agentId,
     });
     const [refusalPrompt] = promptsOf('day0-agreement-refusal');
-    expect(refusalPrompt).toContain('Priya: willDo');
-    expect(refusalPrompt).toContain('Mateo: willDo');
+    expect(refusalPrompt).toContain('Priya: Will do');
+    expect(refusalPrompt).toContain('Mateo: Will do');
     expect(refusalPrompt).toContain('approve refunds');
     const mateoItem = await seedItem(harness, mateo, 'LOG-9', 'claimed');
     expect(
@@ -891,8 +891,8 @@ describe('keeping an agreement on a card', (): void => {
     await harness.withIdentity(OWNER).mutation(api.charters.approve, { charterId });
     await drain(harness);
     const [prompt] = promptsOf('day0-agreement-refusal');
-    expect(prompt).toContain('Ines: willDo');
-    expect(prompt).not.toContain('Priya: willDo');
+    expect(prompt).toContain('Ines: Will do');
+    expect(prompt).not.toContain('Priya: Will do');
     expect((await agreementsOf(harness)).find((row) => row._id === agreementId)).toMatchObject({
       status: 'refused',
       effectiveUntil: expect.any(Number),

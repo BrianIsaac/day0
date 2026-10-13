@@ -26,7 +26,9 @@ import {
   heldStageOf,
   markApproving,
   openCard,
+  unboundReportingLines,
 } from './reorientation';
+import type { Charter } from '../src/agent/charter';
 import {
   CARD_ACTION_REFUSALS,
   DEFER_DAYS,
@@ -73,6 +75,11 @@ export interface CardView {
   readonly held: HeldCounts;
   /** The charter version an Approve of a charter change would amend, when there is one. */
   readonly charterVersion?: string;
+  /**
+   * On a handover's card, the words of each reporting-line rule the charter carries that binds no
+   * clause, so the card names what the old manager's rule was (W16-R21).
+   */
+  readonly carriedRules?: string[];
 }
 
 /** The card, owned by the caller, and still open to a decision. */
@@ -292,8 +299,9 @@ export const approve = mutation({
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
     // Closed before the target runs and given its outcome after; the change Approve makes opens
-    // no second card about itself on this employee (`markApproving`).
-    markApproving(ctx, card.agentId);
+    // no second card about itself on this employee, nor on the others an edge for everyone
+    // reaches (`markApproving`).
+    await markApproving(ctx, card);
     await ctx.db.patch(card._id, {
       status: 'applied',
       decidedAt: now,
@@ -380,30 +388,92 @@ export const defer = mutation({
   },
 });
 
+/** The most a by-hand card's summary grows to as later changes of the day join it. */
+const JOINED_SUMMARY_CHARS = 600;
+
+/** Whether the card's proposal is one a finished talk put there: the manager's own, never reset. */
+async function proposedByTalk(
+  ctx: MutationCtx,
+  reorientationId: Id<'reorientations'>,
+): Promise<boolean> {
+  const talk = await ctx.db
+    .query('reorientationTalks')
+    .withIndex('by_reorientation', (q) => q.eq('reorientationId', reorientationId))
+    .first();
+  return talk !== null && talk.state === 'finished' && talk.outcome !== undefined;
+}
+
 /**
  * Open a card by hand for a change of the employee's role or goal (section 3's last row): the
  * whole charter is what it reaches, and the judgement proposes the clause to change. Public,
  * guarded by the employee's owner. Writes the card and `reorientation.opened`, and schedules the
  * judgement.
  *
+ * @returns The card; whether the change joined one already standing that day; whether the
+ *   proposal is asked for again; and whether the typed words are on the card, which a joined
+ *   change past the summary's bound is not (the joined event keeps them).
  * @throws ConvexError for an empty summary or one past 300 characters.
  */
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
-  handler: async (ctx, args): Promise<{ reorientationId: Id<'reorientations'> | null }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    reorientationId: Id<'reorientations'> | null;
+    joined: boolean;
+    asked: boolean;
+    onCard: boolean;
+  }> => {
     await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
     const now = Date.now();
+    const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,
       trigger: 'role-changed',
-      triggerKey: `role-changed:${now}`,
+      triggerKey,
       summary,
       affected: { charterClauses: await charterClausesWhere(ctx, args.agentId, () => true) },
       now,
     });
-    return { reorientationId };
+    const card = reorientationId === null ? null : await ctx.db.get(reorientationId);
+    // A second change typed the same day joins the card already standing (one card a kind a day):
+    // its words go onto that card beside the first (W16-R24), once, and while the summary stays
+    // inside its bound (the joined event keeps them either way).
+    const joined = card !== null && card.triggerKey !== triggerKey;
+    let asked = !joined;
+    // Whether the typed words are on the card: a joined change past the summary's bound is not.
+    let onCard = true;
+    if (card !== null && joined) {
+      const held = card.triggerSummary.replace(/[.;\s]+$/u, '');
+      const said = held.toLowerCase().includes(summary.replace(/[.;\s]+$/u, '').toLowerCase());
+      const fits = held.length + 2 + summary.length <= JOINED_SUMMARY_CHARS;
+      onCard = said || fits;
+      // The proposal is asked again over both only where it is the judgement's own and the card
+      // is open: a talk under way finishes in its own, and a finished talk's is the manager's.
+      asked =
+        !said &&
+        fits &&
+        card.status === 'open' &&
+        card.proposed.kind !== 'pending' &&
+        !(await proposedByTalk(ctx, card._id));
+      if (!said && fits) {
+        await ctx.db.patch(card._id, {
+          triggerSummary: `${held}; ${summary}`,
+          ...(asked ? { proposed: { kind: 'pending' as const } } : {}),
+        });
+      }
+      if (asked) {
+        await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, {
+          reorientationId: card._id,
+        });
+      }
+      // A card still waiting on its first proposal is judged over both by the join itself.
+      asked ||= !said && fits && card.status === 'open' && card.proposed.kind === 'pending';
+    }
+    return { reorientationId, joined, asked, onCard };
   },
 });
 
@@ -438,6 +508,13 @@ export const listForAgent = query({
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .first();
+    // Each source is read once, however many cards and pages name it.
+    const sources = new Map<Id<'docSources'>, Promise<Doc<'docSources'> | null>>();
+    const sourceOf = async (sourceId: Id<'docSources'>): Promise<Doc<'docSources'> | null> => {
+      const read = sources.get(sourceId) ?? ctx.db.get(sourceId);
+      sources.set(sourceId, read);
+      return await read;
+    };
     const views: CardView[] = [];
     for (const card of [
       ...standing.sort((left, right) => right.createdAt - left.createdAt),
@@ -445,14 +522,18 @@ export const listForAgent = query({
     ]) {
       const ids = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
       const rows = await Promise.all(ids.map(async (id) => await ctx.db.get(id)));
+      // Only rows of the card's own owner are named on it: after a handover the old manager's
+      // graph, agreements and documentation stay theirs (W16-R1, `people.ts`' rule).
+      const owned = <Row extends { readonly userId: string }>(row: Row | null): Row | null =>
+        row !== null && row.userId === card.userId ? row : null;
       const pages = await Promise.all(
-        card.evidence.pageRefs.slice(0, 10).map(
-          async (ref) =>
-            await ctx.db
-              .query('docPages')
-              .withIndex('by_source_ref', (q) => q.eq('sourceId', ref.sourceId).eq('ref', ref.ref))
-              .first(),
-        ),
+        card.evidence.pageRefs.slice(0, 10).map(async (ref) => {
+          if (owned(await sourceOf(ref.sourceId)) === null) return null;
+          return await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', ref.sourceId).eq('ref', ref.ref))
+            .first();
+        }),
       );
       const skills = await Promise.all(
         [...new Set([...card.affected.skills, ...card.evidence.skillIds])]
@@ -460,17 +541,17 @@ export const listForAgent = query({
           .map(async (id) => await ctx.db.get(id)),
       );
       const agreements = await Promise.all(
-        card.affected.agreements.slice(0, 10).map(async (id) => await ctx.db.get(id)),
+        card.affected.agreements.slice(0, 10).map(async (id) => owned(await ctx.db.get(id))),
       );
       const edges = await Promise.all(
         [...new Set([...card.affected.relationships, ...card.evidence.relationshipIds])]
           .slice(0, 10)
-          .map(async (id) => await ctx.db.get(id)),
+          .map(async (id) => owned(await ctx.db.get(id))),
       );
       const people: CardView['people'] = [];
       for (const edge of edges) {
         if (edge === null) continue;
-        const person = await ctx.db.get(edge.toPersonId);
+        const person = owned(await ctx.db.get(edge.toPersonId));
         people.push({
           _id: edge._id,
           words: `${person?.displayName ?? 'Someone'}, its ${RELATIONSHIP_NOUNS[edge.type]}${
@@ -505,6 +586,9 @@ export const listForAgent = query({
         ),
         people,
         ...(charter?.approved ? { charterVersion: charter.version } : {}),
+        ...(card.trigger === 'manager-changed' && charter?.approved
+          ? { carriedRules: unboundReportingLines(charter.body as Charter) }
+          : {}),
       });
     }
     return views;

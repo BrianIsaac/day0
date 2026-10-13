@@ -540,8 +540,33 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
       summary: 'Linear access ended',
     }))!;
     await harness.run(async (ctx) => await ctx.db.patch(applied, { status: 'applied' }));
-    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor'));
+    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor', 5));
     expect((await cardOf(harness, open)).userId).toBe('successor');
     expect((await cardOf(harness, applied)).userId).toBe('successor');
+    // The undecided card closes as handed over (W16-R1, D-5 (a)); the decided one keeps its standing.
+    expect(await cardOf(harness, open)).toMatchObject({
+      status: 'dismissed',
+      decidedAt: 5,
+      outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+    });
+    expect((await cardOf(harness, applied)).status).toBe('applied');
+  });
+
+  it('closes a deferred card too, so it holds nothing and reopens nowhere under the new manager (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const deferred = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-1',
+      summary: 'A skill is due a re-check',
+    }))!;
+    await harness.run(
+      async (ctx) => await ctx.db.patch(deferred, { status: 'deferred', revisitAt: 9_999 }),
+    );
+    await harness.run(async (ctx) => await moveCardsToOwner(ctx, agentId, 'successor', 5));
+    const card = await cardOf(harness, deferred);
+    expect(card).toMatchObject({ status: 'dismissed', userId: 'successor', decidedAt: 5 });
+    expect(card.revisitAt).toBeUndefined();
   });
 });

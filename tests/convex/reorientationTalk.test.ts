@@ -8,7 +8,8 @@ import schema from '../../convex/schema';
 import { MAX_KEPT_TURNS } from '../../src/agent/one-to-one-conversation';
 import type { ProposalReply } from '../../src/agent/reorientation-proposal';
 import { allConvexModules } from './all-modules';
-import { managerIdentity } from './fakes/manager-identity';
+import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
+import { seedEdge, seedPerson } from './fakes/people-graph';
 import { basisOf, cardOf, eventTypesOf, seedEmployee } from './fakes/reorientation';
 
 /*
@@ -321,6 +322,52 @@ describe('the conversation ends in a proposal on the card and applies nothing', 
       proposed: { kind: 'pending' },
     });
     expect((await talkOf(bed)).state).toBe('active');
+  });
+
+  it('refuses a relationship scope written as a sentence, in the room’s words, writing nothing (W16-R3)', async (): Promise<void> => {
+    const bed = await openedCard();
+    const personId = await seedPerson(bed.harness, 'Ines Duarte', { userId: OWNER_SUBJECT });
+    const edgeId = await seedEdge(bed.harness, personId, {
+      type: 'approval-authority',
+      userId: OWNER_SUBJECT,
+      scope: 'NetLedger journal changes and REVOPS close plans',
+    });
+    await bed.harness.run(async (ctx) => {
+      const card = await ctx.db.get(bed.cardId);
+      if (card === null) throw new Error('no card');
+      await ctx.db.patch(bed.cardId, {
+        evidence: { ...card.evidence, relationshipIds: [edgeId] },
+      });
+    });
+    await opened(bed);
+    // The seeded charter's three clauses come first, so the edge is the fourth item.
+    const sentence = {
+      reply: {
+        change: 'relationship' as const,
+        candidate: 4,
+        action: 'edit',
+        text: 'Ines Duarte approves NetLedger journal changes only; no longer approver for REVOPS close plans, which Aisha Bello now approves first.',
+        rationale: 'You said Aisha Bello now approves REVOPS close plans.',
+      },
+      quotes: [],
+    };
+    await expect(answered(bed, sentence)).resolves.toEqual({
+      kept: false,
+      refusal:
+        'The proposal put a sentence where a short phrase of what the relationship covers goes. Ask again.',
+    });
+    expect(await cardOf(bed.harness, bed.cardId)).toMatchObject({ proposed: { kind: 'pending' } });
+    await expect(
+      answered(bed, {
+        ...sentence,
+        reply: { ...sentence.reply, text: 'NetLedger journal changes' },
+      }),
+    ).resolves.toEqual({ kept: true, ended: true });
+    expect((await cardOf(bed.harness, bed.cardId)).proposed).toMatchObject({
+      kind: 'relationship',
+      action: 'edit',
+      scope: 'NetLedger journal changes',
+    });
   });
 
   it('refuses an outcome drawn from candidates the card no longer offers', async (): Promise<void> => {

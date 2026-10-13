@@ -11,7 +11,8 @@ import { eventsOfType } from './eventLog';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEventOf } from '../src/events/contract';
 import { pageStatusOf, sourceAuthorityOf, type SourceAuthority } from '../src/docs/authority';
-import type { CiteConflict, PlanCite } from '../src/work/types';
+import { planLeansOn } from '../src/work/conflict-hold';
+import type { CiteConflict, ExecutionPlan, PlanCite } from '../src/work/types';
 
 /*
  * The standing conflict (wave 15, 15-A; split out of `convex/docRelations.ts` by wave 16's 16-s,
@@ -199,50 +200,61 @@ async function standingCitedConflicts(ctx: QueryCtx, plan: unknown): Promise<Cit
   return found;
 }
 
-/** The blocks the planner was shown for one item, as its selection recorded them, or undefined. */
-async function selectedBlocks(
+/**
+ * What an item's newest plan-site selection was, by the employee's newest records of each kind:
+ * the blocks it named, or that it failed and the planner read the whole mirror; undefined when
+ * neither record is left among the newest. A failure newer than the newest selection wins, so a
+ * redraft whose selection failed is read as the whole mirror and not as the earlier draft's
+ * selection (W16-R11, probes P2 and P3).
+ *
+ * @param ctx - The query context.
+ * @param row - The work item.
+ * @param read - How many of the newest records of each kind are looked through; the decision's
+ *   own window unless the upgrade's pass, which looks further back, says otherwise.
+ */
+export async function planSelectionOf(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
-): Promise<string[] | undefined> {
-  const recent = await eventsOfType(ctx, row.agentId, 'work.documentation-selected')
-    .order('desc')
-    .take(PLAN_SELECTIONS_READ);
-  for (const event of recent) {
-    if (!isEventOf(event, 'work.documentation-selected')) continue;
-    if (event.payload.workItemId === row._id && event.payload.site === 'plan') {
-      return [...event.payload.blockIds];
-    }
-  }
-  return undefined;
-}
-
-/** Whether the plan's selection could not be made, so the planner read the whole mirror. */
-async function selectionFellBack(
-  ctx: QueryCtx,
-  row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
-): Promise<boolean> {
-  const recent = await eventsOfType(ctx, row.agentId, 'work.documentation-selection-failed')
-    .order('desc')
-    .take(PLAN_SELECTIONS_READ);
-  return recent.some(
+  read: number = PLAN_SELECTIONS_READ,
+): Promise<{ readonly blockIds: string[] } | 'fell-back' | undefined> {
+  const [selections, failures] = await Promise.all([
+    eventsOfType(ctx, row.agentId, 'work.documentation-selected').order('desc').take(read),
+    eventsOfType(ctx, row.agentId, 'work.documentation-selection-failed').order('desc').take(read),
+  ]);
+  const selected = selections.find(
+    (event) =>
+      isEventOf(event, 'work.documentation-selected') &&
+      event.payload.workItemId === row._id &&
+      event.payload.site === 'plan',
+  );
+  const failed = failures.find(
     (event) =>
       isEventOf(event, 'work.documentation-selection-failed') &&
       event.payload.workItemId === row._id &&
       event.payload.site === 'plan',
   );
+  if (
+    failed !== undefined &&
+    (selected === undefined || failed._creationTime > selected._creationTime)
+  ) {
+    return 'fell-back';
+  }
+  return selected !== undefined && isEventOf(selected, 'work.documentation-selected')
+    ? { blockIds: [...selected.payload.blockIds] }
+    : undefined;
 }
 
 /**
  * The hashes of the blocks a plan relies on: its cited blocks, or, where it cites nothing, the
  * blocks its selection showed the planner: those kept on the item with their hashes
  * (`workItems.selectedBlocks`, W15-R17), or for an item selected before they were kept, the ones
- * its selection record names; undefined when it cites nothing and no selection was kept or
- * recorded.
+ * its newest selection record names; `fell-back` when that selection failed and the planner read
+ * the whole mirror; undefined when it cites nothing and no selection was kept or recorded.
  */
 async function planBlockHashes(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
-): Promise<Set<string> | undefined> {
+): Promise<Set<string> | 'fell-back' | undefined> {
   const cites = (row.plan as { cites?: ReadonlyArray<Pick<PlanCite, 'blocks'>> } | null | undefined)
     ?.cites;
   const hashes = new Set<string>();
@@ -255,9 +267,9 @@ async function planBlockHashes(
   if (row.selectedBlocks !== undefined && row.selectedBlocks.length > 0) {
     return new Set(row.selectedBlocks.slice(0, SELECTED_BLOCKS_READ).map((block) => block.hash));
   }
-  const selected = await selectedBlocks(ctx, row);
-  if (selected === undefined) return undefined;
-  for (const id of selected.slice(0, SELECTED_BLOCKS_READ)) {
+  const selection = await planSelectionOf(ctx, row);
+  if (selection === undefined || selection === 'fell-back') return selection;
+  for (const id of selection.blockIds.slice(0, SELECTED_BLOCKS_READ)) {
     const blockId = ctx.db.normalizeId('docBlocks', id);
     const block = blockId === null ? null : await ctx.db.get(blockId);
     if (block !== null) hashes.add(block.hash);
@@ -284,14 +296,14 @@ export async function conflictsOnPlanBlocks(
 ): Promise<CiteConflict[]> {
   if (agent.userId === undefined) return [];
   const hashes = await planBlockHashes(ctx, row);
-  if (hashes !== undefined) {
+  if (hashes === undefined) return [];
+  if (hashes !== 'fell-back') {
     const byRelation = new Map<string, CiteConflict>();
     for (const conflict of (await standingConflictsOn(ctx, agent.userId, hashes)).values()) {
       byRelation.set(conflict.relationId, citeConflictOf(conflict));
     }
     return [...byRelation.values()];
   }
-  if (!(await selectionFellBack(ctx, row))) return [];
   const found: CiteConflict[] = [];
   for (const relation of await confirmedConflicts(ctx, agent.userId)) {
     const standing = await standingConflictOf(ctx, relation);
@@ -307,11 +319,54 @@ export async function conflictsOnPlanBlocks(
 }
 
 /**
+ * Whether a plan's own words lean on a conflict (`planLeansOn`, D-1 (c)): the heading the pages
+ * disagree under, or one page's title, named in its summary, steps or risk notes.
+ *
+ * @param plan - The work item's plan, as stored.
+ * @param conflict - The conflict as a cite names it.
+ */
+export function planLeansOnConflict(plan: unknown, conflict: CiteConflict): boolean {
+  if (typeof plan !== 'object' || plan === null) return false;
+  return planLeansOn(plan as Partial<ExecutionPlan>, {
+    heading: conflict.heading,
+    titles: conflict.pages.map((page) => page.title),
+  });
+}
+
+/**
+ * The conflicts a drafted plan names in its own words and cites nowhere (D-1 (c)): those standing
+ * on the blocks its selection showed the planner (`workItems.selectedBlocks`, each printed
+ * `[conflict]`) that its words lean on. Read only for a plan with cites, since a plan that cites
+ * nothing is asked about its whole selection already; an item selected before the blocks were kept
+ * has none to read, and is asked by its cites alone. Read at a drafted plan's decision and, for an
+ * approved plan, by the run before it writes (`managerQuestions.conflictConfirmedSince`).
+ */
+export async function conflictsLeanedOn(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, 'plan' | 'selectedBlocks'>,
+  agent: Pick<Doc<'agents'>, 'userId'>,
+): Promise<CiteConflict[]> {
+  const cites = (row.plan as { cites?: readonly unknown[] } | null | undefined)?.cites;
+  const kept = row.selectedBlocks ?? [];
+  if (agent.userId === undefined || !Array.isArray(cites) || cites.length === 0) return [];
+  if (kept.length === 0) return [];
+  const hashes = new Set(kept.slice(0, SELECTED_BLOCKS_READ).map((block) => block.hash));
+  const byRelation = new Map<string, CiteConflict>();
+  for (const standing of (await standingConflictsOn(ctx, agent.userId, hashes)).values()) {
+    const conflict = citeConflictOf(standing);
+    if (planLeansOnConflict(row.plan, conflict)) byRelation.set(conflict.relationId, conflict);
+  }
+  return [...byRelation.values()];
+}
+
+/**
  * Every conflict that stands under a drafted plan, each relation once (W15-R18's three inputs,
- * D-4 (c)): the plan's own cites that carried a `conflict` tag, and every conflict on the blocks
- * it relies on ({@link conflictsOnPlanBlocks}), so a conflict confirmed after the plan was drafted
- * is asked too. What a drafted plan's question asks about (`work.decidePlan`). It replaces wave
- * 15's `citedConflictOf`, which read the first tagged cite only, for a hold of the whole plan.
+ * D-4 (c)): the plan's own cites that carried a `conflict` tag, every conflict on the blocks it
+ * relies on ({@link conflictsOnPlanBlocks}), so a conflict confirmed after the plan was drafted is
+ * asked too, and every conflict it was shown and names in its own words without citing
+ * ({@link conflictsLeanedOn}, D-1 (c)). What a drafted plan's question asks about
+ * (`work.decidePlan`). It replaces wave 15's `citedConflictOf`, which read the first tagged cite
+ * only, for a hold of the whole plan.
  *
  * @param ctx - The deciding mutation's context.
  * @param row - The work item, its plan as stored.
@@ -326,6 +381,7 @@ export async function conflictsUnderPlan(
   for (const conflict of [
     ...(await standingCitedConflicts(ctx, row.plan)),
     ...(await conflictsOnPlanBlocks(ctx, row, agent)),
+    ...(await conflictsLeanedOn(ctx, row, agent)),
   ]) {
     if (!byRelation.has(conflict.relationId)) byRelation.set(conflict.relationId, conflict);
   }

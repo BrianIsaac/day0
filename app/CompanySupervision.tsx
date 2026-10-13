@@ -206,6 +206,8 @@ export const PILOT_FIGURES: readonly PilotFigure[] = [
   {
     label: 'Hours saved',
     unit: 'your estimates, internal gauge',
+    // Between two wide figures it sat alone on its row below the wide breakpoint (W16-R32).
+    wide: true,
     definition:
       'The minutes you estimated a plan would have taken you, summed over completed items. An internal gauge for you, never a headline figure.',
     value: ({ hoursSaved }) =>

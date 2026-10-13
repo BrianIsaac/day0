@@ -520,7 +520,7 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     // Re-pinned for 16-F: the refusal named versions 2 to 4 long after 5 to 7 were read; it now
     // names what the command reads, a trace or an owner export.
     expect(refused.err.join('\n')).toContain(
-      'is not a day0 trace or owner export this release reads',
+      'is not a Day0 trace or owner export this release reads',
     );
     const mixed = capture();
     expect(runRecompute([stray, directory], mixed.io)).toBe(2);

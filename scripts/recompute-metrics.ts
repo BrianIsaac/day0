@@ -384,7 +384,7 @@ export function recompute(
     const ownerFile = readOwnerExport(parsed);
     if (ownerFile === undefined) {
       throw new Error(
-        `${path} is not a day0 trace or owner export this release reads; export it with pnpm export:trace`,
+        `${path} is not a Day0 trace or owner export this release reads; export it with pnpm export:trace`,
       );
     }
     traces.push(...employeeTracesOf(ownerFile));

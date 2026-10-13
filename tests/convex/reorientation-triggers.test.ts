@@ -4,7 +4,9 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { stampRecheckDue } from '../../convex/skillVersions';
+import { reevaluatePendingInTransaction } from '../../convex/workReevaluation';
 import { transferExpiresAt } from '../../src/agent/manager-transfer';
+import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
 import { allConvexModules } from './all-modules';
 import {
   MANAGER_ADDRESS,
@@ -12,7 +14,7 @@ import {
   fixtureAddressOf,
   managerIdentity,
 } from './fakes/manager-identity';
-import { cardsOf, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import { cardsOf, openTestCard, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /*
@@ -427,6 +429,170 @@ describe('manager changed: a handover is accepted (manager.transferred)', (): vo
           .collect(),
     );
     expect(listed).toEqual([]);
+  });
+});
+
+describe('a handover card names a reporting-line rule drafted before rules were bound (W16-R21, W7a)', (): void => {
+  it('puts the rule’s own words on the card and before the judgement when it binds no clause', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const quote = 'Go through me for all of them for now, I’ll intro you.';
+    await harness.run(async (ctx) => {
+      const charter = await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+        .first();
+      // The wave 6 draft's shape (bed 1, 16-J's W7a): no `binds`, empty `wording`.
+      await ctx.db.patch(charter!._id, {
+        body: {
+          ...(charter!.body as object),
+          constraints: [{ kind: 'reporting-line', quote, wording: [], origin: 'synthesis' }],
+        },
+      });
+    });
+    const transferId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Mira',
+          fromOwnerKey: OWNER_SUBJECT,
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: fixtureAddressOf('colleague'),
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+    const colleague = harness.withIdentity(managerIdentity('colleague'));
+    await colleague.mutation(api.transferAcceptance.accept, { transferId });
+    const [view] = await colleague.query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(view.card).toMatchObject({ trigger: 'manager-changed', status: 'open' });
+    expect(view.card.affected.charterClauses).toEqual([]);
+    expect(view.carriedRules).toEqual([quote]);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: view.card._id,
+    });
+    expect(read?.input.evidence).toContain(
+      `A reporting-line rule of the previous manager’s that the charter carries: “${quote}”`,
+    );
+  });
+});
+
+describe('a handover closes what the old manager was deciding (W16-R1, D-5 (a))', (): void => {
+  it('closes the undecided cards and every talk with the words cleared, and shows the new manager nothing of the old graph', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const ines = await seedPerson(harness, 'Ines Duarte');
+    const edgeId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('relationships', {
+          userId: OWNER_SUBJECT,
+          toPersonId: ines,
+          type: 'approval-authority',
+          scope: 'NetLedger journal changes',
+          effectiveFrom: 1,
+          status: 'active',
+          source: 'manager',
+          confirmedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const standing = await openTestCard(harness, {
+      agentId,
+      trigger: 'relationship-changed',
+      triggerKey: 'edge-change',
+      summary: 'Ines Duarte, its approver, changed',
+      evidence: { relationshipIds: [edgeId] },
+    });
+    const decided = await openTestCard(harness, {
+      agentId,
+      trigger: 'role-changed',
+      triggerKey: 'by-hand',
+      summary: 'Its role changed',
+    });
+    if (standing === null || decided === null) throw new Error('no card opened');
+    const turns = [
+      { id: 'e0', speaker: 'employee' as const, text: 'Who approves now?', at: 1 },
+      { id: 'm0', speaker: 'manager' as const, text: 'Aisha does, Ines never did well.', at: 2 },
+    ];
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(standing, { status: 'discussing' });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: standing,
+        state: 'active',
+        turns,
+        replyDraft: 'And tell Ines',
+        conversation: 1,
+        startedAt: 1,
+      });
+      await ctx.db.patch(decided, { status: 'dismissed', decidedAt: 2 });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: decided,
+        state: 'finished',
+        turns,
+        conversation: 1,
+        outcome: {
+          proposed: { kind: 'none', rationale: 'Nothing changes.' },
+          quotes: ['Aisha does, Ines never did well.'],
+        },
+        startedAt: 1,
+        endedAt: 2,
+      });
+    });
+    const transferId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Mira',
+          fromOwnerKey: OWNER_SUBJECT,
+          fromAddress: MANAGER_ADDRESS,
+          toAddress: fixtureAddressOf('colleague'),
+          state: 'asked',
+          requestedAt: Date.now(),
+          expiresAt: transferExpiresAt(Date.now()),
+        }),
+    );
+    const colleague = harness.withIdentity(managerIdentity('colleague'));
+    await colleague.mutation(api.transferAcceptance.accept, { transferId });
+    await harness.finishInProgressScheduledFunctions();
+
+    const cards = await cardsOf(harness, agentId);
+    expect(cards.find((card) => card._id === standing)).toMatchObject({
+      status: 'dismissed',
+      userId: 'colleague',
+      outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+    });
+    expect(cards.filter((card) => card.trigger === 'manager-changed')).toMatchObject([
+      { status: 'open', userId: 'colleague' },
+    ]);
+    const talks = await harness.run(
+      async (ctx) =>
+        await ctx.db
+          .query('reorientationTalks')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .collect(),
+    );
+    expect(talks).toHaveLength(2);
+    for (const talk of talks) {
+      expect(talk).toMatchObject({ state: 'closed', turns: [] });
+      expect(talk.replyDraft).toBeUndefined();
+      expect(talk.outcome?.quotes ?? []).toEqual([]);
+    }
+    for (const cardId of [standing, decided]) {
+      const room = await colleague.query(api.reorientationTalk.forCard, {
+        reorientationId: cardId,
+      });
+      expect(room?.talk?.turns).toEqual([]);
+    }
+    const listed = await colleague.query(api.reorientationDecisions.listForAgent, { agentId });
+    // The card keeps its own summary, as the employee's record does; the old manager's edge, its
+    // person and its scope are no longer resolved onto it.
+    const said = JSON.stringify(listed);
+    expect(said).not.toContain('Ines Duarte, its approver for');
+    expect(said).not.toContain('NetLedger journal changes');
+    expect(listed.find((view) => view.card._id === standing)?.people).toEqual([]);
   });
 });
 
@@ -944,6 +1110,57 @@ describe('the counted rows: three refusals, skips or rejections', (): void => {
     ]);
   });
 
+  it('keeps a dismissed skip card dismissed when a status flip re-admits the same skips and they are skipped again (W16-R37)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const clause = 'Change committee-deck numbers';
+    const skip = async (workItemId: Id<'workItems'>): Promise<void> => {
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: the deck is not its to change',
+          clause,
+        },
+      });
+    };
+    const items: Id<'workItems'>[] = [];
+    for (const index of [1, 2, 3]) {
+      items.push(await seedWork(harness, agentId, 'discovered', { externalId: `REVOPS-${index}` }));
+    }
+    for (const workItemId of items) await skip(workItemId);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.trigger).toBe('repeated-skip');
+    vi.setSystemTime(Date.now() + 60_000);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(card._id, { status: 'dismissed', decidedAt: Date.now() }),
+    );
+    // Bed 3: a page superseded re-admits the out-of-scope skips, which the model skips again
+    // under the same clause; the same three items are not three new skips.
+    for (const round of [1, 2]) {
+      vi.setSystemTime(Date.now() + 60_000);
+      await harness.run(
+        async (ctx) =>
+          await reevaluatePendingInTransaction(ctx, {
+            agentId,
+            trigger: 'documentation',
+            key: `documentation-status:source:runbooks/page-${round}.md:superseded`,
+          }),
+      );
+      for (const workItemId of items) await skip(workItemId);
+    }
+    expect((await cardsOf(harness, agentId)).map((row) => [row._id, row.status])).toEqual([
+      [card._id, 'dismissed'],
+    ]);
+    // A fourth item skipped under the clause is one new skip; three new ones open a card again.
+    for (const index of [4, 5]) {
+      await skip(await seedWork(harness, agentId, 'discovered', { externalId: `REVOPS-${index}` }));
+    }
+    expect(await cardsOf(harness, agentId)).toHaveLength(1);
+    await skip(await seedWork(harness, agentId, 'discovered', { externalId: 'REVOPS-6' }));
+    expect(await cardsOf(harness, agentId)).toHaveLength(2);
+  });
+
   it('opens one card when the manager rejects a third plan in thirty days, and again only after a decided card', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -976,5 +1193,148 @@ describe('the counted rows: three refusals, skips or rejections', (): void => {
     vi.setSystemTime(Date.now() + 60_000);
     await reject(4);
     expect(await cardsOf(harness, agentId)).toHaveLength(1);
+  });
+});
+
+describe('the counted cards show their events to the judgement (W16-R4, D-4 (a))', (): void => {
+  /** The will-not-do clause 16-J's three rejections quoted. */
+  const CLAUSE = 'Send anything out without manager approval.';
+
+  /** What the judgement reads of the employee's one card. */
+  async function judgementEvidence(harness: Harness, agentId: Id<'agents'>): Promise<string[]> {
+    const [card] = await cardsOf(harness, agentId);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    if (read === null) throw new Error('the card is not open to the judgement');
+    return [...read.input.evidence];
+  }
+
+  it('gives the rejections’ reasons, each by its item, so three quoting one clause can propose the amendment', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    for (const index of [1, 2, 3]) {
+      const workItemId = await seedWork(harness, agentId, 'plan-pending', {
+        externalId: `REVOPS-${index}`,
+        title: `Send the REVOPS-${index} close summary to the customer`,
+        plan: { steps: ['Send it'] },
+      });
+      await owner.mutation(api.work.cancelPlan, {
+        workItemId,
+        reason: `It must not go out on its own: “${CLAUSE}” ${CORPUS_SLOTS.linear_token}`,
+      });
+    }
+    const evidence = await judgementEvidence(harness, agentId);
+    for (const index of [1, 2, 3]) {
+      expect(evidence).toContainEqual(
+        expect.stringContaining(
+          `Plan rejected for “Send the REVOPS-${index} close summary to the customer”: It must not go out on its own: “${CLAUSE}”`,
+        ),
+      );
+    }
+    // The reasons pass the token scrub before they reach a prompt.
+    expect(evidence.join('\n')).not.toContain(CORPUS_SLOTS.linear_token);
+  });
+
+  it('shows at most ten events of one type, and none of a type it does not count', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const workItemId = await seedWork(harness, agentId, 'cancelled', { title: 'Send it' });
+    const eventIds = await harness.run(async (ctx) => {
+      const ids: Id<'events'>[] = [];
+      for (let index = 0; index < 12; index += 1) {
+        ids.push(
+          await ctx.db.insert('events', {
+            agentId,
+            type: 'work.cancelled',
+            payload: { workItemId, reason: `reason ${index}`, decidedVia: 'dashboard' },
+            createdAt: index,
+          }),
+        );
+      }
+      ids.push(
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.discovered',
+          payload: { workItemId },
+          createdAt: 12,
+        }),
+      );
+      return ids;
+    });
+    await openTestCard(harness, {
+      agentId,
+      trigger: 'repeated-rejection',
+      triggerKey: 'rejections',
+      summary: 'You rejected 12 of its plans in thirty days',
+      evidence: { eventIds },
+    });
+    const evidence = await judgementEvidence(harness, agentId);
+    expect(evidence).toHaveLength(10);
+    expect(evidence[9]).toBe('Plan rejected for “Send it”: reason 9');
+  });
+
+  it('gives the skips’ clause and reason, and a refusal’s withheld reasons', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    for (const index of [1, 2, 3]) {
+      const workItemId = await seedWork(harness, agentId, 'discovered', {
+        externalId: `REVOPS-${index}`,
+        title: `Change the deck for REVOPS-${index}`,
+      });
+      await harness.mutation(internal.work.setVerdict, {
+        workItemId,
+        verdict: {
+          decision: 'skip',
+          reason: 'out-of-scope: the deck is not its to change',
+          clause: 'Change committee-deck numbers',
+        },
+      });
+    }
+    const evidence = await judgementEvidence(harness, agentId);
+    expect(evidence).toContainEqual(
+      'Skipped “Change the deck for REVOPS-1” under “Change committee-deck numbers”: out-of-scope: the deck is not its to change',
+    );
+    expect(evidence.filter((line) => line.startsWith('Skipped '))).toHaveLength(3);
+
+    const refused = convexTest(schema, allConvexModules());
+    const refusedAgent = await seedEmployee(refused);
+    for (const index of [1, 2, 3]) {
+      const runId = await refused.run(
+        async (ctx) =>
+          await ctx.db.insert('events', {
+            agentId: refusedAgent,
+            type: 'work.execution-claimed',
+            payload: {},
+            createdAt: 1,
+          }),
+      );
+      const workItemId = await seedWork(refused, refusedAgent, 'executing', {
+        externalId: `REVOPS-${index}`,
+        title: `Read REVOPS-${index}`,
+        executionRunId: runId,
+      });
+      await refused.mutation(internal.workRuns.setCompleted, {
+        workItemId,
+        runId,
+        output: {
+          actions: [],
+          applied: [
+            { tool: 'mcp.call', ok: true, effect: 'landed', idempotencyKey: `k${index}` },
+            {
+              tool: 'linear.read',
+              ok: true,
+              held: true,
+              reason:
+                "dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
+            },
+          ],
+        },
+      });
+    }
+    expect(await judgementEvidence(refused, refusedAgent)).toContainEqual(
+      "Held in a run of “Read REVOPS-1”: dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
+    );
   });
 });

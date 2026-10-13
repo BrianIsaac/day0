@@ -12,6 +12,10 @@ import schema, { reorientationTalkProposalValidator } from './schema';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
+import { PLAN_CANCELLED_REASON } from '../src/work/stop';
+import { redactTokenShapes } from '../src/surfaces/redact';
+import { conflictSteps, heldWriteSurfaces, planLeansOn } from '../src/work/conflict-hold';
+import type { ExecutionPlan } from '../src/work/types';
 import {
   REORIENTATION_BLOCKING_LIMIT,
   UNDECIDED_REORIENTATION_STATUSES,
@@ -19,10 +23,17 @@ import {
   type ReorientationStatus,
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
-import { conflictQuestionText, type NamedPageWords } from '../src/agent/reorientation-words';
 import {
+  approvedResultWords,
+  conflictQuestionText,
+  type NamedPageWords,
+} from '../src/agent/reorientation-words';
+import {
+  COUNTED_EVENTS_SHOWN,
   agreementActionsOf,
+  countedEventLine,
   type ClauseField,
+  type CountedEvent,
   type ProposalCandidate,
   type ProposalInput,
 } from '../src/agent/reorientation-proposal';
@@ -316,14 +327,23 @@ async function standingCards(
 const approvingThisTransaction = new WeakMap<object, Set<Id<'agents'>>>();
 
 /**
- * Mark the employee whose card this transaction approves, so the change Approve applies opens no
- * second card about itself on the same employee (O-13). Called by `reorientationDecisions.approve`
- * before the target runs; the mark lives as long as the transaction, whatever the employee's
- * other cards (the second pass's minor: a read of the newest applied cards missed an old one).
+ * Mark the employees the change a card's Approve applies reaches, so that change opens no second
+ * card about itself (O-13): the card's own employee, and every employee of the owner when the
+ * proposal edits or retires an edge for everyone, which `people.openEdgeCards` would otherwise fan
+ * out to again, each Approve re-opening the rest (W16-R2: bed 1's 50 joined events). Called by
+ * `reorientationDecisions.approve` before the target runs; the mark lives as long as the
+ * transaction, whatever the employees' other cards (the second pass's minor: a read of the newest
+ * applied cards missed an old one).
  */
-export function markApproving(ctx: MutationCtx, agentId: Id<'agents'>): void {
+export async function markApproving(ctx: MutationCtx, card: Doc<'reorientations'>): Promise<void> {
   const approving = approvingThisTransaction.get(ctx.db) ?? new Set<Id<'agents'>>();
-  approving.add(agentId);
+  approving.add(card.agentId);
+  if (card.proposed.kind === 'relationship') {
+    const edge = await ctx.db.get(card.proposed.relationshipId);
+    if (edge !== null && edge.fromAgentId === undefined && edge.fromPersonId === undefined) {
+      for (const agent of await ownerAgents(ctx, edge.userId)) approving.add(agent._id);
+    }
+  }
   approvingThisTransaction.set(ctx.db, approving);
 }
 
@@ -542,22 +562,39 @@ export const holdingCard = internalQuery({
 });
 
 /**
- * Move an employee's cards to its new owner, in the handover's transaction (16-K's F2, option
- * (a)): `userId` is a copy of the employee's owner key, so the owner's cards across employees
- * (`by_user_status`) list the moved employee's under the owner who has it.
+ * Move an employee's cards to its new owner, in the handover's transaction (16-K's F2): `userId`
+ * is a copy of the employee's owner key, so the owner's cards across employees (`by_user_status`)
+ * list the moved employee's under the owner who has it. A card still undecided is closed as handed
+ * over (W16-R1, D-5 (a); 16-K's option (b)): what it asks rests on the old manager's graph, words
+ * and documentation, which stay theirs, so the new manager starts from the transfer's own card.
+ * Its talk's words are cleared beside it (`reorientationTalk.clearTalksForHandover`).
  */
 export async function moveCardsToOwner(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   userId: string,
+  now: number,
 ): Promise<void> {
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
     const cards = await ctx.db
       .query('reorientations')
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
       .take(MOVED_CARDS_READ);
+    // A deferred card is standing too: left as it was it would keep its hold and open again
+    // under the new manager on its date (the second pass).
+    const undecided = (STANDING_STATUSES as readonly string[]).includes(status);
     for (const card of cards) {
-      if (card.userId !== userId) await ctx.db.patch(card._id, { userId });
+      if (undecided) {
+        await ctx.db.patch(card._id, {
+          userId,
+          status: 'dismissed',
+          decidedAt: now,
+          revisitAt: undefined,
+          outcome: { summary: approvedResultWords.handedOver },
+        });
+      } else if (card.userId !== userId) {
+        await ctx.db.patch(card._id, { userId });
+      }
     }
   }
 }
@@ -783,6 +820,43 @@ export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
 }
 
 /**
+ * What a conflict's hold would withhold of a plan, in the manager's words (W16-R10): the display
+ * names of the surfaces its held steps write, or `every` where the plan declares no writes. A
+ * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)).
+ */
+async function heldSurfaceNames(
+  ctx: QueryCtx,
+  row: Doc<'workItems'>,
+  conflict: ConflictAsked,
+): Promise<string[] | 'every'> {
+  const { relationId } = conflict;
+  const plan = row.plan as ExecutionPlan | undefined;
+  const relation = await ctx.db.get(relationId);
+  if (plan === undefined || !Array.isArray(plan.steps) || relation === null) return [];
+  // The blocks the two pages disagree in, as `docRelationProposals.conflictBlocks` reads them.
+  const blocks =
+    relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
+  const leaned = planLeansOn(plan, {
+    heading: conflict.heading,
+    titles: conflict.pages.map((page) => page.title),
+  });
+  const held = heldWriteSurfaces(plan, conflictSteps(plan, { relationId, blocks, leaned }));
+  if (held === 'every' || held.length === 0) return held;
+  const surfaces = await ctx.db
+    .query('surfaces')
+    .withIndex('by_agent', (q) => q.eq('agentId', row.agentId))
+    .take(SURFACES_NAMED_READ);
+  return held.map(
+    (slug) =>
+      surfaces.find((surface) => surface.slug.toLowerCase() === slug.toLowerCase())?.displayName ??
+      slug,
+  );
+}
+
+/** The employee's surfaces a question reads for their names. */
+const SURFACES_NAMED_READ = 100;
+
+/**
  * Ask, beside a plan, which of two pages is right (RM20 (a); D-4 (c)): one non-blocking
  * `retrieval` question about the relation, on the plan's own row, which its request and its card
  * carry; asked once per row and relation. The steps that rely on the passage wait for the answer
@@ -801,13 +875,22 @@ export async function askConflictQuestion(
     .query('managerQuestions')
     .withIndex('by_relation', (q) => q.eq('relationId', conflict.relationId))
     .take(QUESTIONS_PER_RELATION_READ);
-  if (asked.some((question) => question.workItemId === row._id)) return null;
+  // Asked once while its question is open; a conflict settled and confirmed again is asked again,
+  // since the answer given was to the conflict as it stood then (W16-R27).
+  if (asked.some((question) => question.workItemId === row._id && question.answer === undefined)) {
+    return null;
+  }
   const [agent, charter] = await Promise.all([
     ctx.db.get(row.agentId),
     approvedCharter(ctx, row.agentId),
   ]);
   if (agent === null || charter === undefined) return null;
-  const question = conflictQuestionText(agent.name, conflict.heading, conflict.pages);
+  const question = conflictQuestionText(
+    agent.name,
+    conflict.heading,
+    conflict.pages,
+    await heldSurfaceNames(ctx, row, conflict),
+  );
   const questionId = await ctx.db.insert('managerQuestions', {
     agentId: row.agentId,
     key: conflictQuestionKey(conflict.relationId),
@@ -840,7 +923,7 @@ export async function askConflictQuestion(
 const QUESTIONS_PER_RELATION_READ = 500;
 
 /** The employee's charter as approved last, or undefined. */
-async function approvedCharter(
+export async function approvedCharter(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'charters'> | undefined> {
@@ -897,6 +980,23 @@ export function carriesReportingLine(
       (rule.binds !== undefined
         ? rule.binds.some((bound) => bound.field === clause.field && bound.index === clause.index)
         : rule.wording.some((phrase) => clause.text.includes(phrase))),
+  );
+}
+
+/**
+ * The words of each reporting-line rule the charter carries that binds none of its clauses (W16-R21,
+ * W7a): a rule drafted before rules were bound has neither `binds` nor `wording`, so no clause
+ * carries it and a handover's card would name nothing of what the old manager's rule was.
+ */
+export function unboundReportingLines(body: Charter): string[] {
+  const clauses = clausesOf(body);
+  return (body.constraints ?? []).flatMap((rule) =>
+    rule.kind === 'reporting-line' &&
+    rule.struck !== true &&
+    rule.quote.trim() !== '' &&
+    !clauses.some((clause) => carriesReportingLine(clause, { ...body, constraints: [rule] }))
+      ? [rule.quote.trim()]
+      : [],
   );
 }
 
@@ -1025,11 +1125,87 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
     if (correction !== null)
       lines.push(`Correction on “${correction.itemTitle}”: ${correction.text}`);
   }
+  lines.push(...(await countedEventLines(ctx, card)));
+  if (card.trigger === 'manager-changed') {
+    const charter = await approvedCharter(ctx, card.agentId);
+    for (const quote of charter === undefined
+      ? []
+      : unboundReportingLines(charter.body as Charter)) {
+      lines.push(
+        `A reporting-line rule of the previous manager’s that the charter carries: “${redactTokenShapes(quote)}”`,
+      );
+    }
+  }
   for (const id of card.affected.workItems.slice(0, 10)) {
     const row = await ctx.db.get(id);
     if (row !== null) lines.push(`Work affected: “${row.title}”, ${row.state}`);
   }
   return lines;
+}
+
+/**
+ * The events a counted card rests on, up to `COUNTED_EVENTS_SHOWN` of each type, as evidence lines
+ * (W16-R4, D-4 (a)): the rejections' reasons, the skips' clauses and reasons, the refusals'
+ * withheld reasons, each by its item's title. Other events a card carries say nothing here.
+ */
+async function countedEventLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promise<string[]> {
+  const lines: string[] = [];
+  const shown = new Map<string, number>();
+  for (const id of card.evidence.eventIds) {
+    const event = await ctx.db.get(id);
+    if (event === null) continue;
+    const counted = await countedEventOf(ctx, event);
+    if (counted === undefined || (shown.get(counted.type) ?? 0) >= COUNTED_EVENTS_SHOWN) continue;
+    const line = countedEventLine(counted);
+    if (line === undefined) continue;
+    shown.set(counted.type, (shown.get(counted.type) ?? 0) + 1);
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** A counted event with its item's title, or undefined for an event of another type. */
+async function countedEventOf(
+  ctx: QueryCtx,
+  event: Doc<'events'>,
+): Promise<CountedEvent | undefined> {
+  const payload = event.payload as {
+    workItemId?: Id<'workItems'>;
+    reason?: unknown;
+    clause?: unknown;
+    withheld?: ReadonlyArray<{ reason?: unknown }>;
+  };
+  if (
+    event.type !== 'work.cancelled' &&
+    event.type !== 'work.skipped' &&
+    event.type !== 'work.actions-withheld'
+  ) {
+    return undefined;
+  }
+  const item = payload.workItemId === undefined ? null : await ctx.db.get(payload.workItemId);
+  const title = item?.title ?? 'an item no longer listed';
+  const text = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() !== '' ? value : undefined;
+  switch (event.type) {
+    case 'work.cancelled':
+      return { type: event.type, title, reason: text(payload.reason) ?? PLAN_CANCELLED_REASON };
+    case 'work.skipped': {
+      const clause = text(payload.clause);
+      const reason = text(payload.reason);
+      return {
+        type: event.type,
+        title,
+        ...(clause === undefined ? {} : { clause }),
+        ...(reason === undefined ? {} : { reason }),
+      };
+    }
+    case 'work.actions-withheld':
+      return {
+        type: event.type,
+        title,
+        reasons: (payload.withheld ?? []).flatMap((row) => text(row.reason) ?? []),
+      };
+  }
 }
 
 /**

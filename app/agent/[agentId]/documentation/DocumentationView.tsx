@@ -102,9 +102,11 @@ export function DocumentationView() {
       </Card>
       {answered !== null ? (
         <RelationAnswered
+          // One answer, one card: a refused Undo's line never rides under the next answer (W15-R47).
+          key={answered.relationId}
           answered={answered}
           cardGone={!(relations ?? []).some((relation) => relation._id === answered.relationId)}
-          onUndone={(text) => setAnswered({ relationId: answered.relationId, text, undo: false })}
+          onUndone={() => setAnswered({ ...answered, undo: false, undone: true })}
         />
       ) : null}
       {(relations ?? []).map((relation) =>

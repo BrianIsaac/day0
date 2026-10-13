@@ -16,7 +16,7 @@ import {
   GATE_REFUSAL_STOP,
   managerStopNote,
 } from '@/work/stop';
-import { isOpenQuestionStop } from '@/work/obligations';
+import { isConflictQuestion, isOpenQuestionStop } from '@/work/obligations';
 import {
   INTERRUPTED_APPLY_REASON,
   landedRowCount,
@@ -359,6 +359,8 @@ export function heldQuestionOf(
 ): string | undefined {
   if (item.state !== 'failed' || !item.skipReason || !isStopped(item.skipReason)) return undefined;
   if (!isOpenQuestionStop(stopDetail(item.skipReason))) return undefined;
+  // A documentation conflict is answered on its question above, never by a note (W16-R8).
+  if (isConflictQuestion(item.output)) return undefined;
   const output = item.output as
     | { openQuestion?: { question?: unknown }; initial?: { openQuestion?: { question?: unknown } } }
     | undefined;
@@ -473,6 +475,11 @@ export function failedItemReason(item: {
     const detail = stopDetail(item.skipReason);
     const questionOpen = Boolean(item.output?.openQuestion || item.output?.initial?.openQuestion);
     // The run asked its question and withheld the writes that wait on the answer.
+    if (questionOpen && isOpenQuestionStop(detail) && isConflictQuestion(item.output)) {
+      return unconfirmed
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, answer the question above, then Retry: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry: ${detail}`;
+    }
     if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
         ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Answer and retry: ${detail}`

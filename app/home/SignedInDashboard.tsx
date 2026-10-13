@@ -229,7 +229,7 @@ function AfterDeploy() {
 
 /**
  * The owner's documentation: how much is linked, and where it is managed; in the hosted office,
- * what its employees read instead, and a link that views the seeded pages (RM26 (a)).
+ * what its employees read instead, and a link to the page that says the same (RM26 (a)).
  */
 function DocumentationCard({
   sources,
@@ -243,12 +243,18 @@ function DocumentationCard({
       {/* The link's 44 px target (N14) takes the header's height; the padding makes up the rest. */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)] py-1 pl-5 pr-2">
         <h2 className="text-sm font-semibold">Documentation</h2>
-        <Link
-          href="/documentation"
-          className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
-        >
-          {mode === 'mock' ? 'View' : 'Manage'}
-        </Link>
+        {/* Named once the mode answers, so it never reads Manage and then View (W16-R35); the
+            placeholder keeps the header's 44 px height meanwhile. */}
+        {mode === undefined ? (
+          <span aria-hidden="true" className="inline-block min-h-11" />
+        ) : (
+          <Link
+            href="/documentation"
+            className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
+          >
+            {mode === 'mock' ? 'View' : 'Manage'}
+          </Link>
+        )}
       </div>
       <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
         {mode === 'mock'

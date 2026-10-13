@@ -24,14 +24,14 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
-  citeConflictOf,
   confirmedConflicts,
+  conflictsUnderPlan,
   decisionsOffered,
   standingConflictOf,
   standingWithPages,
   type RelationDecision,
 } from './docConflicts';
-import { askConflictQuestion, openWorkCiting } from './reorientation';
+import { askConflictQuestion } from './reorientation';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -50,6 +50,7 @@ import {
   type StatusSource,
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
+import { conflictChoiceWords } from '../src/agent/reorientation-words';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -281,6 +282,9 @@ export const pagesWrittenBy = internalQuery({
 /** Why a decision was refused: the card it answers is no longer the relation's. */
 export const DECISION_NOT_OFFERED = 'That card has changed: this answer is no longer offered.';
 
+/** Why a reversed answer was refused: only a successor has a direction to turn. */
+export const REVERSE_IS_FOR_SUPERSEDES = 'Only “supersedes” can be answered the other way round.';
+
 /** What a decision makes of the relation's row. */
 function decided(
   decision: RelationDecision,
@@ -336,12 +340,25 @@ export const decide = mutation({
   args: {
     relationId: v.id('docRelations'),
     decision: v.union(...RELATION_DECISIONS.map((decision) => v.literal(decision))),
+    /**
+     * "{A} supersedes {B}", the proposed direction turned round (W15-R45's remainder): the
+     * measures name the later version by a date or a version word, which a reader that gives no
+     * edit time or a copied folder gets wrong, and the card offered no way to say so.
+     */
+    reversed: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<SupersedeOutcome | null> => {
     const caller = await getCallerOrThrow(ctx);
-    const relation = await ctx.db.get(args.relationId);
-    if (relation === null) throw new ConvexError('That relation is no longer stored.');
-    if (relation.userId !== caller.ownerKey) throw new Error('forbidden');
+    const stored = await ctx.db.get(args.relationId);
+    if (stored === null) throw new ConvexError('That relation is no longer stored.');
+    if (stored.userId !== caller.ownerKey) throw new Error('forbidden');
+    let relation = stored;
+    if (args.reversed === true) {
+      if (args.decision !== 'supersedes') throw new ConvexError(REVERSE_IS_FOR_SUPERSEDES);
+      // Written with the answer or not at all: a refusal below rolls the swap back with it.
+      await ctx.db.patch(stored._id, { from: stored.to, to: stored.from, reversed: true });
+      relation = { ...stored, from: stored.to, to: stored.from, reversed: true };
+    }
     return await decideRelationInTransaction(ctx, relation, args.decision, {
       decidedBy: verifiedAddressOf(caller),
       via: 'dashboard',
@@ -407,7 +424,18 @@ export async function decideRelationInTransaction(
   await ctx.db.patch(
     relation._id,
     decision === 'undo'
-      ? { ...answer, kind, proposedKind: undefined, decidedBy: undefined, decidedAt: undefined }
+      ? {
+          ...answer,
+          kind,
+          proposedKind: undefined,
+          decidedBy: undefined,
+          decidedAt: undefined,
+          // An answer given the other way round is taken back with its turn: the card asks again
+          // as the measures proposed it.
+          ...(relation.reversed === true
+            ? { from: relation.to, to: relation.from, reversed: undefined }
+            : {}),
+        }
       : {
           ...answer,
           ...(kind !== relation.kind
@@ -457,13 +485,15 @@ export async function decideRelationInTransaction(
   // the questions asked about it, so nothing waits on them (the second pass's B1).
   if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
   if (relation.kind === 'possible_conflict') {
+    // Each page by its letter, title and source, as the question named them (W16-R12).
+    const pages = [named(from, fromSource), named(to, toSource)] as const;
     const settled =
       decision === 'from-is-right'
-        ? `${from.title} is right`
+        ? conflictChoiceWords('from', pages)
         : decision === 'to-is-right'
-          ? `${to.title} is right`
+          ? conflictChoiceWords('to', pages)
           : decision === 'both-hold'
-            ? 'Both hold'
+            ? conflictChoiceWords('both', pages)
             : undefined;
     if (settled !== undefined) {
       await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
@@ -499,7 +529,16 @@ async function closeConflictQuestions(
   }
 }
 
-/** Ask a confirmed conflict's question beside each reader's drafted plan that cites either page. */
+/** The drafted plans of one reader a confirmation looks through for the conflict's question. */
+const PENDING_PLANS_READ = 100;
+
+/**
+ * Ask a confirmed conflict's question beside each reader's drafted plan that rests on it, read as
+ * the plan's own decision reads it (`conflictsUnderPlan`): by its cites, or where it cites nothing
+ * by its kept selection (W16-R9). Matching the plans that cite either page missed a plan that cites
+ * nothing, which was then asked nothing and stopped after its approval; and it asked a plan citing
+ * another passage of either page, which its decision does not.
+ */
 async function askAtConfirmation(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
@@ -507,19 +546,24 @@ async function askAtConfirmation(
 ): Promise<void> {
   const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
   if (standing === undefined) return;
-  const conflict = citeConflictOf(standing);
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
     ctx.db.get(relation.to.sourceId),
   ]);
   if (fromSource === null || toSource === null) return;
   for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-    for (const workItemId of await openWorkCiting(ctx, agent._id, [relation.from, relation.to])) {
-      const row = await ctx.db.get(workItemId);
-      if (row?.state !== 'plan-pending') continue;
+    const drafted = await ctx.db
+      .query('workItems')
+      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
+      .take(PENDING_PLANS_READ);
+    for (const row of drafted) {
+      const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
+        (under) => under.relationId === relation._id,
+      );
+      if (conflict === undefined) continue;
       await askConflictQuestion(ctx, {
         row,
-        conflict: { relationId: relation._id, heading: conflict.heading, pages: conflict.pages },
+        conflict: { ...conflict, relationId: relation._id },
         now,
       });
     }

@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { internalMutation } from './_generated/server';
+import { internalMutation, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
 import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL, TEAM_ASKS } from '../src/work/office-asks';
 
 /**
@@ -344,32 +345,90 @@ For social asks (which are typically out-of-scope for the RevOps role), if you d
   },
 ];
 
+/** One document of the hosted office as it ships: a team document or a how-to guide. */
+interface ShippedDocument {
+  readonly slug: string;
+  readonly title: string;
+  readonly body: string;
+  readonly category: 'team-doc' | 'how-to-guide';
+}
+
+/** Every document the hosted office ships with, the team's first and then the guides. */
+const SHIPPED_DOCUMENTS: readonly ShippedDocument[] = [
+  ...TEAM_DOCS.map((doc) => ({ ...doc, category: 'team-doc' as const })),
+  ...HOW_TO_GUIDES.map((guide) => ({ ...guide, category: 'how-to-guide' as const })),
+];
+
+/**
+ * Write one shipped document into an employee's office: rewritten where its shipped words moved,
+ * left where it already reads as shipped, and added where the office has none unless the caller
+ * says an office keeps what it was seeded with. A page the manager's own documentation mirrors
+ * under the slug is theirs: it is never written over (the 13-FD second pass; `it-access` is a
+ * name a handbook may well use).
+ *
+ * @returns Whether a row was written.
+ */
+async function writeShippedDocument(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  shipped: ShippedDocument,
+  missing: 'add' | 'leave',
+): Promise<boolean> {
+  const existing = await ctx.db
+    .query('mockDocs')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', shipped.slug))
+    .unique();
+  if (existing?.sourceId !== undefined) return false;
+  const payload = {
+    title: shipped.title,
+    body: shipped.body,
+    category: shipped.category,
+    updatedAt: Date.now(),
+  };
+  if (existing === null) {
+    if (missing === 'leave') return false;
+    await ctx.db.insert('mockDocs', { agentId, slug: shipped.slug, ...payload });
+    return true;
+  }
+  if (
+    existing.title === shipped.title &&
+    existing.body === shipped.body &&
+    existing.category === shipped.category
+  ) {
+    return false;
+  }
+  await ctx.db.patch(existing._id, payload);
+  return true;
+}
+
+/**
+ * Bring the documents an employee's hosted office already holds up to the shipped text (W16-R15,
+ * D-10 (a)): the `mock-office-reseed` pass, for an office seeded before a release that moved a
+ * guide. Only documents are rewritten, and none is added: the office's messages are matched by
+ * their words, so seeding them again would post a second copy of any a release reworded (the
+ * pre-tag's bed, on production's own office), and an office keeps the shape it was seeded with.
+ *
+ * @param ctx - The pass's mutation context.
+ * @param agentId - The employee whose office it is.
+ * @returns How many documents were rewritten.
+ */
+export async function reseedOfficeDocuments(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  let rewritten = 0;
+  for (const shipped of SHIPPED_DOCUMENTS) {
+    if (await writeShippedDocument(ctx, agentId, shipped, 'leave')) rewritten += 1;
+  }
+  return rewritten;
+}
+
 export const seedMockEnvironment = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    const upsertDoc = async (
-      slug: string,
-      title: string,
-      body: string,
-      category: 'team-doc' | 'how-to-guide',
-    ) => {
-      const existing = await ctx.db
-        .query('mockDocs')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      const payload = { title, body, category, updatedAt: Date.now() };
-      // A page the manager's own documentation mirrors under this slug is theirs: the seed never
-      // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
-      if (existing?.sourceId !== undefined) return;
-      if (existing) {
-        await ctx.db.patch(existing._id, payload);
-        return;
-      }
-      await ctx.db.insert('mockDocs', { agentId: args.agentId, slug, ...payload });
-    };
-
-    for (const d of TEAM_DOCS) await upsertDoc(d.slug, d.title, d.body, 'team-doc');
-    for (const g of HOW_TO_GUIDES) await upsertDoc(g.slug, g.title, g.body, 'how-to-guide');
+    for (const shipped of SHIPPED_DOCUMENTS) {
+      await writeShippedDocument(ctx, args.agentId, shipped, 'add');
+    }
 
     // Spreadsheet - Q4 Revenue Tracker, two tabs
     const sheetSlug = 'q4-revenue-tracker';

@@ -7470,6 +7470,10 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toContain(question);
     expect(stopped.skipReason).toContain("to the manager's answer");
+    // The stop names the relation, so the card sends the manager to the question (W16-R8).
+    expect(
+      (stopped.output as { openQuestion?: { relationId?: string } }).openQuestion?.relationId,
+    ).toBe(relation._id);
   });
 
   it('stops a run whose plan relies on a conflict confirmed since its approval, naming the two pages (16-O; D-4 (b))', async (): Promise<void> => {
@@ -7491,7 +7495,7 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     const stopped = await readItem(harness, workItemId);
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toBe(
-      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+      'stopped: Since you approved this plan, you confirmed that A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook) disagree under “Thresholds”. Retry drafts the plan again.',
     );
     expect(recorded.mcp).toEqual([]);
   });
@@ -7522,7 +7526,7 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     const stopped = await readItem(harness, workItemId);
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toBe(
-      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+      'stopped: Since you approved this plan, you confirmed that A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook) disagree under “Thresholds”. Retry drafts the plan again.',
     );
     expect(recorded.mcp).toEqual([]);
   });
@@ -7557,7 +7561,7 @@ describe("a Slack read sent as POST does not stop the ticket's own item (19 Sep 
     const stopped = await readItem(harness, workItemId);
     expect(stopped.state).toBe('failed');
     expect(stopped.skipReason).toBe(
-      'stopped: Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+      'stopped: Since you approved this plan, you confirmed that A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook) disagree under “Thresholds”. Retry drafts the plan again.',
     );
     expect(recorded.mcp.filter((call) => call.tool === 'save_comment')).toEqual([]);
   });

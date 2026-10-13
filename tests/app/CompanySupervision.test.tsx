@@ -338,6 +338,10 @@ describe('the company supervision card', (): void => {
       expect(pilot).toContain(label);
     }
     expect(pilot).toContain('your estimates, internal gauge');
+    // W16-R32: Hours saved sat alone on its row below the wide breakpoint, between two wide
+    // figures; it spans both columns as they do.
+    const hoursCell = /<td[^>]*class="([^"]*)"[^>]*>(?:(?!<\/td>).)*Hours saved/s.exec(pilot);
+    expect(hoursCell?.[1]).toContain('max-lg:col-span-2');
     const priyaRow = rowOf(pilot, 'Priya');
     expect(priyaRow).toContain('1 of 4 (25%)');
     expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');

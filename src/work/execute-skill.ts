@@ -1374,7 +1374,13 @@ function closingAgainstFactIssues(output: CorrectableOutput & WorkDoneFields): s
  * approval") is an escalation, not a draft, and is not read here (the second pass).
  */
 const APPROVAL_TENSE =
-  /\bdraft(?:ed)?\b[^.:;]{0,60}\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bdraft(?:ed)?\b[^.:;]{0,60}\bfor your (?:approval|review|sign-off)\b|\bdraft for review\b|\b(?:will|i'?ll) (?:post|send|share)\b[^.]{0,40}\bonce (?:you )?approved?\b/i;
+  /\bdraft(?:ed)?\b[^.:;]{0,60}\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bdraft(?:ed)?\b[^.:;]{0,60}\bfor your (?:approval|review|sign-off)\b|\bdraft for review\b|\b(?:will|i'?ll) (?:post|send|share)\b[^.]{0,40}\b(?:once (?:you )?approved?|(?:when|after) you approve)\b|\b(?:repl(?:y|ies)|drafts?|answers?|messages?|notes?)\b[^.:;]{0,60}\b(?:once|when|after) you approve\b/i;
+
+/**
+ * The mock office's channel that is the manager's DM: a message held for the manager's approval
+ * is one sent to the manager (W16-R14), where an answer for someone else stops short of them.
+ */
+const MOCK_MANAGER_DM = 'dm-manager';
 
 /** The tripwire's words, which the card reads as an approval-tense message (`withheldInWords`). */
 export const APPROVAL_TENSE_ISSUE =
@@ -1384,11 +1390,18 @@ export const APPROVAL_TENSE_ISSUE =
  * The tripwire on a mock message whose words frame it as a draft held for the manager (W19-4):
  * on the v0.19.0 walk Pip's answer for Hana went to the manager's DM as "Draft reply to Hana, held
  * for your approval: ...", the item finished, and Hana never had it. The executor's action-mode
- * line forbids it; this reads it. One finding per message, naming its first such sentence.
+ * line forbids it; this reads it, in a message to the manager only, since a colleague's "draft
+ * for your review" is ordinary work (W16-R14). One finding per message, naming its first such
+ * sentence.
  */
 export function approvalTenseFindings(actions: readonly MockAction[]): ClaimFinding[] {
   return actions.flatMap((action, index): ClaimFinding[] => {
     if (isSurfaceTool(action.tool)) return [];
+    // A colleague's "draft for your review" is ordinary work (W16-R14, reader 4's p3): only a
+    // message to the manager is one that holds the answer back from whoever asked.
+    if (action.tool !== 'slack.postMessage' || action.args?.channelSlug !== MOCK_MANAGER_DM) {
+      return [];
+    }
     const said = messageTexts(action)
       .flatMap((text) => text.split(/(?<=[.!?])\s+/))
       .find((sentence) => APPROVAL_TENSE.test(sentence));

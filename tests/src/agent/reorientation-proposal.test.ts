@@ -2,12 +2,17 @@ import { describe, expect, it } from 'vitest';
 import type { Id } from '../../../convex/_generated/dataModel';
 import {
   ProposalRefused,
+  REORIENTATION_PROPOSAL_SYSTEM,
+  countedEventLine,
   proposalOf,
   proposalPrompt,
   proposalReplySchema,
   type ProposalCandidate,
   type ProposalReply,
 } from '../../../src/agent/reorientation-proposal';
+import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../../../src/agent/drafted-text-rules';
+import { scopeCovers } from '../../../src/people/resolution';
+import { RELATIONSHIP_SCOPE_LIMIT } from '../../../src/people/words';
 
 const page = { sourceId: 'source-1' as Id<'docSources'>, ref: 'revops/escalation-paths.md' };
 const successor = {
@@ -237,6 +242,148 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
     );
     expect(proposed.rationale).toHaveLength(600);
     expect(proposed.kind === 'charter-change' && proposed.after).toHaveLength(600);
+  });
+
+  /** The 16-RV review's bed 1: Approve stored this 189-character sentence as the edge's scope. */
+  const BED_ONE_SENTENCE =
+    'Ines Duarte is no longer the approver for NetLedger journal changes and REVOPS close plans; approval for these routes to the current Revops manager until a successor approver is named.';
+  /** 16-J's walk (W1c): the talk's sentence Approve stored as the scope. */
+  const WALK_SENTENCE =
+    'Ines Duarte approves NetLedger journal changes only; no longer approver for REVOPS close plans, which Aisha Bello now approves first.';
+
+  it('refuses an edge scope that is a sentence, which the graph would read as a bag of words (W16-R3, D-3 (a))', (): void => {
+    // The reason it must be refused: every word of "REVOPS close plans" is among the sentence's,
+    // so the graph still routes REVOPS close plans to the person it says no longer approves them.
+    expect(scopeCovers(BED_ONE_SENTENCE, 'REVOPS close plans')).toBe(true);
+    expect(scopeCovers(WALK_SENTENCE, 'REVOPS close plans')).toBe(true);
+    for (const text of [BED_ONE_SENTENCE, WALK_SENTENCE]) {
+      expect(() =>
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toThrow(ProposalRefused);
+    }
+    for (const text of [
+      'Approves close plans. Not journals',
+      'Close plans: first',
+      'Who approves? Aisha',
+    ]) {
+      expect(() =>
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toThrow('a short phrase');
+    }
+  });
+
+  it('refuses a sentence joined by commas alone, and takes a phrase written with a closing full stop (the second pass)', (): void => {
+    // No stop, semicolon or colon, and under 200 characters: still a sentence the graph would
+    // read as a bag of words.
+    const comma =
+      'Ines Duarte approves NetLedger journal changes only, no longer approver for REVOPS close plans';
+    expect(scopeCovers(comma, 'REVOPS close plans')).toBe(true);
+    expect(() =>
+      proposalOf(
+        reply({ change: 'relationship', candidate: 3, action: 'edit', text: comma }),
+        CANDIDATES,
+      ),
+    ).toThrow(ProposalRefused);
+    // A model's habit of closing a phrase with a full stop is not a sentence: the stop is dropped.
+    expect(
+      proposalOf(
+        reply({
+          change: 'relationship',
+          candidate: 3,
+          action: 'edit',
+          text: 'NetLedger journal changes.',
+        }),
+        CANDIDATES,
+      ),
+    ).toMatchObject({ scope: 'NetLedger journal changes' });
+  });
+
+  it('refuses an edge scope past the 200 characters Approve takes, and keeps a phrase', (): void => {
+    const longPhrase = `NetLedger ${'journal '.repeat(30)}changes`;
+    expect(longPhrase.length).toBeGreaterThan(RELATIONSHIP_SCOPE_LIMIT);
+    expect(() =>
+      proposalOf(
+        reply({ change: 'relationship', candidate: 3, action: 'edit', text: longPhrase }),
+        CANDIDATES,
+      ),
+    ).toThrow(ProposalRefused);
+    for (const text of [
+      'NetLedger journal changes',
+      'Q3 close, v1.2 runbooks',
+      'acme.test renewals',
+    ]) {
+      expect(
+        proposalOf(
+          reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
+          CANDIDATES,
+        ),
+      ).toMatchObject({ kind: 'relationship', action: 'edit', scope: text });
+    }
+  });
+});
+
+describe('countedEventLine: what a counted card rests on, as the judgement reads it (W16-R4)', (): void => {
+  it('says a rejection by its reason, without the cancellation’s own prefix, and one with none', (): void => {
+    expect(
+      countedEventLine({
+        type: 'work.cancelled',
+        title: 'Send the close summary',
+        reason: 'plan cancelled by the manager: not without my approval',
+      }),
+    ).toBe('Plan rejected for “Send the close summary”: not without my approval');
+    expect(
+      countedEventLine({
+        type: 'work.cancelled',
+        title: 'Send the close summary',
+        reason: 'plan cancelled by the manager',
+      }),
+    ).toBe('Plan rejected for “Send the close summary”, with no reason given');
+  });
+
+  it('says a skip with or without its clause, and a run’s withheld reasons once each', (): void => {
+    expect(countedEventLine({ type: 'work.skipped', title: 'Change the deck' })).toBe(
+      'Skipped “Change the deck”',
+    );
+    expect(
+      countedEventLine({
+        type: 'work.actions-withheld',
+        title: 'Read REVOPS-1',
+        reasons: ['no grant (linear:read)', 'no grant (linear:read)', 'left out by the manager'],
+      }),
+    ).toBe('Held in a run of “Read REVOPS-1”: no grant (linear:read); left out by the manager');
+    expect(
+      countedEventLine({ type: 'work.actions-withheld', title: 'Read REVOPS-1', reasons: [' '] }),
+    ).toBeUndefined();
+  });
+
+  it('bounds a line’s words', (): void => {
+    const line = countedEventLine({
+      type: 'work.cancelled',
+      title: 'Send it',
+      reason: 'word '.repeat(200),
+    });
+    expect(line?.length).toBeLessThan(340);
+    expect(line?.endsWith('...')).toBe(true);
+  });
+});
+
+describe('the proposal judgement’s system prompt', (): void => {
+  it('holds the rationale and the words it writes to the house copy rules, as the talk is (W16-R20, W5b)', (): void => {
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(PLAIN_PUNCTUATION_IN_EVERY_FIELD);
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain('Spell in British English.');
+    expect(REORIENTATION_PROPOSAL_SYSTEM).not.toContain('—');
+  });
+
+  it('asks for a relationship’s new scope as a phrase, never a sentence (W16-R3, D-3 (a))', (): void => {
+    expect(REORIENTATION_PROPOSAL_SYSTEM).toContain(
+      '- `relationship`: `action` is edit or retire; `text` is the new scope for edit: a short phrase naming what the relationship covers, such as “NetLedger journal changes”, never a sentence.',
+    );
   });
 });
 

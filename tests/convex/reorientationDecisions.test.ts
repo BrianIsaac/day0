@@ -289,6 +289,69 @@ describe('approve: the proposal applied through its target', (): void => {
     ]);
   });
 
+  it('opens no card on any employee when Approve edits an edge for everyone (W16-R2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await seedEmployee(harness);
+    const mateo = await seedEmployee(harness, { name: 'Mateo' });
+    const edge = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Ines Duarte',
+        nameKey: 'ines duarte',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      // An approver for everyone: no employee or person it is from (bed 1's edge).
+      return await ctx.db.insert('relationships', {
+        userId: OWNER_SUBJECT,
+        toPersonId: person,
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    const opened = async (): Promise<number> =>
+      (
+        await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('events')
+              .filter((q) => q.eq(q.field('type'), 'reorientation.opened'))
+              .collect(),
+        )
+      ).length;
+    const reorientationId = await proposedCard(
+      harness,
+      priya,
+      {
+        kind: 'relationship',
+        relationshipId: edge,
+        action: 'edit',
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes and REVOPS close plans',
+        rationale: 'Ines approves REVOPS close plans too now.',
+      },
+      { evidence: { relationshipIds: [edge] }, affected: { relationships: [edge] } },
+    );
+    const before = await opened();
+    await owner.mutation(api.reorientationDecisions.approve, { reorientationId });
+    await harness.finishInProgressScheduledFunctions();
+    // Bed 1: 50 joined events on one Approve. The change the manager approved opens or joins no
+    // card on the employee it was approved for, nor on any other the same edge reaches.
+    expect(await opened()).toBe(before);
+    expect(await cardsOf(harness, mateo)).toEqual([]);
+    expect((await cardsOf(harness, priya)).map((card) => card.status)).toEqual(['applied']);
+  });
+
   it('sets a page superseded by its named successor, and hands another back to its source', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -942,6 +1005,101 @@ describe('openByHand and listForAgent', (): void => {
     const card = await cardOf(harness, reorientationId!);
     expect(card).toMatchObject({ trigger: 'role-changed', risk: 'medium', status: 'open' });
     expect(card.affected.charterClauses).toHaveLength(3);
+  });
+
+  it('says a second by-hand change the same day joined the standing card, whose summary then holds both (W16-R24)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    const first = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'Mira now covers renewals too',
+    });
+    expect(first).toMatchObject({ joined: false });
+    // The judgement answered the first change before the second was typed.
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: first.reorientationId!,
+      proposed: { kind: 'none', rationale: 'Renewals are within the charter.' },
+      basis: await basisOf(harness, first.reorientationId!),
+    });
+    vi.setSystemTime(Date.now() + 60_000);
+    const second = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'It no longer triages tier-2 asks.',
+    });
+    expect(second).toEqual({
+      reorientationId: first.reorientationId,
+      joined: true,
+      asked: true,
+      onCard: true,
+    });
+    const cards = await cardsOf(harness, agentId);
+    expect(cards).toHaveLength(1);
+    // The typed words are on the card, not only in the record, and the proposal is asked again.
+    expect(cards[0]).toMatchObject({
+      triggerSummary: 'Mira now covers renewals too; It no longer triages tier-2 asks.',
+      proposed: { kind: 'pending' },
+    });
+  });
+
+  it('keeps a proposal the manager’s own talk put on the card, a repeated change once, and the summary bounded (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    const { reorientationId } = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'Mira now covers renewals too',
+    });
+    // A finished talk put the manager's own proposal on the card.
+    const talked = {
+      kind: 'none' as const,
+      rationale: 'You said renewals are within the charter.',
+    };
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(reorientationId!, { proposed: talked });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: reorientationId!,
+        state: 'finished',
+        turns: [],
+        conversation: 1,
+        outcome: { proposed: talked, quotes: ['renewals are within the charter'] },
+        startedAt: 1,
+        endedAt: 2,
+      });
+    });
+    const again = async (summary: string) => {
+      // Each by-hand change is its own report, keyed by when it was typed.
+      vi.setSystemTime(Date.now() + 60_000);
+      return await owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary });
+    };
+    await expect(again('It no longer triages tier-2 asks')).resolves.toEqual({
+      reorientationId,
+      joined: true,
+      asked: false,
+      onCard: true,
+    });
+    // The same words typed again are on the card already.
+    await expect(again('It no longer triages tier-2 asks')).resolves.toMatchObject({
+      onCard: true,
+    });
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.proposed).toEqual(talked);
+    expect(card.triggerSummary).toBe(
+      'Mira now covers renewals too; It no longer triages tier-2 asks',
+    );
+    // Past the bound the words stay in the record's joined events, and the card's summary as it is.
+    // The answer says so, so the page never says the words were added (W16-R24).
+    const answers = [];
+    for (const index of [1, 2, 3]) {
+      answers.push(await again(`${'A long change of role. '.repeat(12)}${index}`));
+    }
+    const summary = (await cardsOf(harness, agentId))[0].triggerSummary;
+    expect(summary.length).toBeLessThanOrEqual(600);
+    expect(answers.map((answer) => answer.onCard)).toEqual([true, false, false]);
+    expect(summary).toContain('A long change of role. 1');
+    expect(summary).not.toContain('A long change of role. 2');
+    expect(answers.at(-1)).toMatchObject({ joined: true, asked: false });
   });
 
   it('lists the standing cards first, with the names their ids stand for, and only to the owner', async (): Promise<void> => {

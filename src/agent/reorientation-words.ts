@@ -31,6 +31,8 @@ export const CARD_ACTION_REFUSALS = {
 export const approvedResultWords = {
   none: 'nothing needed to change',
   dismissed: 'nothing changed',
+  /** A card still undecided when its employee was handed over (W16-R1, D-5 (a)). */
+  handedOver: 'closed at the handover, as it was the previous manager’s to decide',
   charter: (version: string): string => `the charter was amended to version ${version}`,
   agreement: {
     keep: 'the working agreement was kept as it is',
@@ -77,10 +79,31 @@ export function closingHeldReason(name: string, summary: string): string {
   return `${name} stopped before its closing steps: a reorientation card is still open (${withoutStop(summary)}). Decide it, then Retry.`;
 }
 
+/**
+ * What a plan's card on the Work tab says while a high-risk reorientation card holds it (W-9; the
+ * joins' draft, a product word flagged with RM24): the hold stops Day0's own approval only, so
+ * the plan is still the manager's to approve, and the line says what Day0 will not do meanwhile.
+ */
+export function heldByCardWords(summary: string): string {
+  return `Day0 approves nothing here on its own until you decide the reorientation card: ${withoutStop(summary)}.`;
+}
+
 /** A documentation page as a conflict's question names it: its title and its source's label. */
 export interface NamedPageWords {
   readonly title: string;
   readonly source: string;
+}
+
+/** The letter each of a conflict's two pages goes by, as the typed answer names it. */
+export type PageLetter = 'A' | 'B';
+
+/**
+ * One of a conflict's two pages as every place that names it says it (W16-R12): its letter, its
+ * title and its source, "A, {title} ({source})". Two pages of one title in two sources are told
+ * apart by the source, and two sources of one label by the letter the question gave them.
+ */
+export function pageWords(letter: PageLetter, page: NamedPageWords): string {
+  return `${letter}, ${page.title} (${page.source})`;
 }
 
 /** The three answers a conflict's question takes, as the request and the card offer them. */
@@ -89,29 +112,48 @@ export const CONFLICT_CHOICES = ['from', 'to', 'both'] as const;
 /** One answer to a conflict's question: the first page is right, the second, or both hold. */
 export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
 
+/** Surfaces named in a sentence: "Linear and Slack". */
+const SURFACE_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' });
+
 /**
  * The question a standing conflict under a drafted plan asks, in the plan's own request (RM20 (a);
  * section 7, flagged: the pages are lettered as the typed answer names them, a plan citing nothing
  * holds every step, and the held steps run on Retry after the answer): "Two pages disagree under
  * “{heading}”: A, {A} ({source}), and B, {B} ({source}). Which is right? {name} runs the other
- * steps now and holds the ones that may rely on this until you answer and Retry."
+ * steps now and holds the ones that may rely on this until you answer and Retry." Where the
+ * hold's surfaces are known it names them, "holds its writes to {surfaces}", or says every write
+ * where the plan declares none to tell apart (W16-R10).
  */
 export function conflictQuestionText(
   name: string,
   heading: string,
   pages: readonly [NamedPageWords, NamedPageWords],
+  holds?: readonly string[] | 'every',
 ): string {
   const [a, b] = pages;
-  return `Two pages disagree under “${heading}”: A, ${a.title} (${a.source}), and B, ${b.title} (${b.source}). Which is right? ${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+  // What the hold withholds is every write to a surface a held step writes (W16-R10), so the
+  // question names those surfaces, or says every write where the plan cannot tell them apart.
+  const held =
+    holds === 'every'
+      ? `${name} holds every write of the plan until you answer and Retry.`
+      : holds !== undefined && holds.length > 0
+        ? `${name} runs the other steps now and holds its writes to ${SURFACE_LIST.format(holds)} until you answer and Retry.`
+        : `${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+  return `Two pages disagree under “${heading}”: ${pageWords('A', a)}, and ${pageWords('B', b)}. Which is right? ${held}`;
 }
 
-/** An answer's words, as the card's buttons and the record say it. */
+/**
+ * An answer's words, as the card's buttons, the stored answer and the record say it: "A, {title}
+ * ({source}) is right", so two pages of one title make two controls of two names (W16-R12).
+ */
 export function conflictChoiceWords(
   choice: ConflictChoice,
   pages: readonly [NamedPageWords, NamedPageWords],
 ): string {
   if (choice === 'both') return 'Both hold';
-  return `${(choice === 'from' ? pages[0] : pages[1]).title} is right`;
+  return choice === 'from'
+    ? `${pageWords('A', pages[0])} is right`
+    : `${pageWords('B', pages[1])} is right`;
 }
 
 /** How a Slack request asks for the answer: the decision's code and a letter. */

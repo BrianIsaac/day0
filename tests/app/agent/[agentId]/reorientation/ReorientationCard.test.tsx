@@ -9,6 +9,11 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a query answers, by function name; one left out stays loading. */
   queries: {} as Record<string, unknown>,
+  /** Whether a card opened by hand joined one already standing that day. */
+  joins: false,
+  onCard: true,
+  /** Whether the join asked the judgement again. */
+  asks: true,
 }));
 
 vi.mock('convex/react', () => ({
@@ -21,6 +26,14 @@ vi.mock('convex/react', () => ({
         return { result: 'the charter was amended to version 0.2' };
       }
       if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
+      if (name === 'reorientationDecisions:openByHand') {
+        return {
+          reorientationId: 'card-1',
+          joined: backend.joins,
+          asked: backend.asks,
+          onCard: backend.onCard,
+        };
+      }
       return null;
     },
   useQuery: (reference: unknown, args: unknown): unknown =>
@@ -35,7 +48,7 @@ import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientat
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
-import { mount, press, said } from '../../../../fixtures/dom/press';
+import { mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
 
 /**
@@ -125,6 +138,9 @@ function withCard(fields: Partial<CardView['card']>, view: Partial<CardView> = {
 beforeEach((): void => {
   backend.calls.length = 0;
   backend.queries = {};
+  backend.joins = false;
+  backend.onCard = true;
+  backend.asks = true;
 });
 
 afterEach((): void => {
@@ -485,6 +501,41 @@ describe('a reorientation card', (): void => {
     }
   });
 
+  it('names on a handover’s card the reporting-line rule that binds no clause (W16-R21, W7a)', async (): Promise<void> => {
+    const view = drawn(
+      withCard(
+        {
+          trigger: 'manager-changed',
+          triggerSummary: 'priya@acme.test handed Mira over to you',
+          evidence: { ...BASE.card.evidence, pageRefs: [] },
+        },
+        { pages: [], carriedRules: ['Go through me for all of them for now, I’ll intro you.'] },
+      ),
+    );
+    expect(view.container.textContent).toContain(
+      'Its reporting-line rule: “Go through me for all of them for now, I’ll intro you.”',
+    );
+    await floor(view.container);
+    view.unmount();
+  });
+
+  it('says a card closed by a handover was closed there, not dismissed (W16-R1, D-5 (a))', async (): Promise<void> => {
+    const view = drawn(
+      withCard({
+        status: 'dismissed',
+        decidedAt: OPENED + 60_000,
+        outcome: { summary: 'closed at the handover, as it was the previous manager’s to decide' },
+      }),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Closed at the handover: it was the previous manager’s to decide.');
+    expect(text).toContain('closed at the handover 26 Sep 2026, 14:45');
+    expect(text).not.toContain('Dismissed');
+    expect(controls(view.container)).toEqual([]);
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('offers Discuss with Mira after the three decisions, to the card’s own talk', async (): Promise<void> => {
     const view = drawn(BASE);
     const foot = [...view.container.querySelectorAll('button, a')].map(
@@ -570,5 +621,30 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     } finally {
       window.location.hash = '';
     }
+  });
+
+  it('says a card opened by hand was opened, or that the change joined the card already open today (W16-R24)', async (): Promise<void> => {
+    backend.queries['reorientationDecisions:listForAgent'] = [BASE];
+    const typed = async (): Promise<string | undefined> => {
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      typeInto(view.container.querySelector('input[type="text"]')!, 'Mira now covers renewals too');
+      await press(view.container, 'Open a card');
+      const outcome = said(view.container).at(-1);
+      view.unmount();
+      return outcome;
+    };
+    expect(await typed()).toBe('A card is open. Mira is working out what to propose.');
+    backend.joins = true;
+    expect(await typed()).toBe(
+      'Added to today’s card. Mira is working out what to propose over both.',
+    );
+    // Where the card's proposal stands (the manager's own talk put it there), nothing says otherwise.
+    backend.asks = false;
+    expect(await typed()).toBe('Added to today’s card.');
+    // A card whose summary is full keeps the words in the record, and the page says where they are.
+    backend.onCard = false;
+    expect(await typed()).toBe(
+      'Today’s card has no room for more words, so this change is in Mira’s record and not on the card.',
+    );
   });
 });

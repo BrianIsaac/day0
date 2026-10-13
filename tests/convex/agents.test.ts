@@ -2101,6 +2101,49 @@ describe('the employee roster', (): void => {
     });
   });
 
+  it('lands an item on its first done completion when an earlier one in the month answered not done (W16-R17)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: mira,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Post the close audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const complete = async (at: string, workDone: string): Promise<void> => {
+      vi.setSystemTime(new Date(at));
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('events', {
+          agentId: mira,
+          type: 'work.completed',
+          payload: { workItemId, output: { workDone, workDoneWhy: 'Said by the run.' } },
+          createdAt: Date.now(),
+        });
+      });
+    };
+    await complete('2026-09-03T02:00:00Z', 'not-done');
+    await complete('2026-09-05T02:00:00Z', 'done');
+    vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
+
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(row.landedThisMonth).toEqual({
+      month: '2026-09',
+      days: [{ day: '2026-09-05', landed: 1 }],
+      atLeast: false,
+    });
+  });
+
   it('counts a done answer landed and names the partly done beside it, as the walk’s Lark showed', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-11T14:00:00Z'));

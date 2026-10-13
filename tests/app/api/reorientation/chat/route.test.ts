@@ -280,7 +280,7 @@ describe('the talk’s route: a turn', (): void => {
     expect(sent[0]).toMatchObject({
       model: GLM,
       stream: true,
-      prompt_cache_key: 'day0-reorientation-talk-v1',
+      prompt_cache_key: 'day0-reorientation-talk-v2',
       messages: [{ role: 'system', content: 'THE TALK SYSTEM PROMPT' }, { role: 'user' }],
     });
     expect(sent[0]).not.toHaveProperty('tools');
@@ -420,6 +420,73 @@ describe('the talk’s route: Put this on the card', (): void => {
       error: 'Mira put nothing on the card. Try again.',
     });
     expect(talk.calls.map((call) => call.name)).toEqual(['reorientationTalk:takeTurn']);
+  });
+
+  it('logs why nothing was put on the card: the finish, the calls, the refused fields, the text and the usage (W16-R19, W1b)', async (): Promise<void> => {
+    const lines: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
+      lines.push(JSON.parse(String(line)) as Record<string, unknown>);
+    });
+    try {
+      afterOpening();
+      const nothing = await loadRoute([() => generated(false)]);
+      await nothing(talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }));
+      const { rationale: _rationale, ...noRationale } = OUTCOME;
+      void _rationale;
+      const refused = await loadRoute([
+        () =>
+          Response.json({
+            id: 'chatcmpl-talk',
+            object: 'chat.completion',
+            created: 1,
+            model: GLM,
+            choices: [
+              {
+                index: 0,
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: 'call_complete',
+                      type: 'function',
+                      function: {
+                        name: 'reorientationComplete',
+                        arguments: JSON.stringify(noRationale),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+      ]);
+      await refused(talkRequest({ ...REPLY, request: { ...REPLY.request, kind: 'finish' } }));
+    } finally {
+      spy.mockRestore();
+    }
+    const said = lines.filter(
+      (line) => line.msg === 'reorientation talk: nothing was put on the card',
+    );
+    expect(said).toEqual([
+      expect.objectContaining({
+        level: 'warn',
+        finishReason: 'stop',
+        toolCalls: [],
+        textLength: 'Shall I put that on the card?'.length,
+        usage: expect.objectContaining({ inputTokens: 1, outputTokens: 1 }),
+      }),
+      expect.objectContaining({
+        finishReason: 'tool-calls',
+        toolCalls: ['reorientationComplete'],
+        refusedFields: ['rationale'],
+        textLength: 0,
+      }),
+    ]);
+    // Only the fields' paths are logged, never what the model wrote in them.
+    expect(JSON.stringify(said)).not.toContain('committee-deck');
   });
 
   it('says a store that could not be reached as a 503, not a bare failure (the second pass’s m5)', async (): Promise<void> => {

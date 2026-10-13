@@ -76,6 +76,9 @@ it('says neither office’s words while the mode is still loading (the second pa
   const html = renderToStaticMarkup(<DocumentationPage />);
   expect(html).not.toContain('hosted office');
   expect(html).not.toContain('Link a documentation location');
+  // Nor the local install's subtitle or a chip reading "loading" (W16-R35).
+  expect(html).not.toContain('Link read-only locations');
+  expect(html).not.toContain('>loading<');
 });
 
 it('keeps the hosted mock documentation page unchanged', (): void => {

@@ -322,11 +322,18 @@ describe('plan drafter grounding', (): void => {
     expect(planSystemPrompt(false, 'mock')).not.toContain('part selected for this item');
   });
 
-  it('tells the real planner what a [conflict] cite is, so it plans no step on the disputed point (15-A)', (): void => {
+  it('tells the real planner to cite the [conflict] passage a step relies on, never to plan round it (W16-R7, D-1 (a))', (): void => {
     const real = planSystemPrompt(false, 'real');
     expect(real).toContain(
-      'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.',
+      'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites` for that step, the one whose write the point decides: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, plan a step of your own that asks about it, or say that a question has been asked.',
     );
+    // Wave 15's whole-plan hold: on GLM the walk's REVOPS-2 and REVOPS-3 obeyed it, cited no
+    // disputed block, worked round the dispute and told the manager a question was asked.
+    expect(real).not.toContain('plan no step that acts on that point');
+    expect(real).not.toContain('your manager has been asked');
+    // The pre-tag bed's REVOPS-2 on GLM: the tagged cite sat on a step of its own that asked the
+    // manager in the DM, so the hold named the message and not the comment the point decides.
+    expect(real).toContain('plan a step of your own that asks about it');
     expect(planSystemPrompt(false, 'mock')).not.toContain('[conflict]');
   });
 

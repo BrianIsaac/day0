@@ -1680,8 +1680,9 @@ function sameResolution(
 }
 
 /**
- * The resolution an item keeps from a poll's answer: the answer, unless it is `unknown` and the
- * item already resolved to a person (W15-R36). A Take of a changed address retires the identities
+ * The resolution an item's requester keeps from a poll's answer: the answer, unless it is `unknown`
+ * and the item already resolved to a person (W15-R36). The requester's alone: intake never changes
+ * who asked, where the owner changes with the ticket's assignee (W16-R30). A Take of a changed address retires the identities
  * a lookup of the old address recorded until a lookup of the new one answers, so the poll between
  * them finds nobody; who asked is still who asked, and the person-scoped agreements, the planner's
  * From line and "Keep this note for later asks from ..." keep reading them.
@@ -1699,7 +1700,7 @@ function keptResolution(
  * and never an insert), written as `requesterPerson` and `ownerPerson` beside the strings, never
  * in place of them. Fenced as the seed is: nothing once a handover moved the employee to another
  * owner since the sweep read it. Writes only a field whose answer changed, and never turns a
- * person it resolved into nobody ({@link keptResolution}).
+ * requester it resolved into nobody ({@link keptResolution}).
  *
  * @returns Whether it wrote the row.
  */
@@ -1735,14 +1736,22 @@ export const resolveItemPeople = internalMutation({
     const ownerPerson =
       args.owner === undefined
         ? undefined
-        : keptResolution(item.ownerPerson, await resolveFirst(ctx, scope, args.owner));
+        : // The owner is whoever the ticket is assigned to now: intake re-lists it, so a
+          // reassignment to someone the graph does not hold lets the old owner go (W16-R30).
+          await resolveFirst(ctx, scope, args.owner);
+    // An item whose ticket has no assignee any more has no owner in the graph either: intake
+    // cleared the owner's name and lists no owner to look up (the second pass on W16-R30).
+    const unassigned =
+      args.owner === undefined && item.owner === undefined && item.ownerPerson !== undefined;
     const changes = {
       ...(requesterPerson === undefined || sameResolution(item.requesterPerson, requesterPerson)
         ? {}
         : { requesterPerson }),
-      ...(ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
-        ? {}
-        : { ownerPerson }),
+      ...(unassigned
+        ? { ownerPerson: undefined }
+        : ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
+          ? {}
+          : { ownerPerson }),
     };
     if (Object.keys(changes).length === 0) return false;
     await ctx.db.patch(item._id, changes);

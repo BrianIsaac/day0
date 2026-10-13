@@ -20,6 +20,7 @@ import {
 import {
   PROPOSAL_CHANGES,
   ProposalRefused,
+  ScopeNotAPhrase,
   proposalOf,
   type JudgedProposal,
 } from '../src/agent/reorientation-proposal';
@@ -77,6 +78,10 @@ const ALREADY_ON_CARD = 'This talk is already on the card. Reply to take it up a
 
 /** Said when an outcome names what the card does not hold, or an action it does not take. */
 const OUTCOME_REFUSED = 'The proposal named something this card cannot change. Ask again.';
+
+/** Said when an outcome's new scope for a relationship is a sentence, not a phrase (W16-R3). */
+const SCOPE_REFUSED =
+  'The proposal put a sentence where a short phrase of what the relationship covers goes. Ask again.';
 
 /** What a turn of the talk is: one of the one-to-one's three, or a finish. */
 const talkRequestValidator = v.union(
@@ -173,6 +178,39 @@ export async function closeTalkOfCard(
 ): Promise<void> {
   const talk = await talkOfCard(ctx, reorientationId);
   if (talk !== null) await closeTalk(ctx, talk);
+}
+
+/** The most talks of one employee a handover clears. */
+const HANDOVER_TALKS_READ = 1_000;
+
+/**
+ * Close every talk of an employee being handed over, with the old manager's words cleared (W16-R1,
+ * D-5 (a)): the turns, the reply being typed and the quotes an outcome kept, as the one-to-one's
+ * are (`voice.endOneToOnesForHandover`). The proposal an outcome put on its card stays with the
+ * card. Called in the handover's transaction (`transferAcceptance`).
+ *
+ * @param ctx - The handover's mutation context.
+ * @param agentId - The employee handed over.
+ * @param now - The handover's time.
+ */
+export async function clearTalksForHandover(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  now: number,
+): Promise<void> {
+  const talks = await ctx.db
+    .query('reorientationTalks')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .take(HANDOVER_TALKS_READ);
+  for (const talk of talks) {
+    await ctx.db.patch(talk._id, {
+      state: 'closed',
+      turns: [],
+      replyDraft: undefined,
+      endedAt: talk.endedAt ?? now,
+      ...(talk.outcome !== undefined ? { outcome: { ...talk.outcome, quotes: [] } } : {}),
+    });
+  }
 }
 
 /** The card's one talk, if it has one. */
@@ -327,7 +365,7 @@ async function endInProposal(ctx: MutationCtx, ending: Ending): Promise<string |
       reorientationId: card._id,
       reason: err.message,
     });
-    return OUTCOME_REFUSED;
+    return err instanceof ScopeNotAPhrase ? SCOPE_REFUSED : OUTCOME_REFUSED;
   }
   const now = Date.now();
   // A card being talked through is open again; a deferred one keeps its date (the second pass's M2).

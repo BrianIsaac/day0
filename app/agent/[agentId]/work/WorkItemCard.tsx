@@ -43,11 +43,14 @@ import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { usePreviousValue } from '../../../components/previous-value';
 import { StatusRegion } from '../../../components/StatusRegion';
-import { useChange } from '../../../components/use-change';
+import { type Change, useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
 import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
+import Link from 'next/link';
+import { heldByCardWords } from '@/agent/reorientation-words';
+import { employeeTabHref } from '../employee-tabs';
 import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
@@ -172,6 +175,12 @@ function retryDone(mode: RetryMode, title: string): string {
   }
 }
 
+/** The reorientation card that holds an item's plan: its id, for the link, and what changed. */
+export interface HoldingCard {
+  readonly reorientationId: string;
+  readonly summary: string;
+}
+
 /**
  * One work item in its state, as round two section 3.7 draws it: the head (the state in the
  * manager's words, where it came from, the ask), then what the state is about (a skip citing
@@ -188,6 +197,7 @@ export function WorkItemCard({
   managerKey,
   questions = [],
   conflicts = [],
+  heldByCard,
   corrections = [],
   agreements = [],
   autonomyChanges = [],
@@ -216,6 +226,8 @@ export function WorkItemCard({
   questions?: Doc<'managerQuestions'>[];
   /** The questions this item's plan's conflicts ask beside it and nobody answered (RM20 (a)). */
   conflicts?: readonly ConflictQuestionRow[];
+  /** The high-risk reorientation card that holds this item's plan from Day0's own approval (W-9). */
+  heldByCard?: HoldingCard;
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
   /** The employee's working agreements, for the line saying this plan applied one (W13-R29). */
@@ -268,6 +280,15 @@ export function WorkItemCard({
   ): void => {
     setAppliedTo(applies ? { state: item.state, since: item.waitingSince } : undefined);
     change.run(call, { done, refused });
+  };
+  // A conflict's answer is the card's change too: the question leaves the card once answered, so
+  // its outcome and focus stay with the card (W16-R26).
+  const answering: Change = {
+    ...change,
+    run: (call, words) => {
+      setAppliedTo(undefined);
+      change.run(call, words);
+    },
   };
   const outcomeOutlived =
     appliedTo !== undefined &&
@@ -573,8 +594,21 @@ export function WorkItemCard({
         />
       ) : null}
       {conflicts.map((question) => (
-        <ConflictQuestion key={question._id} question={question} />
+        <ConflictQuestion key={question._id} question={question} change={answering} />
       ))}
+      {item.state === 'plan-pending' && heldByCard !== undefined ? (
+        <ItemSection>
+          {/* The hold stops Day0's own approval only: the plan is still the manager's to approve. */}
+          <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+            {heldByCardWords(heldByCard.summary)}{' '}
+            <Link
+              href={`${employeeTabHref(item.agentId, 'needs-you')}/reorientation#card-${heldByCard.reorientationId}`}
+            >
+              Open the card
+            </Link>
+          </p>
+        </ItemSection>
+      ) : null}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm
           key={item._id}

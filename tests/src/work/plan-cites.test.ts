@@ -231,9 +231,29 @@ describe('isGoneCitesReason', (): void => {
       { title: 'Pipeline runbook', source: 'Handbook' },
     ]);
     expect(reason).toBe(
-      'Since you approved this plan, you confirmed that Finance escalation and Pipeline runbook disagree under “Thresholds”. Retry drafts the plan again.',
+      'Since you approved this plan, you confirmed that A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook) disagree under “Thresholds”. Retry drafts the plan again.',
     );
     expect(isGoneCitesReason(reason)).toBe(true);
+  });
+
+  it('names two same-titled pages by their sources, and keeps Retry’s sentence under the 300-character cut (W16-R12, W4a)', (): void => {
+    expect(
+      conflictConfirmedReason('Comment length', [
+        { title: 'Close comment limits', source: 'Revops folder' },
+        { title: 'Close comment limits', source: 'Policies folder' },
+      ]),
+    ).toBe(
+      'Since you approved this plan, you confirmed that A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder) disagree under “Comment length”. Retry drafts the plan again.',
+    );
+    const long = conflictConfirmedReason('A heading '.repeat(12).trim(), [
+      { title: 'A very long page title '.repeat(6).trim(), source: 'Revops folder' },
+      { title: 'A very long page title '.repeat(6).trim(), source: 'Policies folder' },
+    ]);
+    expect(long.length).toBeLessThanOrEqual(300);
+    expect(long.endsWith('Retry drafts the plan again.')).toBe(true);
+    expect(long).toContain('(Revops folder)');
+    expect(long).toContain('(Policies folder)');
+    expect(isGoneCitesReason(long)).toBe(true);
   });
 
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
