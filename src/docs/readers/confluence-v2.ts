@@ -214,32 +214,6 @@ export function goneSinceListed(listed: ListedConfluencePage): UnreadPage {
   };
 }
 
-/**
- * A listing window whose answer fits what one answer may hold (W15-R11).
- *
- * A window of pages with their bodies can be past the bound though each page alone is not, and
- * a sync that failed there would meet the same window every time. So a window too large is asked
- * for again at half its pages, down to one; a single page still too large is listed without its
- * body, to be named unread, and the walk goes on past it.
- *
- * @param limit - The most pages the batch takes.
- * @param list - Asks for a window of at most this many pages, with or without their bodies.
- * @returns The window, and whether it is one page listed without the body it was too large with.
- */
-export async function listingThatFits<Listed>(
-  limit: number,
-  list: (pages: number, bodies: boolean) => Promise<Listed>,
-): Promise<{ readonly listed: Listed; readonly oversize: boolean }> {
-  for (let pages = limit; ; pages = Math.floor(pages / 2)) {
-    try {
-      return { listed: await list(pages, true), oversize: false };
-    } catch (error) {
-      if (!(error instanceof AnswerTooLargeError)) throw error;
-      if (pages <= 1) return { listed: await list(1, false), oversize: true };
-    }
-  }
-}
-
 /** One page of the listing, as the batch needs it. */
 interface ListedPages {
   readonly results: readonly unknown[];

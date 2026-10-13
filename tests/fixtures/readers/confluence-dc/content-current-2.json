@@ -73,22 +73,6 @@
         "ancestors": "",
         "descendants": "/rest/api/content/4587524/descendant",
         "space": "/rest/api/space/OPS"
-      },
-      "body": {
-        "storage": {
-          "value": "<p>每周一上午刷新管道看板。</p>",
-          "representation": "storage",
-          "_expandable": {
-            "content": "/rest/api/content/4587524"
-          }
-        },
-        "_expandable": {
-          "editor": "",
-          "view": "",
-          "export_view": "",
-          "styled_view": "",
-          "anonymous_export_view": ""
-        }
       }
     }
   ],
@@ -96,7 +80,7 @@
   "limit": 2,
   "size": 2,
   "_links": {
-    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=current&expand=body.storage,version",
+    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=current&expand=version",
     "base": "https://wiki.acme.corp/confluence",
     "context": "/confluence"
   }

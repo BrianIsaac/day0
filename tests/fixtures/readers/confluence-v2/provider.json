@@ -2,7 +2,7 @@
   "reference": [
     {
       "url": "https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json",
-      "read": "2026-10-10 (info.version 2.0.0: GET /spaces, GET /spaces/{id}/pages, PageBulk, Version, BodyBulk, MultiEntityLinks, the Link header); re-read 2026-10-13 for GET /pages: id (\"Filter the results based on page ids\", at most 250), body-format optional, limit default 25 and maximum 250"
+      "read": "2026-10-10 (info.version 2.0.0: GET /spaces, GET /spaces/{id}/pages, PageBulk, Version, BodyBulk, MultiEntityLinks, the Link header); GET /pages as the wave 17 plan read it at this address on 2026-10-13 (its section 4.7; this unit called no vendor host): id (\"Filter the results based on page ids\", at most 250), body-format optional, limit default 25 and maximum 250"
     },
     {
       "url": "https://support.atlassian.com/user-management/docs/manage-api-tokens-for-service-accounts/",

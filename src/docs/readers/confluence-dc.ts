@@ -3,12 +3,17 @@
  * server, read through its REST API as Markdown (decision X-2).
  *
  * It reads with a personal access token sent as a bearer (Confluence 7.9 and later), and walks
- * `GET /rest/api/content?spaceKey=&type=page&status=current&expand=body.storage,version` by
- * `start` and `limit` to the listing's end, each body converted from the storage format as the
- * Cloud reader's is. Then it asks once more with `status=archived`: Data Center's reference
- * documents `current`, `trashed` and `any`, so whether a server lists its archived pages is
- * unverified (V15-1b); one that does has them marked archived, and one that refuses the status
- * is logged and its current pages stand.
+ * `GET /rest/api/content?spaceKey=&type=page&status=current&expand=version` by `start` and
+ * `limit` to the listing's end, without the pages' bodies. Then it asks once more with
+ * `status=archived`: Data Center's reference documents `current`, `trashed` and `any`, so whether
+ * a server lists its archived pages is unverified (V15-1b); one that does has them marked
+ * archived, and one that refuses the status is logged and its current pages stand.
+ *
+ * A listed page stored at the version, the title and the address its listing gives is kept with
+ * no body asked for (the reader contract by revision, wave 17), so an unchanged space costs its
+ * listings' requests alone. A page that changed is read by its id
+ * (`GET /rest/api/content/{id}?expand=body.storage,version`, under the status it was listed
+ * with), its body converted from the storage format as the Cloud reader's is.
  *
  * The server is the customer's, so its address is held to the page rules before any request
  * (`page-address.ts`): https on a public host, or a host `DAY0_PRIVATE_HOSTS` lists, dialled at
@@ -25,13 +30,22 @@ import {
 import type { DocPage, DocSourceRecord } from '../types';
 import {
   ListingChangedError,
+  storedMarks,
   type DocumentationReader,
+  type KeptPage,
   type ReadPageBatch,
+  type StoredRevisions,
   type UnreadPage,
 } from './batch';
-import { confluencePage, listingThatFits } from './confluence-v2';
+import {
+  confluencePage,
+  goneSinceListed,
+  keptConfluencePage,
+  type ListedConfluencePage,
+} from './confluence-v2';
 import { checkPageAddress, pinnedPageFetch } from './page-address';
 import {
+  AnswerTooLargeError,
   field,
   ProviderHttp,
   providerBody,
@@ -44,7 +58,7 @@ import {
 /** The provider's name in a sentence. */
 const PROVIDER = 'Confluence';
 
-/** The largest listing answer read: a batch of pages with their bodies. */
+/** The largest answer read: a listing page, or one page with its body. */
 const MAX_LISTING_BYTES = 48 * 1024 * 1024;
 
 /** The two walks of a space, in order: its current pages, then its archived ones. */
@@ -86,7 +100,8 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
    * @param source - The linked Confluence Data Center source.
    * @param secret - The personal access token.
    * @param cursor - Where the previous batch left the walk.
-   * @param limit - The most pages this batch takes.
+   * @param limit - The most pages this batch lists.
+   * @param stored - What the sync stored each listed page with; none reads every page.
    * @throws Error when the token, the address or the space is refused, or the server stays
    *   limited past the waits; PageAddressRefusal for an address Day0 does not read from;
    *   ListingChangedError for a cursor that is not this reader's.
@@ -96,6 +111,7 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
+    stored?: StoredRevisions,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -109,21 +125,31 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     if (resumed === undefined) await this.checkSpace(http, locator, secret);
     const phase: Phase = resumed?.[1] === 'archived' ? 'archived' : 'current';
     const start = Number(resumed?.[2] ?? 0);
-    const { listed, oversize } = await listingThatFits(
-      limit,
-      async (count: number, bodies: boolean): Promise<ListedPages> =>
-        await this.listing(http, locator, secret, { phase, start, limit: count, bodies }),
+    const session: Session = { http, locator, token: secret };
+    const listed = await this.listing(session, { phase, start, limit });
+    const entries = listed.results.map((result) => listedPage(result, listed.base));
+    // Asked once a listing page, before any body: what each listed page was stored with.
+    const marks = await storedMarks(
+      stored,
+      entries.map((entry) => entry.id),
     );
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
-    for (const result of listed.results) {
-      const read = this.page(source, result, listed.base, oversize);
+    const kept: KeptPage[] = [];
+    for (const entry of entries) {
+      const keep = keptConfluencePage(entry, marks.get(entry.id));
+      if (keep !== undefined) {
+        kept.push(keep);
+        continue;
+      }
+      const read = await this.page(session, source, entry, { phase, base: listed.base });
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
     return {
       pages,
       unread,
+      ...(kept.length > 0 ? { kept } : {}),
       ...(listed.refused === true ? { archivedWalkRefused: true } : {}),
       nextCursor: nextCursor(phase, start, listed),
     };
@@ -151,23 +177,24 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     accepted(answer, body);
   }
 
-  /** One page of one walk, with the pages' bodies unless it is asked for without. */
+  /**
+   * One page of one walk, without the pages' bodies: each entry's version, title, status and
+   * address are what a page is kept by.
+   */
   private async listing(
-    http: ProviderHttp,
-    locator: ConfluenceDataCenterLocator,
-    token: string,
+    session: Session,
     at: {
       readonly phase: Phase;
       readonly start: number;
       readonly limit: number;
-      readonly bodies: boolean;
     },
   ): Promise<ListedPages> {
+    const { http, locator, token } = session;
     const url = new URL(`${locator.base}/rest/api/content`);
     url.searchParams.set('spaceKey', locator.spaceKey);
     url.searchParams.set('type', 'page');
     url.searchParams.set('status', at.phase);
-    url.searchParams.set('expand', at.bodies ? 'body.storage,version' : 'version');
+    url.searchParams.set('expand', 'version');
     url.searchParams.set('start', String(at.start));
     url.searchParams.set('limit', String(at.limit));
     const answer = await http.send(url, { ...this.request(token), maxBytes: MAX_LISTING_BYTES });
@@ -211,30 +238,40 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     };
   }
 
-  /** One listed page as Markdown, or why it is not read. */
-  private page(
+  /**
+   * One listed page that changed, read by its id as Markdown, or why it is not read.
+   *
+   * @param at - The walk that listed it, whose status it is found under, and the listing's base
+   *   address for a page whose own answer names none.
+   */
+  private async page(
+    session: Session,
     source: DocSourceRecord,
-    result: unknown,
-    base: string | undefined,
-    oversize: boolean,
-  ): DocPage | UnreadPage {
-    const id = textField(result, 'id');
-    if (id === undefined) throw new Error('Confluence listed a page with no id.');
-    const version = field(result, 'version');
-    const webui = textField(field(result, '_links'), 'webui');
+    listed: ListedConfluencePage,
+    at: { readonly phase: Phase; readonly base: string | undefined },
+  ): Promise<DocPage | UnreadPage> {
+    const { http, locator, token } = session;
+    const now = this.options.now ?? Date.now;
+    const url = new URL(`${locator.base}/rest/api/content/${encodeURIComponent(listed.id)}`);
+    url.searchParams.set('expand', 'body.storage,version');
+    // The reference's default is `current`: an archived page is found under its own status.
+    url.searchParams.set('status', at.phase);
+    let answer: ProviderAnswer;
+    try {
+      answer = await http.send(url, { ...this.request(token), maxBytes: MAX_LISTING_BYTES });
+    } catch (error) {
+      // A page past what one answer may hold is that page's: the rest of the walk is read (W15-R11).
+      if (!(error instanceof AnswerTooLargeError)) throw error;
+      return confluencePage(source, { ...listed, oversize: true }, now);
+    }
+    const body = this.ownBody(answer, locator);
+    if (answer.status === 404) return goneSinceListed(listed);
+    const page = accepted(answer, body);
+    // As its own answer has the page, which is the body's own version.
     return confluencePage(
       source,
-      {
-        id,
-        title: textField(result, 'title'),
-        status: textField(result, 'status'),
-        storage: textField(field(field(result, 'body'), 'storage'), 'value'),
-        oversize,
-        versionNumber: field(version, 'number'),
-        editedAt: textField(version, 'when'),
-        url: base?.startsWith('https://') && webui !== undefined ? `${base}${webui}` : undefined,
-      },
-      this.options.now ?? Date.now,
+      listedPage(page, textField(field(page, '_links'), 'base') ?? at.base),
+      now,
     );
   }
 
@@ -277,6 +314,35 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     }
     return body;
   }
+}
+
+/** One connection to the server for a batch. */
+interface Session {
+  readonly http: ProviderHttp;
+  readonly locator: ConfluenceDataCenterLocator;
+  readonly token: string;
+}
+
+/**
+ * One page as the server answers it, in a listing or by id: what the readers read of it.
+ *
+ * @param base - The server's address the answer names, which a page's own address is under.
+ * @throws Error for a page with no id.
+ */
+function listedPage(result: unknown, base: string | undefined): ListedConfluencePage {
+  const id = textField(result, 'id');
+  if (id === undefined) throw new Error('Confluence listed a page with no id.');
+  const version = field(result, 'version');
+  const webui = textField(field(result, '_links'), 'webui');
+  return {
+    id,
+    title: textField(result, 'title'),
+    status: textField(result, 'status'),
+    storage: textField(field(field(result, 'body'), 'storage'), 'value'),
+    versionNumber: field(version, 'number'),
+    editedAt: textField(version, 'when'),
+    url: base?.startsWith('https://') && webui !== undefined ? `${base}${webui}` : undefined,
+  };
 }
 
 /**
