@@ -1116,7 +1116,8 @@ interface SettledClaims {
  * acknowledgement, a duplicate-reply notice, the edit that closes a decided request (12-M writes
  * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
  * edit record the failure and are not sent again, since the message may have landed. A per-run
- * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
+ * note is left to its own switch (`work.recoverUnsentManagerNote`) and is not among the notes
+ * read, so it cannot stand in a digest's note's place. Each read is the open claims
  * older than the lease on its index, so a claim with a result is never read, and each is taken
  * in its turn and no larger than the transaction's room, so a kind is read only while there is
  * room to settle it (W16-R31); a work item, which carries its run's output, is read no more at a
@@ -1176,16 +1177,16 @@ async function settleLapsedManagerClaims(
           .eq('discardedAt', undefined)
           .gt('claimedAt', 0)
           .lt('claimedAt', before),
-      ),
+      )
+      // A digest's notes only: a per-run note is its own switch's, and fifty of them at the head
+      // of the index, read with the rest, were the whole read and hid the digest's behind them.
+      .filter((q) => q.neq(q.field('digestId'), undefined)),
     LEASE_BATCH,
   );
-  const released = await settle(
-    notes.filter((note) => note.digestId !== undefined),
-    async (note) => {
-      await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
-      return getDocumentSize(note);
-    },
-  );
+  const released = await settle(notes, async (note) => {
+    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+    return getDocumentSize(note);
+  });
   if (released.length > 0) {
     const payload = { noteIds: released.map((note) => note._id), reason: failure };
     await appendEvent(ctx, {
@@ -1294,8 +1295,8 @@ export const SETTLE_AGENTS_PER_SWEEP = 50;
  * schedules the next: the same page again when its room ran out, or when a read came back full
  * and something was settled, since a settled claim is no longer read and the page's rest is found
  * there; the next page from where it stopped otherwise (W16-R31). A pass of a page that settles
- * nothing schedules no second pass of it, so the per-run notes this sweep reads and leaves do not
- * keep it running.
+ * nothing schedules no second pass of it, so a read that comes back full of claims it leaves
+ * does not keep it running.
  *
  * @param cursor - Where the previous page stopped; absent, the sweep starts at the first employee.
  * @returns How many claims this transaction settled.

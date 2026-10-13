@@ -1715,6 +1715,35 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     expect(untouched.replaced?.editFailure).toBeUndefined();
   });
 
+  it('releases a digest’s note that stands behind a window of per-run notes the lease leaves (the continuation’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    // Sixty per-run notes claimed before the digest's: they head the open claims' index, and the
+    // lease leaves each to its own switch. Read fifty at a time with the digest's notes, they
+    // were the whole read at every pass, and the digest's note behind them was never released.
+    await harness.run(async (ctx) => {
+      for (let note = 0; note < 60; note += 1) {
+        await ctx.db.insert('managerNotes', {
+          agentId: seeded.agentId,
+          workItemId: seeded.workItemId,
+          kind: 'landed',
+          text: 'Landed.',
+          createdAt: 1,
+          claimedAt: Date.now() - LAPSED - 60_000 - note,
+        });
+      }
+    });
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    const released = await harness.run(async (ctx) => await ctx.db.get(seeded.digestNote));
+    expect(released).toMatchObject({ failure: MANAGER_CLAIM_LAPSED_REASON });
+    expect(released?.claimedAt).toBeUndefined();
+    // The per-run notes are as they were.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(seeded.perRunNote)))?.failure,
+    ).toBeUndefined();
+  });
+
   it('runs as a job of its own, apart from the stalled-step sweep', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
