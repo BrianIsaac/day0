@@ -662,6 +662,45 @@ describe('unchangedPage and a split that never landed (second pass)', (): void =
   });
 });
 
+describe('unchangedPage and a page with no block (W16-R34)', (): void => {
+  it('does not keep a page whose text holds blocks and whose rows hold none, once its source is measured: it is stored and split again', async (): Promise<void> => {
+    // A v0.19.0 page whose split failed keeps the hash its store wrote. While its source is owed
+    // the remeasure it is checked block for block; after, one block's status vouched for it, and
+    // a page with no block passed that check for good.
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbooks/refresh.md',
+        title: 'Refresh',
+        markdown: RUNBOOK,
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'headings.md',
+        title: 'Headings',
+        markdown: '# Only a heading',
+        updatedAt: 1,
+        contentHash: 'a'.repeat(32),
+      });
+    });
+    const ask = async (ref: string) =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId,
+        ref,
+        contentHash: 'a'.repeat(32),
+      });
+    expect(await ask('runbooks/refresh.md')).toBeNull();
+    // A page with no text under its headings has no block to miss, and is kept.
+    expect(await ask('headings.md')).toMatchObject({ title: 'Headings' });
+    await split(harness, { sourceId, runId }, RUNBOOK);
+    expect(await ask('runbooks/refresh.md')).toMatchObject({ title: 'Refresh' });
+  });
+});
+
 describe('unchangedPage and the split a stored hash vouches for (W15-R25)', (): void => {
   /** A source with a sync running, which `upsertPage` writes for. */
   async function syncing(harness: TestConvex<typeof schema>) {

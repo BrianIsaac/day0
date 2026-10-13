@@ -553,18 +553,37 @@ async function blocksAreThePages(
 }
 
 /**
- * Whether a page's first stored block holds the page's status, as every block does once the
- * status is copied onto them in the transaction that writes it: one row read.
+ * Whether a stored page's split has landed: it holds a block, or its text has none to hold. Read
+ * by what keeps a page as stored without reading it block for block (W16-R34).
  */
-async function firstBlockHasPageStatus(
+export async function splitLanded(
   ctx: QueryCtx,
-  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'status'>,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'markdown'>,
 ): Promise<boolean> {
   const first = await ctx.db
     .query('docBlocks')
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
     .first();
-  return first === null || (first.status ?? 'active') === pageStatusOf(page);
+  return first !== null || splitPage(page.markdown).length === 0;
+}
+
+/**
+ * Whether a page's first stored block holds the page's status, as every block does once the
+ * status is copied onto them in the transaction that writes it: one row read. A page with no
+ * block passes only when its text has none to hold (W16-R34: no block at all passed, so a page
+ * whose split never landed was kept by its hash with no blocks for good); it is split to tell,
+ * which a page with blocks never is.
+ */
+async function firstBlockHasPageStatus(
+  ctx: QueryCtx,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'status' | 'markdown'>,
+): Promise<boolean> {
+  const first = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
+    .first();
+  if (first === null) return splitPage(page.markdown).length === 0;
+  return (first.status ?? 'active') === pageStatusOf(page);
 }
 
 /**
