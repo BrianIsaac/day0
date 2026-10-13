@@ -226,7 +226,7 @@ export function WorkItemCard({
   employeeName = 'the employee',
   managerKey,
   questions = [],
-  conflicts = [],
+  conflicts,
   heldByCard,
   corrections = [],
   agreements = [],
@@ -254,7 +254,11 @@ export function WorkItemCard({
   managerKey?: string;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
-  /** The questions this item's plan's conflicts ask beside it and nobody answered (RM20 (a)). */
+  /**
+   * The questions this item's plan's conflicts ask beside it (RM20 (a)): the open ones, drawn with
+   * their answers, and the settled ones a stopped run's words read (17-C). Undefined while they
+   * load, where a stop reads its question as still standing.
+   */
   conflicts?: readonly ConflictQuestionRow[];
   /** The high-risk reorientation card that holds this item's plan from Day0's own approval (W-9). */
   heldByCard?: HoldingCard;
@@ -436,7 +440,7 @@ export function WorkItemCard({
       : 'working';
   const stopReason =
     item.state === 'failed' && !rejection && failed.length === 0
-      ? failedItemReason(item)
+      ? failedItemReason(item, conflicts)
       : undefined;
   // What a rejected run held and never sent: the ledger's held rows when the
   // run applied some rows first, else the held actions themselves.
@@ -637,9 +641,11 @@ export function WorkItemCard({
           agreements={agreements}
         />
       ) : null}
-      {conflicts.map((question) => (
-        <ConflictQuestion key={question._id} question={question} change={answering} />
-      ))}
+      {(conflicts ?? [])
+        .filter((question) => question.settled === undefined)
+        .map((question) => (
+          <ConflictQuestion key={question._id} question={question} change={answering} />
+        ))}
       {item.state === 'plan-pending' && heldByCard !== undefined ? (
         <ItemSection>
           {/* The hold stops Day0's own approval only: the plan is still the manager's to approve. */}

@@ -1676,11 +1676,10 @@ export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
 
 /**
  * A `question` notice as its event records it (wave 17, 17-K for 17-C): the conflict's question
- * posted in the thread of a request already delivered, with the question it asks. Declared, not
- * yet joined to an event type: the contract's test fails a payload no writer writes and the
- * record's maps take words for every kind, so 17-C joins it in the commit that queues, sends and
- * renders the notice (to {@link WorkDecisionAcknowledgingPayload} as a second member, or to a
- * type of its own).
+ * posted in the thread of a request already delivered, with the question it asks. The second
+ * member of `work.decision-acknowledging`'s payload since 17-C queues, sends and renders the
+ * notice: the event is the claim of one message in the manager's DM before its provider call,
+ * whichever kind of notice the message is.
  */
 export interface DecisionQuestionNoticePayload extends DecisionNamed {
   /** The notice's replay key, as `managerDecisionNotices.messageTs` holds it. */
@@ -2207,7 +2206,7 @@ export interface EventPayloads {
   'work.decision-notifying': WorkDecisionNotifyingPayload;
   'work.decision-request-closing': WorkDecisionRequestClosingPayload;
   'work.decision-request-replacing': WorkDecisionRequestReplacingPayload;
-  'work.decision-acknowledging': WorkDecisionAcknowledgingPayload;
+  'work.decision-acknowledging': WorkDecisionAcknowledgingPayload | DecisionQuestionNoticePayload;
   'work.decision-ignored': WorkDecisionIgnoredPayload;
   'work.decision-duplicate': WorkDecisionDuplicatePayload;
   'work.decision-batch-issued': WorkDecisionBatchIssuedPayload;

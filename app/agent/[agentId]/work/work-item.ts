@@ -16,7 +16,12 @@ import {
   GATE_REFUSAL_STOP,
   managerStopNote,
 } from '@/work/stop';
-import { isConflictQuestion, isOpenQuestionStop } from '@/work/obligations';
+import {
+  conflictRelationsOf,
+  isConflictQuestion,
+  isOpenQuestionStop,
+  ownQuestionOf,
+} from '@/work/obligations';
 import {
   INTERRUPTED_APPLY_REASON,
   landedRowCount,
@@ -359,13 +364,48 @@ export function heldQuestionOf(
 ): string | undefined {
   if (item.state !== 'failed' || !item.skipReason || !isStopped(item.skipReason)) return undefined;
   if (!isOpenQuestionStop(stopDetail(item.skipReason))) return undefined;
-  // A documentation conflict is answered on its question above, never by a note (W16-R8).
-  if (isConflictQuestion(item.output)) return undefined;
-  const output = item.output as
-    | { openQuestion?: { question?: unknown }; initial?: { openQuestion?: { question?: unknown } } }
-    | undefined;
-  const question = output?.openQuestion?.question ?? output?.initial?.openQuestion?.question;
-  return typeof question === 'string' && question.trim() !== '' ? question : undefined;
+  // A documentation conflict is answered on its question above, never by a note (W16-R8): the
+  // note answers the executor's own question, which may stand beside a conflict's (17-C).
+  return ownQuestionOf(item.output);
+}
+
+/** A conflict's question as a stopped run's words read it (`managerQuestions.conflictsForAgent`). */
+export interface StopQuestion {
+  readonly relationId: string;
+  /** The two pages its answers name, while its conflict stands and its buttons are drawn. */
+  readonly pages: unknown;
+  /** How it stopped waiting, once it has. */
+  readonly settled?: { readonly answer?: string; readonly closed?: string };
+}
+
+/**
+ * What a run that stopped on a conflict's question says once that question no longer waits
+ * (17-C; section 7, flagged): it was answered, with the answer, or closed because the two pages no
+ * longer disagree, and Retry runs it. Said in place of "answer the question above", which then
+ * names a question with nothing to press.
+ */
+export function settledQuestionWords(
+  settled: StopQuestion['settled'],
+  unconfirmed: boolean,
+): string {
+  const retry = unconfirmed ? 'Confirm what landed below, then Retry runs it.' : 'Retry runs it.';
+  if (settled?.answer !== undefined) {
+    return `The question this run waited on is answered (${settled.answer}). ${retry}`;
+  }
+  return settled?.closed !== undefined
+    ? `The question this run waited on is closed: the two pages no longer disagree. ${retry}`
+    : `The question this run waited on is no longer open. ${retry}`;
+}
+
+/**
+ * What a run that stopped on a conflict's question says when that question is past the ones the
+ * page reads (17-C's second pass): whether it still stands is not known here, so the card neither
+ * sends the manager to buttons it does not draw nor says the question is settled; the conflict's
+ * own card on the Documentation tab decides it either way.
+ */
+export function unreadQuestionWords(detail: string, unconfirmed: boolean): string {
+  const first = unconfirmed ? 'confirm what landed below; ' : '';
+  return `stopped on a question about two pages that disagree, and the writes that wait on it were never sent; ${first}the question is past the ones this page reads, so if it is still open say which page is right on the Documentation tab, then Retry: ${detail}`;
 }
 
 /** What Retry does on a skip no rule waives: the item is evaluated again from the start. */
@@ -421,18 +461,25 @@ export const TICKET_REREAD_STOP = 'withheld before the first write: ';
  * DM included. Where the two disagree the card follows the gate, because the
  * gate is what the manager meets next.
  */
-export function failedItemReason(item: {
-  skipReason?: string;
-  managerFeedback?: { reason: string };
-  output?: {
-    refusedClosing?: unknown;
-    openQuestion?: unknown;
-    actions?: unknown;
-    applied?: unknown;
-    initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
-  } | null;
-  providerReconciliation?: { entries: readonly ReconciliationEntry[] };
-}): string | undefined {
+export function failedItemReason(
+  item: {
+    skipReason?: string;
+    managerFeedback?: { reason: string };
+    output?: {
+      refusedClosing?: unknown;
+      openQuestion?: unknown;
+      actions?: unknown;
+      applied?: unknown;
+      initial?: { openQuestion?: unknown; actions?: unknown; applied?: unknown } | null;
+    } | null;
+    providerReconciliation?: { entries: readonly ReconciliationEntry[] };
+  },
+  /**
+   * The item's conflict questions as the card has them, newest first; undefined while they are
+   * not known, where a conflict's question is taken to stand as the run left it.
+   */
+  questions?: readonly StopQuestion[],
+): string | undefined {
   // The engine's own reason for an interrupted apply, said to the manager plainly (W12-R9, bed).
   if (item.skipReason === INTERRUPTED_APPLY_REASON) {
     return providerReconciliationEntries(item.output).length > 0
@@ -476,9 +523,42 @@ export function failedItemReason(item: {
     const questionOpen = Boolean(item.output?.openQuestion || item.output?.initial?.openQuestion);
     // The run asked its question and withheld the writes that wait on the answer.
     if (questionOpen && isOpenQuestionStop(detail) && isConflictQuestion(item.output)) {
-      return unconfirmed
-        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, answer the question above, then Retry: ${detail}`
-        : `stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry: ${detail}`;
+      // Whether each conflict's question still stands, with its buttons drawn above (17-C): the
+      // newest question about each relation the stop names.
+      const asked = conflictRelationsOf(item.output).map((relationId) =>
+        questions?.find((question) => question.relationId === relationId),
+      );
+      const stands =
+        questions === undefined ||
+        asked.some(
+          (question) =>
+            question !== undefined && question.settled === undefined && question.pages !== null,
+        );
+      const own = ownQuestionOf(item.output) !== undefined;
+      if (stands && own) {
+        return unconfirmed
+          ? `stopped with two questions open for you, and the writes that wait on them were never sent; confirm what landed below, answer the question above, then answer the other with Answer and retry: ${detail}`
+          : `stopped with two questions open for you, and the writes that wait on them were never sent; answer the question above, then answer the other below with Answer and retry: ${detail}`;
+      }
+      if (stands) {
+        return unconfirmed
+          ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, answer the question above, then Retry: ${detail}`
+          : `stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry: ${detail}`;
+      }
+      // None of the stop's questions is among those the page read (the card reads the employee's
+      // newest): nothing is known of it, so nothing is said of it but where it is decided.
+      if (!own && asked.every((question) => question === undefined)) {
+        return unreadQuestionWords(detail, unconfirmed);
+      }
+      // Every conflict's question is settled: with none of the executor's own beside it, Retry
+      // runs it; with one, the words below ask for that answer alone.
+      if (!own) {
+        return settledQuestionWords(
+          asked.find((question) => question?.settled?.answer !== undefined)?.settled ??
+            asked.find((question) => question?.settled !== undefined)?.settled,
+          unconfirmed,
+        );
+      }
     }
     if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed

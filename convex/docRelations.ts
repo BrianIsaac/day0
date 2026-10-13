@@ -7,6 +7,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
@@ -32,6 +33,7 @@ import {
   type RelationDecision,
 } from './docConflicts';
 import { askConflictQuestion } from './reorientation';
+import { closeQuestionsOnPage } from './questionCloses';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -51,6 +53,7 @@ import {
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
 import { conflictChoiceWords } from '../src/agent/reorientation-words';
+import { isOpenQuestion } from '../src/agent/manager-questions';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -494,7 +497,7 @@ export async function decideRelationInTransaction(
   // A conflict confirmed asks which page is right beside every drafted plan citing either page
   // (section 3's conflict row: a question, never a card; D-4 (c)); a conflict settled here answers
   // the questions asked about it, so nothing waits on them (the second pass's B1).
-  if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (decision === 'disagree') await scheduleConfirmationAsks(ctx, relation);
   if (relation.kind === 'possible_conflict') {
     // Each page by its letter, title and source, as the question named them (W16-R12).
     const pages = [named(from, fromSource), named(to, toSource)] as const;
@@ -507,8 +510,14 @@ export async function decideRelationInTransaction(
             ? conflictChoiceWords('both', pages)
             : undefined;
     if (settled !== undefined) {
-      await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
+      await answerConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
     }
+  }
+  // Naming one page right takes the other out of use, so every other conflict that page is an end
+  // of stops standing with nobody having answered it: its questions are closed, not left open on
+  // the plans that asked them (17-C). After the answers above, which this relation's own keep.
+  if (decision === 'from-is-right' || decision === 'to-is-right') {
+    await closeQuestionsOnPage(ctx, decision === 'from-is-right' ? to : from, now);
   }
   if (decision !== 'supersedes') return null;
   const older = (await ctx.db.get(to._id)) ?? to;
@@ -520,9 +529,10 @@ const QUESTIONS_SETTLED_READ = 500;
 
 /**
  * Answer every open question about a conflict the manager settled, in the card's words and by the
- * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O).
+ * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O). A
+ * question closed without an answer stays closed: it was not asked of the plan that stands (17-C).
  */
-async function closeConflictQuestions(
+async function answerConflictQuestions(
   ctx: MutationCtx,
   relationId: Id<'docRelations'>,
   answer: { readonly text: string; readonly via: 'dashboard' | 'slack' },
@@ -533,53 +543,99 @@ async function closeConflictQuestions(
     .withIndex('by_relation', (q) => q.eq('relationId', relationId))
     .take(QUESTIONS_SETTLED_READ);
   for (const question of questions) {
-    if (question.answer !== undefined) continue;
+    if (!isOpenQuestion(question)) continue;
     await ctx.db.patch(question._id, {
       answer: { text: answer.text, answeredAt: now, via: answer.via },
     });
   }
 }
 
-/** The drafted plans of one reader a confirmation looks through for the conflict's question. */
-const PENDING_PLANS_READ = 100;
+/** The drafted plans one step of a confirmation's asking looks through. */
+const ASK_PLANS_PAGE = 10;
 
 /**
- * Ask a confirmed conflict's question beside each reader's drafted plan that rests on it, read as
- * the plan's own decision reads it (`conflictsUnderPlan`): by its cites, or where it cites nothing
- * by its kept selection (W16-R9). Matching the plans that cite either page missed a plan that cites
- * nothing, which was then asked nothing and stopped after its approval; and it asked a plan citing
- * another passage of either page, which its decision does not.
+ * Start asking a confirmed conflict's question beside the drafted plans that rest on it, out of
+ * the transaction that confirmed it (17-C; the pre-tag's second pass: the confirmation read a
+ * hundred drafted plans a reader, each through `conflictsUnderPlan`, inside `decide`). Schedules
+ * the first step for the employees that read either page; with none, nothing.
  */
-async function askAtConfirmation(
+async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
-  now: number,
 ): Promise<void> {
-  const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
-  if (standing === undefined) return;
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
     ctx.db.get(relation.to.sourceId),
   ]);
   if (fromSource === null || toSource === null) return;
-  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-    const drafted = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
-      .take(PENDING_PLANS_READ);
-    for (const row of drafted) {
+  const readers = (await readersOfEither(ctx, [fromSource, toSource])).map((agent) => agent._id);
+  if (readers.length === 0) return;
+  await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+    relationId: relation._id,
+    readers,
+    cursor: null,
+  });
+}
+
+/**
+ * One step of asking a confirmed conflict's question beside the drafted plans that rest on it:
+ * a page of the first reader's drafted plans, each read as its own decision reads it
+ * (`conflictsUnderPlan`): by its cites, or where it cites nothing by its kept selection (W16-R9).
+ * Matching the plans that cite either page missed a plan that cites nothing, which was then asked
+ * nothing and stopped after its approval; and it asked a plan citing another passage of either
+ * page, which its decision does not. Internal; scheduled by `decide` and by itself until every
+ * reader's drafted plans are read. Writes the questions, their events and, for a plan whose
+ * request is already out, the notice for its thread; nothing once the conflict no longer stands.
+ */
+export const askConfirmed = internalMutation({
+  args: {
+    relationId: v.id('docRelations'),
+    /** The employees whose drafted plans are still to be read, the first being read now. */
+    readers: v.array(v.id('agents')),
+    /** Where in the first reader's drafted plans this step goes on from. */
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<{ asked: number }> => {
+    const [reader, ...rest] = args.readers;
+    const relation = await ctx.db.get(args.relationId);
+    if (reader === undefined || (await standingConflictOf(ctx, relation)) === undefined) {
+      return { asked: 0 };
+    }
+    const agent = await ctx.db.get(reader);
+    const drafted =
+      agent === null
+        ? { page: [], isDone: true, continueCursor: '' }
+        : await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
+            .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
+    const now = Date.now();
+    let asked = 0;
+    for (const row of drafted.page) {
+      if (agent === null) break;
       const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
-        (under) => under.relationId === relation._id,
+        (under) => under.relationId === args.relationId,
       );
       if (conflict === undefined) continue;
-      await askConflictQuestion(ctx, {
+      const questionId = await askConflictQuestion(ctx, {
         row,
-        conflict: { ...conflict, relationId: relation._id },
+        conflict: { ...conflict, relationId: args.relationId },
         now,
       });
+      if (questionId !== null) asked += 1;
     }
-  }
-}
+    const next = drafted.isDone
+      ? { readers: rest, cursor: null }
+      : { readers: args.readers, cursor: drafted.continueCursor };
+    if (next.readers.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+        relationId: args.relationId,
+        ...next,
+      });
+    }
+    return { asked };
+  },
+});
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
 type CardPage = NamedPage & {

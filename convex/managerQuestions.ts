@@ -1,5 +1,6 @@
 import { ConvexError, v } from 'convex/values';
 import {
+  internalMutation,
   internalQuery,
   mutation,
   query,
@@ -22,20 +23,29 @@ import {
   standingConflictOf,
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
+import type { RequestQuestion } from '../src/work/manager-channel';
+import { slackEscaped } from '../src/surfaces/slack-markup';
+import { providerTsToMs } from '../src/work/provider-ts';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
 import {
   CONFLICT_CHOICES,
+  CONFLICT_QUESTION_CLOSED,
   conflictChoiceWords,
+  conflictQuestionText,
   type ConflictChoice,
 } from '../src/agent/reorientation-words';
 import type { CharterAnswerVia } from '../src/events/contract';
 import type { Charter } from '../src/agent/charter';
 import {
+  isOpenQuestion,
   managerOpenQuestions,
   questionKey,
   sharedContentWords,
+  type ManagerQuestionCloseReason,
 } from '../src/agent/manager-questions';
+import { heldSurfaceNames } from './reorientation';
+import { closeQuestionsOfRelation } from './questionCloses';
 import { appendEvent } from './eventLog';
 
 /**
@@ -152,6 +162,7 @@ export async function answerQuestionInTransaction(
   via: CharterAnswerVia,
 ): Promise<{ amendedCharterId: Id<'charters'> | null }> {
   if (record.answer) throw new Error('that question has already been answered');
+  if (record.closed) throw new Error('that question was closed without an answer');
   const answer = text.replace(/\s+/g, ' ').trim();
   if (!answer) throw new Error('the answer cannot be empty');
   const latest = await ctx.db
@@ -206,7 +217,7 @@ export async function answerQuestionInTransaction(
   return { amendedCharterId };
 }
 
-/** The questions asked at this work item's plan, unanswered first. */
+/** The questions asked at this work item's plan, those still open first. */
 export const forWorkItem = query({
   args: { workItemId: v.id('workItems') },
   handler: async (ctx, args): Promise<Doc<'managerQuestions'>[]> => {
@@ -214,8 +225,8 @@ export const forWorkItem = query({
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_work_item', (q) => q.eq('workItemId', args.workItemId))
-      .collect();
-    return rows.sort((a, b) => Number(Boolean(a.answer)) - Number(Boolean(b.answer)));
+      .take(ITEM_QUESTIONS_READ);
+    return rows.sort((a, b) => Number(!isOpenQuestion(a)) - Number(!isOpenQuestion(b)));
   },
 });
 
@@ -236,7 +247,7 @@ export const openForAgent = query({
     const open = new Set(
       charter?.approved ? managerOpenQuestions(charter.body as Charter).map(questionKey) : [],
     );
-    return rows.filter((row) => !row.answer && open.has(row.key));
+    return rows.filter((row) => isOpenQuestion(row) && open.has(row.key));
   },
 });
 
@@ -260,6 +271,10 @@ export const CONFLICT_ANSWER_REFUSALS = {
   gone: 'That question is no longer stored.',
   notConflict: 'That question is not about two pages that disagree.',
   answered: 'That question has already been answered.',
+  /** Closed when its plan was drafted again: the plan that stands now asks its own. */
+  redrafted: 'That question was closed when the plan was drafted again.',
+  /** Closed because its conflict stopped standing. */
+  closed: CONFLICT_QUESTION_CLOSED,
   /** The conflict stopped standing since the card was drawn: nothing is decided or recorded. */
   settled: 'These two pages no longer disagree as they did, so nothing is recorded.',
 } as const;
@@ -294,6 +309,13 @@ export async function answerConflictInTransaction(
     throw new ConvexError(CONFLICT_ANSWER_REFUSALS.notConflict);
   }
   if (question.answer !== undefined) throw new ConvexError(CONFLICT_ANSWER_REFUSALS.answered);
+  if (question.closed !== undefined) {
+    throw new ConvexError(
+      question.closed.reason === 'redrafted'
+        ? CONFLICT_ANSWER_REFUSALS.redrafted
+        : CONFLICT_ANSWER_REFUSALS.closed,
+    );
+  }
   const relation = await ctx.db.get(question.relationId);
   const standing = await standingConflictOf(ctx, relation);
   // A card clicked after the conflict settled or a page left decides nothing, so it records
@@ -341,7 +363,7 @@ export const answerConflict = mutation({
  */
 const ITEM_QUESTIONS_READ = 100;
 
-/** The questions one item's plan raised and nobody has answered, oldest first. */
+/** The conflict questions one item's plans raised that are still open, oldest first. */
 export async function openConflictQuestions(
   ctx: Pick<QueryCtx, 'db'>,
   workItemId: Id<'workItems'>,
@@ -355,72 +377,253 @@ export async function openConflictQuestions(
     (question) =>
       question.type === 'retrieval' &&
       question.relationId !== undefined &&
-      question.answer === undefined,
+      isOpenQuestion(question),
   );
-}
-
-/**
- * The questions one item's plan raised that nobody has answered and whose conflict still stands,
- * oldest first: what a typed answer answers and what the plan's request asks (the second pass's
- * m3 and m4). A question whose conflict no longer stands (a page archived or gone since, the
- * relation no longer confirmed) holds nothing and is asked no more.
- */
-export async function standingConflictQuestions(
-  ctx: QueryCtx,
-  workItemId: Id<'workItems'>,
-): Promise<Doc<'managerQuestions'>[]> {
-  const standing: Doc<'managerQuestions'>[] = [];
-  for (const question of await openConflictQuestions(ctx, workItemId)) {
-    const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
-    if ((await standingConflictOf(ctx, relation)) !== undefined) standing.push(question);
-  }
-  return standing;
 }
 
 /** The agent's questions the poll's check reads back, newest first (standard 10.4). */
 const QUESTIONS_OWED_READ = 100;
 
+/** A plan's request the manager can still answer a conflict question by: its code and its message. */
+export interface QuestionRequest {
+  readonly workItemId: Id<'workItems'>;
+  readonly decisionId: string;
+  /** The request's message in the DM, whose thread the answer may be typed in. */
+  readonly ts: string | undefined;
+}
+
 /**
- * Whether a conflict's question beside a plan whose request went to this DM still waits for its
- * answer (the second pass's M1): the question holds nothing of the plan, so the manager may answer
- * long after the request was decided, and the poll reads the DM until the conflict is settled or
- * answered. A question whose conflict no longer stands waits for nothing.
+ * The items one read of the question requests looks up, each row read whole for its request: a
+ * row carries its plan and its output, so the bound is on rows and not on questions (17-C's
+ * second pass; the cards read as many plans whole, `HELD_PLANS_READ`).
+ */
+const QUESTION_ITEMS_READ = 20;
+
+/** The remembered requests of one item a read looks through for its plan's: one a park, few. */
+const ITEM_REQUESTS_READ = 20;
+
+/**
+ * The plan's request an item's conflict questions are answered by, on one DM: the item's own
+ * while it holds it, else the one a park remembered when it cleared it (17-C, decision C-3;
+ * `decisionRequests.rememberRequestWithQuestion`), the newest first.
+ */
+async function planRequestOf(
+  ctx: QueryCtx,
+  workItemId: Id<'workItems'>,
+  surface: Pick<Doc<'surfaces'>, 'slug'>,
+  channel: string,
+): Promise<QuestionRequest | undefined> {
+  const decision = (await ctx.db.get(workItemId))?.decision;
+  if (
+    decision?.kind === 'plan' &&
+    decision.surfaceSlug === surface.slug &&
+    decision.channel === channel
+  ) {
+    return { workItemId, decisionId: decision.id, ts: decision.ts };
+  }
+  const kept = (
+    await ctx.db
+      .query('replacedDecisionRequests')
+      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+      .order('desc')
+      .take(ITEM_REQUESTS_READ)
+  ).find(
+    (request) =>
+      request.kind === 'plan' &&
+      request.decidedAt !== undefined &&
+      request.surfaceSlug === surface.slug &&
+      request.channel === channel,
+  );
+  return kept === undefined ? undefined : { workItemId, decisionId: kept.decisionId, ts: kept.ts };
+}
+
+/**
+ * The plan requests on one DM whose item has a conflict question still standing, newest question
+ * first, each item once (17-C): the question holds steps of the plan until it is answered, so the
+ * manager may answer long after the request was decided, by its code at the top of the DM or in
+ * its thread. A question whose conflict no longer stands waits for nothing. An item's row is read
+ * once whatever it was asked, and no more than {@link QUESTION_ITEMS_READ} items are looked up.
  *
  * @param ctx - The poll's query context.
  * @param surface - The manager channel's card.
  * @param channel - Its DM's id.
+ * @param most - How many requests are enough.
  */
-export async function conflictAnswerOwedOn(
+export async function questionRequestsOn(
   ctx: QueryCtx,
   surface: Pick<Doc<'surfaces'>, 'agentId' | 'slug'>,
   channel: string,
-): Promise<boolean> {
+  most: number,
+): Promise<QuestionRequest[]> {
   const questions = await ctx.db
     .query('managerQuestions')
     .withIndex('by_agent', (q) => q.eq('agentId', surface.agentId))
     .order('desc')
     .take(QUESTIONS_OWED_READ);
+  const requests = new Map<Id<'workItems'>, QuestionRequest>();
+  const looked = new Map<Id<'workItems'>, QuestionRequest | undefined>();
   for (const question of questions) {
+    if (requests.size >= most) break;
     if (question.type !== 'retrieval' || question.relationId === undefined) continue;
-    if (question.answer !== undefined) continue;
-    const decision = (await ctx.db.get(question.workItemId))?.decision;
-    if (decision?.kind !== 'plan' || decision.surfaceSlug !== surface.slug) continue;
-    if (decision.channel !== channel) continue;
+    if (!isOpenQuestion(question) || requests.has(question.workItemId)) continue;
+    if (!looked.has(question.workItemId)) {
+      if (looked.size >= QUESTION_ITEMS_READ) continue;
+      looked.set(
+        question.workItemId,
+        await planRequestOf(ctx, question.workItemId, surface, channel),
+      );
+    }
+    const request = looked.get(question.workItemId);
+    if (request === undefined) continue;
     if ((await standingConflictOf(ctx, await ctx.db.get(question.relationId))) !== undefined) {
-      return true;
+      requests.set(question.workItemId, request);
     }
   }
-  return false;
+  return [...requests.values()];
+}
+
+/** One of an item's conflict questions, with the number the manager answers it by. */
+export interface NumberedConflictQuestion {
+  /**
+   * Its place among the conflict questions asked beside the item's plans, in the order they were
+   * asked and whatever became of them (17-C, decision C-4): answering or closing one never
+   * renumbers another, so a number typed from an old message still names the question it named.
+   */
+  readonly number: number;
+  readonly question: Doc<'managerQuestions'>;
+  /** Whether it still waits for its answer and its conflict still stands. */
+  readonly standing: boolean;
 }
 
 /**
- * The conflict questions a plan's decision request carries, by their text. Internal; read by
- * `managerChannelActions.requestDecision`.
+ * Every conflict question asked beside an item's plans, oldest first, each with its number and
+ * whether it still stands: what a numbered answer names and what a request numbers (17-C;
+ * W16-R27, where a typed answer went to the first standing question whatever the manager meant).
+ */
+export async function numberedConflictQuestions(
+  ctx: QueryCtx,
+  workItemId: Id<'workItems'>,
+): Promise<NumberedConflictQuestion[]> {
+  const asked = (
+    await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
+      .take(ITEM_QUESTIONS_READ)
+  ).filter((question) => question.type === 'retrieval' && question.relationId !== undefined);
+  const numbered: NumberedConflictQuestion[] = [];
+  for (const [index, question] of asked.entries()) {
+    const relation =
+      isOpenQuestion(question) && question.relationId !== undefined
+        ? await ctx.db.get(question.relationId)
+        : null;
+    numbered.push({
+      number: index + 1,
+      question,
+      standing: relation !== null && (await standingConflictOf(ctx, relation)) !== undefined,
+    });
+  }
+  return numbered;
+}
+
+/**
+ * How far the deployment's clock may lead the provider's before a question a request carried is
+ * read as asked after it and posted a second time in the thread (17-C's second pass): a request
+ * is on its way out for well under a second, so a lead of that much was enough. Five seconds is
+ * past any clock a working deployment keeps, and far short of the time a manager takes to settle
+ * a conflict and confirm it again, which is the one way the same words are asked twice.
+ */
+export const QUESTION_CARRIED_SKEW_MS = 5_000;
+
+/** What becomes of a queued question notice when its send looks at it. */
+export type QuestionNoticeOwed =
+  /** Posted now, in the request's thread; numbered where the plan has several standing. */
+  | {
+      readonly state: 'send';
+      readonly questionId: Id<'managerQuestions'>;
+      readonly threadTs: string;
+      readonly number?: number;
+    }
+  /** The request is still on its way out: looked at again shortly. */
+  | { readonly state: 'wait' }
+  /** Nothing to post: the notice is dropped. */
+  | { readonly state: 'drop' };
+
+/**
+ * Whether a queued question notice is still owed (17-C): posted when its question is open, its
+ * conflict stands, and the request it was queued for is the item's own, delivered, and did not
+ * carry the question in its body. A request still in flight is waited for; one that failed is
+ * resent with the question in it. Whether the body carried the question is read off the times: a
+ * question asked after the provider took the request was not in it, and one asked while the
+ * request was on its way out, when the body was built before or after it, is looked for in the
+ * request's own text. The two times are two machines' clocks, the deployment's and the
+ * provider's, so a question asked within {@link QUESTION_CARRIED_SKEW_MS} after the provider's
+ * stamp still counts as asked on the way out. Read by `work.prepareManagerReplyNotice`.
+ */
+export async function questionNoticeOwed(
+  ctx: QueryCtx,
+  notice: Pick<Doc<'managerDecisionNotices'>, 'questionId' | 'workItemId' | 'decisionId'>,
+): Promise<QuestionNoticeOwed> {
+  const [question, row] = await Promise.all([
+    notice.questionId === undefined ? null : ctx.db.get(notice.questionId),
+    ctx.db.get(notice.workItemId),
+  ]);
+  const decision = row?.decision;
+  if (question === null || decision === undefined) return { state: 'drop' };
+  if (decision.id !== notice.decisionId || decision.kind !== 'plan') return { state: 'drop' };
+  const numbered = await numberedConflictQuestions(ctx, notice.workItemId);
+  const asked = numbered.find((entry) => entry.question._id === question._id);
+  if (asked === undefined || !asked.standing) return { state: 'drop' };
+  if (decision.ts === undefined) {
+    return decision.requestFailedAt === undefined ? { state: 'wait' } : { state: 'drop' };
+  }
+  const deliveredAt = providerTsToMs(decision.ts);
+  if (
+    (deliveredAt === null || question._creationTime <= deliveredAt + QUESTION_CARRIED_SKEW_MS) &&
+    decision.requestText?.includes(slackEscaped(question.question)) === true
+  ) {
+    return { state: 'drop' };
+  }
+  const several = numbered.filter((entry) => entry.standing).length > 1;
+  return {
+    state: 'send',
+    questionId: question._id,
+    threadTs: decision.ts,
+    ...(several ? { number: asked.number } : {}),
+  };
+}
+
+/**
+ * The conflict questions a plan's decision request carries, each with its words and its number.
+ * Internal; read by `managerChannelActions.requestDecision`.
  */
 export const conflictQuestionsForRequest = internalQuery({
   args: { workItemId: v.id('workItems') },
-  handler: async (ctx, args): Promise<string[]> =>
-    (await standingConflictQuestions(ctx, args.workItemId)).map((question) => question.question),
+  handler: async (ctx, args): Promise<RequestQuestion[]> =>
+    (await numberedConflictQuestions(ctx, args.workItemId))
+      .filter((numbered) => numbered.standing)
+      .map((numbered) => ({ text: numbered.question.question, number: numbered.number })),
+});
+
+/**
+ * Close the item's open conflict questions whose conflict no longer stands (17-C): a page was
+ * archived, edited or removed since, or the two are no longer trusted alike, by a path that did
+ * not pass the relation's own decision. Internal; called by the run before it reads what it holds
+ * (`workActions.withConflictsHeld`), so a question nobody can answer is closed by the first run
+ * that would have waited on it. Writes `closed: settled` on each; returns how many.
+ */
+export const closeSettled = internalMutation({
+  args: { workItemId: v.id('workItems') },
+  handler: async (ctx, args): Promise<number> => {
+    const now = Date.now();
+    let closed = 0;
+    for (const question of await openConflictQuestions(ctx, args.workItemId)) {
+      const relationId = question.relationId;
+      if (relationId === undefined) continue;
+      if ((await standingConflictOf(ctx, await ctx.db.get(relationId))) !== undefined) continue;
+      closed += await closeQuestionsOfRelation(ctx, relationId, now);
+    }
+    return closed;
+  },
 });
 
 /**
@@ -501,40 +704,98 @@ export const conflictConfirmedSince = internalQuery({
 export interface ConflictQuestionView {
   readonly _id: Id<'managerQuestions'>;
   readonly workItemId: Id<'workItems'>;
+  /** The relation it asks about, by which a run's stop names the question it waited on. */
+  readonly relationId: Id<'docRelations'>;
+  /**
+   * The question in words. While its conflict stands, what Day0 holds meanwhile is said from the
+   * plan as it stands now (17-C: the words stored when it was asked went stale beside the live
+   * hold); a message already in Slack stays as it was sent.
+   */
   readonly question: string;
   /** The two pages, first and second, while the conflict still stands; null once it does not. */
   readonly pages: readonly [CiteConflictPage, CiteConflictPage] | null;
+  /**
+   * How it stopped waiting, once it has: the answer it was given, or why it was closed without
+   * one. Absent while it is open. The card draws no settled question; the stop beside one reads
+   * this to say Retry runs it (17-C).
+   */
+  readonly settled?: { readonly answer?: string; readonly closed?: ManagerQuestionCloseReason };
 }
 
 /** The conflict questions one read of an employee's takes: one a plan and conflict, few open. */
 const OPEN_CONFLICTS_READ = 50;
 
 /**
- * The conflict questions still waiting beside an employee's plans (RM20 (a)), each with the two
- * pages its answers name, for the Work tab's cards. Public, guarded by the employee's owner.
+ * The plans one read of the cards reads whole to say what each question holds now: a plan's row
+ * carries its whole plan and output, so past these the question is said as it was asked (W16-R6).
+ */
+const HELD_PLANS_READ = 20;
+
+/**
+ * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards: those
+ * still open, each with the two pages its answers name and what Day0 holds for it now, and those
+ * among the newest that were answered or closed, which no card draws and a stopped run's words
+ * read. Public, guarded by the employee's owner. Reads the newest questions' small rows, the
+ * relation and blocks of each open one, and at most `HELD_PLANS_READ` plans whole.
  */
 export const conflictsForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ConflictQuestionView[]> => {
-    await assertOwnsAgent(ctx, args.agentId);
+    const agent = await assertOwnsAgent(ctx, args.agentId);
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .take(OPEN_CONFLICTS_READ * 4);
     const views: ConflictQuestionView[] = [];
+    const plans = new Map<Id<'workItems'>, Doc<'workItems'> | null>();
+    let open = 0;
+    let settled = 0;
     for (const row of rows) {
-      if (row.type !== 'retrieval' || row.relationId === undefined || row.answer !== undefined) {
+      const relationId = row.relationId;
+      if (row.type !== 'retrieval' || relationId === undefined) continue;
+      const named = { _id: row._id, workItemId: row.workItemId, relationId };
+      if (!isOpenQuestion(row)) {
+        if (settled >= OPEN_CONFLICTS_READ) continue;
+        settled += 1;
+        views.push({
+          ...named,
+          question: row.question,
+          pages: null,
+          settled:
+            row.answer !== undefined
+              ? { answer: row.answer.text }
+              : { closed: row.closed?.reason ?? 'settled' },
+        });
         continue;
       }
-      if (views.length >= OPEN_CONFLICTS_READ) break;
-      const standing = await standingConflictOf(ctx, await ctx.db.get(row.relationId));
-      const pages = standing === undefined ? null : citeConflictOf(standing).pages;
+      if (open >= OPEN_CONFLICTS_READ) continue;
+      open += 1;
+      const standing = await standingConflictOf(ctx, await ctx.db.get(relationId));
+      if (standing === undefined) {
+        views.push({ ...named, question: row.question, pages: null });
+        continue;
+      }
+      const conflict = citeConflictOf(standing);
+      if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
+        plans.set(row.workItemId, await ctx.db.get(row.workItemId));
+      }
+      const plan = plans.get(row.workItemId);
       views.push({
-        _id: row._id,
-        workItemId: row.workItemId,
-        question: row.question,
-        pages: pages === null ? null : [pages[0], pages[1]],
+        ...named,
+        question:
+          plan === undefined || plan === null
+            ? row.question
+            : conflictQuestionText(
+                agent.name,
+                conflict.heading,
+                conflict.pages,
+                // An item that is done, or whose plan was turned down, holds nothing (W3k).
+                plan.state === 'completed' || plan.state === 'cancelled'
+                  ? 'nothing'
+                  : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
+              ),
+        pages: [conflict.pages[0], conflict.pages[1]],
       });
     }
     return views;

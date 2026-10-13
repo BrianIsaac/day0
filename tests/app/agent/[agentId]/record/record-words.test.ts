@@ -479,6 +479,10 @@ describe('recordWords', (): void => {
     expect(answered('replaced')).toBe(
       'Mira answered your reply to a replaced request for “Refresh pipeline coverage view” with the request that replaced it.',
     );
+    // A conflict's question posted under a request already delivered rides the same event (17-C).
+    expect(answered('question')).toBe(
+      'Mira asked you which of two pages is right, in the thread of the plan’s request for “Refresh pipeline coverage view”.',
+    );
   });
 
   it('says which credential left the documentation, and a page swap that bound the new value (N23; 12-S3)', (): void => {

@@ -29,6 +29,7 @@ import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { outcomeUnknownReasonFor, type ApplyEnd } from '../src/work/reconciliation';
 import { accessEnded } from '../src/work/surface-access';
 import { appendEvent } from './eventLog';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 
 /*
@@ -201,6 +202,8 @@ export async function parkOnConnection(
     reason: 'awaiting-connection' as const,
     missingSurface,
   };
+  // The plan goes, and its conflict questions with it: the next plan is asked on what it cites.
+  await closeQuestionsAtRedraft(ctx, row._id, Date.now());
   await ctx.db.patch(row._id, {
     state: 'deferred',
     waitingSince: Date.now(),

@@ -4,7 +4,13 @@ import {
   managerDmReachable,
   managerMessageTexts,
   openManagerQuestion,
+  conflictRelationsOf,
+  isConflictQuestion,
+  joinedOpenQuestion,
+  noteAnswersQuestion,
   openQuestionStopReason,
+  ownQuestionOf,
+  standingQuestionsOf,
 } from '../../../src/work/obligations';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
@@ -121,5 +127,79 @@ describe('openQuestionStopReason', (): void => {
       "the approved plan leaves steps 2 and 3 to the manager's answer, and the question put to the manager is still open: Which template?",
     );
     expect(reason([1, 2, 4])).toContain('leaves steps 1, 2 and 4 to');
+  });
+
+  it('names every question a set waits on, and the steps of them all, in one stop (17-C, C-2)', (): void => {
+    const reason = openQuestionStopReason({
+      question: 'Which template?',
+      steps: [3],
+      also: [{ question: 'Two pages disagree. Which is right?', steps: [2], relationId: 'r1' }],
+    });
+    expect(reason).toBe(
+      "the approved plan leaves steps 2 and 3 to the manager's answer, and the question put to the manager is still open: Which template? Also open: Two pages disagree. Which is right?",
+    );
+    // It is still the question stop, so a note given with Retry answers the executor's question.
+    expect(isOpenQuestionStop(reason)).toBe(true);
+  });
+});
+
+describe('the questions a set waits on, each with its own mark (17-C, C-2; the pre-tag’s second pass)', (): void => {
+  const own = { question: 'Which template?', steps: [3] };
+  const conflict = {
+    question: 'Two pages disagree. Which is right?',
+    steps: [2],
+    relationId: 'r1',
+  };
+
+  it('keeps the conflict’s mark beside the executor’s own question, whichever was recorded first', (): void => {
+    const mixed = joinedOpenQuestion(joinedOpenQuestion(undefined, own), conflict);
+    expect(mixed).toEqual({ ...own, also: [conflict] });
+    expect(standingQuestionsOf(mixed)).toEqual([own, conflict]);
+    expect(joinedOpenQuestion(conflict, own)).toEqual({ ...conflict, also: [own] });
+    // The stored output says so to every reader: a conflict's question is among them, and the
+    // executor's own is the one a note answers.
+    expect(isConflictQuestion({ openQuestion: mixed })).toBe(true);
+    expect(conflictRelationsOf({ openQuestion: mixed })).toEqual(['r1']);
+    expect(ownQuestionOf({ openQuestion: mixed })).toBe('Which template?');
+    expect(ownQuestionOf({ initial: { openQuestion: mixed } })).toBe('Which template?');
+  });
+
+  it('joins the steps of the same question, by its relation or by its words, and never doubles it', (): void => {
+    expect(joinedOpenQuestion(own, { question: 'Which template?', steps: [2, 3] })).toEqual({
+      question: 'Which template?',
+      steps: [2, 3],
+    });
+    const again = { question: 'Asked in other words.', steps: [4], relationId: 'r1' };
+    expect(joinedOpenQuestion({ ...own, also: [conflict] }, again)).toEqual({
+      ...own,
+      also: [{ ...conflict, steps: [2, 4] }],
+    });
+    // A second conflict stands beside the first with its own steps.
+    const second = { question: 'Two more pages disagree.', steps: [5], relationId: 'r2' };
+    expect(joinedOpenQuestion(conflict, second)).toEqual({ ...conflict, also: [second] });
+    expect(conflictRelationsOf({ openQuestion: { ...conflict, also: [second] } })).toEqual([
+      'r1',
+      'r2',
+    ]);
+  });
+
+  it('reads a row stored before the shape widened as its one question', (): void => {
+    expect(standingQuestionsOf(own)).toEqual([own]);
+    expect(isConflictQuestion({ openQuestion: own })).toBe(false);
+    expect(ownQuestionOf({ openQuestion: own })).toBe('Which template?');
+    expect(isConflictQuestion({ openQuestion: conflict })).toBe(true);
+    expect(ownQuestionOf({ openQuestion: conflict })).toBeUndefined();
+    expect(ownQuestionOf({})).toBeUndefined();
+    expect(conflictRelationsOf(undefined)).toEqual([]);
+  });
+
+  it('takes a Retry’s note as an answer unless every question the run stopped on is a conflict’s', (): void => {
+    expect(noteAnswersQuestion({ openQuestion: own })).toBe(true);
+    expect(noteAnswersQuestion({ openQuestion: { ...own, also: [conflict] } })).toBe(true);
+    expect(noteAnswersQuestion({ openQuestion: { ...conflict, also: [own] } })).toBe(true);
+    // A stop whose reason alone carries the question, with none kept on the output (review D2).
+    expect(noteAnswersQuestion({})).toBe(true);
+    expect(noteAnswersQuestion(undefined)).toBe(true);
+    expect(noteAnswersQuestion({ openQuestion: conflict })).toBe(false);
   });
 });

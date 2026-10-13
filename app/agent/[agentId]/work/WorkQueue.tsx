@@ -248,7 +248,7 @@ export function WorkQueue({
   agentId,
   workItems,
   openQuestions,
-  conflictQuestions = [],
+  conflictQuestions,
   heldByCards,
   surfaces,
   registeredSkillCount,
@@ -436,7 +436,7 @@ export function WorkQueue({
                   surfaces={surfaces}
                   autonomousActions={autonomousActions}
                   questions={openQuestions.filter((question) => question.workItemId === item._id)}
-                  conflicts={conflictQuestions.filter(
+                  conflicts={conflictQuestions?.filter(
                     (question) => question.workItemId === item._id,
                   )}
                   heldByCard={heldByCards?.get(item._id)}

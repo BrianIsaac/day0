@@ -9,6 +9,8 @@ import type { MutationCtx } from '../../convex/_generated/server';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { redraftPlansDraftedWithout } from '../../convex/planRedraft';
+import { askConflictQuestion } from '../../convex/reorientation';
+import { asManager, measure, relations, twoThatDisagree } from './fakes/doc-relations';
 import { MANAGER_CLAIM_LAPSED_REASON, MANAGER_CLAIM_LEASE_MS } from '../../convex/workLoop';
 import {
   NOTICE_TO_A_GUEST,
@@ -576,7 +578,7 @@ describe('the outbound manager-channel action', (): void => {
     expect(sent).toHaveLength(2);
   });
 
-  it("leaves a conflict's question notice unsent and unclaimed: it is no acknowledgement of a reply (17-K, for 17-C's send)", async (): Promise<void> => {
+  it("posts a conflict's question in the thread of the request already delivered, once (17-C; the guard 17-K left is replaced by the send)", async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     vi.stubGlobal(
       'fetch',
@@ -598,62 +600,150 @@ describe('the outbound manager-channel action', (): void => {
       workItemId,
       kind: 'plan',
     });
-    const noticeId = await harness.run(async (ctx) => {
-      const workItem = await ctx.db.get(workItemId);
-      const surface = await ctx.db
-        .query('surfaces')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', 'team-chat'))
-        .unique();
-      if (!workItem?.decision || !surface) throw new Error('decision fixture missing');
-      const charterId = await ctx.db.insert('charters', {
+    // Two pages of the owner's come to disagree and the manager confirms it, after the request
+    // went out; the question is asked beside the plan as a confirmation asks it.
+    const pages = await twoThatDisagree(harness);
+    await measure(harness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    const questionId = await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
         agentId,
         version: '0.1',
         body: {},
         approved: true,
+        approvedAt: 1,
         createdAt: 1,
       });
-      const questionId = await ctx.db.insert('managerQuestions', {
-        agentId,
-        key: 'conflict:refund-window',
-        question: 'Two pages disagree under "Refund window". Which is right?',
-        context: { touchedBy: 'plan', text: 'Refund window', words: ['refund', 'window'] },
-        askedAt: 2,
-        workItemId,
-        charterId,
-        blocking: false,
-        type: 'retrieval',
-      });
-      return await ctx.db.insert('managerDecisionNotices', {
-        agentId,
-        surfaceId: surface._id,
-        workItemId,
-        decisionId: workItem.decision.id,
-        messageTs: `question:${questionId}`,
-        kind: 'question',
-        questionId,
-        text: 'Two pages disagree under "Refund window". Which is right?',
-        createdAt: 3,
+      const row = await ctx.db.get(workItemId);
+      if (!row) throw new Error('work item missing');
+      return await askConflictQuestion(ctx, {
+        row,
+        conflict: {
+          relationId: relation._id,
+          heading: 'Thresholds',
+          pages: [
+            { title: 'Finance escalation', source: 'Finance wiki' },
+            { title: 'Pipeline runbook', source: 'Handbook' },
+          ],
+        },
+        now: Date.now(),
       });
     });
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    expect(notice).toMatchObject({ kind: 'question', questionId });
 
-    // Nothing is sent. The reason the action gives is the acknowledgement path's own and is not
-    // held here: 17-C's send replaces the guard and says what it did.
     await expect(
-      harness.action(internal.managerChannelActions.sendManagerReplyNotice, { noticeId }),
-    ).resolves.toMatchObject({ sent: false });
-    // The request went out; the question did not follow it as an acknowledgement.
-    expect(sent).toHaveLength(1);
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+      }),
+    ).resolves.toEqual({ sent: true });
+    // The request, then the question under it: the request's own message is the thread.
+    expect(sent).toHaveLength(2);
+    const posted = JSON.parse(sent[1].body) as { channel: string; thread_ts: string; text: string };
+    expect(posted.channel).toBe('D0MANAGER');
+    expect(posted.thread_ts).toBe('provider-1');
+    // The plan here names no steps, so the hold is said in general; the signature line follows.
+    expect(posted.text.split('\n').slice(0, 2)).toEqual([
+      'Since I asked you about this plan, you confirmed that two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? ops worker holds the steps that may rely on this until you answer.',
+      expect.stringMatching(
+        /^Answer with “answer ([2-9a-z]{6}) A”, “answer \1 B” or “answer \1 both”\.$/,
+      ),
+    ]);
     const after = await harness.run(async (ctx) => ({
-      notice: await ctx.db.get(noticeId),
+      notice: await ctx.db.get(notice._id),
       acknowledging: await ctx.db
         .query('events')
         .withIndex('by_agent', (q) => q.eq('agentId', agentId))
         .filter((q) => q.eq(q.field('type'), 'work.decision-acknowledging'))
         .collect(),
     }));
-    expect(after.notice).not.toHaveProperty('claimedAt');
-    expect(after.notice).not.toHaveProperty('providerTs');
-    expect(after.acknowledging).toEqual([]);
+    expect(after.notice).toMatchObject({ providerTs: 'provider-2' });
+    expect(after.acknowledging.map((event) => event.payload)).toEqual([
+      expect.objectContaining({ kind: 'question', questionId }),
+    ]);
+    // The replay: the send scheduled where the notice was queued, and any later one, post nothing.
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
+    expect(sent).toHaveLength(2);
+  });
+
+  it("gives up a question's notice whose request never reached the DM, and says so on the notice (17-C)", async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    const pages = await twoThatDisagree(harness);
+    await measure(harness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    // The request was claimed and never recorded: it is still on its way out.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+        },
+      });
+      await askConflictQuestion(ctx, {
+        row: (await ctx.db.get(workItemId))!,
+        conflict: {
+          relationId: relation._id,
+          heading: 'Thresholds',
+          pages: [
+            { title: 'Finance escalation', source: 'Finance wiki' },
+            { title: 'Pipeline runbook', source: 'Handbook' },
+          ],
+        },
+        now: Date.now(),
+      });
+    });
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    // A look while the request is out waits; the last look gives the notice up.
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+      }),
+    ).resolves.toEqual({ sent: false, reason: 'waits for the request it follows' });
+    await expect(
+      harness.action(internal.managerChannelActions.sendManagerReplyNotice, {
+        noticeId: notice._id,
+        waited: 40,
+      }),
+    ).resolves.toEqual({
+      sent: false,
+      reason: 'The plan’s request was not delivered, so the question was not posted in its thread.',
+    });
+    const after = await harness.run(async (ctx) => await ctx.db.get(notice._id));
+    expect(after?.failure).toBe(
+      'The plan’s request was not delivered, so the question was not posted in its thread.',
+    );
+    expect(after).not.toHaveProperty('providerTs');
+    expect(sent).toHaveLength(0);
   });
 });
 
@@ -865,7 +955,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     expect((JSON.parse(sent[0]!.body) as { blocks?: unknown }).blocks).toBeUndefined();
   });
 
-  it('asks for no typed reply from an app that takes no messages, its buttons and day0 the only ways (W12V-7)', async (): Promise<void> => {
+  it('asks for no typed reply from an app that takes no messages, its buttons and Day0 the only ways (W12V-7)', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);
@@ -883,7 +973,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     };
     expect(body.text).not.toMatch(/reply “|“approve|“reject/i);
     expect(body.text.split('\n').at(-1)).toBe(
-      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Press Approve or Reject below, or decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
     const reject = body.blocks
       .find((block) => block.type === 'actions')
@@ -893,7 +983,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     );
   });
 
-  it('asks for no typed reply from an app that takes no messages and has no buttons: day0 alone (W12V-7)', async (): Promise<void> => {
+  it('asks for no typed reply from an app that takes no messages and has no buttons: Day0 alone (W12V-7)', async (): Promise<void> => {
     recordSlack();
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await seedParkedPlan(harness);
@@ -906,7 +996,7 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
     const body = JSON.parse(sent[0]!.body) as { text: string; blocks?: unknown };
     expect(body.blocks).toBeUndefined();
     expect(body.text.split('\n').at(-1)).toBe(
-      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
   });
 

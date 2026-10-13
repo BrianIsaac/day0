@@ -169,8 +169,12 @@ export function heldReplyCodes(
 export type DecisionReply =
   | { verb: 'approve'; id: string }
   | { verb: 'reject'; id: string; reason: string }
-  /** The answer to a conflict's question in a plan's request (RM20 (a)): the first page, the second, or both. */
-  | { verb: 'answer'; id: string; choice: ConflictChoice };
+  /**
+   * The answer to a conflict's question in a plan's request (RM20 (a)): the first page, the second,
+   * or both, and the question's number where the manager gave one (17-C). A bare answer names none
+   * and is taken when exactly one question stands.
+   */
+  | { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
 
 /**
  * The longest manager reason kept in full, from the card or from chat alike.
@@ -205,14 +209,16 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
     .replace(/^[\s"'“”‘’`*_]+/, '')
     .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
-  const answer = /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})\s+(a|b|both)$/i.exec(
-    flat,
-  );
+  const answer =
+    /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+([1-9]\d{0,2}))?\s+(a|b|both)$/i.exec(
+      flat,
+    );
   if (answer) {
-    const letter = answer[2].toLowerCase();
+    const letter = answer[3].toLowerCase();
     return {
       verb: 'answer',
       id: answer[1].toLowerCase(),
+      ...(answer[2] === undefined ? {} : { number: Number(answer[2]) }),
       choice: letter === 'a' ? 'from' : letter === 'b' ? 'to' : 'both',
     };
   }
@@ -416,12 +422,20 @@ export const BUTTONS_REPLY_LEAD = 'Press Approve or Reject below, or reply ';
 
 /**
  * The line of a request with buttons from an app that takes no messages (W12V-7): the buttons or
- * day0, never a typed reply. Once the buttons are gone it reads {@link DAY0_ONLY_LEAD}.
+ * Day0, never a typed reply. Once the buttons are gone it reads {@link DAY0_ONLY_LEAD}.
  */
-export const BUTTONS_DAY0_LEAD = 'Press Approve or Reject below, or decide in day0.';
+export const BUTTONS_DAY0_LEAD = 'Press Approve or Reject below, or decide in Day0.';
 
-/** The line of a request no press or reply can decide: day0 alone. */
-export const DAY0_ONLY_LEAD = 'Decide in day0.';
+/**
+ * {@link BUTTONS_DAY0_LEAD} as every request sent before 0.21.0 wrote it, the product's name in
+ * lower case (W16-R35's rest: the name is "Day0" in every string of this module since 17-C). A
+ * request delivered before the upgrade still holds this in the manager's DM and on its row, and
+ * the edit that marks it decided must find it.
+ */
+export const BUTTONS_DAY0_LEAD_BEFORE_0_21 = 'Press Approve or Reject below, or decide in day0.';
+
+/** The line of a request no press or reply can decide: Day0 alone. */
+export const DAY0_ONLY_LEAD = 'Decide in Day0.';
 
 /**
  * Why a request from an app that takes no messages offers no typed code (W12V-7): Slack answers the
@@ -471,10 +485,11 @@ export function decisionRequestText(args: {
    */
   leftForCard?: { readonly indexes: readonly number[]; readonly clause?: string };
   /**
-   * The questions a plan's conflicts ask beside it (RM20 (a)), each with its answer line: the plan
-   * goes on meanwhile, so they never stop the approval.
+   * The questions a plan's conflicts ask beside it (RM20 (a)), with their answer line: the plan
+   * goes on meanwhile, so they never stop the approval. Each with its number on the plan (17-C); a
+   * question given as its words alone takes its place in the list as its number.
    */
-  questions?: readonly string[];
+  questions?: ReadonlyArray<string | RequestQuestion>;
 }): string {
   const closes = args.kind === 'actions' ? (args.leftForCard?.indexes ?? []) : [];
   if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
@@ -516,7 +531,7 @@ export function decisionRequestText(args: {
       (index, position) =>
         `${position + 1}. ${summariseAction(actions[index], args.surfaces ?? [], summary)}`,
     );
-    if (lines.length === 0) lines = ['1. Review the held actions in day0.'];
+    if (lines.length === 0) lines = ['1. Review the held actions in Day0.'];
     noun = 'held actions';
     // A Slack approval approves every held index; the card can approve some.
     if (held.length > 1) {
@@ -524,7 +539,7 @@ export function decisionRequestText(args: {
       const approval =
         args.typedCode !== false ? `“approve ${args.id}”` : args.buttons ? 'Approve' : undefined;
       if (approval !== undefined) {
-        scope = `${approval} applies ${covers} listed; to approve only some, decide in day0.`;
+        scope = `${approval} applies ${covers} listed; to approve only some, decide in Day0.`;
       }
     }
   }
@@ -535,13 +550,13 @@ export function decisionRequestText(args: {
       '',
       listHeading,
       ...shown,
-      ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in day0.`] : []),
+      ...(omitted > 0 ? [`…and ${omitted} more ${noun}; the full list is in Day0.`] : []),
       ...(closes.length > 0
         ? [
             '',
             closes.length === 1
-              ? 'Not sent by approving here, as it waits on its card in day0:'
-              : 'Not sent by approving here, as each waits on its card in day0:',
+              ? 'Not sent by approving here, as it waits on its card in Day0:'
+              : 'Not sent by approving here, as each waits on its card in Day0:',
             ...closeLines(args.actions ?? [], closes, args.surfaces ?? [], summary),
             `${heldCloseSentence(args.agentName, args.leftForCard?.clause)} ${
               closes.length === 1
@@ -570,19 +585,43 @@ export function decisionRequestText(args: {
   return frame(lines.slice(0, shown), lines.length - shown);
 }
 
+/** One conflict question as a message asks it: its words, and its number on the plan. */
+export interface RequestQuestion {
+  readonly text: string;
+  /** Its place among the plan's conflict questions, which the typed answer names (17-C). */
+  readonly number: number;
+}
+
 /**
  * A plan's conflict questions as the request asks them, and how to answer: a typed answer where
- * the employee's app takes messages, the plan's card in Day0 otherwise.
+ * the employee's app takes messages, the plan's card in Day0 otherwise. More than one is numbered,
+ * each by its own number on the plan, and the answer line shows the first's; one alone is asked
+ * without its number and answered without it (17-C; section 7).
  */
-function questionLines(questions: readonly string[], id: string, typedCode: boolean): string[] {
+function questionLines(
+  questions: ReadonlyArray<string | RequestQuestion>,
+  id: string,
+  typedCode: boolean,
+): string[] {
   if (questions.length === 0) return [];
-  const asked = questions.slice(0, REQUEST_QUESTIONS_SHOWN);
-  const more = questions.length - asked.length;
+  const numbered = questions.map(
+    (question, index): RequestQuestion =>
+      typeof question === 'string' ? { text: question, number: index + 1 } : question,
+  );
+  const asked = numbered.slice(0, REQUEST_QUESTIONS_SHOWN);
+  const more = numbered.length - asked.length;
+  const several = numbered.length > 1;
   return [
     '',
-    ...asked.map((question) => slackEscaped(question)),
-    ...(more > 0 ? [`And ${more} more on the plan’s card in day0.`] : []),
-    typedCode ? conflictReplyLine(id) : 'Answer it on the plan’s card in day0.',
+    ...asked.map((question) =>
+      slackEscaped(several ? `${question.number}. ${question.text}` : question.text),
+    ),
+    ...(more > 0 ? [`And ${more} more on the plan’s card in Day0.`] : []),
+    typedCode
+      ? conflictReplyLine(id, several ? asked[0].number : undefined)
+      : several
+        ? 'Answer them on the plan’s card in Day0.'
+        : 'Answer it on the plan’s card in Day0.',
   ];
 }
 
@@ -594,7 +633,7 @@ const REQUEST_QUESTIONS_SHOWN = 3;
 
 /**
  * A request's last line: how it is decided. The typed code only where the employee's app takes
- * messages (W12V-7), the buttons only where it carries presses, and day0 always.
+ * messages (W12V-7), the buttons only where it carries presses, and Day0 always.
  */
 function replyLine(id: string, buttons: boolean, typedCode: boolean): string {
   if (typedCode) {
@@ -621,7 +660,7 @@ function closeOnlyRequestText(
   const noun = args.closes.length === 1 ? 'ticket close' : 'ticket closes';
   const waits = args.closes.length === 1 ? 'waits' : 'wait';
   return [
-    `${slackEscaped(args.agentName)}’s ${noun} on “${quotedText(args.title, 'Untitled work')}” ${waits} for you on its card in day0.`,
+    `${slackEscaped(args.agentName)}’s ${noun} on “${quotedText(args.title, 'Untitled work')}” ${waits} for you on its card in Day0.`,
     ...(args.item ? itemLines(args.item) : []),
     '',
     ...closeLines(args.actions ?? [], args.closes, args.surfaces ?? [], summary),
@@ -718,7 +757,7 @@ function refusedLines(
   return [
     'Refused by Day0’s gate, so not sent whatever you decide:',
     ...shown,
-    ...(more > 0 ? [`…and ${more} more refused; the full list is in day0.`] : []),
+    ...(more > 0 ? [`…and ${more} more refused; the full list is in Day0.`] : []),
   ];
 }
 
@@ -745,7 +784,7 @@ export function draftedWithoutLine(without: DraftedWithoutLine): string {
 /** The first line of a plan request: its summary, or where to read the plan. */
 function planHeading(plan: unknown): string {
   const summary = (plan ?? {}) as { summary?: unknown };
-  return `Plan: ${quotedText(summary.summary, 'The drafted plan is available in day0.')}`;
+  return `Plan: ${quotedText(summary.summary, 'The drafted plan is available in Day0.')}`;
 }
 
 /** The longest plan step or note a request quotes before it clips. */
@@ -803,7 +842,7 @@ export function batchRequestLines(args: {
         })`,
     ),
     closes
-      ? `Reply “approve ${args.id}” to approve every held action in all ${count} but any ticket close Day0 held, which is decided on its card in day0, or “reject ${args.id} <reason>” to reject them all, any such close included. A request decided since is left as decided.`
+      ? `Reply “approve ${args.id}” to approve every held action in all ${count} but any ticket close Day0 held, which is decided on its card in Day0, or “reject ${args.id} <reason>” to reject them all, any such close included. A request decided since is left as decided.`
       : `Reply “approve ${args.id}” to approve every held action in all ${count}, or “reject ${args.id} <reason>” to reject them all. A request decided since is left as decided.`,
   ];
 }
@@ -868,8 +907,8 @@ export function decisionNoticeText(args: {
  */
 export function closesLeftForCardWords(count: number): string {
   return count === 1
-    ? 'I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.'
-    : `I won’t send the ${count} ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.`;
+    ? 'I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.'
+    : `I won’t send the ${count} ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in Day0.`;
 }
 
 /**
@@ -879,7 +918,7 @@ export function closesLeftForCardWords(count: number): string {
  * @param id - The request's code.
  */
 export function closeOnCardNoticeText(id: string): string {
-  return `Approval ${id} received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.`;
+  return `Approval ${id} received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in Day0.`;
 }
 
 /**
@@ -914,8 +953,8 @@ export function batchDecisionNoticeText(args: {
     closes.length === 0
       ? ''
       : closes.length === 1
-        ? ` I won’t send the ticket close of ${closes[0]} with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.`
-        : ` I won’t send the ticket closes of ${closes.slice(0, -1).join(', ')} and ${closes[closes.length - 1]} with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.`;
+        ? ` I won’t send the ticket close of ${closes[0]} with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.`
+        : ` I won’t send the ticket closes of ${closes.slice(0, -1).join(', ')} and ${closes[closes.length - 1]} with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in Day0.`;
   const left = args.skipped.map((member) => `${member.decisionId}: ${member.reason}`);
   return left.length > 0
     ? `${head}${onCard} Left as they were: ${left.join('; ')}.`

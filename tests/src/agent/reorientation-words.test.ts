@@ -3,7 +3,10 @@ import {
   approvedResultWords,
   closingHeldReason,
   conflictChoiceWords,
+  conflictNoticeText,
   conflictQuestionText,
+  conflictNoticeReplyLine,
+  conflictReplyLine,
   decisionWords,
   heldWords,
   pendingWords,
@@ -131,6 +134,47 @@ describe('the conflict question says what it holds (W16-R10)', (): void => {
   it('says every write waits when the plan declares no writes to tell them apart', (): void => {
     expect(conflictQuestionText('Priya', 'Comment length', pages, 'every')).toContain(
       'Which is right? Priya holds every write of the plan until you answer and Retry.',
+    );
+  });
+
+  it('says nothing of the item waits beside one that is done or turned down (the joins’ W3k)', (): void => {
+    expect(conflictQuestionText('Priya', 'Comment length', pages, 'nothing')).toBe(
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Nothing of this item waits on the answer: other plans of Priya’s that rest on these pages do.',
+    );
+  });
+});
+
+describe('the question as the thread of a delivered request asks it (17-C; section 7)', (): void => {
+  const pages = [
+    { title: 'Close comment limits', source: 'Revops folder' },
+    { title: 'Close comment limits', source: 'Policies folder' },
+  ] as const;
+
+  it('says the conflict was confirmed since the plan was asked about, and what is held meanwhile', (): void => {
+    expect(conflictNoticeText('Priya', 'Comment length', pages, ['Linear', 'Slack'])).toBe(
+      'Since I asked you about this plan, you confirmed that two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Priya holds its writes to Linear and Slack until you answer.',
+    );
+    expect(conflictNoticeText('Priya', 'Comment length', pages, 'every')).toContain(
+      'Which is right? Priya holds every write of the plan until you answer.',
+    );
+    expect(conflictNoticeText('Priya', 'Comment length', pages)).toContain(
+      'Which is right? Priya holds the steps that may rely on this until you answer.',
+    );
+  });
+
+  it('shows how to answer a numbered question, and a lone one without its number', (): void => {
+    expect(conflictReplyLine('ab3xyz')).toBe(
+      'Answer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.',
+    );
+    expect(conflictReplyLine('ab3xyz', 2)).toBe(
+      'Answer each by its number: “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
+    );
+  });
+
+  it('says which question a thread’s message asks, where the plan has several, in the words to type', (): void => {
+    expect(conflictNoticeReplyLine('ab3xyz')).toBe(conflictReplyLine('ab3xyz'));
+    expect(conflictNoticeReplyLine('ab3xyz', 2)).toBe(
+      'This is question 2 of the plan: answer with “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
     );
   });
 });

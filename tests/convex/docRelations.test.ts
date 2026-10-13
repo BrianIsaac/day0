@@ -823,7 +823,10 @@ describe('the functions convex/docRelations.ts registers', (): void => {
         return `${name} ${value?.isPublic === true ? 'public' : 'internal'} ${kind}`;
       })
       .sort((left, right) => left.localeCompare(right));
+    // Re-taken by 17-C for one internal mutation added, `askConfirmed`: the asking a confirmation
+    // schedules out of its own transaction. No function it registered at v0.19.0 moved.
     expect(registered).toEqual([
+      'askConfirmed internal mutation',
       'decide public mutation',
       'generationsToMeasure internal query',
       'listOpen public query',

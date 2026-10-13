@@ -14,7 +14,12 @@ import {
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
-import { citeConflictOf, planSelectionOf, standingConflictsOn } from './docConflicts';
+import {
+  citeConflictOf,
+  planSelectionOf,
+  standingConflictsOn,
+  type CarriedPage,
+} from './docConflicts';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
@@ -332,13 +337,25 @@ export async function selectedDocumentation(
       block.hash === undefined ? [] : [block.hash],
     ),
   );
+  // The pages those blocks are of, for an owner whose confirmed conflicts pass one read: there
+  // the conflicts are read by the page, so an older one is not missed (W15-R19; 17-C).
+  const carriedKeys = new Set(
+    [...scouted, ...[...pageBlocks.values()].flat()].map((block) => block.pageKey),
+  );
+  const carried = (): CarriedPage[] =>
+    docs.flatMap((doc) =>
+      doc.sourceId !== undefined &&
+      doc.sourceRef !== undefined &&
+      carriedKeys.has(pageKeyOf(doc.sourceId, doc.sourceRef))
+        ? [{ sourceId: doc.sourceId, ref: doc.sourceRef }]
+        : [],
+    );
   const standing =
-    userId === undefined ? new Map() : await standingConflictsOn(ctx, userId, hashes);
+    userId === undefined ? [] : await standingConflictsOn(ctx, userId, hashes, carried);
   const conflicts = new Map(
-    [...standing].map(([hash, conflict]): [string, CiteConflict] => [
-      hash,
-      citeConflictOf(conflict),
-    ]),
+    standing.flatMap((conflict) =>
+      conflict.blocks.map((hash): [string, CiteConflict] => [hash, citeConflictOf(conflict)]),
+    ),
   );
   return selectDocumentation({ request, pages, scouted, pageBlocks, always, conflicts });
 }

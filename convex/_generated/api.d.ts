@@ -85,6 +85,7 @@ import type * as personChanges from '../personChanges.js';
 import type * as planApproval from '../planApproval.js';
 import type * as planRedraft from '../planRedraft.js';
 import type * as probeActions from '../probeActions.js';
+import type * as questionCloses from '../questionCloses.js';
 import type * as refreshLease from '../refreshLease.js';
 import type * as reorientation from '../reorientation.js';
 import type * as reorientationActions from '../reorientationActions.js';
@@ -227,6 +228,7 @@ declare const fullApi: ApiFromModules<{
   planApproval: typeof planApproval;
   planRedraft: typeof planRedraft;
   probeActions: typeof probeActions;
+  questionCloses: typeof questionCloses;
   refreshLease: typeof refreshLease;
   reorientation: typeof reorientation;
   reorientationActions: typeof reorientationActions;

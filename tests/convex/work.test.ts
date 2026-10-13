@@ -29,6 +29,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import type { Charter } from '../../src/agent/charter';
 import { skillBodyHash } from '../../src/work/skill-body';
 import { collectLedgerObservations } from '../../convex/metrics';
+import { seedConflictQuestion } from './fakes/conflict-question';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { seedEmployee, seedIdentity, seedPerson } from './fakes/people-graph';
 import { guardRefusal } from './fakes/anonymous-caller';
@@ -4260,6 +4261,24 @@ describe('the exact-action gate', (): void => {
         output: { ...output, applied },
       }),
     ).resolves.toEqual({ parked: false });
+    // The plan's request is still on the item, and a conflict's question of the plan is open: the
+    // park that clears the request keeps it, so its code and thread still answer (17-C, C-3).
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+          ts: '1787770800.000100',
+          decidedAt: 2,
+          outcome: 'approved',
+        },
+      });
+    });
+    await seedConflictQuestion(harness, { agentId, workItemId });
     await expect(
       harness.mutation(internal.work.setAwaitingApproval, {
         workItemId,
@@ -4268,6 +4287,9 @@ describe('the exact-action gate', (): void => {
         output: { ...output, applied },
       }),
     ).resolves.toEqual({ parked: true });
+    expect(
+      await harness.run(async (ctx) => await ctx.db.query('replacedDecisionRequests').collect()),
+    ).toMatchObject([{ workItemId, decisionId: 'ab3xyz', kind: 'plan', outcome: 'approved' }]);
     const parked = await readItem(harness, workItemId);
     expect(parked).toMatchObject({
       state: 'actions-pending',

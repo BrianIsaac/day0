@@ -464,7 +464,27 @@ export const sendDecisionNotice = internalAction({
   },
 });
 
-/** Send the sole acknowledgement claimed for one parsed manager reply. */
+/** How long a question's notice waits between looks for the request it follows to be delivered. */
+const QUESTION_NOTICE_WAIT_MS = 5_000;
+
+/**
+ * How many looks it makes: past the request's own recovery bound (`DECISION_REQUEST_RECOVERY_MS`),
+ * after which a silent request is taken as lost and resent with the question in it.
+ */
+const QUESTION_NOTICE_LOOKS = 40;
+
+/** Why a question's notice was dropped unsent: its request carried it, or it closed meanwhile. */
+export const QUESTION_NOTICE_NOT_OWED = 'the question is no longer owed in the thread';
+
+/** Why a question's notice was given up: the request it was to follow never reached the DM. */
+export const QUESTION_NOTICE_UNDELIVERED =
+  'The plan’s request was not delivered, so the question was not posted in its thread.';
+
+/**
+ * Send the one notice claimed for the manager's DM: the acknowledgement of a parsed reply, or a
+ * conflict's question for the thread of a request already delivered (17-C), which waits while its
+ * request is still on its way out. Internal; scheduled where the notice is queued.
+ */
 export const sendManagerReplyNotice = internalAction({
   args: {
     noticeId: v.id('managerDecisionNotices'),
@@ -473,11 +493,34 @@ export const sendManagerReplyNotice = internalAction({
      * cleared its decision since, which would leave the acknowledgement outside the thread.
      */
     threadTs: v.optional(v.string()),
+    /** How many times a question's notice has waited for its request already. */
+    waited: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ sent: boolean; reason?: string }> => {
     const notice = { noticeId: args.noticeId };
     const prepared = await ctx.runMutation(internal.work.prepareManagerReplyNotice, notice);
-    if (!prepared.prepared) return { sent: false, reason: 'notice already claimed' };
+    if (!prepared.prepared && prepared.wait === true) {
+      const waited = args.waited ?? 0;
+      if (waited >= QUESTION_NOTICE_LOOKS) {
+        await ctx.runMutation(internal.work.recordManagerReplyNotice, {
+          ...notice,
+          failure: QUESTION_NOTICE_UNDELIVERED,
+        });
+        return { sent: false, reason: QUESTION_NOTICE_UNDELIVERED };
+      }
+      await ctx.scheduler.runAfter(
+        QUESTION_NOTICE_WAIT_MS,
+        internal.managerChannelActions.sendManagerReplyNotice,
+        { ...notice, waited: waited + 1 },
+      );
+      return { sent: false, reason: 'waits for the request it follows' };
+    }
+    if (!prepared.prepared) {
+      return {
+        sent: false,
+        reason: prepared.dropped === true ? QUESTION_NOTICE_NOT_OWED : 'notice already claimed',
+      };
+    }
     try {
       const result = await deliverManagerMessage(
         ctx,

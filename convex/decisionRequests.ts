@@ -5,6 +5,7 @@ import { isManagerChannel } from './workLoop';
 import { askedFor, type DecisionKind } from '../src/work/manager-channel';
 import { accessEnded } from '../src/work/surface-access';
 import { appendEvent } from './eventLog';
+import { isOpenQuestion } from '../src/agent/manager-questions';
 import { compareProviderTs } from '../src/work/provider-ts';
 
 /*
@@ -192,6 +193,64 @@ export async function rememberDecidedUnmarked(
   const wait = decision.closeClaimedAt === undefined ? 0 : CLOSE_EDIT_IN_FLIGHT_MS;
   await ctx.scheduler.runAfter(wait, internal.managerChannelActions.markRequestReplaced, {
     replacedId,
+  });
+}
+
+/** The questions of one item a park looks through for one still open: a handful in practice. */
+const PARK_QUESTIONS_READ = 100;
+
+/**
+ * Remember a plan's delivered request before a park clears it from the item, while a conflict's
+ * question asked beside that plan is still open (17-C, decision C-3): the question holds steps of
+ * the plan for as long as it stands, the manager answers it by the request's code and in the
+ * request's thread, and both are on the request alone. Kept with how it was decided, its code is
+ * answered as the question's (`managerReplies.resolveManagerReply`) and its thread stays read
+ * (`managerQuestions.questionRequestsOn`). Nothing is edited in the DM: the request's message
+ * already says how it was decided. Without an open question nothing is kept.
+ *
+ * @param ctx - The park's transaction.
+ * @param row - The work item as it stands, its `decision` the one going.
+ * @param now - The transaction's time.
+ */
+export async function rememberRequestWithQuestion(
+  ctx: MutationCtx,
+  row: Doc<'workItems'>,
+  now: number,
+): Promise<void> {
+  const decision = row.decision;
+  if (decision === undefined || decision.kind !== 'plan' || decision.ts === undefined) return;
+  const asked = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+    .take(PARK_QUESTIONS_READ);
+  const open = asked.some(
+    (question) =>
+      question.type === 'retrieval' &&
+      question.relationId !== undefined &&
+      isOpenQuestion(question),
+  );
+  if (!open) return;
+  const kept = await ctx.db
+    .query('replacedDecisionRequests')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', row.agentId).eq('decisionId', decision.id),
+    )
+    .first();
+  if (kept !== null) return;
+  await ctx.db.insert('replacedDecisionRequests', {
+    agentId: row.agentId,
+    workItemId: row._id,
+    decisionId: decision.id,
+    kind: decision.kind,
+    surfaceSlug: decision.surfaceSlug,
+    channel: decision.channel,
+    ts: decision.ts,
+    ...(decision.requestText === undefined ? {} : { requestText: decision.requestText }),
+    ...(decision.withButtons === true ? { withButtons: true } : {}),
+    replacedAt: now,
+    ...(decision.outcome === undefined ? {} : { outcome: decision.outcome }),
+    ...(decision.decidedAt === undefined ? {} : { decidedAt: decision.decidedAt }),
+    ...(decision.decidedVia === undefined ? {} : { decidedVia: decision.decidedVia }),
   });
 }
 
@@ -661,20 +720,34 @@ export async function settleClosedBatchesOn(
 export const RECENT_THREADS_READ = 10;
 
 /**
- * The provider timestamps of Day0's other messages in a manager DM within the notice window,
- * newest first, at most {@link RECENT_THREADS_READ} (M10): the requests decided in it, the
- * replaced requests whose message was edited in it, and the notes sent in it. An open request's
+ * The most requests with a standing conflict question whose threads one poll reads on a channel,
+ * newest first (17-C): each holds steps of a plan until it is answered, so few stand at once.
+ */
+export const QUESTION_THREADS_READ = 20;
+
+/**
+ * The provider timestamps of Day0's other messages in a manager DM whose threads are read: within
+ * the notice window, newest first and at most {@link RECENT_THREADS_READ} (M10), the requests
+ * decided in it, the replaced requests whose message was edited in it and the notes sent in it;
+ * and, however long ago they were decided, the requests whose plan has a conflict question still
+ * standing, at most {@link QUESTION_THREADS_READ} (17-C; W16-R27: the answer's acknowledgement
+ * goes into that thread, and a reply left there after the hour was never read). An open request's
  * own thread is read already and is left out.
  *
  * @param since - The start of the notice window.
- * @param known - The decided requests' timestamps, and the open requests' to leave out.
+ * @param known - The decided requests' timestamps, the open requests' to leave out, and those of
+ *   the requests with a standing question.
  */
 export async function recentThreadsOn(
   ctx: QueryCtx,
   surface: Doc<'surfaces'>,
   channel: string,
   since: number,
-  known: { readonly decided: readonly string[]; readonly open: readonly string[] },
+  known: {
+    readonly decided: readonly string[];
+    readonly open: readonly string[];
+    readonly questions?: readonly string[];
+  },
 ): Promise<string[]> {
   const [replaced, notes] = await Promise.all([
     ctx.db
@@ -703,10 +776,19 @@ export async function recentThreadsOn(
       note.providerTs !== undefined && note.createdAt >= since ? [note.providerTs] : [],
     ),
   ];
-  return [...new Set(stamps)]
-    .filter((ts) => !open.has(ts))
-    .sort((left, right) => compareProviderTs(right, left))
-    .slice(0, RECENT_THREADS_READ);
+  const newestFirst = (list: readonly string[], most: number): string[] =>
+    [...new Set(list)]
+      .filter((ts) => !open.has(ts))
+      .sort((left, right) => compareProviderTs(right, left))
+      .slice(0, most);
+  // The standing questions' threads first, outside the window's bound: a busy hour of decided
+  // requests never pushes out the one thread an answer is still owed in.
+  return [
+    ...new Set([
+      ...newestFirst(known.questions ?? [], QUESTION_THREADS_READ),
+      ...newestFirst(stamps, RECENT_THREADS_READ),
+    ]),
+  ];
 }
 
 /**

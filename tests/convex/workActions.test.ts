@@ -68,8 +68,10 @@ import {
   type ExecutionOutput,
   type ExecutionPlan,
   type MockAction,
+  type OpenQuestion,
   type PlanStepOutcome,
 } from '../../src/work/types';
+import { isConflictQuestion, ownQuestionOf } from '../../src/work/obligations';
 import {
   FINISHED_WORDS,
   MOSS_DRAFT,
@@ -8377,6 +8379,104 @@ describe('a question asked in the notes when no chat surface can carry the manag
     },
   );
 
+  it('stops once on a set that waits on the executor’s own question and a conflict’s, each kept with its mark (17-C; the pre-tag’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const asked = 'Which template should the notice use?';
+    recorded.skillOutput = {
+      ...sitting4Log1PhaseOne,
+      notes: `The notice template is not documented for an unconfirmed ETA. ${asked}`,
+      declaredQuestion: asked,
+      actions: [read!, comment!, done!],
+    };
+    const harness = convexTest(contractSchema(), allConvexModules());
+    const { agentId, workItemId } = await seedWithoutChat(harness);
+    await harness.run(async (ctx) => await ctx.db.patch(agentId, { autonomousActions: true }));
+    // Two pages of the owner's disagree, the manager confirmed it, and the plan's second step
+    // cites the disputed passage: its question was asked beside the plan and is still open.
+    const pages = await twoThatDisagree(harness as unknown as RelationsHarness);
+    await measure(harness as unknown as RelationsHarness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness as unknown as RelationsHarness)).find(
+      (row) => row.kind === 'possible_conflict',
+    )!;
+    await asManager(harness as unknown as RelationsHarness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    const conflictQuestion =
+      'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right?';
+    const questionId = await harness.run(async (ctx) => {
+      const hashes = new Set(conflictBlocks(relation));
+      const blocks = (await ctx.db.query('docBlocks').collect()).filter((block) =>
+        hashes.has(block.hash),
+      );
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        plan: {
+          ...(row?.plan as object),
+          cites: [
+            {
+              step: 2,
+              label: 'Finance wiki/escalation.md#Finance escalation > Thresholds',
+              blocks: blocks.map((block) => ({ id: block._id, hash: block.hash })),
+            },
+          ],
+        } as never,
+      });
+      const charterId = await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        createdAt: 1,
+      });
+      return await ctx.db.insert('managerQuestions', {
+        agentId,
+        key: `conflict:${relation._id}`,
+        question: conflictQuestion,
+        context: { touchedBy: 'plan', text: 'Thresholds', words: [] },
+        askedAt: 1,
+        workItemId,
+        charterId,
+        blocking: false,
+        type: 'retrieval',
+        relationId: relation._id,
+      });
+    });
+
+    await harness.withIdentity(OWNER).action(api.workActions.executeApprovedPlan, { workItemId });
+    await harness.action(internal.workActions.applyApprovedActions, { workItemId });
+
+    const stopped = await readItem(harness, workItemId);
+    expect(stopped.state).toBe('failed');
+    expect(ticketWrites()).toEqual([]);
+    // One stop names both questions, and the output keeps each with its own mark: the conflict's
+    // relation survives beside the executor's question.
+    const open = (stopped.output as { openQuestion?: OpenQuestion }).openQuestion;
+    expect(open).toMatchObject({ question: asked, steps: [2, 3] });
+    expect(open?.relationId).toBeUndefined();
+    expect(open?.also).toEqual([
+      { question: conflictQuestion, steps: expect.any(Array), relationId: relation._id },
+    ]);
+    expect(stopped.skipReason).toContain(`is still open: ${asked} Also open: ${conflictQuestion}`);
+    expect(isConflictQuestion(stopped.output)).toBe(true);
+    expect(ownQuestionOf(stopped.output)).toBe(asked);
+
+    // The manager answers the conflict on its question and the executor's with the Retry's note:
+    // the note is taken as the answer to the executor's question, and nothing holds the next run.
+    await harness.withIdentity(OWNER).mutation(api.managerQuestions.answerConflict, {
+      questionId,
+      choice: 'both',
+    });
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'Use the exception template.' });
+    const retried = await readItem(harness, workItemId);
+    expect(retried.managerFeedback).toMatchObject({ answersQuestion: true });
+    expect(await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId })).toEqual(
+      [],
+    );
+  });
+
   it.each([
     ['English', 'Please confirm which template the notice should use.'],
     ['Chinese', '请确认通知使用哪个模板。'],
@@ -10072,7 +10172,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
       await approveInSlack(harness, surfaceId, route);
       expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
       expect(await acknowledgement(harness, surfaceId)).toBe(
-        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+        'Approval gh6npq received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.',
       );
 
       // The comment and the post land; the close does not, and waits on its card alone.
@@ -10262,7 +10362,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect(row.state).toBe('actions-pending');
     expect(row.approvedIndexes).toBeUndefined();
     expect(await acknowledgement(harness, surfaceId, '1789000003.000100')).toBe(
-      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
+      'Approval jm8uvw received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in Day0.',
     );
   });
 
@@ -10323,7 +10423,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect((await readItem(harness, workItemId)).approvedIndexes).toEqual([0, 3]);
     expect((await readItem(harness, second.workItemId)).approvedIndexes).toEqual([0]);
     expect(await acknowledgement(harness, surfaceId)).toBe(
-      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+      'Approval bq2wxy received for 2 of 2 decisions (gh6npq, hk7rst). I’m applying the approved actions now. I won’t send the ticket close of gh6npq with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.',
     );
     const approved = (await events(harness, agentId)).filter(
       (event) => event.type === 'work.actions-approved',
@@ -10409,7 +10509,7 @@ describe('a close Day0 held is decided on its card (12-H, R-12D-1)', (): void =>
     expect(posts.some((text) => text.startsWith('Approval gh6npq received.'))).toBe(true);
     const closeOnly = posts.find((text) => text.startsWith('Priya’s ticket close')) ?? '';
     expect(closeOnly.split('\n')[0]).toBe(
-      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in day0.',
+      'Priya’s ticket close on “Add the close-summary audit note” waits for you on its card in Day0.',
     );
     expect(closeOnly).toContain('wrote “I could not find the close summary”.');
     expect(closeOnly).not.toContain(parked.decision?.id ?? 'no code');
