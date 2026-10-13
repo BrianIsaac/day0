@@ -16,7 +16,12 @@
   --color-muted: #a1a1aa;
   --color-accent: #22d3ee;
   --color-warn: #f59e0b;
-  --color-danger: #ef4444;
+  /* One step lighter than the design's red (#ef4444), in the dark set only (D-7 (b), wave 17): on
+     its 15% chip fill that red read 4.03:1 on a card, the one drawn text pair under 4.5:1 in
+     either set (W16-R33). This step reads 5.98, 5.15 and 5.59 on the page, a card and an inset,
+     and 5.90 on danger-soft. The danger fill and line below keep the values mixed from the
+     design's red: the chip's text moved, not its ground. */
+  --color-danger: #f87171;
   --color-ok: #34d399;
   --color-card: #18181b;
   --color-border: #27272a;

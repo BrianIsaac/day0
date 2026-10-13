@@ -63,12 +63,36 @@ describe('the theme tokens', () => {
     }
   });
 
-  it('keeps card prose and the accent, warn and ok tones on their fills readable at WCAG AA', () => {
+  it('keeps card prose and every tone on its fill readable at WCAG AA', () => {
     expect(contrast(token('fg-2'), token('card'))).toBeGreaterThanOrEqual(4.5);
-    // Danger on its own fill is 4.34:1, short of AA: the design's pair, recorded in the wave 6 A
-    // handover for a product call rather than changed here.
-    for (const tone of ['accent', 'warn', 'ok']) {
+    // Re-taken (D-7 (b), wave 17): danger on its own fill was 4.34:1, the design's pair, recorded
+    // in the wave 6 A handover for a product call and left out of this loop until it was ruled.
+    for (const tone of ['accent', 'warn', 'ok', 'danger']) {
       expect(contrast(token(tone), token(`${tone}-soft`)), tone).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('draws the dark danger chip at 4.5:1 or over on the page, a card and an inset (D-7 (b); W16-R33’s contrast table)', () => {
+    // The review's table: danger text on its 15% fill was 4.61 on the page, 4.03 on a card and
+    // 4.37 on an inset, the only drawn text pair under 4.5:1 in either set.
+    const danger = token('danger');
+    const drawn = Object.fromEntries(
+      ['bg', 'card', 'inset'].map((surface) => [
+        surface,
+        Number(contrast(danger, over(danger, 0.15, token(surface))).toFixed(2)),
+      ]),
+    );
+    expect(drawn).toEqual({ bg: 5.98, card: 5.15, inset: 5.59 });
+    // One step lighter of the same red, never another hue; its fill and line keep the design's.
+    expect(danger).toBe('#f87171');
+    expect([token('danger-soft'), token('danger-line')]).toEqual(['#281d1f', '#733937']);
+    // The light set's danger is unchanged, and passes on the same three grounds.
+    expect(lightToken('danger')).toBe('#991b1b');
+    for (const surface of ['bg', 'card', 'inset']) {
+      expect(
+        contrast(lightToken('danger'), over(lightToken('danger'), 0.15, lightToken(surface))),
+        surface,
+      ).toBeGreaterThanOrEqual(4.5);
     }
   });
 });
