@@ -7,6 +7,7 @@ import type { GenericMutationCtx, WithoutSystemFields } from 'convex/server';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { insertMinimalRow } from './schema-fixtures';
+import { AGREEMENT_APPROVED_VIA } from '../../src/work/agreement-vocabulary';
 
 describe('documentation schema', (): void => {
   it('stores owner-level sources, pages and agent source selections', async (): Promise<void> => {
@@ -3485,5 +3486,55 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
     expect(read.older).not.toHaveProperty('datedBySource');
     expect(read.dated).toMatchObject({ updatedAt: 5, datedBySource: true });
     expect(read.read).toMatchObject({ updatedAt: 6, datedBySource: false });
+  });
+
+  it("records an agreement a reorientation card's Approve made as the card's, and one kept on the agreements card as that card's still (O-15)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agreement = (
+      approvedVia: Doc<'workingAgreements'>['approvedVia'],
+    ): WithoutSystemFields<Doc<'workingAgreements'>> => ({
+      userId: 'owner',
+      kind: 'convention',
+      statement: 'Link the ticket in every #revops post.',
+      scope: 'global',
+      sourceType: 'manager-card',
+      status: 'active',
+      approvedAt: 5,
+      approvedVia,
+      effectiveFrom: 5,
+      createdAt: 4,
+      appliedTo: [],
+    });
+    const read = await harness.run(async (ctx) => {
+      const fromCard = await ctx.db.insert('workingAgreements', agreement('reorientation'));
+      const fromAgreements = await ctx.db.insert('workingAgreements', agreement('agreements-card'));
+      const active = await ctx.db
+        .query('workingAgreements')
+        .withIndex('by_user_status', (q) => q.eq('userId', 'owner').eq('status', 'active'))
+        .collect();
+      return {
+        fromCard: await ctx.db.get(fromCard),
+        fromAgreements: await ctx.db.get(fromAgreements),
+        active: active.map((row) => row.approvedVia),
+      };
+    });
+    expect(read.fromCard?.approvedVia).toBe('reorientation');
+    expect(read.fromAgreements?.approvedVia).toBe('agreements-card');
+    expect(read.active).toEqual(['reorientation', 'agreements-card']);
+    // The schema's union is this list: the three ways before 0.21.0 keep their places.
+    expect(AGREEMENT_APPROVED_VIA).toEqual([
+      'promotion-card',
+      'plan-approval',
+      'agreements-card',
+      'reorientation',
+    ]);
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.insert(
+          'workingAgreements',
+          agreement('talk' as Doc<'workingAgreements'>['approvedVia']),
+        );
+      }),
+    ).rejects.toThrow();
   });
 });
