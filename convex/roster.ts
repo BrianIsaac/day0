@@ -1,12 +1,14 @@
-import { v, type Infer } from 'convex/values';
+import { paginationOptsValidator } from 'convex/server';
+import { ConvexError, v, type Infer } from 'convex/values';
 import { typedCodeReachOf } from './slackMessagesTab';
 import { socketBridgeStateOf } from './socketHeartbeats';
 import type { Doc, Id } from './_generated/dataModel';
-import type { QueryCtx } from './_generated/server';
+import { query, type QueryCtx } from './_generated/server';
+import { getCallerOrThrow } from './ownership';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
 import { needsYouOfEmployee } from './needsYou';
-import { isEvaluationAgent } from './metrics';
+import { byWriteOrder, isEvaluationAgent } from './metrics';
 import {
   holdsLiveStepClaim,
   isManagerChannel,
@@ -31,10 +33,12 @@ import { finishedAnswerOf } from '../src/work/work-done';
 import type { WorkDoneAnswer } from '../src/work/types';
 
 /*
- * The landing page's roster: one row per employee of an owner, read for `agents.rosterForUser`,
- * which validates and authorises and calls {@link rosterOf} (standard 9.3). Moved out of
- * `convex/agents.ts` to keep that module under the standard's soft 1,000 lines (9.2); the
- * query's path is unchanged.
+ * The landing page's roster: one row per employee of an owner. The home reads it by pages
+ * through {@link page} (wave 17, 17-F; RM33 (a)), so an owner of fifty employees sees every one,
+ * each row's day and month read at the viewer's own clock. `agents.rosterForUser`, which
+ * validates and authorises and calls {@link rosterOf} (standard 9.3), still answers the twenty
+ * newest at the backend's clock for a page loaded before wave 17. Moved out of `convex/agents.ts`
+ * to keep that module under the standard's soft 1,000 lines (9.2).
  */
 
 /** The longest role line the roster shows, the ellipsis included. */
@@ -46,7 +50,7 @@ const CHARTER_PENDING_ROLE_LINE = 'charter pending';
 /** The role line of an approved charter whose body states no function. */
 const ROLE_NOT_STATED = 'role not stated';
 
-/** The most employees the landing page lists, as `listForUser` returns. */
+/** The most employees one read of the roster lists: `rosterForUser`'s all, and one page's. */
 const ROSTER_LIMIT = 20;
 
 /**
@@ -104,9 +108,15 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
  * counted once, on the day it first completed within the month: landed when
  * that completion's run answered done, partly done when it answered so, and
  * neither when it answered not done (RM23 (a); `finishedAnswerOf`, the one
- * reading the card, the Work tab and the cycle time take). Reads the month's
- * `work.completed` events by the type index, from the month's first midnight
- * on, and dates each by the instant it was logged.
+ * reading the card, the Work tab and the cycle time take). An item the manager
+ * sent back is counted by the completion that followed, or not at all while
+ * none has, as the Work tab reads its latest answer (the v0.20.0 walk's
+ * finding 4). Reads the month's `work.completed` and `work.retry` events by
+ * the type index, from the month's first midnight on, and dates each by the
+ * instant it was logged. Each read is bounded: past either bound the count is a
+ * floor and says so, and past the send-backs' bound a completion older than the
+ * oldest send-back read is left out, since one of the unread may have taken it
+ * back.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -122,17 +132,32 @@ async function landedThisMonth(
   const monthStart = dayStart(`${month}-01`, zone);
   // Newest first, so a month past the bound still shows its latest days, today among them;
   // one more than the bound is read to tell a full month from a longer one.
-  const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
-    .order('desc')
-    .take(MONTH_LANDED_READ_LIMIT + 1);
+  const [read, sentBackRead] = await Promise.all([
+    eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
+      .order('desc')
+      .take(MONTH_LANDED_READ_LIMIT + 1),
+    eventsOfType(ctx, agent._id, 'work.retry', { from: monthStart })
+      .order('desc')
+      .take(MONTH_LANDED_READ_LIMIT + 1),
+  ]);
+  const sentBack = sentBackRead.slice(0, MONTH_LANDED_READ_LIMIT);
+  const moreSentBack = sentBackRead.length > MONTH_LANDED_READ_LIMIT;
+  // Past the send-backs' bound the older ones are unread: only what finished since the oldest one
+  // read is known not to have been taken back.
+  const from = moreSentBack ? (sentBack.at(-1)?.createdAt ?? monthStart) : monthStart;
   const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
-  for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
-    if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
+  // Oldest first: each item keeps the first completion that did the work, in whole or in part,
+  // since it was last sent back; a not-done answer lands nothing (W16-R17).
+  for (const event of [...read.slice(0, MONTH_LANDED_READ_LIMIT), ...sentBack].sort(byWriteOrder)) {
+    if (event.createdAt < from) continue;
+    if (isEventOf(event, 'work.retry')) {
+      firstFinished.delete(event.payload.workItemId);
+      continue;
+    }
+    if (!isEventOf(event, 'work.completed')) continue;
     const workItemId: unknown = event.payload.workItemId;
     const answer = finishedAnswerOf(event.payload.output);
-    // Read newest first, so the last completion kept per item is its first in the month that did
-    // the work, in whole or in part; a not-done answer Retry sent back lands nothing (W16-R17).
-    if (typeof workItemId === 'string' && answer !== 'not-done') {
+    if (typeof workItemId === 'string' && answer !== 'not-done' && !firstFinished.has(workItemId)) {
       firstFinished.set(workItemId, { at: event.createdAt, answer });
     }
   }
@@ -152,7 +177,7 @@ async function landedThisMonth(
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([day, { landed, partly }]) => ({ day, landed, ...(partly > 0 ? { partly } : {}) })),
-    atLeast: read.length > MONTH_LANDED_READ_LIMIT,
+    atLeast: read.length > MONTH_LANDED_READ_LIMIT || moreSentBack,
   };
 }
 
@@ -346,32 +371,32 @@ async function workCounts(
 }
 
 /**
- * The owner's employees, one row each, for the landing page: who they are,
+ * Some of an owner's employees, one row each, for the landing page: who they are,
  * their state as their own page shows it (`shownEmployeeState`: a charter
  * outranks the row) and where their one-to-one stands (`oneToOnePhase`, off
  * the newest session, as the page reads it), the role the manager approved,
  * the open, parked and stopped work, what waits on the manager, whether they
  * act on their own, whether they are paused, how much documentation they
- * read, and what they landed this month. Evaluation agents and the baseline arm are left out.
+ * read, and what they landed this month.
  *
  * @param ctx - The query's context.
- * @param ownerKey - The owner whose employees are listed.
- * @returns At most `ROSTER_LIMIT` rows, newest first.
+ * @param ownerKey - The owner the employees belong to.
+ * @param agents - The employees to list, in the order to list them.
+ * @param at - The instant whose day and month each row reads, in the employee's own zone: the
+ *   viewer's clock (W16-R32), or the backend's for a caller that sends none.
  */
-export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterRow[]> {
-  const agents = (
-    await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
-      .order('desc')
-      .take(ROSTER_SCAN_LIMIT)
-  )
-    .filter((agent) => !isEvaluationAgent(agent))
-    .slice(0, ROSTER_LIMIT);
+async function rosterRows(
+  ctx: QueryCtx,
+  ownerKey: string,
+  agents: readonly Doc<'agents'>[],
+  at: number,
+): Promise<RosterRow[]> {
   const sources = await ctx.db
     .query('docSources')
     .withIndex('by_user', (q) => q.eq('userId', ownerKey))
     .take(DOC_SOURCE_READ_LIMIT);
+  // What stands now (a wait, an access ended, a bridge's heartbeat) is read at the backend's
+  // clock, as the writes that change it are stamped; only the calendar follows the viewer's.
   const now = Date.now();
   return await Promise.all(
     agents.map(async (agent): Promise<RosterRow> => {
@@ -379,7 +404,7 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         charterStanding(ctx, agent._id),
         workCounts(ctx, agent._id),
         needsYouOfEmployee(ctx, agent, now),
-        landedThisMonth(ctx, agent, now),
+        landedThisMonth(ctx, agent, at),
         newestSession(ctx, agent._id),
         ctx.db
           .query('surfaces')
@@ -404,7 +429,7 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         // so the roster and the inbox never disagree; the field stays, filled from it.
         needsYou: waiting.length,
         docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
-        today: dayKey(now, agentZone(agent)),
+        today: dayKey(at, agentZone(agent)),
         landedThisMonth: landed,
         decisionsReach: decisionsReachOf(
           channel,
@@ -415,3 +440,86 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
     }),
   );
 }
+
+/**
+ * The owner's newest employees, one row each ({@link rosterRows}), at the backend's clock:
+ * `agents.rosterForUser`'s answer. Evaluation agents and the baseline arm are left out.
+ *
+ * @param ctx - The query's context.
+ * @param ownerKey - The owner whose employees are listed.
+ * @returns At most `ROSTER_LIMIT` rows, newest first.
+ */
+export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterRow[]> {
+  const agents = (
+    await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+      .order('desc')
+      .take(ROSTER_SCAN_LIMIT)
+  )
+    .filter((agent) => !isEvaluationAgent(agent))
+    .slice(0, ROSTER_LIMIT);
+  return await rosterRows(ctx, ownerKey, agents, Date.now());
+}
+
+/** The last instant the roster's calendar is read at: the start of the last day Day0 counts. */
+const LAST_ROSTER_INSTANT = Date.UTC(9999, 11, 30);
+
+/** What a caller is told whose clock is no time on the calendar. */
+const NOT_A_CALENDAR_TIME =
+  'The page’s clock is not a time Day0 can place on the calendar; reload the page';
+
+/** One page of the roster, as the page's paginated read takes it. */
+const rosterPageValidator = v.object({
+  page: v.array(rosterRowValidator),
+  isDone: v.boolean(),
+  continueCursor: v.string(),
+});
+
+/**
+ * One page of the caller's employees for the landing page, newest first ({@link rosterRows}), so
+ * the home lists every employee an owner holds and not the twenty newest (wave 17, 17-F;
+ * RM33 (a)). Each row's day and month are read at `at`, the viewer's clock rounded down to a
+ * quarter hour (`rosterClock`), in the employee's own zone: a cached query's own clock stands
+ * still, so the month card's today went stale past midnight on an idle page (W16-R32). Evaluation
+ * agents and the baseline arm are left out, so a page may hold fewer rows than it read.
+ *
+ * Public, any signed-in caller, for the caller's own employees only (`getCallerOrThrow`, 12-G;
+ * the read is keyed by the caller's owner key). A page reads at most `ROSTER_LIMIT` employees
+ * whatever is asked. Writes nothing.
+ *
+ * @throws ConvexError when `at` is no time on the calendar.
+ */
+export const page = query({
+  args: { paginationOpts: paginationOptsValidator, at: v.number() },
+  returns: rosterPageValidator,
+  handler: async (ctx, args): Promise<Infer<typeof rosterPageValidator>> => {
+    const identity = await getCallerOrThrow(ctx);
+    // The guard first: a caller it refuses learns nothing of the arguments (12-G).
+    if (!Number.isFinite(args.at) || args.at < 0 || args.at > LAST_ROSTER_INSTANT) {
+      throw new ConvexError(NOT_A_CALENDAR_TIME);
+    }
+    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
+    if (identity.ownerKey === '') return { page: [], isDone: true, continueCursor: '' };
+    const read = await ctx.db
+      .query('agents')
+      .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
+      .order('desc')
+      .paginate({
+        ...args.paginationOpts,
+        numItems: Math.min(args.paginationOpts.numItems, ROSTER_LIMIT),
+      });
+    // The paginated read's own split hints (`splitCursor`, `pageStatus`) are left out by name,
+    // never spread: what it pages is twenty `agents` rows, which no client needs to split.
+    return {
+      page: await rosterRows(
+        ctx,
+        identity.ownerKey,
+        read.page.filter((agent) => !isEvaluationAgent(agent)),
+        args.at,
+      ),
+      isDone: read.isDone,
+      continueCursor: read.continueCursor,
+    };
+  },
+});

@@ -105,6 +105,37 @@ describe('MonthCard', (): void => {
   });
 });
 
+describe('the month card past twenty employees (wave 17, 17-F; RM33 (a))', (): void => {
+  const figures = {
+    employees: [{}],
+    company: {
+      decisions: { approved: 0, rejected: 0, medianLatencyMs: null, p90LatencyMs: null },
+      actions: {
+        approved: 0,
+        held: 0,
+        refused: 0,
+        automatic: { writes: 0, reads: 0, managerMessages: 0 },
+      },
+      auditTrail: { complete: 0, total: 0, fraction: null },
+    },
+  } as unknown as OwnerMetrics;
+  const drawn = (coverage?: Parameters<typeof MonthCard>[0]['coverage']): string =>
+    renderToStaticMarkup(
+      <MonthCard roster={[]} figures={figures} coverage={coverage} waiting={0} now={NOW} />,
+    );
+
+  it('says nothing over the figures where the one read covers the company', (): void => {
+    expect(drawn()).not.toContain(' read<');
+    expect(drawn({ kind: 'all' })).toBe(drawn());
+  });
+
+  it('says how many are read while the pages load, and the count once every employee is', (): void => {
+    expect(drawn({ kind: 'reading', read: 20, of: 51 })).toContain('>20 of 51 read<');
+    expect(drawn({ kind: 'every', employees: 51 })).toContain('>51 employees<');
+    expect(drawn({ kind: 'every', employees: 1_204 })).toContain('>1,204 employees<');
+  });
+});
+
 describe('the month card’s today is the employees’ day (16-F)', (): void => {
   it('marks the employees’ today, not the viewer’s, when their zone is already in the next month', (): void => {
     // 30 September 18:00 UTC is 1 October 02:00 in Singapore.

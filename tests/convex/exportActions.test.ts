@@ -1,15 +1,18 @@
 /** @vitest-environment node */
 
+import { randomBytes } from 'node:crypto';
 import { convexTest } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
+import { OWNER_ROW_EMPLOYEE_ID_FIELDS } from '../../convex/exportActions';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { employeeTracesOf, readOwnerExport } from '../../src/export/trace';
+import { encrypt } from '../../src/lib/credential-crypto';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
-import { ownerExportOf, seedOwner } from './fakes/owner-export';
+import { ownerExportOf, seedOwner, type Harness } from './fakes/owner-export';
 
 describe('the export redacts by its own policy row (review M9)', (): void => {
   it("removes an e-mail, a phone number and a labelled address from a work item's text", async (): Promise<void> => {
@@ -171,6 +174,51 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     expect(file.employees.map((trace) => trace.agent.id)).not.toContain(a.evaluationId);
   });
 
+  it('names every one of the owner’s agents across the pages of its head, each once, and none of another owner’s (W16-R32)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    const b = await seedOwner(harness, 'owner-b', 'Bravo');
+    // The review's input: more agents than the head once read (five hundred, counting at most
+    // one past them as left out).
+    const more = 505;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < more; index += 1) {
+        await ctx.db.insert('agents', {
+          bossEmail: fixtureAddressOf('owner-a'),
+          name: `Alpha hire ${index}`,
+          userId: 'owner-a',
+          state: 'active',
+          createdAt: 10 + index,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const head = await caller.action(api.exportActions.exportForOwner, {});
+    const employees = [...head.employees];
+    const setAside = [...head.setAside];
+    let cursor = head.moreAgents;
+    let pages = 1;
+    while (cursor !== null) {
+      const page = await caller.action(api.exportActions.exportOwnerAgents, { cursor });
+      employees.push(...page.employees);
+      setAside.push(...page.setAside);
+      cursor = page.moreAgents;
+      pages += 1;
+    }
+
+    expect(pages).toBeGreaterThan(5);
+    expect(employees).toHaveLength(more + 1);
+    expect(new Set(employees.map((employee) => employee.id)).size).toBe(more + 1);
+    // In deploy order, the seeded employee first.
+    expect(employees[0]).toEqual({ id: a.agentId, name: 'Alpha Employee' });
+    expect(employees.at(-1)?.name).toBe(`Alpha hire ${more - 1}`);
+    expect(setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    for (const id of [b.agentId, b.evaluationId]) {
+      expect([...employees, ...setAside].map((agent) => agent.id)).not.toContain(id);
+    }
+  });
+
   it('refuses a caller with no identity', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const refusal = await guardRefusal();
@@ -178,7 +226,134 @@ describe('the owner export (wave 16, 16-F)', (): void => {
       refusal,
     );
     await expect(
+      harness.action(api.exportActions.exportOwnerAgents, { cursor: 'any' }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
       harness.action(api.exportActions.exportOwnerPage, { section: 'people', cursor: null }),
     ).rejects.toMatchObject(refusal);
+  });
+});
+
+describe('a page of an employee’s trace is bounded in bytes', (): void => {
+  it('ends a page of work items before it has read past the bound, and the trace still holds every one once', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // Forty finished items whose runs each kept a 200 KB draft: 8 MB in one page of a hundred.
+    const draft = 'y'.repeat(200_000);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId: a.agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `Alpha-long-${index}`,
+          title: `Alpha long ticket ${index}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          output: { workDone: 'done', workDoneWhy: 'Posted.', draft },
+          observedAt: 3,
+          createdAt: 3,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const first = await caller.action(api.exportActions.exportPage, {
+      agentId: a.agentId,
+      section: 'workItems',
+      cursor: null,
+    });
+    expect(first.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(first.rows).length).toBeLessThan(5 * 1024 * 1024);
+    expect(first.next).toMatchObject({ section: 'workItems' });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+    expect(file.employees[0]?.sections.workItems).toHaveLength(41);
+  });
+});
+
+describe('an employee’s id in the export (W16-R32)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** One stored credential of the owner's, sealed as the store action seals it. */
+  async function storeValue(harness: Harness, owner: string, plaintext: string): Promise<void> {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('credentials', {
+        userId: owner,
+        kind: 'value',
+        label: 'A short tile code',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(plaintext, key),
+      });
+    });
+  }
+
+  it('is in the file unscrubbed when a stored value occurs inside it, and the value is still removed where it is data', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // The review's input: a short stored credential that occurs inside the employees' ids.
+    const inside = a.agentId.slice(0, 4);
+    expect(a.evaluationId).toContain(inside);
+    await storeValue(harness, 'owner-a', inside);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', {
+        agentId: a.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'Alpha-2',
+        title: `Rotate the tile code ${inside} before Friday`,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 2,
+        createdAt: 2,
+      });
+    });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+
+    // Wherever the file names the employee: the list its traces follow, its own trace, its rows
+    // and the owner's rows that are about it; and the agent set aside the same.
+    expect(file.employees.map((trace) => trace.agent.id)).toEqual([a.agentId]);
+    const [trace] = file.employees;
+    expect(trace?.sections.events.map((event) => event.agentId)).toEqual([a.agentId]);
+    expect(trace?.sections.workItems.map((item) => item.agentId)).toEqual([a.agentId, a.agentId]);
+    expect(file.owner.skillVersions.map((version) => version.authorAgentId)).toEqual([a.agentId]);
+    expect(file.owner.retirements.map((row) => row.agentId)).toEqual([a.evaluationId]);
+    expect(file.setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    // The stored value where it is data, in a ticket's title, is removed as before.
+    const titles = trace?.sections.workItems.map((item) => item.title) ?? [];
+    expect(titles.some((title) => title.startsWith('Rotate the tile code '))).toBe(true);
+    expect(titles.join(' ')).not.toContain(inside);
+  });
+
+  it('is kept in the owner’s rows in every field the schema types as an employee’s id', (): void => {
+    // The tables the owner's rows are read from (`OWNER_SECTION_PAGES`).
+    const tables = [
+      'retirements',
+      'managerTransfers',
+      'docSources',
+      'docPages',
+      'docRelations',
+      'skillVersions',
+      'people',
+      'personIdentities',
+      'relationships',
+      'workingAgreements',
+    ] as const;
+    const typed = new Set(
+      tables.flatMap((table) =>
+        Object.entries(schema.tables[table].validator.fields).flatMap(([field, validator]) =>
+          validator.kind === 'id' && validator.tableName === 'agents' ? [field] : [],
+        ),
+      ),
+    );
+    expect([...typed].sort()).toEqual([...OWNER_ROW_EMPLOYEE_ID_FIELDS].sort());
   });
 });

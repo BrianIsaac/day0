@@ -8,10 +8,12 @@
  * Each trace is one employee's, as `scripts/export-trace.ts` writes it from
  * the paged export: redacted, dated in the agent's zone, stamped with the
  * release and commit. An owner export (wave 16) is read as every employee's trace it carries,
- * with the agents it names as set aside. The owner's employees are chosen as `metrics:forOwner`
- * chooses them (evaluation agents, which a trace flags, and baseline arms
- * left out), so the JSON printed first is the shape the query returns, field
- * for field. A recording made before the trace existed is read from its
+ * with the agents it names as set aside. Every employee the traces carry is counted, as
+ * `metrics:forOwnerByPages` counts the whole company (evaluation agents, which a trace flags, and
+ * baseline arms left out), so the JSON printed first is the shape that action returns, field for
+ * field; `metrics:forOwner`, the query a page subscribes to, covers the twenty most recent
+ * employees and agrees only for a company of twenty or fewer (wave 17, 17-F; RM33 (a)). A
+ * recording made before the trace existed is read from its
  * Convex snapshot export instead (`<export.zip | export-directory>`), the
  * unredacted database, and the output says so.
  *

@@ -150,6 +150,23 @@ describe('NeedsYouList', (): void => {
     expect(text).toContain('2 more on your employees’ pages');
   });
 
+  it('counts in its last line what waits for employees the inbox does not reach, and never says nothing waits while something does (17-F)', (): void => {
+    const listed = renderToStaticMarkup(
+      <NeedsYouList
+        inbox={{ entries: [], total: 0, waitingByEmployee: [] }}
+        now={NOW}
+        beyond={
+          new Map([
+            ['synthetic-earlier-1', 2],
+            ['synthetic-earlier-2', 1],
+          ])
+        }
+      />,
+    );
+    expect(listed).toContain('3 more on your employees’ pages.');
+    expect(listed).not.toContain('Nothing is waiting on you.');
+  });
+
   it('says so when nothing waits on the manager', (): void => {
     const empty = renderToStaticMarkup(
       <NeedsYouList inbox={{ entries: [], total: 0, waitingByEmployee: [] }} now={NOW} />,
@@ -201,6 +218,34 @@ describe('NeedsYouList with a paused employee (12-P)', (): void => {
     expect(html.match(/<li/g)?.length).toBe(
       renderToStaticMarkup(<NeedsYouList inbox={waiting} now={NOW} />).match(/<li/g)!.length + 2,
     );
+  });
+
+  it('names a paused employee the inbox does not reach, from that employee’s own count (the second pass of the fixes, 17-F)', (): void => {
+    // The inbox reads the newest twenty employees; Tomas is an earlier one, paused, with two
+    // decisions waiting on his own page.
+    const beyond = new Map([['synthetic-tomas', 2]]);
+    const listed = renderToStaticMarkup(
+      <NeedsYouList inbox={waiting} now={NOW} paused={paused} beyond={beyond} />,
+    )
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ');
+    expect(listed).toContain('Tomas is paused; 2 decisions still wait on you.');
+    expect(listed).toContain('Manage Tomas');
+
+    // With nothing of the newest twenty waiting, the line is still said, above the count.
+    const alone = renderToStaticMarkup(
+      <NeedsYouList
+        inbox={{ entries: [], total: 0, waitingByEmployee: [] }}
+        now={NOW}
+        paused={paused}
+        beyond={beyond}
+      />,
+    )
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ');
+    expect(alone).toContain('Tomas is paused; 2 decisions still wait on you.');
+    expect(alone).toContain('2 more on your employees’ pages.');
+    expect(alone.indexOf('Tomas is paused')).toBeLessThan(alone.indexOf('2 more on your'));
   });
 
   it('draws no line before the inbox has loaded or when nobody is paused', (): void => {

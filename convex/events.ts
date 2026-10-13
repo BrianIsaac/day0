@@ -9,11 +9,16 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, employeeOwnerScope, getCallerOrThrow } from './ownership';
 import { handoversFromTransfers, isEvaluationAgent } from './metrics';
 import { ownerRetirements } from './retirements';
-import { OWNER_EXPORT_AGENT_LIMIT, OWNER_SECTION_PAGES, withoutOwner } from './ownerExport';
-import { redactTokenShapes } from '../src/surfaces/redact';
-import { agentZone, dayKey, deploymentZone } from '../src/lib/zone';
 import {
-  OWNER_EXPORT_FORMAT,
+  OWNER_EXPORT_PAGE_BYTES,
+  OWNER_SECTION_PAGES,
+  ownerAgentsPage,
+  ownerExportHead,
+  withoutOwner,
+} from './ownerExport';
+import { redactTokenShapes } from '../src/surfaces/redact';
+import { agentZone, dayKey } from '../src/lib/zone';
+import {
   OWNER_SECTIONS,
   ownerKeyDigest,
   ownerSectionAfter,
@@ -22,6 +27,7 @@ import {
   TRACE_PAGE_ROWS,
   TRACE_SECTIONS,
   TRACE_VERSION,
+  type OwnerAgentsPage,
   type OwnerExportHead,
   type OwnerPage,
   type OwnerRows,
@@ -662,7 +668,8 @@ const traceSection = v.union(...TRACE_SECTIONS.map((section) => v.literal(sectio
 /**
  * One page of one section of an agent's trace, redacted, with where the next
  * page starts. At most `TRACE_PAGE_ROWS` rows, so no call nears the
- * backend's 8,192-element return bound. Internal; the export action runs it
+ * backend's 8,192-element return bound, and fewer where the rows are long
+ * (`OWNER_EXPORT_PAGE_BYTES`). Internal; the export action runs it
  * under the caller's identity and the ownership check here runs again.
  */
 export const exportPage = internalQuery({
@@ -672,6 +679,7 @@ export const exportPage = internalQuery({
     const page = await SECTION_PAGES[args.section](ctx, args.agentId, {
       cursor: args.cursor,
       numItems: TRACE_PAGE_ROWS,
+      maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
     });
     const following = sectionAfter(args.section);
     return {
@@ -687,57 +695,50 @@ export const exportPage = internalQuery({
 });
 
 /*
- * The owner export's two registered queries (wave 16, 16-F). Its limits, the readers of each
- * section's page and what a row leaves out are a module below, `convex/ownerExport.ts` (wave 17,
- * 17-s); the redaction is this module's, the same as the employee's trace.
+ * The owner export's three registered queries (wave 16, 16-F; the agents' pages wave 17, 17-F).
+ * Its limits, its head, the readers of each section's page and what a row leaves out are a module
+ * below, `convex/ownerExport.ts` (wave 17, 17-s); the redaction is this module's, the same as the
+ * employee's trace.
  */
 
+/** An agent the figures set aside as a trace names it, or undefined for an employee. */
+function setAsideAgentOf(agent: Doc<'agents'>): TraceAgent | undefined {
+  return isEvaluationAgent(agent) ? traceAgentOf(agent) : undefined;
+}
+
 /**
- * The head of an owner export (wave 16, 16-F; decision F-1): the manifest, every employee the
- * caller holds by id and name, the agents the figures set aside, and where the owner's rows
- * start. Internal; `exportActions.exportForOwner` runs it under the caller's identity, and the
- * owner key is the caller's own, so no other owner's agent is ever listed.
+ * The head of an owner export (wave 16, 16-F; decision F-1): the manifest, the first page of the
+ * caller's agents (the employees by id and name, the agents the figures set aside) with where the
+ * next page starts, and where the owner's rows start. Internal; `exportActions.exportForOwner`
+ * runs it under the caller's identity, and the owner key is the caller's own, so no other owner's
+ * agent is ever listed. Reads; writes nothing.
  */
 export const exportOwnerHead = internalQuery({
   args: { exportedAt: v.number() },
   handler: async (ctx, args): Promise<OwnerExportHead> => {
     const { ownerKey } = await getCallerOrThrow(ctx);
-    const [stamp, read] = await Promise.all([
-      ctx.db.query('deploymentVersions').order('desc').first(),
-      // Newest first, as the figures keep the most recent employees; listed in deploy order.
-      ctx.db
-        .query('agents')
-        .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
-        .order('desc')
-        .take(OWNER_EXPORT_AGENT_LIMIT + 1),
-    ]);
-    const agents = read.slice(0, OWNER_EXPORT_AGENT_LIMIT).reverse();
-    const zone = deploymentZone();
-    return {
-      manifest: {
-        format: OWNER_EXPORT_FORMAT,
-        version: TRACE_VERSION,
-        exportedAt: args.exportedAt,
-        exportedOn: dayKey(args.exportedAt, zone),
-        zone,
-        release: stamp?.release ?? null,
-        commit: stamp?.commit ?? null,
-        pageRows: TRACE_PAGE_ROWS,
-        ownerKey,
-      },
-      employees: agents
-        .filter((agent) => !isEvaluationAgent(agent))
-        .map((agent) => ({ id: agent._id, name: agent.name })),
-      setAside: agents.filter(isEvaluationAgent).map(traceAgentOf),
-      omittedAgents: read.length - agents.length,
-      next: { section: OWNER_SECTIONS[0], cursor: null },
-    };
+    return await ownerExportHead(ctx, ownerKey, args.exportedAt, setAsideAgentOf);
+  },
+});
+
+/**
+ * One later page of the caller's agents for an owner export, from the cursor the head or the page
+ * before handed out, so the export names every agent the caller holds (wave 17, W16-R32).
+ * Internal; `exportActions.exportOwnerAgents` runs it under the caller's identity, and the read is
+ * keyed by the caller's own owner key. Reads; writes nothing.
+ */
+export const exportOwnerAgents = internalQuery({
+  args: { cursor: v.string() },
+  handler: async (ctx, args): Promise<OwnerAgentsPage> => {
+    const { ownerKey } = await getCallerOrThrow(ctx);
+    return await ownerAgentsPage(ctx, ownerKey, args.cursor, setAsideAgentOf);
   },
 });
 
 /**
  * One page of one section of the owner's rows, redacted for export, with where the next page
- * starts. At most `TRACE_PAGE_ROWS` rows (stored pages fewer). Internal;
+ * starts. At most `TRACE_PAGE_ROWS` rows (stored pages fewer), and fewer where the rows are long
+ * (`OWNER_EXPORT_PAGE_BYTES`). Internal;
  * `exportActions.exportOwnerPage` runs it under the caller's identity, and every read is keyed by
  * the caller's own owner key.
  */
@@ -751,6 +752,7 @@ export const exportOwnerPage = internalQuery({
     const page = await OWNER_SECTION_PAGES[args.section](ctx, ownerKey, {
       cursor: args.cursor,
       numItems: TRACE_PAGE_ROWS,
+      maximumBytesRead: OWNER_EXPORT_PAGE_BYTES,
     });
     const following = ownerSectionAfter(args.section);
     return {

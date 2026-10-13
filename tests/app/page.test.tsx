@@ -47,7 +47,7 @@ vi.mock('@clerk/nextjs', () => ({
   }),
 }));
 
-/** The signed-in owner's company as `agents.rosterForUser` returns it, newest first. */
+/** The signed-in owner's company as the pages of the roster (`roster.page`) return it, newest first. */
 const roster = [
   {
     agentId: 'synthetic-owner-agent',
@@ -155,9 +155,8 @@ vi.mock('convex/react', () => {
         createdAt: 1,
       }));
     }
-    if (name === 'agents:rosterForUser') {
-      if (!authState.rosterAvailable)
-        throw new Error('Function agents:rosterForUser is unavailable');
+    if (name === 'roster:page') {
+      if (!authState.rosterAvailable) throw new Error('Function roster:page is unavailable');
       return shownRoster;
     }
     if (name === 'metrics:forOwner' && shownRoster.length === 1) {
@@ -200,6 +199,18 @@ vi.mock('convex/react', () => {
   };
   return {
     useQuery: answer,
+    // The home reads its roster by pages (wave 17, 17-F): the fixture is every page, read whole.
+    usePaginatedQuery: (reference: FunctionReference<'query'>) => {
+      const results = answer(reference);
+      return Array.isArray(results)
+        ? { results, status: 'Exhausted', isLoading: false, loadMore: (): void => undefined }
+        : {
+            results: [],
+            status: 'LoadingFirstPage',
+            isLoading: true,
+            loadMore: (): void => undefined,
+          };
+    },
     // The home reads its inbox through `useQueries`, which answers a failed read as a value.
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
@@ -417,7 +428,7 @@ describe('signed-in landing', () => {
     authState.rosterAvailable = false;
     try {
       expect(() => renderToStaticMarkup(<LandingPage />)).toThrow(
-        'Function agents:rosterForUser is unavailable',
+        'Function roster:page is unavailable',
       );
     } finally {
       authState.signedIn = false;

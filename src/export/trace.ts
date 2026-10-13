@@ -320,10 +320,7 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
  */
 export async function assembleTrace(
   agentId: string,
-  call: {
-    head(request: TraceRequest): Promise<TraceHead>;
-    page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
-  },
+  call: TraceCalls,
   skip: ReadonlySet<TraceSection> = new Set(),
 ): Promise<AgentTrace> {
   const head = await call.head({ agentId });
@@ -562,17 +559,24 @@ export interface OwnerManifest {
 }
 
 /**
- * The first call's answer: the manifest, the employees whose traces follow (every one the owner
- * holds, by id), the agents set aside (evaluation agents and baseline arms, named only, as a
- * trace names an agent, so the figures set them aside as `metrics:forOwner` does), and where the
- * owner's rows start.
+ * One page of the owner's agents, in deploy order: the employees whose traces follow, by id, and
+ * the agents set aside (evaluation agents and baseline arms, named only, as a trace names an
+ * agent, so the figures set them aside as `metrics:forOwner` does).
  */
-export interface OwnerExportHead {
-  readonly manifest: OwnerManifest;
+export interface OwnerAgentsPage {
   readonly employees: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly setAside: readonly TraceAgent[];
-  /** How many more of the owner's agents there were than one export reads. */
-  readonly omittedAgents: number;
+  /** Where the next page of the owner's agents starts, or null after the last. */
+  readonly moreAgents: string | null;
+}
+
+/**
+ * The first call's answer: the manifest, the first page of the owner's agents (every one the
+ * owner holds is named, the rest through {@link OwnerAgentsPage}'s cursor, so none is left out:
+ * wave 17, W16-R32), and where the owner's rows start.
+ */
+export interface OwnerExportHead extends OwnerAgentsPage {
+  readonly manifest: OwnerManifest;
   readonly next: OwnerCursor;
 }
 
@@ -594,6 +598,11 @@ export interface OwnerExport {
   readonly owner: OwnerRows;
   readonly employees: readonly AgentTrace[];
   readonly setAside: readonly TraceAgent[];
+  /**
+   * How many of the owner's agents the head named and the file carries neither as a trace nor as
+   * set aside: none, since the head names every agent by pages and each employee's trace follows
+   * (wave 17; before it the head read at most five hundred and counted one past them).
+   */
   readonly omittedAgents: number;
 }
 
@@ -605,31 +614,113 @@ export function ownerSectionAfter(section: OwnerSection): OwnerSection | undefin
   return OWNER_SECTIONS[OWNER_SECTIONS.indexOf(section) + 1];
 }
 
+/** The calls of one employee's paged export, as {@link assembleTrace} takes them. */
+export interface TraceCalls {
+  head(request: TraceRequest): Promise<TraceHead>;
+  page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
+}
+
+/** The calls of the owner's paged export: its head, its later pages of agents, its rows. */
+export interface OwnerExportCalls {
+  head(): Promise<OwnerExportHead>;
+  /** One later page of the owner's agents, from the cursor the head or the page before gave. */
+  agents(cursor: string): Promise<OwnerAgentsPage>;
+  page(cursor: OwnerCursor): Promise<OwnerPage>;
+  readonly employee: TraceCalls;
+}
+
 /**
- * Assemble the owner export by calling the paged export until nothing is left: the head, the
- * owner's rows page by page, then each employee's trace through the employee's own export, its
- * owner-scoped sections left to the owner's rows.
+ * Every agent of the owner, read from the head's page and the pages after it until none is left,
+ * each named once.
  *
- * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
- *   takes them).
- * @returns The one file's contents, with the counts in its manifest.
+ * @param head - The head, which holds the first page.
+ * @param agents - One later page, from a cursor.
+ */
+async function everyOwnerAgent(
+  head: OwnerAgentsPage,
+  agents: OwnerExportCalls['agents'],
+): Promise<Pick<OwnerAgentsPage, 'employees' | 'setAside'>> {
+  const employees = new Map(head.employees.map((employee) => [employee.id, employee]));
+  const setAside = new Map(head.setAside.map((agent) => [agent.id, agent]));
+  let more = head.moreAgents;
+  while (more !== null) {
+    const page = await agents(more);
+    for (const employee of page.employees) employees.set(employee.id, employee);
+    for (const agent of page.setAside) setAside.set(agent.id, agent);
+    more = page.moreAgents;
+  }
+  return { employees: [...employees.values()], setAside: [...setAside.values()] };
+}
+
+/** Where the owner export is written, a piece at a time: the file a browser or the command saves. */
+export interface OwnerExportSink {
+  /** Write the next piece of the file; the export waits for it before it reads on. */
+  write(chunk: string): Promise<void>;
+}
+
+/** How far a streamed export has got: the employees whose traces are written, of those it names. */
+export interface OwnerExportProgress {
+  readonly written: number;
+  readonly employees: number;
+}
+
+/** What a streamed export is told beside its calls and its sink. */
+export interface OwnerExportOptions {
+  /** Aborted to cancel: the export stops before its next call or write ({@link OwnerExportCancelled}). */
+  readonly signal?: AbortSignal;
+  /** Told once the owner's rows are written and again after each employee's trace. */
+  readonly onProgress?: (progress: OwnerExportProgress) => void;
+}
+
+/** A streamed export stopped by its signal: nothing more was read or written, and the file is not whole. */
+export class OwnerExportCancelled extends Error {
+  /** A cancelled export, said in the words a caller that shows it reads. */
+  constructor() {
+    super('the export was cancelled');
+    this.name = 'OwnerExportCancelled';
+  }
+}
+
+/** The indent of one level of the file, as `JSON.stringify(file, null, 2)` prints it. */
+const FILE_INDENT = '  ';
+
+/** A value as `JSON.stringify(value, null, 2)` prints it at a depth inside the file. */
+function printedAt(value: unknown, depth: number): string {
+  // A string's own line breaks are escaped, so every line break here is the printer's.
+  return JSON.stringify(value, null, 2).replace(/\n/g, `\n${FILE_INDENT.repeat(depth)}`);
+}
+
+/** What the first piece of the file is written from, beside the calls and the sink. */
+interface OwnerRowsRequest {
+  readonly head: OwnerExportHead;
+  /** How many employees' traces follow, for the manifest's counts. */
+  readonly employees: number;
+  /** Throws once the export is cancelled. */
+  readonly live: () => void;
+}
+
+/**
+ * Read the owner's rows page by page and write the file's first piece: the manifest, which
+ * carries their counts, the rows, and the opening of the employees' list. The rows are this
+ * function's own, so they are let go when it returns, before the first employee is read: on the
+ * wave 17 bed they were 8 MB of an 11 MB file, held to the export's end while they were the
+ * stream's.
+ *
+ * @returns The manifest as written.
  * @throws Error when a page answers for a section other than the one asked for.
  */
-export async function assembleOwnerExport(call: {
-  head(): Promise<OwnerExportHead>;
-  page(cursor: OwnerCursor): Promise<OwnerPage>;
-  employee: {
-    head(request: TraceRequest): Promise<TraceHead>;
-    page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
-  };
-}): Promise<OwnerExport> {
-  const head = await call.head();
+async function writeOwnerRows(
+  call: OwnerExportCalls,
+  sink: OwnerExportSink,
+  { head, employees, live }: OwnerRowsRequest,
+): Promise<OwnerExport['manifest']> {
   const owner = Object.fromEntries(
     OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
   ) as Record<OwnerSection, unknown[]>;
   const seen = new Set<string>();
   let next: OwnerCursor | null = head.next;
   while (next !== null) {
+    live();
     const page: OwnerPage = await call.page(next);
     if (page.section !== next.section) {
       throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
@@ -642,21 +733,102 @@ export async function assembleOwnerExport(call: {
     }
     next = page.next;
   }
-  const employees: AgentTrace[] = [];
-  // One employee at a time, so a company's traces are never all in flight at once.
-  for (const { id } of head.employees) {
-    employees.push(await assembleTrace(id, call.employee, OWNER_SCOPED_SECTIONS));
-  }
   const counts = Object.fromEntries(
     OWNER_SECTIONS.map((section) => [section, owner[section].length]),
   ) as Record<OwnerSection, number>;
-  return {
-    manifest: { ...head.manifest, counts: { ...counts, employees: employees.length } },
-    owner: owner as unknown as OwnerRows,
-    employees,
-    setAside: head.setAside,
-    omittedAgents: head.omittedAgents,
+  const manifest: OwnerExport['manifest'] = {
+    ...head.manifest,
+    counts: { ...counts, employees },
   };
+  live();
+  await sink.write(
+    `{\n${FILE_INDENT}"manifest": ${printedAt(manifest, 1)},\n${FILE_INDENT}"owner": ${printedAt(owner, 1)},\n${FILE_INDENT}"employees": [`,
+  );
+  return manifest;
+}
+
+/**
+ * Write the owner export to a sink as it is read (wave 17, 17-F; decision F-1): the head and the
+ * rest of the owner's agents, the owner's rows page by page, then each employee's trace through
+ * the employee's own export, its owner-scoped sections left to the owner's rows. The owner's rows
+ * are held until they are written, since the manifest that goes first carries their counts, and
+ * let go before the first employee is read ({@link writeOwnerRows}): they hold no stored page's
+ * text, and the skill library's bodies are the heaviest thing among them.
+ * An employee's trace is written the moment it is whole and let go before the next is read, so
+ * the export holds one trace however many employees there are. The pieces together are the file
+ * `JSON.stringify(file, null, 2)` and a line break would print of the whole {@link OwnerExport},
+ * byte for byte.
+ *
+ * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
+ *   takes them).
+ * @param sink - Where each piece of the file goes, in order.
+ * @param options - The signal that cancels the export, and who hears how far it has got.
+ * @returns The file's manifest, with its counts.
+ * @throws OwnerExportCancelled when the signal is aborted; the sink then holds part of a file.
+ * @throws Error when a page answers for a section other than the one asked for.
+ */
+export async function streamOwnerExport(
+  call: OwnerExportCalls,
+  sink: OwnerExportSink,
+  options: OwnerExportOptions = {},
+): Promise<OwnerExport['manifest']> {
+  const live = (): void => {
+    if (options.signal?.aborted === true) throw new OwnerExportCancelled();
+  };
+  live();
+  const head = await call.head();
+  const named = await everyOwnerAgent(head, async (cursor) => {
+    live();
+    return await call.agents(cursor);
+  });
+  const employees = named.employees.length;
+  const manifest = await writeOwnerRows(call, sink, { head, employees, live });
+  options.onProgress?.({ written: 0, employees });
+  const guarded: TraceCalls = {
+    head: async (request) => {
+      live();
+      return await call.employee.head(request);
+    },
+    page: async (request) => {
+      live();
+      return await call.employee.page(request);
+    },
+  };
+  let written = 0;
+  // One employee at a time, each written before the next is read: one trace is held, never two.
+  for (const { id } of named.employees) {
+    const piece = `${written === 0 ? '' : ','}\n${FILE_INDENT.repeat(2)}${printedAt(await assembleTrace(id, guarded, OWNER_SCOPED_SECTIONS), 2)}`;
+    live();
+    await sink.write(piece);
+    written += 1;
+    options.onProgress?.({ written, employees });
+  }
+  live();
+  await sink.write(
+    `${written === 0 ? '' : `\n${FILE_INDENT}`}],\n${FILE_INDENT}"setAside": ${printedAt(named.setAside, 1)},\n${FILE_INDENT}"omittedAgents": ${employees - written}\n}\n`,
+  );
+  return manifest;
+}
+
+/**
+ * The owner export assembled whole in memory, for a file small enough to hold (a test, a bed of a
+ * few employees): {@link streamOwnerExport}'s pieces, read back as the file they make. A browser
+ * and the command write the pieces to a file as they arrive instead.
+ *
+ * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
+ *   takes them).
+ * @returns The one file's contents, with the counts in its manifest.
+ * @throws Error when a page answers for a section other than the one asked for.
+ */
+export async function assembleOwnerExport(call: OwnerExportCalls): Promise<OwnerExport> {
+  const pieces: string[] = [];
+  await streamOwnerExport(call, {
+    write: async (chunk) => {
+      pieces.push(chunk);
+      await Promise.resolve();
+    },
+  });
+  return JSON.parse(pieces.join('')) as OwnerExport;
 }
 
 /**

@@ -11,6 +11,9 @@ export interface PausedEmployee {
   readonly name: string;
 }
 
+/** No employee beyond the inbox: the list's default, one map for every render. */
+const NONE_BEYOND: ReadonlyMap<string, number> = new Map();
+
 /** Said in place of the inbox when the backend could not read it. */
 export const NEEDS_YOU_UNREADABLE =
   'The inbox could not be read just now. Each employee’s page still shows what waits on you there.';
@@ -27,28 +30,44 @@ export const NEEDS_YOU_UNREADABLE =
  *   `Error` the backend answered with when the read failed.
  * @param now - The page's clock, so the waits age.
  * @param paused - The manager's paused employees; none by default.
+ * @param beyond - What waits for each employee the inbox does not reach (it reads the newest
+ *   twenty, the roster every one): counted in the last line, since their entries are on their own
+ *   pages, and named in a paused employee's line as the inbox's own count is.
  */
 export function NeedsYouList({
   inbox: read,
   now,
   paused = [],
+  beyond = NONE_BEYOND,
 }: {
   inbox: NeedsYouInbox | undefined | Error;
   now: number;
   paused?: readonly PausedEmployee[];
+  beyond?: ReadonlyMap<string, number>;
 }) {
   const failed = read instanceof Error;
   const inbox = failed ? undefined : read;
-  const more = inbox ? inbox.total - inbox.entries.length : 0;
-  const waitingOf = new Map(
-    (inbox?.waitingByEmployee ?? []).map(({ agentId, waiting }) => [String(agentId), waiting]),
+  const beyondTotal = [...beyond.values()].reduce((sum, waiting) => sum + waiting, 0);
+  const more = inbox ? inbox.total - inbox.entries.length + beyondTotal : 0;
+  // Nothing is said of a paused employee before the inbox is read, as before its own count was.
+  const waitingOf = new Map<string, number>(
+    inbox
+      ? [
+          ...beyond,
+          ...inbox.waitingByEmployee.map(({ agentId, waiting }): [string, number] => [
+            String(agentId),
+            waiting,
+          ]),
+        ]
+      : [],
   );
   const pausedLines = paused.flatMap(({ agentId, name }) => {
     const waiting = waitingOf.get(agentId) ?? 0;
     return waiting > 0 ? [{ agentId, name, line: pausedNeedsYouLine(name, waiting) }] : [];
   });
   // The entries are a second tier inside the card, as the Work tab's rows are (v4 section 1.3).
-  const arriving = useArrival(inbox !== undefined && inbox.entries.length > 0);
+  const listed = inbox !== undefined && inbox.entries.length > 0;
+  const arriving = useArrival(listed);
   return (
     <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
@@ -61,8 +80,6 @@ export function NeedsYouList({
         </p>
       ) : inbox === undefined ? (
         <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Loading</p>
-      ) : inbox.entries.length === 0 ? (
-        <p className="px-5 py-4 text-sm text-[var(--color-muted)]">Nothing is waiting on you.</p>
       ) : (
         <>
           {pausedLines.length > 0 ? (
@@ -86,15 +103,27 @@ export function NeedsYouList({
               ))}
             </ul>
           ) : null}
-          <ol data-cards={arriving ? 'rows' : undefined} className="flex flex-col gap-3 p-5">
-            {inbox.entries.map((entry) => (
-              <InboxEntry key={entry.key} entry={entry} now={now} named />
-            ))}
-          </ol>
+          {inbox.entries.length > 0 ? (
+            <ol data-cards={arriving ? 'rows' : undefined} className="flex flex-col gap-3 p-5">
+              {inbox.entries.map((entry) => (
+                <InboxEntry key={entry.key} entry={entry} now={now} named />
+              ))}
+            </ol>
+          ) : more === 0 ? (
+            // With something waiting on a page this list does not reach, the last line says so alone.
+            <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
+              Nothing is waiting on you.
+            </p>
+          ) : null}
         </>
       )}
       {more > 0 ? (
-        <p className="border-t border-[var(--color-border)] px-5 py-3 text-xs text-[var(--color-muted)]">
+        <p
+          className={[
+            'px-5 py-3 text-xs text-[var(--color-muted)]',
+            ...(listed ? ['border-t border-[var(--color-border)]'] : []),
+          ].join(' ')}
+        >
           {more} more on your employees’ pages.
         </p>
       ) : null}

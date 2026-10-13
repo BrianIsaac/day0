@@ -191,6 +191,10 @@ export interface OwnerMetrics {
   company: CompanyMetrics;
   /** The owner's evaluation agents and baseline arms, never part of the company. */
   excludedAgents: number;
-  /** Employees older than the most recent `MAX_COMPANY_EMPLOYEES`, left out of every figure. */
+  /**
+   * Employees older than the most recent `MAX_COMPANY_EMPLOYEES` the owner holds, or than as many
+   * of those it handed over, left out of every figure by the bounded read (`metrics:forOwner`);
+   * none where every employee was read by pages (`metrics:forOwnerByPages`, the recompute).
+   */
   omittedEmployees: number;
 }

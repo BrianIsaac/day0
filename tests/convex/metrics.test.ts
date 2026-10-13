@@ -1,5 +1,6 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
+import { ConvexError } from 'convex/values';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
@@ -1354,6 +1355,130 @@ describe('supervision figures for a company of employees', (): void => {
       await guardRefusal(),
     );
   });
+
+  /** The company's figures read by pages to the last employee (wave 17, 17-F; RM33 (a)). */
+  async function wholeCompanyFigures(
+    harness: ReturnType<typeof convexTest>,
+  ): Promise<OwnerMetrics> {
+    return await harness.withIdentity(COMPANY_OWNER).action(api.metrics.forOwnerByPages, {});
+  }
+
+  it('reads every employee by pages, so a company of fifty-one is counted whole where the one read keeps twenty (RM33 (a); the review’s bed 1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    for (let index = 0; index < 51; index += 1) {
+      await deployEmployee(harness, {
+        name: `Employee ${index + 1}`,
+        deployedAt: 1_000 + index,
+        charterApprovedAt: 61_000 + index,
+        decisions: [
+          {
+            requestedAt: 100_000,
+            decidedAt: 101_000 + index * 1_000,
+            via: 'dashboard',
+            outcome: 'approved',
+          },
+        ],
+      });
+    }
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect([whole.company.employees, whole.omittedEmployees]).toEqual([51, 0]);
+    expect(whole.employees.map((row) => row.name)).toEqual(
+      Array.from({ length: 51 }, (_, index) => `Employee ${index + 1}`),
+    );
+    // One manager's distribution over every decision of every employee: waits of 1 s to 51 s.
+    expect(whole.company.decisions).toMatchObject({ approved: 51, medianLatencyMs: 26_000 });
+    expect(whole.company.charter.approvedEmployees).toBe(51);
+    expect(whole.company.charter.timesToFirstApprovedMs).toHaveLength(51);
+    // The read a card subscribes to stays bounded, and says how many it left out.
+    const bounded = await companyFigures(harness);
+    expect([bounded.company.employees, bounded.omittedEmployees]).toEqual([20, 31]);
+  });
+
+  it('answers by pages exactly what the one read answers for a company it covers: a handed-over employee within the spans, an evaluation agent set aside', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ids: Id<'agents'>[] = [];
+    for (const spec of THREE_EMPLOYEES) ids.push(await deployEmployee(harness, spec));
+    await deployEmployee(harness, {
+      name: 'Day0 evaluation 1',
+      bossEmail: 'eval-day0-r1-1760000000000@day0.local',
+      deployedAt: 4_000,
+    });
+    // Seven more than one page of employees holds, and one handed to another manager.
+    for (let index = 0; index < 7; index += 1) {
+      await deployEmployee(harness, { name: `Later ${index + 1}`, deployedAt: 5_000 + index });
+    }
+    await handOver(harness, ids[0]!, 111_000);
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect(whole).toEqual(await companyFigures(harness));
+    expect(whole.excludedAgents).toBe(1);
+    expect(whole.employees.map((row) => row.name)).toContain('Priya');
+  });
+
+  it('answers by pages what the one read answers for an employee held again, one handed over twice and one retired since its handover (the second pass, 17-F)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    /** The successor handing an employee back, as an accepted request leaves it. */
+    const handBack = async (agentId: Id<'agents'>, acceptedAt: number): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('managerTransfers', {
+          agentId,
+          agentName: 'Priya',
+          fromOwnerKey: SUCCESSOR.subject,
+          fromAddress: SUCCESSOR.email ?? '',
+          toAddress: COMPANY_OWNER.email ?? '',
+          state: 'accepted',
+          requestedAt: acceptedAt - 60_000,
+          expiresAt: acceptedAt + 1_209_600_000,
+          decidedAt: acceptedAt,
+          toOwnerKey: COMPANY_OWNER.subject,
+        });
+        await ctx.db.patch(agentId, {
+          userId: COMPANY_OWNER.subject,
+          bossEmail: COMPANY_OWNER.email,
+        });
+      });
+    };
+    const [heldAgain, handedTwice] = [
+      await deployEmployee(harness, THREE_EMPLOYEES[0]),
+      await deployEmployee(harness, THREE_EMPLOYEES[1]),
+    ];
+    await deployEmployee(harness, THREE_EMPLOYEES[2]);
+    // More than one page of employees, so the walk meets its phases across pages.
+    for (let index = 0; index < 7; index += 1) {
+      await deployEmployee(harness, { name: `Later ${index + 1}`, deployedAt: 5_000 + index });
+    }
+    // Away and back: the caller holds it now, and the walk meets it held and departed both.
+    await handOver(harness, heldAgain, 111_000);
+    await handBack(heldAgain, 150_000);
+    // Away, back and away again: two departures of the one employee.
+    await handOver(harness, handedTwice, 112_000);
+    await handBack(handedTwice, 160_000);
+    await handOver(harness, handedTwice, 230_000);
+    // Handed over and retired by its new manager: its records are gone.
+    const gone = await deployEmployee(harness, { name: 'Gone', deployedAt: 9_000 });
+    await handOver(harness, gone, 500_000);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.delete(gone);
+    });
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect(whole).toEqual(await companyFigures(harness));
+    const names = whole.employees.map((row) => row.name);
+    expect(names.filter((name) => name === 'Priya')).toHaveLength(1);
+    expect(names).not.toContain('Gone');
+    expect(whole.company.employees).toBe(names.length);
+  });
+
+  it('refuses a caller with no identity the figures by pages', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(harness.action(api.metrics.forOwnerByPages, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
 });
 
 describe('handoversFromTransfers', (): void => {
@@ -2528,6 +2653,83 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       medianToCompletionMs: 8_000,
     });
   });
+
+  it('counts a not-done answer followed by a done one with no send-back between as done, as the month’s landings read it (the second pass, 17-F)', (): void => {
+    const notDone = { workDone: 'not-done', workDoneWhy: 'The checks could not all be read.' };
+    const done = { workDone: 'done', workDoneWhy: 'Every check was read and posted.' };
+    const events = [
+      event('work.discovered', { workItemId: 'r' }, 1_000),
+      event('work.completed', { workItemId: 'r', output: notDone }, 5_000),
+      event('work.completed', { workItemId: 'r', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('r')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
+
+  /** A manager sending a finished item back with a note, as the v0.20.0 walk's Nell was sent. */
+  const sentBack = (workItemId: string, at: number): Doc<'events'> =>
+    event(
+      'work.retry',
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'completed',
+        feedback: 'There is no ticket to record it on; say so and finish.',
+      },
+      at,
+    );
+
+  it('counts a partly-done answer sent back and finished as done, once, as the Work tab reads it (the v0.20.0 walk’s finding 4)', (): void => {
+    // Nell's docs item on the walk: "Partly done, in Nell's own words", sent back with a note,
+    // then LANDED. The Work tab read "Done 3"; the home still "(2 done, 1 partly done)".
+    const partly = {
+      workDone: 'partial',
+      workDoneWhy: 'The ticket record has no ticket to land on.',
+    };
+    const done = { workDone: 'done', workDoneWhy: 'The thread reply and the recap are sent.' };
+    const events = [
+      event('work.discovered', { workItemId: 'n' }, 1_000),
+      event('work.completed', { workItemId: 'n', output: partly }, 5_000),
+      sentBack('n', 6_000),
+      event('work.completed', { workItemId: 'n', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('n')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
+
+  it('counts an item by the answer it finished with last, whichever way a send-back went', (): void => {
+    const done = { workDone: 'done', workDoneWhy: 'Posted.' };
+    const partly = { workDone: 'partial', workDoneWhy: 'One of two posted.' };
+    const events = [
+      // Done, sent back, then partly done: partly done, as its card now says.
+      event('work.discovered', { workItemId: 'a' }, 1_000),
+      event('work.completed', { workItemId: 'a', output: done }, 2_000),
+      sentBack('a', 3_000),
+      event('work.completed', { workItemId: 'a', output: partly }, 4_000),
+      // Done, sent back and still running: finished by no answer yet, as the Work tab shows it.
+      event('work.discovered', { workItemId: 'b' }, 1_000),
+      event('work.completed', { workItemId: 'b', output: done }, 2_000),
+      sentBack('b', 3_000),
+      // Done and never sent back.
+      event('work.discovered', { workItemId: 'c' }, 1_000),
+      event('work.completed', { workItemId: 'c', output: done }, 7_000),
+    ];
+    const items = [item('a'), item('b', { state: 'executing' }), item('c')];
+    expect(computeAgentMetrics(events, items, []).pilot.cycleTime).toMatchObject({
+      ended: 2,
+      completed: 1,
+      partlyDone: 1,
+      medianToCompletionMs: 6_000,
+    });
+  });
 });
 
 describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
@@ -2835,5 +3037,23 @@ describe('today in the employee’s zone (16-F)', (): void => {
     await expect(owner.query(api.metrics.forAgent, { agentId, day: '12 October' })).rejects.toThrow(
       'not a day',
     );
+  });
+
+  it('refuses 9999-12-31 with its sentence, the last day having no day after it (W16-R32)', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+    const owner = harness.withIdentity(managerIdentity());
+
+    // The review's input: a day of the calendar whose next day the day arithmetic cannot name.
+    const refusal = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-31' }).then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<string>).data).toBe(
+      '9999-12-31 is past the last day Day0 counts; name an earlier day',
+    );
+    // The day before it has a day after it, and is read as any other.
+    const lastCounted = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-30' });
+    expect(lastCounted.today?.day).toBe('9999-12-30');
   });
 });
