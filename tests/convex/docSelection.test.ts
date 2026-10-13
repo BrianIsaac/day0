@@ -909,6 +909,47 @@ describe('docSelection.changedCitedBlocks and a page’s status (15-A; W14-R25, 
     ]);
   });
 
+  it('names what superseded each of twelve cited pages of 700 KB under Convex’s limits: a successor’s row is read for its title only for the first few (W15-R20)', async (): Promise<void> => {
+    // The wave 15 review: a successor's whole row was read for its title, once a cited superseded
+    // page, on top of the cited page's own row. Twelve such pages of 700 KB, each superseded by
+    // one as long, read 16.8 MiB and threw the check a plan's run starts with.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    const paragraph = `${'Kestrel close notes, kept for the record of the quarter. '.repeat(18)}\n\n`;
+    const long = paragraph.repeat(Math.ceil((700 * 1024) / paragraph.length));
+    const cites: Array<{ id: string; hash: string }> = [];
+    for (let index = 0; index < 12; index += 1) {
+      await storePage(harness, {
+        agentId,
+        ...handbook,
+        ref: `old-${index}.md`,
+        title: `Close notes ${index}`,
+        markdown: `# Close notes ${index}\n\n${long}`,
+      });
+      await storePage(harness, {
+        agentId,
+        ...handbook,
+        ref: `new-${index}.md`,
+        title: `Close notes ${index}, second edition`,
+        markdown: `# Close notes ${index}, second edition\n\n${long}`,
+      });
+      await mark(harness, { ...handbook, ref: `old-${index}.md` }, 'superseded', {
+        sourceId: handbook.sourceId,
+        ref: `new-${index}.md`,
+      });
+      const [block] = await pageBlocks(harness, handbook.sourceId, `old-${index}.md`);
+      cites.push({ id: block._id as string, hash: block.hash });
+    }
+    const gone = await harness.query(internal.docSelection.changedCitedBlocks, {
+      agentId,
+      blocks: cites,
+    });
+    expect(gone.map((block) => block.supersededBy)).toEqual(
+      cites.map((_cite, index) => `Close notes ${index}, second edition`),
+    );
+  }, 240_000);
+
   it('answers the cite of a page the employee no longer reads as gone (W14-R25)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { agentId, handbook, cite } = await cited(harness);

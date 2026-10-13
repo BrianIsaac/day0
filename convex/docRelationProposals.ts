@@ -68,6 +68,21 @@ export async function pageAt(ctx: QueryCtx, name: PageName): Promise<Doc<'docPag
 }
 
 /**
+ * Whether a source lists a page under a ref, read from its listing row (`docPageListings`: every
+ * stored page carries one, a few bytes of it): the test that a page a front matter names exists,
+ * which read the page's whole row from every source it looked in (W15-R20; the review's R2-K, 32
+ * sources each holding a 700 KB `readme.md`, threw the measure over the read limit). A ref listed
+ * and not stored is no page, and the measure's own read of the candidate passes it over.
+ */
+async function listed(ctx: QueryCtx, name: PageName): Promise<boolean> {
+  const row = await ctx.db
+    .query('docPageListings')
+    .withIndex('by_source_ref', (q) => q.eq('sourceId', name.sourceId).eq('ref', name.ref))
+    .first();
+  return row !== null;
+}
+
+/**
  * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
  * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
  * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
@@ -145,7 +160,7 @@ export async function candidatesOf(
   for (const named of [...front.supersedes, ...front.supersededBy].slice(0, NAMED_PAGES)) {
     for (const source of owner.sources) {
       for (const ref of [named, `${named}.md`]) {
-        if ((await pageAt(ctx, { sourceId: source._id, ref })) !== null) {
+        if (await listed(ctx, { sourceId: source._id, ref })) {
           hit({ sourceId: source._id, ref }, 1_000);
         }
       }

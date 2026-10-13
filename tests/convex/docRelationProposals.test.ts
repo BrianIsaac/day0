@@ -1296,3 +1296,44 @@ describe('a page whose candidates the cap cut (W16-R34)', (): void => {
     ).toBeUndefined();
   }, 120_000);
 });
+
+describe('the pages a page’s front matter names, under Convex’s limits (W15-R20; reader 2’s R2-K)', (): void => {
+  it('measures a page that names a readme held, at 700 KB, by each of 32 sources', async (): Promise<void> => {
+    // The wave 15 review's R2-K: a whole page row was read from every source to test that a named
+    // page exists, so 32 sources each holding a 700 KB `readme.md` threw the measure over the
+    // transaction's read limit and the page was never measured.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const paragraph = `${'Kestrel close notes, kept for the record of the quarter. '.repeat(18)}\n\n`;
+    const readme = `# Readme\n\n${paragraph.repeat(Math.ceil((700 * 1024) / paragraph.length))}`;
+    expect(Buffer.byteLength(readme)).toBeGreaterThan(700 * 1024);
+    const sources: Source[] = [];
+    for (let index = 0; index < 32; index += 1) {
+      const source = await syncingSource(harness, `Library ${index}`);
+      await storedPage(harness, source, { ref: 'readme.md', title: 'Readme', markdown: readme });
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('docPageListings', {
+            sourceId: source.sourceId,
+            ref: 'readme.md',
+            seenBy: 1,
+          }),
+      );
+      sources.push(source);
+    }
+    await storedPage(harness, sources[0], {
+      ref: 'zebra.md',
+      title: 'Zebra quartz',
+      markdown: '---\nsupersedes: readme\n---\n# Zebra quartz\n\nThe zebra quartz procedure.',
+      updatedAt: 2,
+    });
+    // Measured, against the three candidates a page takes: each proposed as the page it replaces.
+    expect(await measure(harness, sources[0], 'zebra.md')).toBe(3);
+    expect(await relations(harness)).toMatchObject(
+      [0, 1, 2].map(() => ({
+        kind: 'possible_successor',
+        from: { sourceId: sources[0].sourceId, ref: 'zebra.md' },
+        to: { ref: 'readme.md' },
+      })),
+    );
+  }, 240_000);
+});
