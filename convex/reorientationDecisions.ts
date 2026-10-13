@@ -398,20 +398,41 @@ export const defer = mutation({
  */
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
-  handler: async (ctx, args): Promise<{ reorientationId: Id<'reorientations'> | null }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ reorientationId: Id<'reorientations'> | null; joined: boolean }> => {
     await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
     const now = Date.now();
+    const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,
       trigger: 'role-changed',
-      triggerKey: `role-changed:${now}`,
+      triggerKey,
       summary,
       affected: { charterClauses: await charterClausesWhere(ctx, args.agentId, () => true) },
       now,
     });
-    return { reorientationId };
+    const card = reorientationId === null ? null : await ctx.db.get(reorientationId);
+    // A second change typed the same day joins the card already standing (one card a kind a day):
+    // its words go onto that card beside the first, and the proposal is asked again over both,
+    // unless a talk is under way, whose own finish replaces it (W16-R24).
+    const joined = card !== null && card.triggerKey !== triggerKey;
+    if (card !== null && joined) {
+      const again = card.status === 'open' && card.proposed.kind !== 'pending';
+      await ctx.db.patch(card._id, {
+        triggerSummary: `${card.triggerSummary.replace(/[.;\s]+$/u, '')}; ${summary}`,
+        ...(again ? { proposed: { kind: 'pending' as const } } : {}),
+      });
+      if (again) {
+        await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, {
+          reorientationId: card._id,
+        });
+      }
+    }
+    return { reorientationId, joined };
   },
 });
 

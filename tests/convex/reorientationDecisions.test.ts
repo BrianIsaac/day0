@@ -1007,6 +1007,36 @@ describe('openByHand and listForAgent', (): void => {
     expect(card.affected.charterClauses).toHaveLength(3);
   });
 
+  it('says a second by-hand change the same day joined the standing card, whose summary then holds both (W16-R24)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    const first = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'Mira now covers renewals too',
+    });
+    expect(first).toMatchObject({ joined: false });
+    // The judgement answered the first change before the second was typed.
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: first.reorientationId!,
+      proposed: { kind: 'none', rationale: 'Renewals are within the charter.' },
+      basis: await basisOf(harness, first.reorientationId!),
+    });
+    vi.setSystemTime(Date.now() + 60_000);
+    const second = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'It no longer triages tier-2 asks.',
+    });
+    expect(second).toEqual({ reorientationId: first.reorientationId, joined: true });
+    const cards = await cardsOf(harness, agentId);
+    expect(cards).toHaveLength(1);
+    // The typed words are on the card, not only in the record, and the proposal is asked again.
+    expect(cards[0]).toMatchObject({
+      triggerSummary: 'Mira now covers renewals too; It no longer triages tier-2 asks.',
+      proposed: { kind: 'pending' },
+    });
+  });
+
   it('lists the standing cards first, with the names their ids stand for, and only to the owner', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

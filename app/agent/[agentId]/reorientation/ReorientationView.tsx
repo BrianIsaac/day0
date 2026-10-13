@@ -37,7 +37,11 @@ function OpenByHand({ name }: { name: string }) {
         onSubmit={(event) => {
           event.preventDefault();
           change.run(() => open({ agentId: agent._id, summary: trimmed }), {
-            done: `A card is open. ${name} is working out what to propose.`,
+            // A second change typed the same day joins the standing card (W16-R24).
+            done: (opened) =>
+              opened.joined
+                ? `Added to the card already open today. ${name} is working out what to propose over both.`
+                : `A card is open. ${name} is working out what to propose.`,
             refused: 'No card was opened.',
             after: () => setSummary(''),
           });

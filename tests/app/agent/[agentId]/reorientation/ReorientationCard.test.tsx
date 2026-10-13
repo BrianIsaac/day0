@@ -9,6 +9,8 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a query answers, by function name; one left out stays loading. */
   queries: {} as Record<string, unknown>,
+  /** Whether a card opened by hand joined one already standing that day. */
+  joins: false,
 }));
 
 vi.mock('convex/react', () => ({
@@ -21,6 +23,9 @@ vi.mock('convex/react', () => ({
         return { result: 'the charter was amended to version 0.2' };
       }
       if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
+      if (name === 'reorientationDecisions:openByHand') {
+        return { reorientationId: 'card-1', joined: backend.joins };
+      }
       return null;
     },
   useQuery: (reference: unknown, args: unknown): unknown =>
@@ -35,7 +40,7 @@ import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientat
 import { AgentZoneContext } from '../../../../../app/components/time';
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
-import { mount, press, said } from '../../../../fixtures/dom/press';
+import { mount, press, said, typeInto } from '../../../../fixtures/dom/press';
 import { underTarget } from '../../../../fixtures/dom/targets';
 
 /**
@@ -125,6 +130,7 @@ function withCard(fields: Partial<CardView['card']>, view: Partial<CardView> = {
 beforeEach((): void => {
   backend.calls.length = 0;
   backend.queries = {};
+  backend.joins = false;
 });
 
 afterEach((): void => {
@@ -605,5 +611,22 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     } finally {
       window.location.hash = '';
     }
+  });
+
+  it('says a card opened by hand was opened, or that the change joined the card already open today (W16-R24)', async (): Promise<void> => {
+    backend.queries['reorientationDecisions:listForAgent'] = [BASE];
+    const typed = async (): Promise<string | undefined> => {
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      typeInto(view.container.querySelector('input[type="text"]')!, 'Mira now covers renewals too');
+      await press(view.container, 'Open a card');
+      const outcome = said(view.container).at(-1);
+      view.unmount();
+      return outcome;
+    };
+    expect(await typed()).toBe('A card is open. Mira is working out what to propose.');
+    backend.joins = true;
+    expect(await typed()).toBe(
+      'Added to the card already open today. Mira is working out what to propose over both.',
+    );
   });
 });
