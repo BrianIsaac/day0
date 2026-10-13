@@ -74,6 +74,7 @@ import type * as organisationCorrections from '../organisationCorrections.js';
 import type * as organisationSecrets from '../organisationSecrets.js';
 import type * as orientationActions from '../orientationActions.js';
 import type * as orientationData from '../orientationData.js';
+import type * as ownerExport from '../ownerExport.js';
 import type * as ownership from '../ownership.js';
 import type * as people from '../people.js';
 import type * as peopleExtractionActions from '../peopleExtractionActions.js';
@@ -215,6 +216,7 @@ declare const fullApi: ApiFromModules<{
   organisationSecrets: typeof organisationSecrets;
   orientationActions: typeof orientationActions;
   orientationData: typeof orientationData;
+  ownerExport: typeof ownerExport;
   ownership: typeof ownership;
   people: typeof people;
   peopleExtractionActions: typeof peopleExtractionActions;
