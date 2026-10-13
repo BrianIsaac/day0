@@ -92,7 +92,7 @@ const SELECTION_RULE =
  * that works round the point is asked nothing and would tell the manager a question was asked.
  */
 const CONFLICT_RULE =
-  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites`: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, or say that a question has been asked.';
+  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites` for that step, the one whose write the point decides: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, plan a step of your own that asks about it, or say that a question has been asked.';
 
 /**
  * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
