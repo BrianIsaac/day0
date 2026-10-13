@@ -12,7 +12,9 @@ import {
   proposalInputOf,
   riskOf,
 } from '../../convex/reorientation';
+import * as reorientationModule from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
+import { registeredIn } from './registered-functions';
 import {
   basisOf,
   cardOf,
@@ -568,5 +570,22 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
     const card = await cardOf(harness, deferred);
     expect(card).toMatchObject({ status: 'dismissed', userId: 'successor', decidedAt: 5 });
     expect(card.revisitAt).toBeUndefined();
+  });
+});
+
+describe('the functions convex/reorientation.ts registers', (): void => {
+  // The move of what a card reaches into `convex/reorientationReach.ts` (wave 17, 17-s; decision
+  // S-1) moves no registered function: each `internal.reorientation.*` path is a string the
+  // scheduler, the judgement's action and the closing phase hold. The list as `v0.20.0`
+  // registered it.
+  it('are the ones it registered at v0.20.0, each of the same kind and visibility', (): void => {
+    expect(registeredIn(reorientationModule)).toEqual([
+      'holdingCard internal query',
+      'openCardLater internal mutation',
+      'proposalInput internal query',
+      'recordProposalFailure internal mutation',
+      'reopenDeferred internal mutation',
+      'writeProposal internal mutation',
+    ]);
   });
 });
