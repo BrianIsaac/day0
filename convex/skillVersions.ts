@@ -198,6 +198,17 @@ export async function holdersOf(
 }
 
 /**
+ * Whether two re-check reasons are one reason, read blind to the kind of their quotes (W-10): a
+ * release before 0.21.0 stored a runbook's title in straight quotes and this one stores it in
+ * curly ones, so a row stamped before the upgrade would never be found by the reason that says
+ * the same cause better, and the two would stand apart on the card and the record.
+ */
+function sameReason(left: string, right: string): boolean {
+  const straight = (reason: string): string => reason.replace(/[“”]/g, '"');
+  return straight(left) === straight(right);
+}
+
+/**
  * Stamp "Re-check due" on a registered row, with the trigger's reason (A13: every re-check is
  * event-driven). The chip is never cleared here: only a passing re-check clears it
  * (`skills.completeRegistration`), and only of a stamp made before the check began. A row
@@ -240,7 +251,12 @@ export async function stampRecheckDue(
       recheckReason: reason,
       recheckPage: stamp.page,
     });
-  } else if (stamp.saysBetter !== undefined && row.recheckReason === stamp.saysBetter && samePage) {
+  } else if (
+    stamp.saysBetter !== undefined &&
+    row.recheckReason !== undefined &&
+    sameReason(row.recheckReason, stamp.saysBetter) &&
+    samePage
+  ) {
     await ctx.db.patch(skillId, {
       recheckReason: reason,
       ...(checking ? { recheckDueAt: now } : {}),
@@ -316,14 +332,16 @@ export async function stampRecheckDueOnSurfaces(
 const CHANGED_PAGE_SCAN = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
 
 /**
- * The re-check reason of a skill whose runbook changed: "its runbook "Refresh the tile" changed
- * on 8 October 2026", after the card's "Re-check due: ".
+ * The re-check reason of a skill whose runbook changed: "its runbook “Refresh the tile” changed
+ * on 8 October 2026", after the card's "Re-check due: ". The title sits in the copy's curly
+ * quotes (W-10); a release before 0.21.0 wrote them straight, and a stored reason is compared
+ * blind to which ({@link sameReason}).
  *
  * @param title - The page's title as stored now.
  * @param day - The day of the change in the holder's zone, as the pages print a day.
  */
 export function changedRunbookReason(title: string, day: string): string {
-  return `its runbook "${title}" changed on ${day}`;
+  return `its runbook “${title}” changed on ${day}`;
 }
 
 /**
@@ -360,7 +378,7 @@ export const RUNBOOKS_A_SCAN = 64;
 
 /**
  * The re-check reason of a skill whose runbook changed or is no longer current, after the card's
- * "Re-check due: " (the wave file's section 8): "its runbook "Refresh the tile" was superseded
+ * "Re-check due: " (the wave file's section 8): "its runbook “Refresh the tile” was superseded
  * on 8 October 2026", "was archived on", "was marked a draft on", "was removed from Handbook
  * on", beside "changed on".
  *
@@ -375,13 +393,13 @@ export function runbookReason(
     case 'changed':
       return changedRunbookReason(page.title, day);
     case 'superseded':
-      return `its runbook "${page.title}" was superseded on ${day}`;
+      return `its runbook “${page.title}” was superseded on ${day}`;
     case 'archived':
-      return `its runbook "${page.title}" was archived on ${day}`;
+      return `its runbook “${page.title}” was archived on ${day}`;
     case 'draft':
-      return `its runbook "${page.title}" was marked a draft on ${day}`;
+      return `its runbook “${page.title}” was marked a draft on ${day}`;
     case 'removed':
-      return `its runbook "${page.title}" was removed from ${page.source ?? 'its source'} on ${day}`;
+      return `its runbook “${page.title}” was removed from ${page.source ?? 'its source'} on ${day}`;
     default: {
       const unknown: never = page.change;
       throw new Error(`unhandled runbook change ${String(unknown)}`);

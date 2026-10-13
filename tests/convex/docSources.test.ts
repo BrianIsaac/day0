@@ -3206,7 +3206,7 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await stamped(holders.reads)).toBe(
-      'its runbook "Refresh the tile" changed on 8 October 2026',
+      'its runbook “Refresh the tile” changed on 8 October 2026',
     );
     expect(await stamped(holders.readsAnother)).toBeNull();
     const row = await harness.run(async (ctx) => await ctx.db.get(holders.reads));
@@ -3608,7 +3608,7 @@ describe('the finish’s prune over a provider that lists in no fixed order (14-
     expect(await reason()).toBeUndefined();
     await walk(harness, sourceId, ['kept.md']);
     expect(await reason()).toBe(
-      'its runbook "missed.md" was removed from Drive on 10 October 2026',
+      'its runbook “missed.md” was removed from Drive on 10 October 2026',
     );
   });
 

@@ -1058,7 +1058,7 @@ describe('stampChangedPage (14-I)', (): void => {
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await skill(harness, holders.reads)).recheckReason).toBe(
-      'its runbook "Runbook" changed on 8 October 2026',
+      'its runbook “Runbook” changed on 8 October 2026',
     );
     expect((await skill(harness, holders.withdrawn)).recheckDueAt).toBeUndefined();
     vi.useRealTimers();
@@ -1073,16 +1073,16 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
       changedRunbookReason('Refresh the tile', day),
     );
     expect(runbookReason({ ...page, change: 'superseded' }, day)).toBe(
-      'its runbook "Refresh the tile" was superseded on 8 October 2026',
+      'its runbook “Refresh the tile” was superseded on 8 October 2026',
     );
     expect(runbookReason({ ...page, change: 'archived' }, day)).toBe(
-      'its runbook "Refresh the tile" was archived on 8 October 2026',
+      'its runbook “Refresh the tile” was archived on 8 October 2026',
     );
     expect(runbookReason({ ...page, change: 'draft' }, day)).toBe(
-      'its runbook "Refresh the tile" was marked a draft on 8 October 2026',
+      'its runbook “Refresh the tile” was marked a draft on 8 October 2026',
     );
     expect(runbookReason({ ...page, change: 'removed', source: 'Handbook' }, day)).toBe(
-      'its runbook "Refresh the tile" was removed from Handbook on 8 October 2026',
+      'its runbook “Refresh the tile” was removed from Handbook on 8 October 2026',
     );
   });
 
@@ -1165,10 +1165,10 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     expect(pending).toEqual(['skillVersions:stampChangedPages']);
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await skill(harness, holders.superseded)).recheckReason).toBe(
-      'its runbook "Pipeline runbook" was superseded on 8 October 2026',
+      'its runbook “Pipeline runbook” was superseded on 8 October 2026',
     );
     expect((await skill(harness, holders.removed)).recheckReason).toBe(
-      'its runbook "Old escalation" was removed from Handbook on 8 October 2026',
+      'its runbook “Old escalation” was removed from Handbook on 8 October 2026',
     );
     expect((await skill(harness, holders.untouched)).recheckDueAt).toBeUndefined();
     vi.useRealTimers();
@@ -1261,19 +1261,19 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
 
     const textFirst = await skill(harness, holders.textFirst);
     expect(textFirst.recheckReason).toBe(
-      'its runbook "Close checklist" was archived on 8 October 2026',
+      'its runbook “Close checklist” was archived on 8 October 2026',
     );
     // Still due since the first of the two stamps: one cause, said better.
     expect(textFirst.recheckDueAt).toBe(at);
     expect((await skill(harness, holders.statusFirst)).recheckReason).toBe(
-      'its runbook "Bin page" was archived on 8 October 2026',
+      'its runbook “Bin page” was archived on 8 October 2026',
     );
     // A cause that is not this runbook's text stays the card's, as for every trigger (A13).
     expect((await skill(harness, holders.otherCause)).recheckReason).toBe(
       'its Linear tools changed',
     );
     expect((await skill(harness, holders.otherRunbook)).recheckReason).toBe(
-      'its runbook "Edited page" changed on 8 October 2026',
+      'its runbook “Edited page” changed on 8 October 2026',
     );
     // Both triggers are still on the record, in the order they landed.
     const said = await harness.run(async (ctx) =>
@@ -1288,8 +1288,8 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
         .map((event) => (event.payload as { reason: string }).reason),
     );
     expect(said).toEqual([
-      'its runbook "Close checklist" changed on 8 October 2026',
-      'its runbook "Close checklist" was archived on 8 October 2026',
+      'its runbook “Close checklist” changed on 8 October 2026',
+      'its runbook “Close checklist” was archived on 8 October 2026',
     ]);
     vi.useRealTimers();
   });
@@ -1363,7 +1363,7 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     // On the base the archive of the other page took the change's place: one title, one day.
     expect((await skill(harness, skillId)).recheckReason).toBe(
-      'its runbook "Close checklist" changed on 8 October 2026',
+      'its runbook “Close checklist” changed on 8 October 2026',
     );
     // The same page archived after its own change is still said better, as 15-J built it.
     await harness.mutation(internal.skillVersions.stampChangedPages, {
@@ -1376,8 +1376,73 @@ describe('stampChangedPages: the runbooks no longer current, in one read of the 
     });
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect((await skill(harness, skillId)).recheckReason).toBe(
-      'its runbook "Close checklist" was archived on 8 October 2026',
+      'its runbook “Close checklist” was archived on 8 October 2026',
     );
+    vi.useRealTimers();
+  });
+
+  it('says better, once, a reason the release before stored with straight quotes: the row is not stamped apart from it (W-10)', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness, 'Priya');
+    const at = Date.UTC(2026, 9, 8, 9, 0);
+    const { handbook, skillId } = await harness.run(async (ctx) => {
+      const handbook = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Handbook',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const versionId = await ctx.db.insert('skillVersions', {
+        userId: 'owner',
+        name: 'close',
+        description: 'close',
+        surfaceClass: 'kanban',
+        operation: 'comment',
+        version: 1,
+        body: '# Body',
+        bodyHash: 'b'.repeat(64),
+        requiredScopes: [],
+        harnessTools: [],
+        authorName: 'Priya',
+        readRefs: [{ sourceId: handbook, ref: 'close.md', title: 'Close checklist' }],
+        verifiedAt: 1,
+        createdAt: 1,
+      });
+      // As v0.20.0 stamped it that morning: the page's change, its title in straight quotes.
+      const skillId = await ctx.db.insert('skills', {
+        agentId,
+        name: 'close',
+        description: 'close',
+        body: '# Body',
+        sourceType: 'agent-authored',
+        state: 'registered',
+        versionId,
+        ownerKey: 'owner',
+        createdAt: 1,
+        recheckDueAt: at,
+        recheckReason: 'its runbook "Close checklist" changed on 8 October 2026',
+        recheckPage: { sourceId: handbook, ref: 'close.md' },
+      });
+      return { handbook, skillId };
+    });
+    // After the upgrade, the same day: the page is archived, which says the same cause better.
+    await harness.mutation(internal.skillVersions.stampChangedPages, {
+      userId: 'owner',
+      pages: [
+        { sourceId: handbook, ref: 'close.md', title: 'Close checklist', change: 'archived' },
+      ],
+      changedAt: at + 80,
+      cursor: null,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await skill(harness, skillId)).toMatchObject({
+      recheckReason: 'its runbook “Close checklist” was archived on 8 October 2026',
+      recheckDueAt: at,
+    });
     vi.useRealTimers();
   });
 

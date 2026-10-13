@@ -1198,7 +1198,7 @@ describe('the skills that read a page whose status changed', (): void => {
       supersededBy: successor,
     });
     expect(await reasonOf(harness, skillId)).toBe(
-      'its runbook "Refreshing the tile" was superseded on 10 October 2026',
+      'its runbook “Refreshing the tile” was superseded on 10 October 2026',
     );
     expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
   });
@@ -1233,7 +1233,7 @@ describe('the skills that read a page whose status changed', (): void => {
       });
     }
     expect(await reasonOf(harness, archived)).toBe(
-      'its runbook "Refreshing the tile" was archived on 10 October 2026',
+      'its runbook “Refreshing the tile” was archived on 10 October 2026',
     );
     expect((await pageOf(harness, back)).status).toBe('active');
     expect(await reasonOf(harness, returning)).toBeUndefined();
