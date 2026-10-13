@@ -3,6 +3,7 @@ import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { deploymentNoProxy } from '../../scripts/lib/proxy-env';
 import { hasHostTool } from '../setup/host-tools';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -309,6 +310,41 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     const dropped = runSync([`GIT_SSL_CAINFO=${bundle}`], 'DAY0_SURFACE_MODE=mock\n');
     expect(dropped.calls).toContain('convex env remove GIT_SSL_CAINFO');
     expect(dropped.deployment).not.toContain(`GIT_SSL_CAINFO=${bundle}`);
+  });
+
+  it("puts NO_PROXY on the deployment when the file names a proxy, since a Node action's environment is the deployment's (17-P)", (): void => {
+    // The bed's finding: the backend's Node executor runs a function with the deployment's
+    // variables in place of the container's, so without this the proxy takes every request a
+    // Node action makes, its own calls back to the backend among them.
+    const proxied = runSync(
+      [],
+      'DAY0_SURFACE_MODE=mock\nHTTPS_PROXY=http://day0:hunter2@proxy.acme.test:3128\nNO_PROXY=day0.acme.test,.acme.test\n',
+    );
+    expect(proxied.status).toBe(0);
+    expect(proxied.calls).toContain(
+      `convex env set NO_PROXY -- ${deploymentNoProxy('day0.acme.test,.acme.test')}`,
+    );
+    expect(deploymentNoProxy('day0.acme.test,.acme.test').split(',').slice(0, 2)).toEqual([
+      'localhost',
+      '127.0.0.1',
+    ]);
+    // The proxy's own address stays off the deployment: Node read it when it started, and it
+    // may carry a password.
+    expect(proxied.calls.join('\n')).not.toContain('hunter2');
+    expect(proxied.calls.join('\n')).not.toContain('HTTPS_PROXY');
+
+    const plainOnly = runSync(
+      [],
+      'DAY0_SURFACE_MODE=mock\nHTTP_PROXY=http://proxy.acme.test:3128\n',
+    );
+    expect(plainOnly.calls).toContain(`convex env set NO_PROXY -- ${deploymentNoProxy(undefined)}`);
+
+    const dropped = runSync(
+      [`NO_PROXY=${deploymentNoProxy(undefined)}`],
+      'DAY0_SURFACE_MODE=mock\nNO_PROXY=day0.acme.test\n',
+    );
+    expect(dropped.calls).toContain('convex env remove NO_PROXY');
+    expect(dropped.deployment.some((line) => line.startsWith('NO_PROXY='))).toBe(false);
   });
 
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {

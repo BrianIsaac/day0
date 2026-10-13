@@ -104,6 +104,7 @@ import {
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import {
+  deploymentNoProxy,
   PROXY_VARIABLES,
   proxyConfigured,
   proxyForDisplay,
@@ -314,6 +315,10 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
   const connected = connections !== undefined && 'error' in connections ? [] : (connections ?? []);
   // Asked once: the report lists them, and the daemon's line says which archive the build reads.
   const versions = toolVersions();
+  // A Node action reads NO_PROXY off the deployment, so with a proxy named it is read back.
+  const wayOutDeployment = !proxyConfigured(proxySettings((name) => v[name]))
+    ? undefined
+    : (accessDeployment ?? (backendHere ? readDeploymentEnv(v) : undefined));
   const sections: Section[] = [
     backendSection(v),
     ...(migrations ? [migrations] : []),
@@ -331,6 +336,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       connected,
       process.version,
       daemonArchitecture(versions.docker) ?? process.arch,
+      wayOutDeployment,
     ),
   ];
 
@@ -2003,12 +2009,15 @@ function keptOut(host: string, noProxy: readonly string[]): boolean {
  * @param connections - The organisation's connections, whose vendors join the list.
  * @param nodeVersion - `process.version`.
  * @param architecture - The platform the backend image is built for.
+ * @param deployment - The deployment's own variables, when it was asked: a Node action reads its
+ *   `NO_PROXY` from there, never from the container.
  */
 export function wayOutSection(
   v: Values,
   connections: readonly ConnectionRow[],
   nodeVersion: string,
   architecture: string,
+  deployment?: DeploymentRead,
 ): Section {
   const settings = proxySettings((name) => v[name]);
   const lines: string[] = [];
@@ -2047,6 +2056,24 @@ export function wayOutSection(
     if (nodeGap !== undefined) {
       worsen('gap');
       lines.push(nodeGap);
+    }
+    if (deployment !== undefined && 'error' in deployment) {
+      lines.push(
+        `The deployment's NO_PROXY could not be read (${deployment.error}): run this again with the backend up.`,
+      );
+    } else if (deployment !== undefined) {
+      if ((deployment.values.NO_PROXY ?? '') === deploymentNoProxy(settings.noProxy)) {
+        lines.push(
+          'The deployment holds NO_PROXY as this file gives it, which a Node action reads.',
+        );
+      } else {
+        worsen('gap');
+        lines.push(
+          'The deployment does not hold NO_PROXY as this file gives it: run `pnpm sync:env`.',
+          'A Node action reads it from the deployment, never the container; without it every request',
+          'one makes takes the proxy, its own calls back to the backend among them, and fails there.',
+        );
+      }
     }
     if (settings.httpsProxy === undefined) {
       worsen('warn');

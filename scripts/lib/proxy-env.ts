@@ -23,6 +23,48 @@ export const ENV_PROXY_NODE = '22.21.0';
 /** This machine's own names, which never go through a proxy: the backend's published port is here. */
 export const LOOPBACK_NO_PROXY = ['localhost', '127.0.0.1', '[::1]'] as const;
 
+/**
+ * What never takes the proxy from inside a container: the container itself, this machine as a
+ * container names it, and every compose service another one dials by name. The compose file
+ * begins each service's `NO_PROXY` with this list, and `pnpm sync:env` puts it on the deployment
+ * (`deploymentNoProxy`); `tests/docker-compose.test.ts` holds the two to each other.
+ */
+export const SERVICE_NO_PROXY = [
+  'localhost',
+  '127.0.0.1',
+  'host.docker.internal',
+  'backend',
+  'dashboard',
+  'model',
+  'redactor',
+  'docs-notion-mcp',
+  'notion-mcp',
+  'slack-socket',
+  'looker-tile',
+  'playwright-mcp',
+  'nango-server',
+  'nango-db',
+  'nango-redis',
+] as const;
+
+/**
+ * `NO_PROXY` as the deployment must hold it when a proxy is named: the services' own list, then
+ * what the customer's IT listed, as given.
+ *
+ * The backend's Node executor runs each function with the deployment's variables in place of the
+ * container's (an allow-list of six names survives, and the proxy names are not among them),
+ * while Node's proxy agent, built when the executor started, keeps the proxy and reads `NO_PROXY`
+ * again at every request. Without this value on the deployment, every request a Node action
+ * makes takes the proxy, its own calls back to the backend at `127.0.0.1` among them, and each
+ * fails there (found on the bed `day0-w17p`, 13 October 2026; docs/running/egress.md).
+ *
+ * @param named - `NO_PROXY` as `.env.local` gives it.
+ */
+export function deploymentNoProxy(named: string | undefined): string {
+  const given = (named ?? '').trim();
+  return `${SERVICE_NO_PROXY.join(',')}${given === '' ? '' : `,${given}`}`;
+}
+
 /** The way out as configured; a name that is unset or empty is absent. */
 export interface ProxySettings {
   readonly httpsProxy?: string;

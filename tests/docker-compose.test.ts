@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
+import { deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
 
 interface Service {
   readonly ports?: readonly string[];
@@ -470,6 +471,11 @@ describe('the way out through a proxy (wave 17, 17-P; RM31 (a))', (): void => {
       // The same list everywhere, so a name added for one service is not forgotten for another.
       expect(rendered(service, {}).NO_PROXY).toBe(rendered('backend', {}).NO_PROXY);
     }
+    // And the list `pnpm sync:env` puts on the deployment, which is what a Node action reads.
+    expect(rendered('backend', {}).NO_PROXY).toBe(SERVICE_NO_PROXY.join(','));
+    expect(rendered('backend', { NO_PROXY: 'day0.acme.test' }).NO_PROXY).toBe(
+      deploymentNoProxy('day0.acme.test'),
+    );
   });
 
   it('hands the proxy to nothing that does not reach out', (): void => {

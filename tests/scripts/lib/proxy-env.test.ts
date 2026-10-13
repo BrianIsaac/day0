@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deploymentNoProxy,
   hostProxyEnvironment,
   mergedNoProxy,
   nodeReadsEnvProxy,
@@ -8,6 +9,7 @@ import {
   proxyNodeGap,
   proxySettings,
   PROXY_VARIABLES,
+  SERVICE_NO_PROXY,
 } from '../../../scripts/lib/proxy-env';
 
 const reader =
@@ -103,5 +105,22 @@ describe('a proxy named in a line a person reads', (): void => {
     );
     expect(proxyForDisplay('http://proxy.acme.test')).toBe('proxy.acme.test');
     expect(proxyForDisplay('proxy without a scheme')).toBe('an address that is not a URL');
+  });
+});
+
+describe('what never takes the proxy from inside a container', (): void => {
+  it('is the container itself and every service another one dials by name, then what IT lists, as given', (): void => {
+    expect(SERVICE_NO_PROXY.slice(0, 3)).toEqual([
+      'localhost',
+      '127.0.0.1',
+      'host.docker.internal',
+    ]);
+    expect(SERVICE_NO_PROXY).toEqual(
+      expect.arrayContaining(['backend', 'redactor', 'nango-server']),
+    );
+    expect(deploymentNoProxy(undefined)).toBe(SERVICE_NO_PROXY.join(','));
+    expect(deploymentNoProxy(' day0.acme.test,.acme.test ')).toBe(
+      `${SERVICE_NO_PROXY.join(',')},day0.acme.test,.acme.test`,
+    );
   });
 });

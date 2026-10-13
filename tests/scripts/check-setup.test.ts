@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { proxyChecks } from '../../scripts/check-sign-in';
+import { deploymentNoProxy } from '../../scripts/lib/proxy-env';
 import {
   WATCHED,
   authSection,
@@ -1109,6 +1110,38 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     );
     expect(plain.status).toBe('warn');
     expect(plain.lines.join(' ')).toContain('Only HTTP_PROXY is named');
+  });
+
+  it('is a gap when the deployment does not hold NO_PROXY as the file gives it, naming what breaks and the fix', (): void => {
+    const proxied = {
+      ...REAL,
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'day0.acme.test',
+    };
+    const held = wayOutSection(proxied, [], 'v22.23.2', 'x64', {
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+    });
+    expect(held.status).toBe('ok');
+    expect(held.lines.join(' ')).toContain('The deployment holds NO_PROXY as this file gives it');
+    const stale: ReadonlyArray<Readonly<Record<string, string>>> = [
+      {},
+      { NO_PROXY: deploymentNoProxy(undefined) },
+    ];
+    for (const values of stale) {
+      const missing = wayOutSection(proxied, [], 'v22.23.2', 'x64', { values });
+      expect(missing.status).toBe('gap');
+      expect(missing.lines.join(' ')).toContain(
+        'The deployment does not hold NO_PROXY as this file gives it: run `pnpm sync:env`.',
+      );
+      expect(missing.lines.join(' ')).toContain('its own calls back to the backend');
+    }
+    // Not asked (the backend is down), or unreadable: said, never failed.
+    expect(wayOutSection(proxied, [], 'v22.23.2', 'x64').status).toBe('ok');
+    expect(
+      wayOutSection(proxied, [], 'v22.23.2', 'x64', { error: 'no admin key' }).lines.join(' '),
+    ).toContain("The deployment's NO_PROXY could not be read (no admin key)");
+    // No proxy named: nothing is asked of the deployment.
+    expect(wayOutSection(REAL, [], 'v22.23.2', 'x64', { values: {} }).status).toBe('ok');
   });
 
   it('says where a proxy that NO_PROXY leaves no exception for would send the customer’s own hosts', (): void => {
