@@ -2,7 +2,11 @@
  * The steps a conflict's question holds at the apply (wave 16, 16-O; RM20 (a), D-4 (c)): a plan
  * drafted over a passage two equally trusted pages disagree on runs, and only the writes of the
  * steps that rely on the passage wait for the manager's answer. A step relies on it when one of
- * its cites carries the relation or one of the blocks the pages disagree in; a plan that cites
+ * its cites carries the relation or one of the blocks the pages disagree in, and so does every
+ * step after the first such: a plan's steps follow from one another, and a planner cites the
+ * passage where it reads or drafts from it, not always where it writes (the pre-tag's re-walk on
+ * the hosted model: the cite sat on the step that drafts a comment, the write two steps on). The
+ * steps before it run. A plan that cites
  * nothing says nothing of which step relies on it, so every step waits, as it does for a conflict
  * the plan names in its own words and cites nowhere (D-1 (c), `planLeansOn`). Pure.
  */
@@ -53,7 +57,8 @@ export function planLeansOn(
 }
 
 /**
- * The one-based plan steps a conflict holds, sorted.
+ * The one-based plan steps a conflict holds, sorted: the first step that cites the passage and
+ * every step after it.
  *
  * @param plan - The approved plan, its cites as stored.
  * @param conflict - The relation, and the blocks its pages disagree in.
@@ -72,8 +77,9 @@ export function conflictSteps(
       ? [cite.step]
       : [],
   );
-  if (steps.length === 0 && conflict.leaned === true) return every;
-  return [...new Set(steps)].sort((left, right) => left - right);
+  if (steps.length === 0) return conflict.leaned === true ? every : [];
+  const first = Math.min(...steps);
+  return every.filter((step) => step >= first);
 }
 
 /**

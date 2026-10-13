@@ -82,8 +82,41 @@ describe('conflictSteps: the plan steps a conflict’s question holds', (): void
         { ...plan, cites: [{ step: 1, label: 'x', blocks: [{ id: 'b9', hash: 'h9' }] }] },
         { relationId: 'relation-2', blocks: ['h9'] },
       ),
-    ).toEqual([1]);
+    ).toEqual([1, 2]);
     expect(conflictSteps(plan, { relationId: 'relation-3', blocks: ['h0'] })).toEqual([]);
+  });
+
+  it('holds every step from the first that cites the passage, since the steps after it rest on it (the pre-tag bed’s REVOPS-1)', (): void => {
+    // On the hosted model the tagged cite sat on the step that drafts the comment, which writes
+    // nothing, and the steps that post it and close the ticket cited the how-to: held by the
+    // citing step alone, the hold withheld nothing while its question said it held.
+    const drafted: Pick<ExecutionPlan, 'steps' | 'cites' | 'obligations'> = {
+      steps: [
+        'Read the ticket',
+        'Draft the comment',
+        'Post the comment',
+        'Move the ticket to Done',
+      ],
+      cites: [
+        { step: 1, label: 'how-to#Read', blocks: [{ id: 'b0', hash: 'h0' }] },
+        { step: 2, label: 'limits#Comment length', blocks: [{ id: 'b1', hash: 'h1' }] },
+        { step: 3, label: 'how-to#Action shape', blocks: [{ id: 'b2', hash: 'h2' }] },
+      ],
+      obligations: {
+        steps: [
+          { kind: 'read', reads: ['linear'], writes: [] },
+          { kind: 'report', reads: [], writes: [] },
+          { kind: 'write', reads: [], writes: ['linear'] },
+          { kind: 'conditional-write', reads: [], writes: ['linear'] },
+        ],
+        transition: 'none',
+        transitionStep: null,
+        basis: 'judgement',
+      },
+    };
+    const held = conflictSteps(drafted, { relationId: 'relation-9', blocks: ['h1'] });
+    expect(held).toEqual([2, 3, 4]);
+    expect(heldWriteSurfaces(drafted, held)).toEqual(['linear']);
   });
 
   it('holds every step of a plan that cites nothing, since nothing says which relies on the passage', (): void => {
