@@ -317,13 +317,16 @@ export function isStopped(skipReason: string | undefined): boolean {
   return skipReason?.startsWith(STOPPED_PREFIX) === true;
 }
 
-/** How a model call's failure names itself: the function and the agent's internal name. */
-const MODEL_CALL = String.raw`\bagent(?:Json|Text)\([^)]*\):\s*`;
+/**
+ * How a model call's failure names itself: the function and the agent's internal name, and for a
+ * structured call sometimes its mode after them ("agentJson(day0-skill-x-initial): prompt: ").
+ */
+const MODEL_CALL = String.raw`\bagent(?:Json|Text)\([^)]*\):\s*(?:(?:native|prompt):\s*)?`;
 
 /**
  * Each way a model call ends without a reply Day0 can use, as its error words it
  * (`src/lib/mastra.ts`), beside the manager's words for it. Read in order; the last takes any
- * other failure of a call, whose own words follow the call's name.
+ * other failure of a call, whose own words follow the call's name and are kept.
  */
 const MODEL_CALL_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
   [
@@ -343,7 +346,9 @@ const MODEL_CALL_WORDS: ReadonlyArray<readonly [RegExp, string]> = [
     new RegExp(`${MODEL_CALL}\\w+ generation was stopped by a tripwire`, 'g'),
     'the model call was stopped',
   ],
-  [new RegExp(MODEL_CALL, 'g'), 'the model call '],
+  // A call that spent its budget says so in words already (`budgetSpent`): the name alone goes.
+  [new RegExp(`${MODEL_CALL}(?=the model call\\b)`, 'g'), ''],
+  [new RegExp(MODEL_CALL, 'g'), 'the model call failed: '],
 ];
 
 /**

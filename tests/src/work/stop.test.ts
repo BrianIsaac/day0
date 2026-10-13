@@ -178,8 +178,27 @@ describe('a stop on the model’s reply, as the manager reads it (finding 1 of t
         'stopped: agentJson(day0-skill-x-initial): prompt generation was stopped by a tripwire (token limit)',
       ),
     ).toBe('the model call was stopped (token limit)');
-    expect(stopDetail('stopped: agentText(day0-voice): timed out after 300000 ms')).toBe(
-      'the model call timed out after 300000 ms',
+  });
+
+  // The second pass: a call that spends its budget is the commonest failure, and its message
+  // (`budgetSpent` in `src/lib/mastra.ts`) carries the call's name with or without the mode.
+  it('says a call that spent its budget once, without the call’s name or its mode', (): void => {
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): prompt: the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
+    expect(
+      stopDetail('stopped: agentText(day0-voice): the model call reached its 60000ms budget'),
+    ).toBe('the model call reached its 60000ms budget');
+    // Any other words after a call's name are kept, the name and the mode left out.
+    expect(stopDetail('stopped: agentText(day0-voice): the provider closed the stream')).toBe(
+      'the model call failed: the provider closed the stream',
     );
   });
 
