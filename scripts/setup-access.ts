@@ -16,15 +16,7 @@
  * Everything is asked and checked before anything is written: a missing answer stops the verb
  * with nothing changed.
  */
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { ADMINISTRATORS_VAR, parseAdministrators } from '../src/lib/administrators';
 import {
@@ -58,9 +50,8 @@ import { adminTarget, deploymentAdmin, type DeploymentAdmin } from './lib/convex
 import { readEnvValues, writeEnvValues } from './lib/env-file';
 import {
   defaultInstallRecordDirectory,
-  installRecordMarkdown,
-  installRecordName,
   installRecordRunMarkdown,
+  writeInstallRecordSection,
   type InstallRecord,
   type RecordedConnection,
   type RecordedSignIn,
@@ -810,6 +801,7 @@ function recordedConnection(
   landing: Landing,
   planned: Planned,
   outcome: RecordedConnection['outcome'],
+  landedAt?: Date,
 ): RecordedConnection {
   const text = (name: string): string | undefined =>
     typeof landing[name] === 'string' ? (landing[name] as string) : undefined;
@@ -835,6 +827,15 @@ function recordedConnection(
     ...(text('redirectUrl') === undefined ? {} : { redirectUrl: text('redirectUrl') }),
     ...(text('issuer') === undefined ? {} : { issuer: text('issuer') }),
     secretLifetime: planned.mode.secretLifetime.words,
+    // A date only for a secret this run landed, where the recipe gives its lifetime in days: a
+    // connection found already landed has an age this run cannot know.
+    ...(landedAt === undefined || planned.mode.secretLifetime.days === undefined
+      ? {}
+      : {
+          secretExpires: new Date(
+            landedAt.getTime() + planned.mode.secretLifetime.days * 24 * 60 * 60 * 1000,
+          ),
+        }),
     outcome,
     guide: planned.recipe.guide,
   };
@@ -999,7 +1000,9 @@ export async function runAccess(options: AccessOptions, io: AccessIo): Promise<n
       return 1;
     }
     io.log(`Landed ${landing.system}, ${modeWords(planned.mode.mode)}.`);
-    recorded.push(recordedConnection(landing, planned, 'landed'));
+    recorded.push(
+      recordedConnection(landing, planned, 'landed', new Date(io.now?.() ?? Date.now())),
+    );
   }
 
   io.log(`\n${CHECK_ACCESS.join(' ')}    (check every connection)`);
@@ -1050,14 +1053,13 @@ function writeRecord(
       : { check: { command: CHECK_ACCESS.join(' '), status: checkStatus } }),
   };
   try {
-    mkdirSync(directory, { recursive: true });
-    const path = join(directory, installRecordName(at));
     // A later run the same day is added to the day's record, never in place of it (R41V-12).
-    if (existsSync(path)) {
-      appendFileSync(path, `\n${installRecordRunMarkdown(record)}`, { encoding: 'utf8' });
-    } else {
-      writeFileSync(path, installRecordMarkdown(record), { encoding: 'utf8', mode: 0o600 });
-    }
+    const path = writeInstallRecordSection({
+      directory,
+      at,
+      project,
+      section: installRecordRunMarkdown(record),
+    });
     io.log(`\nThe install record for the customer's IT: ${path}`);
   } catch (err) {
     io.log(`The install record could not be written to ${directory}: ${errorMessage(err)}`);

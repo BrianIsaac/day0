@@ -48,3 +48,23 @@ describe('the security headers', (): void => {
     );
   });
 });
+
+describe('behind a reverse proxy (wave 17, 17-P)', (): void => {
+  /** The headers one path's own rule adds. */
+  async function headersFor(source: string): Promise<Record<string, string>> {
+    const rules = (await nextConfig.headers?.()) ?? [];
+    const rule = rules.find((one) => one.source === source);
+    return Object.fromEntries((rule?.headers ?? []).map(({ key, value }) => [key, value]));
+  }
+
+  it.each(['/api/voice/chat', '/api/reorientation/chat'])(
+    'tells the proxy not to buffer the streamed reply of %s',
+    async (route): Promise<void> => {
+      expect(await headersFor(route)).toEqual({ 'X-Accel-Buffering': 'no' });
+    },
+  );
+
+  it('names itself on every response, so a check can tell Day0 from whatever else a proxy forwards to', async (): Promise<void> => {
+    expect((await headersFor('/:path*'))['X-Day0']).toBe('app');
+  });
+});

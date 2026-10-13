@@ -183,6 +183,15 @@ export interface HarnessOptions {
   authConfig?: (deploymentSettings: Readonly<Record<string, string>>) => string | undefined;
   /** The identity settings the deployment already holds, as a past `sync:env` left them. */
   deploymentSettings?: Record<string, string>;
+  /** What `git rev-parse --short=12 HEAD` answers in the checkout; absent means nothing. */
+  headCommit?: string;
+  /** The commit the deployment's release stamp names; absent means the stamp names none. */
+  stampCommit?: string;
+  /**
+   * The image the backend's container runs and the base it is labelled with, as `docker inspect`
+   * and `docker image inspect` answer; absent means the container names no image.
+   */
+  backendImage?: { readonly id: string; readonly base?: string };
 }
 
 /** The settings the auth config reads, which `sync:env` copies from `.env.local` to the deployment. */
@@ -309,6 +318,15 @@ export function harness(options: HarnessOptions = {}): Harness {
         ? { status: 1, stdout: '', stderr: 'service "model" is not running' }
         : { status: 0, stdout: options.ollamaList, stderr: '' };
     }
+    if (joined.startsWith('docker inspect') && args.includes('{{.Image}}')) {
+      return { status: 0, stdout: `${options.backendImage?.id ?? ''}\n`, stderr: '' };
+    }
+    if (joined.startsWith('docker image inspect') && joined.includes('.Config.Labels')) {
+      return { status: 0, stdout: `${options.backendImage?.base ?? ''}\n`, stderr: '' };
+    }
+    if (joined.startsWith('git rev-parse')) {
+      return { status: 0, stdout: `${options.headCommit ?? ''}\n`, stderr: '' };
+    }
     if (joined.startsWith('docker inspect')) {
       return { status: 0, stdout: `${options.inspectOwner ?? directory}\n`, stderr: '' };
     }
@@ -384,7 +402,7 @@ export function harness(options: HarnessOptions = {}): Harness {
     if (joined.startsWith('npx convex data deploymentVersions')) {
       return {
         status: 0,
-        stdout: `${JSON.stringify({ _id: 'k1', _creationTime: 1, release: options.releaseStamp, recordedAt: 1 })}\n`,
+        stdout: `${JSON.stringify({ _id: 'k1', _creationTime: 1, release: options.releaseStamp, ...(options.stampCommit === undefined ? {} : { commit: options.stampCommit }), recordedAt: 1 })}\n`,
         stderr: '',
       };
     }

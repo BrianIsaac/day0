@@ -84,6 +84,10 @@ import { isLoopback, setupRoute } from './setup-route';
 import {
   fetchFromContainer,
   fetchFromHost,
+  probeApp,
+  probeLive,
+  proxiedAppOrigin,
+  proxiedBackendOrigin,
   readDeploymentEnv,
   signInSetupChecks,
   worstStatus,
@@ -99,6 +103,18 @@ import {
   type ConnectionRow,
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
+import {
+  missingFromDeployment,
+  noProxyEntries,
+  SERVICE_NO_PROXY,
+  PROXY_VARIABLES,
+  proxyAddressGap,
+  proxyConfigured,
+  proxyForDisplay,
+  proxyNodeGap,
+  proxySettings,
+} from './lib/proxy-env';
+import { runUnderProxy } from './lib/under-proxy';
 import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -198,6 +214,8 @@ export const WATCHED = [
   'DAY0_NANGO_SECRET_KEY',
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
+  'DAY0_APP_PORT',
+  ...PROXY_VARIABLES,
 ] as const;
 
 /** How a section reads: complete, worth saying out loud, or half-done. */
@@ -299,6 +317,12 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
     (backendHere && v[ADMINISTRATORS_VAR] ? readDeploymentEnv(v) : undefined);
   const access = accessSection(v, connections, accessDeployment);
   const connected = connections !== undefined && 'error' in connections ? [] : (connections ?? []);
+  // Asked once: the report lists them, and the daemon's line says which archive the build reads.
+  const versions = toolVersions();
+  // A Node action reads NO_PROXY off the deployment, so with a proxy named it is read back.
+  const wayOutDeployment = !proxyConfigured(proxySettings((name) => v[name]))
+    ? undefined
+    : (accessDeployment ?? (backendHere ? readDeploymentEnv(v) : undefined));
   const sections: Section[] = [
     backendSection(v),
     ...(migrations ? [migrations] : []),
@@ -311,6 +335,13 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
     sandboxSection(v, projectName),
     voiceSection(v),
     finalisationSection(v),
+    wayOutSection(
+      v,
+      connected,
+      process.version,
+      daemonArchitecture(versions.docker) ?? process.arch,
+      wayOutDeployment,
+    ),
   ];
 
   if (options.report) {
@@ -319,7 +350,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
         setupReport({
           values: v,
           sections,
-          versions: toolVersions(),
+          versions,
           images: composeImages(readFileSync('docker-compose.yml', 'utf8')).map((row) => ({
             ...row,
             running: services?.includes(row.service) ?? false,
@@ -1040,12 +1071,17 @@ function probeSignIn(
   if (!issuer) return undefined;
   const backendHere = where.selfHosted && (where.services?.includes('backend') ?? false);
   const deploymentReachable = backendHere || (!where.selfHosted && !!v.CONVEX_DEPLOYMENT);
+  const appOrigin = proxiedAppOrigin(v);
+  const backendOrigin = appOrigin === undefined ? undefined : proxiedBackendOrigin(v);
   return {
     host: fetchFromHost(issuer.issuer),
     ...(backendHere
       ? { container: fetchFromContainer(issuer.issuer, where.projectName, ENV_FILE) }
       : {}),
     ...(deploymentReachable ? { deployment: readDeploymentEnv(v) } : {}),
+    ...(appOrigin === undefined ? {} : { app: probeApp(appOrigin) }),
+    // Asked only with the backend up: a proxy with no backend behind it says nothing of itself.
+    ...(backendOrigin !== undefined && backendHere ? { live: probeLive(backendOrigin) } : {}),
   };
 }
 
@@ -1949,6 +1985,136 @@ export function egressHosts(
   return rows;
 }
 
+/** The host of a customer's own address this configuration names, or undefined when it names none. */
+function ownHost(url: string | undefined): string | undefined {
+  try {
+    return url?.trim() ? new URL(url.trim()).hostname : undefined;
+  } catch {
+    // Not a URL: its own section says so.
+    return undefined;
+  }
+}
+
+/** Whether an exclusion list keeps a host out of the proxy, by its name or a suffix of it. */
+function keptOut(host: string, noProxy: readonly string[]): boolean {
+  return noProxy.some((entry) => {
+    // A leading dot or `*.` covers a domain; a port narrows the entry and still names the host.
+    const name = entry
+      .replace(/^\*?\./, '')
+      .replace(/:\d+$/, '')
+      .toLowerCase();
+    return name === '*' || host === name || host.endsWith(`.${name}`);
+  });
+}
+
+/**
+ * The way out of the machine, for a person (wave 17, 17-P; RM31 (a)): whether the services dial
+ * out directly or through the customer's HTTP proxy, what is kept out of it, whether this Node
+ * reads it at all, and every host this configuration reaches by what needs it. The same list the
+ * support report carries as `egress`, which until 0.21.0 was printed nowhere else.
+ *
+ * @param v - Resolved values.
+ * @param connections - The organisation's connections, whose vendors join the list.
+ * @param nodeVersion - `process.version`.
+ * @param architecture - The platform the backend image is built for.
+ * @param deployment - The deployment's own variables, when it was asked: a Node action reads its
+ *   `NO_PROXY` from there, never from the container.
+ */
+export function wayOutSection(
+  v: Values,
+  connections: readonly ConnectionRow[],
+  nodeVersion: string,
+  architecture: string,
+  deployment?: DeploymentRead,
+): Section {
+  const settings = proxySettings((name) => v[name]);
+  const lines: string[] = [];
+  let status: Status = 'ok';
+  const worsen = (to: Status): void => {
+    if (to === 'gap' || status === 'ok') status = to;
+  };
+  let title = 'The way out: direct';
+  if (!proxyConfigured(settings)) {
+    lines.push('No proxy is named (HTTPS_PROXY), so every service dials out directly.');
+  } else {
+    const address = settings.httpsProxy ?? settings.httpProxy ?? '';
+    title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
+    lines.push(
+      'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
+      'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
+      "Day0's own services and this machine are always kept out of it.",
+    );
+    // The customer's own names: the services' list is said in the line above, once.
+    const listed = noProxyEntries(settings.noProxy).filter(
+      (entry) => !SERVICE_NO_PROXY.some((name) => name === entry.toLowerCase()),
+    );
+    const own = [ownHost(v.DAY0_PUBLIC_URL), ownHost(v.DAY0_OIDC_ISSUER)].filter(
+      (host): host is string => host !== undefined && !isLoopback(`http://${host}`),
+    );
+    const through = own.filter((host) => !keptOut(host, listed));
+    if (listed.length > 0) lines.push(`NO_PROXY also keeps out: ${listed.join(', ')}.`);
+    if (through.length > 0) {
+      lines.push(
+        `${listed.length > 0 ? 'NO_PROXY does not list' : 'NO_PROXY lists nothing more, so'} ` +
+          `${through.join(' and ')}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
+        'list them in NO_PROXY if the proxy does not serve hosts inside your network.',
+      );
+    }
+    const addressGap = proxyAddressGap(settings);
+    if (addressGap !== undefined) {
+      worsen('gap');
+      lines.push(addressGap);
+    }
+    const nodeGap = proxyNodeGap(nodeVersion, settings);
+    if (nodeGap !== undefined) {
+      worsen('gap');
+      lines.push(nodeGap);
+    }
+    if (deployment !== undefined && 'error' in deployment) {
+      lines.push(
+        `The deployment's NO_PROXY could not be read (${deployment.error}): run this again with the backend up.`,
+      );
+    } else if (deployment !== undefined) {
+      const lacking = missingFromDeployment(deployment.values.NO_PROXY, settings.noProxy);
+      if (lacking.length === 0) {
+        lines.push(
+          'The deployment holds every name NO_PROXY keeps out, which is where a Node action reads it.',
+        );
+      } else {
+        worsen('gap');
+        lines.push(
+          'The deployment does not hold every name NO_PROXY keeps out: run `pnpm sync:env`.',
+          `It lacks ${lacking.join(', ')}.`,
+          'A Node action reads the list from the deployment, never the container; without it every',
+          'request one makes takes the proxy, its own calls back to the backend among them, and',
+          'fails there.',
+        );
+      }
+    }
+    if (settings.httpsProxy === undefined) {
+      worsen('warn');
+      lines.push(
+        'Only HTTP_PROXY is named: every vendor Day0 reaches is https, which HTTPS_PROXY carries.',
+        'Name the proxy in HTTPS_PROXY as well.',
+      );
+    } else if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
+      worsen('warn');
+      lines.push(
+        `NODE_USE_ENV_PROXY=${settings.useEnvProxy} turns Node's reading of the proxy off: the bridge, the`,
+        "backend's Node actions and Nango then dial out directly. Empty it, or set it to 1.",
+      );
+    }
+    lines.push(
+      'What each service did with a proxy on a bed whose only route out was one: docs/running/egress.md.',
+    );
+  }
+  lines.push(
+    'The hosts this configuration reaches, each by what needs it (docs/running/egress.md):',
+    ...egressHosts(v, connections, architecture).map((row) => `  ${row.host}: ${row.purpose}`),
+  );
+  return { title: titleFor(status, title), status, lines };
+}
+
 /** The Dockerfile a compose service is built from, by its path from the compose file. */
 function buildDockerfile(definition: unknown): string | undefined {
   const build =
@@ -2112,5 +2278,7 @@ function checkoutCommit(): string | undefined {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = main(ENV_FILE, { report: process.argv.includes('--report') });
+  process.exitCode =
+    runUnderProxy(readEnvFile(ENV_FILE)) ??
+    main(ENV_FILE, { report: process.argv.includes('--report') });
 }

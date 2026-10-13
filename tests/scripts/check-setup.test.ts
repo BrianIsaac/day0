@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { proxyChecks } from '../../scripts/check-sign-in';
+import { deploymentNoProxy } from '../../scripts/lib/proxy-env';
 import {
   WATCHED,
   authSection,
@@ -18,6 +20,7 @@ import {
   parseMigrationStatus,
   settingsSection,
   setupReport,
+  wayOutSection,
   setupRoute,
   accessChecksForReport,
   accessSection,
@@ -815,6 +818,8 @@ describe('the company sign-in block of the auth section', (): void => {
     DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
     DAY0_SESSION_SECRET: 's'.repeat(43),
     DAY0_PUBLIC_URL: 'https://day0.acme.test',
+    // A complete install behind the customer's proxy names the backend's origin too (17-P).
+    NEXT_PUBLIC_CONVEX_URL: 'https://convex.day0.acme.test',
   };
   const DISCOVERY = JSON.stringify({ issuer: ISSUER, jwks_uri: `${ISSUER}/jwks` });
   const REACHED = { status: 200, body: DISCOVERY };
@@ -825,7 +830,14 @@ describe('the company sign-in block of the auth section', (): void => {
     DAY0_OIDC_ALLOWED_DOMAINS: 'acme.test',
     DAY0_PUBLIC_URL: 'https://day0.acme.test',
   };
-  const PROBES = { host: REACHED, container: REACHED, deployment: { values: PUSHED } };
+  const PROBES = {
+    host: REACHED,
+    container: REACHED,
+    deployment: { values: PUSHED },
+    // The two proxy rows' probes (17-P): the app answers as Day0, the backend's origin upgrades.
+    app: { status: 307, day0: true },
+    live: { status: 200, upgraded: true },
+  };
 
   it('passes a complete install the host and the backend container both reach', (): void => {
     const section = authSection(COMPLETE, PROBES);
@@ -920,6 +932,287 @@ describe('the company sign-in block of the auth section', (): void => {
   it('lists the issuer as an outbound host in the support report', (): void => {
     const hosts = egressHosts(COMPLETE).map((row) => row.host);
     expect(hosts).toContain('issuer.acme.test');
+  });
+
+  describe("the customer's reverse proxy (wave 17, 17-P)", (): void => {
+    /** A row by how its words begin, after its verdict's label, or by a phrase inside it. */
+    const lineOf = (section: { lines: string[] }, words: string): string | undefined =>
+      section.lines.find((line) => line.replace(/^(pass|note|gap) +/, '').startsWith(words)) ??
+      section.lines.find((line) => line.includes(words));
+
+    it('passes both rows when the public address answers as Day0 and the backend origin carries the live connection', (): void => {
+      const section = authSection(COMPLETE, PROBES);
+      expect(section.status).toBe('ok');
+      expect(section.lines).toContain('pass https://day0.acme.test answers as Day0 over https.');
+      expect(section.lines).toContain(
+        'pass https://convex.day0.acme.test carries the live connection.',
+      );
+    });
+
+    it('is a gap when the public address answers but is not Day0', (): void => {
+      const section = authSection(
+        { ...COMPLETE, DAY0_APP_PORT: '3000' },
+        { ...PROBES, app: { status: 200, day0: false } },
+      );
+      expect(section.status).toBe('gap');
+      expect(section.lines).toContain(
+        'gap  https://day0.acme.test answered, and not as Day0: check the proxy forwards to ' +
+          'port 3000 (docs/running/proxy.md, "The app").',
+      );
+    });
+
+    it('names the port the app is served on, where the file moves it', (): void => {
+      const section = authSection(
+        { ...COMPLETE, DAY0_APP_PORT: '5372' },
+        { ...PROBES, app: { status: 404, day0: false } },
+      );
+      expect(lineOf(section, 'not as Day0')).toContain('forwards to port 5372');
+    });
+
+    it('is a gap naming proxy.md when the backend origin refuses the upgrade', (): void => {
+      const section = authSection(COMPLETE, { ...PROBES, live: { status: 200, upgraded: false } });
+      expect(section.status).toBe('gap');
+      expect(section.lines).toContain(
+        'gap  https://convex.day0.acme.test did not complete the WebSocket upgrade: add the ' +
+          'upgrade headers (docs/running/proxy.md, "The backend").',
+      );
+    });
+
+    it('is a gap when the backend origin answers as something else, or not at all, with the backend up', (): void => {
+      const other = authSection(COMPLETE, { ...PROBES, live: { status: 404, upgraded: false } });
+      expect(other.status).toBe('gap');
+      expect(lineOf(other, 'convex.day0.acme.test')).toBe(
+        'gap  https://convex.day0.acme.test answered HTTP 404, and not as the backend: check ' +
+          'the proxy forwards it to port 3210 (docs/running/proxy.md, "The backend").',
+      );
+      const silent = authSection(
+        { ...COMPLETE, CONVEX_PORT: '5370' },
+        { ...PROBES, live: { error: 'ECONNREFUSED' } },
+      );
+      expect(silent.status).toBe('gap');
+      expect(lineOf(silent, 'convex.day0.acme.test')).toBe(
+        'gap  https://convex.day0.acme.test did not answer (ECONNREFUSED): check the proxy ' +
+          'forwards it to port 5370 (docs/running/proxy.md, "The backend").',
+      );
+    });
+
+    it('notes, and does not fail, a public address with nothing behind it yet: the app is started after this check', (): void => {
+      for (const app of [{ error: 'ECONNREFUSED' }, { status: 502, day0: false }]) {
+        const section = authSection(COMPLETE, { ...PROBES, app });
+        expect(section.status).toBe('warn');
+        expect(lineOf(section, 'https://day0.acme.test')).toContain('note');
+        expect(lineOf(section, 'https://day0.acme.test')).toContain('pnpm start');
+      }
+    });
+
+    it("says what to do when this machine's Node does not trust the proxy's certificate", (): void => {
+      const section = authSection(COMPLETE, {
+        ...PROBES,
+        app: { error: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' },
+      });
+      expect(lineOf(section, 'https://day0.acme.test')).toContain('NODE_EXTRA_CA_CERTS');
+    });
+
+    it('notes a backend that only this machine can reach beside a public address others reach', (): void => {
+      const section = authSection(
+        { ...COMPLETE, NEXT_PUBLIC_CONVEX_URL: 'http://127.0.0.1:3210' },
+        { ...PROBES, live: undefined },
+      );
+      expect(section.status).toBe('warn');
+      expect(lineOf(section, '--backend-url')).toContain(
+        'note NEXT_PUBLIC_CONVEX_URL is http://127.0.0.1:3210, which only a browser on this machine reaches',
+      );
+    });
+
+    it('asks nothing of a proxy where the public address is this machine itself', (): void => {
+      const local = { ...COMPLETE, DAY0_PUBLIC_URL: 'http://localhost:3000' };
+      const lines = authSection(local, { ...PROBES, app: undefined, live: undefined }).lines;
+      expect(lines.join('\n')).not.toContain('answers as Day0');
+      expect(lines.join('\n')).not.toContain('live connection');
+      expect(lines.join('\n')).not.toContain('--backend-url');
+    });
+
+    it('holds a silent public address to a gap once the app is meant to be up (the install ends on it)', (): void => {
+      const checks = proxyChecks(COMPLETE, { app: { error: 'ECONNREFUSED' } }, { strict: true });
+      expect(checks.map((one) => [one.name, one.status])).toEqual([
+        ['proxy-app', 'gap'],
+        ['proxy-backend', 'warn'],
+      ]);
+    });
+  });
+});
+
+describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
+  const REAL = { DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' };
+
+  it('lists every host this configuration reaches, by what needs it, for a person and not only in the report', (): void => {
+    const section = wayOutSection(REAL, [], 'v22.23.2', 'x64');
+    expect(section.status).toBe('ok');
+    expect(section.title).toBe('The way out: direct');
+    expect(section.lines[0]).toBe(
+      'No proxy is named (HTTPS_PROXY), so every service dials out directly.',
+    );
+    for (const row of egressHosts(REAL, [], 'x64')) {
+      expect(section.lines, row.host).toContain(`  ${row.host}: ${row.purpose}`);
+    }
+    expect(section.lines).toContain(
+      'The hosts this configuration reaches, each by what needs it (docs/running/egress.md):',
+    );
+  });
+
+  it('names the proxy by its host and port, never its password, and what is kept out of it', (): void => {
+    const section = wayOutSection(
+      {
+        ...REAL,
+        HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
+        NO_PROXY: 'day0.acme.test,login.acme.test',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(section.status).toBe('ok');
+    expect(section.title).toBe('The way out: through the proxy at proxy.acme.test:3128');
+    const lines = section.lines.join('\n');
+    expect(lines).not.toContain('hunter2');
+    expect(lines).toContain('the backend, the Slack socket bridge, the redactor and Nango');
+    expect(lines).toContain(
+      'The setup and the three checks start themselves with it, run by hand or not.',
+    );
+    expect(lines).toContain('NO_PROXY also keeps out: day0.acme.test, login.acme.test.');
+  });
+
+  it('is a gap when the proxy’s address is not one a client can use', (): void => {
+    const section = wayOutSection(
+      { ...REAL, HTTPS_PROXY: 'proxy.acme.test:3128' },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe(
+      'The way out: through the proxy at an address that is not a URL - needs fixing',
+    );
+    expect(section.lines).toContain(
+      'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
+  });
+
+  it('reads a NO_PROXY entry that carries a port as keeping its host out', (): void => {
+    const lines = wayOutSection(
+      {
+        ...REAL,
+        HTTPS_PROXY: 'http://proxy.acme.test:3128',
+        NO_PROXY: 'day0.acme.test:443',
+        DAY0_PUBLIC_URL: 'https://day0.acme.test',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines.join('\n');
+    expect(lines).not.toContain('NO_PROXY does not list');
+  });
+
+  it('is a gap when a proxy is named and this Node would dial out without it', (): void => {
+    const section = wayOutSection(
+      { ...REAL, HTTPS_PROXY: 'http://proxy.acme.test:3128' },
+      [],
+      'v22.12.0',
+      'x64',
+    );
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe(
+      'The way out: through the proxy at proxy.acme.test:3128 - needs fixing',
+    );
+    expect(section.lines.join(' ')).toContain('Node 22.21.0 or later does');
+  });
+
+  it("warns when the file turns Node's switch off beside a proxy, or names one for plain http alone", (): void => {
+    const off = wayOutSection(
+      { ...REAL, HTTPS_PROXY: 'http://proxy.acme.test:3128', NODE_USE_ENV_PROXY: '0' },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(off.status).toBe('warn');
+    expect(off.lines.join(' ')).toContain('NODE_USE_ENV_PROXY=0');
+    const plain = wayOutSection(
+      { ...REAL, HTTP_PROXY: 'http://proxy.acme.test:3128' },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(plain.status).toBe('warn');
+    expect(plain.lines.join(' ')).toContain('Only HTTP_PROXY is named');
+  });
+
+  it('is a gap when the deployment does not hold NO_PROXY as the file gives it, naming what breaks and the fix', (): void => {
+    const proxied = {
+      ...REAL,
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'day0.acme.test',
+    };
+    const held = wayOutSection(proxied, [], 'v22.23.2', 'x64', {
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+    });
+    expect(held.status).toBe('ok');
+    expect(held.lines.join(' ')).toContain(
+      'The deployment holds every name NO_PROXY keeps out, which is where a Node action reads it',
+    );
+    const stale: ReadonlyArray<Readonly<Record<string, string>>> = [
+      {},
+      { NO_PROXY: deploymentNoProxy(undefined) },
+    ];
+    for (const values of stale) {
+      const missing = wayOutSection(proxied, [], 'v22.23.2', 'x64', { values });
+      expect(missing.status).toBe('gap');
+      expect(missing.lines.join(' ')).toContain(
+        'The deployment does not hold every name NO_PROXY keeps out: run `pnpm sync:env`.',
+      );
+      expect(missing.lines.join(' ')).toContain('its own calls back to the backend');
+    }
+    // The bed's case: run as a child of the setup, this check's own NO_PROXY is the file's with
+    // this machine's names put before it, and the deployment holds what `pnpm sync:env` pushed
+    // from the file. Every name the two need is there, so it passes, and names only IT's own.
+    const asChild = wayOutSection(
+      { ...proxied, NO_PROXY: 'localhost,127.0.0.1,day0.acme.test' },
+      [],
+      'v22.23.2',
+      'x64',
+      { values: { NO_PROXY: deploymentNoProxy('day0.acme.test') } },
+    );
+    expect(asChild.status).toBe('ok');
+    expect(asChild.lines).toContain('NO_PROXY also keeps out: day0.acme.test.');
+    // What is missing is named.
+    expect(
+      wayOutSection(proxied, [], 'v22.23.2', 'x64', {
+        values: { NO_PROXY: deploymentNoProxy(undefined) },
+      }).lines.join(' '),
+    ).toContain('It lacks day0.acme.test.');
+    // Not asked (the backend is down), or unreadable: said, never failed.
+    expect(wayOutSection(proxied, [], 'v22.23.2', 'x64').status).toBe('ok');
+    expect(
+      wayOutSection(proxied, [], 'v22.23.2', 'x64', { error: 'no admin key' }).lines.join(' '),
+    ).toContain("The deployment's NO_PROXY could not be read (no admin key)");
+    // No proxy named: nothing is asked of the deployment.
+    expect(wayOutSection(REAL, [], 'v22.23.2', 'x64', { values: {} }).status).toBe('ok');
+  });
+
+  it('says where a proxy that NO_PROXY leaves no exception for would send the customer’s own hosts', (): void => {
+    const section = wayOutSection(
+      {
+        ...REAL,
+        HTTPS_PROXY: 'http://proxy.acme.test:3128',
+        DAY0_PUBLIC_URL: 'https://day0.acme.test',
+        DAY0_OIDC_ISSUER: 'https://login.acme.test',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(section.lines.join(' ')).toContain(
+      'NO_PROXY lists nothing more, so day0.acme.test and login.acme.test are asked for through the proxy',
+    );
   });
 });
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
+import { deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
 
 interface Service {
   readonly ports?: readonly string[];
@@ -380,5 +381,110 @@ describe('the backend image (14-F ruling 1 (a), 8 October)', (): void => {
         rmSync(directory, { recursive: true, force: true });
       }
     }
+  });
+});
+
+describe('the way out through a proxy (wave 17, 17-P; RM31 (a))', (): void => {
+  /** The services that reach out of the machine, each of which is handed the proxy. */
+  const REACHING_OUT = ['backend', 'slack-socket', 'redactor', 'nango-server'] as const;
+
+  /**
+   * A value as Compose renders it from the env file: `${NAME}`, `${NAME:-default}` and
+   * `${NAME:+replacement}`, nested, which are the forms these lines use.
+   */
+  function render(value: string, env: Readonly<Record<string, string>>): string {
+    let rendered = value;
+    for (let pass = 0; pass < 4 && rendered.includes('${'); pass += 1) {
+      rendered = rendered.replace(
+        /\$\{([A-Z_]+)(?::([-+])([^${}]*))?\}/g,
+        (_whole, name: string, form: string | undefined, word: string | undefined): string => {
+          const set = (env[name] ?? '') !== '';
+          if (form === '+') return set ? (word ?? '') : '';
+          return set ? env[name]! : (word ?? '');
+        },
+      );
+    }
+    return rendered;
+  }
+
+  /** A service's environment as the container gets it under an env file. */
+  function rendered(
+    service: string,
+    env: Readonly<Record<string, string>>,
+  ): Record<string, string> {
+    return Object.fromEntries(
+      (COMPOSE.services[service]?.environment ?? []).map((entry) => {
+        const at = entry.indexOf('=');
+        return [entry.slice(0, at), render(entry.slice(at + 1), env)];
+      }),
+    );
+  }
+
+  it.each(REACHING_OUT)('hands %s the proxy the env file names', (service): void => {
+    const environment = rendered(service, {
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      HTTP_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'day0.acme.test,.acme.test',
+    });
+    expect(environment.HTTPS_PROXY).toBe('http://proxy.acme.test:3128');
+    expect(environment.HTTP_PROXY).toBe('http://proxy.acme.test:3128');
+    expect(environment.NODE_USE_ENV_PROXY).toBe('1');
+    expect(environment.NO_PROXY?.split(',').slice(-2)).toEqual(['day0.acme.test', '.acme.test']);
+  });
+
+  it.each(REACHING_OUT)(
+    'leaves %s without a proxy when the env file names none',
+    (service): void => {
+      const environment = rendered(service, {});
+      expect(environment.HTTPS_PROXY).toBe('');
+      expect(environment.HTTP_PROXY).toBe('');
+      expect(environment.NODE_USE_ENV_PROXY).toBe('');
+    },
+  );
+
+  it("lets the env file turn Node's switch on or off itself", (): void => {
+    expect(rendered('backend', { HTTP_PROXY: 'http://p:3128' }).NODE_USE_ENV_PROXY).toBe('');
+    expect(
+      rendered('backend', { HTTP_PROXY: 'http://p:3128', NODE_USE_ENV_PROXY: '1' })
+        .NODE_USE_ENV_PROXY,
+    ).toBe('1');
+    expect(
+      rendered('backend', { HTTPS_PROXY: 'http://p:3128', NODE_USE_ENV_PROXY: '0' })
+        .NODE_USE_ENV_PROXY,
+    ).toBe('0');
+  });
+
+  it('never sends a call between its own services, or to the container itself, through the proxy', (): void => {
+    // Every service another one dials by name, outside the test profile's doubles.
+    const dialled = Object.entries(
+      COMPOSE.services as Record<string, Service & { profiles?: readonly string[] }>,
+    )
+      .filter(([, service]) => !(service.profiles ?? []).includes('test'))
+      .filter(([, service]) => service.network_mode !== 'none')
+      .map(([name]) => name);
+    for (const service of REACHING_OUT) {
+      const direct = (rendered(service, {}).NO_PROXY ?? '').split(',');
+      expect(direct, service).toEqual(
+        expect.arrayContaining(['localhost', '127.0.0.1', 'host.docker.internal', 'notion-mcp']),
+      );
+      for (const name of dialled) expect(direct, `${service} reaching ${name}`).toContain(name);
+      // The same list everywhere, so a name added for one service is not forgotten for another.
+      expect(rendered(service, {}).NO_PROXY).toBe(rendered('backend', {}).NO_PROXY);
+    }
+    // And the list `pnpm sync:env` puts on the deployment, which is what a Node action reads.
+    expect(rendered('backend', {}).NO_PROXY).toBe(SERVICE_NO_PROXY.join(','));
+    expect(rendered('backend', { NO_PROXY: 'day0.acme.test' }).NO_PROXY).toBe(
+      deploymentNoProxy('day0.acme.test'),
+    );
+  });
+
+  it('hands the proxy to nothing that does not reach out', (): void => {
+    const others = Object.entries(COMPOSE.services)
+      .filter(([name]) => !(REACHING_OUT as readonly string[]).includes(name))
+      .filter(([, service]) =>
+        (service.environment ?? []).some((entry) => /^(HTTPS?_PROXY|NO_PROXY)=/.test(entry)),
+      )
+      .map(([name]) => name);
+    expect(others).toEqual([]);
   });
 });

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   formatSignInReport,
+  probeApp,
   reportExitCode,
   signInCheckLink,
   waitForReport,
@@ -97,5 +99,44 @@ describe('pnpm check:sign-in', (): void => {
   it('gives up waiting after its time, saying so', async (): Promise<void> => {
     const waiting = await waitForReport('check-1', 50);
     await expect(waiting.report).rejects.toThrow('No sign-in reached the check');
+  });
+});
+
+describe('the proxy probes, by the environment they are given (wave 17, 17-P)', (): void => {
+  // The probe blocks this process until its child answers, so what it asks is a process of its own.
+  let app: ChildProcess;
+  let origin = '';
+
+  beforeAll(async (): Promise<void> => {
+    app = spawn(process.execPath, [
+      '-e',
+      "const s=require('node:http').createServer((q,r)=>{r.setHeader('x-day0','app');r.end('ok')})" +
+        ".listen(0,'127.0.0.1',()=>console.log(s.address().port))",
+    ]);
+    const port = await new Promise<string>((resolvePort) => {
+      app.stdout?.once('data', (data: Buffer) => resolvePort(String(data).trim()));
+    });
+    origin = `http://127.0.0.1:${port}`;
+  });
+
+  afterAll((): void => {
+    app.kill();
+  });
+
+  // The setup's own children are handed the proxy with this machine kept out of it; the install's
+  // proxy step asked without it, so it and a check run by hand could disagree about one address.
+  it('ask through the proxy the environment names, and directly for what NO_PROXY keeps out', (): void => {
+    const proxied = {
+      PATH: process.env.PATH,
+      NODE_ENV: 'test',
+      HTTP_PROXY: 'http://127.0.0.1:9',
+      NODE_USE_ENV_PROXY: '1',
+    } as const;
+    expect(probeApp(origin, { ...proxied, NO_PROXY: '127.0.0.1' })).toEqual({
+      status: 200,
+      day0: true,
+    });
+    // Nothing listens at the proxy's address, so an answer here would mean it was not asked.
+    expect(probeApp(origin, { ...proxied, NO_PROXY: 'elsewhere.test' })).toHaveProperty('error');
   });
 });

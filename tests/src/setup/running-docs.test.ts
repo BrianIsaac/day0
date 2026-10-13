@@ -1,6 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 
+import { egressHosts } from '../../../scripts/check-setup';
 import { PROFILES } from '../../../scripts/compose';
 import { REAL_MODE_PROFILES } from '../../../scripts/setup';
 
@@ -148,5 +150,139 @@ describe('the interfaces page', (): void => {
     expect(read('README.md').split(command).length - 1).toBe(2);
     expect(read('CONTRIBUTING.md')).toContain(`\`${command} <file>\``);
     expect(INTERFACES).toContain('`pnpm export:trace --owner`');
+  });
+});
+
+/**
+ * The three pages wave 17 added for a customer's IT (17-P): the reverse proxy, the way out and the
+ * upgrade with its way back. The checks and the setup send a reader to them by name and by
+ * section, so a page renamed, a heading reworded or a host added to the list has to reach the
+ * page before the gate is green.
+ */
+describe('the pages the checks send a reader to', (): void => {
+  const ROOT = new URL('../../../', import.meta.url);
+  const read = (file: string): string => readFileSync(new URL(file, ROOT), 'utf8');
+  /** Everything that prints a page's name to a person. */
+  const SOURCES = [
+    ...readdirSync(new URL('scripts/', ROOT))
+      .filter((name) => /\.(ts|sh)$/.test(name))
+      .map((name) => `scripts/${name}`),
+    ...readdirSync(new URL('scripts/lib/', ROOT)).map((name) => `scripts/lib/${name}`),
+    'docker-compose.yml',
+    'docker/proxy.bed.yml',
+    '.env.example',
+    'next.config.mjs',
+  ];
+  const TEXT = SOURCES.map(read).join('\n');
+
+  it('exist, each one a source names', (): void => {
+    const named = [
+      ...new Set([...TEXT.matchAll(/docs\/running\/([a-z-]+\.md)/g)].map(([, n]) => n!)),
+    ];
+    expect(named).toEqual(
+      expect.arrayContaining(['proxy.md', 'egress.md', 'upgrade-and-rollback.md']),
+    );
+    expect(named.filter((name) => !existsSync(new URL(`docs/running/${name}`, ROOT)))).toEqual([]);
+  });
+
+  it('carry every section of the proxy page a check names', (): void => {
+    const sections = [
+      ...new Set(
+        [
+          ...TEXT.replace(/'\s*\+\s*'/g, '').matchAll(
+            /docs\/running\/proxy\.md, \\?["']([^"'\\]+)/g,
+          ),
+        ].map(([, section]) => section!),
+      ),
+    ];
+    expect(sections.sort()).toEqual(['The app', 'The backend', 'The certificate']);
+    const page = read('docs/running/proxy.md');
+    for (const section of sections) expect(page).toContain(`\n## ${section}\n`);
+  });
+
+  it('list on the egress page every host the check can print', (): void => {
+    const page = read('docs/running/egress.md');
+    const everything = {
+      DAY0_SURFACE_MODE: 'real',
+      OPENAI_API_KEY: 'k',
+      ELEVENLABS_API_KEY: 'k',
+      DAYTONA_API_KEY: 'k',
+    };
+    const bundled = {
+      DAY0_SURFACE_MODE: 'real',
+      CONVEX_OPENAI_BASE_URL: 'http://model:11434/v1',
+    };
+    const hosts = new Set(
+      [
+        ...egressHosts(everything, [], 'x64'),
+        ...egressHosts(everything, [], 'arm64'),
+        ...egressHosts(bundled, [], 'x64'),
+      ].map((row) => row.host),
+    );
+    expect(hosts.size).toBeGreaterThan(30);
+    expect([...hosts].filter((host) => !page.includes(`\`${host}\``))).toEqual([]);
+    // What is not given the proxy is said beside its host, so a reader of the table alone knows.
+    const row = (host: string): string =>
+      page.split('\n').find((line) => line.startsWith('|') && line.includes(`\`${host}\``)) ?? '';
+    for (const host of ['api.notion.com', 'registry.npmjs.org', 'registry.ollama.ai']) {
+      expect(row(host), host).toContain('(directly: see above)');
+    }
+  });
+
+  it('give on the upgrade page the way back as the upgrade prints it', (): void => {
+    const page = read('docs/running/upgrade-and-rollback.md');
+    expect(read('scripts/setup.ts')).toContain("'Never start the old image over this volume.'");
+    expect(page).toContain('Never start the old image over this volume.');
+    expect(page).toMatch(
+      /\.\/setup\.sh restore \S+ from a checkout of v\d+\.\d+\.\d+ \(commit [0-9a-f]{12}\)\./,
+    );
+  });
+});
+
+describe('the runbook and the components page, on the two proxies (wave 17, 17-P)', (): void => {
+  const RUNBOOK = readFileSync(
+    new URL('../../../docs/running/install.md', import.meta.url),
+    'utf8',
+  );
+
+  it('asks IT about both before the day, and links the three pages', (): void => {
+    const before = RUNBOOK.slice(
+      RUNBOOK.indexOf('## Before the day'),
+      RUNBOOK.indexOf('## On the day'),
+    );
+    expect(before).toContain('](proxy.md)');
+    expect(before).toContain('**The way out.**');
+    expect(before).toContain('](egress.md)');
+    expect(RUNBOOK).toContain('](upgrade-and-rollback.md)');
+  });
+
+  it('gives the install’s proxy check as a step of its own, by the words of its two gaps', (): void => {
+    expect(RUNBOOK).toContain('**The reverse proxy**');
+    expect(RUNBOOK).toContain('"answered, and not as Day0"');
+    expect(RUNBOOK).toContain('"did not complete the WebSocket upgrade"');
+  });
+
+  it('says which components the compose file hands the proxy, and which reach out without it', (): void => {
+    const services = (
+      parse(COMPOSE) as { services: Record<string, { environment?: readonly string[] }> }
+    ).services;
+    const handed = Object.entries(services)
+      .filter(([, service]) =>
+        (service.environment ?? []).some((entry) => entry.startsWith('HTTPS_PROXY=')),
+      )
+      .map(([name]) => name);
+    expect(handed.sort()).toEqual(['backend', 'nango-server', 'redactor', 'slack-socket']);
+    const from = COMPONENTS.indexOf('## Which components reach out');
+    expect(from).toBeGreaterThan(0);
+    const section = COMPONENTS.slice(from, COMPONENTS.indexOf('\n---', from));
+    const [given, notGiven] = section.split('reach out too and are not handed it');
+    for (const name of handed) expect(given).toContain(`\`${name}\``);
+    // Every other service that fetches something from outside the machine, by the page's own
+    // list of hosts: the Notion component, the browser, and the bundled model service's pulls.
+    for (const name of ['docs-notion-mcp', 'playwright-mcp', 'model']) {
+      expect(given).toContain(`\`${name}\``);
+      expect(handed).not.toContain(name);
+    }
+    expect(notGiven).toContain('](egress.md)');
   });
 });

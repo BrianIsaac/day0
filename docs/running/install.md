@@ -30,16 +30,23 @@ Ask the customer's IT to have ready, or to do with you on the day:
 2. **An https proxy** in front of the machine, with two origins: one for the
    app (`DAY0_PUBLIC_URL`, for example `https://day0.acme.com`) and one for the
    backend (`--backend-url`, for example `https://convex.day0.acme.com`, proxied
-   to the backend's port), since people's browsers call both.
-3. **The identity provider's app registration**, following the guide for it:
+   to the backend's port), since people's browsers call both. [Day0 behind
+   your reverse proxy](proxy.md) says what it must carry, with a
+   configuration for Caddy and one for nginx; the install checks yours.
+3. **The way out.** Ask whether the machine reaches the internet directly or
+   only through an HTTP proxy. If through a proxy, its address goes in
+   `.env.local` before the install, and IT allows the hosts Day0 reaches:
+   [The way out](egress.md) lists every one by what needs it, and says which
+   parts of Day0 do not take a proxy at all.
+4. **The identity provider's app registration**, following the guide for it:
    [Microsoft Entra ID](sign-in-entra.md), [Okta](sign-in-okta.md),
    [Google Workspace](sign-in-google.md), or [any other OpenID Connect
    issuer](sign-in-oidc.md). It needs the redirect URI
    `${DAY0_PUBLIC_URL}/api/auth/oidc/callback`.
-4. **The administrators**: the addresses of the people who will manage the
+5. **The administrators**: the addresses of the people who will manage the
    organisation's connections in Day0 (they sign in with them; a manager
    cannot manage a connection).
-5. **For each system the documentation names**, its recipe:
+6. **For each system the documentation names**, its recipe:
    [Slack](access-slack.md) (a workspace service account; the configuration
    token is generated on the day, since it lasts 12 hours),
    [Linear](access-linear.md) (an administrator who creates the app from the
@@ -57,6 +64,10 @@ Ask the customer's IT to have ready, or to do with you on the day:
 ```
 
 or another route (README). This starts the stack and writes `.env.local`.
+Where the way out is an HTTP proxy, write its address into `.env.local` now
+(`HTTPS_PROXY`, `HTTP_PROXY` and your own hosts in `NO_PROXY`:
+[The way out](egress.md)) and run `./setup.sh resume`, so the services start
+with it and the install runs every step through it.
 
 ### 2. The install
 
@@ -96,7 +107,8 @@ It runs, in order, and **stops at the first step that fails, naming it**:
 5. **`pnpm check:setup`**, now with the access block.
 6. **`pnpm build`**: the browser reads the company sign-in's profile at build.
    Then start the app behind the proxy (`pnpm start`, in another terminal or
-   under the customer's service manager); the install waits up to 10 minutes
+   under the customer's service manager; it listens on `127.0.0.1`, which the
+   proxy forwards to); the install waits up to 10 minutes
    for it to answer at `DAY0_PUBLIC_URL`, and says the last error if it never
    does. Where the proxy's certificate comes from the customer's own
    certificate authority, this machine's Node must trust it: run the install
@@ -112,7 +124,13 @@ It runs, in order, and **stops at the first step that fails, naming it**:
    same authority signs: the clone runs in the deployment's environment, which
    `./scripts/sync-convex-env.sh` writes. The kit sets none of them, so agree
    with IT before the day how the bundle reaches the container.
-7. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
+7. **The reverse proxy**: the public address must answer as Day0 over
+   https, and the backend's origin must carry the live connection (a
+   WebSocket). A gap names the section of [the proxy's page](proxy.md) that
+   fixes it: "answered, and not as Day0" for an origin forwarded to the wrong
+   port, "did not complete the WebSocket upgrade" for a backend origin
+   without the upgrade headers.
+8. **`pnpm check:sign-in`**: it prints a link; someone from IT opens it in a
    private window and signs in as a test person; it shows each claim's
    verdict and what the deployment made of the token.
 
@@ -145,17 +163,37 @@ rm answers.env
 ### 3. Keep the app running
 
 The install built the app and waited for it; keep `pnpm start` running behind
-the proxy, on port 3000, which the proxy forwards `DAY0_PUBLIC_URL` to, under
-the customer's service manager.
+the proxy, on port 3000 of `127.0.0.1`, which the proxy forwards
+`DAY0_PUBLIC_URL` to, under the customer's service manager. `DAY0_APP_HOST`
+names another address for a proxy on another machine ([the proxy's
+page](proxy.md), "The app").
 
 ### 4. The install record
 
-`./setup.sh access` writes `~/day0-install/<project>/install-record-<date>.md`
-(`--record <dir>` elsewhere): what was registered and where, the redirect URIs,
-each connection's mode and scopes, the administrators, and when each secret
-expires. It holds no secret. Hand it to the customer's IT. A later run the same
-day adds its own section below the earlier ones, so a day's record names every
-connection landed that day.
+`./setup.sh install` writes `~/day0-install/<project>/install-record-<date>.md`
+(`--record <dir>` elsewhere), whichever of its steps ran: the release and
+commit installed, Day0's public address and the backend's, the backend image
+by its id and by the pinned backend it was built from, where the backups go,
+each step's outcome and the reverse proxy's two rows. `./setup.sh access`
+adds what was registered and where, the redirect URIs, each connection's mode
+and scopes, the administrators, and when each secret expires, as a date where
+the recipe gives a period. It holds no secret. Hand it to the customer's IT.
+A later run the same day adds its own section below the earlier ones, and so
+do `./setup.sh upgrade`, `backup` and `restore`, so the record names what was
+installed, every connection landed, each backup taken and the way back from
+each upgrade.
+
+## After the day
+
+- **An upgrade, and the way back from one**: [Upgrading Day0, and the way
+  back](upgrade-and-rollback.md). `./setup.sh upgrade` takes a backup first
+  and ends on the one command that goes back to it.
+- **A change to the network**: after the proxy in front or the way out
+  changes, `pnpm check:setup` says whether Day0 still has both.
+- **A change to a system's own page.** Superseding or editing the page that
+  documents a system takes that system's connection back to approval: each
+  employee's card for it asks its manager again, and is used again once
+  approved. Tell the managers before retiring such a page.
 
 ## Each half alone
 
@@ -181,7 +219,7 @@ connection landed that day.
 | `secret` GAP | the deployment's credential key changed since the secret was landed: rotate the connection with a fresh secret |
 | `identity` GAP, no issuer ("No issuer is recorded ...", an MCP connection) | a public client (no secret): `./setup.sh access --correct <system>` records the issuer the server's own metadata names, and no card ends. A client with a secret takes the issuer IT registered it with: revoke the connection on the organisation page, then land it again with `./setup.sh access` and that issuer. Every card on it ends |
 | `identity` GAP, any other | the vendor refused the secret: generate a new one by the recipe and rotate the connection |
-| `reach` GAP | the backend container could not reach the vendor. When it does not trust the certificate, give the backend container the customer's CA bundle (see the note under step 6, `SSL_CERT_FILE`); otherwise open its way out (the proxy or firewall in front of the backend). Then run the check again |
+| `reach` GAP | the backend container could not reach the vendor. When it does not trust the certificate, give the backend container the customer's CA bundle (see the note under step 6, `SSL_CERT_FILE`); otherwise open its way out: allow the vendor's host at the firewall or the HTTP proxy ([The way out](egress.md)). Then run the check again |
 | `reach` WARN ("Not asked from the backend container") | start the backend (`./setup.sh resume`) and run the check again |
 | `status` GAP | the connection needs IT's attention, for the reason it gives |
 

@@ -63,7 +63,23 @@ nothing else on your machine can dial them.
 | `slack-socket` | `slack-socket` | none | dials the backend's `http://backend:3211` on the `slack-socket` network, and Slack outbound |
 
 `pnpm dev` serves the app itself on `DAY0_APP_PORT` (3000 by default,
-`--app-port`), outside Docker.
+`--app-port`), outside Docker. `pnpm start`, which a customer install runs,
+serves it on the same port of `127.0.0.1` behind the customer's reverse
+proxy; `DAY0_APP_HOST` names another address ([Day0 behind your reverse
+proxy](proxy.md)).
+
+## Which components reach out
+
+Four of them leave the machine: `backend` (the model, the systems an
+approved card reaches, the documentation readers), `slack-socket` (Slack's
+Socket Mode hosts), `redactor` (its wheels and model, on a first start) and
+`nango-server` (the providers' token endpoints). Where `.env.local` names an
+HTTP proxy (`HTTPS_PROXY`), the compose file hands it to those four, with
+Day0's own service names always kept out of it. `docs-notion-mcp`,
+`playwright-mcp` and `model` (its model pulls, on the local-model way)
+reach out too and are not handed it. [The way out](egress.md) lists every
+host, what each component did with a proxy on a bed whose only route out
+was one, and what needs a direct route.
 
 ---
 
@@ -462,7 +478,9 @@ unprivileged user. It reaches the backend on `slack-socket`, an internal
 network with no route out that only the two of them join, and Slack on
 `slack-socket-egress`, which nothing else joins (fake Slack does, on a review
 bed). The egress it needs is outbound WebSocket (`wss://`) to Slack's Socket
-Mode hosts.
+Mode hosts, directly or through the HTTP proxy `.env.local` names; its first
+log line says which (`wayOut`), and says loudly when a proxy is named that
+its Node would not read.
 
 ---
 
