@@ -1828,6 +1828,21 @@ describe('withRoutingRules (RM27)', (): void => {
     expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
   });
 
+  // The second pass: a hyphen inside a word is no mark that closes an answer.
+  it.each([
+    [
+      'No-one sends anything, check with me first.',
+      'No-one sends anything, check with the manager first.',
+    ],
+    ['Yes - run it by me.', 'Run it by the manager.'],
+  ])(
+    'reads the hyphen of %j as the word’s own, and a spaced dash as a mark',
+    (said, clause): void => {
+      const drawn = withRoutingRules(charter([]), { collaborators: said }, [], []);
+      expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
+    },
+  );
+
   it('keeps a clause’s own first word where it is no answer: "Right-size it, then run it by me." (W16-R31)', (): void => {
     const drawn = withRoutingRules(
       charter([]),

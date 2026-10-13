@@ -608,10 +608,12 @@ function inTheThirdPerson(sentence: string): string {
 
 /**
  * The word or words an answer opens on before the instruction it gives, each closed by a mark:
- * "Yes, run it by me.", "No: go through me for both.", "Yes, yes: always check with me first."
+ * "Yes, run it by me.", "No: go through me for both.", "Yes, yes: always check with me first.",
+ * "Yes - run it by me." A dash closes one only with a space before it: the hyphen of "No-one" is
+ * the word's own.
  */
 const ANSWER_OPENER =
-  /^(?:(?:yes|yeah|yep|yup|no|nope|sure|ok|okay|right|correct|absolutely|exactly|definitely)\s*[,.:;!\u2013-]+\s*)+/i;
+  /^(?:(?:yes|yeah|yep|yup|no|nope|sure|ok|okay|right|correct|absolutely|exactly|definitely)(?:\s*[,.:;!]+|\s+[\u2013-]+)\s*)+/i;
 
 /** A sentence without the word it answers with, or as it was when nothing follows that word. */
 function withoutAnswerOpener(sentence: string): string {
