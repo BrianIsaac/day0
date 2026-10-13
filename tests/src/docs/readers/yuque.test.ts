@@ -484,6 +484,36 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
     expect(requests.some((request) => request.url.pathname.endsWith('/docs/210000001'))).toBe(true);
   });
 
+  it('keeps a document whose title the store writes otherwise: its spaces closed up, a closing # dropped (wave 17, 17-X)', async (): Promise<void> => {
+    const { reader, requests } = readerOnSpace((request) => {
+      if (!request.url.pathname.endsWith('/docs')) return undefined;
+      if (request.url.searchParams.get('deleted') === 'true') return json(200, { data: [] });
+      return json(200, {
+        data: [
+          {
+            id: 230000001,
+            title: 'Q3  close plan #',
+            type: 'Doc',
+            status: 1,
+            content_updated_at: '2026-10-01T00:00:00.000Z',
+          },
+        ],
+        meta: { total: 1 },
+      });
+    });
+    // As the sync stores a page read under that title: by its first heading.
+    const stored = async (refs: readonly string[]) =>
+      new Map(
+        refs.map((ref) => [ref, { revision: '2026-10-01T00:00:00.000Z', title: 'Q3 close plan' }]),
+      );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(batch.pages).toEqual([]);
+    expect(batch.kept?.map((page) => page.ref)).toEqual(['230000001']);
+    expect(requests.some((request) => request.url.pathname.endsWith('/docs/230000001'))).toBe(
+      false,
+    );
+  });
+
   it('lists 1,200 unchanged documents inside Yuque’s hourly limit at the fifteen-minute schedule', async (): Promise<void> => {
     // 15-X's X-13: 1,200 documents cost 1,249 requests a sync, 4,996 an hour against 5,000, and
     // one sync took 14.99 minutes at the 720 ms spacing.
