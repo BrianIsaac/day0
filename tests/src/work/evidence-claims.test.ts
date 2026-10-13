@@ -1519,3 +1519,54 @@ describe('a true report of a write of its own set is held with it, not withheld 
     expect(boundEarlierWrites(comment, [NOTE_1, NOTE_2])).toEqual([0, 1]);
   });
 });
+
+describe('a counted report beside one post that shares its words (W16-R31)', (): void => {
+  const empty: ClaimEvidence = { ledger: '', documentation: [], managerFeedback: [] };
+  // Reader 4's p7, rebuilt from the finding's text: two posts, one of which shares a word with
+  // the comment that says both were posted, and a `reports` the run left null.
+  const plain = slackPost('C0REVOPS', 'The fire alarm test is at 10 on Friday.');
+  const worded = slackPost('C0REVOPS', 'Stop-drill note: the evacuation route is the east stairs.');
+  const both = (reports: number[] | null): MockAction => ({
+    ...commentOn('REVOPS-6', 'Posted both stop-drill notes in #revops.'),
+    reports: reports as number[],
+  });
+  const held = { disposition: 'held', reason: 'write held for the manager' } as const;
+  const auto = { disposition: 'auto' } as const;
+
+  it('binds “both notes” to both posts, whichever of them shares a word with it', (): void => {
+    expect(boundEarlierWrites(both(null), [plain, worded])).toEqual([0, 1]);
+    expect(boundEarlierWrites(both(null), [worded, plain])).toEqual([0, 1]);
+    const { reports: _unused, ...recordedBefore } = both(null);
+    void _unused;
+    expect(boundEarlierWrites(recordedBefore, [plain, worded])).toEqual([0, 1]);
+  });
+
+  it('holds the comment with a first post the manager has yet to decide, so a declined one keeps it back', (): void => {
+    expect(
+      heldWithReportedWrites([plain, worded, both(null)], [held, auto, auto]).map(
+        (verdict) => verdict.disposition,
+      ),
+    ).toEqual(['held', 'auto', 'held']);
+    expect(reportsFindings([plain, worded, both(null)])).toEqual([]);
+  });
+
+  it('still binds a report that names one note to that note alone, and both notes to the two that carry its words (W13-R2)', (): void => {
+    const second = commentOn('REVOPS-6', 'Posted the stop-drill note in #revops.');
+    expect(boundEarlierWrites(second, [plain, worded])).toEqual([1]);
+    const unrelated = slackPost('C0GENERAL', 'Lunch is in the kitchen at noon today.');
+    expect(boundEarlierWrites(both(null), [NOTE_1, NOTE_2, unrelated])).toEqual([0, 1]);
+  });
+
+  it('asks a declaration that names the one post sharing a word for the other as well (W15-R2)', (): void => {
+    const findings = unsupportedClaimFindings([plain, worded, both([1])], empty);
+    expect(findings.map((finding) => finding.index)).toEqual([2]);
+    expect(findings[0]!.issue).toContain(
+      'reports more writes of this set than its `reports` names',
+    );
+    expect(findings[0]!.issue).toContain('the sentence can mean are [0, 1]');
+    expect(unsupportedClaimFindings([plain, worded, both([0, 1])], empty)).toEqual([]);
+    // The words name one post and the declaration the other: between them, both.
+    expect(unsupportedClaimFindings([plain, worded, both([0])], empty)).toEqual([]);
+    expect(boundEarlierWrites(both([0]), [plain, worded])).toEqual([0, 1]);
+  });
+});

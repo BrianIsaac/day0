@@ -573,11 +573,15 @@ function reportedWriteIndexes(
       sharing.push(index);
     }
   });
+  if (!kindGuess || !namesMessageKind(said)) return sharing;
   // A report that names a message's kind binds every message of that kind, unless some carry its
   // own words: then those alone, so an unrelated post beside the reported ones is not bound
-  // (W13-R2).
-  if (sharing.length > 0 || !kindGuess || !namesMessageKind(said)) return sharing;
-  return ofKind;
+  // (W13-R2). Where fewer messages carry its words than it says were made ("both notes" beside
+  // one post that shares a word), the count is the kind's, so every message of the kind is bound
+  // with them and a declined one keeps the report back (W16-R31).
+  const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
+  if (sharing.length > 0 && sharingMessages >= messagesNamed(said)) return sharing;
+  return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
 }
 
 /**
@@ -851,14 +855,14 @@ function reportsDisagreements(
     for (const sentence of sentencesOf(text)) {
       if (negatesReport(sentence)) continue;
       const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
-      // The words name their writes, which bind the message beside its declaration
-      // (`boundEarlierWrites`): it is held with them and sent after them.
-      if (reportedWriteIndexes(clause, earlier, false).length > 0) continue;
-      // The words name only a kind of message ("both notes"), which binds nothing beside a
-      // declaration: the declaration must then hold as many of that kind as the sentence says.
+      // The writes the words name bind the message beside its declaration
+      // (`boundEarlierWrites`): it is held with them and sent after them. A kind of message
+      // ("both notes") binds nothing beside a declaration, so the two together must hold as many
+      // of that kind as the sentence says: one post that shares a word is not both (W16-R31).
+      const covered = new Set([...named, ...reportedWriteIndexes(clause, earlier, false)]);
       const ofKind = reportedWriteIndexes(clause, earlier);
       const wanted = Math.min(messagesNamed(withoutIntentions(clause)), ofKind.length);
-      if (ofKind.filter((at) => named.has(at)).length >= wanted) continue;
+      if (ofKind.filter((at) => covered.has(at)).length >= wanted) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );
