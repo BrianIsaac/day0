@@ -35,6 +35,7 @@ import {
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
 import { credentialPageRef } from '../src/docs/credential-ref';
+import { sameButForRedaction } from '../src/docs/redaction-difference';
 import {
   readsWithOwnSecret,
   secretLabel,
@@ -2003,14 +2004,16 @@ export const upsertPage = internalMutation({
       }
       await ctx.db.patch(existing._id, page);
       await splitStored();
-      // A changed runbook re-checks the skills that read it (the enhancements plan, 4.1): its
-      // text changed and both hashes say so; a page stored before its hash may only have been
-      // redacted to other words, which is no change a skill must be checked against.
-      const textChanged =
-        existing.contentHash !== undefined &&
-        args.contentHash !== undefined &&
-        existing.contentHash !== args.contentHash;
-      if (textChanged && existing.markdown !== page.markdown) {
+      // A changed runbook re-checks the skills that read it (the enhancements plan, 4.1). The
+      // same hash before redaction says the source's text is what it was, whatever the redaction
+      // now makes of it. Another hash, or none on the stored row (its split never landed:
+      // W16-R34, which skipped the stamp), does not say the text changed either: a release that
+      // re-takes every hash stores the same page under a new one (W15-R42). So the two stored
+      // texts are read, and a difference that is only the redaction's is no change a skill must
+      // be checked against.
+      const sameSourceText =
+        existing.contentHash !== undefined && existing.contentHash === args.contentHash;
+      if (!sameSourceText && !sameButForRedaction(existing.markdown, page.markdown)) {
         const source = await ctx.db.get(args.sourceId);
         if (source !== null) {
           await ctx.scheduler.runAfter(0, internal.skillVersions.stampChangedPage, {
