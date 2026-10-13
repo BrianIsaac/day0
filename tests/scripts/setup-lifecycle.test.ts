@@ -24,6 +24,7 @@ import {
   verbCommand,
   writeEnvValues,
   type SetupCommand,
+  wayBackLine,
 } from '../../scripts/setup';
 import { parseCloudArguments } from '../../scripts/setup-cloud';
 import {
@@ -1020,6 +1021,161 @@ describe('backup, restore and upgrade (step 15)', (): void => {
     expect(failed.output.join('\n')).toContain('nothing is installed or pushed without a backup');
     expect(ran(failed)).not.toContain('pnpm install');
     rmSync(homeDirectory, { recursive: true, force: true });
+  });
+
+  describe('the way back and the install record (wave 17, 17-P)', (): void => {
+    const IMAGE = { id: `sha256:${'5'.repeat(64)}`, base: `sha256:${'d'.repeat(64)}` };
+    const UPGRADED = {
+      services: ['backend'],
+      releaseStamp: '0.3.0',
+      stampCommit: '26d76e0d31d2',
+      headCommit: '15753ce8ebd0',
+      backendImage: IMAGE,
+    };
+    /** The day's record under a home directory, or nothing when none was written. */
+    function recordIn(homeDirectory: string): string {
+      const directory = join(homeDirectory, 'day0-install', PROJECT);
+      return existsSync(directory)
+        ? readdirSync(directory)
+            .map((name) => readFileSync(join(directory, name), 'utf8'))
+            .join('\n')
+        : '';
+    }
+    /** The one backup a run left under a home directory. */
+    function backupIn(homeDirectory: string): string {
+      const directory = join(homeDirectory, 'day0-backups', PROJECT);
+      return join(directory, readdirSync(directory).find((name) => name.endsWith('.tar.gz'))!);
+    }
+
+    it('prints the way back when the upgrade ends, with the backup it took and the checkout its rows came from', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+      const file = backupIn(homeDirectory);
+      expect(h.output).toContain(
+        `The way back: ./setup.sh restore ${file} from a checkout of v0.3.0 (commit 26d76e0d31d2). ` +
+          'Never start the old image over this volume.',
+      );
+      // The last thing it says of the upgrade itself: nothing is pushed after it.
+      const said = h.output.join('\n');
+      expect(said.indexOf('The way back:')).toBeGreaterThan(said.lastIndexOf('convex dev --once'));
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it("describes an upgrade's backup by the commit that wrote its rows as well as the one that took it (17-K's F5)", async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+      expect(JSON.parse(readFileSync(`${backupIn(homeDirectory)}.json`, 'utf8'))).toMatchObject({
+        release: '0.3.0',
+        rowsCommit: '26d76e0d31d2',
+        commit: '15753ce8ebd0',
+      });
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('adds the upgrade to the install record: from which release, the backup and its checksum, the image and the way back', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('upgrade'), h.io)).toBe(0);
+      const file = backupIn(homeDirectory);
+      const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
+      const record = recordIn(homeDirectory);
+      expect(record).toContain(`# Day0 install record: ${PROJECT}`);
+      expect(record).toMatch(/^## The upgrade of \d{4}-\d{2}-\d{2}T/m);
+      expect(record).toContain('- Outcome: completed');
+      expect(record).toContain('- From release: v0.3.0');
+      expect(record).toContain('- Release: v0.3.0');
+      expect(record).toContain('- Commit: 15753ce8ebd0');
+      expect(record).toContain(`- Backend image: ${IMAGE.id}`);
+      expect(record).toContain(`- Built from the pinned backend: ${IMAGE.base}`);
+      expect(record).toContain(`- Backup: ${file}`);
+      expect(record).toContain(`- Its sha256: ${digest}`);
+      expect(record).toContain('- Its rows are at: v0.3.0, stamped by commit 26d76e0d31d2');
+      expect(record).toContain(`### The way back\n\nThe way back: ./setup.sh restore ${file} `);
+      expect(h.output.join('\n')).toContain('The install record: ');
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('still prints and records the way back when the upgrade stops after its backup', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({
+        ...UPGRADED,
+        environment: { HOME: homeDirectory },
+        failing: [{ match: 'pnpm install', status: 1, stderr: 'ERR_PNPM_OUTDATED_LOCKFILE' }],
+      });
+      expect(await runCommand(verb('upgrade'), h.io)).toBe(1);
+      expect(h.output.join('\n')).toContain(
+        `The way back: ./setup.sh restore ${backupIn(homeDirectory)} `,
+      );
+      expect(recordIn(homeDirectory)).toContain(
+        '- Outcome: stopped: pnpm install failed (status 1); nothing was pushed',
+      );
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('names the checkout in words where the deployment carried no stamp to read', (): void => {
+      expect(wayBackLine({ file: '/b/day0.tar.gz', sha256: '7'.repeat(64) }, 'real')).toBe(
+        'The way back: ./setup.sh restore /b/day0.tar.gz from the checkout this installation ran ' +
+          'before the upgrade. Never start the old image over this volume.',
+      );
+      expect(
+        wayBackLine(
+          { file: '/b/day0.tar.gz', sha256: '7'.repeat(64), rowsRelease: '0.20.0' },
+          'mock',
+        ),
+      ).toBe(
+        'The way back: pnpm setup:local restore /b/day0.tar.gz from a checkout of v0.20.0. ' +
+          'Never start the old image over this volume.',
+      );
+    });
+
+    it('adds a backup taken on its own to the record', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('backup'), h.io)).toBe(0);
+      const record = recordIn(homeDirectory);
+      expect(record).toMatch(/^## The backup of /m);
+      expect(record).toContain(`- Backup: ${backupIn(homeDirectory)}`);
+      expect(record).toContain('- Taken by the checkout at commit: 15753ce8ebd0');
+      expect(record).not.toContain('The way back');
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
+    it('adds a restore to the record: what was put back, and the copy of what it replaced', async (): Promise<void> => {
+      const homeDirectory = home();
+      const taken = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('backup'), taken.io)).toBe(0);
+      const file = backupIn(homeDirectory);
+      const elsewhere = mkdtempSync(join(tmpdir(), 'day0-setup-record-'));
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(
+        await runCommand(
+          verb('restore', { restoreFrom: file, access: { record: elsewhere } }),
+          h.io,
+        ),
+      ).toBe(0);
+      const [name] = readdirSync(elsewhere);
+      const record = readFileSync(join(elsewhere, name!), 'utf8');
+      expect(record).toMatch(/^## The restore of /m);
+      expect(record).toContain('- Outcome: completed');
+      expect(record).toContain(`### What was put back\n\n- Backup: ${file}`);
+      expect(record).toContain('### What it replaced, backed up first\n\n- Backup: ');
+      expect(record.match(/^- Backup: /gm)).toHaveLength(2);
+      // One section for the restore, none of its own for the safety copy it took on the way.
+      expect(record).not.toMatch(/^## The backup of /m);
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    });
+
+    it('writes nothing on a dry run', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      expect(await runCommand(verb('upgrade', { dryRun: true }), h.io)).toBe(0);
+      expect(recordIn(homeDirectory)).toBe('');
+      expect(h.output.join('\n')).toContain('Then it prints the way back');
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
   });
 
   it('refuses a backup when Docker cannot say whether the backend runs, rather than tar a live database', async (): Promise<void> => {
