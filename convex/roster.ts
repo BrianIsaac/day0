@@ -113,7 +113,10 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
  * none has, as the Work tab reads its latest answer (the v0.20.0 walk's
  * finding 4). Reads the month's `work.completed` and `work.retry` events by
  * the type index, from the month's first midnight on, and dates each by the
- * instant it was logged.
+ * instant it was logged. Each read is bounded: past either bound the count is a
+ * floor and says so, and past the send-backs' bound a completion older than the
+ * oldest send-back read is left out, since one of the unread may have taken it
+ * back.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -129,19 +132,24 @@ async function landedThisMonth(
   const monthStart = dayStart(`${month}-01`, zone);
   // Newest first, so a month past the bound still shows its latest days, today among them;
   // one more than the bound is read to tell a full month from a longer one.
-  const [read, sentBack] = await Promise.all([
+  const [read, sentBackRead] = await Promise.all([
     eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
       .order('desc')
       .take(MONTH_LANDED_READ_LIMIT + 1),
     eventsOfType(ctx, agent._id, 'work.retry', { from: monthStart })
       .order('desc')
-      .take(MONTH_LANDED_READ_LIMIT),
+      .take(MONTH_LANDED_READ_LIMIT + 1),
   ]);
+  const sentBack = sentBackRead.slice(0, MONTH_LANDED_READ_LIMIT);
+  const moreSentBack = sentBackRead.length > MONTH_LANDED_READ_LIMIT;
+  // Past the send-backs' bound the older ones are unread: only what finished since the oldest one
+  // read is known not to have been taken back.
+  const from = moreSentBack ? (sentBack.at(-1)?.createdAt ?? monthStart) : monthStart;
   const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
   // Oldest first: each item keeps the first completion that did the work, in whole or in part,
   // since it was last sent back; a not-done answer lands nothing (W16-R17).
   for (const event of [...read.slice(0, MONTH_LANDED_READ_LIMIT), ...sentBack].sort(byWriteOrder)) {
-    if (event.createdAt < monthStart) continue;
+    if (event.createdAt < from) continue;
     if (isEventOf(event, 'work.retry')) {
       firstFinished.delete(event.payload.workItemId);
       continue;
@@ -169,7 +177,7 @@ async function landedThisMonth(
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([day, { landed, partly }]) => ({ day, landed, ...(partly > 0 ? { partly } : {}) })),
-    atLeast: read.length > MONTH_LANDED_READ_LIMIT,
+    atLeast: read.length > MONTH_LANDED_READ_LIMIT || moreSentBack,
   };
 }
 

@@ -129,6 +129,53 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
 
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 0, partly: 1 }]);
   });
+
+  it('lands an item whose not-done answer was followed by a done one with no send-back between, as the cycle time counts it (the second pass, 17-F)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const nell = await employee(harness, 'owner', 'Nell');
+    const log = await finishedItem(harness, nell);
+    await log('work.completed', '2026-10-12T06:10:00Z', 'not-done');
+    await log('work.completed', '2026-10-13T06:35:00Z', 'done');
+
+    const [row] = await harness
+      .withIdentity(managerIdentity('owner'))
+      .query(api.agents.rosterForUser, {});
+
+    expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 1 }]);
+  });
+
+  it('leaves out an item finished before the oldest send-back it read, and says the count is a floor, in a month of more send-backs than it reads (the second pass, 17-F)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const nell = await employee(harness, 'owner', 'Nell');
+    // Done on the 2nd and sent back on the 3rd, never finished again: its card shows it running.
+    const takenBack = await finishedItem(harness, nell);
+    await takenBack('work.completed', '2026-10-02T06:00:00Z', 'done');
+    await takenBack('work.retry', '2026-10-03T06:00:00Z');
+    // Then a hundred send-backs of another item, a minute apart, and one landing after them all.
+    const busy = await finishedItem(harness, nell);
+    for (let minute = 0; minute < 100; minute += 1) {
+      await busy(
+        'work.retry',
+        new Date(Date.parse('2026-10-05T00:00:00Z') + minute * 60_000).toISOString(),
+      );
+    }
+    await busy('work.completed', '2026-10-06T06:00:00Z', 'done');
+
+    const [row] = await harness
+      .withIdentity(managerIdentity('owner'))
+      .query(api.agents.rosterForUser, {});
+
+    // The send-back of the 3rd is past the hundred read: the item it took back is not landed.
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-06', landed: 1 }],
+      atLeast: true,
+    });
+  });
 });
 
 describe('clipRoleLine', (): void => {

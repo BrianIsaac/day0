@@ -2599,6 +2599,22 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
     });
   });
 
+  it('counts a not-done answer followed by a done one with no send-back between as done, as the month’s landings read it (the second pass, 17-F)', (): void => {
+    const notDone = { workDone: 'not-done', workDoneWhy: 'The checks could not all be read.' };
+    const done = { workDone: 'done', workDoneWhy: 'Every check was read and posted.' };
+    const events = [
+      event('work.discovered', { workItemId: 'r' }, 1_000),
+      event('work.completed', { workItemId: 'r', output: notDone }, 5_000),
+      event('work.completed', { workItemId: 'r', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('r')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
+
   /** A manager sending a finished item back with a note, as the v0.20.0 walk's Nell was sent. */
   const sentBack = (workItemId: string, at: number): Doc<'events'> =>
     event(

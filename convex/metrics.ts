@@ -819,8 +819,10 @@ function pilotTotals(
   let reused = 0;
   let adopted = 0;
   const standingEnd = new Map<string, number>();
-  // The completion each item's answer is read from: its first, or its first since the manager
-  // last sent it back. Done answers by when they finished; partly done ones named beside them.
+  // The completion each item's answer is read from: the first that did the work, in whole or in
+  // part, or the first such since the manager last sent it back (the month's landings read the
+  // same one, `landedThisMonth`). Done answers by when they finished; partly done ones named
+  // beside them.
   const firstCompletion = new Map<string, number>();
   const completedOnce = new Set<string>();
   const partlyFinished = new Set<string>();
@@ -886,10 +888,11 @@ function pilotTotals(
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
       if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
       if (isEventOf(event, 'work.completed') && !completedOnce.has(workItemId)) {
-        completedOnce.add(workItemId);
         // One reading, the run's answer held to its ledger (RM23 (a)): only a done answer is a
-        // completion the cycle time measures; a partly done one is named beside it.
+        // completion the cycle time measures; a partly done one is named beside it; a not-done
+        // one did none of the work, so a completion after it is still the item's answer.
         const answer = finishedAnswerOf(event.payload.output);
+        if (answer !== 'not-done') completedOnce.add(workItemId);
         if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
         else if (answer === 'partial') partlyFinished.add(workItemId);
       }
