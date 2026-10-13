@@ -7,8 +7,8 @@ export interface Boss {
   readonly firstName: string | undefined;
 }
 
-/** One employee as `agents.rosterForUser` returns it. */
-export type RosterRow = FunctionReturnType<typeof api.agents.rosterForUser>[number];
+/** One employee as a page of the roster (`roster.page`) returns it. */
+export type RosterRow = FunctionReturnType<typeof api.roster.page>['page'][number];
 
 /** The needs-you inbox as `work.needsYou` returns it. */
 export type NeedsYouInbox = FunctionReturnType<typeof api.work.needsYou>;

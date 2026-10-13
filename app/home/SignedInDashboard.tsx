@@ -10,6 +10,7 @@ import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
 import { useOwnerPerson } from './use-owner-person';
+import { useRoster } from './use-roster';
 import { AcceptTransfer } from './AcceptTransfer';
 import { AuthorisationUnfinished } from './AuthorisationUnfinished';
 import { DeployForm } from './DeployForm';
@@ -56,14 +57,14 @@ function useNeedsYou(): NeedsYouInbox | undefined | Error {
  */
 export function SignedInDashboard({ boss }: { boss: Boss }) {
   useOwnerPerson();
-  const roster = useQuery(api.agents.rosterForUser);
+  const now = useNow();
+  const roster = useRoster(now);
   const inboxRead = useNeedsYou();
   const inbox = inboxRead instanceof Error ? undefined : inboxRead;
   const figures = useQuery(api.metrics.forOwner);
   const docSources = useQuery(api.docSources.listMine);
   const surfaceMode = useQuery(api.config.surfaceMode);
   const reportingElsewhere = useQuery(api.agents.employeesReportingElsewhere);
-  const now = useNow();
   const [deploying, setDeploying] = useState(false);
   const deployToggle = useRef<HTMLButtonElement>(null);
   // The main column's cards arrive with the page (v4 section 1.3); the aside does not move.

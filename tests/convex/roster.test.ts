@@ -1,11 +1,17 @@
 import { convexTest, type TestConvex } from 'convex-test';
+import type { FunctionReturnType } from 'convex/server';
+import { ConvexError } from 'convex/values';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import { clipRoleLine } from '../../convex/roster';
 import schema from '../../convex/schema';
+import { rosterClock } from '../../src/metrics/roster-clock';
 import { allConvexModules } from './all-modules';
+import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
+import { registeredIn } from './registered-functions';
+import * as rosterModule from '../../convex/roster';
 
 /*
  * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). The roster
@@ -152,5 +158,160 @@ describe('clipRoleLine', (): void => {
   it('does not split a surrogate pair when one long role word must be clipped', (): void => {
     const glyph = '\u{1F600}';
     expect(clipRoleLine(glyph.repeat(60))).toBe(`${glyph.repeat(44)}\u2026`);
+  });
+});
+
+/** Every page of an owner's roster, read as the home reads it: twenty at a time to the end. */
+async function everyRosterPage(
+  harness: Harness,
+  owner: string,
+  at: number,
+): Promise<{ rows: Array<{ agentId: string; name: string; today: string }>; pages: number }> {
+  const caller = harness.withIdentity(managerIdentity(owner));
+  const rows: Array<{ agentId: string; name: string; today: string }> = [];
+  let cursor: string | null = null;
+  let pages = 0;
+  for (;;) {
+    const page: FunctionReturnType<typeof api.roster.page> = await caller.query(api.roster.page, {
+      paginationOpts: { numItems: 20, cursor },
+      at,
+    });
+    rows.push(...page.page);
+    pages += 1;
+    if (page.isDone) return { rows, pages };
+    cursor = page.continueCursor;
+  }
+}
+
+describe('the roster read by pages (wave 17, 17-F; RM33 (a))', (): void => {
+  it('lists every employee of an owner of fifty-one, each once, newest first, and no other owner’s', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mine: Id<'agents'>[] = [];
+    for (let index = 1; index <= 51; index += 1) {
+      mine.push(await employee(harness, 'owner', `Employee ${index}`));
+    }
+    // An evaluation agent of the owner's and another owner's employee, neither on the roster.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'eval-day0-r1-1760000000000@day0.local',
+        name: 'Day0 evaluation 1',
+        userId: 'owner',
+        state: 'active',
+        createdAt: 2,
+      });
+    });
+    await employee(harness, 'neighbour', 'Not mine');
+
+    const { rows, pages } = await everyRosterPage(harness, 'owner', Date.UTC(2026, 9, 13, 6));
+
+    expect(pages).toBeGreaterThanOrEqual(3);
+    expect(rows.map((row) => row.agentId)).toEqual([...mine].reverse());
+    expect(rows.map((row) => row.name)).not.toContain('Day0 evaluation 1');
+    expect(rows.map((row) => row.name)).not.toContain('Not mine');
+  });
+
+  it('reads at most twenty employees a page, whatever a caller asks for', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    for (let index = 1; index <= 25; index += 1) await employee(harness, 'owner', `E${index}`);
+    const page = await harness.withIdentity(managerIdentity('owner')).query(api.roster.page, {
+      paginationOpts: { numItems: 5_000, cursor: null },
+      at: Date.UTC(2026, 9, 13, 6),
+    });
+    expect(page.page).toHaveLength(20);
+    expect(page.isDone).toBe(false);
+  });
+
+  it('refuses a caller with no identity, and registers the one query', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(
+      harness.query(api.roster.page, { paginationOpts: { numItems: 20, cursor: null }, at: 0 }),
+    ).rejects.toMatchObject(await guardRefusal());
+    expect(registeredIn(rosterModule)).toEqual(['page public query']);
+  });
+});
+
+describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void => {
+  it('turns to the next day past the employee’s midnight while the backend’s clock stands still', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // The backend's clock, as a cached query last ran it: 23:50 on the 13th in Singapore.
+    vi.setSystemTime(new Date('2026-10-13T15:50:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    await employee(harness, 'owner', 'Priya', 'Asia/Singapore');
+    await employee(harness, 'owner', 'Mateo', 'America/Sao_Paulo');
+    const todayAt = async (viewer: string): Promise<Record<string, string>> => {
+      const { rows } = await everyRosterPage(harness, 'owner', rosterClock(Date.parse(viewer)));
+      return Object.fromEntries(rows.map((row) => [row.name, row.today]));
+    };
+
+    // An idle page ten minutes before midnight in Singapore, then twenty minutes after it.
+    expect(await todayAt('2026-10-13T15:50:00Z')).toEqual({
+      Priya: '2026-10-13',
+      Mateo: '2026-10-13',
+    });
+    expect(await todayAt('2026-10-13T16:10:00Z')).toEqual({
+      Priya: '2026-10-14',
+      Mateo: '2026-10-13',
+    });
+  });
+
+  it('reads the month the viewer’s clock is in, so a new month starts empty', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-31T15:50:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const priya = await employee(harness, 'owner', 'Priya');
+    const log = await finishedItem(harness, priya);
+    await log('work.completed', '2026-10-31T10:00:00Z', 'done');
+    const caller = harness.withIdentity(managerIdentity('owner'));
+    const monthAt = async (viewer: string): Promise<unknown> =>
+      (
+        await caller.query(api.roster.page, {
+          paginationOpts: { numItems: 20, cursor: null },
+          at: rosterClock(Date.parse(viewer)),
+        })
+      ).page[0]?.landedThisMonth;
+
+    expect(await monthAt('2026-10-31T15:50:00Z')).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-31', landed: 1 }],
+      atLeast: false,
+    });
+    expect(await monthAt('2026-10-31T16:10:00Z')).toEqual({
+      month: '2026-11',
+      days: [],
+      atLeast: false,
+    });
+  });
+
+  it('refuses a clock that is no time on the calendar, in words the page shows', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await employee(harness, 'owner', 'Priya');
+    const caller = harness.withIdentity(managerIdentity('owner'));
+    for (const at of [Number.NaN, Number.POSITIVE_INFINITY, -1, Date.UTC(9999, 11, 31)]) {
+      const refusal = await caller
+        .query(api.roster.page, { paginationOpts: { numItems: 20, cursor: null }, at })
+        .then(
+          (): unknown => undefined,
+          (error: unknown): unknown => error,
+        );
+      expect(refusal, String(at)).toBeInstanceOf(ConvexError);
+      expect((refusal as ConvexError<string>).data).toBe(
+        'The page’s clock is not a time Day0 can place on the calendar; reload the page',
+      );
+    }
+  });
+});
+
+describe('the quarter hour the roster is asked at', (): void => {
+  it('is the last quarter hour at or before the viewer’s clock, the step every zone’s midnight falls on', (): void => {
+    expect(rosterClock(Date.parse('2026-10-13T16:14:59.999Z'))).toBe(
+      Date.parse('2026-10-13T16:00:00Z'),
+    );
+    expect(rosterClock(Date.parse('2026-10-13T16:15:00Z'))).toBe(
+      Date.parse('2026-10-13T16:15:00Z'),
+    );
+    // Kathmandu's midnight (UTC+5:45) is at a quarter hour too.
+    expect(rosterClock(Date.parse('2026-10-13T18:15:00Z'))).toBe(
+      Date.parse('2026-10-13T18:15:00Z'),
+    );
   });
 });

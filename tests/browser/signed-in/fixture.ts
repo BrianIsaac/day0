@@ -635,7 +635,8 @@ export function home(): Record<string, unknown> {
     metrics: companyMetrics,
   });
   return {
-    'agents:rosterForUser': roster,
+    // The home reads its roster by pages (wave 17, 17-F); the stub answers one exhausted page.
+    'roster:page': roster,
     'work:needsYou': {
       total: 2,
       entries: (employeePage()['work:needsYouForAgent'] as { entries: unknown[] }).entries,

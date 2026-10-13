@@ -118,6 +118,13 @@ vi.mock('convex/react', () => {
   };
   return {
     useQuery: answer,
+    // The home reads its roster by pages (wave 17, 17-F): still loading here, as every other read.
+    usePaginatedQuery: () => ({
+      results: [],
+      status: 'LoadingFirstPage',
+      isLoading: true,
+      loadMore: (): void => undefined,
+    }),
     // The home reads its inbox through `useQueries`, which answers a failed read as a value.
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),

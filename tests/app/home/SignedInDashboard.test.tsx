@@ -20,7 +20,7 @@ const month = (days: Array<[string, number]> = []) => ({
   atLeast: false,
 });
 
-/** The owner's company as `agents.rosterForUser` returns it, newest first. */
+/** The owner's company as the pages of the roster (`roster.page`) return it, newest first. */
 const roster = [
   {
     agentId: 'synthetic-owner-agent',
@@ -185,7 +185,7 @@ vi.mock('convex/react', () => {
         documentation: true,
       };
     }
-    if (name === 'agents:rosterForUser') return shown;
+    if (name === 'roster:page') return shown;
     if (name === 'work:needsYou') return state.inbox;
     if (name === 'agents:employeesReportingElsewhere') return state.reportingElsewhere;
     if (name === 'managerTransfers:departures') return state.departures;
@@ -228,6 +228,18 @@ vi.mock('convex/react', () => {
   };
   return {
     useQuery: answer,
+    // The home reads its roster by pages (wave 17, 17-F): the fixture is every page, read whole.
+    usePaginatedQuery: (reference: FunctionReference<'query'>) => {
+      const results = answer(reference);
+      return Array.isArray(results)
+        ? { results, status: 'Exhausted', isLoading: false, loadMore: (): void => undefined }
+        : {
+            results: [],
+            status: 'LoadingFirstPage',
+            isLoading: true,
+            loadMore: (): void => undefined,
+          };
+    },
     // The home reads its inbox through `useQueries`, which answers a failed read as a value.
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
