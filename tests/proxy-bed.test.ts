@@ -88,7 +88,7 @@ describe("the proxy bed's overlay", (): void => {
     const relay = OVERLAY.services['host-relay'];
     expect(relay?.network_mode).toBe('host');
     expect(relay?.environment).toEqual([
-      'RELAYS=${CONVEX_PORT:-3210}=${PROXY_BED_BACKEND_ADDRESS:?}:3210,${CONVEX_SITE_PROXY_PORT:-3211}=${PROXY_BED_BACKEND_ADDRESS:?}:3211',
+      'RELAYS=${CONVEX_PORT:-3210}=${PROXY_BED_BACKEND_ADDRESS:?}:3210,${CONVEX_SITE_PROXY_PORT:-3211}=${PROXY_BED_BACKEND_ADDRESS:?}:3211${PROXY_BED_EXTRA_RELAYS:+,${PROXY_BED_EXTRA_RELAYS}}',
     ]);
   });
 

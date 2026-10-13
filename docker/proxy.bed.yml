@@ -107,7 +107,9 @@ services:
     restart: unless-stopped
     stop_grace_period: 2s
     environment:
-      - RELAYS=${CONVEX_PORT:-3210}=${PROXY_BED_BACKEND_ADDRESS:?}:3210,${CONVEX_SITE_PROXY_PORT:-3211}=${PROXY_BED_BACKEND_ADDRESS:?}:3211
+      # PROXY_BED_EXTRA_RELAYS carries any other port a bed's tools reach on this machine, such as
+      # the fake Slack's, which `pnpm check:access` asks at its published port: `<port>=<address>:<port>`.
+      - RELAYS=${CONVEX_PORT:-3210}=${PROXY_BED_BACKEND_ADDRESS:?}:3210,${CONVEX_SITE_PROXY_PORT:-3211}=${PROXY_BED_BACKEND_ADDRESS:?}:3211${PROXY_BED_EXTRA_RELAYS:+,${PROXY_BED_EXTRA_RELAYS}}
     volumes:
       - ./docker/proxy-bed:/app:ro
 
