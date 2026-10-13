@@ -814,6 +814,22 @@ describe('people.resolveItemPeople: intake writes whom the strings are, beside t
       requesterPerson: { kind: 'person', personId: sam },
       ownerPerson: { kind: 'unknown' },
     });
+    // Unassigned: intake clears the owner's name and lists no owner, so nobody is its owner
+    // (the second pass).
+    await listed('lin-sam');
+    await harness.run(async (ctx) => await ctx.db.patch(itemId, { owner: undefined }));
+    expect(
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'FIN-1',
+        startedUnder: 'owner',
+        requester: [{ provider: 'linear', externalId: 'lin-sam', displayName: 'Sam Reyes' }],
+      }),
+    ).toBe(true);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(itemId)))?.ownerPerson,
+    ).toBeUndefined();
   });
 
   it('writes nothing once a handover moved the employee since the sweep read it', async (): Promise<void> => {

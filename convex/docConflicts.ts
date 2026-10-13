@@ -205,18 +205,20 @@ async function standingCitedConflicts(ctx: QueryCtx, plan: unknown): Promise<Cit
  * neither record is left among the newest. A failure newer than the newest selection wins, so a
  * redraft whose selection failed is read as the whole mirror and not as the earlier draft's
  * selection (W16-R11, probes P2 and P3).
+ *
+ * @param ctx - The query context.
+ * @param row - The work item.
+ * @param read - How many of the newest records of each kind are looked through; the decision's
+ *   own window unless the upgrade's pass, which looks further back, says otherwise.
  */
 export async function planSelectionOf(
   ctx: QueryCtx,
   row: Pick<Doc<'workItems'>, '_id' | 'agentId'>,
+  read: number = PLAN_SELECTIONS_READ,
 ): Promise<{ readonly blockIds: string[] } | 'fell-back' | undefined> {
   const [selections, failures] = await Promise.all([
-    eventsOfType(ctx, row.agentId, 'work.documentation-selected')
-      .order('desc')
-      .take(PLAN_SELECTIONS_READ),
-    eventsOfType(ctx, row.agentId, 'work.documentation-selection-failed')
-      .order('desc')
-      .take(PLAN_SELECTIONS_READ),
+    eventsOfType(ctx, row.agentId, 'work.documentation-selected').order('desc').take(read),
+    eventsOfType(ctx, row.agentId, 'work.documentation-selection-failed').order('desc').take(read),
   ]);
   const selected = selections.find(
     (event) =>

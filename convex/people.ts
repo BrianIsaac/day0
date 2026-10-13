@@ -1739,13 +1739,19 @@ export const resolveItemPeople = internalMutation({
         : // The owner is whoever the ticket is assigned to now: intake re-lists it, so a
           // reassignment to someone the graph does not hold lets the old owner go (W16-R30).
           await resolveFirst(ctx, scope, args.owner);
+    // An item whose ticket has no assignee any more has no owner in the graph either: intake
+    // cleared the owner's name and lists no owner to look up (the second pass on W16-R30).
+    const unassigned =
+      args.owner === undefined && item.owner === undefined && item.ownerPerson !== undefined;
     const changes = {
       ...(requesterPerson === undefined || sameResolution(item.requesterPerson, requesterPerson)
         ? {}
         : { requesterPerson }),
-      ...(ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
-        ? {}
-        : { ownerPerson }),
+      ...(unassigned
+        ? { ownerPerson: undefined }
+        : ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
+          ? {}
+          : { ownerPerson }),
     };
     if (Object.keys(changes).length === 0) return false;
     await ctx.db.patch(item._id, changes);

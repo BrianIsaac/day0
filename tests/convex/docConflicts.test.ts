@@ -856,6 +856,42 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await eventsOf(harness, retried!.agentId, 'work.plan-redraft')).toHaveLength(1);
   });
 
+  it('drafts a plan that cites nothing again on the first Retry too, once the answer superseded a page of its question (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await askedInRequest(harness);
+    const [question] = await questionsOf(harness, workItemId);
+    // The plan cites nothing: the hold covered every step, and the question was asked from its
+    // selection, which holds both disputed pages.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        plan: { ...(row!.plan as object), cites: [] },
+        skipReason: `stopped: ${openQuestionStopReason({ question: question.question, steps: [1] })}`,
+        output: {
+          draft: '',
+          notes: '',
+          actions: [],
+          applied: [],
+          openQuestion: {
+            question: question.question,
+            steps: [1],
+            relationId: question.relationId,
+          },
+        },
+      });
+    });
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId: question._id,
+      choice: 'from',
+    });
+    await expect(
+      asManager(harness).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+  });
+
   it('keeps reading the DM while a question waits, however long ago its plan was approved (the second pass’s M1)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

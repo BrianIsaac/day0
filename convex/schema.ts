@@ -825,6 +825,12 @@ export default defineSchema({
      */
     proposedKind: v.optional(v.union(...RELATION_KINDS.map((kind) => v.literal(kind)))),
     /**
+     * Set while the manager's answer stands the other way round from the proposal (16-PT; W15-R45's
+     * reverse button): "supersedes" answered with `from` and `to` turned, so "Undo" turns them
+     * back and the card asks again as the measures proposed it. Absent otherwise.
+     */
+    reversed: v.optional(v.boolean()),
+    /**
      * What proposed it, measure by measure: a shared share of the text, a title that differs only
      * by a version, a figure that differs under one heading; with the blocks each read, by their
      * hash (`docBlocks.hash`) on their page.

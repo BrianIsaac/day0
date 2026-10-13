@@ -356,8 +356,8 @@ export const decide = mutation({
     if (args.reversed === true) {
       if (args.decision !== 'supersedes') throw new ConvexError(REVERSE_IS_FOR_SUPERSEDES);
       // Written with the answer or not at all: a refusal below rolls the swap back with it.
-      await ctx.db.patch(stored._id, { from: stored.to, to: stored.from });
-      relation = { ...stored, from: stored.to, to: stored.from };
+      await ctx.db.patch(stored._id, { from: stored.to, to: stored.from, reversed: true });
+      relation = { ...stored, from: stored.to, to: stored.from, reversed: true };
     }
     return await decideRelationInTransaction(ctx, relation, args.decision, {
       decidedBy: verifiedAddressOf(caller),
@@ -424,7 +424,18 @@ export async function decideRelationInTransaction(
   await ctx.db.patch(
     relation._id,
     decision === 'undo'
-      ? { ...answer, kind, proposedKind: undefined, decidedBy: undefined, decidedAt: undefined }
+      ? {
+          ...answer,
+          kind,
+          proposedKind: undefined,
+          decidedBy: undefined,
+          decidedAt: undefined,
+          // An answer given the other way round is taken back with its turn: the card asks again
+          // as the measures proposed it.
+          ...(relation.reversed === true
+            ? { from: relation.to, to: relation.from, reversed: undefined }
+            : {}),
+        }
       : {
           ...answer,
           ...(kind !== relation.kind

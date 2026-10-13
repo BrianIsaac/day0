@@ -162,7 +162,8 @@ export function unlinkLabel(holdings: Holdings | null | undefined): string {
  * What the card says the deletion takes: in the hosted office, where no person and no working
  * agreement is kept, it names neither, as its dialog does not (the v0.17.0 redeploy's finding 4).
  *
- * @param mode - The deployment's mode, `loading` while it is read, or undefined for a local install.
+ * @param mode - The deployment's mode, `loading` while it is read; undefined reads as a local
+ *   install's, which is what the card says where it is drawn without one.
  */
 export function whatItDeletes(mode: 'mock' | 'real' | 'loading' | undefined): string {
   // Until the mode answers, only what both offices delete is said (W16-R35): the hosted office

@@ -120,11 +120,22 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
       supersededBy: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
     });
     expect((await pageOf(harness, v1)).status).toBeUndefined();
-    // Reversing is the duplicate card's alone: no other answer has a direction to turn.
+    // Undo takes the turn back with the answer: the card asks again as the measures proposed it
+    // (the second pass), and the page it had superseded is current again.
     await asManager(harness).mutation(api.docRelations.decide, {
       relationId: relation._id,
       decision: 'undo',
     });
+    const undone = (await relations(harness))[0];
+    expect(undone).toMatchObject({
+      status: 'proposed',
+      from: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+      to: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+    });
+    expect(undone.reversed).toBeUndefined();
+    const restated = await pageOf(harness, v2);
+    expect([restated.status, restated.supersededBy]).toEqual(['active', undefined]);
+    // Reversing is the duplicate card's alone: no other answer has a direction to turn.
     await expect(
       asManager(harness).mutation(api.docRelations.decide, {
         relationId: relation._id,

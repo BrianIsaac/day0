@@ -3421,6 +3421,18 @@ describe('the kept selection pass (16-PT; W16-R11)', (): void => {
       },
     });
     const lost = await item(harness, agentId, 'REVOPS-5');
+    // A redraft whose selection failed read the whole mirror: the first draft's record must not
+    // be kept for it, or the conflict checks would read that list (the second pass; P2 and P3).
+    const fellBack = await item(harness, agentId, 'REVOPS-6');
+    await selected(harness, agentId, fellBack, [blocks[0]._id]);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('events', {
+        agentId,
+        type: 'work.documentation-selection-failed',
+        payload: { workItemId: fellBack, site: 'plan', reason: 'the library is past its reads' },
+        createdAt: 3,
+      });
+    });
     // A block rewritten in place after the selection: its hash now is what the check compares.
     await harness.run(async (ctx) => {
       await ctx.db.patch(blocks[0]._id, { hash: 'rewritten-in-place' });
@@ -3440,11 +3452,12 @@ describe('the kept selection pass (16-PT; W16-R11)', (): void => {
     expect(await read(cited)).toBe('absent');
     // No record left to read: an empty list, which reads as none, so the pass never comes back.
     expect(await read(lost)).toEqual([]);
+    expect(await read(fellBack)).toEqual([]);
     const row = async () =>
       (await harness.query(internal.migrations.status, {})).migrations.find(
         (entry) => entry.name === 'work-selected-blocks',
       );
-    expect(await row()).toMatchObject({ release: '0.20.0', changed: 2 });
+    expect(await row()).toMatchObject({ release: '0.20.0', changed: 3 });
     await harness.run(async (ctx) => {
       const done = await ctx.db
         .query('migrations')
@@ -3511,7 +3524,15 @@ describe('the hosted office reseed pass (16-PT; W16-R15, D-10 (a))', (): void =>
     // approval-tense tripwire reads; and a guide the manager's own documentation mirrors.
     const old = `${shipped.body}\n\nDraft for review. Will post here once approved.`;
     const mirrored = (await documents(harness, agentId)).get('how-to-update-ticket')!;
+    const reworded = (
+      await harness.run(async (ctx) => await ctx.db.query('mockSlackMessages').collect())
+    ).find((message) => message.channelSlug === 'dm-manager')!;
+    const billing = (await documents(harness, agentId)).get('billing-replies')!;
     await harness.run(async (ctx) => {
+      // An earlier release's wording of a seeded message, and an office from before a team
+      // document was added to the seed.
+      await ctx.db.patch(reworded._id, { body: `${reworded.body} (as it was worded then)` });
+      await ctx.db.delete(billing._id);
       await ctx.db.patch(shipped._id, { body: old, updatedAt: 1 });
       await ctx.db.patch(mirrored._id, { body: 'The manager’s own page.', sourceId, updatedAt: 1 });
     });
@@ -3529,6 +3550,10 @@ describe('the hosted office reseed pass (16-PT; W16-R15, D-10 (a))', (): void =>
     expect(after.get('how-to-post-slack')?.body).toBe(shipped.body);
     expect(after.get('how-to-post-slack')?.body).not.toContain('Draft for review');
     expect(after.get('how-to-update-ticket')?.body).toBe('The manager’s own page.');
+    // A document the office never had is not added (an office keeps the shape it was seeded
+    // with), and a seeded message a release reworded is not posted a second time: on production's
+    // own office the whole seed added the manager's ask again, in its new words.
+    expect(after.has('billing-replies')).toBe(false);
     // Nothing else of the office moved: no second message or ticket, no other document rewritten.
     expect(
       await harness.run(async (ctx) => ({

@@ -149,14 +149,14 @@ const ITEM_QUESTIONS_READ = 50;
 
 /**
  * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
- * cites is no longer current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on
- * resuming and stop again on its gone cite, so the first Retry drafts the plan again.
+ * cites, or for a plan that cites nothing a page of the conflict it was asked about, is no longer
+ * current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on resuming and stop
+ * again on its gone cite, so the first Retry drafts the plan again.
  */
 async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
   const cites =
     (row.plan as { cites?: ReadonlyArray<{ sourceId?: string; pageRef?: string }> } | undefined)
       ?.cites ?? [];
-  if (cites.length === 0) return false;
   const questions = await ctx.db
     .query('managerQuestions')
     .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
@@ -166,7 +166,12 @@ async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Pr
     const relation = await ctx.db.get(question.relationId);
     if (relation === null) continue;
     for (const end of [relation.from, relation.to]) {
-      if (!cites.some((cite) => cite.sourceId === end.sourceId && cite.pageRef === end.ref)) {
+      // A plan that cites nothing was asked from its selection, which holds both pages: either
+      // page no longer current is one it was drafted from (the second pass).
+      if (
+        cites.length > 0 &&
+        !cites.some((cite) => cite.sourceId === end.sourceId && cite.pageRef === end.ref)
+      ) {
         continue;
       }
       const page = await ctx.db

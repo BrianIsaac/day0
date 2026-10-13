@@ -1374,7 +1374,7 @@ function closingAgainstFactIssues(output: CorrectableOutput & WorkDoneFields): s
  * approval") is an escalation, not a draft, and is not read here (the second pass).
  */
 const APPROVAL_TENSE =
-  /\bdraft(?:ed)?\b[^.:;]{0,60}\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bdraft(?:ed)?\b[^.:;]{0,60}\bfor your (?:approval|review|sign-off)\b|\bdraft for review\b|\b(?:will|i'?ll) (?:post|send|share)\b[^.]{0,40}\bonce (?:you )?approved?\b|\b(?:once|when|after) you approve\b/i;
+  /\bdraft(?:ed)?\b[^.:;]{0,60}\b(?:held|holding|waits?|waiting|pending|queued)\s+(?:for|on)\s+(?:your|the manager'?s?|manager'?s?)\s+(?:approval|review|sign-off)\b|\bdraft(?:ed)?\b[^.:;]{0,60}\bfor your (?:approval|review|sign-off)\b|\bdraft for review\b|\b(?:will|i'?ll) (?:post|send|share)\b[^.]{0,40}\b(?:once (?:you )?approved?|(?:when|after) you approve)\b|\b(?:repl(?:y|ies)|drafts?|answers?|messages?|notes?)\b[^.:;]{0,60}\b(?:once|when|after) you approve\b/i;
 
 /**
  * The mock office's channel that is the manager's DM: a message held for the manager's approval

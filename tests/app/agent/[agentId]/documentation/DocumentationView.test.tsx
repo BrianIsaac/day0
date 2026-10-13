@@ -689,5 +689,19 @@ describe('the answer said once its card has gone (W15-R47)', (): void => {
     );
     expect(html).toMatch(/<p role="status" aria-live="polite"[^>]*><\/p>/);
     expect(html).not.toContain('Both pages are kept as current.');
+    // And it is filled once mounted, a render later.
+    const view = mount(
+      <RelationAnswered
+        answered={{
+          relationId: 'relation-1' as never,
+          text: 'Both pages are kept as current.',
+          undo: true,
+        }}
+        cardGone
+        onUndone={(): void => undefined}
+      />,
+    );
+    expect(said(view.container)).toContain('Both pages are kept as current.');
+    view.unmount();
   });
 });

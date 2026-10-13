@@ -124,6 +124,15 @@ describe('withheldInWords: what a withheld write says to a manager (RM22 (a))', 
       approvalTenseFindings([post('dm-manager', 'I will send it to Hana when you approve it.')]),
     ).toHaveLength(1);
     expect(approvalTenseFindings([PIP_DOCS_DRAFT_DM])).toHaveLength(1);
+    // An escalation that holds something else for the manager is not a draft (the second pass):
+    // it names no reply or draft and sends nothing itself.
+    for (const body of [
+      'I have not issued the refund; I will issue it once you approve.',
+      'Confirm when you approve the plan and I will carry on.',
+      'The close can go ahead after you approve the journal.',
+    ]) {
+      expect(approvalTenseFindings([post('dm-manager', body)]), body).toEqual([]);
+    }
   });
 
   it('says a message withheld with a write that waits on the answer waits on it too (the second pass)', (): void => {
