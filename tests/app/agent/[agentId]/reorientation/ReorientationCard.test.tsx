@@ -11,6 +11,7 @@ const backend = vi.hoisted(() => ({
   queries: {} as Record<string, unknown>,
   /** Whether a card opened by hand joined one already standing that day. */
   joins: false,
+  onCard: true,
   /** Whether the join asked the judgement again. */
   asks: true,
 }));
@@ -26,7 +27,12 @@ vi.mock('convex/react', () => ({
       }
       if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
       if (name === 'reorientationDecisions:openByHand') {
-        return { reorientationId: 'card-1', joined: backend.joins, asked: backend.asks };
+        return {
+          reorientationId: 'card-1',
+          joined: backend.joins,
+          asked: backend.asks,
+          onCard: backend.onCard,
+        };
       }
       return null;
     },
@@ -133,6 +139,7 @@ beforeEach((): void => {
   backend.calls.length = 0;
   backend.queries = {};
   backend.joins = false;
+  backend.onCard = true;
   backend.asks = true;
 });
 
@@ -634,5 +641,10 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     // Where the card's proposal stands (the manager's own talk put it there), nothing says otherwise.
     backend.asks = false;
     expect(await typed()).toBe('Added to today’s card.');
+    // A card whose summary is full keeps the words in the record, and the page says where they are.
+    backend.onCard = false;
+    expect(await typed()).toBe(
+      'Today’s card has no room for more words, so this change is in Mira’s record and not on the card.',
+    );
   });
 });

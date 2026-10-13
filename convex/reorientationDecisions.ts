@@ -388,14 +388,6 @@ export const defer = mutation({
   },
 });
 
-/**
- * Open a card by hand for a change of the employee's role or goal (section 3's last row): the
- * whole charter is what it reaches, and the judgement proposes the clause to change. Public,
- * guarded by the employee's owner. Writes the card and `reorientation.opened`, and schedules the
- * judgement.
- *
- * @throws ConvexError for an empty summary or one past 300 characters.
- */
 /** The most a by-hand card's summary grows to as later changes of the day join it. */
 const JOINED_SUMMARY_CHARS = 600;
 
@@ -411,12 +403,28 @@ async function proposedByTalk(
   return talk !== null && talk.state === 'finished' && talk.outcome !== undefined;
 }
 
+/**
+ * Open a card by hand for a change of the employee's role or goal (section 3's last row): the
+ * whole charter is what it reaches, and the judgement proposes the clause to change. Public,
+ * guarded by the employee's owner. Writes the card and `reorientation.opened`, and schedules the
+ * judgement.
+ *
+ * @returns The card; whether the change joined one already standing that day; whether the
+ *   proposal is asked for again; and whether the typed words are on the card, which a joined
+ *   change past the summary's bound is not (the joined event keeps them).
+ * @throws ConvexError for an empty summary or one past 300 characters.
+ */
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
   handler: async (
     ctx,
     args,
-  ): Promise<{ reorientationId: Id<'reorientations'> | null; joined: boolean; asked: boolean }> => {
+  ): Promise<{
+    reorientationId: Id<'reorientations'> | null;
+    joined: boolean;
+    asked: boolean;
+    onCard: boolean;
+  }> => {
     await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
@@ -436,10 +444,13 @@ export const openByHand = mutation({
     // inside its bound (the joined event keeps them either way).
     const joined = card !== null && card.triggerKey !== triggerKey;
     let asked = !joined;
+    // Whether the typed words are on the card: a joined change past the summary's bound is not.
+    let onCard = true;
     if (card !== null && joined) {
       const held = card.triggerSummary.replace(/[.;\s]+$/u, '');
       const said = held.toLowerCase().includes(summary.replace(/[.;\s]+$/u, '').toLowerCase());
       const fits = held.length + 2 + summary.length <= JOINED_SUMMARY_CHARS;
+      onCard = said || fits;
       // The proposal is asked again over both only where it is the judgement's own and the card
       // is open: a talk under way finishes in its own, and a finished talk's is the manager's.
       asked =
@@ -462,7 +473,7 @@ export const openByHand = mutation({
       // A card still waiting on its first proposal is judged over both by the join itself.
       asked ||= !said && fits && card.status === 'open' && card.proposed.kind === 'pending';
     }
-    return { reorientationId, joined, asked };
+    return { reorientationId, joined, asked, onCard };
   },
 });
 

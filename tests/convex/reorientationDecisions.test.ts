@@ -1027,7 +1027,12 @@ describe('openByHand and listForAgent', (): void => {
       agentId,
       summary: 'It no longer triages tier-2 asks.',
     });
-    expect(second).toEqual({ reorientationId: first.reorientationId, joined: true, asked: true });
+    expect(second).toEqual({
+      reorientationId: first.reorientationId,
+      joined: true,
+      asked: true,
+      onCard: true,
+    });
     const cards = await cardsOf(harness, agentId);
     expect(cards).toHaveLength(1);
     // The typed words are on the card, not only in the record, and the proposal is asked again.
@@ -1072,16 +1077,29 @@ describe('openByHand and listForAgent', (): void => {
       reorientationId,
       joined: true,
       asked: false,
+      onCard: true,
     });
-    await again('It no longer triages tier-2 asks');
+    // The same words typed again are on the card already.
+    await expect(again('It no longer triages tier-2 asks')).resolves.toMatchObject({
+      onCard: true,
+    });
     const [card] = await cardsOf(harness, agentId);
     expect(card.proposed).toEqual(talked);
     expect(card.triggerSummary).toBe(
       'Mira now covers renewals too; It no longer triages tier-2 asks',
     );
     // Past the bound the words stay in the record's joined events, and the card's summary as it is.
-    for (const index of [1, 2, 3]) await again(`${'A long change of role. '.repeat(12)}${index}`);
-    expect((await cardsOf(harness, agentId))[0].triggerSummary.length).toBeLessThanOrEqual(600);
+    // The answer says so, so the page never says the words were added (W16-R24).
+    const answers = [];
+    for (const index of [1, 2, 3]) {
+      answers.push(await again(`${'A long change of role. '.repeat(12)}${index}`));
+    }
+    const summary = (await cardsOf(harness, agentId))[0].triggerSummary;
+    expect(summary.length).toBeLessThanOrEqual(600);
+    expect(answers.map((answer) => answer.onCard)).toEqual([true, false, false]);
+    expect(summary).toContain('A long change of role. 1');
+    expect(summary).not.toContain('A long change of role. 2');
+    expect(answers.at(-1)).toMatchObject({ joined: true, asked: false });
   });
 
   it('lists the standing cards first, with the names their ids stand for, and only to the owner', async (): Promise<void> => {

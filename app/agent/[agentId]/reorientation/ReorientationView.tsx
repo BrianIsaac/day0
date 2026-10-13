@@ -38,13 +38,16 @@ function OpenByHand({ name }: { name: string }) {
           event.preventDefault();
           change.run(() => open({ agentId: agent._id, summary: trimmed }), {
             // A second change typed the same day joins the standing card (W16-R24); it is judged
-            // again over both unless the card's proposal is one a talk put there.
+            // again over both unless the card's proposal is one a talk put there. A card whose
+            // summary is full takes no more words: the record's joined event keeps them.
             done: (opened) =>
               !opened.joined
                 ? `A card is open. ${name} is working out what to propose.`
-                : opened.asked
-                  ? `Added to today’s card. ${name} is working out what to propose over both.`
-                  : 'Added to today’s card.',
+                : !opened.onCard
+                  ? `Today’s card has no room for more words, so this change is in ${name}’s record and not on the card.`
+                  : opened.asked
+                    ? `Added to today’s card. ${name} is working out what to propose over both.`
+                    : 'Added to today’s card.',
             refused: 'No card was opened.',
             after: () => setSummary(''),
           });
