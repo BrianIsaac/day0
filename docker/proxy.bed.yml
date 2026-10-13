@@ -18,9 +18,12 @@
 # What it changes:
 #
 # - No network has a route out. `default`, and the two networks the main file gives the Slack
-#   socket bridge and Nango for their own way out, become internal; the forward proxy joins all
-#   three and alone joins `proxy-egress`, the one network that leaves the machine. A service
-#   reaches the internet through it or not at all, which is what the bed is for.
+#   socket bridge and Nango for their own way out, become internal; the forward proxy alone joins
+#   `proxy-egress`, the one network that leaves the machine. A service reaches the internet
+#   through it or not at all, which is what the bed is for. A customer's proxy is one address
+#   every service and this machine reach; the bed's is PROXY_BED_FORWARD_ADDRESS on the project
+#   network, so the bridge and Nango's server, which the main file keeps off that network, join
+#   it here to reach the proxy. A bed's concession, never the product's.
 # - Docker publishes no port on an internal network, so the backend's two loopback ports are
 #   carried by `host-relay` instead, and the setup, the Convex CLI, the app and the reverse proxy
 #   reach the backend at 127.0.0.1 as they do on a customer's machine.
@@ -30,11 +33,9 @@
 #   the project network (the subnet's first), which is not loopback, so Day0 treats it as the
 #   public address it is standing in for.
 #
-# The bed's `.env.local` names the forward proxy as a customer's would name theirs:
-# HTTPS_PROXY=http://forward-proxy:3128 (and HTTP_PROXY), with the test issuer's address and
-# PROXY_BED_ADDRESS in NO_PROXY, since both are inside the bed's own network. The app, on this
-# machine, cannot resolve that name: it is started with HTTPS_PROXY naming
-# PROXY_BED_FORWARD_ADDRESS in its shell, which wins over the file.
+# The bed's `.env.local` names the forward proxy as a customer's would name theirs, by one
+# address: HTTPS_PROXY=http://<PROXY_BED_FORWARD_ADDRESS>:3128 (and HTTP_PROXY), with the test
+# issuer's address and PROXY_BED_ADDRESS in NO_PROXY, since both are inside the bed's own network.
 #
 # The certificate is a throwaway authority's (fake-oidc/make-tls.sh <dir> <PROXY_BED_ADDRESS>);
 # this machine's Node trusts it through NODE_EXTRA_CA_CERTS, as it would a customer's own.
@@ -70,9 +71,7 @@ services:
     stop_grace_period: 2s
     networks:
       default:
-        ipv4_address: ${PROXY_BED_FORWARD_ADDRESS:?the forward proxy's address on the project network, which this machine's app names it by}
-      slack-socket-egress:
-      nango-egress:
+        ipv4_address: ${PROXY_BED_FORWARD_ADDRESS:?the forward proxy's address on the project network, which every service and this machine name it by}
       proxy-egress:
     environment:
       - FORWARD_PROXY_PORT=3128
@@ -89,6 +88,13 @@ services:
       interval: 5s
       timeout: 3s
       start_period: 5s
+
+  # Joined to the project network only to reach the forward proxy (see the head of this file).
+  slack-socket:
+    networks: ['default']
+
+  nango-server:
+    networks: ['default']
 
   host-relay:
     image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32

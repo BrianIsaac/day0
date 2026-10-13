@@ -20,7 +20,7 @@ interface Service {
   readonly image?: string;
   readonly network_mode?: string;
   readonly ports?: readonly string[];
-  readonly networks?: Record<string, unknown>;
+  readonly networks?: Record<string, unknown> | readonly string[];
   readonly environment?: readonly string[];
   readonly volumes?: readonly string[];
 }
@@ -47,16 +47,22 @@ describe("the proxy bed's overlay", (): void => {
     expect(open).toEqual(['proxy-egress']);
     const joined = (name: string): string[] =>
       Object.entries(OVERLAY.services)
-        .filter(([, service]) => Object.keys(service.networks ?? {}).includes(name))
+        .filter(([, service]) =>
+          (Array.isArray(service.networks)
+            ? service.networks
+            : Object.keys(service.networks ?? {})
+          ).includes(name),
+        )
         .map(([service]) => service);
     expect(joined('proxy-egress')).toEqual(['forward-proxy']);
-    // It is reachable from every network a service that reaches out sits on.
+    // One address for everything, as a customer's proxy is: the two services the main file keeps
+    // off the project network join it here, and gain no way out by it.
     expect(Object.keys(OVERLAY.services['forward-proxy']?.networks ?? {}).sort()).toEqual([
       'default',
-      'nango-egress',
       'proxy-egress',
-      'slack-socket-egress',
     ]);
+    expect(OVERLAY.services['slack-socket']?.networks).toEqual(['default']);
+    expect(OVERLAY.services['nango-server']?.networks).toEqual(['default']);
   });
 
   it('runs each reverse proxy on the host’s network under a profile of its own, its image pinned to a digest', (): void => {
