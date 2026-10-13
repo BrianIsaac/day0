@@ -184,6 +184,28 @@ describe('LinkSourceForm', (): void => {
     view.unmount();
   });
 
+  it('says what the folder field’s “.” means beside it, and nothing of it for another kind (16-T’s F7)', (): void => {
+    // The signed-in shots: "Where it is" drew a lone "." with nothing to say what it stood for.
+    const view = mount(<LinkSourceForm />);
+    const where = field<HTMLTextAreaElement>(view.container, 'source-locator');
+    expect(where.value).toBe('.');
+    const hint = view.container.ownerDocument.getElementById(
+      where.getAttribute('aria-describedby') ?? '',
+    );
+    expect(hint?.textContent).toBe(
+      'A folder inside the documents folder Day0 was given at setup. “.” is all of it; a name such as runbooks is that folder alone.',
+    );
+    const kind = field<HTMLSelectElement>(view.container, 'source-kind');
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    act((): void => {
+      setter?.call(kind, 'git');
+      kind.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(field(view.container, 'source-locator').hasAttribute('aria-describedby')).toBe(false);
+    expect(view.container.textContent).not.toContain('is all of it');
+    view.unmount();
+  });
+
   it('clears the folder default label when another kind is chosen, and keeps a typed one (14-F)', (): void => {
     const view = mount(<LinkSourceForm />);
     const kind = field<HTMLSelectElement>(view.container, 'source-kind');
