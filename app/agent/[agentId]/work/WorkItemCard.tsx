@@ -176,9 +176,9 @@ function retryDone(mode: RetryMode, title: string): string {
 }
 
 /**
- * What holds the apply of a set the manager approved, as the row stands: a pause holds it while
- * the row still waits at its claim, and once the apply is claimed it is under way whatever the
- * pause says (`waitsAtClaim`).
+ * What holds the apply of a set the manager approved, as the row stands: a pause holds it until
+ * the apply is claimed, after which it is under way whatever the pause says. Read from the state
+ * and the claim alone, so the line is right from the press, before the row shows the approval.
  */
 function applyHoldOf(
   item: Pick<Doc<'workItems'>, 'state' | 'applyAttemptId'>,
