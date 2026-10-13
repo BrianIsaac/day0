@@ -444,6 +444,59 @@ describe('the measured figures', (): void => {
   });
 });
 
+describe('where a customer install starts (wave 17, 17-P)', (): void => {
+  /** One README section's text, from its heading to the next of the same or a higher level. */
+  function sectionOf(heading: string): string {
+    const at = README.indexOf(`\n${heading}\n`);
+    expect(at, heading).toBeGreaterThan(0);
+    const level = heading.split(' ')[0]!.length;
+    const next = new RegExp(`\\n#{1,${level}} `).exec(README.slice(at + 1));
+    return README.slice(at, next === null ? undefined : at + 1 + next.index);
+  }
+
+  it('is a README section of its own, linking the runbook and the three pages, in both halves', (): void => {
+    for (const heading of ['### Installing at a customer', '#### 在客户处安装']) {
+      const section = sectionOf(heading);
+      for (const page of ['install.md', 'proxy.md', 'egress.md', 'upgrade-and-rollback.md']) {
+        expect(section, `${heading}: ${page}`).toContain(`](docs/running/${page})`);
+      }
+      expect(section).toContain('`DAY0_APP_HOST`');
+      expect(section).toContain('`127.0.0.1`');
+    }
+  });
+
+  it('is where the setup page sends a reader who is installing for someone else', (): void => {
+    const pointer = DETAILED_SECTIONS.find((one) => one.href.endsWith('#installing-at-a-customer'));
+    expect(pointer?.title).toBe('Installing at a customer');
+    expect(pointer?.body).toContain('reverse proxy');
+  });
+
+  it('gives the way back and the install record beside the upgrade, in both halves', (): void => {
+    for (const heading of ['### Backup, restore and upgrade', '#### 备份、恢复与升级']) {
+      const section = sectionOf(heading);
+      expect(section).toContain('Never start the old image over this volume.');
+      expect(section).toContain('](docs/running/upgrade-and-rollback.md)');
+      expect(section).toContain('install-record-<date>.md');
+    }
+  });
+
+  it('names the release’s new settings in the environment table', (): void => {
+    const table = sectionOf('## Environment');
+    for (const name of [
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'NODE_USE_ENV_PROXY',
+      'DAY0_APP_HOST',
+      'DAY0_APP_PORT',
+    ]) {
+      expect(table, name).toContain(`\`${name}\``);
+    }
+    expect(table).toContain('](docs/running/egress.md)');
+    expect(table).toContain('](docs/running/proxy.md)');
+  });
+});
+
 describe('the detailed sections', (): void => {
   it('are README anchors, not invented pages', (): void => {
     expect(DETAILED_SECTIONS.length).toBeGreaterThanOrEqual(4);

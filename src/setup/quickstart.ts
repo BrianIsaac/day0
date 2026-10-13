@@ -505,6 +505,11 @@ export const DETAILED_SECTIONS: readonly DetailedSection[] = [
     body: 'The components, linking your documentation, the first day of decisions, one deployment per workspace and the teardown. Local only, and deliberately unreachable from a hosted deployment.',
   },
   {
+    href: `${REPOSITORY_URL}#installing-at-a-customer`,
+    title: 'Installing at a customer',
+    body: "Where an install with a customer's IT starts: the runbook, the reverse proxy in front, the way out through an HTTP proxy, and the upgrade with its way back.",
+  },
+  {
     href: `${REPOSITORY_URL}#your-own-hosted-copy`,
     title: 'Your own hosted copy',
     body: 'The accounts it takes, what the cloud setup, upgrade and backup do step by step, what each refuses, and the rollback it prints.',
