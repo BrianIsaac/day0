@@ -686,13 +686,21 @@ export async function scheduleDueHoldChecks(
   const stale = (await holdsOf(ctx, userId, agentId)).filter(
     (hold) => (hold.refusal?.judgedAt ?? 0) <= now - CHECK_STALE_MS,
   );
-  // A hold two judgements disagreed on waits for the manager's Check now, or a newly approved
-  // charter (RM32 (a)): judged again here every stale window, chance would settle it either way
-  // within the hour. One whose agreement is in effect for nobody any more is still set aside.
+  // A hold two judgements disagreed on waits for an act of the manager's (RM32 (a)): Check now, a
+  // newly approved charter, or the employee's resume. Judged again here every stale window, chance
+  // would settle it either way within the hour. One whose agreement is in effect for nobody any
+  // more is still set aside.
   const disputed = await disputedHolds(ctx, agentId, stale);
   const waiting = stale.filter((hold) => disputed.has(hold._id));
-  for (const holdId of await mootHolds(ctx, waiting)) {
-    await ctx.db.patch(holdId, { status: 'dismissed' });
+  const moot = await mootHolds(ctx, waiting);
+  for (const hold of waiting) {
+    if (moot.has(hold._id)) {
+      await ctx.db.patch(hold._id, { status: 'dismissed' });
+    } else if (hold.refusal) {
+      // Stamped as read now, so the marker is read once a stale window and not at every pass
+      // of the sweep and every stored plan (the second pass).
+      await ctx.db.patch(hold._id, { refusal: { ...hold.refusal, judgedAt: now } });
+    }
   }
   const due = stale.filter((hold) => !disputed.has(hold._id));
   return (await scheduleCheckOfHolds(ctx, agentId, due, now)) ? 1 : 0;
@@ -1230,9 +1238,10 @@ async function disputedHolds(
  * of two judgements refused it against while the other allowed it (RM32 (a); 16-FX's F1, where the
  * one refusal ended the agreement for fifty-one employees). The agreement stays in effect for every
  * other employee and ends for nobody; this employee's hold names it and takes it out of what this
- * employee's planner and runs read, until Check now, or the check of a newly approved charter,
- * judges it again: `checkForCharter` lifts the hold when its first judgement allows the agreement,
- * and ends the agreement for everyone only when both refuse. A hold that already stands is kept,
+ * employee's planner and runs read, until an act of the manager's judges it again (Check now, a
+ * newly approved charter, or the employee's resume, which checks every agreement its pause held):
+ * `checkForCharter` lifts the hold when its first judgement allows the agreement, and ends the
+ * agreement for everyone only when both refuse. The sweep and a stored plan do not judge it. A hold that already stands is kept,
  * stamped as tried now. Nothing for a row no longer active for every employee, or an employee the
  * owner no longer has. Writes `agreement.refused` on the employee, naming the agreement, the hold
  * and the one refusal (`refusedOnce`), which is how the card and the sweep know the hold from one
@@ -1696,7 +1705,7 @@ function disputedView(view: AgreementView, refusedOnce: RefusedOnce | undefined)
  * check), active and refused, newest first. A hold of an agreement for every employee says
  * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
  * check reads) and, when two judgements of this employee's charter disagreed on it, the one
- * refusal (`refusal.refusedOnce`, RM32 (a)), and one whose agreement is in effect for nobody any
+ * refusal (`refusal.refusedOnce`, RM32 (a)); a hold whose agreement is in effect for nobody any
  * more is left out; an
  * agreement for every employee whose check against this employee's amended charter is owed says
  * since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`; writes nothing.

@@ -343,6 +343,49 @@ describe('a charter’s refusal of an agreement for every employee, judged twice
     expect(await plannerReads(harness, mateo, 'LOG-1')).toEqual([]);
   });
 
+  it('reads the disputed marker once a stale window at the sweep, not at every pass (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { ines, agreementId } = await f1Office(harness);
+    recorded.verdicts.push('widens-scope', 'keep');
+    await checkCharter(harness, ines);
+    vi.setSystemTime(Date.now() + CHECK_STALE_MS + 60_000);
+    const sweep = async (): Promise<number> =>
+      await harness.run(async (ctx) => {
+        const { scheduleDueHoldChecks } = await import('../../convex/workingAgreements');
+        return await scheduleDueHoldChecks(ctx, ines, Date.now());
+      });
+    expect(await sweep()).toBe(0);
+    // Passed over now: not stale again until the next window, so the next pass reads no events.
+    const hold = (await agreementsOf(harness)).find((row) => row.supersedes === agreementId);
+    expect(hold?.refusal?.judgedAt).toBe(Date.now());
+    expect((await holdOnCard(harness, ines, agreementId))?.refusal).toMatchObject({
+      refusedOnce: { reason: 'widens-scope' },
+    });
+    expect(await sweep()).toBe(0);
+    expect(recorded.model).toHaveLength(2);
+  });
+
+  it('judges a disputed hold again when the manager resumes the employee, as it does every agreement the pause held (the second pass: said, not guarded)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { ines, agreementId } = await f1Office(harness);
+    recorded.verdicts.push('widens-scope', 'keep');
+    await checkCharter(harness, ines);
+    recorded.model.length = 0;
+    recorded.verdicts.push('widens-scope', 'keep');
+    await harness.run(async (ctx) => {
+      const { scheduleHeldChecks } = await import('../../convex/workingAgreements');
+      await scheduleHeldChecks(ctx, ines);
+    });
+    await drain(harness);
+    // Judged twice again, disputed again: still held, still in effect for everyone else.
+    expect(recorded.model).toHaveLength(2);
+    const rows = await agreementsOf(harness);
+    expect(rows.find((row) => row._id === agreementId)?.status).toBe('active');
+    expect(
+      rows.filter((row) => row.supersedes === agreementId && row.status === 'refused'),
+    ).toHaveLength(1);
+  });
+
   it('lifts a disputed hold when Check now’s first judgement allows the agreement', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { ines, agreementId } = await f1Office(harness);

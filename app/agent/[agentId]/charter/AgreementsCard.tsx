@@ -125,9 +125,9 @@ function editControlOf(
  * with Dismiss, and, for a keep for every employee refused past the bound, Keep for this employee
  * alone; a hold of an agreement for every employee, with Check now once it can be checked
  * (W14-R15), which says so when two judgements of the employee's charter disagreed on it (RM32
- * (a): `refusalSentence` reads the hold's `refusedOnce`); an agreement for every employee whose check against the employee's amended charter is
- * owed, which stays in effect, with Check now (RM28 (b)); and a proposal, which is decided on the
- * Work tab. Real mode only, as agreements are.
+ * (a): `refusalSentence` reads the hold's `refusedOnce`); an agreement for every employee whose
+ * check against the employee's amended charter is owed, which stays in effect, with Check now
+ * (RM28 (b)); and a proposal, which is decided on the Work tab. Real mode only, as agreements are.
  *
  * @param props - The agreements, the employee's name, the Work tab, and the calls.
  */

@@ -222,8 +222,9 @@ function foundByOne(refusedOnce: RefusedOnce, name: string): string {
  * Why an agreement for every employee is held for one employee whose charter Day0 judged it against
  * twice, one judgement refusing it and the other allowing it (RM32 (a); wording draft, RM24): that
  * the two disagreed, what the one found, that it stays in effect for the others, and what Check now
- * does. Such a hold is not checked again by itself, so the line promises no check within the half
- * hour: one judgement's variance held it, and a third and fourth unasked would settle it by chance.
+ * does. Such a hold is not checked again by the sweep or a stored plan, so the line promises no
+ * check within the half hour: one judgement's variance held it, and a third and fourth unasked
+ * would settle it by chance. A newly approved charter and the employee's resume judge it too.
  *
  * @param name - The employee's name.
  * @param refusedOnce - The one judgement's refusal.

@@ -369,9 +369,9 @@ async function endWatch(ctx: ActionCtx, watch: Id<'_scheduled_functions'> | null
  * second time (RM32 (a); 16-FX's F1: the hosted model allowed one statement against one charter
  * and refused it against another with the same body): the agreement ends for everyone only when
  * both judgements refuse, on a first charter and on an amendment alike. One refusal of two holds
- * it for this employee alone and says so (`holdDisputed`), until Check now or the next approved
- * charter judges it again; a second judgement that could not be had is a check that could not be
- * had.
+ * it for this employee alone and says so (`holdDisputed`), until an act of the manager's judges it
+ * again (Check now, the next approved charter, the employee's resume); a second judgement that
+ * could not be had is a check that could not be had.
  *
  * One run reads at most `CHECK_BATCH` agreements with the model, one at a time, and hands the rest
  * to the next run, and it keeps a watch on itself ({@link watchOver}), so a run that dies mid-way
@@ -440,7 +440,7 @@ export const checkForCharter = internalAction({
           agentId: args.agentId,
           refusal: outcome.refusal,
         });
-      } else {
+      } else if (outcome.outcome === 'kept') {
         const settled = { agreementId: agreement._id, agentId: args.agentId };
         if (inputs.held.includes(agreement._id)) {
           await ctx.runMutation(internal.workingAgreements.liftHold, settled);
@@ -450,6 +450,9 @@ export const checkForCharter = internalAction({
         if (inputs.owed.includes(agreement._id)) {
           await ctx.runMutation(internal.workingAgreements.recordChecked, settled);
         }
+      } else {
+        const unknown: never = outcome;
+        throw new Error(`unhandled check outcome ${JSON.stringify(unknown)}`);
       }
       // The new watch first, then the old one ended: no moment is left unwatched (the second
       // pass).
