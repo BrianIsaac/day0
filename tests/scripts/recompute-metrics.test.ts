@@ -569,6 +569,53 @@ describe('recomputing the figures from the owner export (wave 16, 16-F)', (): vo
     expect(live.excludedAgents).toBe(1);
   });
 
+  it('recomputes every employee of a company past twenty from the one file, and agrees with the figures read by pages under --expect (RM33 (a))', async (): Promise<void> => {
+    const harness = await companyBackend();
+    // Twenty-one hires beside Priya and Mateo: twenty-three employees, three past what the one
+    // read a card subscribes to covers.
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 1; index <= 21; index += 1) {
+        const agentId = await ctx.db.insert('agents', {
+          bossEmail: MANAGER_ADDRESS,
+          name: `Hire ${index}`,
+          userId: OWNER,
+          state: 'active',
+          arm: 'day0',
+          createdAt: 10_000 + index,
+        });
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'agent.deployed',
+          payload: {},
+          createdAt: 10_000 + index,
+        });
+      }
+    });
+    const caller = harness.withIdentity(managerIdentity(OWNER));
+    const whole = await caller.action(api.metrics.forOwnerByPages, {});
+    const bounded = await caller.query(api.metrics.forOwner, {});
+    expect([whole.company.employees, whole.omittedEmployees]).toEqual([23, 0]);
+    expect([bounded.company.employees, bounded.omittedEmployees]).toEqual([20, 3]);
+
+    const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-owner-pages-'));
+    temporary.push(directory);
+    const file = join(directory, 'owner.json');
+    const expected = join(directory, 'expected.json');
+    writeFileSync(file, JSON.stringify(await exportedOwnerFile(harness)));
+    writeFileSync(expected, JSON.stringify(whole));
+
+    const run = capture();
+    expect(runRecompute([file, '--expect', expected], run.io), run.err.join('\n')).toBe(0);
+    expect(run.out.at(-1)).toBe(`every figure in ${expected} holds`);
+    expect(run.out.find((line) => line.startsWith('owner '))).toContain(
+      '23 employees, 1 evaluation agent set aside, 0 omitted',
+    );
+    // The bounded read's twenty are no longer what a recompute of the whole file answers.
+    const twenty = join(directory, 'twenty.json');
+    writeFileSync(twenty, JSON.stringify(bounded));
+    expect(runRecompute([file, '--expect', twenty], capture().io)).toBe(1);
+  });
+
   it('names an employee handed elsewhere as not counted, and counts it with the other manager’s trace beside the file', async (): Promise<void> => {
     const harness = await companyBackend();
     await handOverMateo(harness);

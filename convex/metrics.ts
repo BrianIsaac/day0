@@ -1,6 +1,7 @@
 import { ConvexError, v } from 'convex/values';
+import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
-import { query, type QueryCtx } from './_generated/server';
+import { action, internalQuery, query, type QueryCtx } from './_generated/server';
 import {
   actionIntent,
   isGateRefusal,
@@ -1086,7 +1087,11 @@ export function computeAgentMetrics(
   return agentFigures(events, workItems, charters, surfaces).metrics;
 }
 
-/** The most employees the company figures cover: as many as the landing page lists. */
+/**
+ * The most employees the one read a card subscribes to covers (`forOwner`): it stays bounded, and
+ * says how many it left out. The company's figures over every employee are read by pages
+ * (`forOwnerByPages`; wave 17, RM33 (a), F-2), and the recompute reads every trace it is given.
+ */
 export const MAX_COMPANY_EMPLOYEES = 20;
 
 /** One employee's durable records, as `forAgent` reads them or a trace carries them. */
@@ -1152,12 +1157,13 @@ function byDeployOrder(left: CompanyAgent, right: CompanyAgent): number {
  * handed over is its old owner's up to the acceptance and its new owner's
  * from it, so the old owner's past figures never change after the fact.
  * Employees the owner never held, evaluation agents and baseline arms are
- * left out. Of those the owner holds now, the most recent
- * `MAX_COMPANY_EMPLOYEES` are kept, as the landing page lists them; of those
- * it handed over, the most recent as many again, so a departure never takes
- * the place of an employee the roster shows. The older ones are counted as
- * omitted so a partial company figure is never silent. The query and the
- * recompute script both select through here.
+ * left out. With no `limit`, every employee is kept: the recompute reads
+ * every trace it is given (RM33 (a)). With one, of those the owner holds now
+ * the most recent `limit` are kept, and of those it handed over the most
+ * recent as many again, so a departure never takes the place of an employee
+ * it holds; the older ones are counted as omitted, so a read that is bounded
+ * is never silent about it. The query and the recompute script both select
+ * through here.
  *
  * @param agents - Agent rows, in any order: the owner's own and any it handed over; rows the
  *   owner never held are ignored.
@@ -1166,6 +1172,7 @@ function byDeployOrder(left: CompanyAgent, right: CompanyAgent): number {
  *   the flag a trace carries instead of the address.
  * @param handovers - The accepted handovers of those agents; none reads every agent as never
  *   handed over.
+ * @param limit - The most employees of each kind a bounded read keeps; none keeps them all.
  * @returns The employees in deploy order, the spans the owner held each, and the counts left out.
  */
 export function selectCompanyEmployees<Agent extends CompanyAgent>(
@@ -1173,6 +1180,7 @@ export function selectCompanyEmployees<Agent extends CompanyAgent>(
   owner: string,
   isEvaluation: (agent: Agent) => boolean,
   handovers: readonly AcceptedHandover[] = [],
+  limit?: number,
 ): CompanySelection<Agent> {
   const held = agents.flatMap((agent) => {
     const own = handovers.filter((handover) => handover.agentId === agent._id);
@@ -1185,7 +1193,7 @@ export function selectCompanyEmployees<Agent extends CompanyAgent>(
   const holdsNow = ({ windows }: (typeof company)[number]): boolean =>
     windows.some((window) => window.until === null);
   const mostRecent = (employees: typeof company): typeof company =>
-    employees.slice(Math.max(0, employees.length - MAX_COMPANY_EMPLOYEES));
+    limit === undefined ? employees : employees.slice(Math.max(0, employees.length - limit));
   const kept = [
     ...mostRecent(company.filter(holdsNow)),
     ...mostRecent(company.filter((employee) => !holdsNow(employee))),
@@ -1226,6 +1234,29 @@ function pooledActions(rows: readonly AgentMetrics['actions'][]): AgentMetrics['
 }
 
 /**
+ * One employee's figures with the raw lists behind them, which a company figure pools before it
+ * takes any median: what one page of the company's figures answers for each employee it read.
+ */
+export interface EmployeeFigures {
+  readonly agent: EmployeeRecords['agent'];
+  readonly metrics: AgentMetrics;
+  readonly decisions: DecisionTotals;
+  readonly pilot: PilotTotals;
+}
+
+/**
+ * One employee's figures from its records, with the lists a company figure pools.
+ *
+ * @param record - The employee's durable records, already cut to the reader's spans.
+ */
+export function employeeFiguresOf(record: EmployeeRecords): EmployeeFigures {
+  return {
+    agent: record.agent,
+    ...agentFigures(record.events, record.workItems, record.charters, record.surfaces ?? []),
+  };
+}
+
+/**
  * Compute each employee's figures and the company row from their records.
  *
  * Args:
@@ -1239,10 +1270,20 @@ export function computeCompanyMetrics(
   records: readonly EmployeeRecords[],
   setAside: Pick<OwnerMetrics, 'excludedAgents' | 'omittedEmployees'>,
 ): OwnerMetrics {
-  const figures = records.map((record) => ({
-    agent: record.agent,
-    ...agentFigures(record.events, record.workItems, record.charters, record.surfaces ?? []),
-  }));
+  return companyMetricsOf(records.map(employeeFiguresOf), setAside);
+}
+
+/**
+ * The company row pooled from each employee's figures, beside the employees' own: the one pooling
+ * the query, the read by pages and the recompute all take, so they cannot disagree.
+ *
+ * @param figures - Each employee's figures with the lists behind them, in deploy order.
+ * @param setAside - What the selection left out, carried into the result.
+ */
+export function companyMetricsOf(
+  figures: readonly EmployeeFigures[],
+  setAside: Pick<OwnerMetrics, 'excludedAgents' | 'omittedEmployees'>,
+): OwnerMetrics {
   const metrics = figures.map((figure) => figure.metrics);
   const decisions: DecisionTotals = {
     requested: 0,
@@ -1681,7 +1722,9 @@ async function heldEmployees(
 /**
  * Public, any signed-in caller; reads only the caller's own: the supervision figures of
  * the caller's company, each employee's own figures and the company row, each
- * employee counted within the spans the caller held it (D12 (a)). Writes
+ * employee counted within the spans the caller held it (D12 (a)). Bounded, so a card can
+ * subscribe to it: it covers the most recent `MAX_COMPANY_EMPLOYEES` employees and says how many
+ * it left out (`omittedEmployees`); `forOwnerByPages` reads them all. Writes
  * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwner = query({
@@ -1694,6 +1737,7 @@ export const forOwner = query({
       identity.ownerKey,
       isEvaluationAgent,
       handovers,
+      MAX_COMPANY_EMPLOYEES,
     );
     const records = await Promise.all(
       selection.employees.map(async (agent) =>
@@ -1704,5 +1748,163 @@ export const forOwner = query({
       ),
     );
     return computeCompanyMetrics(records, selection);
+  },
+});
+
+/** How many employees' whole records one page of the company's figures reads. */
+const COMPANY_PAGE_EMPLOYEES = 5;
+
+/**
+ * The walk of an owner's employees for the figures by pages: those it holds now, in deploy
+ * order, then those it handed over, by the state of the request that moved each.
+ */
+const FIGURES_PHASES = ['held', ...ACCEPTED_TRANSFER_STATES] as const;
+
+/** Where the walk stands: the phase, and the backend's cursor inside it. */
+interface FiguresCursor {
+  readonly phase: (typeof FIGURES_PHASES)[number];
+  readonly cursor: string | null;
+}
+
+/** One page of the company's figures: each employee read, in the order read, and what follows. */
+interface OwnerFiguresPage {
+  /** Each employee's figures, with the row's creation time, which orders the whole company. */
+  readonly employees: ReadonlyArray<EmployeeFigures & { readonly creationTime: number }>;
+  /** The evaluation agents and baseline arms the page passed over. */
+  readonly excludedAgents: number;
+  /** Where the next page starts, or null after the last. */
+  readonly next: string | null;
+}
+
+/** A figures cursor read back from the string a page handed out. */
+function figuresCursorOf(cursor: string | null): FiguresCursor {
+  if (cursor === null) return { phase: 'held', cursor: null };
+  const parsed = JSON.parse(cursor) as Partial<FiguresCursor>;
+  const phase = FIGURES_PHASES.find((candidate) => candidate === parsed.phase);
+  if (phase === undefined || (parsed.cursor !== null && typeof parsed.cursor !== 'string')) {
+    throw new Error('not a cursor of the company’s figures');
+  }
+  return { phase, cursor: parsed.cursor };
+}
+
+/** The cursor of the page after one: further into its phase, the next phase, or the end. */
+function figuresCursorAfter(
+  at: FiguresCursor,
+  read: { readonly isDone: boolean; readonly continueCursor: string },
+): string | null {
+  if (!read.isDone) return JSON.stringify({ phase: at.phase, cursor: read.continueCursor });
+  const following = FIGURES_PHASES[FIGURES_PHASES.indexOf(at.phase) + 1];
+  return following === undefined ? null : JSON.stringify({ phase: following, cursor: null });
+}
+
+/**
+ * One employee's figures within the spans an owner held it (D12 (a)), or undefined for an
+ * employee the owner never held.
+ */
+async function employeeFiguresWithin(
+  ctx: QueryCtx,
+  owner: string,
+  agent: Doc<'agents'>,
+): Promise<OwnerFiguresPage['employees'][number] | undefined> {
+  const handovers = handoversFromTransfers(await acceptedTransfersOf(ctx, agent._id));
+  const windows = tenureWindowsOf(owner, agent.userId, handovers);
+  if (windows.length === 0) return undefined;
+  const records = recordsWithinTenure(await readEmployeeRecords(ctx, agent), windows);
+  return { ...employeeFiguresOf(records), creationTime: agent._creationTime };
+}
+
+/**
+ * One page of the figures of the caller's company (wave 17, 17-F; RM33 (a), F-2): at most
+ * `COMPANY_PAGE_EMPLOYEES` employees' whole records, each counted within the spans the caller
+ * held it, with the lists a company figure pools. The employees the caller holds now come first,
+ * in deploy order; then those it handed over that still exist, an employee it holds again left to
+ * the first walk. Internal; `forOwnerByPages` runs it under the caller's identity, and every
+ * read is keyed by the caller's own owner key. Reads; writes nothing.
+ */
+export const ownerFiguresPage = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, args): Promise<OwnerFiguresPage> => {
+    const { ownerKey } = await getCallerOrThrow(ctx);
+    const at = figuresCursorOf(args.cursor);
+    const paging = { cursor: at.cursor, numItems: COMPANY_PAGE_EMPLOYEES };
+    if (at.phase === 'held') {
+      const read = await ctx.db
+        .query('agents')
+        .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
+        .paginate(paging);
+      const company = read.page.filter((agent) => !isEvaluationAgent(agent));
+      const figures = await Promise.all(
+        company.map(async (agent) => await employeeFiguresWithin(ctx, ownerKey, agent)),
+      );
+      return {
+        employees: figures.filter((employee) => employee !== undefined),
+        excludedAgents: read.page.length - company.length,
+        next: figuresCursorAfter(at, read),
+      };
+    }
+    const phase = at.phase;
+    const read = await ctx.db
+      .query('managerTransfers')
+      .withIndex('by_from_owner_state', (q) => q.eq('fromOwnerKey', ownerKey).eq('state', phase))
+      .paginate(paging);
+    const departed = await Promise.all(
+      [...new Set(read.page.map((row) => row.agentId))].map(
+        async (agentId) => await ctx.db.get(agentId),
+      ),
+    );
+    const figures = await Promise.all(
+      departed
+        // Retired since, held again by the caller (the first walk's), or never the company's.
+        .filter(
+          (agent): agent is Doc<'agents'> =>
+            agent !== null && agent.userId !== ownerKey && !isEvaluationAgent(agent),
+        )
+        .map(async (agent) => await employeeFiguresWithin(ctx, ownerKey, agent)),
+    );
+    return {
+      employees: figures.filter((employee) => employee !== undefined),
+      excludedAgents: 0,
+      next: figuresCursorAfter(at, read),
+    };
+  },
+});
+
+/**
+ * Public, any signed-in caller; reads only the caller's own: the supervision figures of the
+ * caller's whole company, every employee read by pages (wave 17, 17-F; RM33 (a), F-2), where
+ * `forOwner` covers the most recent twenty. The action carries the cursor from page to page and
+ * pools once every page is in, with the pooling `forOwner` and the recompute take, so the three
+ * agree; no query subscribes to every employee's whole record. Each employee is counted within
+ * the spans the caller held it (D12 (a)), once however often the walk meets it. Writes nothing.
+ * A caller with no identity is refused (`getCallerOrThrow`, 12-G).
+ */
+export const forOwnerByPages = action({
+  args: {},
+  handler: async (ctx): Promise<OwnerMetrics> => {
+    await getCallerOrThrow(ctx);
+    const read = new Map<string, OwnerFiguresPage['employees'][number]>();
+    let excludedAgents = 0;
+    let cursor: string | null = null;
+    do {
+      const page: OwnerFiguresPage = await ctx.runQuery(internal.metrics.ownerFiguresPage, {
+        cursor,
+      });
+      for (const employee of page.employees) read.set(employee.agent._id, employee);
+      excludedAgents += page.excludedAgents;
+      cursor = page.next;
+    } while (cursor !== null);
+    const inDeployOrder = [...read.values()].sort(
+      (left, right) =>
+        left.creationTime - right.creationTime || (left.agent._id < right.agent._id ? -1 : 1),
+    );
+    return companyMetricsOf(
+      inDeployOrder.map(({ agent, metrics, decisions, pilot }) => ({
+        agent,
+        metrics,
+        decisions,
+        pilot,
+      })),
+      { excludedAgents, omittedEmployees: 0 },
+    );
   },
 });

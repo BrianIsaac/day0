@@ -28,10 +28,10 @@ interface RegisteredFunction {
  * 16-O's `reorientationDecisions:approve`, `:dismiss`, `:defer`, `:openByHand` and
  * `:listForAgent`; 223 with 16-O's `managerQuestions:answerConflict`; 224 with 16-O's
  * `managerQuestions:conflictsForAgent`; 229 with 16-D's `reorientationTalk:takeTurn`,
- * `:recordAnswer`, `:finish`, `:keepReplyDraft` and `:forCard`; 231 with wave 17's
- * `exportActions:exportOwnerAgents` and `roster:page`, 17-F).
+ * `:recordAnswer`, `:finish`, `:keepReplyDraft` and `:forCard`; 232 with wave 17's
+ * `exportActions:exportOwnerAgents`, `roster:page` and `metrics:forOwnerByPages`, 17-F).
  */
-const PINNED_COUNT = 231;
+const PINNED_COUNT = 232;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 

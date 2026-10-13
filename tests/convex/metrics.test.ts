@@ -1355,6 +1355,75 @@ describe('supervision figures for a company of employees', (): void => {
       await guardRefusal(),
     );
   });
+
+  /** The company's figures read by pages to the last employee (wave 17, 17-F; RM33 (a)). */
+  async function wholeCompanyFigures(
+    harness: ReturnType<typeof convexTest>,
+  ): Promise<OwnerMetrics> {
+    return await harness.withIdentity(COMPANY_OWNER).action(api.metrics.forOwnerByPages, {});
+  }
+
+  it('reads every employee by pages, so a company of fifty-one is counted whole where the one read keeps twenty (RM33 (a); the review’s bed 1)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    for (let index = 0; index < 51; index += 1) {
+      await deployEmployee(harness, {
+        name: `Employee ${index + 1}`,
+        deployedAt: 1_000 + index,
+        charterApprovedAt: 61_000 + index,
+        decisions: [
+          {
+            requestedAt: 100_000,
+            decidedAt: 101_000 + index * 1_000,
+            via: 'dashboard',
+            outcome: 'approved',
+          },
+        ],
+      });
+    }
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect([whole.company.employees, whole.omittedEmployees]).toEqual([51, 0]);
+    expect(whole.employees.map((row) => row.name)).toEqual(
+      Array.from({ length: 51 }, (_, index) => `Employee ${index + 1}`),
+    );
+    // One manager's distribution over every decision of every employee: waits of 1 s to 51 s.
+    expect(whole.company.decisions).toMatchObject({ approved: 51, medianLatencyMs: 26_000 });
+    expect(whole.company.charter.approvedEmployees).toBe(51);
+    expect(whole.company.charter.timesToFirstApprovedMs).toHaveLength(51);
+    // The read a card subscribes to stays bounded, and says how many it left out.
+    const bounded = await companyFigures(harness);
+    expect([bounded.company.employees, bounded.omittedEmployees]).toEqual([20, 31]);
+  });
+
+  it('answers by pages exactly what the one read answers for a company it covers: a handed-over employee within the spans, an evaluation agent set aside', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const ids: Id<'agents'>[] = [];
+    for (const spec of THREE_EMPLOYEES) ids.push(await deployEmployee(harness, spec));
+    await deployEmployee(harness, {
+      name: 'Day0 evaluation 1',
+      bossEmail: 'eval-day0-r1-1760000000000@day0.local',
+      deployedAt: 4_000,
+    });
+    // Seven more than one page of employees holds, and one handed to another manager.
+    for (let index = 0; index < 7; index += 1) {
+      await deployEmployee(harness, { name: `Later ${index + 1}`, deployedAt: 5_000 + index });
+    }
+    await handOver(harness, ids[0]!, 111_000);
+
+    const whole = await wholeCompanyFigures(harness);
+
+    expect(whole).toEqual(await companyFigures(harness));
+    expect(whole.excludedAgents).toBe(1);
+    expect(whole.employees.map((row) => row.name)).toContain('Priya');
+  });
+
+  it('refuses a caller with no identity the figures by pages', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(harness.action(api.metrics.forOwnerByPages, {})).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
 });
 
 describe('handoversFromTransfers', (): void => {
