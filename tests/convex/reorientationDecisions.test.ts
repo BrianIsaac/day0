@@ -4,6 +4,7 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { openCards } from '../../convex/reorientation';
+import { proposalFingerprint } from '../../src/agent/reorientation-words';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
 import {
@@ -1027,6 +1028,44 @@ describe('approve: the proposal applied through its target', (): void => {
           .first(),
     );
     expect(page?.status).toBeUndefined();
+  });
+
+  it('refuses Approve on a proposal that moved since the page drew it, and approves what was shown (W16-R24)', async (): Promise<void> => {
+    // The review's W16-R24: `approve` took only the card's id, so a Discuss finish in another tab
+    // swapped the proposal under an Approve.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const shown = { kind: 'none' as const, rationale: 'Nothing needs to change.' };
+    const reorientationId = await proposedCard(harness, agentId, shown);
+    // Another tab's talk finishes: the card now proposes a scope.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(reorientationId, {
+        proposed: {
+          kind: 'scope',
+          scope: 'linear:write',
+          action: 'grant',
+          rationale: 'The manager said to grant it.',
+        },
+      });
+    });
+    const owner = harness.withIdentity(OWNER);
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, {
+        reorientationId,
+        shown: proposalFingerprint(shown),
+      }),
+    ).rejects.toThrow(
+      'The proposal changed while this card was open. Read it again, then approve.',
+    );
+    expect((await cardOf(harness, reorientationId)).status).toBe('open');
+    expect(await payloadsOf(harness, agentId, 'permission.granted')).toEqual([]);
+    const now = (await cardOf(harness, reorientationId)).proposed;
+    await expect(
+      owner.mutation(api.reorientationDecisions.approve, {
+        reorientationId,
+        shown: proposalFingerprint(now),
+      }),
+    ).resolves.toEqual({ result: 'access “linear:write” was granted' });
   });
 
   it('refuses a card with nothing proposed yet, a decided card, and a stranger', async (): Promise<void> => {

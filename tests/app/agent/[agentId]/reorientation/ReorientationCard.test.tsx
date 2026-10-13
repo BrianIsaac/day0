@@ -46,6 +46,7 @@ import {
 } from '../../../../../app/agent/[agentId]/reorientation/ReorientationCard';
 import { ReorientationView } from '../../../../../app/agent/[agentId]/reorientation/ReorientationView';
 import { AgentZoneContext } from '../../../../../app/components/time';
+import { proposalFingerprint } from '../../../../../src/agent/reorientation-words';
 import { asEmployee } from '../../../../fixtures/dom/employee';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { mount, press, said, typeInto } from '../../../../fixtures/dom/press';
@@ -198,7 +199,11 @@ describe('a reorientation card', (): void => {
     await press(view.container, 'Dismiss');
     expect(said(view.container).at(-1)).toBe('Dismissed: nothing changed.');
     expect(backend.calls).toEqual([
-      { name: 'reorientationDecisions:approve', args: { reorientationId: 'card-1' } },
+      // Approve carries what the card showed (17-O; W16-R24): the proposal's own fields.
+      {
+        name: 'reorientationDecisions:approve',
+        args: { reorientationId: 'card-1', shown: proposalFingerprint(BASE.card.proposed) },
+      },
       { name: 'reorientationDecisions:defer', args: { reorientationId: 'card-1' } },
       { name: 'reorientationDecisions:dismiss', args: { reorientationId: 'card-1' } },
     ]);
@@ -454,8 +459,9 @@ describe('a reorientation card', (): void => {
     const view = drawn(
       withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timed out' } }),
     );
+    // Re-taken (17-O; W16-R23, section 7): the reason is said and Discuss is named as a way on.
     expect(view.container.textContent).toContain(
-      'Mira could not work out a proposal for this change. Nothing changes unless you act: dismiss the card, or amend the charter yourself.',
+      'Mira could not work out a proposal (timed out). Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
     );
     await floor(view.container);
     view.unmount();

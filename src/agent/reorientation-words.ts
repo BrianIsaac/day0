@@ -271,9 +271,49 @@ export function pendingWords(name: string, held: HeldCounts): string {
   return `${opening} Nothing is held while it does.`;
 }
 
-/** What a card says when the judgement could not propose: the card stays, and Dismiss is the way on. */
-export function failedProposalWords(name: string): string {
-  return `${name} could not work out a proposal for this change. Nothing changes unless you act: dismiss the card, or amend the charter yourself.`;
+/** What the sweep stores on a card whose proposal stayed pending with nothing said (W16-R23). */
+export const PROPOSAL_DID_NOT_FINISH = 'did not finish';
+
+/**
+ * What a card says when the judgement could not propose (section 7): the card stays, and the ways
+ * on are named, Discuss first. "{name} could not work out a proposal ({reason}). Nothing changes
+ * unless you act: talk it through with {name}, dismiss the card, or amend the charter yourself."
+ * A judgement that never finished says so in place of a reason.
+ *
+ * @param failure - The stored reason, when there is one.
+ */
+export function failedProposalWords(name: string, failure?: string): string {
+  const reason = failure?.trim().replace(/[.!?]+$/u, '');
+  const opening =
+    reason === PROPOSAL_DID_NOT_FINISH
+      ? `${name} did not finish working out a proposal.`
+      : reason === undefined || reason === ''
+        ? `${name} could not work out a proposal for this change.`
+        : `${name} could not work out a proposal (${reason}).`;
+  return `${opening} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
+}
+
+/** Why Approve was refused for a card whose proposal changed since the page drew it (W16-R24). */
+export const PROPOSAL_CHANGED =
+  'The proposal changed while this card was open. Read it again, then approve.';
+
+/**
+ * A proposal as one string, the same for the same proposal whatever order its fields are stored
+ * in: what the page sends back with Approve, so a talk's finish in another tab cannot put another
+ * proposal under the press (W16-R24).
+ */
+export function proposalFingerprint(proposed: unknown): string {
+  const ordered = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : typeof value === 'object' && value !== null
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+              .map(([key, entry]) => [key, ordered(entry)]),
+          )
+        : value;
+  return JSON.stringify(ordered(proposed));
 }
 
 /**

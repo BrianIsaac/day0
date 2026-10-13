@@ -41,6 +41,46 @@ export type ProposalOutcome =
 /** The most of a failure's reason a card keeps. */
 const FAILURE_CHARS = 300;
 
+/** What a card's judgement reads and writes of its card, as the action reaches the store. */
+export interface ProposalStore {
+  /** The card as the judgement reads it, or null when it is decided, gone or already proposed. */
+  read(): Promise<{ readonly input: ProposalInput; readonly basis: string } | null>;
+  /** Write the proposal onto the card the judgement read. */
+  write(proposed: JudgedProposal, basis: string): Promise<void>;
+  /** Record that no proposal could be had, with why. */
+  fail(reason: string, basis: string | undefined): Promise<void>;
+}
+
+/**
+ * Ask what one card proposes and write the answer, recording a failure for anything that goes
+ * wrong on the way (W16-R23): a judgement the model could not give, and also a read or a write
+ * that throws, which once left the card pending for good with nothing said.
+ *
+ * @param store - The card's store.
+ * @param call - The model call; the deployment's client unless a test injects one.
+ * @returns What became of the card's proposal.
+ */
+export async function proposeOnCard(
+  store: ProposalStore,
+  call?: ProposalJudgementCall,
+): Promise<'proposed' | 'failed' | 'nothing'> {
+  let basis: string | undefined;
+  try {
+    const read = await store.read();
+    if (read === null) return 'nothing';
+    basis = read.basis;
+    const judged = await judgeProposal(read.input, call);
+    if (judged.outcome === 'proposed') {
+      await store.write(judged.proposed, read.basis);
+      return 'proposed';
+    }
+    await store.fail(judged.reason, basis);
+  } catch (err: unknown) {
+    await store.fail(safeFailureMessage(err, '', 'the judgement failed', FAILURE_CHARS), basis);
+  }
+  return 'failed';
+}
+
 /**
  * Ask what one card proposes.
  *

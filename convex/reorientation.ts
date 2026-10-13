@@ -36,6 +36,7 @@ import {
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
 import {
+  PROPOSAL_DID_NOT_FINISH,
   approvedResultWords,
   closedByHandSummary,
   conflictQuestionText,
@@ -1385,32 +1386,81 @@ export const writeProposal = internalMutation({
  * a join changed since is not recorded: the join's own judgement answers for it.
  */
 export const recordProposalFailure = internalMutation({
-  args: { reorientationId: v.id('reorientations'), failure: v.string(), basis: v.string() },
+  args: {
+    reorientationId: v.id('reorientations'),
+    failure: v.string(),
+    /** What the judgement read; absent when it failed before it read the card (W16-R23). */
+    basis: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<void> => {
     const card = await ctx.db.get(args.reorientationId);
     if (card === null || card.proposed.kind !== 'pending') return;
-    if (proposalBasis(card) !== args.basis) return;
+    if (args.basis !== undefined && proposalBasis(card) !== args.basis) return;
     await ctx.db.patch(card._id, {
       proposed: { kind: 'pending', failedAt: Date.now(), failure: args.failure },
     });
   },
 });
 
+/** How long a card's proposal may stay pending before the sweep says it did not finish. */
+export const PROPOSAL_PENDING_MS = 10 * 60_000;
+
+/** The newest open cards the sweep reads for a proposal that never finished. */
+const PENDING_SWEEP_READ = 200;
+
+/**
+ * Mark failed every open card whose proposal has been pending past `PROPOSAL_PENDING_MS` with
+ * nothing said (W16-R23): an action killed, or a failure that could not be recorded, left such a
+ * card waiting for good. A judgement that answers after all still writes its proposal.
+ *
+ * @returns How many cards were marked.
+ */
+async function failStalePending(ctx: MutationCtx, now: number): Promise<number> {
+  const open = await ctx.db
+    .query('reorientations')
+    .withIndex('by_status_revisit', (q) => q.eq('status', 'open'))
+    .order('desc')
+    .take(PENDING_SWEEP_READ);
+  let marked = 0;
+  for (const card of open) {
+    if (card.proposed.kind !== 'pending' || card.proposed.failedAt !== undefined) continue;
+    if (card.createdAt > now - PROPOSAL_PENDING_MS) continue;
+    await ctx.db.patch(card._id, {
+      proposed: { kind: 'pending', failedAt: now, failure: PROPOSAL_DID_NOT_FINISH },
+    });
+    marked += 1;
+  }
+  return marked;
+}
+
 /**
  * Open again every deferred card whose date has come (A21), up to a bound a run: the Defer sweep,
- * run every fifteen minutes through `crons.runScheduledJob`. Internal. Writes
- * `reorientation.reopened`.
+ * run every fifteen minutes through `crons.runScheduledJob`. A card that opens again with nothing
+ * proposed, pending or failed, is asked for its proposal again; and an open card whose proposal
+ * has been pending ten minutes with nothing said is marked as not finished (W16-R23). Internal.
+ * Writes `reorientation.reopened`.
  */
 export const reopenDeferred = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ reopened: number }> => {
+  handler: async (ctx): Promise<{ reopened: number; stale?: number }> => {
     const now = Date.now();
+    const stale = await failStalePending(ctx, now);
     const due = await ctx.db
       .query('reorientations')
       .withIndex('by_status_revisit', (q) => q.eq('status', 'deferred').lte('revisitAt', now))
       .take(REOPEN_READ);
+    let asked = 0;
     for (const card of due) {
-      await ctx.db.patch(card._id, { status: 'open' });
+      await ctx.db.patch(card._id, {
+        status: 'open',
+        ...(card.proposed.kind === 'pending' ? { proposed: { kind: 'pending' as const } } : {}),
+      });
+      if (card.proposed.kind === 'pending') {
+        await ctx.scheduler.runAfter(judgeAfterMs(asked), internal.reorientationActions.propose, {
+          reorientationId: card._id,
+        });
+        asked += 1;
+      }
       await appendEvent(ctx, {
         agentId: card.agentId,
         type: 'reorientation.reopened',
@@ -1422,6 +1472,6 @@ export const reopenDeferred = internalMutation({
         createdAt: now,
       });
     }
-    return { reopened: due.length };
+    return { reopened: due.length, ...(stale > 0 ? { stale } : {}) };
   },
 });

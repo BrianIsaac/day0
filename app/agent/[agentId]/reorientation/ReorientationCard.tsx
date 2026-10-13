@@ -14,6 +14,7 @@ import {
   failedProposalWords,
   heldWords,
   pendingWords,
+  proposalFingerprint,
   sentenceOf,
   revisitDay,
 } from '@/agent/reorientation-words';
@@ -321,7 +322,7 @@ export function ReorientationCard({
             {proposed.kind === 'pending' ? (
               <p>
                 {proposed.failedAt !== undefined
-                  ? failedProposalWords(name)
+                  ? failedProposalWords(name, proposed.failure)
                   : pendingWords(name, held)}
               </p>
             ) : (
@@ -344,10 +345,13 @@ export function ReorientationCard({
                 size="large"
                 disabled={change.busy || proposed.kind === 'pending'}
                 onClick={() =>
-                  change.run(() => approve({ reorientationId }), {
-                    done: (outcome) => `Approved: ${outcome.result}.`,
-                    refused: 'The card was not approved.',
-                  })
+                  change.run(
+                    () => approve({ reorientationId, shown: proposalFingerprint(proposed) }),
+                    {
+                      done: (outcome) => `Approved: ${outcome.result}.`,
+                      refused: 'The card was not approved.',
+                    },
+                  )
                 }
               >
                 Approve

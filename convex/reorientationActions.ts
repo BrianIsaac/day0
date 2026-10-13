@@ -4,7 +4,7 @@ import { v } from 'convex/values';
 import { internalAction } from './_generated/server';
 import { internal } from './_generated/api';
 import { log } from '../src/lib/logger';
-import { judgeProposal } from '../src/agent/reorientation-judgement';
+import { proposeOnCard } from '../src/agent/reorientation-judgement';
 
 /*
  * The reorientation card's judgement (wave 16, 16-O; decision O-2): a trigger's writer is a
@@ -14,32 +14,34 @@ import { judgeProposal } from '../src/agent/reorientation-judgement';
  */
 
 /**
- * Ask what one card proposes and write it onto the card; a failed judgement, or a reply that
- * names what the card does not hold, leaves the card open with nothing proposed and says why.
- * Internal; scheduled by `openCard`.
+ * Ask what one card proposes and write it onto the card; a failed judgement, a reply that names
+ * what the card does not hold, or a read or write that throws (W16-R23) leaves the card open with
+ * nothing proposed and says why. Internal; scheduled where a card opens or is asked again.
  */
 export const propose = internalAction({
   args: { reorientationId: v.id('reorientations') },
   handler: async (ctx, args): Promise<void> => {
-    const read = await ctx.runQuery(internal.reorientation.proposalInput, args);
-    if (read === null) return;
-    const judged = await judgeProposal(read.input);
-    if (judged.outcome === 'unavailable') {
-      log.warn('reorientation: the proposal judgement failed', {
-        reorientationId: args.reorientationId,
-        reason: judged.reason,
-      });
-      await ctx.runMutation(internal.reorientation.recordProposalFailure, {
-        reorientationId: args.reorientationId,
-        failure: judged.reason,
-        basis: read.basis,
-      });
-      return;
-    }
-    await ctx.runMutation(internal.reorientation.writeProposal, {
-      reorientationId: args.reorientationId,
-      proposed: judged.proposed,
-      basis: read.basis,
+    const { reorientationId } = args;
+    await proposeOnCard({
+      read: async () => await ctx.runQuery(internal.reorientation.proposalInput, args),
+      write: async (proposed, basis) => {
+        await ctx.runMutation(internal.reorientation.writeProposal, {
+          reorientationId,
+          proposed,
+          basis,
+        });
+      },
+      fail: async (failure, basis) => {
+        log.warn('reorientation: the proposal judgement failed', {
+          reorientationId,
+          reason: failure,
+        });
+        await ctx.runMutation(internal.reorientation.recordProposalFailure, {
+          reorientationId,
+          failure,
+          ...(basis !== undefined ? { basis } : {}),
+        });
+      },
     });
   },
 });

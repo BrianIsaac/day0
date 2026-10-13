@@ -8,9 +8,12 @@ import {
   decidedElsewhereOf,
   decidedElsewhereWords,
   decisionWords,
+  failedProposalWords,
   heldWords,
   pendingWords,
+  proposalFingerprint,
   sentenceOf,
+  PROPOSAL_DID_NOT_FINISH,
 } from '../../../src/agent/reorientation-words';
 
 describe('the reorientation card’s words (section 7, RM24)', (): void => {
@@ -109,6 +112,40 @@ const SAME_TITLED = [
   { title: 'Close escalation window', source: 'Policies folder' },
   { title: 'Close escalation window', source: 'Revops folder' },
 ] as const;
+
+describe('a judgement that failed, and an Approve of what the manager was shown (17-O; W16-R23, W16-R24)', (): void => {
+  it('names the ways on from a failed judgement, Discuss first, with its reason or that it did not finish', (): void => {
+    const ways =
+      'Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
+    expect(failedProposalWords('Mira', 'timed out.')).toBe(
+      `Mira could not work out a proposal (timed out). ${ways}`,
+    );
+    expect(failedProposalWords('Mira', PROPOSAL_DID_NOT_FINISH)).toBe(
+      `Mira did not finish working out a proposal. ${ways}`,
+    );
+    expect(failedProposalWords('Mira')).toBe(
+      `Mira could not work out a proposal for this change. ${ways}`,
+    );
+  });
+
+  it('gives one proposal one fingerprint whatever order its fields are stored in, and another proposal another', (): void => {
+    const shown = { kind: 'relationship', action: 'retire', relationshipId: 'e1', rationale: 'r' };
+    expect(
+      proposalFingerprint({
+        rationale: 'r',
+        relationshipId: 'e1',
+        action: 'retire',
+        kind: 'relationship',
+      }),
+    ).toBe(proposalFingerprint(shown));
+    expect(proposalFingerprint({ ...shown, action: 'edit' })).not.toBe(proposalFingerprint(shown));
+    expect(
+      proposalFingerprint({ kind: 'charter-change', changes: [{ index: 1, field: 'willDo' }] }),
+    ).toBe(
+      proposalFingerprint({ changes: [{ field: 'willDo', index: 1 }], kind: 'charter-change' }),
+    );
+  });
+});
 
 describe('a card decided on another employee’s card, and one closed at a handover (17-O)', (): void => {
   it('stores whose card decided it and what that did, and reads both back for the card’s line', (): void => {

@@ -9,6 +9,7 @@ import {
   INLINE_CARDS_PER_TRANSACTION,
   JUDGEMENTS_AT_ONCE,
   JUDGEMENT_STAGGER_MS,
+  PROPOSAL_PENDING_MS,
   continueCardChain,
   heldByReorientation,
   openCard,
@@ -681,6 +682,66 @@ describe('reopenDeferred: the Defer sweep', (): void => {
     expect((await cardOf(harness, due)).status).toBe('open');
     expect((await cardOf(harness, later)).status).toBe('deferred');
     expect((await eventTypesOf(harness, agentId)).at(-1)).toBe('reorientation.reopened');
+    // The card opened again with nothing proposed: its proposal is asked for again.
+    expect(
+      (await scheduledAs(harness, 'reorientationActions:propose')).filter(
+        (job) => (job.args[0] as { reorientationId: string }).reorientationId === due,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('marks failed a card whose proposal has been pending ten minutes with nothing said, and no card before that (W16-R23)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    vi.setSystemTime(MORNING_UTC);
+    const stuck = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-1',
+      summary: 'A skill is due a re-check',
+      now: MORNING_UTC,
+    }))!;
+    const failedAlready = (await openTestCard(harness, {
+      agentId,
+      trigger: 'access-ended',
+      triggerKey: 'event-2',
+      summary: 'Linear access ended',
+      now: MORNING_UTC,
+    }))!;
+    await harness.mutation(internal.reorientation.recordProposalFailure, {
+      reorientationId: failedAlready,
+      failure: 'timed out',
+    });
+    // A failure recorded with no basis, as one before the card was read is, marks the card.
+    expect((await cardOf(harness, failedAlready)).proposed).toMatchObject({
+      kind: 'pending',
+      failure: 'timed out',
+    });
+    vi.setSystemTime(MORNING_UTC + PROPOSAL_PENDING_MS - 1);
+    await expect(harness.mutation(internal.reorientation.reopenDeferred, {})).resolves.toEqual({
+      reopened: 0,
+    });
+    vi.setSystemTime(MORNING_UTC + PROPOSAL_PENDING_MS);
+    await expect(harness.mutation(internal.reorientation.reopenDeferred, {})).resolves.toEqual({
+      reopened: 0,
+      stale: 1,
+    });
+    expect((await cardOf(harness, stuck)).proposed).toEqual({
+      kind: 'pending',
+      failedAt: MORNING_UTC + PROPOSAL_PENDING_MS,
+      failure: 'did not finish',
+    });
+    expect((await cardOf(harness, failedAlready)).proposed).toMatchObject({ failure: 'timed out' });
+    // A judgement that answers after all still writes its proposal over the mark.
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: stuck,
+      proposed: { kind: 'none', rationale: 'Nothing needs to change.' },
+      basis: await basisOf(harness, stuck),
+    });
+    expect((await cardOf(harness, stuck)).proposed).toEqual({
+      kind: 'none',
+      rationale: 'Nothing needs to change.',
+    });
   });
 });
 
