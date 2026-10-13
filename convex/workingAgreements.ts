@@ -1207,30 +1207,54 @@ async function owedChecksOf(
   return owing;
 }
 
+/** What every agreement's last check against one employee's charter is read from. */
+interface LastChecks {
+  /** When the charter the employee's newest approved one amends was approved. */
+  readonly amendedAt: number;
+  /** When each agreement an `agreement.checked` names was last checked, by the agreement's id. */
+  readonly checkedAt: ReadonlyMap<string, number>;
+}
+
+/**
+ * An established employee's last checks: its charters and its newest `agreement.checked` events,
+ * read once for every agreement a settle records (W16-R31: read once an agreement, two hundred
+ * agreements scanned about thirty thousand documents in one transaction). Undefined for an
+ * employee on its first approved charter, or none, whose agreements were never checked against an
+ * earlier one (`hasEarlierApprovedCharter`).
+ */
+async function lastChecksOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<LastChecks | undefined> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  const amended = versions.filter((charter) => charter.approved)[1];
+  if (amended === undefined) return undefined;
+  const checked = await eventsOfType(ctx, agentId, 'agreement.checked')
+    .order('desc')
+    .take(OWED_EVENTS_READ);
+  const checkedAt = new Map<string, number>();
+  // Newest first, so the first event that names an agreement is its last check.
+  for (const event of checked) {
+    const named = agreementNamed(event);
+    if (named !== undefined && !checkedAt.has(named)) checkedAt.set(named, event.createdAt);
+  }
+  return { amendedAt: amended.approvedAt ?? amended.createdAt, checkedAt };
+}
+
 /**
  * When an agreement for every employee was last checked against an employee's charter: as it took
  * effect (its own check read every charter then), or at the approval of the charter the newest
  * amends (whose check read every agreement then), or at a check of it since, whichever is latest.
  */
-async function lastCheckedAt(
-  ctx: Pick<QueryCtx, 'db'>,
-  agreement: Doc<'workingAgreements'>,
-  agentId: Id<'agents'>,
-): Promise<number> {
-  const [versions, checked] = await Promise.all([
-    ctx.db
-      .query('charters')
-      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-      .order('desc')
-      .take(CHARTER_VERSIONS),
-    eventsOfType(ctx, agentId, 'agreement.checked').order('desc').take(OWED_EVENTS_READ),
-  ]);
-  const amended = versions.filter((charter) => charter.approved)[1];
-  const lastCheck = checked.find((event) => agreementNamed(event) === agreement._id);
+function lastCheckedAt(agreement: Doc<'workingAgreements'>, checks: LastChecks): number {
   return Math.max(
     agreement.effectiveFrom ?? agreement.approvedAt ?? agreement.createdAt,
-    amended?.approvedAt ?? amended?.createdAt ?? 0,
-    lastCheck?.createdAt ?? 0,
+    checks.amendedAt,
+    checks.checkedAt.get(agreement._id) ?? 0,
   );
 }
 
@@ -1254,7 +1278,8 @@ export const settleUncheckable = internalMutation({
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (userId === undefined) return null;
-    const established = await hasEarlierApprovedCharter(ctx, args.agentId);
+    const checks = await lastChecksOf(ctx, args.agentId);
+    const established = checks !== undefined;
     const owed = established ? await owedChecksOf(ctx, args.agentId) : new Map<string, number>();
     const held = established
       ? new Set<Id<'workingAgreements'>>()
@@ -1275,7 +1300,7 @@ export const settleUncheckable = internalMutation({
         payload: {
           agreementId: row._id,
           everyEmployee: true,
-          since: await lastCheckedAt(ctx, row, args.agentId),
+          since: lastCheckedAt(row, checks),
         },
         createdAt: now,
       });
