@@ -745,9 +745,9 @@ interface PilotTotals {
   /** Of the reused runs, those of a skill adopted from another employee (A14). */
   adopted: number;
   toEnd: number[];
-  /** From the ask to the first completion, of the items whose run answered done. */
+  /** From the ask to the completion counted, of the items whose run answered done. */
   toCompletion: number[];
-  /** The items whose first completion answered partly done (RM23 (a)). */
+  /** The items whose completion counted answered partly done (RM23 (a)). */
   partlyDone: number;
   answered: number;
   amended: number;
@@ -818,12 +818,11 @@ function pilotTotals(
   let reused = 0;
   let adopted = 0;
   const standingEnd = new Map<string, number>();
+  // The completion each item's answer is read from: its first, or its first since the manager
+  // last sent it back. Done answers by when they finished; partly done ones named beside them.
   const firstCompletion = new Map<string, number>();
-  // Every item's first completion, whatever its run answered: a later one is not the first.
   const completedOnce = new Set<string>();
-  // Items whose first completion answered not done, which a Retry may yet finish (W16-R17).
-  const notDoneFirst = new Set<string>();
-  let partlyDone = 0;
+  const partlyFinished = new Set<string>();
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
@@ -874,9 +873,13 @@ function pilotTotals(
     // anyway") did not end the item; its next end is the one that stands.
     if (isEventOf(event, 'work.retry') && workItemId) {
       standingEnd.delete(workItemId);
-      // A not-done answer Retry sent back did not finish the item either: the completion that
-      // follows is the one the cycle time reads (W16-R17).
-      if (notDoneFirst.delete(workItemId)) completedOnce.delete(workItemId);
+      // A send-back takes the item's answer back with its end, whatever the answer was: the
+      // completion that follows is the one the figures read, as the Work tab reads the item's
+      // latest answer (W16-R17's not-done first; the v0.20.0 walk's finding 4, where a partly-done
+      // item sent back and finished stayed "1 partly done" on the home beside "Done 3" on the tab).
+      completedOnce.delete(workItemId);
+      firstCompletion.delete(workItemId);
+      partlyFinished.delete(workItemId);
       continue;
     }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
@@ -887,8 +890,7 @@ function pilotTotals(
         // completion the cycle time measures; a partly done one is named beside it.
         const answer = finishedAnswerOf(event.payload.output);
         if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
-        else if (answer === 'partial') partlyDone += 1;
-        else notDoneFirst.add(workItemId);
+        else if (answer === 'partial') partlyFinished.add(workItemId);
       }
       continue;
     }
@@ -924,7 +926,7 @@ function pilotTotals(
     adopted,
     toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
-    partlyDone,
+    partlyDone: partlyFinished.size,
     answered,
     amended,
     cards,

@@ -2529,6 +2529,67 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       medianToCompletionMs: 8_000,
     });
   });
+
+  /** A manager sending a finished item back with a note, as the v0.20.0 walk's Nell was sent. */
+  const sentBack = (workItemId: string, at: number): Doc<'events'> =>
+    event(
+      'work.retry',
+      {
+        workItemId,
+        resumeState: 'plan-approved',
+        fromState: 'completed',
+        feedback: 'There is no ticket to record it on; say so and finish.',
+      },
+      at,
+    );
+
+  it('counts a partly-done answer sent back and finished as done, once, as the Work tab reads it (the v0.20.0 walk’s finding 4)', (): void => {
+    // Nell's docs item on the walk: "Partly done, in Nell's own words", sent back with a note,
+    // then LANDED. The Work tab read "Done 3"; the home still "(2 done, 1 partly done)".
+    const partly = {
+      workDone: 'partial',
+      workDoneWhy: 'The ticket record has no ticket to land on.',
+    };
+    const done = { workDone: 'done', workDoneWhy: 'The thread reply and the recap are sent.' };
+    const events = [
+      event('work.discovered', { workItemId: 'n' }, 1_000),
+      event('work.completed', { workItemId: 'n', output: partly }, 5_000),
+      sentBack('n', 6_000),
+      event('work.completed', { workItemId: 'n', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('n')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
+
+  it('counts an item by the answer it finished with last, whichever way a send-back went', (): void => {
+    const done = { workDone: 'done', workDoneWhy: 'Posted.' };
+    const partly = { workDone: 'partial', workDoneWhy: 'One of two posted.' };
+    const events = [
+      // Done, sent back, then partly done: partly done, as its card now says.
+      event('work.discovered', { workItemId: 'a' }, 1_000),
+      event('work.completed', { workItemId: 'a', output: done }, 2_000),
+      sentBack('a', 3_000),
+      event('work.completed', { workItemId: 'a', output: partly }, 4_000),
+      // Done, sent back and still running: finished by no answer yet, as the Work tab shows it.
+      event('work.discovered', { workItemId: 'b' }, 1_000),
+      event('work.completed', { workItemId: 'b', output: done }, 2_000),
+      sentBack('b', 3_000),
+      // Done and never sent back.
+      event('work.discovered', { workItemId: 'c' }, 1_000),
+      event('work.completed', { workItemId: 'c', output: done }, 7_000),
+    ];
+    const items = [item('a'), item('b', { state: 'executing' }), item('c')];
+    expect(computeAgentMetrics(events, items, []).pilot.cycleTime).toMatchObject({
+      ended: 2,
+      completed: 1,
+      partlyDone: 1,
+      medianToCompletionMs: 6_000,
+    });
+  });
 });
 
 describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {

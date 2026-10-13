@@ -6,7 +6,7 @@ import type { QueryCtx } from './_generated/server';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
 import { needsYouOfEmployee } from './needsYou';
-import { isEvaluationAgent } from './metrics';
+import { byWriteOrder, isEvaluationAgent } from './metrics';
 import {
   holdsLiveStepClaim,
   isManagerChannel,
@@ -104,9 +104,12 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
  * counted once, on the day it first completed within the month: landed when
  * that completion's run answered done, partly done when it answered so, and
  * neither when it answered not done (RM23 (a); `finishedAnswerOf`, the one
- * reading the card, the Work tab and the cycle time take). Reads the month's
- * `work.completed` events by the type index, from the month's first midnight
- * on, and dates each by the instant it was logged.
+ * reading the card, the Work tab and the cycle time take). An item the manager
+ * sent back is counted by the completion that followed, or not at all while
+ * none has, as the Work tab reads its latest answer (the v0.20.0 walk's
+ * finding 4). Reads the month's `work.completed` and `work.retry` events by
+ * the type index, from the month's first midnight on, and dates each by the
+ * instant it was logged.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -122,17 +125,27 @@ async function landedThisMonth(
   const monthStart = dayStart(`${month}-01`, zone);
   // Newest first, so a month past the bound still shows its latest days, today among them;
   // one more than the bound is read to tell a full month from a longer one.
-  const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
-    .order('desc')
-    .take(MONTH_LANDED_READ_LIMIT + 1);
+  const [read, sentBack] = await Promise.all([
+    eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
+      .order('desc')
+      .take(MONTH_LANDED_READ_LIMIT + 1),
+    eventsOfType(ctx, agent._id, 'work.retry', { from: monthStart })
+      .order('desc')
+      .take(MONTH_LANDED_READ_LIMIT),
+  ]);
   const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
-  for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
-    if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
+  // Oldest first: each item keeps the first completion that did the work, in whole or in part,
+  // since it was last sent back; a not-done answer lands nothing (W16-R17).
+  for (const event of [...read.slice(0, MONTH_LANDED_READ_LIMIT), ...sentBack].sort(byWriteOrder)) {
+    if (event.createdAt < monthStart) continue;
+    if (isEventOf(event, 'work.retry')) {
+      firstFinished.delete(event.payload.workItemId);
+      continue;
+    }
+    if (!isEventOf(event, 'work.completed')) continue;
     const workItemId: unknown = event.payload.workItemId;
     const answer = finishedAnswerOf(event.payload.output);
-    // Read newest first, so the last completion kept per item is its first in the month that did
-    // the work, in whole or in part; a not-done answer Retry sent back lands nothing (W16-R17).
-    if (typeof workItemId === 'string' && answer !== 'not-done') {
+    if (typeof workItemId === 'string' && answer !== 'not-done' && !firstFinished.has(workItemId)) {
       firstFinished.set(workItemId, { at: event.createdAt, answer });
     }
   }
