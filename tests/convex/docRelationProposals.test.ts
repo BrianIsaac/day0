@@ -1009,6 +1009,102 @@ describe('the candidates of a page in its own source (found on the 16-FD bed)', 
   });
 });
 
+describe('a duplicate beside the conflict of its pair (the joins’ W3d)', (): void => {
+  /** The joins' review-window pair: two folders' pages that give 2 and 5 working days. */
+  async function reviewWindows(harness: Harness): Promise<{ policies: Source; revops: Source }> {
+    const policies = await syncingSource(harness, 'Policies folder');
+    const revops = await syncingSource(harness, 'Revops folder');
+    const body = (days: number): string =>
+      [
+        '# Close review window',
+        '',
+        'How soon a Q3 close ticket in Linear is reviewed once its work is posted.',
+        '',
+        '## Review window',
+        '',
+        `A Q3 close ticket is reviewed within ${days} working days of its audit comment.`,
+        '',
+        '## Who reviews',
+        '',
+        'The revenue operations manager checks every close ticket.',
+      ].join('\n');
+    await storedPage(harness, policies, {
+      ref: 'close-review-window.md',
+      title: 'Close review window',
+      markdown: body(5),
+    });
+    await storedPage(harness, revops, {
+      ref: 'runbooks/close-review-window.md',
+      title: 'Close review window',
+      markdown: body(2),
+      updatedAt: 2,
+    });
+    return { policies, revops };
+  }
+
+  /** The duplicate 0.20.0's measure proposed for the pair, its differing line passed over. */
+  async function duplicateOf(
+    harness: Harness,
+    pair: { policies: Source; revops: Source },
+    status: 'proposed' | 'confirmed',
+  ): Promise<Id<'docRelations'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: pair.revops.sourceId, ref: 'runbooks/close-review-window.md' },
+          to: { sourceId: pair.policies.sourceId, ref: 'close-review-window.md' },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 63 }],
+          status,
+          createdAt: 1,
+          ...(status === 'confirmed' ? { decidedAt: 2 } : {}),
+        }),
+    );
+  }
+
+  it('proposes the pair as a conflict, and the duplicate nobody answered goes with it: one card a pair', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pair = await reviewWindows(harness);
+    await duplicateOf(harness, pair, 'proposed');
+    expect(await measure(harness, pair.revops, 'runbooks/close-review-window.md')).toBe(1);
+    expect(await relations(harness)).toMatchObject([
+      { kind: 'possible_conflict', status: 'proposed' },
+    ]);
+    // Measured again from the other page, the conflict is held and nothing more is written.
+    expect(await measure(harness, pair.policies, 'close-review-window.md')).toBe(0);
+    expect(await relations(harness)).toHaveLength(1);
+  });
+
+  it('leaves a duplicate the manager answered beside the conflict: "Keep both" is their answer', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pair = await reviewWindows(harness);
+    const kept = await duplicateOf(harness, pair, 'confirmed');
+    expect(await measure(harness, pair.revops, 'runbooks/close-review-window.md')).toBe(1);
+    expect(await relations(harness)).toMatchObject([
+      { _id: kept, kind: 'possible_duplicate', status: 'confirmed' },
+      { kind: 'possible_conflict', status: 'proposed' },
+    ]);
+  });
+
+  it('leaves the unanswered duplicate where the pair’s conflict was set aside, since no conflict card is drawn for it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const pair = await reviewWindows(harness);
+    expect(await measure(harness, pair.revops, 'runbooks/close-review-window.md')).toBe(1);
+    const [conflict] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: conflict._id,
+      decision: 'both-hold',
+    });
+    const duplicate = await duplicateOf(harness, pair, 'proposed');
+    expect(await measure(harness, pair.revops, 'runbooks/close-review-window.md')).toBe(0);
+    expect((await relations(harness)).map((row) => [row._id, row.status])).toEqual([
+      [conflict._id, 'dismissed'],
+      [duplicate, 'proposed'],
+    ]);
+  });
+});
+
 describe('a page whose measure throws (W16-R34)', (): void => {
   const DAY = DATED_SUCCESSOR_GAP_MS;
   const RUNBOOK = '# Zebra quartz runbook\n\nPress Refresh once and read back the zebra figure.';

@@ -240,7 +240,10 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * the same blocks. A conflict the manager set aside is proposed again only when the blocks that
  * disagree are other blocks, which is to say a page changed. A conflict whose own blocks no
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
- * left unanswered, it is a proposal nobody can answer, and is deleted here.
+ * left unanswered, it is a proposal nobody can answer, and is deleted here. A duplicate of the
+ * pair nobody answered goes when its conflict has, or is about to have, a card (the joins' W3d:
+ * the tab drew two cards for one pair); where the conflict was set aside it stays, the pair's
+ * one card.
  */
 export async function alreadyHeld(
   ctx: MutationCtx,
@@ -285,14 +288,24 @@ export async function alreadyHeld(
     proposed.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [],
   );
   let held = false;
+  // Whether a conflict of the pair is drawn on a card as it stands.
+  let drawn = false;
   for (const row of existing) {
     if (row.kind !== 'possible_conflict') continue;
     if (row.status === 'dismissed') {
       held ||= conflictBlocks(row).every((hash) => blocks.has(hash));
     } else if ((await disagreementOf(ctx, row)) !== undefined) {
       held = true;
+      drawn = true;
     } else if (row.status === 'proposed') {
       await ctx.db.delete(row._id);
+    }
+  }
+  if (!held || drawn) {
+    for (const row of existing) {
+      if (row.kind === 'possible_duplicate' && row.status === 'proposed') {
+        await ctx.db.delete(row._id);
+      }
     }
   }
   return held;

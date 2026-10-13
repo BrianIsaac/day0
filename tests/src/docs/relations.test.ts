@@ -231,6 +231,60 @@ describe('headingFigures', (): void => {
     );
     expect(headingFigures(a, b)).toEqual([]);
   });
+
+  /** Two pages that say one line under "Review window" with other figures. */
+  const window = (left: string, right: string): [MeasuredPage, MeasuredPage] => [
+    page(
+      'policies:review.md',
+      'Close review window',
+      `# Close review window\n\n## Review window\n\n${left}`,
+    ),
+    page(
+      'revops:review.md',
+      'Close review window',
+      `# Close review window\n\n## Review window\n\n${right}`,
+    ),
+  ];
+
+  it('reads a date word in a sentence that states a figure as part of the sentence: the joins’ review window is a conflict (W3c)', (): void => {
+    // The joins' walk: this pair was proposed a duplicate, "reviewed" passing its line over.
+    const [conflict, ...rest] = headingFigures(
+      ...window(
+        'A Q3 close ticket is reviewed within 2 working days of its audit comment.',
+        'A Q3 close ticket is reviewed within 5 working days of its audit comment.',
+      ),
+    );
+    expect(rest).toEqual([]);
+    expect(conflict).toMatchObject({ heading: 'Review window', left: '3 2', right: '3 5' });
+    for (const [left, right] of [
+      [
+        'A refund is effective within 3 working days.',
+        'A refund is effective within 5 working days.',
+      ],
+      ['Updated figures are posted by 9:00.', 'Updated figures are posted by 10:00.'],
+      ['As of the close, 2 approvers sign.', 'As of the close, 3 approvers sign.'],
+      ['退款在 3 个工作日内生效。', '退款在 5 个工作日内生效。'],
+    ]) {
+      expect(headingFigures(...window(left, right)), left).toHaveLength(1);
+    }
+  });
+
+  it('still passes over a date word beside a date, a date alone and a version beside its number (W3c)', (): void => {
+    for (const [left, right] of [
+      ['Last reviewed 3 October 2026.', 'Last reviewed 9 October 2026.'],
+      ['Reviewed on Oct 3, 2026 by the controller.', 'Reviewed on Oct 9, 2026 by the controller.'],
+      ['Effective from 1 January 2027.', 'Effective from 1 March 2027.'],
+      ['Updated 3/10/26.', 'Updated 9/10/26.'],
+      ['As of 2025.', 'As of 2026.'],
+      ['Copyright 2025 Kestrel Supply Co.', 'Copyright 2026 Kestrel Supply Co.'],
+      ['Synced 2026-10-01.', 'Synced 2026-10-09.'],
+      ['Revision 7.', 'Revision 8.'],
+      ['更新于 2026年10月3日。', '更新于 2026年10月9日。'],
+      ['版本 3', '版本 4'],
+    ]) {
+      expect(headingFigures(...window(left, right)), left).toEqual([]);
+    }
+  });
 });
 
 describe('measureRelation', (): void => {
