@@ -72,6 +72,8 @@ export async function standingWithPages(
   relation: Doc<'docRelations'> | null,
 ): Promise<
   | {
+      /** The relation's row, as the card draws its evidence and answers. */
+      relation: Doc<'docRelations'>;
       conflict: StandingConflict;
       from: Doc<'docPages'>;
       to: Doc<'docPages'>;
@@ -98,6 +100,7 @@ export async function standingWithPages(
   const trust = authorityOf(from, fromSource);
   if (trust !== authorityOf(to, toSource)) return undefined;
   return {
+    relation,
     trust,
     conflict: {
       relationId: relation._id,

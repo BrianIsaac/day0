@@ -12,8 +12,11 @@ import { clockTime } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
 import type { AnsweredRelation } from './RelationAnswered';
 
+/** One read of the relations' cards, as `docRelations.listOpen` answers it. */
+export type RelationCardsRead = FunctionReturnType<typeof api.docRelations.listOpen>;
+
 /** One relation the manager has still to answer, as `docRelations.listOpen` draws it. */
-export type RelationCardRow = FunctionReturnType<typeof api.docRelations.listOpen>[number];
+export type RelationCardRow = RelationCardsRead['cards'][number];
 
 /** The answers a relation's card may offer. */
 export type RelationAnswer = RelationCardRow['offered'][number];

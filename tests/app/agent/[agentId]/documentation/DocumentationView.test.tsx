@@ -17,11 +17,24 @@ const backend = vi.hoisted(() => ({
   results: {} as Record<string, unknown>,
   /** The decisions `docRelations:decide` refuses. */
   refusedDecisions: [] as string[],
+  /** What a later read of the confirmed conflicts answers, by its `conflictsBefore`. */
+  laterReads: {} as Record<number, unknown>,
+  /** Every later read asked for, by its `conflictsBefore`. */
+  readOn: [] as number[],
 }));
 
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
+  useQueries: (
+    queries: Record<string, { args: { conflictsBefore: number } }>,
+  ): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { args }]) => {
+        backend.readOn.push(args.conflictsBefore);
+        return [key, backend.laterReads[args.conflictsBefore]];
+      }),
+    ),
   usePaginatedQuery: (_reference: unknown, args: { sourceId: string }) => {
     backend.paged.push(args.sourceId);
     return {
@@ -55,6 +68,11 @@ import { axeViolations } from '../../../../fixtures/dom/axe';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 import { choose, mount, press, said, settle } from '../../../../fixtures/dom/press';
 import { MOCK_OFFICE_DOCUMENTATION } from '../../../../../src/surfaces/mock-office';
+
+/** One read of the relations' cards as `docRelations:listOpen` answers it: the cards, and where a later read goes on. */
+function read(cards: readonly unknown[], next: number | null = null): unknown {
+  return { cards, next };
+}
 
 /** Two linked sources, the second left out when the employee was deployed. */
 const SOURCES = [
@@ -196,6 +214,8 @@ afterEach((): void => {
   backend.paged = [];
   backend.calls = [];
   backend.results = {};
+  backend.laterReads = {};
+  backend.readOn = [];
   document.body.replaceChildren();
 });
 
@@ -293,7 +313,7 @@ describe('DocumentationView', () => {
   // every state the prototype draws (`agent-documentation.html`).
   it('draws trust for each source, each page’s status with who decided it, and a card for each relation still to answer', () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const text = view.container.textContent ?? '';
     // The Sources card says what trust is in the Trust select's own words, a weight and never a
@@ -337,6 +357,36 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('reads on from where a read stopped, so a confirmed conflict behind many settled ones has its card (W15-R19, F12)', () => {
+    populated();
+    // The first read draws the proposal and stops in the settled conflicts; the second passes
+    // over more of them; the third reaches the one that stands.
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[0]], 500);
+    backend.laterReads = { 500: read([], 200), 200: read([RELATIONS[1]]) };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('These two look like versions of the same runbook');
+    expect(text).toContain('disagree under “Thresholds”: 10,000 against 5,000');
+    expect([...new Set(backend.readOn)]).toEqual([500, 200]);
+    view.unmount();
+  });
+
+  it('reads no further once the cards hold as many confirmed conflicts as one read gives', () => {
+    populated();
+    const conflicts = Array.from({ length: 20 }, (_unused, n) => ({
+      ...RELATIONS[1],
+      _id: `conflict-${n}`,
+    }));
+    backend.queries['docRelations:listOpen'] = read(conflicts, 500);
+    backend.laterReads = { 500: read([{ ...RELATIONS[1], _id: 'conflict-later' }]) };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(backend.readOn).toEqual([]);
+    expect((view.container.textContent ?? '').split('disagree under “Thresholds”')).toHaveLength(
+      21,
+    );
+    view.unmount();
+  });
+
   it('changes a source’s trust from its row and says so', async () => {
     populated();
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
@@ -357,7 +407,7 @@ describe('DocumentationView', () => {
 
   it('records the manager’s answer on a relation’s card and on a conflict’s', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     await press(
       view.container,
@@ -375,9 +425,9 @@ describe('DocumentationView', () => {
 
   it('offers the versions card the other direction too, and records it reversed (W15-R45’s reverse button)', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = [RELATIONS[0]];
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[0]]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-    backend.queries['docRelations:listOpen'] = [];
+    backend.queries['docRelations:listOpen'] = read([]);
     await press(
       view.container,
       '“Escalation paths” (RevOps team wiki) supersedes “Escalation paths, draft v2” (How-to guides)',
@@ -397,11 +447,11 @@ describe('DocumentationView', () => {
 
   it('keeps a refused Undo’s line with the answer it was about, never under the next answer (W15-R47)', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     backend.refusedDecisions = ['undo'];
     try {
       const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-      backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+      backend.queries['docRelations:listOpen'] = read([RELATIONS[1]]);
       await press(
         view.container,
         '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
@@ -411,7 +461,7 @@ describe('DocumentationView', () => {
       await settle();
       expect(said(view.container)).toContain('The answer was not taken back.');
       // The next card's answer is a new "Your answer": the first one's refusal does not ride on it.
-      backend.queries['docRelations:listOpen'] = [];
+      backend.queries['docRelations:listOpen'] = read([]);
       await press(view.container, 'Both hold');
       await settle();
       expect(said(view.container)).not.toContain('The answer was not taken back.');
@@ -424,7 +474,7 @@ describe('DocumentationView', () => {
   it('says a proposed conflict between pages of unequal trust holds nothing, and offers no answer that would', () => {
     // The second pass's minor 3: the card promised a hold that the trust order never gives.
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       {
         ...RELATIONS[1],
         status: 'proposed',
@@ -432,7 +482,7 @@ describe('DocumentationView', () => {
         to: { ...RELATIONS[1].to, authority: 'team' },
         offered: ['from-is-right', 'to-is-right', 'both-hold'],
       },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const text = view.container.textContent ?? '';
     expect(text).toContain(
@@ -450,7 +500,7 @@ describe('DocumentationView', () => {
     // name, "These two look like versions of the same runbook", which a landmark list cannot
     // tell apart.
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       RELATIONS[0],
       {
         ...RELATIONS[0],
@@ -465,7 +515,7 @@ describe('DocumentationView', () => {
         from: { ...RELATIONS[1].from, title: 'Refund policy' },
         to: { ...RELATIONS[1].to, title: 'Refund runbook' },
       },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const names = [...view.container.querySelectorAll('section[aria-labelledby]')]
       .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
@@ -503,7 +553,7 @@ describe('DocumentationView', () => {
       updatedAt,
       edited: true,
     });
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       ...pairs.map(([one, other], index) => ({
         ...RELATIONS[0],
         _id: `relation-ops-${index}`,
@@ -518,7 +568,7 @@ describe('DocumentationView', () => {
         from: page('刷新看板', one, 2),
         to: page('刷新看板', other, 1),
       })),
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const names = [...view.container.querySelectorAll('section[aria-labelledby]')]
       .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
@@ -536,10 +586,10 @@ describe('DocumentationView', () => {
     // The second pass's major 1: a wrong "supersedes" left no control to undo it, and the card
     // took its own "done" line away with it.
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     // The answered relation leaves the cards the backend lists.
-    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[1]]);
     await press(
       view.container,
       '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
@@ -551,7 +601,7 @@ describe('DocumentationView', () => {
     expect(said(view.container)).toContain(
       '“Escalation paths, draft v2” now supersedes “Escalation paths”.',
     );
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     await press(view.container, 'Undo');
     await settle();
     expect(backend.calls).toEqual([
@@ -570,9 +620,9 @@ describe('DocumentationView', () => {
 
   it('says no card asks when an answer is taken back after one of its pages changed (W15-R48)', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[1]]);
     await press(
       view.container,
       '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
@@ -595,10 +645,10 @@ describe('DocumentationView', () => {
   it('says the older page stays as it was when its source’s word, or the manager’s, stands over the relation', async () => {
     // The second pass's minor 13: "now supersedes" was said whatever became of the older page.
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     backend.results['docRelations:decide'] = { older: 'active', by: 'source-native' };
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[1]]);
     await press(
       view.container,
       '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
@@ -612,9 +662,9 @@ describe('DocumentationView', () => {
 
   it('offers no Undo for "{A} is right", which the superseded page’s own row takes back', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
-    backend.queries['docRelations:listOpen'] = [RELATIONS[0]];
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[0]]);
     await press(view.container, '“Finance escalation” (How-to guides) is right');
     await settle();
     expect(said(view.container)).toContain(
@@ -628,13 +678,13 @@ describe('DocumentationView', () => {
 
   it('draws a proposed conflict as one that may disagree and holds nothing, with the answer that confirms it', () => {
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       {
         ...RELATIONS[1],
         status: 'proposed',
         offered: ['disagree', 'from-is-right', 'to-is-right', 'both-hold'],
       },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     const text = view.container.textContent ?? '';
     expect(text).toContain('These two pages may disagree');
@@ -647,13 +697,13 @@ describe('DocumentationView', () => {
 
   it('says from when a confirmed conflict holds a step: the next plan drafted, never one already drafted (W15-R45, D-4 (a))', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       {
         ...RELATIONS[1],
         status: 'proposed',
         offered: ['disagree', 'from-is-right', 'to-is-right', 'both-hold'],
       },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     await press(view.container, 'They disagree');
     await settle();
@@ -670,9 +720,9 @@ describe('DocumentationView', () => {
     // A list of URLs and an MCP server stamp a page with when it was read; on the base the card
     // called that time "edited".
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       { ...RELATIONS[0], from: { ...RELATIONS[0].from, edited: false } },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(view.container.textContent).toContain(
       '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths, draft v2” (How-to guides, last read 26 Sep 2026, 09:10) share 78 percent of their text.',
@@ -682,7 +732,7 @@ describe('DocumentationView', () => {
 
   it('draws a copy its source edited later as the successor, with both dates, the days between and the newer first in the answer (RM19 (a))', () => {
     populated();
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       {
         ...RELATIONS[0],
         from: {
@@ -697,7 +747,7 @@ describe('DocumentationView', () => {
           { measure: 'edit-dates', value: 3 },
         ],
       },
-    ];
+    ]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(view.container.textContent).toContain(
       '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths for the close” (How-to guides, edited 28 Sep 2026, 16:30) share 96 percent of their text, and the second was edited 3 days after the first.',
@@ -727,27 +777,27 @@ describe('DocumentationView', () => {
         { measure: 'edit-dates', value: 3 },
       ],
     };
-    backend.queries['docRelations:listOpen'] = [byDates];
+    backend.queries['docRelations:listOpen'] = read([byDates]);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(view.container.textContent).toContain(
       '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00, dated by its source) and “Escalation paths for the close” (How-to guides, edited 28 Sep 2026, 16:30, dated by its source) share 96 percent of their text, and the second was edited 3 days after the first.',
     );
     view.unmount();
     // A pair proposed before its rows could say (0.20.0): the card claims nothing of the dates.
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       {
         ...byDates,
         from: { ...byDates.from, dated: false },
         to: { ...byDates.to, dated: false },
       },
-    ];
+    ]);
     const before = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(before.container.textContent).not.toContain('dated by its source');
     before.unmount();
     // A relation the dates did not propose says nothing of them either.
-    backend.queries['docRelations:listOpen'] = [
+    backend.queries['docRelations:listOpen'] = read([
       { ...byDates, evidence: [{ measure: 'title-version', value: 1 }] },
-    ];
+    ]);
     const byTitle = mount(
       asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }),
     );
@@ -763,7 +813,7 @@ describe('DocumentationView', () => {
       evidence: [{ measure: 'shared-text', value: 96 }],
     };
     const drawn = (from: boolean, to: boolean, toSource?: string): string => {
-      backend.queries['docRelations:listOpen'] = [
+      backend.queries['docRelations:listOpen'] = read([
         {
           ...duplicate,
           from: { ...duplicate.from, edited: from, dated: from },
@@ -774,7 +824,7 @@ describe('DocumentationView', () => {
             ...(toSource !== undefined ? { source: toSource } : {}),
           },
         },
-      ];
+      ]);
       const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
       const text = view.container.textContent ?? '';
       view.unmount();
@@ -794,7 +844,7 @@ describe('DocumentationView', () => {
 
   it('has no axe violation and gives every control a 44 px target with both tables and both cards populated', async () => {
     populated();
-    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(await axeViolations(view.container, ['region'])).toEqual([]);
     for (const control of view.container.querySelectorAll('button, input, select, textarea')) {
