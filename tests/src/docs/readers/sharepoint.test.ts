@@ -15,6 +15,7 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
 import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
 
@@ -678,6 +679,8 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     const first = await readWhole(reader, site, SECRET, marks);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
+    // The whole first read, as the guide prints it.
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.first);
 
     library.reset();
     const unchanged = await readWhole(reader, site, SECRET, marks);
@@ -687,17 +690,26 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     // The delta's 961 items (the root folder and the files) are 39 listing pages of 25 and the
     // site's 40 pages two; each batch signs in once, and the first looks the site up.
     expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 0, bodies: 0 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.unchanged);
     expect(unchanged.batches).toBe(41);
 
     library.edit(500);
-    library.edit(980);
     library.reset();
     const edited = await readWhole(reader, site, SECRET, marks);
-    expect(edited.read.map((page) => page.ref)).toEqual([fileRef(500), pageRef(980)]);
+    expect(edited.read.map((page) => page.ref)).toEqual([fileRef(500)]);
     expect(edited.read[0].markdown).toContain('Edited 1.');
-    expect(edited.kept).toHaveLength(998);
-    // A file costs the redirect and the download; a site page one request.
-    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 3, bodies: 2 });
+    expect(edited.kept).toHaveLength(999);
+    // A file costs the redirect and the download.
+    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 2, bodies: 1 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.oneChanged);
+
+    library.edit(980);
+    library.reset();
+    const pageEdited = await readWhole(reader, site, SECRET, marks);
+    expect(pageEdited.read.map((page) => page.ref)).toEqual([pageRef(980)]);
+    expect(pageEdited.kept).toHaveLength(999);
+    // A site page costs one request.
+    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 1, bodies: 1 });
   });
 
   it('asks each listing for the fields it reads, and the contract once a listing page before any body', async (): Promise<void> => {
@@ -730,6 +742,78 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
       expect(again.read.map((page) => page.sourceRevision)).toEqual([undefined, undefined]);
       expect(again.kept).toHaveLength(48);
     }
+  });
+
+  it('keeps a site page whose title the store writes otherwise: its spaces closed up, a closing # dropped (the second pass)', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30, sitePages: 5 });
+    // As the title stands at its source before anything is read.
+    library.rename(27, 'Q3  close plan #');
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    expect(marks.get(pageRef(27))?.title).toBe('Q3 close plan');
+    library.reset();
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(30);
+    expect(library.counts().body).toBe(0);
+  });
+
+  it('keeps a Word document whose file name the store writes otherwise (the second pass)', async (): Promise<void> => {
+    const listing = JSON.parse(
+      new TextDecoder().decode(fixtureBytes('sharepoint', 'delta-1.json')),
+    ) as { value: Array<Record<string, unknown>> };
+    const { reader, requests } = readerOnTenant((request) =>
+      request.url.pathname.endsWith('/drive/root/delta') && request.url.searchParams.has('$top')
+        ? json(200, {
+            ...listing,
+            value: listing.value.map((item) =>
+              item.id === '01ESCAL' ? { ...item, name: 'Escalation  paths.docx' } : item,
+            ),
+          })
+        : undefined,
+    );
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks, 3);
+    expect(first.read.find((page) => page.ref === 'file-01ESCAL')?.title).toBe('Escalation  paths');
+    expect(marks.get('file-01ESCAL')?.title).toBe('Escalation paths');
+    requests.length = 0;
+    const again = await readWhole(reader, site, SECRET, marks, 3);
+    expect(again.kept.map((page) => page.ref)).toContain('file-01ESCAL');
+    expect(walked(requests).filter((line) => line.includes('01ESCAL'))).toEqual([]);
+  });
+
+  it('goes by the last occurrence of a file its delta page lists twice, as Graph says to: a file kept by the first and changed by the last is read, and not kept', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 4 });
+    let changedSince = false;
+    const fetch: LibraryFake['fetch'] = async (input, init) => {
+      const answer = await library.fetch(input, init);
+      const url = new URL(input instanceof Request ? input.url : input);
+      if (!changedSince || !url.pathname.endsWith('/drive/root/delta')) return answer;
+      const body = (await answer.json()) as { value: Array<Record<string, unknown>> };
+      const earlier = body.value.find((item) => item.id === '01LIB000001');
+      if (earlier === undefined) throw new Error('the delta page does not list the file');
+      // The feed shows the file as it was, then again as it is now.
+      return json(200, {
+        ...body,
+        value: [...body.value, { ...earlier, cTag: '"c:{changed-since},9"' }],
+      });
+    };
+    const reader = new SharePointReader({
+      fetch,
+      download: fetch,
+      now: (): number => T0,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    changedSince = true;
+    library.reset();
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read.map((page) => [page.ref, page.sourceRevision])).toEqual([
+      [fileRef(1), 'c:"c:{changed-since},9"'],
+    ]);
+    expect(again.kept.map((page) => page.ref)).toEqual([0, 2, 3].map(fileRef));
   });
 
   it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {

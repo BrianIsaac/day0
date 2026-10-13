@@ -9,6 +9,7 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
 import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
 
@@ -475,6 +476,8 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
     const first = await readWhole(reader, space, TOKEN, marks);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
+    // The whole first read, as the guide prints it.
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-v2'].first);
 
     library.reset();
     const unchanged = await readWhole(reader, space, TOKEN, marks);
@@ -482,6 +485,7 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
     expect(unchanged.kept).toHaveLength(1_000);
     // Forty listing pages of 25, none with a body, and the space looked up once.
     expect(library.counts()).toEqual({ token: 0, lookup: 1, listing: 40, body: 0, bodies: 0 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-v2'].unchanged);
 
     library.edit(500);
     library.reset();
@@ -492,6 +496,7 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
     expect(edited.read[0].markdown).toContain('Edited 1.');
     expect(edited.kept).toHaveLength(999);
     expect(library.counts()).toEqual({ token: 0, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-v2'].oneChanged);
     expect(askedById(library)).toEqual([[libraryRef(500)]]);
   });
 
@@ -535,6 +540,21 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
       ).toEqual([libraryRef(3)]);
       expect(again.kept).toHaveLength(29);
     }
+  });
+
+  it('keeps a page whose title the store writes otherwise: its spaces closed up, a closing # dropped (the second pass)', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 5 });
+    // As the title stands at its source before anything is read.
+    library.rename(1, 'Q3  close plan #');
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    expect(marks.get(libraryRef(1))?.title).toBe('Q3 close plan');
+    library.reset();
+    const again = await readWhole(reader, space, TOKEN, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(5);
+    expect(library.counts().body).toBe(0);
   });
 
   it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {

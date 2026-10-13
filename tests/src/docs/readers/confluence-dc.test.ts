@@ -9,6 +9,7 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
 import { readWhole, type StoredMarks } from '../../../fixtures/readers/stored';
 
@@ -427,6 +428,8 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
     const first = await readWhole(reader, space, TOKEN, marks);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
+    // The whole first read, as the guide prints it.
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-dc'].first);
 
     library.reset();
     const unchanged = await readWhole(reader, space, TOKEN, marks);
@@ -438,6 +441,7 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
     for (const listing of library.requests.filter((request) => request.kind === 'listing')) {
       expect(listing.url.searchParams.get('expand')).toBe('version');
     }
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-dc'].unchanged);
 
     library.edit(500);
     library.reset();
@@ -448,6 +452,7 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
     expect(edited.read[0].markdown).toContain('Edited 1.');
     expect(edited.kept).toHaveLength(999);
     expect(library.counts()).toEqual({ token: 0, lookup: 1, listing: 41, body: 1, bodies: 1 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS['confluence-dc'].oneChanged);
     expect(askedOne(library)).toEqual([`${libraryRef(500)} current body.storage,version`]);
   });
 
@@ -465,6 +470,21 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
       ).toEqual([libraryRef(3)]);
       expect(again.kept).toHaveLength(29);
     }
+  });
+
+  it('keeps a page whose title the store writes otherwise: its spaces closed up, a closing # dropped (the second pass)', async (): Promise<void> => {
+    const library = libraryFake('confluence-dc', { pages: 5 });
+    // As the title stands at its source before anything is read.
+    library.rename(1, 'Q3  close plan #');
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    expect(marks.get(libraryRef(1))?.title).toBe('Q3 close plan');
+    library.reset();
+    const again = await readWhole(reader, space, TOKEN, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(5);
+    expect(library.counts().body).toBe(0);
   });
 
   it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {
@@ -539,6 +559,24 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
       },
     ]);
     expect(batch).not.toHaveProperty('kept');
+  });
+
+  it("stops the read on a refused token though the page asked for was archived: the refusal is the token's, not the page's (the second pass)", async (): Promise<void> => {
+    const library = libraryFake('confluence-dc', { pages: 4 });
+    library.archive(2);
+    const reader = new ConfluenceDataCenterReader({
+      fetch: async (input, init) => {
+        const url = new URL(input);
+        return /\/content\/\d+$/.test(url.pathname) && url.searchParams.get('status') === 'archived'
+          ? json(401, { statusCode: 401, message: 'Token expired' })
+          : await library.fetch(input, init);
+      },
+      now: (): number => Date.UTC(2026, 9, 10, 9, 0, 0),
+      sleep: async (): Promise<void> => undefined,
+    });
+    await expect(readWhole(reader, space, TOKEN, new Map())).rejects.toThrow(
+      'Confluence refused the personal access token this source uses (HTTP 401)',
+    );
   });
 
   it('names an archived page the server lists and then will not give by its id unread, and reads the rest of the space (the second pass)', async (): Promise<void> => {

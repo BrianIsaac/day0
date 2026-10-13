@@ -266,8 +266,14 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
     }
     // A server that lists its archived pages is not known to give one by its id under that
     // status (V15-1b): where it will not, that is this page's, whose last version stands, and
-    // the walk goes on. Read before any refusal is worded, as the walk's own refusal is.
-    if (at.phase === 'archived' && answer.status >= 400 && answer.status < 500) {
+    // the walk goes on. Read before any refusal is worded, as the walk's own refusal is; a 401
+    // is never the page's, since it is the token that was refused, and is worded below.
+    if (
+      at.phase === 'archived' &&
+      answer.status >= 400 &&
+      answer.status < 500 &&
+      answer.status !== 401
+    ) {
       log.info('confluence data center lists an archived page and does not give it by id', {
         host: url.host,
         status: answer.status,

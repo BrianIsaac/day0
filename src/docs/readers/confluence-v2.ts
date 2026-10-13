@@ -52,6 +52,7 @@ import {
   type ProviderAnswer,
   type ProviderHttpOptions,
 } from './provider-http';
+import { storedPageTitle } from './stored-title';
 
 /** The provider's name in a sentence. */
 const PROVIDER = 'Confluence';
@@ -177,8 +178,9 @@ export function confluencePage(
  * A listed page kept as stored, or undefined for one whose body is to be read.
  *
  * A page is kept when the sync stored it at the version its listing numbers it by, under the
- * title and the address its listing gives: an archive changes none of the three, so an archived
- * page is kept and its status is the listing's. A listing that numbers no version for a page, or
+ * title its listing gives (as the store writes a title, `storedPageTitle`) and the address its
+ * listing gives: an archive changes none of the three, so an archived page is kept and its
+ * status is the listing's. A listing that numbers no version for a page, or
  * says no status for it (which a kept page's status is read from), has it read as before.
  *
  * Shared by the Cloud and the Data Center readers.
@@ -192,9 +194,8 @@ export function keptConfluencePage(
   if (mark === undefined || listed.status === undefined) return undefined;
   if (typeof listed.versionNumber !== 'number') return undefined;
   if (mark.revision !== String(listed.versionNumber)) return undefined;
-  if (mark.title !== (listed.title?.trim() || 'Untitled') || mark.url !== listed.url) {
-    return undefined;
-  }
+  const title = storedPageTitle(listed.title?.trim() || 'Untitled');
+  if (mark.title !== title || mark.url !== listed.url) return undefined;
   const nativeStatus = confluenceNativeStatus(listed.status);
   return {
     ref: listed.id,

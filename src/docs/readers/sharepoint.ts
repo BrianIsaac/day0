@@ -63,6 +63,7 @@ import {
   type ProviderHttpOptions,
   webPageInPlaceOf,
 } from './provider-http';
+import { storedPageTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** What the reader is given instead of the network, the clock and the timer, for tests. */
@@ -125,6 +126,25 @@ function storedAtFileRevision(stored: string, item: unknown): boolean {
   if (cTag !== undefined) return stored === `${CONTENT_TAG}${cTag}` || stored === cTag;
   const eTag = textField(item, 'eTag');
   return eTag !== undefined && stored === `${ITEM_TAG}${eTag}`;
+}
+
+/**
+ * A delta page's items with every occurrence of an item but its last blanked, each place kept.
+ *
+ * Graph's reference says the same item may appear more than once in a delta feed and that the
+ * last occurrence is the one to use: an earlier one may show the file as it was stored and the
+ * last as it is now, and the file is then read once and not also kept.
+ */
+function lastOccurrences(items: readonly unknown[]): readonly unknown[] {
+  const last = new Map<string, number>();
+  items.forEach((item, index): void => {
+    const id = textField(item, 'id');
+    if (id !== undefined) last.set(id, index);
+  });
+  return items.map((item, index): unknown => {
+    const id = textField(item, 'id');
+    return id === undefined || last.get(id) === index ? item : undefined;
+  });
 }
 
 /** An address Graph gives, when it is one a page may carry. */
@@ -373,7 +393,7 @@ export class SharePointReader implements DocumentationReader {
       throw new ListingChangedError();
     }
     const body = graphBody(answer, 'files');
-    const items = listField(body, 'value');
+    const items = lastOccurrences(listField(body, 'value'));
     // Asked once a listing page, before any body: what each file left to take was stored with.
     const marks = await storedMarks(
       stored,
@@ -531,7 +551,7 @@ export class SharePointReader implements DocumentationReader {
       mark !== undefined &&
       storedAtFileRevision(mark.revision, item) &&
       mark.url === url &&
-      (extension === 'md' ? url !== undefined : mark.title === stem)
+      (extension === 'md' ? url !== undefined : mark.title === storedPageTitle(stem))
     ) {
       return { kept: { ref, datedBySource: Number.isFinite(edited) } };
     }
@@ -662,7 +682,7 @@ export class SharePointReader implements DocumentationReader {
       listedTag !== undefined &&
       listedState !== undefined &&
       mark.revision === listedTag &&
-      mark.title === title &&
+      mark.title === storedPageTitle(title) &&
       mark.url === listedUrl
     ) {
       const status = sharePointPageStatus(textField(listedState, 'level'));

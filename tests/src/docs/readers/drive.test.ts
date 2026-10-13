@@ -10,6 +10,7 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import {
   libraryFake,
   type LibraryFake,
@@ -408,6 +409,8 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
     const first = await readWhole(reader, folder, SECRET, marks);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
+    // The whole first read, as the guide prints it.
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.first);
 
     library.reset();
     const unchanged = await readWhole(reader, folder, SECRET, marks);
@@ -415,6 +418,7 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
     expect(unchanged.kept).toHaveLength(1_000);
     // Forty listing pages of 25; each batch signs in once, and the first checks the folder.
     expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 0, bodies: 0 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.unchanged);
 
     library.edit(500);
     library.reset();
@@ -425,6 +429,7 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
     expect(edited.read[0].markdown).toContain('Edited 1.');
     expect(edited.kept).toHaveLength(999);
     expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.oneChanged);
     // The contract is asked once a listing page, by every document it lists.
     expect(edited.asked).toHaveLength(40);
     expect(edited.asked.every((refs) => refs.length === 25)).toBe(true);
@@ -443,6 +448,20 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
       ).toEqual([libraryRef(3)]);
       expect(again.kept).toHaveLength(29);
     }
+  });
+
+  it('keeps a document whose name the store writes otherwise: its spaces closed up, a closing # dropped (the second pass)', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 5 });
+    // As the name stands at its source before anything is read.
+    library.rename(1, 'Q3  close plan #');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    expect(marks.get(libraryRef(1))?.title).toBe('Q3 close plan');
+    library.reset();
+    const again = await readWhole(reader, folder, SECRET, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(5);
+    expect(library.counts().body).toBe(0);
   });
 
   it('reads a renamed document, though its revision is the stored one', async (): Promise<void> => {
