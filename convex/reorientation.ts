@@ -13,6 +13,7 @@ import { agentZone, dayKey } from '../src/lib/zone';
 import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 import { PLAN_CANCELLED_REASON } from '../src/work/stop';
+import { redactTokenShapes } from '../src/surfaces/redact';
 import { conflictSteps, heldWriteSurfaces } from '../src/work/conflict-hold';
 import type { ExecutionPlan } from '../src/work/types';
 import {
@@ -579,7 +580,9 @@ export async function moveCardsToOwner(
       .query('reorientations')
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
       .take(MOVED_CARDS_READ);
-    const undecided = (UNDECIDED_REORIENTATION_STATUSES as readonly string[]).includes(status);
+    // A deferred card is standing too: left as it was it would keep its hold and open again
+    // under the new manager on its date (the second pass).
+    const undecided = (STANDING_STATUSES as readonly string[]).includes(status);
     for (const card of cards) {
       if (undecided) {
         await ctx.db.patch(card._id, {
@@ -1123,7 +1126,7 @@ async function evidenceLines(ctx: QueryCtx, card: Doc<'reorientations'>): Promis
       ? []
       : unboundReportingLines(charter.body as Charter)) {
       lines.push(
-        `A reporting-line rule of the previous manager’s that the charter carries: “${quote}”`,
+        `A reporting-line rule of the previous manager’s that the charter carries: “${redactTokenShapes(quote)}”`,
       );
     }
   }

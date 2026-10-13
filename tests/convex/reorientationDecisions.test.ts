@@ -1027,7 +1027,7 @@ describe('openByHand and listForAgent', (): void => {
       agentId,
       summary: 'It no longer triages tier-2 asks.',
     });
-    expect(second).toEqual({ reorientationId: first.reorientationId, joined: true });
+    expect(second).toEqual({ reorientationId: first.reorientationId, joined: true, asked: true });
     const cards = await cardsOf(harness, agentId);
     expect(cards).toHaveLength(1);
     // The typed words are on the card, not only in the record, and the proposal is asked again.
@@ -1035,6 +1035,53 @@ describe('openByHand and listForAgent', (): void => {
       triggerSummary: 'Mira now covers renewals too; It no longer triages tier-2 asks.',
       proposed: { kind: 'pending' },
     });
+  });
+
+  it('keeps a proposal the manager’s own talk put on the card, a repeated change once, and the summary bounded (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const owner = harness.withIdentity(OWNER);
+    const { reorientationId } = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'Mira now covers renewals too',
+    });
+    // A finished talk put the manager's own proposal on the card.
+    const talked = {
+      kind: 'none' as const,
+      rationale: 'You said renewals are within the charter.',
+    };
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(reorientationId!, { proposed: talked });
+      await ctx.db.insert('reorientationTalks', {
+        agentId,
+        reorientationId: reorientationId!,
+        state: 'finished',
+        turns: [],
+        conversation: 1,
+        outcome: { proposed: talked, quotes: ['renewals are within the charter'] },
+        startedAt: 1,
+        endedAt: 2,
+      });
+    });
+    const again = async (summary: string) => {
+      // Each by-hand change is its own report, keyed by when it was typed.
+      vi.setSystemTime(Date.now() + 60_000);
+      return await owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary });
+    };
+    await expect(again('It no longer triages tier-2 asks')).resolves.toEqual({
+      reorientationId,
+      joined: true,
+      asked: false,
+    });
+    await again('It no longer triages tier-2 asks');
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.proposed).toEqual(talked);
+    expect(card.triggerSummary).toBe(
+      'Mira now covers renewals too; It no longer triages tier-2 asks',
+    );
+    // Past the bound the words stay in the record's joined events, and the card's summary as it is.
+    for (const index of [1, 2, 3]) await again(`${'A long change of role. '.repeat(12)}${index}`);
+    expect((await cardsOf(harness, agentId))[0].triggerSummary.length).toBeLessThanOrEqual(600);
   });
 
   it('lists the standing cards first, with the names their ids stand for, and only to the owner', async (): Promise<void> => {

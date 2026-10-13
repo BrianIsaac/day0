@@ -12,7 +12,7 @@ import { z } from 'zod';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import type { PageStatus } from '../docs/authority';
 import type { RelationshipType } from '../people/vocabulary';
-import { isScopePhrase } from '../people/words';
+import { scopePhraseOf } from '../people/words';
 import { redactTokenShapes } from '../surfaces/redact';
 import { PLAN_CANCELLED_REASON } from '../work/stop';
 import { awaitingCheck } from '../work/agreement-words';
@@ -381,8 +381,8 @@ function writtenText(reply: ProposalReply, what: string): string {
 
 /** The reply's new scope for an edge, refused unless it is a phrase the graph can match. */
 function scopePhrase(reply: ProposalReply): string {
-  const scope = writtenText(reply, 'scope');
-  if (!isScopePhrase(scope)) {
+  const scope = scopePhraseOf(writtenText(reply, 'scope'));
+  if (scope === undefined) {
     throw new ScopeNotAPhrase(`the new scope must be ${SCOPE_PHRASE_RULE}`);
   }
   return scope;

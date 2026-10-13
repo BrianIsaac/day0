@@ -396,12 +396,27 @@ export const defer = mutation({
  *
  * @throws ConvexError for an empty summary or one past 300 characters.
  */
+/** The most a by-hand card's summary grows to as later changes of the day join it. */
+const JOINED_SUMMARY_CHARS = 600;
+
+/** Whether the card's proposal is one a finished talk put there: the manager's own, never reset. */
+async function proposedByTalk(
+  ctx: MutationCtx,
+  reorientationId: Id<'reorientations'>,
+): Promise<boolean> {
+  const talk = await ctx.db
+    .query('reorientationTalks')
+    .withIndex('by_reorientation', (q) => q.eq('reorientationId', reorientationId))
+    .first();
+  return talk !== null && talk.state === 'finished' && talk.outcome !== undefined;
+}
+
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
   handler: async (
     ctx,
     args,
-  ): Promise<{ reorientationId: Id<'reorientations'> | null; joined: boolean }> => {
+  ): Promise<{ reorientationId: Id<'reorientations'> | null; joined: boolean; asked: boolean }> => {
     await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
     if (summary === '' || summary.length > 300) throw new ConvexError(CARD_ACTION_REFUSALS.summary);
@@ -417,22 +432,37 @@ export const openByHand = mutation({
     });
     const card = reorientationId === null ? null : await ctx.db.get(reorientationId);
     // A second change typed the same day joins the card already standing (one card a kind a day):
-    // its words go onto that card beside the first, and the proposal is asked again over both,
-    // unless a talk is under way, whose own finish replaces it (W16-R24).
+    // its words go onto that card beside the first (W16-R24), once, and while the summary stays
+    // inside its bound (the joined event keeps them either way).
     const joined = card !== null && card.triggerKey !== triggerKey;
+    let asked = !joined;
     if (card !== null && joined) {
-      const again = card.status === 'open' && card.proposed.kind !== 'pending';
-      await ctx.db.patch(card._id, {
-        triggerSummary: `${card.triggerSummary.replace(/[.;\s]+$/u, '')}; ${summary}`,
-        ...(again ? { proposed: { kind: 'pending' as const } } : {}),
-      });
-      if (again) {
+      const held = card.triggerSummary.replace(/[.;\s]+$/u, '');
+      const said = held.toLowerCase().includes(summary.replace(/[.;\s]+$/u, '').toLowerCase());
+      const fits = held.length + 2 + summary.length <= JOINED_SUMMARY_CHARS;
+      // The proposal is asked again over both only where it is the judgement's own and the card
+      // is open: a talk under way finishes in its own, and a finished talk's is the manager's.
+      asked =
+        !said &&
+        fits &&
+        card.status === 'open' &&
+        card.proposed.kind !== 'pending' &&
+        !(await proposedByTalk(ctx, card._id));
+      if (!said && fits) {
+        await ctx.db.patch(card._id, {
+          triggerSummary: `${held}; ${summary}`,
+          ...(asked ? { proposed: { kind: 'pending' as const } } : {}),
+        });
+      }
+      if (asked) {
         await ctx.scheduler.runAfter(0, internal.reorientationActions.propose, {
           reorientationId: card._id,
         });
       }
+      // A card still waiting on its first proposal is judged over both by the join itself.
+      asked ||= !said && fits && card.status === 'open' && card.proposed.kind === 'pending';
     }
-    return { reorientationId, joined };
+    return { reorientationId, joined, asked };
   },
 });
 
@@ -467,6 +497,13 @@ export const listForAgent = query({
       .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
       .order('desc')
       .first();
+    // Each source is read once, however many cards and pages name it.
+    const sources = new Map<Id<'docSources'>, Promise<Doc<'docSources'> | null>>();
+    const sourceOf = async (sourceId: Id<'docSources'>): Promise<Doc<'docSources'> | null> => {
+      const read = sources.get(sourceId) ?? ctx.db.get(sourceId);
+      sources.set(sourceId, read);
+      return await read;
+    };
     const views: CardView[] = [];
     for (const card of [
       ...standing.sort((left, right) => right.createdAt - left.createdAt),
@@ -480,7 +517,7 @@ export const listForAgent = query({
         row !== null && row.userId === card.userId ? row : null;
       const pages = await Promise.all(
         card.evidence.pageRefs.slice(0, 10).map(async (ref) => {
-          if (owned(await ctx.db.get(ref.sourceId)) === null) return null;
+          if (owned(await sourceOf(ref.sourceId)) === null) return null;
           return await ctx.db
             .query('docPages')
             .withIndex('by_source_ref', (q) => q.eq('sourceId', ref.sourceId).eq('ref', ref.ref))

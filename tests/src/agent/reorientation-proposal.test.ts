@@ -264,7 +264,11 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
         ),
       ).toThrow(ProposalRefused);
     }
-    for (const text of ['Approves close plans.', 'Close plans: first', 'Who approves? Aisha']) {
+    for (const text of [
+      'Approves close plans. Not journals',
+      'Close plans: first',
+      'Who approves? Aisha',
+    ]) {
       expect(() =>
         proposalOf(
           reply({ change: 'relationship', candidate: 3, action: 'edit', text }),
@@ -272,6 +276,32 @@ describe('proposalOf: a reply read against the card’s candidates', (): void =>
         ),
       ).toThrow('a short phrase');
     }
+  });
+
+  it('refuses a sentence joined by commas alone, and takes a phrase written with a closing full stop (the second pass)', (): void => {
+    // No stop, semicolon or colon, and under 200 characters: still a sentence the graph would
+    // read as a bag of words.
+    const comma =
+      'Ines Duarte approves NetLedger journal changes only, no longer approver for REVOPS close plans';
+    expect(scopeCovers(comma, 'REVOPS close plans')).toBe(true);
+    expect(() =>
+      proposalOf(
+        reply({ change: 'relationship', candidate: 3, action: 'edit', text: comma }),
+        CANDIDATES,
+      ),
+    ).toThrow(ProposalRefused);
+    // A model's habit of closing a phrase with a full stop is not a sentence: the stop is dropped.
+    expect(
+      proposalOf(
+        reply({
+          change: 'relationship',
+          candidate: 3,
+          action: 'edit',
+          text: 'NetLedger journal changes.',
+        }),
+        CANDIDATES,
+      ),
+    ).toMatchObject({ scope: 'NetLedger journal changes' });
   });
 
   it('refuses an edge scope past the 200 characters Approve takes, and keeps a phrase', (): void => {

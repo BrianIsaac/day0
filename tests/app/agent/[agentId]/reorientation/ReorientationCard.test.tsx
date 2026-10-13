@@ -11,6 +11,8 @@ const backend = vi.hoisted(() => ({
   queries: {} as Record<string, unknown>,
   /** Whether a card opened by hand joined one already standing that day. */
   joins: false,
+  /** Whether the join asked the judgement again. */
+  asks: true,
 }));
 
 vi.mock('convex/react', () => ({
@@ -24,7 +26,7 @@ vi.mock('convex/react', () => ({
       }
       if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
       if (name === 'reorientationDecisions:openByHand') {
-        return { reorientationId: 'card-1', joined: backend.joins };
+        return { reorientationId: 'card-1', joined: backend.joins, asked: backend.asks };
       }
       return null;
     },
@@ -131,6 +133,7 @@ beforeEach((): void => {
   backend.calls.length = 0;
   backend.queries = {};
   backend.joins = false;
+  backend.asks = true;
 });
 
 afterEach((): void => {
@@ -626,7 +629,10 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     expect(await typed()).toBe('A card is open. Mira is working out what to propose.');
     backend.joins = true;
     expect(await typed()).toBe(
-      'Added to the card already open today. Mira is working out what to propose over both.',
+      'Added to today’s card. Mira is working out what to propose over both.',
     );
+    // Where the card's proposal stands (the manager's own talk put it there), nothing says otherwise.
+    backend.asks = false;
+    expect(await typed()).toBe('Added to today’s card.');
   });
 });

@@ -57,19 +57,28 @@ export const RELATIONSHIP_SCOPE_LIMIT = 200;
 /** A mark that ends or splits a sentence: a semicolon, a question or exclamation mark, or a stop or colon before a space. */
 const SENTENCE_MARK = /[;!?]|[.:](?=\s|$)/u;
 
+/** The most words a scope a proposal writes may run to: past it, it is a clause, not a phrase. */
+export const SCOPE_PHRASE_WORDS = 12;
+
 /**
- * Whether a scope a proposal writes onto an edge is a phrase (W16-R3, D-3 (a)): no longer than
- * {@link RELATIONSHIP_SCOPE_LIMIT} and with no sentence punctuation. The people graph matches a
- * scope as a bag of words (`scopeCovers`), so a sentence saying who no longer approves something
- * still covers it; a stop inside a word ("v1.2", "acme.test") is not a sentence's.
+ * The scope a proposal writes onto an edge, as a phrase (W16-R3, D-3 (a)): trimmed, without the
+ * full stop a model closes it with, no longer than {@link RELATIONSHIP_SCOPE_LIMIT}, of at
+ * most {@link SCOPE_PHRASE_WORDS} words and with no sentence punctuation; undefined for anything
+ * else. The people graph matches a scope as a bag of words (`scopeCovers`), so a sentence saying
+ * who no longer approves something still covers it, whether it is joined by stops or by commas; a
+ * stop inside a word ("v1.2", "acme.test") is not a sentence's.
  *
  * @param scope - The scope as the proposal writes it.
  */
-export function isScopePhrase(scope: string): boolean {
-  const trimmed = scope.trim();
-  return (
-    trimmed !== '' && trimmed.length <= RELATIONSHIP_SCOPE_LIMIT && !SENTENCE_MARK.test(trimmed)
-  );
+export function scopePhraseOf(scope: string): string | undefined {
+  const phrase = scope.trim().replace(/\.$/u, '').trimEnd();
+  const words = phrase.split(/\s+/u).filter((word) => word !== '').length;
+  return phrase !== '' &&
+    phrase.length <= RELATIONSHIP_SCOPE_LIMIT &&
+    words <= SCOPE_PHRASE_WORDS &&
+    !SENTENCE_MARK.test(phrase)
+    ? phrase
+    : undefined;
 }
 
 /** The refusal of a change to the owner's own row, which is the manager and never a proposal. */
