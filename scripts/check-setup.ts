@@ -99,6 +99,7 @@ import {
   type ConnectionRow,
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
+import { PROXY_VARIABLES } from './lib/proxy-env';
 import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -198,6 +199,8 @@ export const WATCHED = [
   'DAY0_NANGO_SECRET_KEY',
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
+  'DAY0_APP_PORT',
+  ...PROXY_VARIABLES,
 ] as const;
 
 /** How a section reads: complete, worth saying out loud, or half-done. */

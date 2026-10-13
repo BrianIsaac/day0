@@ -96,6 +96,22 @@
 # the same way (`pnpm sandbox:up`), and it is reached over a unix socket rather
 # than a port, which is the whole of its network story: see the service.
 
+# The way out (wave 17, 17-P; RM31 (a)). A site with no direct route to the
+# internet names its HTTP proxy once, in `.env.local`: HTTPS_PROXY, HTTP_PROXY
+# and NO_PROXY, the names every client reads. The four services that reach out
+# of the machine are handed them: the backend (the model, the systems an
+# approved card reaches, the readers), the Slack socket bridge, the redactor
+# (its wheels and model, on a first start) and Nango's server. Node reads a
+# proxy from its environment only when NODE_USE_ENV_PROXY is 1, so that is set
+# wherever HTTPS_PROXY is, unless `.env.local` sets it itself. NO_PROXY always
+# begins with the names that never leave the machine (the container itself and
+# every service another one dials by name), then whatever `.env.local` lists:
+# the customer's own hosts that the proxy does not serve, Day0's public address
+# and the identity provider among them where they are inside the network. The
+# same list on all four, so a name added for one is not forgotten for another.
+# What each client did with the proxy on a bed whose only route out was one is
+# in docs/running/egress.md, written as found.
+#
 # Every `image:` below is pinned to a digest, `name:tag@sha256:...`, so that a
 # machine which already has these images never pulls at start and a machine
 # that lacks one fails loudly rather than downloading whatever the tag means
@@ -186,6 +202,12 @@ services:
       # every scheduled step is a node action, and the cap must stay above
       # the number of jobs the scheduler may start.
       - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=64
+      # The way out through the customer's proxy, when .env.local names one (see "The way
+      # out" above): the Rust backend's own requests and its Node actions' alike.
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     healthcheck:
       test: curl -f http://localhost:3210/version
       interval: 5s
@@ -389,6 +411,12 @@ services:
       - XDG_CACHE_HOME=/opt/redactor/tmp/cache
       - HOME=/opt/redactor/tmp/home
       - USER=redactor
+      # The way out through the customer's proxy, when .env.local names one: pip and
+      # the model download read it on a first start (see "The way out" above).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     volumes:
       - ./redactor/start.sh:/opt/day0/start.sh:ro
       - ./redactor/server.py:/opt/day0/server.py:ro
@@ -519,6 +547,13 @@ services:
     environment:
       - DAY0_SOCKET_BRIDGE_SECRET=${DAY0_SOCKET_BRIDGE_SECRET:-}
       - DAY0_SOCKET_BACKEND_URL=http://backend:3211
+      # The way out through the customer's proxy, when .env.local names one: the
+      # socket to Slack tunnels through it, the calls to `backend` never do (see
+      # "The way out" above).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     volumes:
       - ./slack-socket:/app:ro
     healthcheck:
@@ -723,6 +758,12 @@ services:
       - FLAG_SERVE_CONNECT_UI=false
       - NANGO_LOGS_ENABLED=false
       - LOG_LEVEL=info
+      # The way out through the customer's proxy, when .env.local names one, for
+      # the providers' token endpoints (see "The way out" above).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     expose: ['3003']
     depends_on:
       nango-db:
