@@ -243,6 +243,39 @@ describe('the Agreements card', (): void => {
     view.unmount();
   });
 
+  it('says a hold two judgements disagreed on, what the one found, and that Check now checks it twice again (RM32 (a); 16-FX’s F1)', async (): Promise<void> => {
+    const disputed: AgreementView = {
+      ...refused,
+      _id: 'wa6' as Id<'workingAgreements'>,
+      statement: 'Name the vessel in every customer comment.',
+      sourceType: 'correction-promotion',
+      refusal: {
+        reason: 'unchecked-for-employee',
+        checkable: true,
+        refusedOnce: { reason: 'widens-scope' },
+      },
+    };
+    const calls: string[] = [];
+    const view = card([disputed], calls);
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Held');
+    expect(text).toContain(
+      "Not in effect for Priya: Day0 checked it against Priya's charter twice and the two checks disagreed. One found that it widens the work the charter gives Priya; the other allowed it. It stays in effect for your other employees. Check now checks it twice again: it ends for every employee only if both checks refuse it.",
+    );
+    // Not checked again by itself, so the row promises no check within the half hour.
+    expect(text).not.toContain('within half an hour');
+    expect(text).not.toContain('has not checked');
+    expect(view.container.querySelector('[aria-label^="Dismiss"]')).toBeNull();
+    await press(
+      view.container,
+      "Check “Name the vessel in every customer comment.” against Priya's charter now",
+    );
+    expect(calls).toEqual(['recheck wa6']);
+    expect(await axeViolations(view.container, ['region'])).toEqual([]);
+    expect(underTarget(view.container)).toEqual([]);
+    view.unmount();
+  });
+
   it('puts a control behind “You can keep it for a single employee instead”, once (W14-R15)', async (): Promise<void> => {
     const tooMany: AgreementView = {
       ...refused,

@@ -738,7 +738,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     payload.reason === 'every-employee-too-many'
       ? `working agreement not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : payload.reason === 'unchecked-for-employee'
-        ? 'working agreement for every employee not in effect for this employee: not checked against its charter'
+        ? payload.refusedOnce !== undefined
+          ? 'working agreement for every employee not in effect for this employee: two checks against its charter disagreed'
+          : 'working agreement for every employee not in effect for this employee: not checked against its charter'
         : text(payload.clause)
           ? `working agreement refused: it contradicts “${text(payload.clause)}”`
           : 'working agreement refused: it would go beyond the charter',

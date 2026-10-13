@@ -861,6 +861,21 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
       // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
       'working agreement for every employee not in effect for this employee: not checked against its charter',
     );
+    // RM32 (a), wave 17: a hold two judgements disagreed on.
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: {
+          agreementId: 'a2',
+          everyEmployee: true,
+          reason: 'unchecked-for-employee',
+          holdId: 'h1',
+          refusedOnce: { reason: 'widens-scope' },
+        },
+      }),
+    ).toBe(
+      'working agreement for every employee not in effect for this employee: two checks against its charter disagreed',
+    );
     expect(
       eventLabel({
         type: 'agreement.activated',

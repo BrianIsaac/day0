@@ -32,6 +32,7 @@ import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
 import type {
   AgreementApprovedVia,
+  AgreementRefusalReason,
   AgreementRowRefusalReason,
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
@@ -1487,6 +1488,13 @@ export interface AgreementRefusedPayload extends AgreementNamed {
    * v0.20.0 named its own row as `agreementId` and carries no `holdId`.
    */
   readonly holdId?: Id<'workingAgreements'>;
+  /**
+   * On a hold two judgements disagreed on (RM32 (a), wave 17): one of the two judgements of the
+   * employee's charter refused the agreement, for this reason and quoting this clause, and the
+   * other allowed it, so it is held for this employee and ends for nobody. Absent on a hold nothing
+   * has checked, and on every hold written before v0.21.0.
+   */
+  readonly refusedOnce?: { readonly reason: AgreementRefusalReason; readonly clause?: string };
 }
 
 /**

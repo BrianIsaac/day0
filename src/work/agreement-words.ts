@@ -8,11 +8,21 @@ import type { Id } from '../../convex/_generated/dataModel';
 import {
   CHECK_STALE_MS,
   EMPLOYEES_CHECKED,
+  type AgreementRefusalReason,
   type AgreementRowRefusalReason,
   type AgreementScope,
   type AgreementSourceType,
   type AgreementStatus,
 } from './agreement-vocabulary';
+
+/**
+ * The one refusal of a charter's two judgements of an agreement for every employee (RM32 (a)): why
+ * that judgement refused it, and the Will not do clause it quoted.
+ */
+export interface RefusedOnce {
+  readonly reason: AgreementRefusalReason;
+  readonly clause?: string;
+}
 
 /** A working agreement as a card reads it; the `workingAgreements` row carries these fields. */
 export interface AgreementView {
@@ -42,6 +52,12 @@ export interface AgreementView {
      * so the agreement can be checked against this employee's charter now (W14-R15's lift).
      */
     readonly checkable?: boolean;
+    /**
+     * On a hold two judgements disagreed on (RM32 (a)): the refusal of the one judgement of the
+     * employee's charter that refused the agreement, where the other allowed it. Absent on a hold
+     * nothing has checked.
+     */
+    readonly refusedOnce?: RefusedOnce;
   };
   /**
    * An agreement for every employee whose check against this employee's amended charter could not
@@ -180,6 +196,48 @@ export function uncheckedForEmployee(name: string, checkable: boolean): string {
   return checkable
     ? `Not in effect for ${name} yet: Day0 has not checked it against ${name}'s charter. It checks within half an hour, or now with Check now. It stays in effect for your other employees.`
     : `Not in effect for ${name}: Day0 has not checked it against ${name}'s charter, and it checks an agreement for every employee only while you have ${EMPLOYEES_CHECKED} employees or fewer. It stays in effect for your other employees.`;
+}
+
+/** What the one refusing judgement of two found, as the clause after "One found that". */
+function foundByOne(refusedOnce: RefusedOnce, name: string): string {
+  switch (refusedOnce.reason) {
+    case 'contradicts-will-not-do':
+      return refusedOnce.clause
+        ? `it contradicts “${refusedOnce.clause}”`
+        : `it contradicts what ${name} will not do`;
+    case 'widens-scope':
+      return `it widens the work the charter gives ${name}`;
+    case 'grants-permission':
+      return 'it would grant a permission';
+    case 'names-credential':
+      return 'it names a credential';
+    default: {
+      const unknown: never = refusedOnce.reason;
+      throw new Error(`unhandled refusal reason ${String(unknown)}`);
+    }
+  }
+}
+
+/**
+ * Why an agreement for every employee is held for one employee whose charter Day0 judged it against
+ * twice, one judgement refusing it and the other allowing it (RM32 (a); wording draft, RM24): that
+ * the two disagreed, what the one found, that it stays in effect for the others, and what Check now
+ * does. Such a hold is not checked again by itself, so the line promises no check within the half
+ * hour: one judgement's variance held it, and a third and fourth unasked would settle it by chance.
+ *
+ * @param name - The employee's name.
+ * @param refusedOnce - The one judgement's refusal.
+ * @param checkable - Whether the owner has no more employees than the check reads.
+ */
+export function disputedForEmployee(
+  name: string,
+  refusedOnce: RefusedOnce,
+  checkable: boolean,
+): string {
+  const next = checkable
+    ? 'Check now checks it twice again: it ends for every employee only if both checks refuse it.'
+    : HOLD_PAST_THE_CHECK;
+  return `Not in effect for ${name}: Day0 checked it against ${name}'s charter twice and the two checks disagreed. One found that ${foundByOne(refusedOnce, name)}; the other allowed it. It stays in effect for your other employees. ${next}`;
 }
 
 /** The control on a hold that can be checked now (W14-R15's lift; wording draft). */
@@ -359,7 +417,9 @@ export function refusalSentence(
     case 'every-employee-too-many':
       return EVERY_EMPLOYEE_TOO_MANY;
     case 'unchecked-for-employee':
-      return uncheckedForEmployee(name, refusal.checkable === true);
+      return refusal.refusedOnce
+        ? disputedForEmployee(name, refusal.refusedOnce, refusal.checkable === true)
+        : uncheckedForEmployee(name, refusal.checkable === true);
     default: {
       const unknown: never = refusal.reason;
       throw new Error(`unhandled refusal reason ${String(unknown)}`);

@@ -28,6 +28,7 @@ import {
   HOLD_PAST_THE_CHECK,
   type AgreementView,
   type RecheckOutcome,
+  type RefusedOnce,
 } from '../src/work/agreement-words';
 import { stepHoldReason } from '../src/work/pause';
 import type { ExecutionPlan } from '../src/work/types';
@@ -665,7 +666,8 @@ async function scheduleCheckOfHolds(
  * (the pause of a whole deployment resumes none by name: 14-FX's recorded gap). A hold no check
  * has tried (written past the bound or under a pause, `judgedAt` 0) is due at once, so the sweep
  * lifts it within one turn of the owner coming back to the bound. One check a stale window,
- * however often the sweep runs or plans are stored. Real mode only.
+ * however often the sweep runs or plans are stored. A hold two judgements disagreed on is not
+ * checked here (RM32 (a), {@link disputedHolds}). Real mode only.
  *
  * @param ctx - The sweep's mutation context.
  * @param agentId - The employee.
@@ -681,9 +683,18 @@ export async function scheduleDueHoldChecks(
   const agent = await ctx.db.get(agentId);
   const userId = agent ? employeeOwnerScope(agent) : undefined;
   if (userId === undefined) return 0;
-  const due = (await holdsOf(ctx, userId, agentId)).filter(
+  const stale = (await holdsOf(ctx, userId, agentId)).filter(
     (hold) => (hold.refusal?.judgedAt ?? 0) <= now - CHECK_STALE_MS,
   );
+  // A hold two judgements disagreed on waits for the manager's Check now, or a newly approved
+  // charter (RM32 (a)): judged again here every stale window, chance would settle it either way
+  // within the hour. One whose agreement is in effect for nobody any more is still set aside.
+  const disputed = await disputedHolds(ctx, agentId, stale);
+  const waiting = stale.filter((hold) => disputed.has(hold._id));
+  for (const holdId of await mootHolds(ctx, waiting)) {
+    await ctx.db.patch(holdId, { status: 'dismissed' });
+  }
+  const due = stale.filter((hold) => !disputed.has(hold._id));
   return (await scheduleCheckOfHolds(ctx, agentId, due, now)) ? 1 : 0;
 }
 
@@ -1128,9 +1139,14 @@ async function holdInTransaction(
   ctx: MutationCtx,
   row: Doc<'workingAgreements'>,
   agentId: Id<'agents'>,
-  hold: { readonly tried: boolean; readonly held: Set<Id<'workingAgreements'>> },
+  hold: {
+    readonly tried: boolean;
+    readonly held: Set<Id<'workingAgreements'>>;
+    /** The one refusal of two judgements that disagreed (RM32 (a), `holdDisputed`). */
+    readonly refusedOnce?: RefusedOnce;
+  },
 ): Promise<void> {
-  const { tried, held } = hold;
+  const { tried, held, refusedOnce } = hold;
   if (row.status !== 'active' || row.agentId !== undefined || held.has(row._id)) return;
   held.add(row._id);
   const now = Date.now();
@@ -1157,10 +1173,110 @@ async function holdInTransaction(
   await appendEvent(ctx, {
     agentId,
     type: 'agreement.refused',
-    payload: { agreementId: row._id, everyEmployee: true, reason, holdId: heldId },
+    payload: {
+      agreementId: row._id,
+      everyEmployee: true,
+      reason,
+      holdId: heldId,
+      ...(refusedOnce !== undefined ? { refusedOnce } : {}),
+    },
     createdAt: now,
   });
 }
+
+/** The newest `agreement.refused` events of an employee its disputed holds are read from. */
+const DISPUTED_EVENTS_READ = 100;
+
+/** The one refusal an `agreement.refused` payload carries for a disputed hold, if it does. */
+function refusedOnceOf(payload: unknown): RefusedOnce | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const carried: unknown = (payload as { refusedOnce?: unknown }).refusedOnce;
+  if (typeof carried !== 'object' || carried === null) return undefined;
+  const { reason, clause } = carried as { reason?: unknown; clause?: unknown };
+  const judged = AGREEMENT_REFUSAL_REASONS.find((known) => known === reason);
+  if (judged === undefined) return undefined;
+  return typeof clause === 'string' ? { reason: judged, clause } : { reason: judged };
+}
+
+/**
+ * Which of an employee's holds two judgements disagreed on (RM32 (a)), each with the one refusal:
+ * the newest `agreement.refused` that names the hold carries `refusedOnce`. A hold nothing has
+ * checked, or whose check could not be had, has none. Read from the employee's newest
+ * {@link DISPUTED_EVENTS_READ} such events, as an owed check is read from its own; a hold whose
+ * line has fallen out of that window reads as unchecked and is checked again by itself.
+ */
+async function disputedHolds(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+  holds: readonly Doc<'workingAgreements'>[],
+): Promise<Map<Id<'workingAgreements'>, RefusedOnce>> {
+  const disputed = new Map<Id<'workingAgreements'>, RefusedOnce>();
+  if (holds.length === 0) return disputed;
+  const refusals = await eventsOfType(ctx, agentId, 'agreement.refused')
+    .order('desc')
+    .take(DISPUTED_EVENTS_READ);
+  for (const hold of holds) {
+    const newest = refusals.find(
+      (event) => (event.payload as { holdId?: unknown } | null)?.holdId === hold._id,
+    );
+    const refusedOnce = refusedOnceOf(newest?.payload);
+    if (refusedOnce !== undefined) disputed.set(hold._id, refusedOnce);
+  }
+  return disputed;
+}
+
+/**
+ * Internal: hold an active agreement for every employee for one employee alone, whose charter one
+ * of two judgements refused it against while the other allowed it (RM32 (a); 16-FX's F1, where the
+ * one refusal ended the agreement for fifty-one employees). The agreement stays in effect for every
+ * other employee and ends for nobody; this employee's hold names it and takes it out of what this
+ * employee's planner and runs read, until Check now, or the check of a newly approved charter,
+ * judges it again: `checkForCharter` lifts the hold when its first judgement allows the agreement,
+ * and ends the agreement for everyone only when both refuse. A hold that already stands is kept,
+ * stamped as tried now. Nothing for a row no longer active for every employee, or an employee the
+ * owner no longer has. Writes `agreement.refused` on the employee, naming the agreement, the hold
+ * and the one refusal (`refusedOnce`), which is how the card and the sweep know the hold from one
+ * nothing has checked.
+ */
+export const holdDisputed = internalMutation({
+  args: {
+    agreementId: v.id('workingAgreements'),
+    agentId: v.id('agents'),
+    /** The refusal of the one judgement that refused it. */
+    refusal: refusalValidator,
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.agreementId);
+    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
+    const standing = await holdOf(ctx, row, args.agentId);
+    if (standing === undefined) {
+      await holdInTransaction(ctx, row, args.agentId, {
+        tried: true,
+        held: new Set<Id<'workingAgreements'>>(),
+        refusedOnce: args.refusal,
+      });
+      return null;
+    }
+    const now = Date.now();
+    await ctx.db.patch(standing._id, {
+      refusal: { reason: 'unchecked-for-employee', judgedAt: now },
+    });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agreement.refused',
+      payload: {
+        agreementId: row._id,
+        everyEmployee: true,
+        reason: 'unchecked-for-employee',
+        holdId: standing._id,
+        refusedOnce: args.refusal,
+      },
+      createdAt: now,
+    });
+    return null;
+  },
+});
 
 /** The newest events of each of the two types an employee's owed checks are read from. */
 const OWED_EVENTS_READ = 100;
@@ -1567,12 +1683,21 @@ function cardViewOf(
   };
 }
 
+/** A hold's card view with the one refusal of two judgements that disagreed on it (RM32 (a)). */
+function disputedView(view: AgreementView, refusedOnce: RefusedOnce | undefined): AgreementView {
+  return refusedOnce === undefined || view.refusal === undefined
+    ? view
+    : { ...view, refusal: { ...view.refusal, refusedOnce } };
+}
+
 /**
  * The agreements on an employee's cards: its own and every employee's, proposed (with those kept
  * and waiting on their check, and without a proposal whose every-employee copy waits on its
  * check), active and refused, newest first. A hold of an agreement for every employee says
  * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
- * check reads), and one whose agreement is in effect for nobody any more is left out; an
+ * check reads) and, when two judgements of this employee's charter disagreed on it, the one
+ * refusal (`refusal.refusedOnce`, RM32 (a)), and one whose agreement is in effect for nobody any
+ * more is left out; an
  * agreement for every employee whose check against this employee's amended charter is owed says
  * since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`; writes nothing.
  */
@@ -1595,12 +1720,13 @@ export const listForAgent = query({
     );
     const holds = rows.filter((row) => row.refusal?.reason === 'unchecked-for-employee');
     const everyEmployee = rows.some((row) => row.status === 'active' && row.agentId === undefined);
-    const [checkable, moot, owed] = await Promise.all([
+    const [checkable, moot, owed, disputed] = await Promise.all([
       holds.length === 0 && !everyEmployee
         ? false
         : pastTheCheck(ctx, userId).then((past) => !past),
       mootHolds(ctx, holds),
       everyEmployee ? owedChecksOf(ctx, agent._id) : new Map<string, number>(),
+      disputedHolds(ctx, agent._id, holds),
     ]);
     // An agreement for every employee whose check against this employee's amended charter is
     // owed says so, with Check now while the owner is within the bound (RM28 (b)).
@@ -1611,7 +1737,12 @@ export const listForAgent = query({
     return rows
       .filter((row) => !(awaitingManager(row) && copied.has(row._id)) && !moot.has(row._id))
       .sort((left, right) => right.createdAt - left.createdAt)
-      .map((row) => cardViewOf(row, checkable && holds.includes(row), owedOf(row)));
+      .map((row) =>
+        disputedView(
+          cardViewOf(row, checkable && holds.includes(row), owedOf(row)),
+          disputed.get(row._id),
+        ),
+      );
   },
 });
 
