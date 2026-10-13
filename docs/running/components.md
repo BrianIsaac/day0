@@ -75,10 +75,11 @@ approved card reaches, the documentation readers), `slack-socket` (Slack's
 Socket Mode hosts), `redactor` (its wheels and model, on a first start) and
 `nango-server` (the providers' token endpoints). Where `.env.local` names an
 HTTP proxy (`HTTPS_PROXY`), the compose file hands it to those four, with
-Day0's own service names always kept out of it. `docs-notion-mcp` and
-`playwright-mcp` reach out too and are not handed it. [The way
-out](egress.md) lists every host, what each component did with a proxy on a
-bed whose only route out was one, and what needs a direct route.
+Day0's own service names always kept out of it. `docs-notion-mcp`,
+`playwright-mcp` and `model` (its model pulls, on the local-model way)
+reach out too and are not handed it. [The way out](egress.md) lists every
+host, what each component did with a proxy on a bed whose only route out
+was one, and what needs a direct route.
 
 ---
 

@@ -6,9 +6,11 @@ must carry, gives a configuration for Caddy and one for nginx, and names the
 check that proves yours. Day0 installs no proxy and starts none: the proxy
 is yours, on the machine or beside it.
 
-Both configurations below were run on a test bed on 13 October 2026 before
-they were printed here, in front of `./setup.sh install` to its last check,
-a sign-in, a live page and a streamed reply ("What was run", at the foot).
+Both configurations below are the files a test bed ran on 13 October 2026,
+with a customer's names where the bed read its own addresses from its
+environment; each section says what differs. The bed ran them in front of
+`./setup.sh install` to its last check, a sign-in, a live page and a
+streamed reply ("What was run", at the foot).
 
 ## What the proxy must carry
 
@@ -149,6 +151,9 @@ each site, and two global options a throwaway certificate needed
 
 ## nginx
 
+Save it as a file of its own under `/etc/nginx/conf.d/`, which nginx reads
+inside its `http` block: the `map` at its head is allowed nowhere else.
+
 ```nginx
 # The live connection: a request that asks to upgrade is passed on as one, any other is not.
 map $http_upgrade $connection_upgrade {
@@ -206,7 +211,9 @@ The bed's own file (`docker/proxy-bed/nginx.conf.template`) is this one
 with its addresses and ports read from the bed's environment. It told its
 two servers apart by port, on one address; the two `server_name` lines
 are how yours are told apart on port 443, and they are the one part of this
-configuration the bed did not run.
+configuration the bed did not run. As printed, with a certificate for the
+two names, the file passes `nginx -t`, and the Caddy file above passes
+`caddy validate`.
 
 ## The check
 

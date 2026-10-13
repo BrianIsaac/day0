@@ -83,12 +83,21 @@ directly on its account.
 
 Read from the code and the compose file; none of these was run on the bed.
 
-- **A git documentation source.** A clone dials its host at the address
-  Day0 resolved for it and with every proxy variable removed, which is what
-  keeps a listed host from being pointed somewhere else. On a network whose
-  only way out is the proxy, a repository on `github.com`, `gitlab.com` or
-  a host in `DAY0_GIT_HOSTS` needs a direct route to that host; one on a git
-  server inside your network (`DAY0_PRIVATE_HOSTS`) needs none.
+- **A git documentation source on a host you list** (`DAY0_GIT_HOSTS`). Its
+  clone dials the host at the address Day0 resolved for it and with every
+  proxy variable removed, which is what keeps a listed host from being
+  pointed somewhere else. On a network whose only way out is the proxy it
+  needs a direct route to that host. A git server inside your network
+  (`DAY0_PRIVATE_HOSTS`) needs none.
+- **A git documentation source on `github.com` or `gitlab.com`: not
+  established.** Day0 clones first, and the clone is a `git` process started
+  with the deployment's variables, which hold `NO_PROXY` and not the
+  proxy's address, so it would dial directly. Where that fails for a public
+  repository, Day0 downloads the repository's archive with a request of its
+  own, which takes the proxy as every Node action's does; a repository read
+  with a secret has no second way. Whether such a source syncs with the
+  proxy as the only way out was not run; allow a direct route to the host
+  until it has been.
 - **The Notion documentation component** (`--profile docs-notion`), which
   fetches its package from `registry.npmjs.org` on its first start and
   calls `api.notion.com`, and **the browser component** (`--profile
@@ -96,10 +105,15 @@ Read from the code and the compose file; none of these was run on the bed.
   route for that container to those two hosts; the browser reaches the
   systems inside your network, and one on the internet needs a direct
   route.
+- **The bundled model service** (`--profile model`, the local-model way
+  only), which pulls its model from `registry.ollama.ai`. It is not handed
+  the proxy.
 - **Docker itself**: the image pulls and the backend image's build are the
   daemon's, by its own proxy settings (Docker's documentation, "Configure
   the daemon to use a proxy").
-- **`pnpm install`**, which reads a proxy from the shell it runs in.
+- **`pnpm install` run by hand**, which reads a proxy from the shell it runs
+  in or from `.npmrc`. The one `./setup.sh upgrade` runs is handed the proxy
+  `.env.local` names, as every child of the setup is.
 
 Next.js's own usage telemetry is turned off for the build and for the app
 (`pnpm build` and `pnpm start` set `NEXT_TELEMETRY_DISABLED=1` before Next
@@ -120,7 +134,7 @@ by what needs each:
 | `mcp.linear.app` | Linear intake and writes, once a Linear card is approved |
 | `slack.com` | Slack intake and posts, once a Slack card is approved |
 | `wss-primary.slack.com` | the Slack socket bridge's connections over `wss://`. Slack picks the host for each connection and may change it; this is the one seen in October 2026 |
-| `github.com`, `gitlab.com`, a host in `DAY0_GIT_HOSTS` | a git documentation source, when one is linked (directly: see above) |
+| `github.com`, `gitlab.com`, a host in `DAY0_GIT_HOSTS` | a git documentation source, when one is linked (see above: a listed host directly, the other two not established) |
 | `open.feishu.cn`, `open.larksuite.com` | a Feishu documentation source, by its region |
 | `api.atlassian.com` | a Confluence Cloud documentation source |
 | `login.microsoftonline.com`, `graph.microsoft.com`, your own `<tenant>.sharepoint.com` | a SharePoint documentation source |
@@ -131,7 +145,7 @@ by what needs each:
 | `huggingface.co` | the redactor's model snapshot, on its first start |
 | `pypi.org`, `files.pythonhosted.org`, `download.pytorch.org` | the redactor's wheels, on its first start |
 | `registry.npmjs.org` | the Notion component's pinned package, on its first start (directly: see above) |
-| `registry.ollama.ai` | model pulls, with the bundled model service only |
+| `registry.ollama.ai` | model pulls, with the bundled model service only (directly: see above) |
 | `app.daytona.io`, or the one `DAYTONA_API_URL` names | the hosted sandbox, when `DAYTONA_API_KEY` is set |
 | `api.elevenlabs.io` | the voice one-to-one, when it is set up |
 | your identity provider | discovery, keys and tokens, from this machine and from the backend |
@@ -150,5 +164,5 @@ names; they join the list as their connections land.
 | `GAP The way out`, "this Node ... does not read one from the environment" | run Day0's commands on Node 22.21.0 or later |
 | "The issuer cannot be reached from inside the backend container" | where your identity provider is inside the network, list it in `NO_PROXY`; where it is outside, allow it at the proxy |
 | `reach` GAP from `pnpm check:access` | allow the vendor's host at the proxy. Where the proxy re-signs https with your own authority, give the backend container that authority's bundle ([the install runbook](install.md), step 6) |
-| a documentation source that never syncs | find its host in the list above; a git source and a Notion source need a direct route |
+| a documentation source that never syncs | find its host in the list above; a Notion source and a git source on a host you list need a direct route |
 | a proxy's log showing a host this page does not name | tell us: the list is meant to be complete |

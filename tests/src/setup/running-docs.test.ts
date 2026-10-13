@@ -221,6 +221,12 @@ describe('the pages the checks send a reader to', (): void => {
     );
     expect(hosts.size).toBeGreaterThan(30);
     expect([...hosts].filter((host) => !page.includes(`\`${host}\``))).toEqual([]);
+    // What is not given the proxy is said beside its host, so a reader of the table alone knows.
+    const row = (host: string): string =>
+      page.split('\n').find((line) => line.startsWith('|') && line.includes(`\`${host}\``)) ?? '';
+    for (const host of ['api.notion.com', 'registry.npmjs.org', 'registry.ollama.ai']) {
+      expect(row(host), host).toContain('(directly: see above)');
+    }
   });
 
   it('give on the upgrade page the way back as the upgrade prints it', (): void => {
@@ -271,7 +277,9 @@ describe('the runbook and the components page, on the two proxies (wave 17, 17-P
     const section = COMPONENTS.slice(from, COMPONENTS.indexOf('\n---', from));
     const [given, notGiven] = section.split('reach out too and are not handed it');
     for (const name of handed) expect(given).toContain(`\`${name}\``);
-    for (const name of ['docs-notion-mcp', 'playwright-mcp']) {
+    // Every other service that fetches something from outside the machine, by the page's own
+    // list of hosts: the Notion component, the browser, and the bundled model service's pulls.
+    for (const name of ['docs-notion-mcp', 'playwright-mcp', 'model']) {
       expect(given).toContain(`\`${name}\``);
       expect(handed).not.toContain(name);
     }

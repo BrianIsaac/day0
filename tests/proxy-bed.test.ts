@@ -209,13 +209,12 @@ describe("the bed's forward proxy", (): void => {
     expect(tunnelled).toContain('200 Connection Established');
     expect(tunnelled).toContain('origin saw GET /through-a-tunnel');
 
-    const forwarded = await await fetch(`http://127.0.0.1:${port}/`, {
-      headers: { host: 'ignored' },
-    }).then(() =>
-      exchange(
-        port,
-        `GET http://127.0.0.1:${target}/plain HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\nConnection: close\r\n\r\n`,
-      ),
+    // A client that dials the port as if it were the origin is told what this is.
+    expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(400);
+
+    const forwarded = await exchange(
+      port,
+      `GET http://127.0.0.1:${target}/plain HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\nConnection: close\r\n\r\n`,
     );
     expect(forwarded).toContain('origin saw GET /plain');
 
@@ -302,5 +301,7 @@ describe('docs/running/proxy.md', (): void => {
           .replace('/tls/', '/etc/day0/tls/'),
       );
     expect(directives(printed('nginx'))).toEqual(bed);
+    // Its `map` is read inside `http` and nowhere else, so the page says where the file goes.
+    expect(PAGE).toContain('under `/etc/nginx/conf.d/`');
   });
 });
