@@ -15,6 +15,8 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
+import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -163,7 +165,8 @@ describe('the SharePoint documentation reader', (): void => {
       updatedAt: Date.UTC(2026, 9, 1, 9, 30, 0),
       // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
       datedBySource: true,
-      sourceRevision: '"c:{11111111-1111-4111-8111-111111111111},7"',
+      // Re-pinned for wave 17 (X-1): a file's revision is stored marked with which tag it is.
+      sourceRevision: 'c:"c:{11111111-1111-4111-8111-111111111111},7"',
     });
     const download = requests.find((request) => request.url.host === 'acme.sharepoint.com');
     expect(download?.authorization).toBeUndefined();
@@ -172,17 +175,20 @@ describe('the SharePoint documentation reader', (): void => {
     }
   });
 
-  it("captures a file's cTag and a page's version as the revision", async (): Promise<void> => {
+  it("captures a file's cTag, marked as the content's tag, and a page's listed eTag as the revision", async (): Promise<void> => {
     const { reader } = readerOnTenant();
     const { pages } = await wholeSite(reader);
+    // Re-pinned for wave 17 (the reader contract by revision): a file's cTag carries its mark
+    // (X-1), and a site page's revision is the eTag its listing gives, where it was its
+    // publishing version, which the listing is not held against.
     expect(pages.map((page) => page.sourceRevision)).toEqual([
-      '"c:{11111111-1111-4111-8111-111111111111},7"',
-      '"c:{22222222-2222-4222-8222-222222222222},3"',
-      '"c:{44444444-4444-4444-8444-444444444444},2"',
+      'c:"c:{11111111-1111-4111-8111-111111111111},7"',
+      'c:"c:{22222222-2222-4222-8222-222222222222},3"',
+      'c:"c:{44444444-4444-4444-8444-444444444444},2"',
       undefined,
-      '3.0',
-      '0.4',
-      '1.0',
+      '"{0A1B2C3D-0000-4000-8000-000000000001},3"',
+      '"{0A1B2C3D-0000-4000-8000-000000000002},0"',
+      '"{0A1B2C3D-0000-4000-8000-000000000003},1"',
     ]);
   });
 
@@ -225,7 +231,8 @@ describe('the SharePoint documentation reader', (): void => {
       updatedAt: Date.UTC(2026, 8, 28, 7, 0, 0),
       // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
       datedBySource: true,
-      sourceRevision: '3.0',
+      // Re-pinned for wave 17: the listed eTag, where it was the publishing version.
+      sourceRevision: '"{0A1B2C3D-0000-4000-8000-000000000001},3"',
     });
     const chinese = pages.filter((page) => !/[A-Za-z]/.test(page.title));
     expect(chinese.map((page) => page.title)).toEqual(['运维手册', '值班表']);
@@ -251,7 +258,8 @@ describe('the SharePoint documentation reader', (): void => {
       updatedAt: Date.UTC(2026, 8, 12, 10, 0, 0),
       // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
       datedBySource: true,
-      sourceRevision: '"c:{22222222-2222-4222-8222-222222222222},3"',
+      // Re-pinned for wave 17 (X-1): marked as the content's tag.
+      sourceRevision: 'c:"c:{22222222-2222-4222-8222-222222222222},3"',
     });
   });
 
@@ -638,5 +646,251 @@ describe("a SharePoint page's date (wave 17, D-8)", (): void => {
     }
     // The file beside it, which the second delta page dates, is still its source's.
     expect(pages.find((page) => page.ref === 'file-01OPSZH')?.datedBySource).toBe(true);
+  });
+});
+
+/** A reader on a generated library, its clock still. */
+function readerOnLibrary(library: LibraryFake): SharePointReader {
+  return new SharePointReader({
+    fetch: library.fetch,
+    download: library.fetch,
+    now: (): number => T0,
+    sleep: async (): Promise<void> => undefined,
+  });
+}
+
+/** The ref of a library's file, and of its site page, by the page's place in the library. */
+const fileRef = (index: number): string => `file-01LIB${String(index).padStart(6, '0')}`;
+const pageRef = (index: number): string =>
+  `page-0a1b2c3d-0000-4000-8000-${String(index).padStart(12, '0')}`;
+
+/** The fields each listing is asked for (the wave file's 5.5). */
+const FILE_SELECT =
+  'id,name,size,file,folder,deleted,lastModifiedDateTime,webUrl,eTag,cTag,parentReference';
+const PAGE_SELECT = 'id,name,title,eTag,lastModifiedDateTime,webUrl,publishingState';
+
+describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void => {
+  it("reads a thousand unchanged pages for the listing's requests and no body request, and one changed page alone", async (): Promise<void> => {
+    // 960 files in the library and 40 site pages: a thousand pages.
+    const library = libraryFake('sharepoint', { pages: 1_000, sitePages: 40 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    expect(first.read).toHaveLength(1_000);
+    expect(library.counts().bodies).toBe(1_000);
+
+    library.reset();
+    const unchanged = await readWhole(reader, site, SECRET, marks);
+    expect(unchanged.read).toEqual([]);
+    expect(unchanged.unread).toEqual([]);
+    expect(unchanged.kept).toHaveLength(1_000);
+    // The delta's 961 items (the root folder and the files) are 39 listing pages of 25 and the
+    // site's 40 pages two; each batch signs in once, and the first looks the site up.
+    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 0, bodies: 0 });
+    expect(unchanged.batches).toBe(41);
+
+    library.edit(500);
+    library.edit(980);
+    library.reset();
+    const edited = await readWhole(reader, site, SECRET, marks);
+    expect(edited.read.map((page) => page.ref)).toEqual([fileRef(500), pageRef(980)]);
+    expect(edited.read[0].markdown).toContain('Edited 1.');
+    expect(edited.kept).toHaveLength(998);
+    // A file costs the redirect and the download; a site page one request.
+    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 3, bodies: 2 });
+  });
+
+  it('asks each listing for the fields it reads, and the contract once a listing page before any body', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30, sitePages: 5 });
+    const reader = readerOnLibrary(library);
+    const whole = await readWhole(reader, site, SECRET, new Map());
+    const listings = library.requests.filter((request) => request.kind === 'listing');
+    expect(listings[0].url.searchParams.get('$select')).toBe(FILE_SELECT);
+    expect(listings.at(-1)?.url.searchParams.get('$select')).toBe(PAGE_SELECT);
+    // 25 files and the root folder's page, the last file, then the five site pages.
+    expect(whole.asked.map((refs) => refs.length)).toEqual([24, 1, 5]);
+    expect(whole.asked[2]).toEqual([25, 26, 27, 28, 29].map(pageRef));
+    expect(whole.read).toHaveLength(30);
+  });
+
+  it('reads a page the listing gives no revision for as before, at every sync', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 50, sitePages: 10 });
+    library.pages[3].listsRevision = false;
+    library.pages[45].listsRevision = false;
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    for (const sync of [2, 3]) {
+      library.reset();
+      const again = await readWhole(reader, site, SECRET, marks);
+      expect(
+        again.read.map((page) => page.ref),
+        `sync ${sync}`,
+      ).toEqual([fileRef(3), pageRef(45)]);
+      expect(again.read.map((page) => page.sourceRevision)).toEqual([undefined, undefined]);
+      expect(again.kept).toHaveLength(48);
+    }
+  });
+
+  it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 50, sitePages: 10 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    const before = { file: marks.get(fileRef(7)), page: marks.get(pageRef(42)) };
+    // A file's rename moves its name and address and leaves its cTag; the page's leaves its eTag.
+    library.rename(7, 'Close the quarter');
+    library.rename(42, 'Escalation paths 2027');
+    library.reset();
+    const renamed = await readWhole(reader, site, SECRET, marks);
+    expect(renamed.read.map((page) => [page.ref, page.title, page.sourceRevision])).toEqual([
+      [fileRef(7), 'close-the-quarter', before.file?.revision],
+      [pageRef(42), 'Escalation paths 2027', before.page?.revision],
+    ]);
+    expect(renamed.read[0].url).toBe(
+      'https://acme.sharepoint.com/sites/Runbooks/Shared%20Documents/close-the-quarter.md',
+    );
+    expect(renamed.kept).toHaveLength(48);
+  });
+
+  it('keeps a site page checked out at its source and unchanged, and marks it a draft', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 50, sitePages: 10 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    library.archive(44);
+    library.reset();
+    const after = await readWhole(reader, site, SECRET, marks);
+    expect(after.read).toEqual([]);
+    expect(library.counts().body).toBe(0);
+    expect(after.kept.find((page) => page.ref === pageRef(44))).toEqual({
+      ref: pageRef(44),
+      nativeStatus: 'draft',
+      datedBySource: true,
+    });
+    // A page its listing says nothing of carries no status, so the stored one is cleared.
+    expect(after.kept.find((page) => page.ref === pageRef(43))).toEqual({
+      ref: pageRef(43),
+      datedBySource: true,
+    });
+    expect(after.kept).toHaveLength(50);
+  });
+
+  it('keeps a delta item with no cTag by its eTag, and never compares an eTag with a stored cTag (X-1)', async (): Promise<void> => {
+    // Graph's reference: the delta omits cTag for OneDrive for Business on a create or a modify.
+    const library = libraryFake('sharepoint', { pages: 30, contentTags: false });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    const eTag = '"{0A1B2C3D-0000-4000-8000-000000000000},0"';
+    expect(first.read[0].sourceRevision).toBe(`e:${eTag}`);
+    library.reset();
+    const unchanged = await readWhole(reader, site, SECRET, marks);
+    expect(unchanged.kept).toHaveLength(30);
+    expect(library.counts().body).toBe(0);
+
+    // The same text stored as a cTag, marked or as 0.20.0 stored it, is not this item's revision.
+    for (const storedAsContentTag of [`c:${eTag}`, eTag]) {
+      marks.set(fileRef(0), { ...first.read[0], revision: storedAsContentTag });
+      library.reset();
+      const again = await readWhole(reader, site, SECRET, marks);
+      expect(
+        again.read.map((page) => page.ref),
+        storedAsContentTag,
+      ).toEqual([fileRef(0)]);
+    }
+  });
+
+  it("marks a file's revision with which tag it is, and keeps a file 0.20.0 stored by its unmarked cTag", async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    const cTag = '"c:{0A1B2C3D-0000-4000-8000-000000000000},0"';
+    expect(first.read[0].sourceRevision).toBe(`c:${cTag}`);
+    // As 0.20.0 stored it: the cTag itself. It is still the content's tag, so nothing is read.
+    for (const [ref, mark] of marks) marks.set(ref, { ...mark, revision: mark.revision.slice(2) });
+    expect(marks.get(fileRef(0))?.revision).toBe(cTag);
+    library.reset();
+    const upgraded = await readWhole(reader, site, SECRET, marks);
+    expect(upgraded.read).toEqual([]);
+    expect(upgraded.kept).toHaveLength(30);
+    // A stored eTag is not compared with the item's cTag, whatever its text.
+    marks.set(fileRef(1), {
+      ...first.read[1],
+      revision: `e:${first.read[1].sourceRevision?.slice(2)}`,
+    });
+    const mixed = await readWhole(reader, site, SECRET, marks);
+    expect(mixed.read.map((page) => page.ref)).toEqual([fileRef(1)]);
+  });
+
+  it('reads a site page stored at 0.20.0 with its version once more, then keeps it by its eTag', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 5, sitePages: 5 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    expect(first.read[0].sourceRevision).toBe('"{0A1B2C3D-0000-4000-8000-000000000000},0"');
+    // As 0.20.0 stored a page: its publishing version.
+    for (const [ref, mark] of marks) marks.set(ref, { ...mark, revision: '1.0' });
+    const upgraded = await readWhole(reader, site, SECRET, marks);
+    expect(upgraded.read).toHaveLength(5);
+    library.reset();
+    const after = await readWhole(reader, site, SECRET, marks);
+    expect(after.read).toEqual([]);
+    expect(library.counts().body).toBe(0);
+  });
+
+  it('says a kept page with no date from its source was dated by the read', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 4, sitePages: 2 });
+    library.pages[0].editedAt = undefined;
+    library.pages[3].editedAt = undefined;
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    expect(first.read.map((page) => page.datedBySource)).toEqual([false, true, true, false]);
+    const kept = (await readWhole(reader, site, SECRET, marks)).kept;
+    expect(kept.map((page) => page.datedBySource)).toEqual([false, true, true, false]);
+  });
+
+  it('reads a site page whose listing leaves its publishing state out, since a kept page takes its status from the listing', async (): Promise<void> => {
+    // Whether the listing answers publishingState under $select is unverified (V17-3): where it
+    // does not, keeping the page would clear a draft's status, so the page is read.
+    const library = libraryFake('sharepoint', {
+      pages: 6,
+      sitePages: 3,
+      withheld: ['publishingState'],
+    });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read.map((page) => page.ref)).toEqual([3, 4, 5].map(pageRef));
+    expect(again.kept.map((page) => page.ref)).toEqual([0, 1, 2].map(fileRef));
+  });
+
+  it('reads a Markdown file whose listing gives no address, since nothing else of it would show a rename', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 3, withheld: ['webUrl'] });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, site, SECRET, marks);
+    expect(first.read.map((page) => page.url)).toEqual([undefined, undefined, undefined]);
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read).toHaveLength(3);
+    expect(again.kept).toEqual([]);
+  });
+
+  it('reads as before with no contract to ask, and for a page the sync does not answer for', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 6, sitePages: 2 });
+    const reader = readerOnLibrary(library);
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25);
+    expect(batch.pages).toHaveLength(4);
+    expect(batch).not.toHaveProperty('kept');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    // The sync offers no page whose stored text holds a value its owner stored since.
+    marks.delete(fileRef(2));
+    const again = await reader.listPageBatch(site, SECRET, undefined, 25, storedIn(marks));
+    expect(again.pages.map((page) => page.ref)).toEqual([fileRef(2)]);
+    expect(again.kept?.map((page) => page.ref)).toEqual([fileRef(0), fileRef(1), fileRef(3)]);
   });
 });
