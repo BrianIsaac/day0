@@ -27,7 +27,7 @@ import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecision
 import { planApprovalRequest } from './PlanApproval';
 import type { RefusedSkill } from './VerdictSection';
 import { EmptyQueue } from './EmptyQueue';
-import { WorkItemCard } from './WorkItemCard';
+import { WorkItemCard, type HoldingCard } from './WorkItemCard';
 import type { ConflictQuestionRow } from './ConflictQuestion';
 
 /**
@@ -249,6 +249,7 @@ export function WorkQueue({
   workItems,
   openQuestions,
   conflictQuestions = [],
+  heldByCards,
   surfaces,
   registeredSkillCount,
   charterApproved,
@@ -282,6 +283,8 @@ export function WorkQueue({
   openQuestions: Doc<'managerQuestions'>[];
   /** The conflict questions waiting beside the employee's plans (RM20 (a)). */
   conflictQuestions?: readonly ConflictQuestionRow[];
+  /** The high-risk reorientation card holding each plan it names, by work item (W-9). */
+  heldByCards?: ReadonlyMap<string, HoldingCard>;
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -436,6 +439,7 @@ export function WorkQueue({
                   conflicts={conflictQuestions.filter(
                     (question) => question.workItemId === item._id,
                   )}
+                  heldByCard={heldByCards?.get(item._id)}
                   corrections={corrections}
                   agreements={agreements}
                   autonomyChanges={autonomyChanges}

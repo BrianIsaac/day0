@@ -52,6 +52,8 @@ function card(
     questions?: Doc<'managerQuestions'>[];
     autonomous?: boolean;
     loop?: boolean;
+    /** The reorientation card that holds the item's plan, when one does. */
+    heldByCard?: { reorientationId: string; summary: string };
     /** What the server answers a Stop with; it stops the run unless told otherwise. */
     stop?: StopRunAnswer;
   } = {},
@@ -74,6 +76,7 @@ function card(
         autonomousActions={options.autonomous ?? false}
         employeeName={EMPLOYEE}
         questions={options.questions ?? []}
+        heldByCard={options.heldByCard}
         onApprovePlan={record('approvePlan')}
         onCancelPlan={record('cancelPlan')}
         onRetryFailed={record('retry')}
@@ -127,6 +130,30 @@ describe('discovered, then skipped (work-discovered.html)', (): void => {
       'Taken: Refresh pipeline coverage view for quarterly forecasting goes back to be evaluated.',
     ]);
     expect(focusedName()).toBe('Take it anyway');
+  });
+});
+
+describe('a plan a reorientation card holds (W-9)', (): void => {
+  it('says Day0 approves nothing on its own until the card is decided, with the card a link away', (): void => {
+    const held = card(DRAWN.planPending, {
+      heldByCard: {
+        reorientationId: 'card-1',
+        summary: '“How to update a Linear ticket” was superseded',
+      },
+    });
+    expect(held.text()).toContain(
+      'Day0 approves nothing here on its own until you decide the reorientation card: “How to update a Linear ticket” was superseded.',
+    );
+    const link = [...held.container.querySelectorAll('a')].find(
+      (anchor) => anchor.textContent === 'Open the card',
+    );
+    expect(link?.getAttribute('href')).toBe(
+      `/agent/${DRAWN.planPending.agentId}/reorientation#card-card-1`,
+    );
+    held.unmount();
+    const free = card(DRAWN.planPending);
+    expect(free.text()).not.toContain('reorientation card');
+    free.unmount();
   });
 });
 

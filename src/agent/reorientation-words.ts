@@ -79,6 +79,15 @@ export function closingHeldReason(name: string, summary: string): string {
   return `${name} stopped before its closing steps: a reorientation card is still open (${withoutStop(summary)}). Decide it, then Retry.`;
 }
 
+/**
+ * What a plan's card on the Work tab says while a high-risk reorientation card holds it (W-9; the
+ * joins' draft, a product word flagged with RM24): the hold stops Day0's own approval only, so
+ * the plan is still the manager's to approve, and the line says what Day0 will not do meanwhile.
+ */
+export function heldByCardWords(summary: string): string {
+  return `Day0 approves nothing here on its own until you decide the reorientation card: ${withoutStop(summary)}.`;
+}
+
 /** A documentation page as a conflict's question names it: its title and its source's label. */
 export interface NamedPageWords {
   readonly title: string;
