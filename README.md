@@ -564,6 +564,8 @@ Then, in the browser:
 
    Every per-agent function checks the caller, so the command presents the local owner's identity (`dev-no-auth|local-boss`; `--identity` names another). The agent id is the last segment of the dashboard URL, and `pnpm metrics:recompute trace.json` recomputes the card from the file.
 
+   For every employee at once, `pnpm export:trace --owner --out owner.json` writes one file: each employee's trace, and the rows you hold once for all of them (your documentation sources and pages by title and status, never a page's text, address or reference; the relations between pages; your skill library, people and working agreements). The home's "Everything, for every employee" card downloads the same file, and `pnpm metrics:recompute owner.json --expect figures.json` recomputes the company figures from it and fails on any that differs.
+
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
 Closing actions carry a different approval identity from phase one, so a delayed approval cannot authorise new payloads at old indexes; provider idempotency retains the execution identity. Pre-hold repair preserves payload values and valid argument bindings, then reruns the closing-action checks. A blocked run can still send a manager DM under its standing grant when that message asks the manager something; a note that only reports is withheld with the stop. A Slack plan approval carries no question answers; use the charter or plan card to answer, and refresh a stale plan card if the charter answer changed.
@@ -1691,6 +1693,8 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
    ```
 
    每个按 Agent 划分的函数都会校验调用者，因此该命令以本机 owner 的身份运行（`dev-no-auth|local-boss`；`--identity` 可指定其他身份）。Agent id 是 dashboard URL 的最后一段，`pnpm metrics:recompute trace.json` 可从该文件重新计算卡片。
+
+   如需一次导出所有员工，`pnpm export:trace --owner --out owner.json` 会写出一个文件：每位员工的轨迹，以及你为全体员工只保存一份的数据（文档来源与页面的标题和状态，不含页面正文、地址或引用；页面之间的关系；你的技能库、人员与工作约定）。首页的“Everything, for every employee”卡片下载的是同一个文件，`pnpm metrics:recompute owner.json --expect figures.json` 可据此重新计算公司数字，任何一项不一致都会失败。
 
    ![A clean revocation evidence composite: Linear write is revoked, the in-flight comment is refused for no grant, and supervision records one blocked action with complete audit coverage](.github/images/revocation-supervision.webp)
 
