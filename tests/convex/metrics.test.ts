@@ -1,5 +1,6 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
+import { ConvexError } from 'convex/values';
 import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import {
@@ -2835,5 +2836,23 @@ describe('today in the employee’s zone (16-F)', (): void => {
     await expect(owner.query(api.metrics.forAgent, { agentId, day: '12 October' })).rejects.toThrow(
       'not a day',
     );
+  });
+
+  it('refuses 9999-12-31 with its sentence, the last day having no day after it (W16-R32)', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+    const owner = harness.withIdentity(managerIdentity());
+
+    // The review's input: a day of the calendar whose next day the day arithmetic cannot name.
+    const refusal = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-31' }).then(
+      (): unknown => undefined,
+      (error: unknown): unknown => error,
+    );
+    expect(refusal).toBeInstanceOf(ConvexError);
+    expect((refusal as ConvexError<string>).data).toBe(
+      '9999-12-31 is past the last day Day0 counts; name an earlier day',
+    );
+    // The day before it has a day after it, and is read as any other.
+    const lastCounted = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-30' });
+    expect(lastCounted.today?.day).toBe('9999-12-30');
   });
 });

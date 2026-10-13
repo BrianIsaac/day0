@@ -1467,6 +1467,24 @@ function isDayKey(day: string): boolean {
 }
 
 /**
+ * The last day a day's figures are read for: the day before the last a day key can name, since a
+ * day is counted to the start of the day after it (W16-R32).
+ */
+const LAST_COUNTED_DAY = '9999-12-30';
+
+/**
+ * Why a day argument is refused, in the words the page shows, or undefined for a day the figures
+ * can count: a day of the calendar whose next day has a name.
+ *
+ * @param day - The day as the caller named it.
+ */
+export function dayRefusal(day: string): string | undefined {
+  if (!isDayKey(day)) return `${day} is not a day; name it as YYYY-MM-DD`;
+  if (day > LAST_COUNTED_DAY) return `${day} is past the last day Day0 counts; name an earlier day`;
+  return undefined;
+}
+
+/**
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
  * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
  * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
@@ -1478,9 +1496,8 @@ export const forAgent = query({
     const agent = await assertOwnsAgent(ctx, args.agentId);
     // The guard first: a caller it refuses learns nothing of the arguments (12-G).
     const { day } = args;
-    if (day !== undefined && !isDayKey(day)) {
-      throw new ConvexError(`${day} is not a day; name it as YYYY-MM-DD`);
-    }
+    const refusal = day === undefined ? undefined : dayRefusal(day);
+    if (refusal !== undefined) throw new ConvexError(refusal);
     const [records, transfers] = await Promise.all([
       readEmployeeRecords(ctx, agent),
       acceptedTransfersOf(ctx, agent._id),
