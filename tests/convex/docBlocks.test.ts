@@ -187,6 +187,59 @@ describe('replacePageBlocks', (): void => {
   });
 });
 
+describe('replacePageBlocks and a page whose title is renamed (W15-R21)', (): void => {
+  const LIMITS = [
+    '# Close limits',
+    '',
+    '## Thresholds',
+    '',
+    'Escalate any variance above 5,000 USD.',
+    '',
+    '## Comment length',
+    '',
+    'An audit comment is at most 60 words.',
+  ].join('\n');
+
+  it('re-points a conflict’s evidence at the blocks whose text and inner headings are what they were, and at no other', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const page = await sourceOf(harness);
+    await split(harness, page, LIMITS);
+    const [thresholds, comments] = (await blocksOf(harness, page.sourceId)).map(
+      (block) => block.hash,
+    );
+    const relationId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: page.sourceId, ref: 'runbooks/refresh.md' },
+          to: { sourceId: page.sourceId, ref: 'other.md' },
+          kind: 'possible_conflict',
+          evidence: [
+            { measure: 'heading-figures', value: 2, blockRefs: [thresholds, 'other-1', comments] },
+            { measure: 'shared-text', value: 40, blockRefs: [thresholds, 'other-2'] },
+          ],
+          status: 'confirmed',
+          createdAt: 1,
+        }),
+    );
+    // The H1 renamed, and the comment limit's figure changed with it.
+    await split(
+      harness,
+      page,
+      LIMITS.replace('# Close limits', '# Close limits for RevOps').replace('60 words', '90 words'),
+    );
+    const [renamed, changed] = (await blocksOf(harness, page.sourceId)).map((block) => block.hash);
+    expect(renamed).not.toBe(thresholds);
+    expect(changed).not.toBe(comments);
+    expect((await harness.run(async (ctx) => await ctx.db.get(relationId)))?.evidence).toEqual([
+      // The passage that only moved under a new title is named by its new hash; the one whose
+      // figure changed keeps the hash no block holds, so it is measured afresh.
+      { measure: 'heading-figures', value: 2, blockRefs: [renamed, 'other-1', comments] },
+      { measure: 'shared-text', value: 40, blockRefs: [thresholds, 'other-2'] },
+    ]);
+  });
+});
+
 describe('splitStoredPage', (): void => {
   it('splits the page as stored when it runs, and nothing for a page gone by then', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
