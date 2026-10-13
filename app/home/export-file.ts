@@ -7,6 +7,7 @@
  */
 
 import { log } from '@/lib/logger';
+import { refusalText } from '../components/use-change';
 
 /** The most a browser without the File System Access API keeps before it saves: 512 MiB. */
 export const HELD_EXPORT_BYTES = 512 * 1024 * 1024;
@@ -17,6 +18,19 @@ export const HELD_EXPORT_BYTES = 512 * 1024 * 1024;
  */
 export const EXPORT_TOO_LARGE =
   'This export is too large for this browser to hold before it saves it. Export from Chrome or Edge, which save it as it arrives, or ask IT to run the export from the command line.';
+
+/** What an export that did not finish says when the refusal carries no words of its own. */
+export const EXPORT_REFUSED = 'The export did not finish; nothing was saved.';
+
+/**
+ * What is added when the empty file the browser made for the chosen name could not be removed
+ * (wording, RM24, flagged).
+ *
+ * @param fileName - The file's name.
+ */
+export function leftBehind(fileName: string): string {
+  return ` The empty file ${fileName} could not be removed; delete it yourself.`;
+}
 
 /** A file the export is being written to. */
 export interface ExportFile {
@@ -70,16 +84,44 @@ function isDismissal(error: unknown): boolean {
 }
 
 /**
+ * Remove the empty file the picker made for a name, where the browser can.
+ *
+ * @returns The name of the file when it is still there, or undefined once it is gone.
+ */
+async function removedOrLeft(handle: RemovableFileHandle): Promise<string | undefined> {
+  if (handle.remove === undefined) return handle.name;
+  try {
+    await handle.remove();
+    return undefined;
+  } catch (error) {
+    log.warn('the empty file the picker made could not be removed', { reason: reasonOf(error) });
+    return handle.name;
+  }
+}
+
+/**
  * A file the manager chose, written as each piece arrives. The pieces go to the browser's own
  * temporary copy until `close`, so a stopped export never leaves half a file under the chosen
- * name; where the picker made a new, empty file for the name, a stopped export removes it too.
+ * name; where the picker made a new, empty file for the name, a stopped export removes it too,
+ * and so does a file the browser then refuses to open for writing.
+ *
+ * @throws Error the browser's own refusal to open the file, with the name of the empty file left
+ *   behind where it could not be removed.
  */
 async function pickedFile(handle: RemovableFileHandle): Promise<ExportFile> {
   // An existing file the manager chose to replace is theirs and stays if the export stops. The
   // browser does not say whether the picker made the file, so an empty one is read as made by it:
-  // an empty file chosen for replacing held nothing to keep.
+  // an empty file chosen for replacing held nothing to keep. A file whose size cannot be read is
+  // never removed: nothing says it is empty.
   const madeByPicker = (await handle.getFile()).size === 0;
-  const writable = await handle.createWritable();
+  let writable: FileSystemWritableFileStream;
+  try {
+    writable = await handle.createWritable();
+  } catch (error) {
+    const left = madeByPicker ? await removedOrLeft(handle) : undefined;
+    if (left === undefined) throw error;
+    throw new Error(`${refusalText(error, EXPORT_REFUSED)}${leftBehind(left)}`, { cause: error });
+  }
   return {
     write: async (chunk) => await writable.write(chunk),
     close: async () => {
@@ -94,17 +136,7 @@ async function pickedFile(handle: RemovableFileHandle): Promise<ExportFile> {
         // what it held when it was picked.
         log.warn('the unfinished export could not be aborted', { reason: reasonOf(error) });
       }
-      if (!madeByPicker) return undefined;
-      if (handle.remove === undefined) return handle.name;
-      try {
-        await handle.remove();
-        return undefined;
-      } catch (error) {
-        log.warn('the empty file the picker made could not be removed', {
-          reason: reasonOf(error),
-        });
-        return handle.name;
-      }
+      return madeByPicker ? await removedOrLeft(handle) : undefined;
     },
   };
 }

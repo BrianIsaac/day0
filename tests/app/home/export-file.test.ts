@@ -22,6 +22,7 @@ beforeEach((): void => {
 });
 
 afterEach((): void => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete (window as { showSaveFilePicker?: unknown }).showSaveFilePicker;
 });
@@ -81,7 +82,63 @@ describe('the file the home’s export is saved to (wave 17, 17-F; decision F-1)
     expect(revoked).toEqual([]);
     vi.advanceTimersByTime(1);
     expect(revoked).toEqual(['blob:export']);
-    vi.useRealTimers();
+  });
+
+  /** The picker answering with a file the browser then refuses to open for writing. */
+  function pickerOfAFileItWillNotOpen(
+    name: string,
+    size: number,
+    removable: boolean,
+  ): { removed: boolean } {
+    const file = { removed: false };
+    (window as { showSaveFilePicker?: unknown }).showSaveFilePicker = async (): Promise<unknown> =>
+      await Promise.resolve({
+        name,
+        getFile: async () => await Promise.resolve({ size }),
+        // An `Error` named as the browser names it: a browser's `DOMException` is an `Error`,
+        // where jsdom's is not, and the page reads the refusal's words as an `Error`'s.
+        createWritable: async (): Promise<never> =>
+          await Promise.reject(
+            Object.assign(new Error('The request is not allowed here.'), {
+              name: 'NotAllowedError',
+            }),
+          ),
+        ...(removable
+          ? {
+              remove: async (): Promise<void> => {
+                file.removed = true;
+                await Promise.resolve();
+              },
+            }
+          : {}),
+      });
+    return file;
+  }
+
+  it('removes the empty file the picker made when the browser will not open it for writing, and says the browser’s refusal (the second pass of the fixes)', async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const file = pickerOfAFileItWillNotOpen('october-export.json', 0, true);
+    await expect(openExportFile('suggested.json')).rejects.toThrow(
+      'The request is not allowed here.',
+    );
+    expect(file.removed).toBe(true);
+  });
+
+  it('names the empty file it could not remove when the browser will not open it for writing', async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    pickerOfAFileItWillNotOpen('october-export.json', 0, false);
+    await expect(openExportFile('suggested.json')).rejects.toThrow(
+      'The request is not allowed here. The empty file october-export.json could not be removed; delete it yourself.',
+    );
+  });
+
+  it('keeps a file the manager chose to replace when the browser will not open it for writing', async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const file = pickerOfAFileItWillNotOpen('last-month.json', 2_048, true);
+    await expect(openExportFile('suggested.json')).rejects.toThrow(
+      /^The request is not allowed here\.$/,
+    );
+    expect(file.removed).toBe(false);
   });
 
   it('answers no file when the manager closes the picker', async (): Promise<void> => {

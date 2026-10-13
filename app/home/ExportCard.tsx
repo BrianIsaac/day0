@@ -15,7 +15,7 @@ import { dayKey, deploymentZone } from '@/lib/zone';
 import { Button } from '../components/Button';
 import { StatusRegion } from '../components/StatusRegion';
 import { refusalText, useChange } from '../components/use-change';
-import { openExportFile } from './export-file';
+import { EXPORT_REFUSED, leftBehind, openExportFile } from './export-file';
 
 /**
  * The file the owner export is saved as: the day of the export, as `--out` would be named by hand.
@@ -33,18 +33,6 @@ function counted(count: number, noun: string): string {
 
 /** What a stopped export says, whoever stopped it (section 7's draft, RM24). */
 export const EXPORT_CANCELLED = 'Cancelled: nothing was saved.';
-
-/** What an export that did not finish says when the refusal carries no words of its own. */
-const EXPORT_REFUSED = 'The export did not finish; nothing was saved.';
-
-/**
- * What is added when the empty file the browser made for the chosen name could not be removed.
- *
- * @param fileName - The file's name.
- */
-function leftBehind(fileName: string): string {
-  return ` The empty file ${fileName} could not be removed; delete it yourself.`;
-}
 
 /** How an export ended: saved under a name, or stopped by the manager with nothing kept. */
 type Exported =
