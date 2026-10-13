@@ -11,7 +11,8 @@ import { eventsOfType } from './eventLog';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { isEventOf } from '../src/events/contract';
 import { pageStatusOf, sourceAuthorityOf, type SourceAuthority } from '../src/docs/authority';
-import type { CiteConflict, PlanCite } from '../src/work/types';
+import { planLeansOn } from '../src/work/conflict-hold';
+import type { CiteConflict, ExecutionPlan, PlanCite } from '../src/work/types';
 
 /*
  * The standing conflict (wave 15, 15-A; split out of `convex/docRelations.ts` by wave 16's 16-s,
@@ -318,11 +319,53 @@ export async function conflictsOnPlanBlocks(
 }
 
 /**
+ * Whether a plan's own words lean on a conflict (`planLeansOn`, D-1 (c)): the heading the pages
+ * disagree under, or one page's title, named in its summary, steps or risk notes.
+ *
+ * @param plan - The work item's plan, as stored.
+ * @param conflict - The conflict as a cite names it.
+ */
+export function planLeansOnConflict(plan: unknown, conflict: CiteConflict): boolean {
+  if (typeof plan !== 'object' || plan === null) return false;
+  return planLeansOn(plan as Partial<ExecutionPlan>, {
+    heading: conflict.heading,
+    titles: conflict.pages.map((page) => page.title),
+  });
+}
+
+/**
+ * The conflicts a drafted plan names in its own words and cites nowhere (D-1 (c)): those standing
+ * on the blocks its selection showed the planner (`workItems.selectedBlocks`, each printed
+ * `[conflict]`) that its words lean on. Read only for a plan with cites, since a plan that cites
+ * nothing is asked about its whole selection already; an item selected before the blocks were kept
+ * has none to read, and is asked by its cites alone.
+ */
+async function conflictsLeanedOn(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, 'plan' | 'selectedBlocks'>,
+  agent: Pick<Doc<'agents'>, 'userId'>,
+): Promise<CiteConflict[]> {
+  const cites = (row.plan as { cites?: readonly unknown[] } | null | undefined)?.cites;
+  const kept = row.selectedBlocks ?? [];
+  if (agent.userId === undefined || !Array.isArray(cites) || cites.length === 0) return [];
+  if (kept.length === 0) return [];
+  const hashes = new Set(kept.slice(0, SELECTED_BLOCKS_READ).map((block) => block.hash));
+  const byRelation = new Map<string, CiteConflict>();
+  for (const standing of (await standingConflictsOn(ctx, agent.userId, hashes)).values()) {
+    const conflict = citeConflictOf(standing);
+    if (planLeansOnConflict(row.plan, conflict)) byRelation.set(conflict.relationId, conflict);
+  }
+  return [...byRelation.values()];
+}
+
+/**
  * Every conflict that stands under a drafted plan, each relation once (W15-R18's three inputs,
- * D-4 (c)): the plan's own cites that carried a `conflict` tag, and every conflict on the blocks
- * it relies on ({@link conflictsOnPlanBlocks}), so a conflict confirmed after the plan was drafted
- * is asked too. What a drafted plan's question asks about (`work.decidePlan`). It replaces wave
- * 15's `citedConflictOf`, which read the first tagged cite only, for a hold of the whole plan.
+ * D-4 (c)): the plan's own cites that carried a `conflict` tag, every conflict on the blocks it
+ * relies on ({@link conflictsOnPlanBlocks}), so a conflict confirmed after the plan was drafted is
+ * asked too, and every conflict it was shown and names in its own words without citing
+ * ({@link conflictsLeanedOn}, D-1 (c)). What a drafted plan's question asks about
+ * (`work.decidePlan`). It replaces wave 15's `citedConflictOf`, which read the first tagged cite
+ * only, for a hold of the whole plan.
  *
  * @param ctx - The deciding mutation's context.
  * @param row - The work item, its plan as stored.
@@ -337,6 +380,7 @@ export async function conflictsUnderPlan(
   for (const conflict of [
     ...(await standingCitedConflicts(ctx, row.plan)),
     ...(await conflictsOnPlanBlocks(ctx, row, agent)),
+    ...(await conflictsLeanedOn(ctx, row, agent)),
   ]) {
     if (!byRelation.has(conflict.relationId)) byRelation.set(conflict.relationId, conflict);
   }

@@ -14,7 +14,7 @@ import type { Charter } from '../src/agent/charter';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 import { PLAN_CANCELLED_REASON } from '../src/work/stop';
 import { redactTokenShapes } from '../src/surfaces/redact';
-import { conflictSteps, heldWriteSurfaces } from '../src/work/conflict-hold';
+import { conflictSteps, heldWriteSurfaces, planLeansOn } from '../src/work/conflict-hold';
 import type { ExecutionPlan } from '../src/work/types';
 import {
   REORIENTATION_BLOCKING_LIMIT,
@@ -821,20 +821,26 @@ export function conflictQuestionKey(relationId: Id<'docRelations'>): string {
 
 /**
  * What a conflict's hold would withhold of a plan, in the manager's words (W16-R10): the display
- * names of the surfaces its held steps write, or `every` where the plan declares no writes.
+ * names of the surfaces its held steps write, or `every` where the plan declares no writes. A
+ * conflict the plan names in its own words and cites nowhere holds every step (D-1 (c)).
  */
 async function heldSurfaceNames(
   ctx: QueryCtx,
   row: Doc<'workItems'>,
-  relationId: Id<'docRelations'>,
+  conflict: ConflictAsked,
 ): Promise<string[] | 'every'> {
+  const { relationId } = conflict;
   const plan = row.plan as ExecutionPlan | undefined;
   const relation = await ctx.db.get(relationId);
   if (plan === undefined || !Array.isArray(plan.steps) || relation === null) return [];
   // The blocks the two pages disagree in, as `docRelationProposals.conflictBlocks` reads them.
   const blocks =
     relation.evidence.find((entry) => entry.measure === 'heading-figures')?.blockRefs ?? [];
-  const held = heldWriteSurfaces(plan, conflictSteps(plan, { relationId, blocks }));
+  const leaned = planLeansOn(plan, {
+    heading: conflict.heading,
+    titles: conflict.pages.map((page) => page.title),
+  });
+  const held = heldWriteSurfaces(plan, conflictSteps(plan, { relationId, blocks, leaned }));
   if (held === 'every' || held.length === 0) return held;
   const surfaces = await ctx.db
     .query('surfaces')
@@ -883,7 +889,7 @@ export async function askConflictQuestion(
     agent.name,
     conflict.heading,
     conflict.pages,
-    await heldSurfaceNames(ctx, row, conflict.relationId),
+    await heldSurfaceNames(ctx, row, conflict),
   );
   const questionId = await ctx.db.insert('managerQuestions', {
     agentId: row.agentId,

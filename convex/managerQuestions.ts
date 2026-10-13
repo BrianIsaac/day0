@@ -14,7 +14,12 @@ import {
   verifiedAddressOf,
 } from './ownership';
 import { amendCharterInTransaction } from './charters';
-import { citeConflictOf, conflictsOnPlanBlocks, standingConflictOf } from './docConflicts';
+import {
+  citeConflictOf,
+  conflictsOnPlanBlocks,
+  planLeansOnConflict,
+  standingConflictOf,
+} from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
@@ -420,23 +425,35 @@ export const conflictQuestionsForRequest = internalQuery({
 /**
  * What the apply holds for a plan's unanswered conflict questions (RM20 (a)): each question, its
  * relation and the hashes of the blocks its pages disagree in, by which the plan's steps that rely
- * on the passage are found. Internal; read by `workActions` before a set is gated.
+ * on the passage are found, and whether the plan's own words lean on the conflict, which holds
+ * every step where no cite carries it (D-1 (c)). Internal; read by `workActions` before a set is
+ * gated.
  */
 export const conflictHoldsFor = internalQuery({
   args: { workItemId: v.id('workItems') },
   handler: async (
     ctx,
     args,
-  ): Promise<Array<{ question: string; relationId: string; blocks: string[] }>> => {
-    const holds: Array<{ question: string; relationId: string; blocks: string[] }> = [];
+  ): Promise<
+    Array<{ question: string; relationId: string; blocks: string[]; leaned: boolean }>
+  > => {
+    const holds: Array<{
+      question: string;
+      relationId: string;
+      blocks: string[];
+      leaned: boolean;
+    }> = [];
+    const plan = (await ctx.db.get(args.workItemId))?.plan;
     for (const question of await openConflictQuestions(ctx, args.workItemId)) {
       const relation = question.relationId ? await ctx.db.get(question.relationId) : null;
       // A conflict that no longer stands holds nothing, whatever became of its question.
-      if (relation === null || (await standingConflictOf(ctx, relation)) === undefined) continue;
+      const standing = relation === null ? undefined : await standingConflictOf(ctx, relation);
+      if (relation === null || standing === undefined) continue;
       holds.push({
         question: question.question,
         relationId: relation._id,
         blocks: [...conflictBlocks(relation)],
+        leaned: planLeansOnConflict(plan, citeConflictOf(standing)),
       });
     }
     return holds;

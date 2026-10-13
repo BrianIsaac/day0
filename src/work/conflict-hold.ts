@@ -3,9 +3,11 @@
  * drafted over a passage two equally trusted pages disagree on runs, and only the writes of the
  * steps that rely on the passage wait for the manager's answer. A step relies on it when one of
  * its cites carries the relation or one of the blocks the pages disagree in; a plan that cites
- * nothing says nothing of which step relies on it, so every step waits. Pure.
+ * nothing says nothing of which step relies on it, so every step waits, as it does for a conflict
+ * the plan names in its own words and cites nowhere (D-1 (c), `planLeansOn`). Pure.
  */
 
+import { contentWords } from '../agent/manager-questions';
 import { actionIntent, isManagerDm, parseSurfaceAction } from '../surfaces/policy';
 import type { SurfaceRecord } from '../surfaces/types';
 import { planObligations } from './obligations';
@@ -15,6 +17,39 @@ import type { ExecutionPlan, MockAction } from './types';
 export interface HeldConflict {
   readonly relationId: string;
   readonly blocks: readonly string[];
+  /**
+   * Set where the plan's own words lean on the conflict (`planLeansOn`): asked beside a plan none
+   * of whose cites carries it, no cite says which step relies on the passage.
+   */
+  readonly leaned?: boolean;
+}
+
+/**
+ * Whether a plan's own words rest on a conflict (the review's D-1 (c), the narrow ask): its
+ * summary, steps and risk notes hold every content word of the heading the two pages disagree
+ * under, or of one page's title. A planner shown a passage tagged `[conflict]` may say the step
+ * waits on the dispute, or that the work is kept within the page's limits, and cite a neighbouring
+ * passage, which the cited-blocks rule alone never asks about. One shared word is no lean: a phrase
+ * counts with two content words or more, and a one-word heading only beside a word of a title.
+ * English words only (`contentWords`): a heading in another script is asked about by its cite.
+ *
+ * @param plan - The plan's words, as stored.
+ * @param conflict - The heading the pages disagree under and the two pages' titles.
+ */
+export function planLeansOn(
+  plan: Partial<Pick<ExecutionPlan, 'summary' | 'steps' | 'riskNotes'>>,
+  conflict: { readonly heading: string; readonly titles: readonly string[] },
+): boolean {
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const words = new Set(
+    contentWords([plan.summary ?? '', ...steps, plan.riskNotes ?? ''].join(' ')),
+  );
+  const named = (phrase: readonly string[]): boolean => phrase.every((word) => words.has(word));
+  const titles = conflict.titles.map(contentWords);
+  if (titles.some((title) => title.length >= 2 && named(title))) return true;
+  const heading = contentWords(conflict.heading);
+  if (heading.length === 0 || !named(heading)) return false;
+  return heading.length >= 2 || titles.some((title) => title.some((word) => words.has(word)));
 }
 
 /**
@@ -28,7 +63,8 @@ export function conflictSteps(
   conflict: HeldConflict,
 ): number[] {
   const cites = plan.cites ?? [];
-  if (cites.length === 0) return plan.steps.map((_step, index) => index + 1);
+  const every = plan.steps.map((_step, index) => index + 1);
+  if (cites.length === 0) return every;
   const blocks = new Set(conflict.blocks);
   const steps = cites.flatMap((cite) =>
     cite.conflict?.relationId === conflict.relationId ||
@@ -36,6 +72,7 @@ export function conflictSteps(
       ? [cite.step]
       : [],
   );
+  if (steps.length === 0 && conflict.leaned === true) return every;
   return [...new Set(steps)].sort((left, right) => left - right);
 }
 

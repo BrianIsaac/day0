@@ -1156,6 +1156,65 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).toMatchObject({ heading: 'Thresholds' });
   });
 
+  it('asks beside a plan that names the dispute in its own words and cites another passage, and holds every step (D-1 (c))', async (): Promise<void> => {
+    // The pre-tag bed's REVOPS-1 on the hosted model: told to cite the tagged passage a step
+    // relies on, the planner said the step was held on the dispute and cited a neighbouring
+    // passage of the page, so nothing was asked and nothing held.
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const { citations } = await selection(harness, agentId);
+    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const elsewhere = {
+      step: 1,
+      label: 'Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Refresh',
+      blocks: [],
+    };
+    const kept = disputed.blocks.map((block) => ({
+      id: block.id as Id<'docBlocks'>,
+      hash: block.hash!,
+    }));
+    const leaning = await planned(harness, agentId, {
+      summary:
+        'Escalate the variance as the finance escalation page says; the two pages disagree on the figure, so that step waits for you.',
+      cites: [elsewhere],
+    });
+    // The same selection shown to a plan whose words rest on neither page: the narrow ask is narrow.
+    const apart = await planned(harness, agentId, {
+      summary: 'Refresh the tile.',
+      steps: ['Press Refresh'],
+      cites: [elsewhere],
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(leaning, { selectedBlocks: kept });
+      await ctx.db.patch(apart, { selectedBlocks: kept });
+    });
+    await harness.mutation(internal.work.decidePlan, { workItemId: leaning });
+    await harness.mutation(internal.work.decidePlan, { workItemId: apart });
+    expect(await questionsOf(harness, leaning)).toEqual([
+      expect.objectContaining({ question: ASKED, relationId }),
+    ]);
+    expect(await questionsOf(harness, apart)).toEqual([]);
+    // No cite says which step relies on the passage, so the apply holds every step's writes.
+    expect(
+      await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId: leaning }),
+    ).toEqual([expect.objectContaining({ relationId, leaned: true })]);
+  });
+
   it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
