@@ -133,13 +133,18 @@ export async function storedPage(
   });
 }
 
-/** Measure a page of a source, as its finishing sync does. */
+/**
+ * Measure a page of a source, as its finishing sync does with room for every candidate.
+ *
+ * @returns How many relations the measure proposed.
+ */
 export async function measure(harness: Harness, source: Source, ref: string): Promise<number> {
-  return await harness.mutation(internal.docRelations.measurePage, {
+  const { proposed } = await harness.mutation(internal.docRelations.measurePage, {
     sourceId: source.sourceId,
     syncRunId: source.runId,
     ref,
   });
+  return proposed;
 }
 
 /** Every relation, oldest first. */

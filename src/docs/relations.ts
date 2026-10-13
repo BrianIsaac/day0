@@ -29,6 +29,19 @@ export const RELATION_PROPOSALS_PER_SYNC = 50;
  */
 export const RELATION_PAGES_PER_STEP = 100;
 
+/**
+ * How many times a page whose measure threw is tried before the measuring passes it over (wave 17,
+ * 17-FD; W16-R34): a measure out of retries on a busy row passes at a later step, and one over a
+ * read limit never does, so it is logged as not measured and the measuring goes on without it.
+ */
+export const RELATION_MEASURE_TRIES = 3;
+
+/**
+ * How long the measuring waits before it tries a page again: long enough for the writes a sync's
+ * end makes to its source's row (discovery, the people extraction) to have landed.
+ */
+export const RELATION_MEASURE_RETRY_MS = 5_000;
+
 /** The most other pages one page is measured against: the best of what its title and headings find. */
 export const RELATION_CANDIDATES_PER_PAGE = 3;
 

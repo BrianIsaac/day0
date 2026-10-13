@@ -37,6 +37,31 @@ afterEach((): void => {
   vi.useRealTimers();
 });
 
+/** A completed walk of a source: the run a finished sync measures. */
+async function completedWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
+  return await harness.run(async (ctx) => {
+    const runs = await ctx.db
+      .query('docSyncRuns')
+      .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
+      .collect();
+    const runId = await ctx.db.insert('docSyncRuns', {
+      sourceId,
+      listing: runs.length + 1,
+      credentialRefs: [],
+      pageCount: 0,
+      redactionCount: 0,
+      state: 'completed',
+      createdAt: runs.length + 2,
+      completedAt: runs.length + 2,
+    });
+    for (const run of runs) {
+      if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
+    }
+    await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
+    return { sourceId, runId };
+  });
+}
+
 describe('measurePage: the relations a finishing sync proposes', (): void => {
   it('proposes a later version in another source as the successor, on each reader’s record, and changes no page', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -267,7 +292,7 @@ describe('measurePage: the relations a finishing sync proposes', (): void => {
         syncRunId: wiki.runId,
         ref: 'pipeline-runbook-v2.md',
       }),
-    ).toBe(0);
+    ).toEqual({ proposed: 0, cut: false });
     expect(await relations(harness)).toEqual([]);
   });
 });
@@ -400,7 +425,8 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
         ref: 'Alpha.md',
         room: 1,
       }),
-    ).toBe(1);
+      // Its room ended it with two candidates unmeasured, and it says so (W16-R34).
+    ).toEqual({ proposed: 1, cut: true });
     expect(await relations(harness)).toHaveLength(1);
     // With no room given a page proposes every relation its three candidates hold.
     expect(await measure(harness, first, 'Bravo.md')).toBe(3);
@@ -420,31 +446,6 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
 });
 
 describe('measuring a library of more pages than one step takes (W15-R5)', (): void => {
-  /** A completed walk of a source: the run a finished sync measures. */
-  async function completedWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
-    return await harness.run(async (ctx) => {
-      const runs = await ctx.db
-        .query('docSyncRuns')
-        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
-        .collect();
-      const runId = await ctx.db.insert('docSyncRuns', {
-        sourceId,
-        listing: runs.length + 1,
-        credentialRefs: [],
-        pageCount: 0,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: runs.length + 2,
-        completedAt: runs.length + 2,
-      });
-      for (const run of runs) {
-        if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
-      }
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
-      return { sourceId, runId };
-    });
-  }
-
   /** Measure a completed walk's pages as its finish schedules it, every step of it. */
   async function measureWalk(harness: Harness, walk: Source): Promise<void> {
     await harness.action(internal.docSyncActions.proposeRelations, walk);
@@ -941,4 +942,196 @@ describe('the candidates of a page in its own source (found on the 16-FD bed)', 
       },
     ]);
   });
+});
+
+describe('a page whose measure throws (W16-R34)', (): void => {
+  const DAY = DATED_SUCCESSOR_GAP_MS;
+  const RUNBOOK = '# Zebra quartz runbook\n\nPress Refresh once and read back the zebra figure.';
+
+  /** A library of one runbook and its copy, edited six days later: one pair the measures relate. */
+  async function runbookAndCopy(harness: Harness): Promise<Source> {
+    const library = await syncingSource(harness, 'Library');
+    await storedPage(harness, library, {
+      ref: 'zebra.md',
+      title: 'Zebra quartz runbook',
+      markdown: RUNBOOK,
+      updatedAt: 2 * DAY,
+    });
+    await storedPage(harness, library, {
+      ref: 'zebra-copy.md',
+      title: 'Zebra quartz notes',
+      markdown: RUNBOOK.replace('# Zebra quartz runbook', '# Zebra quartz notes'),
+      updatedAt: 8 * DAY,
+    });
+    return library;
+  }
+
+  /**
+   * Make every measure that reads the runbook throw, as a measure over a read limit or out of
+   * retries does (the review's W16-R34; convex-test enforces no limit): a second row under its
+   * ref, which the read of a page by its ref refuses.
+   *
+   * @returns The row to delete for the measure to pass again.
+   */
+  async function breakRunbook(harness: Harness, library: Source): Promise<Id<'docPages'>> {
+    return await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docPages', {
+          sourceId: library.sourceId,
+          ref: 'zebra.md',
+          title: 'Zebra quartz runbook',
+          markdown: RUNBOOK,
+          updatedAt: 2 * DAY,
+        }),
+    );
+  }
+
+  const mend = async (harness: Harness, row: Id<'docPages'>): Promise<void> =>
+    await harness.run(async (ctx) => await ctx.db.delete(row));
+
+  const remeasureOf = async (harness: Harness, sourceId: Id<'docSources'>) =>
+    (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.relationsRemeasure;
+
+  /** The measuring steps of one kind the scheduler holds or ran, by their arguments. */
+  const stepsOf = async (harness: Harness, name: string): Promise<Array<Record<string, unknown>>> =>
+    await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect())
+        .filter((job) => job.name.endsWith(name))
+        .map((job) => job.args[0] as Record<string, unknown>),
+    );
+
+  it('tries a page of the sync’s own again at the next step, and proposes its relation once the measure passes', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await runbookAndCopy(harness);
+    const broken = await breakRunbook(harness, library);
+    await harness.action(internal.docSyncActions.proposeRelations, library);
+    expect(await relations(harness)).toEqual([]);
+    await mend(harness, broken);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await relations(harness)).toMatchObject([
+      { kind: 'possible_successor', from: { ref: 'zebra-copy.md' }, to: { ref: 'zebra.md' } },
+    ]);
+  });
+
+  it('keeps the remeasure’s place at the read a measure threw in, and moves on once the page is measured', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await runbookAndCopy(harness);
+    // Two syncs that changed nothing: the pages are out of the look-back, owed by the mark alone.
+    await completedWalk(harness, library.sourceId);
+    await completedWalk(harness, library.sourceId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(library.sourceId, { relationsRemeasure: { cursor: null } }),
+    );
+    const broken = await breakRunbook(harness, library);
+    await harness.action(
+      internal.docSyncActions.proposeRelations,
+      await completedWalk(harness, library.sourceId),
+    );
+    // The read's pages were not all measured: the mark stands where the read began.
+    expect(await remeasureOf(harness, library.sourceId)).toEqual({ cursor: null });
+    expect(await relations(harness)).toEqual([]);
+    await mend(harness, broken);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await relations(harness)).toMatchObject([
+      { kind: 'possible_successor', from: { ref: 'zebra-copy.md' }, to: { ref: 'zebra.md' } },
+    ]);
+    expect(await remeasureOf(harness, library.sourceId)).toBeUndefined();
+  });
+
+  it('passes a page over after three tries, measures the rest and clears the mark', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await runbookAndCopy(harness);
+    // A second pair, stored after the first, that shares no word of a title with it: no search
+    // for its candidates answers the broken page, so nothing is in its measure's way.
+    const other = '# Okapi ledger\n\nPost the okapi ledger line and file it.';
+    await storedPage(harness, library, {
+      ref: 'okapi.md',
+      title: 'Okapi ledger',
+      markdown: other,
+      updatedAt: 2 * DAY,
+    });
+    await storedPage(harness, library, {
+      ref: 'okapi-copy.md',
+      title: 'Okapi ledger duplicate',
+      markdown: other.replace('# Okapi ledger', '# Okapi ledger duplicate'),
+      updatedAt: 5 * DAY,
+    });
+    await completedWalk(harness, library.sourceId);
+    await completedWalk(harness, library.sourceId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(library.sourceId, { relationsRemeasure: { cursor: null } }),
+    );
+    await breakRunbook(harness, library);
+    await harness.action(
+      internal.docSyncActions.proposeRelations,
+      await completedWalk(harness, library.sourceId),
+    );
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await relations(harness)).toMatchObject([
+      { kind: 'possible_successor', from: { ref: 'okapi-copy.md' }, to: { ref: 'okapi.md' } },
+    ]);
+    expect(await remeasureOf(harness, library.sourceId)).toBeUndefined();
+    // Tried at the first step and at two more, each carrying the pages still to try and how
+    // often each was, in the source's page order: the copy, whose measure reads the runbook, and
+    // the runbook.
+    expect((await stepsOf(harness, 'remeasureRelations')).map((step) => step.retry)).toEqual([
+      [
+        { ref: 'zebra-copy.md', tries: 1 },
+        { ref: 'zebra.md', tries: 1 },
+      ],
+      [
+        { ref: 'zebra-copy.md', tries: 2 },
+        { ref: 'zebra.md', tries: 2 },
+      ],
+    ]);
+  });
+});
+
+describe('a page whose candidates the cap cut (W16-R34)', (): void => {
+  it('is measured again at the next sync, though it was the last page of the remeasure’s last read', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    // Seventeen runbooks of three later versions each hold fifty-one relations: the cap of fifty
+    // cuts the seventeenth's third candidate, and that page is the last of the only read.
+    const first = await syncingSource(harness, 'Runbooks');
+    const later = [
+      await syncingSource(harness, 'Second editions'),
+      await syncingSource(harness, 'Third editions'),
+      await syncingSource(harness, 'Fourth editions'),
+    ];
+    const words =
+      'Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November Oscar Papa Quebec';
+    for (const word of words.split(' ')) {
+      const markdown = `# ${word}\n\n${word} procedure, in full.`;
+      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
+      for (const [index, source] of later.entries()) {
+        await storedPage(harness, source, {
+          ref: `${word}-v${index + 2}.md`,
+          title: `${word} v${index + 2}`,
+          markdown,
+          updatedAt: index + 2,
+        });
+      }
+    }
+    // Two syncs that changed nothing put the runbooks out of the look-back: the pass's mark alone
+    // owes them, and the remeasure measures a page once.
+    await completedWalk(harness, first.sourceId);
+    await completedWalk(harness, first.sourceId);
+    await harness.run(
+      async (ctx) => await ctx.db.patch(first.sourceId, { relationsRemeasure: { cursor: null } }),
+    );
+    const measureNextWalk = async (): Promise<void> => {
+      await harness.action(
+        internal.docSyncActions.proposeRelations,
+        await completedWalk(harness, first.sourceId),
+      );
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    };
+    await measureNextWalk();
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
+    await measureNextWalk();
+    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 1);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(first.sourceId)))?.relationsRemeasure,
+    ).toBeUndefined();
+  }, 120_000);
 });

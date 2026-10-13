@@ -84,6 +84,17 @@ async function readersOfEither(
   return [...readers.values()];
 }
 
+/** What one page's measure wrote. */
+export interface PageMeasure {
+  /** How many relations it proposed. */
+  readonly proposed: number;
+  /**
+   * Whether its room ended it with candidates still unmeasured (W16-R34): the page is then
+   * measured again, where it was once counted measured and its last candidates never met.
+   */
+  readonly cut: boolean;
+}
+
 /**
  * Measure one page a sync stored or changed against the owner's other active pages, and write a
  * `proposed` relation for each pair the measures relate that holds none yet. Internal; the sync
@@ -95,7 +106,7 @@ async function readersOfEither(
  * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
  * most a sync proposes whatever its last page holds.
  *
- * @returns How many relations it proposed.
+ * @returns How many relations it proposed, and whether its room cut its candidates short.
  */
 export const measurePage = internalMutation({
   args: {
@@ -105,14 +116,14 @@ export const measurePage = internalMutation({
     /** The new proposals this call may still write; absent, every one its candidates hold. */
     room: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<number> => {
+  handler: async (ctx, args): Promise<PageMeasure> => {
     const source = await ctx.db.get(args.sourceId);
-    if (source === null) return 0;
+    if (source === null) return { proposed: 0, cut: false };
     if (source.activeSyncId !== args.syncRunId && source.lastCompletedSyncId !== args.syncRunId) {
-      return 0;
+      return { proposed: 0, cut: false };
     }
     const page = await pageAt(ctx, args);
-    if (page === null || pageStatusOf(page) !== 'active') return 0;
+    if (page === null || pageStatusOf(page) !== 'active') return { proposed: 0, cut: false };
     const sources = await ctx.db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
@@ -126,7 +137,7 @@ export const measurePage = internalMutation({
       page,
       self.blocks,
     )) {
-      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) break;
+      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) return { proposed, cut: true };
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
@@ -161,7 +172,7 @@ export const measurePage = internalMutation({
       }
       proposed += 1;
     }
-    return proposed;
+    return { proposed, cut: false };
   },
 });
 
