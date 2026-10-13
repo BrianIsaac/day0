@@ -8,9 +8,16 @@
  * the list's end, and the folders found are read after it. A Google Doc is exported as
  * `text/markdown`, which Google bounds at 10 MB: a larger one is named unread. A Word document
  * is downloaded and converted where the reader runs (`word.ts`, RM9 (b1)). The file's `version`
- * is its revision, and a file in the bin is read and marked archived. A 403
- * `userRateLimitExceeded` or `rateLimitExceeded`, or a 429, is backed off with a doubling wait
- * (the quota units of 1 May 2026).
+ * is its revision, and a file in the bin is read and marked archived.
+ *
+ * The listing gives each file's `version`, so a file stored at the version, the name and the
+ * address its listing gives is kept with no export or download asked for (the reader contract by
+ * revision, wave 17): an unchanged folder costs its listings' requests alone. `version` moves
+ * with every change on the server, one nobody can see among them (a share, a comment), so it
+ * reads a file more often than its text changes and never less.
+ *
+ * A 403 `userRateLimitExceeded` or `rateLimitExceeded`, or a 429, is backed off with a doubling
+ * wait (the quota units of 1 May 2026).
  *
  * Built against the published reference; no project read yet (`docs/running/reader-drive.md`).
  */
@@ -19,8 +26,12 @@ import { parseDriveLocator, parseDriveSecret, type DriveServiceAccount } from '.
 import type { DocPage, DocSourceRecord } from '../types';
 import {
   ListingChangedError,
+  storedMarks,
   type DocumentationReader,
+  type KeptPage,
   type ReadPageBatch,
+  type StoredMark,
+  type StoredRevisions,
   type UnreadPage,
 } from './batch';
 import { underTitle } from './html-markdown';
@@ -148,7 +159,8 @@ export class GoogleDriveReader implements DocumentationReader {
    * @param source - The linked Google Drive source.
    * @param secret - The service account's JSON key.
    * @param cursor - Where the previous batch left the walk.
-   * @param limit - The most entries this batch takes.
+   * @param limit - The most entries this batch lists.
+   * @param stored - What the sync stored each listed file with; none reads every file.
    * @throws Error when the key or the folder is refused, or Drive stays limited past the waits;
    *   ListingChangedError for a cursor that is not this reader's, or a page token Drive no longer
    *   honours.
@@ -158,6 +170,7 @@ export class GoogleDriveReader implements DocumentationReader {
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
+    stored?: StoredRevisions,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -172,8 +185,17 @@ export class GoogleDriveReader implements DocumentationReader {
     if (resumed === undefined) await this.checkFolder(session, locator.folderId);
     const walk: Walk = resumed ?? { queue: [locator.folderId], folders: 1 };
     const listed = await this.listing(session, walk, limit);
+    // Asked once a listing page, before any body: what each listed document was stored with.
+    const marks = await storedMarks(
+      stored,
+      listed.files.flatMap((file): string[] => {
+        const id = textField(file, 'id');
+        return id === undefined || !isDocument(textField(file, 'mimeType')) ? [] : [id];
+      }),
+    );
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
+    const kept: KeptPage[] = [];
     const found: string[] = [];
     for (const file of listed.files) {
       const id = textField(file, 'id');
@@ -182,11 +204,21 @@ export class GoogleDriveReader implements DocumentationReader {
         found.push(id);
         continue;
       }
+      const keep = keptFile(file, id, marks.get(id));
+      if (keep !== undefined) {
+        kept.push(keep);
+        continue;
+      }
       const read = await this.file(session, source, file, id);
       if ('markdown' in read) pages.push(read);
       else unread.push(read);
     }
-    return { pages, unread, nextCursor: cursorAfter(walk, listed.nextPageToken, found) };
+    return {
+      pages,
+      unread,
+      ...(kept.length > 0 ? { kept } : {}),
+      nextCursor: cursorAfter(walk, listed.nextPageToken, found),
+    };
   }
 
   /** A read-only access token for the service account, from an assertion it signs. */
@@ -310,19 +342,19 @@ export class GoogleDriveReader implements DocumentationReader {
       };
     }
     const isWord = mimeType === MIME.word;
-    const title = isWord ? name.replace(/\.docx$/i, '') : name;
+    const title = documentTitle(file);
     const markdown = isWord
       ? await this.word(session, file, id, name)
       : await this.exported(session, id, name);
     if (typeof markdown !== 'string') return { ref: id, reason: markdown.reason };
     const edited = Date.parse(textField(file, 'modifiedTime') ?? '');
-    const url = textField(file, 'webViewLink');
+    const url = documentAddress(file);
     const version = field(file, 'version');
     return {
       sourceId: source._id,
       ref: id,
       title,
-      ...(url?.startsWith('https://') ? { url } : {}),
+      ...(url === undefined ? {} : { url }),
       markdown: underTitle(title, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
       datedBySource: Number.isFinite(edited),
@@ -409,6 +441,48 @@ export class GoogleDriveReader implements DocumentationReader {
       ...(maxBytes === undefined ? {} : { maxBytes }),
     });
   }
+}
+
+/** Whether a listed file is one the reader reads: a Google Doc or a Word document. */
+function isDocument(mimeType: string | undefined): boolean {
+  return mimeType === MIME.document || mimeType === MIME.word;
+}
+
+/** A listed document's title: its name, a Word document's without its extension. */
+function documentTitle(file: unknown): string {
+  const name = textField(file, 'name')?.trim() || 'Untitled';
+  return textField(file, 'mimeType') === MIME.word ? name.replace(/\.docx$/i, '') : name;
+}
+
+/** Where a listed document opens in a browser, when Drive gives an address a page may carry. */
+function documentAddress(file: unknown): string | undefined {
+  const url = textField(file, 'webViewLink');
+  return url?.startsWith('https://') ? url : undefined;
+}
+
+/**
+ * A listed document kept as stored, or undefined for one to export or download.
+ *
+ * It is kept when the sync stored it at the `version` its listing gives, under the title and the
+ * address its listing gives: a move to the bin that leaves the version is kept and marked
+ * archived. A listing that gives no version for a file, or does not say whether it is in the bin
+ * (which a kept page's status is read from), has it read as before.
+ *
+ * @param mark - What the sync stored the document with; undefined for one it does not answer for.
+ */
+function keptFile(file: unknown, id: string, mark: StoredMark | undefined): KeptPage | undefined {
+  if (mark === undefined || !isDocument(textField(file, 'mimeType'))) return undefined;
+  const version = field(file, 'version');
+  const trashed = field(file, 'trashed');
+  if (typeof version !== 'string' && typeof version !== 'number') return undefined;
+  if (typeof trashed !== 'boolean') return undefined;
+  if (mark.revision !== String(version)) return undefined;
+  if (mark.title !== documentTitle(file) || mark.url !== documentAddress(file)) return undefined;
+  return {
+    ref: id,
+    ...(trashed ? { nativeStatus: 'archived' as const } : {}),
+    datedBySource: Number.isFinite(Date.parse(textField(file, 'modifiedTime') ?? '')),
+  };
 }
 
 /**

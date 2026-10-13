@@ -10,6 +10,12 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import {
+  libraryFake,
+  type LibraryFake,
+  type LibraryOptions,
+} from '../../../fixtures/readers/library';
+import { readWhole, type StoredMarks } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -375,5 +381,121 @@ describe("a Google Drive document's date (wave 17, D-8)", (): void => {
       ['Close the quarter', T0, false],
       ['Escalation paths', T0, false],
     ]);
+  });
+});
+
+/** A generated library in the fixture folder, and a reader on it with its clock still. */
+function driveLibrary(options: Omit<LibraryOptions, 'publicKey'>): {
+  library: LibraryFake;
+  reader: GoogleDriveReader;
+} {
+  const library = libraryFake('drive', { ...options, publicKey: KEYS.publicKey });
+  const reader = new GoogleDriveReader({
+    fetch: library.fetch,
+    now: (): number => T0,
+    sleep: async (): Promise<void> => undefined,
+  });
+  return { library, reader };
+}
+
+/** The ref of a library's document by its place in the library. */
+const libraryRef = (index: number): string => `1LibDoc${String(index).padStart(26, '0')}`;
+
+describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): void => {
+  it("reads a thousand unchanged documents for the listing's requests and no body request, and one changed document alone", async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 1_000 });
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, folder, SECRET, marks);
+    expect(first.read).toHaveLength(1_000);
+    expect(library.counts().bodies).toBe(1_000);
+
+    library.reset();
+    const unchanged = await readWhole(reader, folder, SECRET, marks);
+    expect(unchanged.read).toEqual([]);
+    expect(unchanged.kept).toHaveLength(1_000);
+    // Forty listing pages of 25; each batch signs in once, and the first checks the folder.
+    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 0, bodies: 0 });
+
+    library.edit(500);
+    library.reset();
+    const edited = await readWhole(reader, folder, SECRET, marks);
+    expect(edited.read.map((page) => [page.ref, page.sourceRevision])).toEqual([
+      [libraryRef(500), '2'],
+    ]);
+    expect(edited.read[0].markdown).toContain('Edited 1.');
+    expect(edited.kept).toHaveLength(999);
+    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    // The contract is asked once a listing page, by every document it lists.
+    expect(edited.asked).toHaveLength(40);
+    expect(edited.asked.every((refs) => refs.length === 25)).toBe(true);
+  });
+
+  it('reads a document the listing gives no revision for as before, at every sync', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    library.pages[3].listsRevision = false;
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    for (const sync of [2, 3]) {
+      const again = await readWhole(reader, folder, SECRET, marks);
+      expect(
+        again.read.map((page) => page.ref),
+        `sync ${sync}`,
+      ).toEqual([libraryRef(3)]);
+      expect(again.kept).toHaveLength(29);
+    }
+  });
+
+  it('reads a renamed document, though its revision is the stored one', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    library.rename(7, 'Close the quarter');
+    const renamed = await readWhole(reader, folder, SECRET, marks);
+    expect(renamed.read.map((page) => [page.ref, page.title, page.sourceRevision])).toEqual([
+      [libraryRef(7), 'Close the quarter', '1'],
+    ]);
+    expect(renamed.kept).toHaveLength(29);
+    expect((await readWhole(reader, folder, SECRET, marks)).read).toEqual([]);
+  });
+
+  it('keeps a document moved to the bin and unchanged, and marks it archived', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    library.archive(12);
+    library.reset();
+    const after = await readWhole(reader, folder, SECRET, marks);
+    expect(after.read).toEqual([]);
+    expect(library.counts().body).toBe(0);
+    expect(after.kept.find((page) => page.ref === libraryRef(12))).toEqual({
+      ref: libraryRef(12),
+      nativeStatus: 'archived',
+      datedBySource: true,
+    });
+    expect(after.kept.find((page) => page.ref === libraryRef(11))).toEqual({
+      ref: libraryRef(11),
+      datedBySource: true,
+    });
+  });
+
+  it('reads a document whose listing does not say whether it is in the bin, since a kept page takes its status from the listing', async (): Promise<void> => {
+    const { reader } = driveLibrary({ pages: 4, withheld: ['trashed'] });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    const again = await readWhole(reader, folder, SECRET, marks);
+    expect(again.read).toHaveLength(4);
+    expect(again.kept).toEqual([]);
+  });
+
+  it('says a kept document with no date from its source was dated by the read, and reads as before with no contract to ask', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 3 });
+    library.pages[1].editedAt = undefined;
+    const plain = await reader.listPageBatch(folder, SECRET, undefined, 25);
+    expect(plain.pages).toHaveLength(3);
+    expect(plain).not.toHaveProperty('kept');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    const kept = (await readWhole(reader, folder, SECRET, marks)).kept;
+    expect(kept.map((page) => page.datedBySource)).toEqual([true, false, true]);
   });
 });
