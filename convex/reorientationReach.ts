@@ -2,9 +2,11 @@ import { v, type Infer } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import {
+  BOUND_MET,
   REORIENTATION_BLOCKING_LIMIT,
   type ReorientationRisk,
 } from '../src/agent/reorientation-vocabulary';
+import { log } from '../src/lib/logger';
 
 /*
  * What a reorientation card reaches and holds (wave 17, 17-s; the wave 16 review's D-6 (a)): the
@@ -373,10 +375,17 @@ export async function blockingWorkOf(
 /** The employees of an owner a fan-out reads, at most. */
 const OWNER_AGENTS_READ = 200;
 
-/** Every employee of an owner, to the fan-out's bound. */
+/**
+ * Every employee of an owner, to the fan-out's bound. An owner with more is read to the bound and
+ * the function log says so (W16-R24).
+ */
 export async function ownerAgents(ctx: QueryCtx, userId: string): Promise<Doc<'agents'>[]> {
-  return await ctx.db
+  const agents = await ctx.db
     .query('agents')
     .withIndex('by_userId', (q) => q.eq('userId', userId))
-    .take(OWNER_AGENTS_READ);
+    .take(OWNER_AGENTS_READ + 1);
+  if (agents.length > OWNER_AGENTS_READ) {
+    log.warn(BOUND_MET, { bound: 'OWNER_AGENTS_READ', limit: OWNER_AGENTS_READ });
+  }
+  return agents.slice(0, OWNER_AGENTS_READ);
 }

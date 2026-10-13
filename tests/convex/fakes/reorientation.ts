@@ -1,4 +1,5 @@
 import type { TestConvex } from 'convex-test';
+import { vi } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type schema from '../../../convex/schema';
 import { internal } from '../../../convex/_generated/api';
@@ -194,5 +195,32 @@ export async function runCardChain(
       internal.reorientation.openCardsLater,
       next.args[0] as { cards: never[]; judged: number },
     );
+  }
+}
+
+/**
+ * Run something and hand back, beside its result, the warnings the logger wrote meanwhile, each
+ * parsed from its line.
+ *
+ * @param run - What to run with the log read.
+ */
+export async function warnedBy<Result>(
+  run: () => Promise<Result>,
+): Promise<{ result: Result; warnings: Array<Record<string, unknown>> }> {
+  const written = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+  try {
+    const result = await run();
+    const warnings = written.mock.calls.flatMap(([line]): Array<Record<string, unknown>> => {
+      try {
+        const parsed = JSON.parse(String(line)) as Record<string, unknown>;
+        return parsed.level === 'warn' ? [parsed] : [];
+      } catch {
+        // Not one of the logger's lines: something else wrote to the console.
+        return [];
+      }
+    });
+    return { result, warnings };
+  } finally {
+    written.mockRestore();
   }
 }

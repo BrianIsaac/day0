@@ -17,6 +17,7 @@ import {
   scheduledAs,
   seedEmployee,
   seedWork,
+  warnedBy,
   type Harness,
 } from './fakes/reorientation';
 
@@ -1577,6 +1578,63 @@ describe('openByHand and listForAgent', (): void => {
       .withIdentity(OWNER)
       .query(api.reorientationDecisions.listForAgent, { agentId });
     expect(views.filter((view) => view.card.status === 'open')).toHaveLength(25);
+  });
+
+  it('names what an employee’s cards reach within a budget of rows, and says in the log when cards past it are drawn bare (W16-R24)', async (): Promise<void> => {
+    // The review's W16-R24: "`listForAgent` reads up to about 60 documents a card across up to
+    // about 170 cards (near 4,096 ranges at the extreme)". Seventy cards of ten plans each.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const first = (await openTestCard(harness, {
+      agentId,
+      trigger: 'access-ended',
+      triggerKey: 'event-0',
+      summary: 'Its access to Linear ended',
+      now: Date.UTC(2026, 8, 1, 12),
+    }))!;
+    await harness.run(async (ctx) => {
+      const base = fieldsOf((await ctx.db.get(first))!);
+      await ctx.db.delete(first);
+      for (let card = 0; card < 70; card += 1) {
+        const workItems: Id<'workItems'>[] = [];
+        for (let item = 0; item < 10; item += 1) {
+          workItems.push(
+            await ctx.db.insert('workItems', {
+              agentId,
+              sourceCategory: 'ticket-queue',
+              sourceSystem: 'linear',
+              externalId: `REVOPS-${card}-${item}`,
+              title: `Item ${card}-${item}`,
+              contentSummary: 'Synthetic.',
+              contentRefs: [],
+              state: 'plan-pending',
+              observedAt: 1,
+              createdAt: 1,
+            }),
+          );
+        }
+        await ctx.db.insert('reorientations', {
+          ...base,
+          triggerKey: `event-${card}`,
+          status: card < 50 ? 'open' : 'deferred',
+          affected: { ...base.affected, workItems },
+          // The newest first: card 0 is the newest.
+          createdAt: 1_000 - card,
+        });
+      }
+    });
+    const { result: views, warnings } = await warnedBy(
+      async () =>
+        await harness
+          .withIdentity(OWNER)
+          .query(api.reorientationDecisions.listForAgent, { agentId }),
+    );
+    expect(views).toHaveLength(70);
+    expect(views.filter((view) => view.workItems.length === 10)).toHaveLength(60);
+    expect(views.slice(60).every((view) => view.workItems.length === 0)).toBe(true);
+    expect(warnings).toEqual([
+      expect.objectContaining({ bound: 'CARD_NAMES_READ', limit: 600, leftBare: 10 }),
+    ]);
   });
 
   it('counts what a standing card holds as the hold stops it, and nothing on a decided card (second pass M3)', async (): Promise<void> => {

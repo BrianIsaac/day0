@@ -23,7 +23,14 @@ import {
 } from '../../convex/reorientationReach';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT } from './fakes/manager-identity';
-import { cardOf, openTestCard, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import {
+  cardOf,
+  openTestCard,
+  seedEmployee,
+  seedWork,
+  warnedBy,
+  type Harness,
+} from './fakes/reorientation';
 import { registeredIn } from './registered-functions';
 
 /*
@@ -499,5 +506,40 @@ describe('the functions convex/reorientationReach.ts registers', (): void => {
   // cards' registered functions stay in `convex/reorientation.ts`.
   it('are none', (): void => {
     expect(registeredIn(reorientationReachModule)).toEqual([]);
+  });
+});
+
+describe('an owner’s employees, as a fan-out reads them (W16-R24)', (): void => {
+  it('reads the first 200 and says in the log that the rest were left out', async (): Promise<void> => {
+    // The review's W16-R24: "silent caps with no record: `ownerAgents` 200".
+    const harness = convexTest(schema, allConvexModules());
+    const seed = async (count: number, userId: string): Promise<void> =>
+      await harness.run(async (ctx) => {
+        for (let index = 0; index < count; index += 1) {
+          await ctx.db.insert('agents', {
+            bossEmail: 'manager@acme.test',
+            name: `Employee ${index}`,
+            userId,
+            state: 'active',
+            createdAt: 1,
+          });
+        }
+      });
+    await seed(201, OWNER_SUBJECT);
+    await seed(200, 'another-owner');
+    const read = async (userId: string) =>
+      await warnedBy(
+        async () =>
+          await harness.run(async (ctx) => await reorientationReachModule.ownerAgents(ctx, userId)),
+      );
+    const cut = await read(OWNER_SUBJECT);
+    expect(cut.result).toHaveLength(200);
+    expect(cut.warnings).toEqual([
+      expect.objectContaining({ bound: 'OWNER_AGENTS_READ', limit: 200 }),
+    ]);
+    // An owner of exactly 200 is read whole, and nothing is said.
+    const whole = await read('another-owner');
+    expect(whole.result).toHaveLength(200);
+    expect(whole.warnings).toEqual([]);
   });
 });

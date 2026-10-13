@@ -44,9 +44,11 @@ import {
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
 import {
+  BOUND_MET,
   REORIENTATION_BLOCKING_LIMIT,
   UNDECIDED_REORIENTATION_STATUSES,
 } from '../src/agent/reorientation-vocabulary';
+import { log } from '../src/lib/logger';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
 
 /*
@@ -66,6 +68,13 @@ const DAY_MS = 86_400_000;
 
 /** The cards a page draws: every standing card, and the decided ones newest first to this bound. */
 const DECIDED_CARDS_SHOWN = 20;
+
+/**
+ * The rows one read of an employee's cards resolves into names, across all of them (W16-R24: up
+ * to about sixty a card over about 170 cards, near the most reads a query may make). Ten cards
+ * with every list full fit; a card past the budget is drawn bare, with what it holds still read.
+ */
+const CARD_NAMES_READ = 600;
 
 /** The standings a card can be decided from: undecided, or deferred. */
 const DECIDABLE = [...UNDECIDED_REORIENTATION_STATUSES, 'deferred'] as const;
@@ -709,18 +718,46 @@ export const listForAgent = query({
       return await read;
     };
     const views: CardView[] = [];
+    // The rows read into names so far, and the cards drawn bare once the budget was spent.
+    let spent = 0;
+    let leftBare = 0;
     for (const card of [
       ...standing.sort((left, right) => right.createdAt - left.createdAt),
       ...decided,
     ]) {
-      const ids = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
+      const holding =
+        card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
+      const workIds = [...new Set([...card.blockingWork, ...card.affected.workItems])].slice(0, 10);
+      const pageRefs = card.evidence.pageRefs.slice(0, 10);
+      const skillIds = [...new Set([...card.affected.skills, ...card.evidence.skillIds])].slice(
+        0,
+        10,
+      );
+      const agreementIds = card.affected.agreements.slice(0, 10);
+      const edgeIds = [
+        ...new Set([...card.affected.relationships, ...card.evidence.relationshipIds]),
+      ].slice(0, 10);
+      const ledgerIds = (card.evidence.connectionEventIds ?? []).slice(0, 10);
+      // An edge is two rows, itself and its person.
+      const wanted =
+        workIds.length +
+        pageRefs.length +
+        skillIds.length +
+        agreementIds.length +
+        2 * edgeIds.length +
+        ledgerIds.length;
+      const named = spent + wanted <= CARD_NAMES_READ;
+      if (named) spent += wanted;
+      else leftBare += 1;
+      // A bare card still reads the work it holds: its line says what waits on it.
+      const ids = named ? workIds : holding ? card.blockingWork.slice(0, 10) : [];
       const rows = await Promise.all(ids.map(async (id) => await ctx.db.get(id)));
       // Only rows of the card's own owner are named on it: after a handover the old manager's
       // graph, agreements and documentation stay theirs (W16-R1, `people.ts`' rule).
       const owned = <Row extends { readonly userId: string }>(row: Row | null): Row | null =>
         row !== null && row.userId === card.userId ? row : null;
       const pages = await Promise.all(
-        card.evidence.pageRefs.slice(0, 10).map(async (ref) => {
+        (named ? pageRefs : []).map(async (ref) => {
           if (owned(await sourceOf(ref.sourceId)) === null) return null;
           return await ctx.db
             .query('docPages')
@@ -729,17 +766,13 @@ export const listForAgent = query({
         }),
       );
       const skills = await Promise.all(
-        [...new Set([...card.affected.skills, ...card.evidence.skillIds])]
-          .slice(0, 10)
-          .map(async (id) => await ctx.db.get(id)),
+        (named ? skillIds : []).map(async (id) => await ctx.db.get(id)),
       );
       const agreements = await Promise.all(
-        card.affected.agreements.slice(0, 10).map(async (id) => owned(await ctx.db.get(id))),
+        (named ? agreementIds : []).map(async (id) => owned(await ctx.db.get(id))),
       );
       const edges = await Promise.all(
-        [...new Set([...card.affected.relationships, ...card.evidence.relationshipIds])]
-          .slice(0, 10)
-          .map(async (id) => owned(await ctx.db.get(id))),
+        (named ? edgeIds : []).map(async (id) => owned(await ctx.db.get(id))),
       );
       const people: CardView['people'] = [];
       for (const edge of edges) {
@@ -753,12 +786,8 @@ export const listForAgent = query({
         });
       }
       const ledger = await Promise.all(
-        (card.evidence.connectionEventIds ?? [])
-          .slice(0, 10)
-          .map(async (id) => await ctx.db.get(id)),
+        (named ? ledgerIds : []).map(async (id) => await ctx.db.get(id)),
       );
-      const holding =
-        card.risk === 'high' && (DECIDABLE as readonly string[]).includes(card.status);
       const notHeld =
         holding && card.blockingWork.length >= REORIENTATION_BLOCKING_LIMIT
           ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id)).length
@@ -805,6 +834,14 @@ export const listForAgent = query({
         ...(card.trigger === 'manager-changed' && charter?.approved
           ? { carriedRules: unboundReportingLines(charter.body as Charter) }
           : {}),
+      });
+    }
+    if (leftBare > 0) {
+      log.warn(BOUND_MET, {
+        bound: 'CARD_NAMES_READ',
+        limit: CARD_NAMES_READ,
+        agentId: args.agentId,
+        leftBare,
       });
     }
     return views;

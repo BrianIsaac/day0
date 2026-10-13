@@ -153,5 +153,11 @@ export const REORIENTATION_TALK_STATES = ['active', 'finished', 'closed'] as con
 /** One of {@link REORIENTATION_TALK_STATES}. */
 export type ReorientationTalkState = (typeof REORIENTATION_TALK_STATES)[number];
 
+/**
+ * What the function log says when one of the cards' bounds cuts (W16-R24: each cut with nothing
+ * said anywhere). The line carries `bound`, the constant's name, and `limit`, its value.
+ */
+export const BOUND_MET = 'reorientation: a bound was met, and what lay past it was left out';
+
 /** The most work items one card holds (C6, decision O1): a card names at most ten. */
 export const REORIENTATION_BLOCKING_LIMIT = 10;

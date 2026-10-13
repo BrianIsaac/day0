@@ -12,6 +12,7 @@ import {
 } from '../../convex/needsYou';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { warnedBy } from './fakes/reorientation';
 
 /**
  * The needs-you projection (`convex/needsYou.ts`, moved out of `convex/work.ts` by the wave 15
@@ -208,6 +209,56 @@ describe('needsYouOfEmployee', (): void => {
         reorientationId: card,
         risk: 'low',
       }),
+    ]);
+  });
+
+  it('lists an employee’s newest twenty open cards and says in the log that older ones were left out (W16-R24)', async (): Promise<void> => {
+    // The review's W16-R24: "silent caps with no record: `needsYou` 20 open cards oldest first".
+    const harness = convexTest(schema, allConvexModules());
+    const agent = await seedEmployee(harness);
+    await harness.run(async (ctx) => {
+      for (let index = 1; index <= 21; index += 1) {
+        await ctx.db.insert('reorientations', {
+          agentId: agent._id,
+          userId: 'owner',
+          trigger: 'skill-recheck-due',
+          triggerKey: `event-${index}`,
+          triggerSummary: `Change ${index}`,
+          evidence: {
+            eventIds: [],
+            pageRefs: [],
+            relationIds: [],
+            correctionIds: [],
+            relationshipIds: [],
+            skillIds: [],
+            skillVersionIds: [],
+          },
+          affected: {
+            charterClauses: [],
+            agreements: [],
+            relationships: [],
+            skills: [],
+            surfaces: [],
+            workItems: [],
+          },
+          proposed: { kind: 'pending' },
+          risk: 'low',
+          blockingWork: [],
+          day: '2026-09-26',
+          status: 'open',
+          createdAt: index,
+        });
+      }
+    });
+    const { result, warnings } = await warnedBy(
+      async () => await harness.run(async (ctx) => await needsYouOfEmployee(ctx, agent, 300)),
+    );
+    const subjects = result.map((entry) => entry.subject);
+    expect(subjects).toHaveLength(20);
+    expect(subjects).toContain('Change 21');
+    expect(subjects).not.toContain('Change 1');
+    expect(warnings).toEqual([
+      expect.objectContaining({ bound: 'NEEDS_YOU_CARD_READ', limit: 20, status: 'open' }),
     ]);
   });
 

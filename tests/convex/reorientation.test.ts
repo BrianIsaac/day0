@@ -29,11 +29,13 @@ import {
   cardOf,
   cardsOf,
   eventTypesOf,
+  fieldsOf,
   openTestCard,
   runCardChain,
   scheduledAs,
   seedEmployee,
   seedWork,
+  warnedBy,
   type Harness,
 } from './fakes/reorientation';
 
@@ -913,6 +915,72 @@ describe('the functions convex/reorientation.ts registers', (): void => {
       'recordProposalFailure internal mutation',
       'reopenDeferred internal mutation',
       'writeProposal internal mutation',
+    ]);
+  });
+});
+
+describe('the cards’ bounds say when they cut (W16-R24)', (): void => {
+  // The review's W16-R24: "silent caps with no record: `moveCardsToOwner` 1,000 a status,
+  // `CARD_LIST_LIMIT` 100 on the evidence lists".
+  it('keeps a card’s first hundred of a list and says in the log how many were left out', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const { result, warnings } = await warnedBy(
+      async () =>
+        await openTestCard(harness, {
+          agentId,
+          trigger: 'role-changed',
+          triggerKey: 'role-changed:1',
+          summary: 'Mira now covers renewals too',
+          affected: {
+            charterClauses: Array.from({ length: 103 }, (unused, index) => ({
+              field: 'willDo' as const,
+              index,
+              text: `Clause ${index}`,
+            })),
+          },
+          now: MORNING_UTC,
+        }),
+    );
+    const card = (await cardsOf(harness, agentId)).find((row) => row._id === result);
+    expect(card?.affected.charterClauses).toHaveLength(100);
+    expect(warnings).toEqual([
+      expect.objectContaining({ bound: 'CARD_LIST_LIMIT', limit: 100, leftOut: 3 }),
+    ]);
+  });
+
+  it('moves a status’s first thousand cards at a handover and says in the log that more were left', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const first = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-0',
+      summary: 'A skill is due a re-check',
+      now: MORNING_UTC,
+    }))!;
+    await harness.run(async (ctx) => {
+      const decided = { ...fieldsOf((await ctx.db.get(first))!), status: 'dismissed' as const };
+      await ctx.db.patch(first, { status: 'dismissed' });
+      for (let index = 1; index <= 1_000; index += 1) {
+        await ctx.db.insert('reorientations', { ...decided, triggerKey: `event-${index}` });
+      }
+    });
+    const { warnings } = await warnedBy(
+      async () =>
+        await harness.run(async (ctx) => {
+          await moveCardsToOwner(ctx, {
+            agentId,
+            userId: 'new-owner',
+            previousManager: 'a@acme.test',
+            now: MORNING_UTC + 1,
+          });
+        }),
+    );
+    const moved = (await cardsOf(harness, agentId)).filter((card) => card.userId === 'new-owner');
+    expect(moved).toHaveLength(1_000);
+    expect(warnings).toEqual([
+      expect.objectContaining({ bound: 'MOVED_CARDS_READ', limit: 1_000, status: 'dismissed' }),
     ]);
   });
 });

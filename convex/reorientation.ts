@@ -30,11 +30,13 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { conflictSteps, heldWriteSurfaces, planLeansOn } from '../src/work/conflict-hold';
 import type { ExecutionPlan } from '../src/work/types';
 import {
+  BOUND_MET,
   UNDECIDED_REORIENTATION_STATUSES,
   type ReorientationRisk,
   type ReorientationStatus,
   type ReorientationTrigger,
 } from '../src/agent/reorientation-vocabulary';
+import { log } from '../src/lib/logger';
 import {
   PROPOSAL_DID_NOT_FINISH,
   approvedResultWords,
@@ -227,12 +229,18 @@ function unique<T>(
 ): T[] {
   const seen = new Set<string>();
   const kept: T[] = [];
+  let leftOut = 0;
   for (const value of lists.flatMap((list) => list ?? [])) {
     const key = keyOf(value);
-    if (seen.has(key) || kept.length >= CARD_LIST_LIMIT) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
-    kept.push(value);
+    if (kept.length < CARD_LIST_LIMIT) kept.push(value);
+    else leftOut += 1;
   }
+  // A value past the bound is not on the card, so a repeat of it is not recognised as carried:
+  // said in the function log, where it was said nowhere (W16-R24).
+  if (leftOut > 0)
+    log.warn(BOUND_MET, { bound: 'CARD_LIST_LIMIT', limit: CARD_LIST_LIMIT, leftOut });
   return kept;
 }
 
@@ -794,10 +802,15 @@ export async function moveCardsToOwner(
 ): Promise<void> {
   const { agentId, userId, now } = handover;
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
-    const cards = await ctx.db
+    const read = await ctx.db
       .query('reorientations')
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
-      .take(MOVED_CARDS_READ);
+      .take(MOVED_CARDS_READ + 1);
+    // Cards past the bound keep the previous owner's key: said in the function log (W16-R24).
+    if (read.length > MOVED_CARDS_READ) {
+      log.warn(BOUND_MET, { bound: 'MOVED_CARDS_READ', limit: MOVED_CARDS_READ, agentId, status });
+    }
+    const cards = read.slice(0, MOVED_CARDS_READ);
     // A deferred card is standing too: left as it was it would keep its hold and open again
     // under the new manager on its date (the second pass).
     const undecided = (STANDING_STATUSES as readonly string[]).includes(status);
