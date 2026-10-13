@@ -323,22 +323,40 @@ function quotedRequests(item: DraftedWorkItem): ReadonlySet<string> {
   );
 }
 
+/** A thread an item names, as its reference writes it: `channel://<slug>#<thread>`. */
+const THREAD_REF = /^channel:\/\/[^#\s]+#\S+$/;
+
+/** Two drafted items that are one ask between them, and what shows it. */
+interface OneAsk {
+  readonly first: DraftedWorkItem;
+  readonly second: DraftedWorkItem;
+  /** The thread both name, or undefined when they quote the same request. */
+  readonly thread: string | undefined;
+}
+
 /**
- * The pairs of drafted items that quote the same request (finding 2 of the v0.20.0 hosted walk):
- * one ask drafted as the read-and-answer item and as a ticket is worked twice, each run answering
- * in the same thread, and in the hosted office one item's run can close the other's ticket.
+ * The pairs of drafted items that are one ask between them (finding 2 of the v0.20.0 hosted
+ * walk): they quote the same request, or they name the same thread, whatever each quotes. One ask
+ * drafted as the read-and-answer item and as a ticket is worked twice, each run answering in the
+ * same thread, and in the hosted office one item's run can close the other's ticket. On the walk
+ * the two quoted Hana's ask word for word; on this unit's bed, under the first form of this
+ * check, the ticket quoted the manager about Kofi's ask and named Kofi's thread.
+ *
+ * @param items - The draft, each read-and-answer item already given its asker's thread
+ *   ({@link withAskThread}), since that is the thread its answer goes to.
  */
-function quotingOneRequest(
-  items: readonly DraftedWorkItem[],
-): Array<readonly [DraftedWorkItem, DraftedWorkItem]> {
+function workingOneAsk(items: readonly DraftedWorkItem[]): OneAsk[] {
   const quoted = items.map((item) => quotedRequests(item));
+  const threads = items.map((item) => item.contentRefs.filter((ref) => THREAD_REF.test(ref)));
   return items.flatMap((first, at) =>
-    items
-      .slice(at + 1)
-      .filter((_second, offset) =>
-        [...quoted[at]!].some((request) => quoted[at + 1 + offset]!.has(request)),
-      )
-      .map((second) => [first, second] as const),
+    items.slice(at + 1).flatMap((second, offset): OneAsk[] => {
+      const other = at + 1 + offset;
+      const thread = threads[at]!.find((ref) => threads[other]!.includes(ref));
+      if (thread !== undefined) return [{ first, second, thread }];
+      return [...quoted[at]!].some((request) => quoted[other]!.has(request))
+        ? [{ first, second, thread: undefined }]
+        : [];
+    }),
   );
 }
 
@@ -353,7 +371,7 @@ interface RoleReading {
  * the office: the out-of-scope items that share a word with the role, which would be judged its
  * work; the in-scope items that share none, which would be skipped; the purposes it left out; the
  * tickets it filed somewhere other than the queue; whether its action ticket names no record the
- * office holds; and the items that quote one request between them.
+ * office holds; and the items that are one ask between them.
  */
 interface DraftReading {
   readonly asTheRole: readonly RoleReading[];
@@ -363,14 +381,15 @@ interface DraftReading {
   readonly offTheQueue: readonly DraftedWorkItem[];
   /** Whether the action ticket names no record of an office that holds some (13-FD). */
   readonly actionUngrounded: boolean;
-  /** The pairs of items that quote one request ({@link quotingOneRequest}). */
-  readonly oneRequest: ReadonlyArray<readonly [DraftedWorkItem, DraftedWorkItem]>;
+  /** The pairs of items that are one ask between them ({@link workingOneAsk}). */
+  readonly oneAsk: readonly OneAsk[];
 }
 
 function readDraft(
   items: readonly DraftedWorkItem[],
   charter: Charter,
   records: ReadonlySet<string>,
+  threads: ReadonlyMap<string, string>,
 ): DraftReading {
   return {
     asTheRole: items
@@ -390,7 +409,7 @@ function readDraft(
     actionUngrounded:
       records.size > 0 &&
       items.some((item) => item.purpose === 'action' && !namesAnOfficeRecord(item, records)),
-    oneRequest: quotingOneRequest(items),
+    oneAsk: workingOneAsk(items.map((item) => withAskThread(item, threads))),
   };
 }
 
@@ -402,7 +421,7 @@ function readsAsIntended(reading: DraftReading): boolean {
     reading.missing.length === 0 &&
     reading.offTheQueue.length === 0 &&
     !reading.actionUngrounded &&
-    reading.oneRequest.length === 0
+    reading.oneAsk.length === 0
   );
 }
 
@@ -433,9 +452,11 @@ function askAgain(reading: DraftReading): string {
       "The action item in your last draft names no record the snapshot holds: ask only for work the snapshot's rows, messages or documents let the role finish, and name those records in its contentRefs.",
     );
   }
-  for (const [first, second] of reading.oneRequest) {
+  for (const { first, second, thread } of reading.oneAsk) {
+    const shared =
+      thread === undefined ? 'quote the same request' : `both name the thread "${thread}"`;
     lines.push(
-      `The ${first.purpose} item and the ${second.purpose} item in your last draft quote the same request, so one ask would be worked twice: each item is its own request, from its own message.`,
+      `The ${first.purpose} item and the ${second.purpose} item in your last draft ${shared}, so one ask would be worked twice: each item is its own request, from its own message.`,
     );
   }
   lines.push(
@@ -510,7 +531,7 @@ export async function generateWorkItemsFromCharter(
   let attempts = 1;
   let budgetRanOut = false;
   for (; attempts < GENERATION_ATTEMPTS; attempts += 1) {
-    const reading = readDraft(draft.items, charter, records);
+    const reading = readDraft(draft.items, charter, records, threads);
     if (readsAsIntended(reading)) {
       return seeded(draft.items.map((item) => withAskThread(item, threads)));
     }
@@ -525,7 +546,7 @@ export async function generateWorkItemsFromCharter(
   // role's work, which is left out rather than queued as the role's work with a skill to approve.
   // An in-scope item is never left out: the queue keeps its read and its tickets, an action ticket
   // that names no record of the office included (its run then says what it could not do).
-  const reading = readDraft(draft.items, charter, records);
+  const reading = readDraft(draft.items, charter, records, threads);
   // A draft in hand when the budget ran out was asked again for a reason: one missing a purpose,
   // with an in-scope item the scope rule would skip, or with an action ticket naming no record is
   // not seeded, and the seeding's next attempt drafts again (W13-R40).
@@ -552,10 +573,10 @@ export async function generateWorkItemsFromCharter(
       attempts,
     });
   }
-  if (reading.oneRequest.length > 0) {
-    log.warn('mock work generator seeded two items that quote one request', {
+  if (reading.oneAsk.length > 0) {
+    log.warn('mock work generator seeded two items that are one ask', {
       attempts,
-      purposes: reading.oneRequest.map(([first, second]) => [first.purpose, second.purpose]),
+      purposes: reading.oneAsk.map((pair) => [pair.first.purpose, pair.second.purpose]),
     });
   }
   if (reading.missing.length > 0) {

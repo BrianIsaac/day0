@@ -833,9 +833,106 @@ describe('one ask drafted as more than one item (finding 2 of the v0.20.0 hosted
     const items = await generateWorkItemsFromCharter(PIP_W20, OFFICE as never);
     expect(items).toHaveLength(4);
     expect(warned.mock.calls.map((call) => call[0])).toContain(
-      'mock work generator seeded two items that quote one request',
+      'mock work generator seeded two items that are one ask',
     );
     warned.mockRestore();
+  });
+
+  // The bed day0-w17fw, 13 October 2026, on the hosted model with the first form of this check:
+  // the IT helpdesk role's read item quoted Kofi's ask and its ticket quoted the manager ("A
+  // helpdesk ticket came in from Kofi about the shared drive ..."), both naming Kofi's thread.
+  it('asks again when two items name one thread, whatever each quotes', async (): Promise<void> => {
+    const kofiRead = {
+      ...drafted(
+        'read-and-answer',
+        'Kofi is locked out of the shared drive after a password change',
+        'Kofi asked in #office-asks: "I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?" Please answer in his thread using the IT access and passwords doc. It is a routine access question.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-it-access',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks#thread-drive-access'],
+      requesterLabel: 'Kofi',
+    };
+    const kofiTicket = {
+      ...ACTION,
+      title: 'Reply to the shared drive lockout thread and close the ticket out',
+      contentSummary:
+        'Manager filed this one: "A helpdesk ticket came in from Kofi about the shared drive saying access denied after his password change. Post the reply in his thread using the wiki steps, comment on the ticket with what you sent, and close it."',
+      externalId: 'ticket-drive-lockout-reply',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks#thread-drive-access'],
+      requesterLabel: 'Manager',
+    };
+    const ownTicket = {
+      ...kofiTicket,
+      title: 'Post the shared drive sign-back steps in the office asks channel',
+      contentSummary:
+        'Manager filed this ticket: "The same access question keeps arriving each Monday, so please post the shared drive sign-back steps in #office-asks so the team can self-serve, then comment on this ticket and close it."',
+      externalId: 'ticket-shared-drive-self-serve-steps',
+      contentRefs: ['docs-fixture/it-access', 'channel://office-asks'],
+    };
+    const beyond = { ...BEYOND, title: 'Add the new starter to the SSO group for ticket access' };
+    drafts.push(
+      [kofiRead, kofiTicket, beyond, PLAIN_OUT_OF_SCOPE],
+      [kofiRead, ownTicket, beyond, PLAIN_OUT_OF_SCOPE],
+    );
+    const office = {
+      ...OFFICE,
+      teamDocs: OFFICE_TEAM_DOCS,
+      slackChannels: [
+        {
+          slug: 'office-asks',
+          displayName: '#office-asks',
+          kind: 'channel',
+          recentMessages: [{ sender: 'Kofi', threadKey: 'thread-drive-access', body: KOFI_ASK }],
+        },
+      ],
+    };
+    const items = await generateWorkItemsFromCharter(NELL_W20, office as never);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain(
+      'The read-and-answer item and the action item in your last draft both name the thread "channel://office-asks#thread-drive-access", so one ask would be worked twice: each item is its own request, from its own message.',
+    );
+    expect(items.map((item) => item.externalId)).toContain('ticket-shared-drive-self-serve-steps');
+  });
+
+  it('reads the thread a read-and-answer item is given from its asker as that item’s thread', async (): Promise<void> => {
+    // The read item names no thread and its asker has one; the ticket names that thread.
+    const read = {
+      ...drafted(
+        'read-and-answer',
+        'How should we word a first reply to a duplicate charge ticket',
+        'Hana asked in the inbox, "Before I send anything to Northwind, what does our billing replies doc say a first reply to a duplicate charge should cover?" Please log each ask.',
+      ),
+      sourceSystem: 'docs',
+      externalId: 'docs-billing-replies',
+      requesterLabel: 'Hana',
+    };
+    const ticket204 = {
+      ...ACTION,
+      title: 'Log the first reply for the Northwind duplicate charge ask',
+      contentSummary:
+        'Hana filed this ask: "Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?" Please log it.',
+      contentRefs: ['channel://office-asks#thread-double-charge', 'docs-fixture/billing-replies'],
+      requesterLabel: 'Hana',
+    };
+    const office = {
+      ...OFFICE,
+      teamDocs: OFFICE_TEAM_DOCS,
+      slackChannels: [
+        {
+          slug: 'office-asks',
+          displayName: '#office-asks',
+          kind: 'channel',
+          recentMessages: [{ sender: 'Hana', threadKey: 'thread-double-charge', body: HANA_ASK }],
+        },
+      ],
+    };
+    drafts.push([read, ticket204, beyond, PLAIN_OUT_OF_SCOPE]);
+    await generateWorkItemsFromCharter(PIP_W20, office as never);
+    expect(prompts.length).toBeGreaterThan(1);
+    expect(prompts[1]).toContain(
+      'both name the thread "channel://office-asks#thread-double-charge"',
+    );
   });
 
   it('tells the generator that the four items are four requests', (): void => {
