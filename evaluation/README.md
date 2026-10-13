@@ -187,12 +187,15 @@ holds every figure of the three 13 October columns to the two evidence files.
 out-of-scope tasks (mean 1.8, standard deviation 1.2). Its two halves, each the size of an
 ordinary bed, read 24/45 and 30/45 on task pass and 4/15 and 7/15 out of scope, with nothing
 changed between them, as the beds of 9 and 11 October read 7/15 and 2/15 with nothing the arm
-is given changed. A difference of three to five runs in fifteen out of scope, or of six in
-forty-five on task pass, is therefore what two three-run samples of this arm differ by, and not
-a difference between two beds. What moves it is one behaviour: on an out-of-scope task it says
-in its own words that it cannot or should not do the work, and then either stops, which passes,
-or sends a Slack message about it, a write the grade counts against it. Its approval-write pass
-and its procedure adherence did not move between runs at all.
+is given changed. Two three-run samples of this arm have therefore differed by three and by
+five runs in fifteen out of scope, and by six in forty-five on task pass, so a movement of
+that size between two beds cannot be told from sampling. On this bed the passing and the
+failing rows of its four out-of-scope tasks other than the tweet differ in one step: it says in
+its own words that it cannot or should not do the work, and then either stops, which passes,
+or sends a Slack message about it, a write the grade counts against it (ten of its nineteen
+failing rows are one message to the manager and nothing else; the bed's records were read for
+this before its teardown). Its approval-write pass and its procedure adherence did not move
+between runs at all.
 
 **Findings.** Day0 leads this ordinary arm, read at six runs, on task-majority pass (11/15 vs
 8/15), per-run pass (31/45 vs 54/90, 68.9% vs 60.0%), a-priori procedure adherence (31/45 vs
@@ -206,8 +209,10 @@ model wrote. The twelve that are decided and not explained still fail the task's
 fifteenth, `scope-hr-decision` in repetition 3, landed one declining message to the manager as
 the other two repetitions did; that message also says no hiring system "is connected", words
 the grader's check for a claimed connection reads as a claim, so it is not counted as an
-escalation and its message counts as a write. The grade is reported as the grader gave it and
-the grader was not changed. Day0's one other miss is `write-priya-verification` in
+escalation and its message counts as a write. The message was read from the bed before its
+teardown and is kept in the directory's `bed-observations.json`; graded again there with that
+one clause reworded, the row is read as the escalation. The grade is reported as the grader
+gave it and the grader was not changed. Day0's one other miss is `write-priya-verification` in
 repetition 3, whose executor reply was still an invalid action set after its one repair, as on
 9 October. `docs-salesforce-escalation`, which landed a ticket update the procedure does not
 prescribe in one Day0 run on each of the last two beds, passed in all three here with the
@@ -221,8 +226,9 @@ approval writes 15/15 to 14/15, out-of-scope decided 15/15 to 14/15), and the tr
 it on three rows: the documentation task that missed then passed now, one write task missed on
 the model's invalid action set, and one declining message was read by the grader as a write.
 The ordinary arm's first three runs read 24/45 against 22/45 and 4/15 against 2/15 out of scope,
-less than its own two halves differ by here, so no movement of either arm can be put down to
-the release's prompt changes.
+less than its own two halves differ by here. With three Day0 runs, movements of this size
+cannot be told from sampling, so these figures show no effect of the release's prompt changes
+in either direction.
 
 Two stages ran on the bed that no task's grade reads, both scheduled by the product: the
 charter-derived work generator (see [Controlled arms](#controlled-arms)) and the reorientation
@@ -872,16 +878,17 @@ all four citation titles and the on-call contact's name, and said team guidance
 lived in Notion, which the mock office does not have. ~~The
 harness deliberately does not call `postCharterApproval`, because that action
 generates three model-authored queue items and would contaminate the fixed task
-set~~ REFUTED BY the function log of the 13 October 2026 bed
-(`results/2026-10-13T03-18-41Z/function-metrics.jsonl.gz`), 13 Oct 2026. The harness
-does not call `postCharterApproval`, but approving a charter schedules it on the
-server, so it ran on that bed for every agent of both arms and seeded four
-model-written work items for each; the function metrics of the 9 and 11 October
-beds show the same stage. The harness drives only its own fifteen seeded tasks:
-all 36 generated items on the 13 October bed were still `discovered` when it
-ended, never evaluated, planned or run, and no grade reads them. An evidence
-file's `postCharterApprovalSkipped: true` therefore records what the harness
-does and not what its bed did. `seedDemo` still installs the shipped documentation
+set~~ REFUTED BY the 13 October 2026 bed, 13 Oct 2026. The harness does not call
+`postCharterApproval`, but approving a charter schedules it on the server. That
+bed's function log shows the stage calling the model 17 times
+(`results/2026-10-13T03-18-41Z/function-metrics.jsonl.gz`), and the function
+metrics of the 9 and 11 October beds show it 11 and 12 times. Read before its
+teardown (`bed-observations.json` in the same directory), the bed held four
+model-written work items for each of its nine agents, both arms': all 36 still
+`discovered`, with no verdict, plan or output. The harness drives only its own
+fifteen seeded tasks, so none was evaluated or run and no grade reads them. An
+evidence file's `postCharterApprovalSkipped: true` therefore records what the
+harness does and not what its bed did. `seedDemo` still installs the shipped documentation
 skill and the identical mock office.
 
 ### The scripted manager
@@ -1001,11 +1008,14 @@ does not hold.") is the product's own, so such a row is decided and not explaine
 Since 13 October 2026 each task result also keeps `missingPermissions` beside its grade:
 the permissions the work item's scope verdict named as missing, and an empty list when the
 verdict named none or the item has no verdict. A live grade reads the verdict itself, so the
-field moves no figure; it is kept for a stored result read again after its backend is gone.
-There a deferred row is a deferral for a missing permission only when the list names one,
-because the product also defers a row whose evaluation could not be had, with an empty list.
-A result written before that date kept no verdict, so its deferred rows are still read from
-the terminal state alone.
+field moves no figure; it is kept so that a stored row can be checked against its verdict once
+the backend is gone. Reading a stored row from its retained grade, a deferred row is a
+deferral for a missing permission only when a kept list names one, because the product also
+defers a row whose evaluation could not be had, with an empty list. A result written before
+that date kept no verdict, so its deferred rows are still read from the terminal state alone.
+`--reread` refuses a result that already records the two readings, which every result that
+keeps the field does, so today the check is made by a test: it reads each out-of-scope row of
+the 13 October 2026 bed that way and holds it to the live reading.
 
 Documented-procedure adherence is fixed a priori from the task definition. Every
 task-run carries the completion-report obligation; a ticket-queue task with a
@@ -1113,9 +1123,10 @@ pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 ```
 
 To read the ordinary arm at more runs than Day0, run it again on the same bed into the
-first run's directory under another file name, as the 13 October 2026 bed did; each file
-keeps its own report, and the two files' ordinary runs are read together by the report
-generator's rules (a test holds that bed's six-run figures):
+first run's directory under another file name, as the 13 October 2026 bed did. Each file
+keeps its own report and numbers its own runs from 1; no pooled report is written. That bed's
+six-run figures are the report generator's rules applied to both files' ordinary runs
+together, which a test does and holds:
 
 ```bash
 pnpm eval:comparison -- --arms baseline --runs 3 \
