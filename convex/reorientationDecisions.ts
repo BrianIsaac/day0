@@ -4,7 +4,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { appendEvent } from './eventLog';
-import { closeTalkOfCard } from './reorientationTalk';
+import { callersCard, closeTalkOfCard } from './reorientationTalk';
 import { ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
 import {
@@ -98,11 +98,11 @@ async function decidableCard(
   ctx: MutationCtx,
   reorientationId: Id<'reorientations'>,
 ): Promise<{ card: Doc<'reorientations'>; agent: Doc<'agents'> }> {
-  // The caller first, before anything is read about the card (the anonymous-caller guard).
-  await getCallerOrThrow(ctx);
-  const card = await ctx.db.get(reorientationId);
-  if (card === null) throw new ConvexError(CARD_ACTION_REFUSALS.gone);
-  const agent = await assertOwnsAgent(ctx, card.agentId);
+  // The caller first, before anything is read about the card (the anonymous-caller guard); a card
+  // that is gone and another owner's answer alike (W16-R35).
+  const owned = await callersCard(ctx, reorientationId);
+  if (owned === null) throw new ConvexError(CARD_ACTION_REFUSALS.gone);
+  const { card, agent } = owned;
   if (!(DECIDABLE as readonly string[]).includes(card.status)) {
     throw new ConvexError(CARD_ACTION_REFUSALS.decided);
   }

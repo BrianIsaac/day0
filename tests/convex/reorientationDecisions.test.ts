@@ -1042,11 +1042,32 @@ describe('approve: the proposal applied through its target', (): void => {
     await expect(
       owner.mutation(api.reorientationDecisions.approve, { reorientationId: pending }),
     ).rejects.toThrow('Nothing is proposed on this card yet');
-    await expect(
-      harness
-        .withIdentity(managerIdentity('stranger'))
-        .mutation(api.reorientationDecisions.dismiss, { reorientationId: pending }),
-    ).rejects.toThrow();
+    // A stranger is told what a card that is not stored is told (W16-R35): the refusal said the
+    // employee was not theirs, which told a card that exists from one that does not.
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    const gone = await harness.run(async (ctx) => {
+      const { _id, _creationTime, ...fields } = (await ctx.db.get(pending))!;
+      void _id;
+      void _creationTime;
+      const copy = await ctx.db.insert('reorientations', { ...fields, triggerKey: 'copy' });
+      await ctx.db.delete(copy);
+      return copy;
+    });
+    for (const decide of [
+      api.reorientationDecisions.approve,
+      api.reorientationDecisions.dismiss,
+      api.reorientationDecisions.defer,
+    ]) {
+      const foreign = await stranger
+        .mutation(decide, { reorientationId: pending })
+        .catch((error: unknown) => String(error));
+      const missing = await owner
+        .mutation(decide, { reorientationId: gone })
+        .catch((error: unknown) => String(error));
+      expect(foreign).toContain('That card is no longer stored.');
+      expect(foreign).toBe(missing);
+    }
+    expect((await cardOf(harness, pending)).status).toBe('open');
     await owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: pending });
     await expect(
       owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: pending }),
