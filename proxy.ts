@@ -173,7 +173,9 @@ function refuse(message: string, status = 403): NextResponse {
  * redirect lands the manager back on the dashboard as a cross-site navigation,
  * which `Strict` would refuse. Lax already keeps the session off cross-site
  * POSTs, and a page on another localhost port is same-site to either value,
- * which is why the two POST routes also check `Origin`.
+ * which is why the POST routes that act as the caller also check `Origin`:
+ * `/api/voice/chat`, `/api/reorientation/chat` (Discuss, 16-D),
+ * `/api/onboarding/synthesise` and `/api/seed`.
  */
 async function devNoAuthGate(request: NextRequest): Promise<NextResponse> {
   const gaps = devNoAuthKeyGaps();

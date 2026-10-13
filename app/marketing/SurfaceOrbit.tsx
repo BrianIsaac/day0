@@ -42,9 +42,9 @@ export function SurfaceOrbit() {
       <OrbitLayer className="day0-surface-glow">
         <defs>
           <radialGradient id="agent-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.22" />
-            <stop offset="55%" stopColor="#22d3ee" stopOpacity="0.04" />
-            <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+            <stop offset="0%" className="[stop-color:var(--color-accent)]" stopOpacity="0.22" />
+            <stop offset="55%" className="[stop-color:var(--color-accent)]" stopOpacity="0.04" />
+            <stop offset="100%" className="[stop-color:var(--color-accent)]" stopOpacity="0" />
           </radialGradient>
         </defs>
         <circle cx="300" cy="300" r="290" fill="url(#agent-glow)" />
@@ -56,7 +56,7 @@ export function SurfaceOrbit() {
             cy="300"
             r="240"
             fill="none"
-            stroke="#22d3ee"
+            className="stroke-[var(--color-accent)]"
             strokeOpacity="0.18"
             strokeWidth="1"
             strokeDasharray="3 12"
@@ -68,7 +68,7 @@ export function SurfaceOrbit() {
             cy="300"
             r="170"
             fill="none"
-            stroke="#22d3ee"
+            className="stroke-[var(--color-accent)]"
             strokeOpacity="0.1"
             strokeWidth="1"
             strokeDasharray="80 14 2 14"
@@ -86,7 +86,7 @@ export function SurfaceOrbit() {
               y1="300"
               x2={cx}
               y2={cy}
-              stroke="#22d3ee"
+              className="stroke-[var(--color-accent)]"
               strokeOpacity="0.25"
               strokeWidth="0.75"
               strokeDasharray="2 5"
@@ -102,22 +102,21 @@ export function SurfaceOrbit() {
           cx="300"
           cy="300"
           r="48"
-          fill="#22d3ee"
+          className="fill-[var(--color-accent)] stroke-[var(--color-accent)]"
           fillOpacity="0.06"
-          stroke="#22d3ee"
           strokeOpacity="0.3"
           strokeWidth="1"
         />
       </OrbitLayer>
       <OrbitLayer className="day0-orbit-dot">
-        <circle cx="300" cy="300" r="6" fill="#22d3ee" />
+        <circle cx="300" cy="300" r="6" className="fill-[var(--color-accent)]" />
       </OrbitLayer>
       <OrbitLayer>
         <text
           x="300"
           y="338"
           textAnchor="middle"
-          fill="#22d3ee"
+          className="fill-[var(--color-accent)]"
           fillOpacity="0.75"
           fontSize="10"
           fontFamily="ui-sans-serif, system-ui"
@@ -131,9 +130,8 @@ export function SurfaceOrbit() {
           cx="300"
           cy="300"
           r="22"
-          fill="#22d3ee"
+          className="fill-[var(--color-accent)] stroke-[var(--color-accent)]"
           fillOpacity="0.18"
-          stroke="#22d3ee"
           strokeOpacity="0.55"
           strokeWidth="1"
         />
@@ -150,7 +148,7 @@ export function SurfaceOrbit() {
             } as CSSProperties
           }
         >
-          <circle cx="300" cy="300" r="3" fill="#a5f3fc" />
+          <circle cx="300" cy="300" r="3" className="fill-[var(--color-glint)]" />
         </OrbitLayer>
       ))}
     </div>
@@ -178,17 +176,16 @@ function SurfaceNode({
         cx={cx}
         cy={cy}
         r="16"
-        fill="#0a0a0b"
-        stroke="#22d3ee"
+        className="fill-[var(--color-bg)] stroke-[var(--color-accent)]"
         strokeOpacity="0.4"
         strokeWidth="1"
       />
-      <circle cx={cx} cy={cy} r="5" fill="#22d3ee" fillOpacity="0.7" />
+      <circle cx={cx} cy={cy} r="5" className="fill-[var(--color-accent)]" fillOpacity="0.7" />
       <text
         x={cx + labelDx}
         y={cy + labelDy}
         textAnchor={anchor}
-        fill="#a1a1aa"
+        className="fill-[var(--color-muted)]"
         fontSize="11"
         fontFamily="ui-sans-serif, system-ui"
         letterSpacing="0.5"

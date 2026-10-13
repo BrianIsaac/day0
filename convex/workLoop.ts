@@ -1153,19 +1153,36 @@ async function settleLapsedManagerClaims(
 }
 
 /**
+ * Employees one transaction of the lapsed-claims sweep reads, five claim reads each (W15-R16: the
+ * sweep read every employee in one transaction); the next page is its own transaction.
+ */
+export const SETTLE_AGENTS_PER_SWEEP = 50;
+
+/**
  * Settle the manager-channel claims every employee's actions died holding (N-3); see
  * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
- * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back.
+ * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back. Each
+ * transaction reads a page of {@link SETTLE_AGENTS_PER_SWEEP} employees and schedules the next
+ * page from where it stopped.
  *
- * @returns How many claims were settled.
+ * @param cursor - Where the previous page stopped; absent, the sweep starts at the first employee.
+ * @returns How many claims this page settled.
  */
 export const settleLapsedClaims = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<{ settled: number }> => {
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ settled: number }> => {
     const now = Date.now();
+    const page = await ctx.db
+      .query('agents')
+      .paginate({ cursor: args.cursor ?? null, numItems: SETTLE_AGENTS_PER_SWEEP });
     let settled = 0;
-    for (const agent of await ctx.db.query('agents').collect()) {
+    for (const agent of page.page) {
       settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.workLoop.settleLapsedClaims, {
+        cursor: page.continueCursor,
+      });
     }
     return { settled };
   },

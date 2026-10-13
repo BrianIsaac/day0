@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 export type ChipTone = 'accent' | 'ok' | 'warn' | 'danger';
 
 const CHIP_TONE: Record<ChipTone, string> = {
-  accent: 'bg-[var(--color-accent)]/15 text-[var(--color-accent)]',
+  accent: 'bg-[var(--color-accent-fill)] text-[var(--color-accent)]',
   ok: 'bg-[var(--color-ok)]/15 text-[var(--color-ok)]',
   warn: 'bg-[var(--color-warn)]/15 text-[var(--color-warn)]',
   danger: 'bg-[var(--color-danger)]/15 text-[var(--color-danger)]',
@@ -31,9 +31,9 @@ export function ProductFrame({ caption, children }: { caption: string; children:
     <div className="flex flex-col overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 py-2 text-xs text-[var(--color-muted)]">
         <span aria-hidden="true" className="flex shrink-0 gap-1.5">
-          <i className="size-2 rounded-full bg-zinc-700" />
-          <i className="size-2 rounded-full bg-zinc-700" />
-          <i className="size-2 rounded-full bg-zinc-700" />
+          <i className="size-2 rounded-full bg-[var(--color-border-2)]" />
+          <i className="size-2 rounded-full bg-[var(--color-border-2)]" />
+          <i className="size-2 rounded-full bg-[var(--color-border-2)]" />
         </span>
         <span className="truncate">{caption}</span>
       </div>

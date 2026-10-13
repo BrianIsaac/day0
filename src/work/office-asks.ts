@@ -51,6 +51,9 @@ const IT_ROLE = /\bIT\b/;
 export const NO_OPEN_ASK_FOR_ROLE =
   '(no ask for this role is open here; company-wide asks arrive in this channel)';
 
+/** The same line for a team's own channel, where every ask is another role's (W19-3). */
+export const NO_TEAM_ASK_FOR_ROLE = '(no ask for this role is open here)';
+
 /** The channel the office's company-wide asks arrive in. */
 export const OFFICE_ASKS_CHANNEL = 'office-asks';
 
@@ -83,8 +86,34 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
   },
 ];
 
+/** A revenue or sales operations role by its name, "rev ops" and "RevOps" included. */
+const REVENUE_ROLE = /\brev(?:enue)?\s*ops\b|\brevenue operations\b|\bsales (?:operations|ops)\b/i;
+
 /**
- * The threads of the office's company-wide asks that are another role's work for a charter, as
+ * The revenue team's own asks the office seeds outside `#office-asks`, with the roles whose work
+ * each is (W19-3). On the v0.19.0 walk Priya's pipeline coverage ask in `#revops-asks`, shown to
+ * every role as the team's, was drawn as their second ticket by the IT helpdesk and the support
+ * triage employees, who judged it part of the job and then escalated it as outside their clauses.
+ * It is a revenue operations ask, shown as the company-wide asks are: to the roles it names. Its
+ * words are the narrow ones ("deals", "forecast" and "pipeline" are a facilities, a finance and a
+ * devops role's words too); the role's own sentence names the rest, and a helpdesk, facilities,
+ * support, billing or finance role is never shown it (the second pass).
+ */
+export const TEAM_ASKS: readonly OfficeAsk[] = [
+  {
+    channelSlug: 'revops-asks',
+    threadKey: 'thread-pipeline-coverage',
+    sender: 'Priya',
+    body: 'New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.',
+    roleWords: ['revops', 'salesforce'],
+    roleNamed: REVENUE_ROLE,
+    notWith: ['helpdesk', 'facilities', 'support', 'billing', 'finance'],
+    notRoleNamed: IT_ROLE,
+  },
+];
+
+/**
+ * The threads of the office's pooled asks that are another role's work for a charter, as
  * `<channel>#<thread>`: those whose role words the charter's words (its role and will-do clauses,
  * as `charterWords` reads them) carry none of, or that carry a word marking another role. The
  * words are passed in so the seed, which reads this list, imports nothing of the scope rule. The
@@ -104,8 +133,8 @@ export function otherRolesAskThreads(
   const anotherRole = (ask: OfficeAsk): boolean =>
     (ask.notWith ?? []).some((word) => words.has(word)) || ask.notRoleNamed?.test(role) === true;
   return new Set(
-    OFFICE_ASKS.filter((ask) => !ownRole(ask) || anotherRole(ask)).map(
-      (ask) => `${ask.channelSlug}#${ask.threadKey}`,
-    ),
+    [...OFFICE_ASKS, ...TEAM_ASKS]
+      .filter((ask) => !ownRole(ask) || anotherRole(ask))
+      .map((ask) => `${ask.channelSlug}#${ask.threadKey}`),
   );
 }

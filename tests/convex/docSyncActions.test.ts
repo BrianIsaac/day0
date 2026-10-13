@@ -809,6 +809,38 @@ describe('the status phase of a finishing sync (15-A; N20)', (): void => {
     expect(markerModel.prompts).toHaveLength(6);
   }, 60_000);
 
+  it('asks the least recently tried page first, so judgements that always fail do not starve the pages behind them (W15-R22)', async (): Promise<void> => {
+    // The review's bed 1: a judgement that fails stores nothing, and the walk asked in page order,
+    // so six pages whose judgement always took its whole timeout spent every sync's budget.
+    const { harness, sourceId } = await folderOf(
+      Object.fromEntries(
+        Array.from({ length: 7 }, (_unused, index) => [
+          `notes/idea-${index}.md`,
+          `# Idea ${index}\n\nDRAFT\n\nBody ${index}.\n`,
+        ]),
+      ),
+    );
+    markerModel.reply = (prompt: string): unknown => {
+      vi.setSystemTime(Date.now() + 60_000);
+      if (!prompt.includes('Body 6.')) throw new Error('the judgement timed out');
+      return { status: 'draft', quote: 'DRAFT' };
+    };
+    const asked = (): string[] =>
+      markerModel.prompts.map((prompt) => /Body (\d)\./.exec(prompt)?.[1] ?? '?');
+    await sync(harness, sourceId);
+    expect(asked()).toEqual(['0', '1', '2']);
+    await sync(harness, sourceId);
+    expect(asked().slice(3)).toEqual(['3', '4', '5']);
+    await sync(harness, sourceId);
+    expect(asked().slice(6, 7)).toEqual(['6']);
+    expect((await statuses(harness))['notes/idea-6.md']).toEqual(['draft', 'marker', 'draft']);
+    // Each attempt is kept on its page, answered or not.
+    const attempted = await harness.run(async (ctx) =>
+      (await ctx.db.query('docPages').collect()).map((page) => page.judgedAttemptAt),
+    );
+    expect(attempted.every((at) => typeof at === 'number')).toBe(true);
+  }, 60_000);
+
   it('asks about at most twenty pages a sync, and the rest at the next', async (): Promise<void> => {
     expect(MARKER_JUDGEMENTS_PER_SYNC).toBe(20);
     const { harness, sourceId } = await folderOf(
@@ -2232,4 +2264,161 @@ describe('documentation sync batching', (): void => {
       /^The source's listing did not end within the 4,000 parts Day0 reads of one listing in a sync, /,
     );
   }, 120_000);
+});
+
+describe('a source that refuses the walk of its archived pages (W15-R30)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the page an earlier walk archived, which two walks refused the deleted view would have pruned', async (): Promise<void> => {
+    let refused = false;
+    const space = providerFake('yuque', {
+      override: (request) =>
+        refused && request.url.searchParams.get('deleted') === 'true'
+          ? new Response(JSON.stringify({ status: 403, message: 'Forbidden' }), {
+              status: 403,
+              headers: { 'content-type': 'application/json' },
+            })
+          : undefined,
+    });
+    const reader = new YuqueReader({
+      fetch: space.fetch,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-refused-');
+    await mkdir(join(root, 'space'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'RevOps runbooks',
+      kind: 'folder',
+      locator: 'space',
+    });
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit) =>
+        await reader.listPageBatch(
+          {
+            _id: source._id,
+            kind: 'yuque',
+            label: 'RevOps runbooks',
+            locator: 'https://acme.yuque.com/revops/runbooks',
+          },
+          'fixture-yuque-token',
+          cursor,
+          limit,
+        ),
+    );
+    const sync = async (): Promise<void> => {
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    };
+    const deleted = async () =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', '210000009'))
+            .unique(),
+      );
+    await sync();
+    expect((await deleted())?.status).toBe('archived');
+    // The token loses the deleted view: two walks in a row list the document nowhere.
+    refused = true;
+    await sync();
+    await sync();
+    expect((await deleted())?.status).toBe('archived');
+    const source = await harness.run(async (ctx) => await ctx.db.get(sourceId));
+    expect(source?.status).toBe('synced');
+  }, 60_000);
+});
+
+describe('the reader contract by revision at the sync (X-13; W15-R31)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps a Yuque repository unchanged since its last sync with no document body asked, mirrored and stored as it was', async (): Promise<void> => {
+    const space = providerFake('yuque');
+    const reader = new YuqueReader({
+      fetch: space.fetch,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-revision-');
+    await mkdir(join(root, 'space'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'RevOps runbooks',
+      kind: 'folder',
+      locator: 'space',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('agents', {
+        bossEmail: 'manager@acme.test',
+        name: 'Priya',
+        userId: 'owner',
+        state: 'deployed',
+        createdAt: 1,
+      });
+    });
+    // The folder source's reads answered by the Yuque reader, with the sync's stored revisions.
+    vi.spyOn(FolderReader.prototype as DocumentationReader, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit, stored) =>
+        await reader.listPageBatch(
+          {
+            _id: source._id,
+            kind: 'yuque',
+            label: 'RevOps runbooks',
+            locator: 'https://acme.yuque.com/revops/runbooks',
+          },
+          'fixture-yuque-token',
+          cursor,
+          limit,
+          stored,
+        ),
+    );
+    const sync = async (): Promise<void> => {
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    };
+    const state = async () =>
+      await harness.run(async (ctx) => ({
+        pages: (await ctx.db.query('docPages').collect())
+          .map((page) => [page.ref, page.sourceRevision ?? null, page.status ?? 'active'])
+          .sort(),
+        mirrors: (await ctx.db.query('mockDocs').collect()).length,
+        source: await ctx.db.get(sourceId),
+        run: await ctx.db.query('docSyncRuns').order('desc').first(),
+      }));
+    await sync();
+    const first = await state();
+    expect(first.pages.length).toBeGreaterThan(0);
+    const details = (): number =>
+      space.requests.filter((request) => /\/docs\/\d+$/.test(request.url.pathname)).length;
+    const before = details();
+    expect(before).toBeGreaterThan(0);
+    await sync();
+    // Nothing changed in the repository: its documents are kept by their listed revisions.
+    expect(details()).toBe(before);
+    const second = await state();
+    expect(second.pages).toEqual(first.pages);
+    expect(second.mirrors).toBe(first.mirrors);
+    expect(second.source?.status).toBe('synced');
+    // The run counts the pages kept by their revision among the pages the source holds.
+    expect(second.run?.pageCount).toBe(first.run?.pageCount);
+  }, 60_000);
 });

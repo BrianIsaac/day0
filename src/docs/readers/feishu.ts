@@ -37,6 +37,7 @@ import {
 } from '../feishu-source';
 import type { DocPage, DocSourceRecord } from '../types';
 import {
+  isProviderFailure,
   ListingChangedError,
   type DocumentationReader,
   type ReadPageBatch,
@@ -639,12 +640,20 @@ export class FeishuReader implements DocumentationReader {
       ...(entry.url === undefined ? {} : { url: entry.url }),
       markdown,
       updatedAt: entry.editedAt ?? this.now(),
-      ...(revision === null ? {} : { sourceRevision: String(revision) }),
+      ...(typeof revision === 'number' ? { sourceRevision: String(revision) } : {}),
+      ...(revision === 'unread' ? { revisionUnread: true } : {}),
     };
   }
 
-  /** A document's `revision_id`, or null when Feishu would not say. */
-  private async revision(session: FeishuSession, entry: ListedEntry): Promise<number | null> {
+  /**
+   * A document's `revision_id`; null when Feishu says none, or refuses the read for good; and
+   * `unread` when the read met a failure that passes (a server error, a timeout), so the
+   * revision the page was stored with stands (W15-R30).
+   */
+  private async revision(
+    session: FeishuSession,
+    entry: ListedEntry,
+  ): Promise<number | null | 'unread'> {
     try {
       const document = await this.call(
         session,
@@ -655,13 +664,13 @@ export class FeishuReader implements DocumentationReader {
       const revision = field(field(document, 'document'), 'revision_id');
       return typeof revision === 'number' ? revision : null;
     } catch (error) {
-      // Whatever went wrong, the page was read (W14-R10): it is kept without a revision, and the
-      // failure is logged, never the page's or the batch's.
+      // Whatever went wrong, the page was read (W14-R10): it is kept, and the failure is logged,
+      // never the page's or the batch's.
       log.warn('feishu document revision not read', {
         ref: entry.ref,
         reason: error instanceof Error ? error.message : String(error),
       });
-      return null;
+      return isProviderFailure(error) ? 'unread' : null;
     }
   }
 

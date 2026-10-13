@@ -9,7 +9,8 @@ import { focusedName, mount, press, said } from '../../fixtures/dom/press';
 
 const state = vi.hoisted(() => ({
   sources: [] as Array<Record<string, unknown>>,
-  mode: 'real' as 'real' | 'mock',
+  /** The deployment's surface mode; `loading` while `config.surfaceMode` has not answered. */
+  mode: 'real' as 'real' | 'mock' | 'loading',
   /** Mutations that reject, by function name, with the text they reject with. */
   refusals: {} as Record<string, string>,
 }));
@@ -24,8 +25,11 @@ vi.mock('convex/react', () => ({
     },
   useQuery: (reference: unknown): unknown => {
     const name = getFunctionName(reference as never);
-    if (name === 'config:surfaceMode')
-      return { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    if (name === 'config:surfaceMode') {
+      return state.mode === 'loading'
+        ? undefined
+        : { mode: state.mode, label: state.mode === 'real' ? 'real (local)' : 'mock' };
+    }
     if (name === 'docSources:listMine') return state.sources;
     return [];
   },
@@ -52,6 +56,29 @@ beforeEach((): void => {
 
 it('leaves the one main landmark to the layout', (): void => {
   expect(renderToStaticMarkup(<DocumentationPage />)).not.toMatch(/<main[\s>]/);
+});
+
+it('says what the hosted office reads in its one sentence, and nothing of a mock or of linking (RM26 (a))', (): void => {
+  // The v0.19.0 walk's finding 6: the chip "mock", "Demo docs (seeded)" and "Linking is a
+  // local-run feature. The hosted mock uses its disclosed synthetic pages."
+  state.mode = 'mock';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).toContain(
+    'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+  );
+  for (const said of ['>mock<', 'Demo docs', 'hosted mock', 'Link read-only locations']) {
+    expect(html).not.toContain(said);
+  }
+});
+
+it('says neither office’s words while the mode is still loading (the second pass)', (): void => {
+  state.mode = 'loading';
+  const html = renderToStaticMarkup(<DocumentationPage />);
+  expect(html).not.toContain('hosted office');
+  expect(html).not.toContain('Link a documentation location');
+  // Nor the local install's subtitle or a chip reading "loading" (W16-R35).
+  expect(html).not.toContain('Link read-only locations');
+  expect(html).not.toContain('>loading<');
 });
 
 it('keeps the hosted mock documentation page unchanged', (): void => {
@@ -120,8 +147,12 @@ describe('the link form and the components a source needs', (): void => {
 
   it('says a folder source needs no component running', (): void => {
     const markup = renderToStaticMarkup(<DocumentationPage />);
-    expect(markup).toContain('The backend reads this location itself.');
-    expect(markup).toContain('No day0 component has to be running.');
+    // Re-pinned for the copy pass (16-FX): the backend is a component that runs, so the sentence
+    // contradicted itself, and it wrote the product's name in lower case.
+    expect(markup).toContain(
+      'The backend reads this location itself, with no other component to start.',
+    );
+    expect(markup).not.toContain('No day0 component');
   });
 
   // Re-pinned from five for 15-X: each of its readers' kinds is offered once the reader reads it.
@@ -146,13 +177,15 @@ describe('the link form and the components a source needs', (): void => {
   it('says folder, git and URL sources need nothing running', (): void => {
     for (const kind of ['folder', 'git', 'urls'] as const) {
       const markup = renderToStaticMarkup(<SourceKindHelp kind={kind} serverKind="notion" />);
-      expect(markup).toContain('No day0 component has to be running.');
+      // Re-pinned for the copy pass (16-FX): the sentence contradicted the backend's own running.
+      expect(markup).toContain('with no other component to start.');
     }
   });
 
   it('says a Feishu source needs nothing running and links the guide for the app IT sets up (14-F)', (): void => {
     const markup = renderToStaticMarkup(<SourceKindHelp kind="feishu" serverKind="notion" />);
-    expect(markup).toContain('No day0 component has to be running.');
+    // Re-pinned for the copy pass (16-FX): the sentence contradicted the backend's own running.
+    expect(markup).toContain('as the app IT created, with no other component to start.');
     expect(markup).toContain(FEISHU_GUIDE_URL);
     expect(FEISHU_GUIDE_URL).toMatch(/\/docs\/running\/reader-feishu\.md$/);
   });
@@ -284,7 +317,8 @@ describe('a reader secret for a private repository or wiki (E-74)', (): void => 
       ['drive', 'reader-drive.md'],
     ] as const) {
       const markup = renderToStaticMarkup(<SourceKindHelp kind={kind} serverKind="notion" />);
-      expect(markup, kind).toContain('No day0 component has to be running.');
+      // Re-pinned for the copy pass (16-FX): the sentence contradicted the backend's own running.
+      expect(markup, kind).toContain(', with no other component to start.');
       expect(markup, kind).toContain(`/docs/running/${guide}"`);
     }
   });

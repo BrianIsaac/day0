@@ -55,6 +55,7 @@ import {
   type WorkSourceCategory,
 } from '../src/work/types';
 import {
+  boundedQuestion,
   closingPhaseOwed,
   declaredReads,
   managerDmReachable,
@@ -67,6 +68,7 @@ import {
   type DeclaredRead,
 } from '../src/work/obligations';
 import { judgeManagerQuestion } from '../src/work/question-judgement';
+import { conflictHeldWrites, conflictSteps } from '../src/work/conflict-hold';
 import { replyTargetFor } from '../src/work/reply-target';
 import type { Doc, Id } from './_generated/dataModel';
 import { logEvent } from './eventLog';
@@ -135,7 +137,8 @@ import {
   selectionSwitchedOff,
   type SelectionRequest,
 } from '../src/docs/select';
-import { goneCitesReason, type GoneCite } from '../src/work/plan-cites';
+import { conflictConfirmedReason, goneCitesReason, type GoneCite } from '../src/work/plan-cites';
+import { closingHeldReason } from '../src/agent/reorientation-words';
 import type { GoneBlock } from './docSelection';
 import {
   sameSkillShape,
@@ -1371,13 +1374,17 @@ async function holdDay0Actions(
       : repairedStaged;
     const stagedOutput =
       SURFACE_MODE === 'real'
-        ? await withOpenQuestionHeld(auditedOutput, {
-            plan: args.plan,
-            surfaces,
-            answered: managerHasAnswered(args.item),
-            // A question an earlier run landed and nobody answered is still the open one.
-            askedEarlier: (args.landedWrites ?? []).map((write) => write.action),
-          })
+        ? await withConflictsHeld(
+            ctx,
+            await withOpenQuestionHeld(auditedOutput, {
+              plan: args.plan,
+              surfaces,
+              answered: managerHasAnswered(args.item),
+              // A question an earlier run landed and nobody answered is still the open one.
+              askedEarlier: (args.landedWrites ?? []).map((write) => write.action),
+            }),
+            { plan: args.plan, surfaces, workItemId: args.workItemId },
+          )
         : auditedOutput;
     await recordConditionalWritesWithheld(
       ctx,
@@ -1476,6 +1483,8 @@ async function holdDay0Actions(
       workItemId: args.workItemId,
       reason,
       runId: args.runId,
+      // A conflict confirmed since the approval stops the run for the manager (D-4 (b)).
+      ...(err instanceof ConflictConfirmedError ? { stopped: true } : {}),
     });
     return result({ ok: false, reason });
   }
@@ -1824,15 +1833,28 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
     question: asked.question,
   });
   if (!open) return read;
-  // A message that reports a write withheld for the answer goes with it (W12X-2).
+  return withheldForQuestion(read, open.withheld, { question: open.question, steps: open.steps });
+}
+
+/**
+ * The set with some writes withheld for a question's answer, each with its reason, the messages
+ * that report them with them (W12X-2), and the question recorded so the run stops with it once
+ * the rest has settled. A question already recorded on the set stands, the steps joined to it.
+ */
+function withheldForQuestion<T extends QuestionableOutput>(
+  output: T,
+  writes: ReadonlyArray<{ index: number; step: number }>,
+  question: NonNullable<ExecutionOutput['openQuestion']>,
+): T {
   const refusals = withReportsOfWithheld(
-    read.actions,
-    open.withheld.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
+    output.actions,
+    writes.map(({ index, step }) => ({ index, reason: withheldForAnswerReason(step) })),
   );
   const removed = new Set(refusals.map((row) => row.index));
-  const withheld = withholdActions(read, refusals, "for the manager's answer");
+  const withheld = withholdActions(output, refusals, "for the manager's answer");
   const reindex = (index: number): number =>
     index - [...removed].filter((removedIndex) => removedIndex < index).length;
+  const standing = output.openQuestion;
   return {
     ...withheld,
     ...(output.argumentRepairs
@@ -1842,8 +1864,56 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
             .map((attempt) => ({ ...attempt, index: reindex(attempt.index) })),
         }
       : {}),
-    openQuestion: { question: open.question, steps: open.steps },
+    openQuestion:
+      standing === undefined
+        ? question
+        : {
+            question: standing.question,
+            steps: [...new Set([...standing.steps, ...question.steps])].sort((a, b) => a - b),
+          },
   };
+}
+
+/**
+ * The set with the writes of the steps an unanswered conflict's question holds withheld (16-O;
+ * RM20 (a), D-4 (c)): the plan was drafted over a passage two equally trusted pages disagree on,
+ * the question rode its request, and the steps that rely on the passage wait for the answer while
+ * the rest run. Real mode only: no conflict is confirmed in mock mode.
+ */
+async function withConflictsHeld<T extends QuestionableOutput>(
+  ctx: ActionCtx,
+  output: T,
+  context: {
+    readonly plan: ExecutionPlan;
+    readonly surfaces: readonly SurfaceRecord[];
+    readonly workItemId: Id<'workItems'>;
+  },
+): Promise<T> {
+  if (SURFACE_MODE !== 'real') return output;
+  const holds = await ctx.runQuery(internal.managerQuestions.conflictHoldsFor, {
+    workItemId: context.workItemId,
+  });
+  const writes = new Map<number, { index: number; step: number }>();
+  const steps = new Set<number>();
+  for (const hold of holds) {
+    const held = conflictSteps(context.plan, hold);
+    for (const write of conflictHeldWrites({
+      plan: context.plan,
+      actions: output.actions,
+      surfaces: context.surfaces,
+      steps: held,
+    })) {
+      writes.set(write.index, write);
+      steps.add(write.step);
+    }
+  }
+  const [first] = holds;
+  if (writes.size === 0 || first === undefined) return output;
+  return withheldForQuestion(output, [...writes.values()], {
+    question: boundedQuestion(first.question),
+    steps: [...steps].sort((a, b) => a - b),
+    relationId: first.relationId,
+  });
 }
 
 /**
@@ -2697,6 +2767,14 @@ export const authorDependentActions = internalAction({
       knownValues = await knownValuesForAgent(ctx, agent);
       const plan = item.plan as ExecutionPlan;
       await refuseGoneCites(ctx, plan, { agentId: item.agentId, workItemId: item._id });
+      // A reorientation card standing over the row holds its closing phase, in both modes (O-3):
+      // the prerequisites stay landed and Retry resumes here once the card is decided.
+      const holding = await ctx.runQuery(internal.reorientation.holdingCard, {
+        workItemId: item._id,
+      });
+      if (holding !== null) {
+        throw new ClosingHeldByCard(closingHeldReason(agent.name, holding.summary));
+      }
       const mockEnv = await siteSnapshot(ctx, {
         agentId: item.agentId,
         workItemId: args.workItemId,
@@ -3018,12 +3096,16 @@ export const authorDependentActions = internalAction({
       // A question this run put to the manager, here, in phase one or in an
       // earlier run, that nobody has answered: the writes the plan left to
       // the answer wait.
-      const gated = await withOpenQuestionHeld(dependent, {
-        plan,
-        surfaces,
-        answered: managerHasAnswered(item),
-        askedEarlier: (initial.landedWrites ?? []).map((write) => write.action),
-      });
+      const gated = await withConflictsHeld(
+        ctx,
+        await withOpenQuestionHeld(dependent, {
+          plan,
+          surfaces,
+          answered: managerHasAnswered(item),
+          askedEarlier: (initial.landedWrites ?? []).map((write) => write.action),
+        }),
+        { plan, surfaces, workItemId: args.workItemId },
+      );
       await recordConditionalWritesWithheld(
         ctx,
         { agentId: item.agentId, workItemId: args.workItemId, runId: args.runId, phase: 'closing' },
@@ -3073,11 +3155,14 @@ export const authorDependentActions = internalAction({
       };
     } catch (error) {
       const gateRefusal = error instanceof ClosingGateRefusal;
-      // The gate's reason is Day0's own sentences, whole; any other failure is
-      // a model or provider message and is scrubbed to one line like the rest.
-      const reason = gateRefusal
-        ? redactSecret(error.message, '', knownValues)
-        : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
+      const heldByCard =
+        error instanceof ClosingHeldByCard || error instanceof ConflictConfirmedError;
+      // The gate's reason is Day0's own sentences, whole, as a card's hold is; any other failure
+      // is a model or provider message and is scrubbed to one line like the rest.
+      const reason =
+        gateRefusal || heldByCard
+          ? redactSecret(error.message, '', knownValues)
+          : safeFailureMessage(error, '', 'the closing phase failed', 300, knownValues);
       // A set the obligation gate refused after its one repair stops the run:
       // the prerequisites landed and stay on the row, the refused set beside
       // its reason, and Retry resumes at the closing phase from that ledger.
@@ -3089,7 +3174,7 @@ export const authorDependentActions = internalAction({
         ...(initial
           ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) }
           : {}),
-        ...(gateRefusal ? { stopped: true } : {}),
+        ...(gateRefusal || heldByCard ? { stopped: true } : {}),
       });
       return { ok: false, reason };
     }
@@ -4138,10 +4223,13 @@ async function planGrounding(
  * approved, so the step no longer rests on what the team has written down. Checked before the
  * first phase writes and again before the closing phase authors. Real mode only. A plan whose
  * planner cited nothing is checked against the blocks it was drafted from, as its selection
- * recorded them, so the check is never vacuous (W14-R25); one with neither passes.
+ * recorded them, so the check is never vacuous (W14-R25). A plan whose blocks all stand, or that
+ * names none, is then checked for a conflict confirmed on them since its approval
+ * ({@link refuseConfirmedSince}, D-4 (b), wave 16).
  *
  * @param item - The employee running the plan and the item it is for.
- * @throws Error naming the cites that no longer stand, and what superseded the first.
+ * @throws Error naming the cites that no longer stand, and what superseded the first; or
+ *   `ConflictConfirmedError` naming the two pages a conflict confirmed since stands between.
  */
 async function refuseGoneCites(
   ctx: ActionCtx,
@@ -4153,8 +4241,9 @@ async function refuseGoneCites(
   const blocks: Array<{ id: string; hash?: string }> =
     cites.length > 0
       ? cites.flatMap((cite) => cite.blocks)
-      : (await ctx.runQuery(internal.docSelection.plannedFromBlocks, item)).map((id) => ({ id }));
-  if (blocks.length === 0) return;
+      : await ctx.runQuery(internal.docSelection.plannedFromBlocks, item);
+  // A plan naming no block (it read the whole mirror) still meets a conflict confirmed since.
+  if (blocks.length === 0) return await refuseConfirmedSince(ctx, item.workItemId);
   const parts: Array<typeof blocks> = [];
   for (let start = 0; start < blocks.length; start += CITE_CHECK_BATCH) {
     parts.push(blocks.slice(start, start + CITE_CHECK_BATCH));
@@ -4177,7 +4266,7 @@ async function refuseGoneCites(
       .flat()
       .map((gone) => [gone.id, gone] as const),
   );
-  if (changed.size === 0) return;
+  if (changed.size === 0) return await refuseConfirmedSince(ctx, item.workItemId);
   // Each cite once, by its own words; a passage the planner did not cite, by its page.
   const gone = new Map<string, GoneCite>();
   const add = (label: string, block: GoneBlock): void => {
@@ -4198,11 +4287,33 @@ async function refuseGoneCites(
   throw new GoneCitesError(goneCitesReason([...gone.values()]));
 }
 
+/**
+ * Refuse to run a plan that relies on a passage two pages were confirmed to disagree on since it
+ * was approved, and nobody was asked about beside it (D-4 (b), wave 16): the run stops with the two
+ * pages named, and Retry drafts the plan again, which asks the question.
+ *
+ * @throws ConflictConfirmedError naming the two pages and the heading.
+ */
+async function refuseConfirmedSince(ctx: ActionCtx, workItemId: Id<'workItems'>): Promise<void> {
+  const conflict = await ctx.runQuery(internal.managerQuestions.conflictConfirmedSince, {
+    workItemId,
+  });
+  if (conflict !== null) {
+    throw new ConflictConfirmedError(conflictConfirmedReason(conflict.heading, conflict.pages));
+  }
+}
+
 /** How a gone passage is named when the planner cited nothing and its row no longer says its page. */
 const UNCITED_PASSAGE = 'a passage the plan was drafted from';
 
 /** A plan whose cited documentation is gone or changed: a failure of the item, not a retryable one. */
 class GoneCitesError extends Error {}
+
+/** A closing phase a reorientation card holds (O-3): a stop the manager ends by deciding the card. */
+class ClosingHeldByCard extends Error {}
+
+/** A plan whose passage was confirmed disputed since its approval (D-4 (b)): a stop Retry redrafts. */
+class ConflictConfirmedError extends GoneCitesError {}
 
 /** The cited blocks one check reads; the check's own bound is the search's 512. */
 const CITE_CHECK_BATCH = 256;
@@ -4264,6 +4375,14 @@ async function siteSnapshot(
         reason: reason.slice(0, SELECTION_FAILURE_CHARS),
       },
     });
+    // A plan drafted from the whole mirror keeps no selection: an earlier draft's kept list would
+    // otherwise stand for it in the conflict checks (W16-R11, probes P2 and P3).
+    if (selection.site === 'plan') {
+      await ctx.runMutation(internal.docSelection.recordPlanSelection, {
+        workItemId: input.workItemId,
+        blocks: [],
+      });
+    }
   }
   if (snapshot.documentation !== undefined) {
     await logEvent(ctx, {
@@ -4276,6 +4395,18 @@ async function siteSnapshot(
         chars: snapshot.documentation.chars,
       },
     });
+    // The plan's blocks with their hashes, on the item, for the gone-cite check (W15-R17).
+    if (snapshot.documentation.site === 'plan') {
+      await ctx.runMutation(internal.docSelection.recordPlanSelection, {
+        workItemId: input.workItemId,
+        blocks: snapshot.documentation.citations.flatMap((citation) =>
+          citation.blocks.map((block) => ({
+            id: block.id,
+            ...(block.hash !== undefined ? { hash: block.hash } : {}),
+          })),
+        ),
+      });
+    }
   }
   return snapshot;
 }

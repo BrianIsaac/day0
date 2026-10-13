@@ -19,6 +19,15 @@ describe('the live feed labels', (): void => {
     }
   });
 
+  it('says a card that proposes nothing in the record’s order (the second pass’s m8)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.proposed',
+        payload: { reorientationId: 'r1', summary: 'x', kind: 'none', by: 'judgement' },
+      }),
+    ).toBe('reorientation card proposes nothing needs to change');
+  });
+
   it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
     const holder = { name: 'Mateo', title: 'Post the September close status note' };
     expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(
@@ -167,6 +176,15 @@ describe('the live feed labels', (): void => {
       'charter question answered with a plan approval, charter amended',
       'skipped (out of scope)',
     ]);
+  });
+
+  it('labels a charter amended from a reorientation card by where it came from (the joins)', (): void => {
+    expect(
+      eventLabel({
+        type: 'charter.amended',
+        payload: { version: '0.2', via: 'reorientation', reason: 'Aman Rao now approves' },
+      }),
+    ).toBe('charter amended to v0.2 from a reorientation card');
   });
 
   it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {

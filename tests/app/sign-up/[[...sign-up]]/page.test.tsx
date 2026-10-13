@@ -53,11 +53,13 @@ describe('the sign-up page', (): void => {
     expect(render()).not.toMatch(/<main[\s>]/);
   });
 
-  it("dresses Clerk's sign-up in the shared appearance, so its text reads on the dark page", (): void => {
+  // Re-pinned (16-T): the appearance carries no theme object now; Clerk's default theme follows
+  // the page's colour-scheme, so the shared variables and options are what dress it in either theme.
+  it("dresses Clerk's sign-up in the shared appearance, so its text reads on the page in either theme", (): void => {
     clerk.appearance.length = 0;
     render();
-    const { theme, variables, options } = clerkSignInAppearance;
-    expect(clerk.appearance).toEqual([expect.objectContaining({ theme, variables, options })]);
+    const { variables, options } = clerkSignInAppearance;
+    expect(clerk.appearance).toEqual([expect.objectContaining({ variables, options })]);
   });
 
   it("leaves the card's header out on the first step only, where the page's h1 says it, and keeps the mark (walk m26)", (): void => {

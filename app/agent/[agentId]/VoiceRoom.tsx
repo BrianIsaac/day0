@@ -13,13 +13,7 @@ import { refusalText } from '../../components/use-change';
 import { Button } from '../../components/Button';
 import { EmployeeContext } from './employee-context';
 import { ROOM_HEIGHT } from './room-frame';
-import {
-  DraftingNotice,
-  draftingOutcome,
-  draftingWords,
-  type SynthesisPost,
-} from './one-to-one/DraftingNotice';
-import { StatusRegion } from '../../components/StatusRegion';
+import { DraftingNotice, draftingWords, type SynthesisPost } from './one-to-one/DraftingNotice';
 import { TopicProgress } from './one-to-one/TopicProgress';
 import { START_DEADLINE_MS, withDeadline } from './one-to-one/deadline';
 
@@ -388,20 +382,16 @@ function VoiceRoomInner({
             ))
           )}
         </div>
-        {/* On the page before the words change, so the drafting line is said as it changes. */}
-        <div className="sr-only">
-          <StatusRegion outcome={words ? draftingOutcome(words) : null} />
-        </div>
-        {over ? (
-          <DraftingNotice
-            focusRef={noticeRef}
-            name={name}
-            phase={serverPhase}
-            post={post}
-            onDraftAgain={draftAgain}
-            onHoldAgain={holdAgain}
-          />
-        ) : null}
+        {/* On the page before the line appears, so it is said as it does. */}
+        <DraftingNotice
+          focusRef={noticeRef}
+          name={name}
+          phase={serverPhase}
+          post={post}
+          open={over}
+          onDraftAgain={draftAgain}
+          onHoldAgain={holdAgain}
+        />
       </div>
     </section>
   );

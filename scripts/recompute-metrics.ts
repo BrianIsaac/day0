@@ -7,7 +7,8 @@
  *
  * Each trace is one employee's, as `scripts/export-trace.ts` writes it from
  * the paged export: redacted, dated in the agent's zone, stamped with the
- * release and commit. The owner's employees are chosen as `metrics:forOwner`
+ * release and commit. An owner export (wave 16) is read as every employee's trace it carries,
+ * with the agents it names as set aside. The owner's employees are chosen as `metrics:forOwner`
  * chooses them (evaluation agents, which a trace flags, and baseline arms
  * left out), so the JSON printed first is the shape the query returns, field
  * for field. A recording made before the trace existed is read from its
@@ -50,9 +51,12 @@ import {
 import type { OwnerMetrics } from '../src/metrics/types';
 import { exportEntries, exportRows } from './convex-export';
 import {
+  employeeTracesOf,
   handoversForRecompute,
   readAgentTrace,
+  readOwnerExport,
   type AgentTrace,
+  type TraceAgent,
   type TraceManifest,
 } from '../src/export/trace';
 import { isEventType, type EventType } from '../src/events/contract';
@@ -101,6 +105,12 @@ export type RecomputeSource =
           employee: string;
         }
       >;
+      /**
+       * The employees an owner export says the owner handed to another manager whose trace was
+       * not read beside it: their records are the other manager's, so the owner's span of them is
+       * counted only from that manager's trace.
+       */
+      departedUnread?: string[];
     }
   | { kind: 'snapshot' };
 
@@ -244,7 +254,12 @@ function timelineOf(
  */
 export function recomputeFromTraces(
   traces: readonly AgentTrace[],
-  options: { owner?: string; now?: number } = {},
+  options: {
+    owner?: string;
+    now?: number;
+    setAside?: readonly TraceAgent[];
+    departures?: ReadonlyArray<{ readonly agentId: string; readonly agentName: string }>;
+  } = {},
 ): Recomputed {
   const read = newestTraceOfEach(traces);
   const owners = [...new Set(read.flatMap((trace) => trace.agent.userId ?? []))];
@@ -252,15 +267,24 @@ export function recomputeFromTraces(
     throw new Error(`the traces belong to ${owners.length} owners; name one with --owner`);
   }
   const owner = options.owner ?? owners[0] ?? DEV_NO_AUTH_SUBJECT;
-  const agents = read.map((trace) => ({
-    _id: trace.agent.id as Id<'agents'>,
-    _creationTime: trace.agent.creationTime,
-    userId: trace.agent.userId,
-    name: trace.agent.name,
-    createdAt: trace.agent.createdAt,
-    evaluation: trace.agent.evaluation || trace.agent.arm === 'baseline',
+  const asAgent = (agent: TraceAgent, trace: AgentTrace | undefined) => ({
+    _id: agent.id as Id<'agents'>,
+    _creationTime: agent.creationTime,
+    userId: agent.userId,
+    name: agent.name,
+    createdAt: agent.createdAt,
+    evaluation: agent.evaluation || agent.arm === 'baseline',
     trace,
-  }));
+  });
+  // An owner export names the agents the figures set aside without their traces, so the count
+  // of what was set aside is the query's (`excludedAgents`).
+  const traced = new Set(read.map((trace) => trace.agent.id));
+  const agents = [
+    ...read.map((trace) => asAgent(trace.agent, trace)),
+    ...(options.setAside ?? [])
+      .filter((agent) => !traced.has(agent.id))
+      .map((agent) => asAgent({ ...agent, evaluation: true }, undefined)),
+  ];
   // The manifests' handovers cut each employee's history at its acceptances, as
   // `metrics:forOwner` cuts it (D12). They carry each owner key as a digest salted with the
   // trace's own export time: the owner asked about and the employee's present holder are digested
@@ -272,18 +296,25 @@ export function recomputeFromTraces(
     ]),
   );
   const selection = selectCompanyEmployees(agents, owner, (agent) => agent.evaluation, handovers);
-  const records: EmployeeRecords[] = selection.employees.map(({ trace, ...agent }) =>
-    recordsWithinTenure(
-      {
-        agent,
-        events: trace.sections.events,
-        workItems: trace.sections.workItems,
-        charters: trace.sections.charters,
-        surfaces: trace.sections.surfaces,
-      },
-      selection.tenures.get(agent._id) ?? [],
-    ),
+  const records: EmployeeRecords[] = selection.employees.flatMap(({ trace, ...agent }) =>
+    trace === undefined
+      ? []
+      : [
+          recordsWithinTenure(
+            {
+              agent,
+              events: trace.sections.events,
+              workItems: trace.sections.workItems,
+              charters: trace.sections.charters,
+              surfaces: trace.sections.surfaces,
+            },
+            selection.tenures.get(agent._id) ?? [],
+          ),
+        ],
   );
+  const departedUnread = (options.departures ?? [])
+    .filter((departure) => !traced.has(departure.agentId))
+    .map((departure) => departure.agentName);
   return {
     owner,
     figures: computeCompanyMetrics(records, selection),
@@ -299,6 +330,7 @@ export function recomputeFromTraces(
         release: manifest.release,
         commit: manifest.commit,
       })),
+      ...(departedUnread.length > 0 ? { departedUnread } : {}),
     },
   };
 }
@@ -322,32 +354,49 @@ function newestTraceOfEach(traces: readonly AgentTrace[]): AgentTrace[] {
 }
 
 /**
- * Read the command line's inputs: one or more trace files, or one snapshot export.
+ * Read the command line's inputs: one or more trace files or owner exports, or one snapshot
+ * export.
  *
- * @throws Error when a JSON file is not a trace of a version this reads, or
- *   traces and a snapshot are mixed.
+ * @throws Error when a JSON file is neither a trace nor an owner export of a version this reads,
+ *   or traces and a snapshot are mixed.
  */
 export function recompute(
   paths: readonly string[],
   options: { owner?: string; now?: number } = {},
 ): Recomputed {
-  const traces = paths.filter((path) => statSync(path).isFile() && path.endsWith('.json'));
-  if (traces.length === 0 && paths.length === 1) return recomputeFromExport(paths[0], options);
-  if (traces.length !== paths.length) {
+  const files = paths.filter((path) => statSync(path).isFile() && path.endsWith('.json'));
+  if (files.length === 0 && paths.length === 1) return recomputeFromExport(paths[0], options);
+  if (files.length !== paths.length) {
     throw new Error('pass trace files, or one snapshot export, not both');
   }
-  return recomputeFromTraces(
-    traces.map((path) => {
-      const trace = readAgentTrace(JSON.parse(readFileSync(path, 'utf8')));
-      if (trace === undefined) {
-        throw new Error(
-          `${path} is not a day0 trace (version 2, 3 or 4); export it with pnpm export:trace`,
-        );
-      }
-      return trace;
-    }),
-    options,
-  );
+  const traces: AgentTrace[] = [];
+  const setAside: TraceAgent[] = [];
+  const departures: Array<{ agentId: string; agentName: string }> = [];
+  const ownerKeys = new Set<string>();
+  for (const path of files) {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const trace = readAgentTrace(parsed);
+    if (trace !== undefined) {
+      traces.push(trace);
+      continue;
+    }
+    // An owner export (wave 16, 16-F): every employee's trace and the agents set aside.
+    const ownerFile = readOwnerExport(parsed);
+    if (ownerFile === undefined) {
+      throw new Error(
+        `${path} is not a Day0 trace or owner export this release reads; export it with pnpm export:trace`,
+      );
+    }
+    traces.push(...employeeTracesOf(ownerFile));
+    ownerKeys.add(ownerFile.manifest.ownerKey);
+    setAside.push(...ownerFile.setAside);
+    departures.push(...ownerFile.owner.departures);
+  }
+  // An owner export names whose it is: its owner is the one asked about unless one is named, so
+  // another manager's trace read beside it (an employee handed over) does not make two owners.
+  const [ownerOfFile] = ownerKeys;
+  const owner = options.owner ?? (ownerKeys.size === 1 ? ownerOfFile : undefined);
+  return recomputeFromTraces(traces, { ...options, owner, setAside, departures });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -413,7 +462,11 @@ function sourceLine({ recomputedAt, source }: Recomputed): string {
     (trace) =>
       `${trace.employee} exported ${trace.exportedOn} (${trace.zone}) at release ${trace.release ?? 'unstamped'}, commit ${trace.commit ?? 'unknown'}`,
   );
-  return `${ran} from ${count(source.traces.length, 'trace')}: ${read.join('; ')}`;
+  const unread =
+    source.departedUnread === undefined
+      ? ''
+      : `; handed to another manager and not read here, so not counted: ${source.departedUnread.join(', ')} (read that manager's trace beside this file to count your span)`;
+  return `${ran} from ${count(source.traces.length, 'trace')}: ${read.join('; ')}${unread}`;
 }
 
 function timelineLines(recomputed: Recomputed): string[] {

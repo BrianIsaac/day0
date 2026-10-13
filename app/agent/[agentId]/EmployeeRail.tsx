@@ -15,6 +15,7 @@ import { eventItemTitle, eventLabel, recordKindOf } from './event-labels';
 import { connectedManagerChannel } from './manager-channel';
 import { clockTime, useAgentZone, useNow } from '../../components/time';
 import { sameManagerAddress } from '@/agent/manager-address';
+import { agentZone, dayKey } from '@/lib/zone';
 
 /** How many of the newest events the rail's record lists. */
 export const RAIL_RECORD_LINES = 5;
@@ -27,25 +28,29 @@ export const RECENT_EVENTS = 30;
  * the reader's own (`metrics.forAgent` cuts them by tenure), so for a manager who took the
  * employee over they say so, beside a record that still lists the earlier manager's.
  *
- * @param standing - Whether the reader took the employee over from another manager.
+ * @param standing - Whether the reader took the employee over from another manager, and whether
+ *   the figures are one day's (the rail's "Today").
  */
 export function railFigures(
-  metrics: AgentMetrics,
-  standing: { readonly tookOver: boolean } = { tookOver: false },
+  metrics: Pick<AgentMetrics, 'decisions' | 'actions'>,
+  standing: { readonly tookOver: boolean; readonly today?: boolean } = { tookOver: false },
 ): ReadonlyArray<{ readonly label: string; readonly value: string }> {
   const { approved, rejected, partiallyApproved, medianLatencyMs } = metrics.decisions;
   const decided = decidedCount(metrics.decisions);
   // A partial approval is one of the approvals, not a decision of its own.
   const inPart = partiallyApproved > 0 ? `, ${partiallyApproved} of them in part` : '';
-  const since = standing.tookOver ? ' since you took over' : '';
+  // A day's count is the day's: "since you took over" is said of the whole record only (W16-R32).
+  const since = standing.tookOver && standing.today !== true ? ' since you took over' : '';
   return [
     {
       label: 'Decisions',
       value:
         decided === 0
-          ? standing.tookOver
-            ? 'none since you took over'
-            : 'none yet'
+          ? standing.today === true
+            ? 'none today'
+            : standing.tookOver
+              ? 'none since you took over'
+              : 'none yet'
           : `${decided} by you${since} (${approved} approved${inPart}, ${rejected} rejected)`,
     },
     { label: 'Median wait', value: formatMetricDuration(medianLatencyMs) },
@@ -93,18 +98,21 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
 }
 
 /**
- * The employee page's aside (round two section 3.6): the figures so far, the newest lines of the
+ * The employee page's aside (round two section 3.6): today's figures in the employee's zone, the newest lines of the
  * record, and where decisions reach the manager. Each tab that draws the aside puts it beside its
  * own column; a tab with an aside of its own (the charter's versions) draws that instead.
  */
 export function EmployeeRail() {
   const { agent, surfaceMode, surfaces } = useEmployee();
   const agentId = agent._id;
-  const metrics = useQuery(api.metrics.forAgent, { agentId });
+  const now = useNow();
+  // The employee's own day (N12, 16-F): the rail's figures are that day's, in its zone.
+  const day = dayKey(now, agentZone(agent));
+  const metrics = useQuery(api.metrics.forAgent, { agentId, day });
+  const today = metrics?.today;
   const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: RECENT_EVENTS });
   const workItems = useQuery(api.work.listForAgent, { agentId });
-  const now = useNow();
   const titles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],
@@ -119,12 +127,12 @@ export function EmployeeRail() {
     !earlier.some((handover) => sameManagerAddress(handover.fromAddress, agent.bossEmail));
   return (
     <>
-      <Card title="So far" meta="counts, not rates">
-        {metrics === undefined || earlier === undefined ? (
+      <Card title="Today" meta="counts, not rates">
+        {today === undefined || earlier === undefined ? (
           <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>
         ) : (
           <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-1.5">
-            {railFigures(metrics, { tookOver }).map((figure) => (
+            {railFigures(today, { tookOver, today: true }).map((figure) => (
               <div key={figure.label} className="contents">
                 <dt className="mt-2 text-[var(--color-muted)] first:mt-0 sm:mt-0">
                   {figure.label}

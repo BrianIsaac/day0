@@ -26,6 +26,7 @@ import {
 } from '../../src/agent/manager-standing';
 import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
+import { WALK_EMPLOYEES } from '../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 import { guardRefusal } from './fakes/anonymous-caller';
 
 afterEach((): void => {
@@ -623,6 +624,8 @@ describe('agent surface grants', (): void => {
           reason: 'Trial containment.',
         },
       ],
+      // The revocation opens a reorientation card (wave 16, 16-O; section 3's access row).
+      ['reorientation.opened', expect.objectContaining({ trigger: 'access-revoked', risk: 'low' })],
       ['permission.granted', { scope: 'linear:read', source: 'manager' }],
     ]);
   });
@@ -957,6 +960,9 @@ type Harness = TestConvex<typeof schema>;
 /** An employee's month with nothing landed yet, as the roster returns it. */
 const NOTHING_LANDED = { month: expect.stringMatching(/^\d{4}-\d{2}$/), days: [], atLeast: false };
 
+/** The employee's today on a roster row read at the clock's own time (16-F; pinned by zone below). */
+const A_DAY = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
+
 /**
  * Deploy one employee through the public mutation, as the landing page does.
  *
@@ -1272,6 +1278,8 @@ describe('the employee roster', (): void => {
         // The drafted charter waits on the manager's approval.
         needsYou: 1,
         docSourceCount: 1,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         // No chat surface: decisions reach the manager in this dashboard alone (12-M; H D6).
         decisionsReach: { kind: 'dashboard' },
@@ -1291,6 +1299,8 @@ describe('the employee roster', (): void => {
         stoppedCount: 0,
         needsYou: 1,
         docSourceCount: 2,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -1312,6 +1322,8 @@ describe('the employee roster', (): void => {
         stoppedCount: 1,
         needsYou: 3,
         docSourceCount: 2,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -1332,8 +1344,11 @@ describe('the employee roster', (): void => {
         parkedCount: 0,
         parkedStates: { deferred: 0, needsSkill: 0, discovered: 0 },
         stoppedCount: 0,
-        needsYou: 1,
+        // Re-pinned for 16-F (F-2): the inbox's count, the plan and the one-to-one it waits on.
+        needsYou: 2,
         docSourceCount: 1,
+        // Re-pinned for 16-F: every row carries the employee's today.
+        today: A_DAY,
         landedThisMonth: NOTHING_LANDED,
         decisionsReach: { kind: 'dashboard' },
       },
@@ -1595,7 +1610,9 @@ describe('the employee roster', (): void => {
       },
     });
     await seedParked(harness, mateo, 'FIN-2', 'discovered', {});
-    expect(await counts()).toEqual({ Priya: [0, 3, 2], Mateo: [1, 2, 1], Aiko: [0, 1, 0] });
+    // Re-pinned for 16-F (decision F-2), here and below: the roster reads the inbox's count, which
+    // also lists the one-to-one each of these employees still waits on, a kind the old count left out.
+    expect(await counts()).toEqual({ Priya: [0, 3, 3], Mateo: [1, 2, 2], Aiko: [0, 1, 1] });
     // The same parked rows by the state each is in, the words the roster says them in (walk m10).
     const states = Object.fromEntries(
       (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
@@ -1613,12 +1630,12 @@ describe('the employee roster', (): void => {
       evaluationClaimedAt: Date.now() - 60_000,
       evaluationAttempts: 1,
     });
-    expect((await counts()).Mateo).toEqual([1, 2, 1]);
+    expect((await counts()).Mateo).toEqual([1, 2, 2]);
     await seedParked(harness, mateo, 'FIN-4', 'discovered', {
       evaluationClaimedAt: Date.now() - 11 * 60_000,
       evaluationAttempts: 1,
     });
-    expect((await counts()).Mateo).toEqual([1, 3, 1]);
+    expect((await counts()).Mateo).toEqual([1, 3, 2]);
 
     // A `needs-skill` row is the manager's to release while its skill waits on a manager's click.
     const live = Date.now() - 60_000;
@@ -1711,10 +1728,12 @@ describe('the employee roster', (): void => {
       'skipped',
     ]);
     await seedWork(harness, aiko, ['completed', 'completed']);
+    // Re-pinned for 16-F (decision F-2), here and below: the roster reads the inbox's count, which
+    // also lists the one-to-one each of these employees still waits on, a kind the old count left out.
     expect(await counts()).toEqual({
-      Priya: [0, 0, 2, 2],
-      Mateo: [0, 0, 0, 0],
-      Aiko: [0, 0, 0, 0],
+      Priya: [0, 0, 2, 3],
+      Mateo: [0, 0, 0, 1],
+      Aiko: [0, 0, 0, 1],
     });
 
     // A stop with nothing landed: Retry stands.
@@ -1722,7 +1741,7 @@ describe('the employee roster', (): void => {
       plan,
       skipReason: `${STOPPED_PREFIX}2 approved plan step(s) remained blocked`,
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 1, 1]);
+    expect((await counts()).Aiko).toEqual([0, 0, 1, 2]);
 
     // An interrupted apply whose ledger names what to verify: the reconciliation is the manager's move, then Retry.
     await seedParked(harness, aiko, 'LOG-interrupted', 'failed', {
@@ -1733,7 +1752,7 @@ describe('the employee roster', (): void => {
       },
       skipReason: INTERRUPTED_APPLY_REASON,
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 2, 2]);
+    expect((await counts()).Aiko).toEqual([0, 0, 2, 3]);
 
     // The same with nothing to verify against: Retry and the confirmation stay disabled, and
     // Close without retry is the manager's move (E-8, wave 12; re-pinned from 2, 2).
@@ -1741,7 +1760,7 @@ describe('the employee roster', (): void => {
       plan,
       skipReason: INTERRUPTED_APPLY_REASON,
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 3, 3]);
+    expect((await counts()).Aiko).toEqual([0, 0, 3, 4]);
 
     // Rejected by the manager, through the mutation the dashboard calls: the held set waited on
     // them, the rejected row keeps its Retry but waits on nobody, since the last decision was theirs.
@@ -1764,17 +1783,17 @@ describe('the employee roster', (): void => {
         output: { actions: [comment] },
         pendingRunId,
       });
-      expect((await counts()).Aiko).toEqual([1, 0, 3 + index, 4]);
+      expect((await counts()).Aiko).toEqual([1, 0, 3 + index, 5]);
       await owner.mutation(api.work.rejectActions, { workItemId, pendingRunId, reason });
     }
-    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 4]);
 
     // A cancelled plan, a skip and finished work are not stopped rows.
     await seedParked(harness, aiko, 'LOG-cancelled', 'cancelled', {
       plan,
       skipReason: 'plan cancelled by the manager',
     });
-    expect((await counts()).Aiko).toEqual([0, 0, 5, 3]);
+    expect((await counts()).Aiko).toEqual([0, 0, 5, 4]);
   });
 
   it('reads the charter the manager approved: an amendment at once, never a draft, and pending again after a draft is sent back', async (): Promise<void> => {
@@ -1841,11 +1860,14 @@ describe('the employee roster', (): void => {
       );
 
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
-    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+    // Re-pinned for 16-F (decision F-2): the roster reads the inbox's count, and before a draft
+    // the one-to-one is what waits on the manager, a kind the old count left out.
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
     const sentBack = await seedCharter(harness, aiko, runThroughBody(), false);
     await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
     await owner.mutation(api.charters.requestChanges, { charterId: sentBack });
-    await expect(needsYou()).resolves.toEqual({ Aiko: 0 });
+    // Sent back, the one-to-one waits on the manager again (re-pinned for 16-F, F-2).
+    await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
 
     const approved = await seedCharter(harness, aiko, runThroughBody(), false);
     await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
@@ -1970,7 +1992,9 @@ describe('the employee roster', (): void => {
 
     const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
 
-    expect(row?.needsYou).toBe(1);
+    // Re-pinned for 16-F (decision F-2): the inbox's count, the new stop and the one-to-one the
+    // employee still waits on, a kind the old count left out.
+    expect(row?.needsYou).toBe(2);
   });
 
   it('keeps today’s landings when a busy month passes the bound, and says the count is a floor', async (): Promise<void> => {
@@ -2074,6 +2098,106 @@ describe('the employee roster', (): void => {
         { day: '2026-09-03', landed: 1 },
       ],
       atLeast: false,
+    });
+  });
+
+  it('lands an item on its first done completion when an earlier one in the month answered not done (W16-R17)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    const workItemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId: mira,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: 'REVOPS-7',
+          title: 'Post the close audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const complete = async (at: string, workDone: string): Promise<void> => {
+      vi.setSystemTime(new Date(at));
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('events', {
+          agentId: mira,
+          type: 'work.completed',
+          payload: { workItemId, output: { workDone, workDoneWhy: 'Said by the run.' } },
+          createdAt: Date.now(),
+        });
+      });
+    };
+    await complete('2026-09-03T02:00:00Z', 'not-done');
+    await complete('2026-09-05T02:00:00Z', 'done');
+    vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
+
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(row.landedThisMonth).toEqual({
+      month: '2026-09',
+      days: [{ day: '2026-09-05', landed: 1 }],
+      atLeast: false,
+    });
+  });
+
+  it('counts a done answer landed and names the partly done beside it, as the walk’s Lark showed', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-11T14:00:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const lark = await deployEmployee(harness, 'owner', 'Lark');
+    const [walkLark] = WALK_EMPLOYEES;
+    await harness.run(async (ctx) => {
+      for (const [index, card] of walkLark!.cards.entries()) {
+        const workItemId = await ctx.db.insert('workItems', {
+          agentId: lark,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${index}`,
+          title: card.title,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: card.state,
+          observedAt: 1,
+          createdAt: 1,
+        });
+        if (card.state !== 'completed') continue;
+        await ctx.db.insert('events', {
+          agentId: lark,
+          type: 'work.completed',
+          payload: { workItemId, output: card.output },
+          createdAt: Date.now(),
+        });
+      }
+    });
+
+    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-11', landed: 1, partly: 2 }],
+      atLeast: false,
+    });
+  });
+
+  it('says each employee’s today in its own zone (16-F)', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 18:00 UTC on 30 September is 1 October 02:00 in Singapore.
+    vi.setSystemTime(new Date('2026-09-30T18:00:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await deployEmployee(harness, 'owner', 'Mira');
+    await harness.run(async (ctx) => await ctx.db.patch(mira, { zone: 'Asia/Singapore' }));
+    const tomas = await deployEmployee(harness, 'owner', 'Tomas');
+    await harness.run(async (ctx) => await ctx.db.patch(tomas, { zone: 'Europe/London' }));
+
+    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+
+    expect(Object.fromEntries(rows.map((row) => [row.name, row.today]))).toEqual({
+      Mira: '2026-10-01',
+      Tomas: '2026-09-30',
     });
   });
 });
@@ -2827,5 +2951,57 @@ describe('the per-employee pause (12-P)', (): void => {
     }
     expect(await agentEvents(harness, agentId)).toEqual([]);
     expect(await agentEvents(hosted, hostedAgent)).toEqual([]);
+  });
+});
+
+describe('the mock office seeded at deploy (16-F, the TODO’s item 5)', (): void => {
+  /** What a deployed employee's office holds once every scheduled function has run, in the mode set. */
+  async function officeAfterDeploy() {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness
+      .withIdentity(managerIdentity('office-owner'))
+      .mutation(api.agents.deploy, {});
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    return await harness.run(async (ctx) => ({
+      docs: (
+        await ctx.db
+          .query('mockDocs')
+          .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId))
+          .collect()
+      ).length,
+      tickets: (
+        await ctx.db
+          .query('mockTickets')
+          .filter((q) => q.eq(q.field('agentId'), agentId))
+          .collect()
+      ).length,
+    }));
+  }
+
+  it('seeds a deployed employee’s office in mock mode, with no page open', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const office = await officeAfterDeploy();
+    expect(office.docs).toBeGreaterThan(0);
+    expect(office.tickets).toBeGreaterThan(0);
+  });
+
+  it('seeds no mock office in real mode', async (): Promise<void> => {
+    useSurfaceMode('real');
+    expect(await officeAfterDeploy()).toEqual({ docs: 0, tickets: 0 });
+  });
+});
+
+describe('the roster’s needs-you count is the inbox’s (16-F, decision F-2)', (): void => {
+  it('counts what the inbox lists for an employee, a one-to-one the old count left out among them', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const owner = harness.withIdentity(managerIdentity());
+    const agentId = await deployEmployee(harness, 'owner', 'Mira');
+
+    const [row] = await owner.query(api.agents.rosterForUser, {});
+    const inbox = await owner.query(api.work.needsYouForAgent, { agentId });
+
+    expect(inbox.total).toBeGreaterThan(0);
+    expect(row?.needsYou).toBe(inbox.total);
   });
 });

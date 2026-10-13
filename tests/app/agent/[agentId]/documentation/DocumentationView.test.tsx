@@ -15,6 +15,8 @@ const backend = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; args: unknown }>,
   /** What a mutation answers, by function name; nothing otherwise. */
   results: {} as Record<string, unknown>,
+  /** The decisions `docRelations:decide` refuses. */
+  refusedDecisions: [] as string[],
 }));
 
 vi.mock('convex/react', () => ({
@@ -34,12 +36,20 @@ vi.mock('convex/react', () => ({
     async (args: unknown): Promise<unknown> => {
       const name = getFunctionName(reference as never);
       backend.calls.push({ name, args });
+      if (
+        name === 'docRelations:decide' &&
+        backend.refusedDecisions.includes((args as { decision: string }).decision)
+      ) {
+        // No words of its own, so the card says its own refusal.
+        throw new Error('');
+      }
       return backend.results[name];
     },
   useAction: () => async (): Promise<void> => undefined,
 }));
 
 import { DocumentationView } from '../../../../../app/agent/[agentId]/documentation/DocumentationView';
+import { RelationAnswered } from '../../../../../app/agent/[agentId]/documentation/RelationAnswered';
 import type { Doc } from '../../../../../convex/_generated/dataModel';
 import { axeViolations } from '../../../../fixtures/dom/axe';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
@@ -339,6 +349,54 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('offers the versions card the other direction too, and records it reversed (W15-R45’s reverse button)', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = [RELATIONS[0]];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    backend.queries['docRelations:listOpen'] = [];
+    await press(
+      view.container,
+      '“Escalation paths” (RevOps team wiki) supersedes “Escalation paths, draft v2” (How-to guides)',
+    );
+    await settle();
+    expect(backend.calls).toEqual([
+      {
+        name: 'docRelations:decide',
+        args: { relationId: 'relation-1', decision: 'supersedes', reversed: true },
+      },
+    ]);
+    expect(said(view.container)).toContain(
+      '“Escalation paths” now supersedes “Escalation paths, draft v2”.',
+    );
+    view.unmount();
+  });
+
+  it('keeps a refused Undo’s line with the answer it was about, never under the next answer (W15-R47)', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    backend.refusedDecisions = ['undo'];
+    try {
+      const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+      backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+      await press(
+        view.container,
+        '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+      );
+      await settle();
+      await press(view.container, 'Undo');
+      await settle();
+      expect(said(view.container)).toContain('The answer was not taken back.');
+      // The next card's answer is a new "Your answer": the first one's refusal does not ride on it.
+      backend.queries['docRelations:listOpen'] = [];
+      await press(view.container, 'Both hold');
+      await settle();
+      expect(said(view.container)).not.toContain('The answer was not taken back.');
+      view.unmount();
+    } finally {
+      backend.refusedDecisions = [];
+    }
+  });
+
   it('says a proposed conflict between pages of unequal trust holds nothing, and offers no answer that would', () => {
     // The second pass's minor 3: the card promised a hold that the trust order never gives.
     populated();
@@ -389,12 +447,64 @@ describe('DocumentationView', () => {
       .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
       .map((heading) => heading?.textContent ?? '')
       .filter((name) => /versions of the same runbook|disagree/.test(name));
+    // Each name carries both pages with their sources since W15-R51: titles alone repeat.
     expect(names).toEqual([
-      'These two look like versions of the same runbook: “Escalation paths”',
-      'These two look like versions of the same runbook: “Close checklist”',
-      'Two pages disagree: “Finance escalation” and “Close checklist”',
-      'Two pages disagree: “Refund policy” and “Refund runbook”',
+      'These two look like versions of the same runbook: “Escalation paths” (RevOps team wiki) and “Escalation paths, draft v2” (How-to guides)',
+      'These two look like versions of the same runbook: “Close checklist” (RevOps team wiki) and “Close checklist v2” (How-to guides)',
+      'Two pages disagree: “Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki)',
+      'Two pages disagree: “Refund policy” (How-to guides) and “Refund runbook” (RevOps team wiki)',
     ]);
+    view.unmount();
+  });
+
+  it('names fifteen cards between same-titled pages of five sources apart (W15-R51)', () => {
+    // The review's bed 3: the five readers' fixtures hold pages titled "运维手册" and "刷新看板"
+    // in every source, and fifteen proposals drew nine regions named by "运维手册" alone.
+    populated();
+    const readers = [
+      'Ops wiki (Cloud)',
+      'Ops wiki (Data Center)',
+      'Runbooks site',
+      'RevOps runbooks',
+      'Runbooks folder',
+    ];
+    const pairs = readers.flatMap((one, index) =>
+      readers.slice(index + 1).map((other) => [one, other]),
+    );
+    const page = (title: string, source: string, updatedAt: number) => ({
+      sourceId: `source-${source}`,
+      ref: `${source}/${title}`,
+      title,
+      source,
+      updatedAt,
+      edited: true,
+    });
+    backend.queries['docRelations:listOpen'] = [
+      ...pairs.map(([one, other], index) => ({
+        ...RELATIONS[0],
+        _id: `relation-ops-${index}`,
+        kind: 'possible_duplicate',
+        from: page('运维手册', one, 2),
+        to: page('运维手册', other, 1),
+      })),
+      ...pairs.slice(0, 5).map(([one, other], index) => ({
+        ...RELATIONS[0],
+        _id: `relation-tile-${index}`,
+        kind: 'possible_duplicate',
+        from: page('刷新看板', one, 2),
+        to: page('刷新看板', other, 1),
+      })),
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const names = [...view.container.querySelectorAll('section[aria-labelledby]')]
+      .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
+      .map((heading) => heading?.textContent ?? '')
+      .filter((name) => name.startsWith('These two look like versions'));
+    expect(names).toHaveLength(15);
+    expect(new Set(names).size).toBe(15);
+    expect(names[0]).toBe(
+      'These two look like versions of the same runbook: “运维手册” (Ops wiki (Data Center)) and “运维手册” (Ops wiki (Cloud))',
+    );
     view.unmount();
   });
 
@@ -429,6 +539,30 @@ describe('DocumentationView', () => {
       'Undo',
     );
     expect(view.container.textContent).toContain(
+      'These two look like versions of the same runbook',
+    );
+    view.unmount();
+  });
+
+  it('says no card asks when an answer is taken back after one of its pages changed (W15-R48)', async () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = RELATIONS;
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    backend.queries['docRelations:listOpen'] = [RELATIONS[1]];
+    await press(
+      view.container,
+      '“Escalation paths, draft v2” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    await settle();
+    // A sync since the answer left one of the two pages not current: the relation is a proposal
+    // again, and the backend lists no card for it.
+    await press(view.container, 'Undo');
+    await settle();
+    expect(said(view.container)).toContain(
+      'Taken back. One of the two pages has changed since, so no card asks about them.',
+    );
+    expect(said(view.container)).not.toContain('The card asks again');
+    expect(view.container.textContent).not.toContain(
       'These two look like versions of the same runbook',
     );
     view.unmount();
@@ -522,6 +656,36 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('draws a copy its source edited later as the successor, with both dates, the days between and the newer first in the answer (RM19 (a))', () => {
+    populated();
+    backend.queries['docRelations:listOpen'] = [
+      {
+        ...RELATIONS[0],
+        from: {
+          ...RELATIONS[0].from,
+          title: 'Escalation paths for the close',
+          updatedAt: Date.UTC(2026, 8, 28, 16, 30),
+          edited: true,
+        },
+        to: { ...RELATIONS[0].to, edited: true },
+        evidence: [
+          { measure: 'shared-text', value: 96 },
+          { measure: 'edit-dates', value: 3 },
+        ],
+      },
+    ];
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(view.container.textContent).toContain(
+      '“Escalation paths” (RevOps team wiki, edited 25 Sep 2026, 09:00) and “Escalation paths for the close” (How-to guides, edited 28 Sep 2026, 16:30) share 96 percent of their text, and the second was edited 3 days after the first.',
+    );
+    expect(
+      [...view.container.querySelectorAll('button')].map((button) => button.textContent),
+    ).toContain(
+      '“Escalation paths for the close” (How-to guides) supersedes “Escalation paths” (RevOps team wiki)',
+    );
+    view.unmount();
+  });
+
   it('has no axe violation and gives every control a 44 px target with both tables and both cards populated', async () => {
     populated();
     backend.queries['docRelations:listOpen'] = RELATIONS;
@@ -530,6 +694,38 @@ describe('DocumentationView', () => {
     for (const control of view.container.querySelectorAll('button, input, select, textarea')) {
       expect(control.className, control.outerHTML.slice(0, 80)).toMatch(/\bmin-h-11\b/);
     }
+    view.unmount();
+  });
+});
+
+describe('the answer said once its card has gone (W15-R47)', (): void => {
+  it('mounts its live region empty, so the answer is announced when it fills', (): void => {
+    const html = renderToStaticMarkup(
+      <RelationAnswered
+        answered={{
+          relationId: 'relation-1' as never,
+          text: 'Both pages are kept as current.',
+          undo: true,
+        }}
+        cardGone
+        onUndone={(): void => undefined}
+      />,
+    );
+    expect(html).toMatch(/<p role="status" aria-live="polite"[^>]*><\/p>/);
+    expect(html).not.toContain('Both pages are kept as current.');
+    // And it is filled once mounted, a render later.
+    const view = mount(
+      <RelationAnswered
+        answered={{
+          relationId: 'relation-1' as never,
+          text: 'Both pages are kept as current.',
+          undo: true,
+        }}
+        cardGone
+        onUndone={(): void => undefined}
+      />,
+    );
+    expect(said(view.container)).toContain('Both pages are kept as current.');
     view.unmount();
   });
 });

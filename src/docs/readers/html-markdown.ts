@@ -84,6 +84,8 @@ function documentService(): TurndownService {
     filter: 'table',
     replacement: (content: string): string => `\n\n${content.trim()}\n\n`,
   });
+  // A page's scripts and styles are no part of what it says (W15-R30).
+  service.remove(['script', 'style', 'noscript']);
   service.addRule('checklistItem', {
     filter: (node: HTMLElement): boolean =>
       node.nodeName === 'INPUT' &&
@@ -163,7 +165,8 @@ export function documentHtmlToMarkdown(html: string): string {
     }
   }
   try {
-    return documentService().turndown(html);
+    // An image right after another is kept apart from it, as a reader sees two (W15-R30).
+    return documentService().turndown(html.replace(/(<img\b[^<>]*>)(?=<img\b)/gi, '$1 '));
   } catch (error) {
     // The converter walks the document by recursion, so one nested past its stack overflows it.
     if (error instanceof RangeError) throw new DocumentConversionError(NESTED_TOO_DEEPLY);
@@ -309,9 +312,9 @@ function firstElement(text: string, names: string): string | undefined {
  * One macro that holds no other macro, as plain HTML.
  *
  * Code is a fenced block in its language; a panel is a quotation under its kind and title; a
- * status is its word; any other macro is its rich text under its title, or its plain text as it
- * was typed. A macro with no body (a table of contents, a page tree) draws nothing: day0 reads
- * the page's own text.
+ * status is its word; an Include Page macro names the page it draws in (W15-R30); any other
+ * macro is its rich text under its title, or its plain text as it was typed. A macro with no body
+ * (a table of contents, a page tree) draws nothing: Day0 reads the page's own text.
  */
 function macroHtml(tag: string, inner: string): string {
   const name = attribute(tag, 'ac:name') ?? '';
@@ -328,6 +331,12 @@ function macroHtml(tag: string, inner: string): string {
     return title ? `<p><strong>${title}</strong></p>${code}` : code;
   }
   if (name === 'status') return title ?? '';
+  // An included page's text is not in this page's storage: the page says where it comes from.
+  if (name === 'include' || name === 'excerpt-include') {
+    const included = parameters.get('')?.trim();
+    const what = `${name === 'excerpt-include' ? 'an excerpt of ' : ''}${included ? `the page “${included}”` : 'another page'}`;
+    return `<p>(Included here in Confluence: ${what}, which Day0 does not read as part of this one.)</p>`;
+  }
   // An issue macro holds nothing but the issue it names.
   if (rich === undefined) return name === 'jira' ? (parameters.get('key') ?? '') : '';
   // By its own property only: a macro may be named anything, `constructor` among it.
@@ -359,12 +368,15 @@ function linkHtml(inner: string): string {
   );
 }
 
-/** An image: a picture at an address stays one; an attached file is named, since day0 reads text. */
+/**
+ * An image: a picture at an address stays one; an attached file is named, since Day0 reads text.
+ * Each stands apart from what is beside it, so two images never run together (W15-R30).
+ */
 function imageHtml(tag: string, inner: string): string {
   const url = attribute(/<ri:url\b[^<>]*>/.exec(inner)?.[0] ?? '', 'ri:value');
-  if (url !== undefined) return `<img src="${url}" alt="${attribute(tag, 'ac:alt') ?? ''}">`;
+  if (url !== undefined) return ` <img src="${url}" alt="${attribute(tag, 'ac:alt') ?? ''}"> `;
   const file = attribute(/<ri:attachment\b[^<>]*>/.exec(inner)?.[0] ?? '', 'ri:filename');
-  return file === undefined ? '' : `(image: ${file})`;
+  return file === undefined ? '' : ` (image: ${file}) `;
 }
 
 /**

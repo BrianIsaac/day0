@@ -17,6 +17,7 @@ import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { connectedManagerChannel } from '../manager-channel';
 import { useNow } from '../../../components/time';
+import { AppearanceControl } from './AppearanceControl';
 import { AutonomyControl } from './AutonomyControl';
 import { NotificationModeControl } from './NotificationModeControl';
 import { PauseControl } from './PauseControl';
@@ -34,7 +35,8 @@ const COPY = 'text-sm text-[var(--color-fg-2)]';
  * charter is approved, the employee's pause (12-P): Pause and Resume by name, the card marked
  * Paused while it is; the hosted office says it has none. Retire opens the retire dialog and, once
  * the employee is gone, takes the manager to the company home, which says once that it is retired.
- * Appearance is not drawn: the stylesheet carries no light theme.
+ * Appearance (16-T) chooses this browser's theme, the viewer's and not the employee's, so it is
+ * drawn in both modes and from day zero.
  */
 export function ManageView() {
   const { agent, charter, surfaceMode, surfaces, arriving } = useEmployee();
@@ -127,6 +129,9 @@ export function ManageView() {
                 : `The hosted office has no pause: every write ${agent.name} drafts there waits for your decision.`}
           </p>
         )}
+      </Card>
+      <Card title="Appearance">
+        <AppearanceControl />
       </Card>
       <Card title={`Retire ${agent.name}`} tone="danger">
         <div className="grid justify-items-start gap-3">

@@ -97,7 +97,7 @@ export function Dialog({
         event.preventDefault();
         if (!busy) onClose();
       }}
-      className="fixed inset-0 z-50 grid place-items-center bg-[#0a0a0b]/70 p-4"
+      className="fixed inset-0 z-50 grid place-items-center bg-[var(--color-scrim)]/70 p-4"
     >
       <div
         ref={panel}
@@ -108,7 +108,7 @@ export function Dialog({
         tabIndex={-1}
         data-dialog=""
         onKeyDown={onKeyDown}
-        className="flex w-[min(560px,100%)] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-[14px] bg-[var(--color-card)] text-[var(--color-fg)] shadow-[0_1px_2px_rgba(0,0,0,0.4),0_16px_40px_-16px_rgba(0,0,0,0.8)]"
+        className="flex w-[min(560px,100%)] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-[14px] bg-[var(--color-card)] text-[var(--color-fg)] shadow-(--shadow-raised)"
       >
         <div
           ref={body}

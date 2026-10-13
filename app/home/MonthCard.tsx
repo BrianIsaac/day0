@@ -5,18 +5,44 @@ import { SupervisionFigures } from './SupervisionFigures';
 import type { RosterRow } from './types';
 
 /**
- * Items landed per day this month across the employees, keyed `YYYY-MM-DD`.
- * An employee whose own zone is already in another month adds nothing.
+ * Items landed per day this month across the employees, keyed `YYYY-MM-DD`, and those finished
+ * partly done, named beside them (RM23 (a)). An employee whose own zone is already in another
+ * month adds nothing.
  */
-function landedByDay(roster: readonly RosterRow[], month: string): Map<string, number> {
-  const byDay = new Map<string, number>();
+function finishedByDay(
+  roster: readonly RosterRow[],
+  month: string,
+): { landed: Map<string, number>; partly: Map<string, number> } {
+  const landedOn = new Map<string, number>();
+  const partlyOn = new Map<string, number>();
   for (const employee of roster) {
     if (employee.landedThisMonth.month !== month) continue;
-    for (const { day, landed } of employee.landedThisMonth.days) {
-      byDay.set(day, (byDay.get(day) ?? 0) + landed);
+    for (const { day, landed, partly } of employee.landedThisMonth.days) {
+      landedOn.set(day, (landedOn.get(day) ?? 0) + landed);
+      if (partly !== undefined && partly > 0) partlyOn.set(day, (partlyOn.get(day) ?? 0) + partly);
     }
   }
-  return byDay;
+  return { landed: landedOn, partly: partlyOn };
+}
+
+/**
+ * The company's today: the day the employees are in, each in its own zone (N12, 16-F), where the
+ * card once read the viewer's. Where their zones put them on different days, the day most of them
+ * are in, and of two as common the later; with no employee's day to read (a backend from before
+ * the field), the viewer's.
+ *
+ * @param roster - The owner's employees, each with its own today.
+ * @param now - The page's clock.
+ */
+export function companyToday(roster: readonly RosterRow[], now: number): string {
+  const counts = new Map<string, number>();
+  for (const { today } of roster) {
+    if (typeof today === 'string') counts.set(today, (counts.get(today) ?? 0) + 1);
+  }
+  const [first] = [...counts].sort(
+    ([leftDay, left], [rightDay, right]) => right - left || rightDay.localeCompare(leftDay),
+  );
+  return first?.[0] ?? dayKey(now, deploymentZone());
 }
 
 /**
@@ -27,7 +53,7 @@ function landedByDay(roster: readonly RosterRow[], month: string): Map<string, n
  * @param roster - The owner's employees, each with what it landed this month.
  * @param figures - The owner's figures, absent until the first employee has any.
  * @param waiting - What waits on the manager now, placed on today.
- * @param now - The page's clock; the month and today are the manager's.
+ * @param now - The page's clock; the month and today are the employees' ({@link companyToday}).
  */
 export function MonthCard({
   roster,
@@ -40,8 +66,9 @@ export function MonthCard({
   waiting: number;
   now: number;
 }) {
-  const today = dayKey(now, deploymentZone());
+  const today = companyToday(roster, now);
   const month = today.slice(0, 7);
+  const finished = finishedByDay(roster, month);
   const partial = roster.some(
     (employee) => employee.landedThisMonth.month === month && employee.landedThisMonth.atLeast,
   );
@@ -55,7 +82,8 @@ export function MonthCard({
         <MonthGrid
           month={month}
           today={today}
-          landed={landedByDay(roster, month)}
+          landed={finished.landed}
+          partly={finished.partly}
           waitingToday={waiting}
         />
         {figures && figures.employees.length > 0 ? (

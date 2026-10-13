@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MANAGER_QUESTION_TYPES,
   contentWords,
+  isBlockingQuestion,
   managerOpenQuestions,
+  questionTypeOf,
   questionKey,
   sharedContentWords,
   synthesisNotes,
@@ -75,5 +78,26 @@ describe('what the manager is asked', (): void => {
     expect(managerOpenQuestions({ openQuestions: OPEN_QUESTIONS_2026_09_16 })).toEqual(
       OPEN_QUESTIONS_2026_09_16,
     );
+  });
+});
+
+describe('what kind of question it is, and whether it holds the plan (16-K)', (): void => {
+  it('reads a question with no `blocking` as blocking, as every question before wave 16 was', (): void => {
+    expect(isBlockingQuestion({})).toBe(true);
+    expect(isBlockingQuestion({ blocking: true })).toBe(true);
+    expect(isBlockingQuestion({ blocking: false })).toBe(false);
+  });
+
+  it('reads a question with no `type` as the charter’s, the one kind asked before wave 16', (): void => {
+    expect(questionTypeOf({})).toBe('charter');
+    expect(questionTypeOf({ type: 'retrieval' })).toBe('retrieval');
+    expect(MANAGER_QUESTION_TYPES).toEqual([
+      'charter',
+      'retrieval',
+      'org',
+      'policy',
+      'tool',
+      'preference',
+    ]);
   });
 });

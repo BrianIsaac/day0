@@ -605,6 +605,17 @@ describe('a form body by its shape (W14-R55)', (): void => {
     });
   });
 
+  it('labels a lone pair a form while its value holds no space (W15-R39)', async (): Promise<void> => {
+    expect(await sent('text=hello')).toEqual({
+      type: 'application/x-www-form-urlencoded',
+      body: 'text=hello',
+    });
+    expect(await sent('text=hello+world')).toEqual({
+      type: 'application/x-www-form-urlencoded',
+      body: 'text=hello+world',
+    });
+  });
+
   it('sends a form already encoded byte for byte, its plus signs and escapes kept', async (): Promise<void> => {
     expect(await sent('channel=C1&text=a+b%20c&ratio=50%25&flag=')).toEqual({
       type: 'application/x-www-form-urlencoded',
@@ -622,6 +633,10 @@ describe('a form body by its shape (W14-R55)', (): void => {
       'env=prod\nregion=eu',
       // A value Day0 cannot encode goes as it was written, never as a thrown error.
       'text=broken \ud800 half',
+      // A lone pair whose value holds a space is a sentence, not a one-field form (W15-R39,
+      // reader 5's p8form "prose2").
+      'Status=Done today',
+      'x=1 and y=2',
     ]) {
       expect(await sent(body), body).toEqual({ type: undefined, body });
     }

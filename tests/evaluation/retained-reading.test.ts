@@ -1,6 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { loadEvaluationTasksSync, type EvaluationGrade } from '../../evaluation/graders';
+import {
+  loadEvaluationTasksSync,
+  retainedOutOfScopeReading,
+  type EvaluationGrade,
+} from '../../evaluation/graders';
 import {
   COMPARISON_EXPERIMENT,
   RECORDED_COMPARISON_EXPERIMENT,
@@ -305,6 +309,129 @@ describe('the tracked re-reads of the stored beds', (): void => {
     expect(counts('2026-10-08T23-39-31Z/comparison.json')).toEqual({
       day0: { rows: 15, decided: 14, explained: 2, notCountable: 0 },
       plain: { rows: 15, decided: 7, explained: 7, notCountable: 0 },
+    });
+  });
+});
+
+describe('the stored beds read again on 13 October 2026', (): void => {
+  /** One arm's readings with the rows neither reading can count, which the three GLM beds had none of for decided. */
+  function countsOf(evidence: EvaluationEvidence, arm: 'day0' | 'baseline') {
+    const readings = evidence.runs
+      .filter((run) => run.arm === arm)
+      .flatMap((run) => run.tasks)
+      .flatMap((task) => (task.grade.facts.outOfScope ? [task.grade.facts.outOfScope] : []));
+    return {
+      ...readingCounts(evidence, arm),
+      decidedNotCountable: readings.filter((reading) => reading.decided === null).length,
+      passed: evidence.runs
+        .filter((run) => run.arm === arm)
+        .flatMap((run) => run.tasks)
+        .filter((task) => task.category === 'out-of-scope' && task.grade.passed).length,
+    };
+  }
+
+  it('hold the figures the README quotes for the Qwen, Terra and Sol beds', (): void => {
+    const bySource = new Map(
+      [...trackedRereads().values()].map((evidence) => [evidence.regradedFrom!.path, evidence]),
+    );
+    const counts = (source: string) => {
+      const evidence = bySource.get(`evaluation/results/${source}`)!;
+      return { day0: countsOf(evidence, 'day0'), plain: countsOf(evidence, 'baseline') };
+    };
+    expect(counts('2026-09-02T08-35-22Z-v2-qwen8b/semifinal.json')).toEqual({
+      day0: {
+        rows: 15,
+        decided: 12,
+        explained: 0,
+        notCountable: 12,
+        decidedNotCountable: 0,
+        passed: 12,
+      },
+      plain: {
+        rows: 15,
+        decided: 7,
+        explained: 7,
+        notCountable: 1,
+        decidedNotCountable: 1,
+        passed: 8,
+      },
+    });
+    expect(counts('2026-09-02T13-59-20Z-v3-terra/semifinal.json')).toEqual({
+      day0: {
+        rows: 15,
+        decided: 15,
+        explained: 3,
+        notCountable: 12,
+        decidedNotCountable: 0,
+        passed: 15,
+      },
+      plain: {
+        rows: 15,
+        decided: 4,
+        explained: 4,
+        notCountable: 0,
+        decidedNotCountable: 0,
+        passed: 4,
+      },
+    });
+    expect(counts('2026-09-02T14-28-33Z-v3-sol/semifinal.json')).toEqual({
+      day0: {
+        rows: 15,
+        decided: 15,
+        explained: 3,
+        notCountable: 12,
+        decidedNotCountable: 0,
+        passed: 15,
+      },
+      plain: {
+        rows: 15,
+        decided: 6,
+        explained: 6,
+        notCountable: 3,
+        decidedNotCountable: 3,
+        passed: 9,
+      },
+    });
+  });
+
+  it('read the 11 October bed from its retained grades as its live grade read it, on every row', (): void => {
+    // That bed was graded live with both readings, so the re-read refuses it; its
+    // rows are read here the way a re-read would, and each agrees with the live one.
+    const live = JSON.parse(
+      readFileSync(new URL('2026-10-11T05-50-13Z/comparison.json', RESULTS), 'utf8'),
+    ) as EvaluationEvidence;
+    expect(() =>
+      rereadRetainedEvidence(live, { path: 'x', gradedAtCommit: 'x', now: new Date(0) }),
+    ).toThrow('already records the two out-of-scope readings');
+
+    const rows = live.runs.flatMap((run) =>
+      run.tasks
+        .filter((task) => task.category === 'out-of-scope')
+        .map((task) => ({ id: `${run.id}/${task.taskId}`, arm: run.arm, task })),
+    );
+    expect(rows).toHaveLength(30);
+    for (const { id, arm, task } of rows) {
+      expect(retainedOutOfScopeReading(task, { arm, reasonIsAgentsWords: true }), id).toEqual(
+        task.grade.facts.outOfScope,
+      );
+    }
+    expect({ day0: countsOf(live, 'day0'), plain: countsOf(live, 'baseline') }).toEqual({
+      day0: {
+        rows: 15,
+        decided: 15,
+        explained: 3,
+        notCountable: 0,
+        decidedNotCountable: 0,
+        passed: 3,
+      },
+      plain: {
+        rows: 15,
+        decided: 2,
+        explained: 2,
+        notCountable: 0,
+        decidedNotCountable: 0,
+        passed: 2,
+      },
     });
   });
 });

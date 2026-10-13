@@ -14,6 +14,7 @@ import {
   firstCorrectEffectAt,
   gradeEvaluationTask,
   loadEvaluationTasks,
+  verdictMissingPermissions,
   type EvaluationArm,
   type EvaluationSnapshot,
   type EvaluationTask,
@@ -757,7 +758,14 @@ export async function driveBaselineState(
   await persist(context);
 }
 
-async function runTask(
+/**
+ * Drive one task of a run to its end and write its result: the terminal
+ * state, the timing, the grade and what the result keeps beside it.
+ *
+ * A task the run already started keeps its start time and deadline; a work
+ * item still open at the deadline is terminalised as a harness timeout.
+ */
+export async function runTask(
   context: HarnessContext,
   run: RunWithProgress,
   agentId: Id<'agents'>,
@@ -839,6 +847,7 @@ async function runTask(
     skillAuthoringAttempts: active.skillAuthoringAttempts,
     actionAudit: auditActionArguments(item.output),
     grade,
+    missingPermissions: verdictMissingPermissions(item.verdict),
     ...(active.lastError ? { error: active.lastError } : {}),
   };
 }
@@ -948,6 +957,7 @@ function regradeTask(
     deployToFirstCorrectActionMs,
     actionAudit: auditActionArguments(item.output),
     grade,
+    missingPermissions: verdictMissingPermissions(item.verdict),
   };
 }
 

@@ -26,13 +26,16 @@ import { incomingTransfersOf } from './managerTransfers';
 import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
-import { citedConflictOf } from './docRelations';
+import { conflictsUnderPlan } from './docConflicts';
+import { conflictAnswerOwedOn } from './managerQuestions';
+import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
   claimLoopStepInTransaction,
   EXECUTION_STALL_MS,
   OPEN_WORK_STATES,
   openSlotCount,
+  PARKED_WORK_STATES,
   queueStep,
   resumeStalledStepsInTransaction,
   scheduleApply,
@@ -320,19 +323,46 @@ export async function assertSameAgent(
 export const WORK_LIST_LIMIT = 300;
 
 /**
- * Public, owner-guarded: one employee's work items, the newest {@link WORK_LIST_LIMIT}, in the
+ * The states a row is not finished in, each with the most of its newest rows one read takes: a
+ * slot-holding or parked row is listed whatever its age, since Needs you links to it and the shell
+ * counts it (W15-R14); a stopped row as many as the inbox lists (`NEEDS_YOU_STOPPED_READ_LIMIT`),
+ * an unjudged one as many as a page of intake. A row that finished, was cancelled or was skipped is
+ * listed only among the newest. Slots are held to the work-in-progress cap, so their bound is never
+ * reached; the bounds keep the read near the 300 rows it was, with their outputs (the second pass).
+ */
+const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'], number]> = [
+  ...OPEN_WORK_STATES.map((state) => [state, 100] as const),
+  ...PARKED_WORK_STATES.map((state) => [state, 100] as const),
+  ['failed', 25],
+  ['discovered', 50],
+];
+
+/**
+ * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
+ * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
  * order the page has always been given: by state, last first, and the newest first within one.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ListedWorkItem[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const newest = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-      .order('desc')
-      .take(WORK_LIST_LIMIT);
-    const items = [...newest].sort((left, right) =>
+    const [newest, ...open] = await Promise.all([
+      ctx.db
+        .query('workItems')
+        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+        .order('desc')
+        .take(WORK_LIST_LIMIT),
+      ...UNFINISHED_STATE_READS.map(
+        async ([state, limit]) =>
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', state))
+            .order('desc')
+            .take(limit),
+      ),
+    ]);
+    const byId = new Map([...newest, ...open.flat()].map((row) => [row._id, row]));
+    const items = [...byId.values()].sort((left, right) =>
       left.state === right.state
         ? right._creationTime - left._creationTime
         : left.state < right.state
@@ -1531,9 +1561,12 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * stand unchecked, and the gates the switch trusts read exactly those
  * (E-70 D4). So does a plan drafted without its ticket or thread
  * (`reason: 'drafted-without-record'`, P7-18): nobody read what it acts on.
- * So does a plan that cites a passage a confirmed conflict stands on
- * (`reason: 'documentation-conflict'`, wave 15): two equally trusted pages
- * disagree there and the manager has not said which is right.
+ * A plan over a passage a confirmed conflict stands on no longer waits
+ * (wave 15's `documentation-conflict`, replaced in wave 16 by D-4 (c)): it
+ * asks which page is right beside the plan and goes on. And, first and
+ * whatever the switch says, a plan a high-risk reorientation card names
+ * (`reason: 'reorientation-pending'`, wave 16): it waits for the card's Approve
+ * or Dismiss, which ask this decision again.
  * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
@@ -1543,7 +1576,42 @@ export const decidePlan = internalMutation({
     const row = await ctx.db.get(args.workItemId);
     if (!row) throw new Error('workItem not found');
     if (row.state !== 'plan-pending') return { approved: false };
+    // A plan over a passage two equally trusted pages disagree on asks which is right, in its own
+    // request, and goes on (D-4 (c), RM20 (a)): the steps that rely on it wait at the apply.
+    // Asked in either position of the switch, once per row and conflict.
     const agent = await ctx.db.get(row.agentId);
+    if (agent !== null) {
+      for (const conflict of await conflictsUnderPlan(ctx, row, agent)) {
+        const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
+        if (relationId === null) continue;
+        await askConflictQuestion(ctx, {
+          row,
+          conflict: { relationId, heading: conflict.heading, pages: conflict.pages },
+          now: Date.now(),
+        });
+      }
+    }
+    // A high-risk reorientation card names the row (the seventh reason, wave 16, 16-O): the plan
+    // waits for the card's Approve or Dismiss whatever the switch says, and the record says so in
+    // either position of the switch. Read again at every look, so a decided card holds nothing.
+    const card = await heldByReorientation(ctx, row);
+    if (card !== undefined) {
+      if (!args.recovery) {
+        await appendEvent(ctx, {
+          agentId: row.agentId,
+          type: 'work.plan-held',
+          payload: {
+            workItemId: args.workItemId,
+            reason: 'reorientation-pending',
+            reorientationId: card._id,
+            summary: card.triggerSummary,
+          },
+          createdAt: Date.now(),
+        });
+      }
+      await scheduleDecisionRequest(ctx, row, 'plan');
+      return { approved: false };
+    }
     if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
@@ -1600,29 +1668,6 @@ export const decidePlan = internalMutation({
             reason: 'drafted-without-record',
             surfaceSlug: without.surfaceSlug,
             cause: without.cause,
-          },
-          createdAt: Date.now(),
-        });
-      }
-      await scheduleDecisionRequest(ctx, row, 'plan');
-      return { approved: false };
-    }
-    // A plan that follows a passage two equally trusted pages disagree on waits for the manager,
-    // who confirmed the conflict and has not yet said which page is right (15-A, the sixth
-    // reason). Read again at every look, so a conflict settled since holds nothing.
-    const conflict = await citedConflictOf(ctx, row.plan);
-    if (conflict !== undefined) {
-      const relationId = ctx.db.normalizeId('docRelations', conflict.relationId);
-      if (!args.recovery && relationId !== null) {
-        await appendEvent(ctx, {
-          agentId: row.agentId,
-          type: 'work.plan-held',
-          payload: {
-            workItemId: args.workItemId,
-            reason: 'documentation-conflict',
-            relationId,
-            heading: conflict.heading,
-            pages: [...conflict.pages],
           },
           createdAt: Date.now(),
         });
@@ -1954,7 +1999,8 @@ export const openDecisions = internalQuery({
     return {
       requests,
       batches,
-      noticeOwed: decidedLately.length > 0,
+      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
+      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
       ...(threads.length > 0 ? { threads } : {}),
     };
   },

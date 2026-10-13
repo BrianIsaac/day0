@@ -70,6 +70,28 @@ describe('ResetCard', (): void => {
     expect(html).not.toMatch(/\bagents?\b/i);
   });
 
+  it('draws no "Also unlink" in the hosted office, where nothing can be linked (RM26 (a), the v0.19.0 walk\'s finding 6)', (): void => {
+    const view = mount(<ResetCard mode="mock" />);
+    expect(view.container.textContent).not.toContain('Also unlink');
+    expect(view.container.querySelector('input[type="checkbox"]')).toBeNull();
+    // Nor while the mode is still being read, so the hosted office never shows it for a moment.
+    const loading = mount(<ResetCard mode="loading" />);
+    expect(loading.container.querySelector('input[type="checkbox"]')).toBeNull();
+    // Nor the local install's sentence, which names people and agreements the office keeps none of
+    // (W16-R35): what both offices delete is said until the mode answers.
+    expect(loading.container.textContent).toContain(
+      'Deletes your employees and everything they made. Your sign-in stays',
+    );
+    expect(loading.container.textContent).not.toContain('working agreements');
+    const local = mount(<ResetCard mode="real" />);
+    expect(local.container.textContent).toContain('Also unlink your documentation sources');
+    // Nor does the line above it point at a box the card does not draw.
+    read.holdings = holding({ employees: true, documentation: true });
+    const hosted = mount(<ResetCard mode="mock" />);
+    expect(hosted.container.textContent).toContain('Stored for you now: your employees.');
+    expect(hosted.container.textContent).not.toContain('tick the box');
+  });
+
   it('names no people or agreements in the hosted office, where none is kept, as its dialog does not (the v0.17.0 redeploy, finding 4)', async (): Promise<void> => {
     const view = mount(<ResetCard mode="mock" />);
     const card = view.container.textContent ?? '';

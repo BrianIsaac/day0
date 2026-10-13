@@ -47,18 +47,21 @@ function dayTone(landed: number, isToday: boolean, waiting: number, future: bool
  *
  * @param month - The month, `YYYY-MM`.
  * @param today - Today, `YYYY-MM-DD`, in the manager's zone.
- * @param landed - Items landed per day, keyed `YYYY-MM-DD`.
+ * @param landed - Items landed per day, keyed `YYYY-MM-DD`: those whose run answered done.
+ * @param partly - Items finished partly done per day, named beside what landed (RM23 (a)).
  * @param waitingToday - What waits on the manager now, placed on today.
  */
 export function MonthGrid({
   month,
   today,
   landed,
+  partly,
   waitingToday,
 }: {
   month: string;
   today: string;
   landed: ReadonlyMap<string, number>;
+  partly: ReadonlyMap<string, number>;
   waitingToday: number;
 }) {
   const offset = firstWeekday(month);
@@ -75,6 +78,7 @@ export function MonthGrid({
       <ol aria-label={`Days of ${monthName(month)}`} className="grid grid-cols-7 gap-1.5">
         {daysOf(month).map((day, index) => {
           const count = landed.get(day) ?? 0;
+          const partlyDone = partly.get(day) ?? 0;
           const isToday = day === today;
           const waiting = isToday ? waitingToday : 0;
           return (
@@ -88,6 +92,11 @@ export function MonthGrid({
               {count > 0 ? (
                 <span className="block text-[var(--color-fg)]/80 max-sm:sr-only">
                   {count} landed
+                </span>
+              ) : null}
+              {partlyDone > 0 ? (
+                <span className="block text-[var(--color-muted)] max-sm:sr-only">
+                  {partlyDone} partly
                 </span>
               ) : null}
               {waiting > 0 ? (

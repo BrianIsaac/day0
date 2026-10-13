@@ -132,6 +132,7 @@ const oneEmployeeMetrics = {
       ended: 0,
       medianToEndMs: null,
       completed: 0,
+      partlyDone: 0,
       medianToCompletionMs: null,
       p90ToCompletionMs: null,
     },
@@ -203,6 +204,7 @@ vi.mock('convex/react', () => {
     useQueries: (queries: Record<string, { query: FunctionReference<'query'> }>) =>
       Object.fromEntries(Object.entries(queries).map(([key, { query }]) => [key, answer(query)])),
     useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
     // The providers hold Clerk's settled answer through a re-resolve, so Convex keeps its token
     // (tests/app/agent/[agentId]/layout.test.tsx drives the real ones).
     useConvexAuth: () => ({

@@ -276,3 +276,31 @@ describe('the roster, its faces and the pill in every phase of the one-to-one (C
     expect(text).not.toContain('In your one-to-one');
   });
 });
+
+describe('the roster’s landed count beside the partly done (RM23 (a))', (): void => {
+  it('prints the walk’s Lark as one landed with two partly done beside it, not three landed', (): void => {
+    const lark = [
+      {
+        ...roster[0],
+        agentId: 'synthetic-lark',
+        name: 'Lark',
+        landedThisMonth: {
+          month: '2026-10',
+          days: [{ day: '2026-10-11', landed: 1, partly: 2 }],
+          atLeast: false,
+        },
+      },
+    ] as unknown as RosterRow[];
+    const text = readAs(
+      renderToStaticMarkup(<EmployeeRoster employees={lark} waiting={waiting} />),
+    );
+    expect(text).toContain('1 2 partly done');
+    expect(text).not.toContain(' 3 ');
+  });
+
+  it('names nothing beside the count when nothing landed partly', (): void => {
+    expect(
+      readAs(renderToStaticMarkup(<EmployeeRoster employees={roster} waiting={waiting} />)),
+    ).not.toContain('partly');
+  });
+});

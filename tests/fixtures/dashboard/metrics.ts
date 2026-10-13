@@ -44,6 +44,7 @@ export const dashboardMetrics = (): AgentMetrics =>
         ended: 3,
         medianToEndMs: 60_000,
         completed: 2,
+        partlyDone: 0,
         medianToCompletionMs: 120_000,
         p90ToCompletionMs: 180_000,
       },

@@ -20,6 +20,7 @@ import {
   runsInFlightLine,
   takeOnLead,
   takesOnLines,
+  accessWords,
   zonedStamp,
 } from '../../app/handover-words';
 import { LOCAL_DEV_TRANSFER_REFUSAL } from '../../src/agent/manager-transfer';
@@ -301,7 +302,8 @@ describe('the acceptance dialog (plan 7.3)', () => {
       '3 items in progress',
       '2 skills',
       'charter version 0.2, approved',
-      'permissions: linear:read and docs:read',
+      // Re-pinned for the v0.19.0 walk's finding 7 (16-FX): the access in the manager's words.
+      'its access: reading Linear and the docs',
       'its record: 41 events, decisions included, as they were made',
     ]);
   });
@@ -325,9 +327,39 @@ describe('the acceptance dialog (plan 7.3)', () => {
       'at least 200 items in progress',
       '1 skill',
       'no approved charter: you hold its Day-1 one-to-one',
-      'permissions: none',
+      // Re-pinned for the v0.19.0 walk's finding 7 (16-FX): the access in the manager's words.
+      'its access: none',
       'its record: at least 200 events, decisions included, as they were made',
     ]);
+  });
+
+  it("names the access the hosted walk's Pip came with in a manager's words, not its scopes (the v0.19.0 walk's finding 7)", () => {
+    const scopes = [
+      'boss:message',
+      'docs:read',
+      'slack:read',
+      'social:read',
+      'spreadsheet:read',
+      'ticket:read',
+      'ticket:write',
+    ];
+    const lines = takesOnLines({
+      ...PREVIEW,
+      takesOn: {
+        ...PREVIEW.takesOn,
+        scopes: scopes.map((scope) => ({ ...PREVIEW.takesOn.scopes[0]!, scope })),
+      },
+    });
+    expect(lines).toContain(
+      'its access: messages to you; reading the docs, Slack, social mentions and the spreadsheet; reading and writing tickets',
+    );
+    expect(lines.join(' ')).not.toMatch(/\b\w+:(?:read|write|message)\b/);
+  });
+
+  it('names a verb it has no word for in its own -ing form (the second pass)', () => {
+    expect(accessWords(['slack:read', 'slack:post', 'notion:comment'])).toBe(
+      'reading and posting on Slack; commenting on Notion',
+    );
   });
 
   it('lists what does not come with the employee', () => {

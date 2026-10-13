@@ -108,8 +108,9 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
 
     const reask = model.calls[1]!.user;
     expect(reask).toContain(K_REASON);
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the card's labels, not the field keys.
     expect(reask).toContain('Work the tickets in Linear, team REVOPS, project Q3 close.');
-    expect(reask).toContain('willNotDo clause');
+    expect(reask).toContain('Will not do clause');
     expect(reask).toContain('system');
     expect(reask.startsWith(model.calls[0]!.user)).toBe(true);
   });
@@ -188,9 +189,12 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
 
     const { verdict, judgements } = await evaluate(revops29, runContext('priya'));
 
-    expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${reason}` });
+    // The clause the skip quoted rides the verdict and the judgement (wave 16, 16-O: a repeated
+    // skip under one clause opens a reorientation card).
+    const clause = 'Access or work in Northstar CRM until there is an approved way in.';
+    expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${reason}`, clause });
     expect(judgements).toEqual([
-      { admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}` },
+      { admitted: false, basis: 'charter-judgement', reason: `out-of-scope: ${reason}`, clause },
     ]);
     expect(model.calls).toHaveLength(1);
   });
@@ -312,7 +316,12 @@ describe('a skip of an item whose source the willDo names (finding K, REVOPS-27)
 
     const { verdict } = await evaluate(revops27, runContext('priya'));
 
-    expect(verdict).toEqual({ decision: 'skip', reason: `out-of-scope: ${cited}` });
+    // The clause the reading quoted rides the verdict (wave 16, 16-O).
+    expect(verdict).toEqual({
+      decision: 'skip',
+      reason: `out-of-scope: ${cited}`,
+      clause: "Own Linear or Slack administration (the admins' lane).",
+    });
   });
 
   it('defers the item unjudged when the second asking cannot be reached, admitting nothing (M19)', async (): Promise<void> => {

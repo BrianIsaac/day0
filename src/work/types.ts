@@ -71,7 +71,12 @@ export interface SkillShape {
 export type WorkVerdict =
   | { decision: 'claim'; value: number; risk: number; requiredPermissions: string[] }
   | { decision: 'queue'; reason: string; openClaims: number }
-  | { decision: 'skip'; reason: string }
+  | {
+      decision: 'skip';
+      reason: string;
+      /** The willNotDo clause an out-of-scope skip quoted, as the charter writes it (16-O). */
+      clause?: string;
+    }
   | { decision: 'defer'; reason: string; missingPermissions: string[] }
   | {
       decision: 'needs-skill';
@@ -207,7 +212,8 @@ export interface ExecutionPlan {
 /**
  * What a cite is disputed by (wave 15, 15-A): a conflict the manager confirmed between the cited
  * page and another of equal trust, under one heading. The selection tags such a cite line
- * `[conflict]`, and a plan that cites one waits for the manager.
+ * `[conflict]`, and a plan that cites one is asked about it: the steps citing it wait for the
+ * manager's answer.
  */
 export interface CiteConflict {
   /** The relation (`docRelations` id) the manager confirmed. */
@@ -430,6 +436,12 @@ export interface OpenQuestion {
   question: string;
   /** The one-based plan steps that wait on the answer. */
   steps: number[];
+  /**
+   * The documentation conflict the question is, when the hold at the apply asked it (16-O): the
+   * manager answers it on the question itself, which decides the relation, so a note given with
+   * Retry is not its answer (W16-R8). Absent on a question the executor put.
+   */
+  relationId?: string;
 }
 
 /**

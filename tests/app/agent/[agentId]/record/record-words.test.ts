@@ -1,3 +1,4 @@
+import { NO_OVERLAP_REASON } from '../../../../../src/work/scope';
 import { describe, expect, it } from 'vitest';
 import { EVENT_TYPES } from '../../../../../src/events/contract';
 import { recordWords } from '../../../../../app/agent/[agentId]/record/record-words';
@@ -140,6 +141,38 @@ describe('recordWords', (): void => {
     ).toBe('Mira skipped “Refresh pipeline coverage view”: forecasting work assigned to Aman.');
   });
 
+  it('says a lexical skip in plain words, with no machine label (RM21 (c), W19-7)', (): void => {
+    // The v0.19.0 walk's row `A-Lark-record.txt`: the reason as v0.19.0 stored it, and as now.
+    for (const reason of [
+      'out-of-scope: no charter or current documented-system overlap',
+      NO_OVERLAP_REASON,
+    ]) {
+      const line = recordWords(
+        { type: 'work.skipped', payload: { reason } },
+        { name: 'Lark', item: 'Reply to the customer mention on social media' },
+      );
+      expect(line).toMatch(/^Lark skipped “Reply to the customer mention on social media”: /);
+      expect(line).not.toContain('out-of-scope');
+      expect(line).not.toContain('documented-system');
+    }
+    expect(
+      recordWords(
+        { type: 'work.skipped', payload: { reason: NO_OVERLAP_REASON } },
+        { name: 'Lark', item: 'Reply to the customer mention on social media' },
+      ),
+    ).toBe(
+      'Lark skipped “Reply to the customer mention on social media”: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to.',
+    );
+    expect(
+      recordWords(
+        { type: 'work.skipped', payload: { reason: 'quality-fit-fail: busywork for the role' } },
+        { name: 'Lark', item: 'Tidy the tracker colours' },
+      ),
+    ).toBe(
+      'Lark skipped “Tidy the tracker colours”: judged not worth doing as it stands: busywork for the role.',
+    );
+  });
+
   it('says each step of a handover request by who asked, the address it names and the employee', (): void => {
     const request = {
       transferId: 't1',
@@ -261,7 +294,27 @@ describe('recordWords', (): void => {
         },
         subject,
       ),
-    ).toBe('The skill kanban-comment-and-close is due a re-check: its check was not kept.');
+    ).toBe(
+      // Re-pinned for the v0.19.0 walk's finding 8 (16-FX): the line says what it means for the
+      // work; a skill with no library version has no Re-check now to name.
+      'The skill kanban-comment-and-close is due a re-check: its check was not kept. It keeps running meanwhile.',
+    );
+    // The walk's own line: what the version reason means, and what to do.
+    expect(
+      recordWords(
+        {
+          type: 'skill.recheck-due',
+          payload: {
+            name: 'kanban-comment-and-close',
+            reason: 'v2 is verified; this runs v1',
+            versionId: 'skillVersions:v1',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The skill kanban-comment-and-close is due a re-check: v2 is verified; this runs v1. It keeps running meanwhile; Re-check now on the Skills tab checks it.',
+    );
   });
 
   it('says whose skill was offered for adoption, and that adopting it checks it again first (10-A)', (): void => {
@@ -998,6 +1051,48 @@ describe('what an evaluation and a plan approval say in the record (walk m15)', 
       ]),
     ).toBe(
       "You approved the plan for “Priya asks for tracker update” from the dashboard, answering 1 charter question and the planner's note.",
+    );
+  });
+});
+
+describe('a selection the backend could not finish, in the record (W15-R48, the joins)', (): void => {
+  it('says what was read instead and leaves the backend’s words to the row’s detail', (): void => {
+    // The review's case: the selection's query met Convex's limit, and the record printed it.
+    const line = recordWords(
+      {
+        type: 'work.documentation-selection-failed',
+        payload: {
+          workItemId: 'w1',
+          site: 'plan',
+          reason: 'Too many index ranges read in a single function execution (limit: 4096)',
+        },
+      },
+      subject,
+    );
+    expect(line).not.toContain('index ranges');
+    expect(line).toBe(
+      'The plan draft for “Draft response for new tier-two RevOps ask” read every documentation page, since the pages it needed could not be selected.',
+    );
+  });
+});
+
+describe('a charter amended from a reorientation card, in the record (the joins)', (): void => {
+  it('says the manager approved a card, then what the card was about', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'charter.amended',
+          payload: {
+            version: '0.2',
+            previousVersion: '0.1',
+            via: 'reorientation',
+            reason: 'Aman Rao now approves REVOPS plans',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Charter amended to version 0.2 from 0.1 as you approved a reorientation card: Aman Rao now approves REVOPS plans.',
     );
   });
 });

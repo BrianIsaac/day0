@@ -281,3 +281,43 @@ describe('what the document conversion refuses', (): void => {
     );
   });
 });
+
+describe('the smaller conversion items of the wave 15 review (W15-R30)', (): void => {
+  it('leaves a document’s script, style and noscript text out of its Markdown', (): void => {
+    // The review: <script> and <style> text was emitted into SharePoint and Yuque Markdown.
+    expect(
+      documentHtmlToMarkdown(
+        '<p>a</p><script>alert(1)</script><style>p{}</style><noscript>Turn scripts on</noscript>',
+      ),
+    ).toBe('a');
+  });
+
+  it('keeps consecutive images apart', (): void => {
+    expect(
+      documentHtmlToMarkdown('<p><img src="a.png" alt="one"><img src="b.png" alt="two"></p>'),
+    ).toBe('![one](a.png) ![two](b.png)');
+    expect(
+      confluenceStorageToMarkdown(
+        '<ac:image ac:alt="chart"><ri:attachment ri:filename="tile.png"/></ac:image><ac:image><ri:url ri:value="https://x.test/a.png"/></ac:image><ac:image ac:width="3"><ri:attachment ri:filename="a.png"/></ac:image>',
+      ),
+    ).toBe('(image: tile.png) ![](https://x.test/a.png) (image: a.png)');
+  });
+
+  it('names the page an Include Page macro draws in, which is not read as part of this one', (): void => {
+    // The review's reader 3 (macros.mts): the macro drew nothing and said nothing.
+    expect(
+      confluenceStorageToMarkdown(
+        '<ac:structured-macro ac:name="include"><ac:parameter ac:name=""><ac:link><ri:page ri:content-title="Shared steps"/></ac:link></ac:parameter></ac:structured-macro><p>after include</p>',
+      ),
+    ).toBe(
+      '(Included here in Confluence: the page “Shared steps”, which Day0 does not read as part of this one.)\n\nafter include',
+    );
+    expect(
+      confluenceStorageToMarkdown(
+        '<ac:structured-macro ac:name="excerpt-include"><ac:parameter ac:name=""><ac:link><ri:page ri:content-title="Defs"/></ac:link></ac:parameter></ac:structured-macro>',
+      ),
+    ).toBe(
+      '(Included here in Confluence: an excerpt of the page “Defs”, which Day0 does not read as part of this one.)',
+    );
+  });
+});

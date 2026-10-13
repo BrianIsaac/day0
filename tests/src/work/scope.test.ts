@@ -6,7 +6,12 @@ import {
   type EvaluateLookups,
   type EvaluationSurface,
 } from '../../../src/work/evaluate';
-import { charterJudgementPrompt, judgeScope, type ScopeJudgement } from '../../../src/work/scope';
+import {
+  charterJudgementPrompt,
+  judgeScope,
+  SCOPE_JUDGEMENT_SYSTEM_PROMPT,
+  type ScopeJudgement,
+} from '../../../src/work/scope';
 import type { WorkCandidate } from '../../../src/work/types';
 
 /** A charter judgement that cites nothing, as the schema requires of an in-scope answer. */
@@ -209,12 +214,42 @@ describe('one scope judgement for the R6 card', (): void => {
     expect(model.calls.map((call) => call.agent)).toEqual(['day0-scope-judgement']);
   });
 
+  it('names the willNotDo clause an out-of-scope skip quoted on the judgement and the verdict (16-O)', async (): Promise<void> => {
+    model.answer = {
+      inScope: false,
+      fit: true,
+      reason: 'The tracker is a revenue record, which the role does not update.',
+      exclusion: {
+        kind: 'will-not-do',
+        quote: 'update the Q4 Revenue Tracker or any revenue record',
+      },
+    };
+    const judgements: ScopeJudgement[] = [];
+    const verdict = await evaluateCandidate(
+      r6Card,
+      context('real'),
+      { ...noSkill, findMatchingSkill: async (): Promise<null> => null },
+      { onScopeJudgement: (judgement): void => void judgements.push(judgement) },
+    );
+    const clause = 'Do not update the Q4 Revenue Tracker or any revenue record.';
+    expect(verdict).toEqual({
+      decision: 'skip',
+      reason: 'out-of-scope: The tracker is a revenue record, which the role does not update.',
+      clause,
+    });
+    expect(judgements).toEqual([expect.objectContaining({ admitted: false, clause })]);
+  });
+
   it('hands the model the boundaries, the adjacent roles and the request, and nothing about the lexical rule', (): void => {
     const prompt = charterJudgementPrompt({ candidate: r6Card, charter: r6Charter, agentsMd: '' });
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the labels the charter card reads,
+    // never the charter's field keys, which a reason then echoed to the manager.
     expect(prompt).toContain(
-      'willNotDo: Do not update the Q4 Revenue Tracker or any revenue record. | Do not act on requests from Priya before the manager introduction.',
+      'Will not do: Do not update the Q4 Revenue Tracker or any revenue record. | Do not act on requests from Priya before the manager introduction.',
     );
-    expect(prompt).toContain('adjacentRoles: RevOps analyst: never editing revenue records');
+    expect(prompt).toContain('Adjacent roles: RevOps analyst: never editing revenue records');
+    expect(prompt).not.toMatch(/willDo|willNotDo|escalationTriggers|adjacentRoles/);
+    expect(SCOPE_JUDGEMENT_SYSTEM_PROMPT).not.toMatch(/willDo|willNotDo|escalationTriggers/);
     expect(prompt).toContain(
       'No good-habits memory yet: judge the boundaries only and answer fit: true.',
     );
@@ -226,8 +261,9 @@ describe('one scope judgement for the R6 card', (): void => {
   });
 
   it('tells the model a clause bounding which items are the role’s is judged against the item, not what it reads (W12V-9)', (): void => {
+    // Re-taken for W15-R16, 12 October 2026: the clauses by the card's labels, not the field keys.
     expect(model.instructions.get('day0-scope-judgement')).toContain(
-      "  - A willNotDo clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
+      "  - A Will not do clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
     );
   });
 
@@ -289,7 +325,9 @@ describe('one scope judgement for the R6 card', (): void => {
     ).resolves.toEqual({
       admitted: false,
       basis: 'no-overlap',
-      reason: 'out-of-scope: no charter or current documented-system overlap',
+      // Re-taken for RM21 (c), 12 October 2026: the same rule's reason in plain words.
+      reason:
+        'out-of-scope: nothing in it is part of the role or its will-do clauses, and it names no system the role is connected to',
     });
     expect(model.calls).toEqual([]);
   });

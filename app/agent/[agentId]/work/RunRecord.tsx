@@ -67,6 +67,7 @@ function UnlandedRows({
  * @param output - The run's persisted output.
  * @param rows - The run's ledger, as `phasedLedger` gives it.
  * @param title - The item's title, naming the draft's scroll region.
+ * @param employeeName - The employee, as the withheld rows' words name it.
  */
 export function RunRecord({
   output,
@@ -75,6 +76,7 @@ export function RunRecord({
   failed,
   unknown,
   title,
+  employeeName,
 }: {
   output: RunOutput | undefined;
   rows: readonly PhasedLedgerRow[];
@@ -82,6 +84,7 @@ export function RunRecord({
   failed: readonly PhasedLedgerRow[];
   unknown: readonly PhasedLedgerRow[];
   title: string;
+  employeeName?: string;
 }) {
   const parts: ReactNode[] = [];
   if (rows.some((row) => row.redaction === 'structural-only')) {
@@ -149,7 +152,7 @@ export function RunRecord({
       <PlanExecutionLedger outcomes={steps} />
       <RefusedBlockedSteps refused={output?.refusedClosing} />
       <RefusedClosingDetails refused={output?.refusedClosing} />
-      <WithheldActionsDetails withheld={withheld} />
+      <WithheldActionsDetails withheld={withheld} employeeName={employeeName} />
       {output ? <DraftDetails output={output} title={title} /> : null}
     </ItemSection>
   );

@@ -58,6 +58,23 @@ describe('Retry-After', (): void => {
     expect(retryAfterMs(null, now)).toBeUndefined();
   });
 
+  it('reads a fraction of a second up, a unit after the seconds, and a negative as nothing (W15-R30)', (): void => {
+    // The review: "3.5" and "-1" read as dates in the past (a wait of 0), and "30 s" as nothing.
+    const now = Date.parse('2026-09-28T01:00:00Z');
+    expect(retryAfterMs('3.5', now)).toBe(3_500);
+    expect(retryAfterMs('0.25', now)).toBe(250);
+    expect(retryAfterMs('30 s', now)).toBe(30_000);
+    expect(retryAfterMs('30s', now)).toBe(30_000);
+    expect(retryAfterMs('2 seconds', now)).toBe(2_000);
+    expect(retryAfterMs('-1', now)).toBeUndefined();
+    expect(retryAfterMs('+5', now)).toBeUndefined();
+    expect(retryAfterMs('12345678901234567890', now)).toBeUndefined();
+    expect(retryAfterMs('2026', now)).toBe(2_026_000);
+    // A date that begins with a digit is still a date (the second pass).
+    expect(retryAfterMs('28 Sep 2026 01:00:07 GMT', now)).toBe(7_000);
+    expect(retryAfterMs('2026-09-28T01:00:09Z', now)).toBe(9_000);
+  });
+
   it('classes a 429 and a 5xx as transient with the wait they ask for, and a 4xx as not', (): void => {
     const limited = transientFromResponse(
       new Response('{}', { status: 429, headers: { 'Retry-After': '2' } }),

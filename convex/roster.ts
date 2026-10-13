@@ -5,6 +5,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import type { QueryCtx } from './_generated/server';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
+import { needsYouOfEmployee } from './needsYou';
 import { isEvaluationAgent } from './metrics';
 import {
   holdsLiveStepClaim,
@@ -25,12 +26,9 @@ import { isPaused } from '../src/work/pause';
 import { decisionChannelOf, decisionsReachOf } from '../src/work/decision-channel';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { accessEnded } from '../src/work/surface-access';
-import {
-  NEEDS_MANAGER_STATES,
-  parkedRowNeedsManager,
-  stoppedRowNeedsManager,
-} from '../src/work/needs-manager';
 import { shownEmployeeState, type CharterApproval } from '../src/work/state-labels';
+import { finishedAnswerOf } from '../src/work/work-done';
+import type { WorkDoneAnswer } from '../src/work/types';
 
 /*
  * The landing page's roster: one row per employee of an owner, read for `agents.rosterForUser`,
@@ -88,8 +86,12 @@ const MONTH_LANDED_READ_LIMIT = 100;
 const landedThisMonthValidator = v.object({
   /** The month, `YYYY-MM`, in the employee's zone. */
   month: v.string(),
-  /** Each day of the month an item first landed on, `YYYY-MM-DD`, with how many, oldest first. */
-  days: v.array(v.object({ day: v.string(), landed: v.number() })),
+  /**
+   * Each day of the month an item first finished on, `YYYY-MM-DD`, oldest first: how many landed,
+   * their runs answering done, and how many finished partly done, named beside them (RM23 (a)),
+   * absent on a day with none.
+   */
+  days: v.array(v.object({ day: v.string(), landed: v.number(), partly: v.optional(v.number()) })),
   /** True when the read reached its bound, so the month holds at least this many. */
   atLeast: v.boolean(),
 });
@@ -99,9 +101,12 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
 
 /**
  * The items an employee completed this month in its own zone (N12), each
- * counted once, on the day it first completed within the month. Reads the
- * month's `work.completed` events by the type index, from the month's first
- * midnight on, and dates each by the instant it was logged.
+ * counted once, on the day it first completed within the month: landed when
+ * that completion's run answered done, partly done when it answered so, and
+ * neither when it answered not done (RM23 (a); `finishedAnswerOf`, the one
+ * reading the card, the Work tab and the cycle time take). Reads the month's
+ * `work.completed` events by the type index, from the month's first midnight
+ * on, and dates each by the instant it was logged.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
@@ -120,23 +125,33 @@ async function landedThisMonth(
   const read = await eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
     .order('desc')
     .take(MONTH_LANDED_READ_LIMIT + 1);
-  const firstLanded = new Map<string, number>();
+  const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
   for (const event of read.slice(0, MONTH_LANDED_READ_LIMIT)) {
     if (!isEventOf(event, 'work.completed') || event.createdAt < monthStart) continue;
     const workItemId: unknown = event.payload.workItemId;
-    // Read newest first, so the last completion kept per item is its first in the month.
-    if (typeof workItemId === 'string') firstLanded.set(workItemId, event.createdAt);
+    const answer = finishedAnswerOf(event.payload.output);
+    // Read newest first, so the last completion kept per item is its first in the month that did
+    // the work, in whole or in part; a not-done answer Retry sent back lands nothing (W16-R17).
+    if (typeof workItemId === 'string' && answer !== 'not-done') {
+      firstFinished.set(workItemId, { at: event.createdAt, answer });
+    }
   }
-  const byDay = new Map<string, number>();
-  for (const at of firstLanded.values()) {
+  const byDay = new Map<string, { landed: number; partly: number }>();
+  for (const { at, answer } of firstFinished.values()) {
     const day = dayKey(at, zone);
-    byDay.set(day, (byDay.get(day) ?? 0) + 1);
+    const counted = byDay.get(day) ?? { landed: 0, partly: 0 };
+    byDay.set(
+      day,
+      answer === 'done'
+        ? { ...counted, landed: counted.landed + 1 }
+        : { ...counted, partly: counted.partly + 1 },
+    );
   }
   return {
     month,
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([day, landed]) => ({ day, landed })),
+      .map(([day, { landed, partly }]) => ({ day, landed, ...(partly > 0 ? { partly } : {}) })),
     atLeast: read.length > MONTH_LANDED_READ_LIMIT,
   };
 }
@@ -168,6 +183,8 @@ export const rosterRowValidator = v.object({
   stoppedCount: v.number(),
   needsYou: v.number(),
   docSourceCount: v.number(),
+  /** Today, `YYYY-MM-DD`, in the employee's zone (N12, 16-F): the day the home's month card marks. */
+  today: v.string(),
   landedThisMonth: landedThisMonthValidator,
   /** Where the employee's decisions reach the manager (12-M; H D6): a DM, buttons or not, or here. */
   decisionsReach: v.union(
@@ -220,19 +237,17 @@ export function clipRoleLine(text: string): string {
 interface CharterStanding {
   /** The clipped role line, or the pending or not-stated line. */
   readonly roleLine: string;
-  /** Whether the newest charter is a draft the manager has not approved yet. */
-  readonly draftAwaitsManager: boolean;
   /** The newest charter's standing, or null before one is drafted. */
   readonly newest: CharterApproval;
 }
 
 /**
- * The role line from the newest charter the manager approved, and whether a
- * newer draft waits on the manager's approval.
+ * The role line from the newest charter the manager approved, and the newest
+ * charter's standing.
  *
  * An amendment is approved on insert, so it wins at once; a draft awaiting
- * approval never shows as the role but counts as waiting on the manager; a
- * draft sent back is deleted, which leaves the employee pending again with
+ * approval never shows as the role (the inbox lists it as waiting on the
+ * manager); a draft sent back is deleted, which leaves the employee pending again with
  * nothing to approve.
  *
  * @param ctx - Query context.
@@ -253,11 +268,10 @@ async function charterStanding(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Ch
       typeof proposedFunction === 'string' && proposedFunction.trim() !== ''
         ? clipRoleLine(proposedFunction)
         : ROLE_NOT_STATED;
-    return { roleLine, draftAwaitsManager, newest: { approved: !draftAwaitsManager } };
+    return { roleLine, newest: { approved: !draftAwaitsManager } };
   }
   return {
     roleLine: CHARTER_PENDING_ROLE_LINE,
-    draftAwaitsManager: draftAwaitsManager ?? false,
     newest: draftAwaitsManager === undefined ? null : { approved: false },
   };
 }
@@ -278,8 +292,7 @@ async function newestSession(
 }
 
 /**
- * Count the employee's open work, its parked work, its stopped work, and the
- * part of the three waiting on the manager.
+ * Count the employee's open work, its parked work and its stopped work.
  *
  * Open rows hold a work-in-progress slot. Parked rows hold none: deferred,
  * waiting on a skill, or waiting in `discovered` for a free slot, whether a
@@ -290,15 +303,12 @@ async function newestSession(
  * counted state, so completed, skipped and cancelled work, however much of
  * it there is, is never read.
  *
- * @returns The open, parked and stopped counts, the parked count by state, and the needs-you
- *   count.
+ * @returns The open, parked and stopped counts, and the parked count by state.
  */
 async function workCounts(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-): Promise<
-  Pick<RosterRow, 'openCount' | 'parkedCount' | 'parkedStates' | 'stoppedCount' | 'needsYou'>
-> {
+): Promise<Pick<RosterRow, 'openCount' | 'parkedCount' | 'parkedStates' | 'stoppedCount'>> {
   const rowsIn = async (
     state: Doc<'workItems'>['state'],
     limit: number = OPEN_STATE_READ_LIMIT,
@@ -317,15 +327,6 @@ async function workCounts(
   ]);
   const openRows = open.flat();
   const parkedRows = parked.flat();
-  // Several rows can wait on one skill, so each skill is read once.
-  const skillIds = [...new Set(parkedRows.flatMap((row) => row.proposedSkillId ?? []))];
-  const skills = new Map(
-    await Promise.all(
-      skillIds.map(
-        async (id): Promise<[Id<'skills'>, Doc<'skills'> | null]> => [id, await ctx.db.get(id)],
-      ),
-    ),
-  );
   const now = Date.now();
   const waitingDiscovered = discovered.filter(
     (row) => !holdsLiveStepClaim(row, 'evaluation', now),
@@ -341,10 +342,6 @@ async function workCounts(
       discovered: waitingDiscovered,
     },
     stoppedCount: stoppedRows.length,
-    needsYou:
-      openRows.filter((row) => NEEDS_MANAGER_STATES.has(row.state)).length +
-      parkedRows.filter((row) => parkedRowNeedsManager(row, skills, now)).length +
-      stoppedRows.filter(stoppedRowNeedsManager).length,
   };
 }
 
@@ -378,9 +375,10 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
   const now = Date.now();
   return await Promise.all(
     agents.map(async (agent): Promise<RosterRow> => {
-      const [charter, counts, landed, session, surfaces] = await Promise.all([
+      const [charter, counts, waiting, landed, session, surfaces] = await Promise.all([
         charterStanding(ctx, agent._id),
         workCounts(ctx, agent._id),
+        needsYouOfEmployee(ctx, agent, now),
         landedThisMonth(ctx, agent, now),
         newestSession(ctx, agent._id),
         ctx.db
@@ -402,9 +400,11 @@ export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterR
         paused: isPaused(agent),
         roleLine: charter.roleLine,
         ...counts,
-        // A drafted charter is the one thing the manager must approve before any work.
-        needsYou: counts.needsYou + (charter.draftAwaitsManager ? 1 : 0),
+        // The inbox's own count (decision F-2): what the employee's Needs you lists, every kind,
+        // so the roster and the inbox never disagree; the field stays, filled from it.
+        needsYou: waiting.length,
         docSourceCount: sources.filter((source) => agentReadsSource(agent, source._id)).length,
+        today: dayKey(now, agentZone(agent)),
         landedThisMonth: landed,
         decisionsReach: decisionsReachOf(
           channel,

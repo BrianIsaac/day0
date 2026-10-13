@@ -10,7 +10,13 @@ const landed = new Map([
 
 describe('MonthGrid', (): void => {
   const html = renderToStaticMarkup(
-    <MonthGrid month="2026-09" today="2026-09-26" landed={landed} waitingToday={3} />,
+    <MonthGrid
+      month="2026-09"
+      today="2026-09-26"
+      landed={landed}
+      partly={new Map()}
+      waitingToday={3}
+    />,
   );
   const days = [...html.matchAll(/<li\b([^>]*)>([\s\S]*?)<\/li>/g)];
   const text = (index: number): string => days[index][2].replace(/<[^>]+>/g, ' ').trim();
@@ -25,7 +31,13 @@ describe('MonthGrid', (): void => {
     expect(days).toHaveLength(30);
     expect(
       renderToStaticMarkup(
-        <MonthGrid month="2028-02" today="2028-02-01" landed={new Map()} waitingToday={0} />,
+        <MonthGrid
+          month="2028-02"
+          today="2028-02-01"
+          landed={new Map()}
+          partly={new Map()}
+          waitingToday={0}
+        />,
       ).match(/<li\b/g),
     ).toHaveLength(29);
   });
@@ -65,7 +77,13 @@ describe('MonthGrid', (): void => {
     expect(days[0][1]).toContain('grid-column-start:2');
     expect(days[1][1]).not.toContain('grid-column-start');
     const june = renderToStaticMarkup(
-      <MonthGrid month="2026-06" today="2026-06-01" landed={new Map()} waitingToday={0} />,
+      <MonthGrid
+        month="2026-06"
+        today="2026-06-01"
+        landed={new Map()}
+        partly={new Map()}
+        waitingToday={0}
+      />,
     );
     expect(june).not.toContain('grid-column-start');
   });

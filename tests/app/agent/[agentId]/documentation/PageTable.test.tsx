@@ -2,12 +2,15 @@
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const backend = vi.hoisted(() => ({
   readState: undefined as unknown,
   pages: [] as unknown[],
   calls: [] as Array<{ name: string; args: unknown }>,
+  /** What the deployment's subscriptions draw before a mutation's promise settles. */
+  afterCall: undefined as (() => void) | undefined,
 }));
 
 vi.mock('convex/react', () => ({
@@ -24,6 +27,7 @@ vi.mock('convex/react', () => ({
     (reference: unknown) =>
     async (args: unknown): Promise<null> => {
       backend.calls.push({ name: getFunctionName(reference as never), args });
+      backend.afterCall?.();
       return null;
     },
 }));
@@ -81,6 +85,7 @@ describe('readStateLine', (): void => {
 
 afterEach((): void => {
   backend.calls = [];
+  backend.afterCall = undefined;
   document.body.replaceChildren();
 });
 
@@ -291,6 +296,57 @@ describe('a page’s status and who decided it (15-A; the wave file’s section 
         args: { pageId: 'p2', status: 'superseded', supersededBy: 'p1' },
       },
     ]);
+    view.unmount();
+  });
+
+  it('returns focus to the row’s own title when the pressed control leaves it, never to the table (W15-R47)', async (): Promise<void> => {
+    backend.pages = listed;
+    backend.readState = null;
+    const view = mount(<PageTable source={SOURCE} zone="UTC" />);
+    // The table that stood in for a control that went has a role for its name (ARIA 1.2).
+    const table = view.container.querySelector('[aria-label="Pages of RevOps team wiki"]');
+    expect(table?.getAttribute('role')).toBe('group');
+    // "Clear" leaves with the manager's status: the list answers with the page cleared.
+    backend.afterCall = (): void => {
+      backend.pages = [
+        { ...listed[0], statusSource: 'default', decidedByYou: undefined },
+        listed[1],
+      ];
+      act((): void => view.root.render(<PageTable source={SOURCE} zone="UTC" />));
+    };
+    await press(view.container, 'Clear your status for Pipeline runbook');
+    await settle();
+    const focused = document.activeElement;
+    expect(focused?.textContent).toBe('Pipeline runbook');
+    expect(focused?.closest('tbody')?.textContent).toContain('pipeline-runbook.md');
+    view.unmount();
+  });
+
+  it('offers no status a page already has, and names a successor read past the table’s bound by its place (W15-R48)', (): void => {
+    backend.pages = [
+      { ...listed[0], status: 'archived', supersededBy: undefined },
+      { ...listed[1], status: 'draft' },
+      {
+        ...listed[0],
+        _id: 'p3',
+        title: 'Old checklist',
+        ref: 'old-checklist.md',
+        supersededBy: 'runbooks/q3-close-checklist-v2.md',
+        supersededByRef: true,
+      },
+    ];
+    backend.readState = null;
+    const view = mount(<PageTable source={SOURCE} zone="UTC" />);
+    const labels = [...view.container.querySelectorAll('button')].map(
+      (button) => button.getAttribute('aria-label') ?? button.textContent,
+    );
+    expect(labels).not.toContain('Mark archived: Pipeline runbook');
+    expect(labels).toContain('This is a draft: Pipeline runbook');
+    expect(labels).not.toContain('This is a draft: Pipeline runbook, version 2');
+    expect(labels).toContain('Mark archived: Pipeline runbook, version 2');
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Superseded by the page at runbooks/q3-close-checklist-v2.md');
+    expect(text).not.toContain('Superseded by “runbooks/q3-close-checklist-v2.md”');
     view.unmount();
   });
 

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { SHORT_SCREEN } from '../../app/marketing/PinnedSequence';
-import { THEME_CSS as CSS, contrast, over, token } from '../fixtures/theme-contrast';
+import {
+  LIGHT_SELECTOR,
+  THEME_CSS as CSS,
+  contrast,
+  lightToken,
+  over,
+  ruleBody,
+  token,
+} from '../fixtures/theme-contrast';
 
 describe('the theme tokens', () => {
   it('keeps muted text readable at WCAG AA on the page, a card and a border, as axe checks it', () => {
@@ -62,6 +70,132 @@ describe('the theme tokens', () => {
     for (const tone of ['accent', 'warn', 'ok']) {
       expect(contrast(token(tone), token(`${tone}-soft`)), tone).toBeGreaterThanOrEqual(4.5);
     }
+  });
+});
+
+/** The selector list the dark set is declared under: the page, a dark island, the office (RM11 (a)). */
+const DARK_SELECTOR = ":root,\n[data-theme='dark'],\n.day0-pixel-office";
+
+/** The prototype's light set (`agent-needs-you-light.html`), under the product's token names. */
+const PROTOTYPE_LIGHT: Readonly<Record<string, string>> = {
+  bg: '#fafafa',
+  fg: '#18181b',
+  muted: '#52525b',
+  accent: '#0e7490',
+  warn: '#92400e',
+  danger: '#991b1b',
+  ok: '#065f46',
+  card: '#ffffff',
+  border: '#e4e4e7',
+  'fg-2': '#3f3f46',
+  'border-2': '#d4d4d8',
+  inset: '#f4f4f5',
+  'accent-soft': '#e4eef1',
+  'accent-line': '#98b7c4',
+  'warn-soft': '#f3e7e2',
+  'warn-line': '#c7a293',
+  'ok-soft': '#e2ebe7',
+  'ok-line': '#92ada3',
+  'danger-soft': '#f9edec',
+  'danger-line': '#cd9893',
+};
+
+/** Every `--color-*` name a set declares, in the order it declares them. */
+function tokenNames(body: string): string[] {
+  return [...body.matchAll(/--color-([a-z0-9-]+):/g)].map((match) => match[1] ?? '');
+}
+
+describe('the light theme tokens (16-T, wave 16 section 5.5)', () => {
+  it("takes the prototype's light value for every token the prototype names", () => {
+    expect(
+      Object.fromEntries(Object.keys(PROTOTYPE_LIGHT).map((name) => [name, lightToken(name)])),
+    ).toEqual(PROTOTYPE_LIGHT);
+  });
+
+  it('declares every token the dark set declares, so no surface keeps a dark value in light', () => {
+    expect(new Set(tokenNames(ruleBody(LIGHT_SELECTOR)))).toEqual(
+      new Set(tokenNames(ruleBody(DARK_SELECTOR))),
+    );
+  });
+
+  it('keeps muted text at 4.5:1 or better on the page, a card, the inset and a border', () => {
+    for (const background of ['bg', 'card', 'inset', 'border']) {
+      expect(
+        contrast(lightToken('muted'), lightToken(background)),
+        background,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it('keeps card prose and every tone on its own fill readable at WCAG AA', () => {
+    expect(contrast(lightToken('fg-2'), lightToken('card'))).toBeGreaterThanOrEqual(4.5);
+    for (const tone of ['accent', 'warn', 'ok', 'danger']) {
+      expect(contrast(lightToken(tone), lightToken(`${tone}-soft`)), tone).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      expect(
+        contrast(lightToken(tone), lightToken('card')),
+        `${tone} on a card`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("draws a filled button's label, the page colour on the accent, at 4.5:1 or better in both themes", () => {
+    expect(contrast(token('bg'), token('accent'))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(lightToken('bg'), lightToken('accent'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("draws accent text on the accent's chip fill at 4.5:1 or better in both themes", () => {
+    // The browser job's signed-in pass measured the 15% mix at 4.34:1 in light (a pressed filter, a
+    // state chip): the light set fills with the opaque accent-soft instead; dark keeps the mix.
+    expect(ruleBody(DARK_SELECTOR)).toContain(
+      '--color-accent-fill: color-mix(in oklab, var(--color-accent) 15%, transparent);',
+    );
+    expect(ruleBody(LIGHT_SELECTOR)).toContain('--color-accent-fill: var(--color-accent-soft);');
+    for (const surface of ['card', 'bg', 'inset']) {
+      expect(
+        contrast(token('accent'), over(token('accent'), 0.15, token(surface))),
+        surface,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrast(lightToken('accent'), lightToken('accent-soft'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('draws the link underline at 3:1 or more on every light surface a link sits on (C3)', () => {
+    const alpha =
+      Number(
+        /color-mix\(in oklab, var\(--color-accent\) (\d+)%, transparent\)/.exec(
+          ruleBody(LIGHT_SELECTOR),
+        )?.[1],
+      ) / 100;
+    for (const surface of ['bg', 'card', 'inset', 'accent-soft', 'warn-soft']) {
+      expect(
+        contrast(over(lightToken('accent'), alpha, lightToken(surface)), lightToken(surface)),
+        surface,
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("sets each set's colour-scheme, which Clerk's default theme and the browser's own controls follow (T-1)", () => {
+    expect(ruleBody(DARK_SELECTOR)).toMatch(/color-scheme:\s*dark;/);
+    expect(ruleBody(LIGHT_SELECTOR)).toMatch(/color-scheme:\s*light;/);
+  });
+
+  it('keeps the pixel office on the dark set in either theme (RM11 (a))', () => {
+    // The office's own palette is fixed; what it reads of the tokens (the nameplates, the empty
+    // line) is the dark set, declared on the office's panel itself so the page's light set never
+    // reaches inside it.
+    expect(CSS).not.toMatch(/\[data-theme='light'\][^{]*\.day0-pixel/);
+    expect(ruleBody(DARK_SELECTOR)).toContain(`--color-card: ${token('card')};`);
+  });
+
+  it('keeps the scrim and the raised shadow in tokens, each with a light value', () => {
+    for (const name of ['scrim', 'shadow']) {
+      expect(token(name), name).toMatch(/^#/);
+      expect(lightToken(name), name).toMatch(/^#/);
+    }
+    expect(ruleBody(DARK_SELECTOR)).toMatch(/--shadow-raised:/);
+    expect(ruleBody(LIGHT_SELECTOR)).toMatch(/--shadow-raised:/);
   });
 });
 

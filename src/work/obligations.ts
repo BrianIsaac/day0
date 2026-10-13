@@ -410,3 +410,19 @@ const OPEN_QUESTION_STOP_TURN =
 export function isOpenQuestionStop(detail: string): boolean {
   return detail.startsWith(OPEN_QUESTION_STOP_START) && detail.includes(OPEN_QUESTION_STOP_TURN);
 }
+
+/**
+ * Whether the question a run's output stopped on is a documentation conflict's (W16-R8): its
+ * answer is given on the question, never by a note with Retry.
+ *
+ * @param output - The run's stored output, of either phase.
+ */
+export function isConflictQuestion(output: unknown): boolean {
+  if (typeof output !== 'object' || output === null) return false;
+  const run = output as {
+    openQuestion?: { relationId?: unknown };
+    initial?: { openQuestion?: { relationId?: unknown } };
+  };
+  const relationId = run.openQuestion?.relationId ?? run.initial?.openQuestion?.relationId;
+  return typeof relationId === 'string' && relationId !== '';
+}

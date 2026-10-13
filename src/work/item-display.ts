@@ -3,7 +3,8 @@ import type { ManagerFeedback } from './manager-feedback';
 import { MANAGER_REJECTION_PREFIX } from './needs-manager';
 import { replyTargetFor } from './reply-target';
 import type { TicketSnapshot } from './ticket-ownership';
-import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from './types';
+import { skipClause } from './skip-reasons';
+import { QUALITY_FIT_SKIP_PREFIX } from './types';
 
 /**
  * The work item card's sentences read off the row, in the manager's words (round two section
@@ -103,13 +104,12 @@ export function withSlackMentionsNamed(
  * @param reason - The skip verdict's reason.
  */
 export function skipSentence(reason: string): string {
-  if (reason.startsWith(OUT_OF_SCOPE_SKIP_PREFIX)) {
-    return sentence(reason.slice(OUT_OF_SCOPE_SKIP_PREFIX.length));
-  }
   if (reason.startsWith(QUALITY_FIT_SKIP_PREFIX)) {
     return `Judged not worth doing as it stands: ${sentence(reason.slice(QUALITY_FIT_SKIP_PREFIX.length))}`;
   }
-  return sentence(reason);
+  // No machine label is read, and the lexical rule's sentence of an earlier release reads in
+  // today's words (W19-7).
+  return sentence(skipClause(reason));
 }
 
 /** A reason as a sentence: its first letter up, a full stop at the end when it has none. */

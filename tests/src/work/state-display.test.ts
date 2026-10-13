@@ -3,11 +3,13 @@ import type { Doc } from '../../../convex/_generated/dataModel';
 import {
   needsYouItemIds,
   openWorkCount,
+  partlyDoneCount,
   QUEUE_FILTERS,
   queueFilterOf,
   workItemGlossary,
 } from '../../../src/work/state-display';
 import { workItemStateLabel } from '../../../src/work/state-labels';
+import { WALK_EMPLOYEES } from '../../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 
 type State = Doc<'workItems'>['state'];
 
@@ -109,5 +111,39 @@ describe('workItemGlossary', (): void => {
         states: ['claimed', 'executing'],
       },
     ]);
+  });
+});
+
+describe('the Done filter and its count of partly done work (RM23 (a))', (): void => {
+  const none = new Set<string>();
+
+  it('keeps every finished row of the walk under Done and says how many are partly done', (): void => {
+    const read = Object.fromEntries(
+      WALK_EMPLOYEES.map((employee) => {
+        const items = employee.cards.map((card, index) => ({
+          _id: `${employee.name}-${index}`,
+          state: card.state,
+          output: card.output,
+        }));
+        return [
+          employee.name,
+          {
+            done: items.filter((item) => queueFilterOf(item, none) === 'done').length,
+            partly: partlyDoneCount(items, none),
+          },
+        ];
+      }),
+    );
+    expect(read).toEqual({
+      Lark: { done: 3, partly: 2 },
+      Nell: { done: 3, partly: 1 },
+      Pip: { done: 3, partly: 2 },
+    });
+  });
+
+  it('counts no partly done row the inbox lists, which is under Needs you', (): void => {
+    const partly = WALK_EMPLOYEES[0]!.cards[0]!;
+    const item = { _id: 'w1', state: partly.state, output: partly.output };
+    expect(partlyDoneCount([item], new Set(['w1']))).toBe(0);
   });
 });

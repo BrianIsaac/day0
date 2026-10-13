@@ -1731,6 +1731,28 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     );
   });
 
+  it('reads a page of employees in one transaction and goes on in the next, settling every one (W15-R16)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const { SETTLE_AGENTS_PER_SWEEP } = await import('../../convex/workLoop');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded: Array<Awaited<ReturnType<typeof claims>>> = [];
+    for (let agent = 0; agent <= SETTLE_AGENTS_PER_SWEEP; agent += 1) {
+      seeded.push(await claims(harness, Date.now() - LAPSED));
+    }
+    const failure = async (notice: Id<'managerDecisionNotices'>) =>
+      (await harness.run(async (ctx) => await ctx.db.get(notice)))?.failure;
+
+    // The review's probe: the sweep read every employee in one transaction, five reads each.
+    const first = await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    expect(first.settled).toBe(SETTLE_AGENTS_PER_SWEEP * 5);
+    expect(await failure(seeded.at(-1)!.notice)).toBeUndefined();
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    for (const one of seeded) expect(await failure(one.notice)).toBe(MANAGER_CLAIM_LAPSED_REASON);
+    vi.useRealTimers();
+  });
+
   it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

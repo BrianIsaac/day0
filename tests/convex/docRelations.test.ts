@@ -1,60 +1,29 @@
-import { convexTest, type TestConvex } from 'convex-test';
+import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, internal } from '../../convex/_generated/api';
-import type { Doc, Id } from '../../convex/_generated/dataModel';
+import { api } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
-import { DECISION_NOT_OFFERED, standingConflictOf } from '../../convex/docRelations';
+import * as docRelationsModule from '../../convex/docRelations';
+import { DECISION_NOT_OFFERED } from '../../convex/docRelations';
+import { standingConflictOf } from '../../convex/docConflicts';
 import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
-import type { SourceAuthority } from '../../src/docs/authority';
-import { RELATION_PROPOSALS_PER_SYNC } from '../../src/docs/relations';
-import type { SelectionRequest } from '../../src/docs/select';
-import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
-
-type Harness = TestConvex<typeof schema>;
-
-/** A linked source with a sync running. */
-interface Source {
-  readonly sourceId: Id<'docSources'>;
-  readonly runId: Id<'docSyncRuns'>;
-}
-
-const PIPELINE_V1 = [
-  '# Pipeline runbook',
-  '',
-  'How the pipeline tile is refreshed.',
-  '',
-  '## Refresh',
-  '',
-  'Press Refresh once and read back the coverage figure.',
-  '',
-  '## Thresholds',
-  '',
-  'Escalate any variance above 5,000 USD to the finance lead.',
-].join('\n');
-
-const PIPELINE_V2 = [
-  '---',
-  'supersedes: pipeline-runbook',
-  '---',
-  '# Pipeline runbook',
-  '',
-  'How the pipeline tile is refreshed.',
-  '',
-  '## Refresh',
-  '',
-  'Press Refresh twice and read back the coverage figure and the audit line.',
-].join('\n');
-
-const FINANCE = [
-  '# Finance escalation',
-  '',
-  '## Thresholds',
-  '',
-  'Escalate any variance above 10,000 USD to the finance lead.',
-].join('\n');
+import {
+  FINANCE,
+  asManager,
+  employee,
+  eventsOf,
+  measure,
+  pageOf,
+  relations,
+  storedPage,
+  syncingSource,
+  twoThatDisagree,
+  twoVersions,
+  type Harness,
+} from './fakes/doc-relations';
 
 // A decision that supersedes a page re-admits parked work, which schedules its next step.
 beforeEach((): void => {
@@ -64,635 +33,12 @@ afterEach((): void => {
   vi.useRealTimers();
 });
 
-/** An employee of an owner's. */
-async function employee(harness: Harness, name: string, userId = 'owner'): Promise<Id<'agents'>> {
-  return await harness.run(
-    async (ctx) =>
-      await ctx.db.insert('agents', {
-        bossEmail: MANAGER_ADDRESS,
-        name,
-        userId,
-        state: 'deployed',
-        createdAt: 1,
-      }),
-  );
-}
-
-/** A linked source of an owner's with a sync running. */
-async function syncingSource(
-  harness: Harness,
-  label: string,
-  fields: { userId?: string; authority?: SourceAuthority } = {},
-): Promise<Source> {
-  return await harness.run(async (ctx) => {
-    const sourceId = await ctx.db.insert('docSources', {
-      userId: 'owner',
-      label,
-      kind: 'folder',
-      locator: '.',
-      status: 'linking',
-      createdAt: 1,
-      updatedAt: 1,
-      ...fields,
-    });
-    const runId = await ctx.db.insert('docSyncRuns', {
-      sourceId,
-      listing: 1,
-      credentialRefs: [],
-      pageCount: 0,
-      redactionCount: 0,
-      state: 'running',
-      createdAt: 2,
-    });
-    await ctx.db.patch(sourceId, { activeSyncId: runId });
-    return { sourceId, runId };
-  });
-}
-
-/** Store a page of the source with its blocks, as the source's running sync leaves it. */
-async function storedPage(
-  harness: Harness,
-  source: Source,
-  page: { ref: string; title: string; markdown: string; updatedAt?: number },
-): Promise<Id<'docPages'>> {
-  return await harness.run(async (ctx) => {
-    const owner = (await ctx.db.get(source.sourceId))!.userId;
-    const pageId = await ctx.db.insert('docPages', {
-      sourceId: source.sourceId,
-      updatedAt: 1,
-      ...page,
-    });
-    await replacePageBlocks(ctx, {
-      userId: owner,
-      sourceId: source.sourceId,
-      pageRef: page.ref,
-      generation: source.runId,
-      markdown: page.markdown,
-    });
-    return pageId;
-  });
-}
-
-/** Measure a page of a source, as its finishing sync does. */
-async function measure(harness: Harness, source: Source, ref: string): Promise<number> {
-  return await harness.mutation(internal.docRelations.measurePage, {
-    sourceId: source.sourceId,
-    syncRunId: source.runId,
-    ref,
-  });
-}
-
-/** Every relation, oldest first. */
-async function relations(harness: Harness): Promise<Doc<'docRelations'>[]> {
-  return await harness.run(async (ctx) => await ctx.db.query('docRelations').collect());
-}
-
-/** A page's row. */
-async function pageOf(harness: Harness, pageId: Id<'docPages'>): Promise<Doc<'docPages'>> {
-  return await harness.run(async (ctx) => (await ctx.db.get(pageId))!);
-}
-
-/** An employee's events of one type, oldest first, by payload. */
-async function eventsOf(
-  harness: Harness,
-  agentId: Id<'agents'>,
-  type: string,
-): Promise<Array<Record<string, unknown>>> {
-  return await harness.run(async (ctx) =>
-    (
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-        .collect()
-    )
-      .filter((event) => event.type === type)
-      .map((event) => event.payload as Record<string, unknown>),
-  );
-}
-
-/** The wiki's runbook and, in a second source, the version that says it supersedes it. */
-async function twoVersions(harness: Harness): Promise<{
-  wiki: Source;
-  official: Source;
-  v1: Id<'docPages'>;
-  v2: Id<'docPages'>;
-}> {
-  const wiki = await syncingSource(harness, 'Team wiki');
-  const official = await syncingSource(harness, 'Official runbooks', { authority: 'official' });
-  const v1 = await storedPage(harness, wiki, {
-    ref: 'runbooks/pipeline-runbook.md',
-    title: 'Pipeline runbook',
-    markdown: PIPELINE_V1,
-  });
-  const v2 = await storedPage(harness, official, {
-    ref: 'pipeline-runbook-v2.md',
-    title: 'Pipeline runbook',
-    markdown: PIPELINE_V2,
-    updatedAt: 2,
-  });
-  return { wiki, official, v1, v2 };
-}
-
-/** Two equally trusted pages that give different figures under one heading. */
-async function twoThatDisagree(
-  harness: Harness,
-  authority: { handbook?: SourceAuthority; finance?: SourceAuthority } = {},
-): Promise<{ handbook: Source; finance: Source; a: Id<'docPages'>; b: Id<'docPages'> }> {
-  const handbook = await syncingSource(harness, 'Handbook', { authority: authority.handbook });
-  const finance = await syncingSource(harness, 'Finance wiki', { authority: authority.finance });
-  const a = await storedPage(harness, handbook, {
-    ref: 'runbooks/pipeline-runbook.md',
-    title: 'Pipeline runbook',
-    markdown: PIPELINE_V1,
-  });
-  const b = await storedPage(harness, finance, {
-    ref: 'escalation.md',
-    title: 'Finance escalation',
-    markdown: FINANCE,
-    updatedAt: 2,
-  });
-  return { handbook, finance, a, b };
-}
-
-const asManager = (harness: Harness) => harness.withIdentity(managerIdentity());
-
 /** A relation as a conflict that stands, or null. */
 async function standingOf(harness: Harness, relationId: Id<'docRelations'>) {
   return await harness.run(
     async (ctx) => (await standingConflictOf(ctx, await ctx.db.get(relationId))) ?? null,
   );
 }
-
-describe('measurePage: the relations a finishing sync proposes', (): void => {
-  it('proposes a later version in another source as the successor, on each reader’s record, and changes no page', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const { wiki, official, v1, v2 } = await twoVersions(harness);
-    const agentId = await employee(harness, 'Priya');
-    expect(await measure(harness, official, 'pipeline-runbook-v2.md')).toBe(1);
-    const [relation, ...rest] = await relations(harness);
-    expect(rest).toEqual([]);
-    expect(relation).toMatchObject({
-      userId: 'owner',
-      kind: 'possible_successor',
-      status: 'proposed',
-      from: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
-      to: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
-    });
-    expect(relation.evidence[0]).toEqual({ measure: 'names-successor', value: 1 });
-    // Never merged, never decided by code: both pages read as they did.
-    for (const id of [v1, v2]) {
-      expect([
-        (await pageOf(harness, id)).status,
-        (await pageOf(harness, id)).supersededBy,
-      ]).toEqual([undefined, undefined]);
-    }
-    expect(await eventsOf(harness, agentId, 'documentation.relation-proposed')).toEqual([
-      {
-        relationId: relation._id,
-        kind: 'possible_successor',
-        from: {
-          sourceId: official.sourceId,
-          ref: 'pipeline-runbook-v2.md',
-          title: 'Pipeline runbook',
-          source: 'Official runbooks',
-        },
-        to: {
-          sourceId: wiki.sourceId,
-          ref: 'runbooks/pipeline-runbook.md',
-          title: 'Pipeline runbook',
-          source: 'Team wiki',
-        },
-        evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-      },
-    ]);
-  });
-
-  it('proposes a pair once: measured again, or from the other page, it writes nothing', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const { wiki, official } = await twoVersions(harness);
-    expect(await measure(harness, official, 'pipeline-runbook-v2.md')).toBe(1);
-    expect(await measure(harness, official, 'pipeline-runbook-v2.md')).toBe(0);
-    expect(await measure(harness, wiki, 'runbooks/pipeline-runbook.md')).toBe(0);
-    expect(await relations(harness)).toHaveLength(1);
-  });
-
-  it('proposes two pages that disagree on a figure as a conflict, and one the manager set aside again only once its blocks change', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const { handbook, finance } = await twoThatDisagree(harness);
-    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
-    const [conflict] = await relations(harness);
-    expect(conflict).toMatchObject({ kind: 'possible_conflict', status: 'proposed' });
-    expect(conflict.evidence[0]).toMatchObject({ measure: 'heading-figures', value: 1 });
-    expect(conflict.evidence[0].blockRefs).toHaveLength(2);
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId: conflict._id,
-      decision: 'both-hold',
-    });
-    expect(await measure(harness, handbook, 'runbooks/pipeline-runbook.md')).toBe(0);
-    // The finance page is edited to another figure: other blocks disagree now.
-    await harness.run(async (ctx) => {
-      const edited = FINANCE.replace('10,000', '20,000');
-      const page = await ctx.db
-        .query('docPages')
-        .withIndex('by_source_ref', (q) =>
-          q.eq('sourceId', finance.sourceId).eq('ref', 'escalation.md'),
-        )
-        .unique();
-      await ctx.db.patch(page!._id, { markdown: edited });
-      await replacePageBlocks(ctx, {
-        userId: 'owner',
-        sourceId: finance.sourceId,
-        pageRef: 'escalation.md',
-        generation: finance.runId,
-        markdown: edited,
-      });
-    });
-    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
-    expect((await relations(harness)).map((row) => row.status)).toEqual(['dismissed', 'proposed']);
-  });
-
-  it('proposes a conflict again once the one it holds no longer disagrees, and removes the proposal nobody could answer', async (): Promise<void> => {
-    // The second pass's minor 4: a conflict whose blocks no longer disagree is drawn on no card,
-    // so it cannot be answered, and it still counted as held: a later conflict between the same
-    // two pages was never proposed.
-    const harness = convexTest(schema, allConvexModules());
-    const { finance } = await twoThatDisagree(harness);
-    /** Store the finance page again with another figure, as a sync that read an edit does. */
-    const editFinance = async (figure: string): Promise<void> =>
-      await harness.run(async (ctx) => {
-        const edited = FINANCE.replace('10,000', figure);
-        const page = await ctx.db
-          .query('docPages')
-          .withIndex('by_source_ref', (q) =>
-            q.eq('sourceId', finance.sourceId).eq('ref', 'escalation.md'),
-          )
-          .unique();
-        await ctx.db.patch(page!._id, { markdown: edited });
-        await replacePageBlocks(ctx, {
-          userId: 'owner',
-          sourceId: finance.sourceId,
-          pageRef: 'escalation.md',
-          generation: finance.runId,
-          markdown: edited,
-        });
-      });
-    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
-    const [first] = await relations(harness);
-    // Unanswered, and the page is edited to another figure: the row names blocks that are gone.
-    await editFinance('20,000');
-    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toEqual([]);
-    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
-    const afterEdit = await relations(harness);
-    expect(afterEdit.map((row) => [row.kind, row.status])).toEqual([
-      ['possible_conflict', 'proposed'],
-    ]);
-    expect(afterEdit[0]._id).not.toBe(first._id);
-    // A conflict the manager confirmed is their answer and is kept; it blocks nothing once stale.
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId: afterEdit[0]._id,
-      decision: 'disagree',
-    });
-    await editFinance('30,000');
-    expect(await measure(harness, finance, 'escalation.md')).toBe(1);
-    expect((await relations(harness)).map((row) => row.status)).toEqual(['confirmed', 'proposed']);
-  });
-
-  it('measures against the owner’s own active pages only, and proposes nothing for a page that is not current', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const theirs = await syncingSource(harness, 'Their wiki', { userId: 'another-owner' });
-    await storedPage(harness, theirs, {
-      ref: 'runbooks/pipeline-runbook.md',
-      title: 'Pipeline runbook',
-      markdown: PIPELINE_V1,
-    });
-    const mine = await syncingSource(harness, 'Official runbooks');
-    const v2 = await storedPage(harness, mine, {
-      ref: 'pipeline-runbook-v2.md',
-      title: 'Pipeline runbook',
-      markdown: PIPELINE_V2,
-    });
-    expect(await measure(harness, mine, 'pipeline-runbook-v2.md')).toBe(0);
-    // The owner's own copy is superseded already: nothing is proposed against it.
-    const wiki = await syncingSource(harness, 'Team wiki');
-    const v1 = await storedPage(harness, wiki, {
-      ref: 'runbooks/pipeline-runbook.md',
-      title: 'Pipeline runbook',
-      markdown: PIPELINE_V1,
-    });
-    await asManager(harness).mutation(api.docStatus.setPageStatus, {
-      pageId: v1,
-      status: 'superseded',
-      supersededBy: v2,
-    });
-    expect(await measure(harness, mine, 'pipeline-runbook-v2.md')).toBe(0);
-    expect(await measure(harness, wiki, 'runbooks/pipeline-runbook.md')).toBe(0);
-    expect(await relations(harness)).toEqual([]);
-  });
-
-  it('writes nothing for a generation that is neither the source’s running one nor its last completed', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const { wiki, official } = await twoVersions(harness);
-    expect(
-      await harness.mutation(internal.docRelations.measurePage, {
-        sourceId: official.sourceId,
-        syncRunId: wiki.runId,
-        ref: 'pipeline-runbook-v2.md',
-      }),
-    ).toBe(0);
-    expect(await relations(harness)).toEqual([]);
-  });
-});
-
-describe('the pages a finishing sync measures', (): void => {
-  it('are the pages the runs since the last complete walk wrote, found by the blocks they wrote', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    // Three walks of one source, oldest first: two completed, and the one running now.
-    const { sourceId, before, completed, running } = await harness.run(async (ctx) => {
-      const sourceId = await ctx.db.insert('docSources', {
-        userId: 'owner',
-        label: 'Team wiki',
-        kind: 'folder',
-        locator: '.',
-        status: 'linking',
-        createdAt: 1,
-        updatedAt: 1,
-      });
-      const walk = async (state: 'completed' | 'running', createdAt: number) =>
-        await ctx.db.insert('docSyncRuns', {
-          sourceId,
-          listing: createdAt,
-          credentialRefs: [],
-          pageCount: 1,
-          redactionCount: 0,
-          state,
-          createdAt,
-          ...(state === 'completed' ? { completedAt: createdAt } : {}),
-        });
-      const before = await walk('completed', 1);
-      const completed = await walk('completed', 2);
-      const running = await walk('running', 3);
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: completed, activeSyncId: running });
-      return { sourceId, before, completed, running };
-    });
-    await storedPage(
-      harness,
-      { sourceId, runId: before },
-      { ref: 'old.md', title: 'Old', markdown: '# Old\n\nUnchanged for a year.' },
-    );
-    await storedPage(
-      harness,
-      { sourceId, runId: completed },
-      { ref: 'last-walk.md', title: 'Last walk', markdown: '# Last walk\n\nStored last time.' },
-    );
-    await storedPage(
-      harness,
-      { sourceId, runId: running },
-      { ref: 'runbooks/pipeline-runbook.md', title: 'Pipeline runbook', markdown: PIPELINE_V1 },
-    );
-    // This walk and the last complete one: a page the walk before stored is not measured again.
-    expect(
-      await harness.query(internal.docRelations.generationsToMeasure, {
-        sourceId,
-        runId: running,
-      }),
-    ).toEqual([running, completed]);
-    // Once it has completed too, it still looks back one complete walk and no further.
-    expect(
-      await harness.query(internal.docRelations.generationsToMeasure, {
-        sourceId,
-        runId: completed,
-      }),
-    ).toEqual([completed, before]);
-    const written = async (generation: Id<'docSyncRuns'>) =>
-      await harness.query(internal.docRelations.pagesWrittenBy, {
-        sourceId,
-        generation,
-        cursor: null,
-      });
-    expect(await written(running)).toEqual({ refs: ['runbooks/pipeline-runbook.md'], next: null });
-    expect(await written(completed)).toEqual({ refs: ['last-walk.md'], next: null });
-  });
-});
-
-describe('the cap on new proposals a sync (the second pass, minor 8)', (): void => {
-  const WORDS = [
-    'Alpha',
-    'Bravo',
-    'Charlie',
-    'Delta',
-    'Echo',
-    'Foxtrot',
-    'Golf',
-    'Hotel',
-    'India',
-    'Juliet',
-    'Kilo',
-    'Lima',
-    'Mike',
-    'November',
-    'Oscar',
-    'Papa',
-    'Quebec',
-  ];
-
-  /**
-   * Seventeen runbooks in one source, each with three later versions, one in each of three other
-   * sources: measuring a runbook proposes three relations, so seventeen propose fifty-one.
-   */
-  async function versionedLibrary(harness: Harness): Promise<Source> {
-    const first = await syncingSource(harness, 'Runbooks');
-    const later = [
-      await syncingSource(harness, 'Second editions'),
-      await syncingSource(harness, 'Third editions'),
-      await syncingSource(harness, 'Fourth editions'),
-    ];
-    for (const word of WORDS) {
-      const markdown = `# ${word}\n\n${word} procedure, in full.`;
-      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
-      for (const [index, source] of later.entries()) {
-        await storedPage(harness, source, {
-          ref: `${word}-v${index + 2}.md`,
-          title: `${word} v${index + 2}`,
-          markdown,
-          updatedAt: index + 2,
-        });
-      }
-    }
-    return first;
-  }
-
-  it('stops a page’s measure at the room it is given', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const first = await versionedLibrary(harness);
-    expect(
-      await harness.mutation(internal.docRelations.measurePage, {
-        sourceId: first.sourceId,
-        syncRunId: first.runId,
-        ref: 'Alpha.md',
-        room: 1,
-      }),
-    ).toBe(1);
-    expect(await relations(harness)).toHaveLength(1);
-    // With no room given a page proposes every relation its three candidates hold.
-    expect(await measure(harness, first, 'Bravo.md')).toBe(3);
-  });
-
-  it('proposes exactly the cap for a sync whose pages hold more, where the last page measured went over it', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const first = await versionedLibrary(harness);
-    expect(
-      await harness.action(internal.docSyncActions.proposeRelations, {
-        sourceId: first.sourceId,
-        runId: first.runId,
-      }),
-    ).toEqual({ measured: 17, proposed: RELATION_PROPOSALS_PER_SYNC });
-    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
-  });
-});
-
-describe('measuring a library of more pages than one step takes (W15-R5)', (): void => {
-  /** A completed walk of a source: the run a finished sync measures. */
-  async function completedWalk(harness: Harness, sourceId: Id<'docSources'>): Promise<Source> {
-    return await harness.run(async (ctx) => {
-      const runs = await ctx.db
-        .query('docSyncRuns')
-        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
-        .collect();
-      const runId = await ctx.db.insert('docSyncRuns', {
-        sourceId,
-        listing: runs.length + 1,
-        credentialRefs: [],
-        pageCount: 0,
-        redactionCount: 0,
-        state: 'completed',
-        createdAt: runs.length + 2,
-        completedAt: runs.length + 2,
-      });
-      for (const run of runs) {
-        if (run.state === 'running') await ctx.db.patch(run._id, { state: 'completed' });
-      }
-      await ctx.db.patch(sourceId, { lastCompletedSyncId: runId, activeSyncId: undefined });
-      return { sourceId, runId };
-    });
-  }
-
-  /** Measure a completed walk's pages as its finish schedules it, every step of it. */
-  async function measureWalk(harness: Harness, walk: Source): Promise<void> {
-    await harness.action(internal.docSyncActions.proposeRelations, walk);
-    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
-  }
-
-  it('measures the pages past the first hundred: a later version stored 120th is proposed', async (): Promise<void> => {
-    // Reader 2's vt/c.test.ts R2-H: 130 stored pages, only the 121st and 122nd related. Each
-    // page holds four sections, so the walk's blocks are more than one read of them.
-    const harness = convexTest(schema, allConvexModules());
-    const library = await syncingSource(harness, 'Library');
-    for (let index = 0; index < 130; index += 1) {
-      const related = index === 120 || index === 121;
-      const title = related
-        ? index === 120
-          ? 'Zebra quartz runbook'
-          : 'Zebra quartz runbook v2'
-        : `Unrelated topic number ${index} qx${index}`;
-      await storedPage(harness, library, {
-        ref: related ? `zebra-${index}.md` : `p${index}.md`,
-        title,
-        markdown: [
-          ...(index === 121 ? ['---', 'supersedes: zebra-120', '---'] : []),
-          `# ${title}`,
-          '',
-          `Content unique to page ${index} word${index} alpha${index}.`,
-          ...['One', 'Two', 'Three'].flatMap((section) => [
-            '',
-            `## ${section} of ${index}`,
-            '',
-            `Section ${section.toLowerCase()} of page ${index}: beta${index} gamma${index}.`,
-          ]),
-        ].join('\n'),
-        updatedAt: 1 + index,
-      });
-    }
-    await harness.run(
-      async (ctx) =>
-        await ctx.db.patch(library.sourceId, {
-          lastCompletedSyncId: library.runId,
-          activeSyncId: undefined,
-        }),
-    );
-    await measureWalk(harness, library);
-    expect(await relations(harness)).toMatchObject([
-      {
-        kind: 'possible_successor',
-        status: 'proposed',
-        from: { ref: 'zebra-121.md' },
-        to: { ref: 'zebra-120.md' },
-      },
-    ]);
-    // Nothing is owed once every page was measured, and a walk that changes nothing adds nothing.
-    expect(
-      (await harness.run(async (ctx) => await ctx.db.get(library.sourceId)))?.relationsOwed,
-    ).toBeUndefined();
-    await measureWalk(harness, await completedWalk(harness, library.sourceId));
-    expect(await relations(harness)).toHaveLength(1);
-  }, 120_000);
-
-  it('goes on at the next sync from where the cap on new proposals stopped it, and owes nothing once it reaches the end', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    // Seventeen runbooks of three later versions each hold fifty-one relations; two more pages
-    // stored after them hold a fifty-second.
-    const first = await syncingSource(harness, 'Runbooks');
-    const later = [
-      await syncingSource(harness, 'Second editions'),
-      await syncingSource(harness, 'Third editions'),
-      await syncingSource(harness, 'Fourth editions'),
-    ];
-    const words =
-      'Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November Oscar Papa Quebec';
-    for (const word of words.split(' ')) {
-      const markdown = `# ${word}\n\n${word} procedure, in full.`;
-      await storedPage(harness, first, { ref: `${word}.md`, title: word, markdown });
-      for (const [index, source] of later.entries()) {
-        await storedPage(harness, source, {
-          ref: `${word}-v${index + 2}.md`,
-          title: `${word} v${index + 2}`,
-          markdown,
-          updatedAt: index + 2,
-        });
-      }
-    }
-    await storedPage(harness, first, {
-      ref: 'Zulu.md',
-      title: 'Zulu',
-      markdown: '# Zulu\n\nZulu procedure, in full.',
-    });
-    await storedPage(harness, later[0], {
-      ref: 'Zulu-v2.md',
-      title: 'Zulu v2',
-      markdown: '# Zulu\n\nZulu procedure, in full.',
-      updatedAt: 2,
-    });
-    const owed = async () =>
-      (await harness.run(async (ctx) => await ctx.db.get(first.sourceId)))?.relationsOwed;
-    await harness.run(
-      async (ctx) =>
-        await ctx.db.patch(first.sourceId, {
-          lastCompletedSyncId: first.runId,
-          activeSyncId: undefined,
-        }),
-    );
-    await measureWalk(harness, first);
-    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
-    // The cap ended the measuring inside the walk's pages: what is left is kept on the source.
-    expect(await owed()).toEqual({ generations: [first.runId], cursor: null });
-    // The next sync changes no page, so its own walk wrote nothing: it measures what is owed.
-    await measureWalk(harness, await completedWalk(harness, first.sourceId));
-    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
-    expect(await owed()).toBeUndefined();
-    // And two syncs on, the first walk's pages are out of the look-back and still nothing is lost.
-    await measureWalk(harness, await completedWalk(harness, first.sourceId));
-    expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC + 2);
-  }, 120_000);
-});
 
 describe('decide: the manager’s answer on a relation’s card', (): void => {
   it('supersedes the older page when the successor is confirmed, and sends parked work back', async (): Promise<void> => {
@@ -749,6 +95,54 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await eventsOf(harness, agentId, 'documentation.relation-decided')).toMatchObject([
       { relationId: relation._id, kind: 'possible_successor', decision: 'supersedes' },
     ]);
+  });
+
+  it('supersedes the other way when the manager says the proposed direction is wrong (W15-R45’s reverse button)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { wiki, official, v1, v2 } = await twoVersions(harness);
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const [relation] = await relations(harness);
+    // The measures proposed v2 as the later version; the manager says v1 is.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'supersedes',
+      reversed: true,
+    });
+    expect((await relations(harness))[0]).toMatchObject({
+      kind: 'possible_successor',
+      status: 'confirmed',
+      from: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+      to: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+    });
+    expect(await pageOf(harness, v2)).toMatchObject({
+      status: 'superseded',
+      statusSource: 'relation',
+      supersededBy: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+    });
+    expect((await pageOf(harness, v1)).status).toBeUndefined();
+    // Undo takes the turn back with the answer: the card asks again as the measures proposed it
+    // (the second pass), and the page it had superseded is current again.
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'undo',
+    });
+    const undone = (await relations(harness))[0];
+    expect(undone).toMatchObject({
+      status: 'proposed',
+      from: { sourceId: official.sourceId, ref: 'pipeline-runbook-v2.md' },
+      to: { sourceId: wiki.sourceId, ref: 'runbooks/pipeline-runbook.md' },
+    });
+    expect(undone.reversed).toBeUndefined();
+    const restated = await pageOf(harness, v2);
+    expect([restated.status, restated.supersededBy]).toEqual(['active', undefined]);
+    // Reversing is the duplicate card's alone: no other answer has a direction to turn.
+    await expect(
+      asManager(harness).mutation(api.docRelations.decide, {
+        relationId: relation._id,
+        decision: 'keep-both',
+        reversed: true,
+      }),
+    ).rejects.toThrow('Only “supersedes” can be answered the other way round.');
   });
 
   it('answers what became of the older page, which a source’s own word or the manager’s keeps as it was', async (): Promise<void> => {
@@ -1039,6 +433,56 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     expect(await standingOf(harness, conflict._id)).toBeNull();
   });
 
+  it('restores the kind the measures proposed when an answer that changed it is taken back (W15-R22)', async (): Promise<void> => {
+    // The review: a duplicate answered "supersedes" and undone came back a successor, with the
+    // successor's words on its card; a successor answered "Keep both", a duplicate.
+    const harness = convexTest(schema, allConvexModules());
+    const wiki = await syncingSource(harness, 'Team wiki');
+    const copies = await syncingSource(harness, 'Copies');
+    const text = '# Close checklist\n\nTick each line before the close.';
+    await storedPage(harness, wiki, { ref: 'close.md', title: 'Close checklist', markdown: text });
+    await storedPage(harness, copies, {
+      ref: 'close-copy.md',
+      title: 'My close notes',
+      markdown: text.replace('# Close checklist', '# My close notes'),
+      updatedAt: 2,
+    });
+    const { official } = await twoVersions(harness);
+    await measure(harness, copies, 'close-copy.md');
+    await measure(harness, official, 'pipeline-runbook-v2.md');
+    const rows = await relations(harness);
+    const duplicate = rows.find((row) => row.kind === 'possible_duplicate')!;
+    const successor = rows.find((row) => row.kind === 'possible_successor')!;
+    const decide = async (
+      relationId: Id<'docRelations'>,
+      decision: 'supersedes' | 'keep-both' | 'undo',
+    ): Promise<unknown> =>
+      await asManager(harness).mutation(api.docRelations.decide, { relationId, decision });
+    const row = async (relationId: Id<'docRelations'>) =>
+      (await relations(harness)).find((each) => each._id === relationId)!;
+    await decide(duplicate._id, 'supersedes');
+    expect([(await row(duplicate._id)).kind, (await row(duplicate._id)).proposedKind]).toEqual([
+      'possible_successor',
+      'possible_duplicate',
+    ]);
+    await decide(duplicate._id, 'undo');
+    expect([(await row(duplicate._id)).kind, (await row(duplicate._id)).proposedKind]).toEqual([
+      'possible_duplicate',
+      undefined,
+    ]);
+    await decide(successor._id, 'keep-both');
+    await decide(successor._id, 'undo');
+    expect([(await row(successor._id)).kind, (await row(successor._id)).status]).toEqual([
+      'possible_successor',
+      'proposed',
+    ]);
+    // An answer that kept the kind writes none, and its undo changes no kind.
+    await decide(successor._id, 'supersedes');
+    expect((await row(successor._id)).proposedKind).toBeUndefined();
+    await decide(successor._id, 'undo');
+    expect((await row(successor._id)).kind).toBe('possible_successor');
+  });
+
   it('is the owner’s alone', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { official } = await twoVersions(harness);
@@ -1162,6 +606,48 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     ]);
   });
 
+  it('draws a confirmed conflict before the proposals spend the read on their pages (W15-R22)', async (): Promise<void> => {
+    // The review: three proposals of 740,000-character pages spent the 8 MiB the cards may read,
+    // and the confirmed conflict behind them, which holds plans, drew no card.
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [conflict] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: conflict._id,
+      decision: 'disagree',
+    });
+    const body = `# Long\n\n${'x'.repeat(740_000)}`;
+    for (let pair = 0; pair < 3; pair += 1) {
+      await harness.run(async (ctx) => {
+        for (const side of ['a', 'b']) {
+          await ctx.db.insert('docPages', {
+            sourceId: handbook.sourceId,
+            ref: `long-${pair}-${side}.md`,
+            title: `Long ${pair} ${side}`,
+            markdown: body,
+            updatedAt: 1,
+          });
+        }
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: handbook.sourceId, ref: `long-${pair}-b.md` },
+          to: { sourceId: handbook.sourceId, ref: `long-${pair}-a.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 100 }],
+          status: 'proposed',
+          createdAt: 10 + pair,
+        });
+      });
+    }
+    const drawn = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(drawn.map((card) => [card.kind, card.status])).toContainEqual([
+      'possible_conflict',
+      'confirmed',
+    ]);
+    expect(drawn.length).toBeGreaterThan(1);
+  }, 30_000);
+
   it('draws cards only while their pages fit one read, and the rest once those are answered', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness, 'Team wiki');
@@ -1206,254 +692,37 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
   }, 30_000);
 });
 
-describe('a confirmed conflict in a selection and at a plan’s decision (the sixth hold reason; A-3)', (): void => {
-  const request: SelectionRequest = {
-    site: 'plan',
-    title: 'Escalate the variance',
-    summary: 'A variance above the threshold needs the finance lead.',
-    roleFunction: 'Revenue operations coordination',
-    writtenBrowserSurfaces: [],
-  };
+/** What Convex sets on a function a module exports. */
+interface RegisteredFunction {
+  readonly isQuery?: boolean;
+  readonly isMutation?: boolean;
+  readonly isAction?: boolean;
+  readonly isPublic?: boolean;
+  readonly exportArgs?: () => string;
+}
 
-  afterEach((): void => {
-    restoreSurfaceMode();
-  });
-
-  /** Two pages that disagree, mirrored for an employee with autonomous actions on, and the relation. */
-  async function disagreement(harness: Harness) {
-    const pages = await twoThatDisagree(harness);
-    const agentId = await harness.run(async (ctx) => {
-      const agentId = await ctx.db.insert('agents', {
-        bossEmail: MANAGER_ADDRESS,
-        name: 'Priya',
-        userId: 'owner',
-        state: 'deployed',
-        createdAt: 1,
-        autonomousActions: true,
-      });
-      for (const page of await ctx.db.query('docPages').collect()) {
-        await ctx.db.insert('mockDocs', {
-          agentId,
-          slug: `source-${page.ref.replace(/[^a-z0-9]+/gi, '-')}`,
-          title: page.title,
-          body: page.markdown,
-          category: 'team-doc',
-          sourceId: page.sourceId,
-          sourceRef: page.ref,
-          updatedAt: 3,
-        });
-      }
-      // A third page, so the item's words tell pages apart.
-      await ctx.db.insert('mockDocs', {
-        agentId,
-        slug: 'office-holidays',
-        title: 'Office holidays',
-        body: '# Office holidays\n\nClosed in August.',
-        category: 'team-doc',
-        updatedAt: 3,
-      });
-      return agentId;
-    });
-    await measure(harness, pages.finance, 'escalation.md');
-    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
-    return { ...pages, agentId, relationId: relation._id };
-  }
-
-  /** The cite lines a plan-site selection prints for the employee. */
-  async function selection(harness: Harness, agentId: Id<'agents'>) {
-    const snapshot = await harness.query(internal.mock.snapshotInternal, {
-      agentId,
-      selection: request,
-    });
-    return {
-      lines: snapshot.teamDocs.flatMap((doc) =>
-        doc.body.split('\n').filter((line) => line.startsWith('[cite: ')),
-      ),
-      citations: snapshot.documentation?.citations ?? [],
-    };
-  }
-
-  it('tags both pages’ cites [conflict] once the manager confirms it, and no cite before or after it is settled', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, relationId } = await disagreement(harness);
-    // Proposed only: a measure tags nothing.
-    expect((await selection(harness, agentId)).lines.join('\n')).not.toContain('[conflict]');
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'disagree',
-    });
-    const tagged = await selection(harness, agentId);
-    expect(tagged.lines).toEqual(
-      expect.arrayContaining([
-        '[cite: Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Thresholds] [conflict]',
-        '[cite: Finance wiki/escalation.md#Finance escalation > Thresholds] [conflict]',
-      ]),
-    );
-    // Only the passages that disagree are tagged, and each carries what it disagrees with.
-    expect(tagged.lines.filter((line) => line.endsWith('[conflict]'))).toHaveLength(2);
-    const conflicts = tagged.citations.flatMap((citation) =>
-      citation.conflict ? [citation.conflict] : [],
-    );
-    expect(conflicts).toHaveLength(2);
-    expect(conflicts[0]).toEqual({
-      relationId,
-      heading: 'Thresholds',
-      pages: [
-        { title: 'Finance escalation', source: 'Finance wiki' },
-        { title: 'Pipeline runbook', source: 'Handbook' },
-      ],
-    });
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'both-hold',
-    });
-    expect((await selection(harness, agentId)).lines.join('\n')).not.toContain('[conflict]');
-  });
-
-  it('sees a confirmed conflict among any number of other confirmed relations, older or newer', async (): Promise<void> => {
-    // The second pass's major 2: the selection read the owner's oldest 64 confirmed relations of
-    // every kind, and every kept version and settled conflict stays confirmed for good, so past
-    // 64 a newly confirmed conflict tagged no cite and held no plan; and its card, read newest
-    // first, went the same way once 64 later answers stood above it.
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const kept = await syncingSource(harness, 'Kept versions');
-    /** 65 relations the manager confirmed that are no conflict: two versions, both kept. */
-    const keptVersions = async (from: number): Promise<void> =>
-      await harness.run(async (ctx) => {
-        for (let pair = from; pair < from + 65; pair += 1) {
-          await ctx.db.insert('docRelations', {
-            userId: 'owner',
-            from: { sourceId: kept.sourceId, ref: `kept-${pair}-v2.md` },
-            to: { sourceId: kept.sourceId, ref: `kept-${pair}.md` },
-            kind: 'possible_duplicate',
-            evidence: [{ measure: 'shared-text', value: 80 }],
-            status: 'confirmed',
-            decidedAt: 5,
-            createdAt: 5,
-          });
-        }
-      });
-    await keptVersions(0);
-    const { agentId, relationId } = await disagreement(harness);
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'disagree',
-    });
-    await keptVersions(65);
-    const { lines } = await selection(harness, agentId);
-    expect(lines.filter((line) => line.endsWith('[conflict]')).sort()).toEqual([
-      '[cite: Finance wiki/escalation.md#Finance escalation > Thresholds] [conflict]',
-      '[cite: Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Thresholds] [conflict]',
+describe('the functions convex/docRelations.ts registers', (): void => {
+  // The split of its helpers (wave 16, 16-s; decision S-1) moves no registered function: each
+  // `api.docRelations.*` and `internal.docRelations.*` path is a string the app, the sync's
+  // actions and the scheduler hold. The list as `v0.19.0` registered it.
+  it('are the ones it registered at v0.19.0, each of the same kind and visibility', (): void => {
+    const registered = Object.entries(
+      docRelationsModule as unknown as Record<string, RegisteredFunction | undefined>,
+    )
+      .filter(([, value]) => value?.exportArgs !== undefined)
+      .map(([name, value]) => {
+        const kind = value?.isQuery ? 'query' : value?.isMutation ? 'mutation' : 'action';
+        return `${name} ${value?.isPublic === true ? 'public' : 'internal'} ${kind}`;
+      })
+      .sort((left, right) => left.localeCompare(right));
+    expect(registered).toEqual([
+      'decide public mutation',
+      'generationsToMeasure internal query',
+      'listOpen public query',
+      'measurePage internal mutation',
+      'measuringPlan internal query',
+      'pagesWrittenBy internal query',
+      'settleRelationsOwed internal mutation',
     ]);
-    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
-      { _id: relationId, kind: 'possible_conflict', status: 'confirmed' },
-    ]);
-  });
-
-  it('holds a plan that cites the disputed passage for the manager, naming the two pages and the heading, and lets it go once both hold', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, relationId } = await disagreement(harness);
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'disagree',
-    });
-    const { citations } = await selection(harness, agentId);
-    const disputed = citations.find((citation) => citation.conflict !== undefined)!;
-    const workItemId = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('workItems', {
-          agentId,
-          sourceCategory: 'ticket-queue',
-          sourceSystem: 'linear',
-          externalId: 'REVOPS-12',
-          title: 'Escalate the variance',
-          contentSummary: 'A variance above the threshold needs the finance lead.',
-          contentRefs: [],
-          observedAt: 1,
-          createdAt: 1,
-          state: 'plan-pending',
-          plan: {
-            summary: 'Escalate the variance to the finance lead.',
-            steps: ['Message the finance lead when the variance passes the threshold'],
-            expectedOutputType: 'slack-reply',
-            riskNotes: '',
-            reversibility: 'A message.',
-            estimatedMinutes: 5,
-            cites: [{ step: 1, ...disputed }],
-          },
-        }),
-    );
-    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
-      approved: false,
-    });
-    expect(await eventsOf(harness, agentId, 'work.plan-held')).toEqual([
-      {
-        workItemId,
-        reason: 'documentation-conflict',
-        relationId,
-        heading: 'Thresholds',
-        pages: [
-          { title: 'Finance escalation', source: 'Finance wiki' },
-          { title: 'Pipeline runbook', source: 'Handbook' },
-        ],
-      },
-    ]);
-    expect((await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.state).toBe(
-      'plan-pending',
-    );
-    // "Both hold": nothing disputes the passage any more, and the sweep's next look approves it.
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'both-hold',
-    });
-    expect(
-      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
-    ).toEqual({ approved: true });
-  });
-
-  it('holds nothing for a plan that cites other passages of the same pages', async (): Promise<void> => {
-    useSurfaceMode('real');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, relationId } = await disagreement(harness);
-    await asManager(harness).mutation(api.docRelations.decide, {
-      relationId,
-      decision: 'disagree',
-    });
-    const workItemId = await harness.run(
-      async (ctx) =>
-        await ctx.db.insert('workItems', {
-          agentId,
-          sourceCategory: 'ticket-queue',
-          sourceSystem: 'linear',
-          externalId: 'REVOPS-13',
-          title: 'Refresh the tile',
-          contentSummary: 'The tile is stale.',
-          contentRefs: [],
-          observedAt: 1,
-          createdAt: 1,
-          state: 'plan-pending',
-          plan: {
-            summary: 'Refresh the tile.',
-            steps: ['Press Refresh'],
-            expectedOutputType: 'ticket-update',
-            riskNotes: '',
-            reversibility: 'Nothing is written.',
-            estimatedMinutes: 5,
-            cites: [
-              {
-                step: 1,
-                label: 'Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Refresh',
-                blocks: [],
-              },
-            ],
-          },
-        }),
-    );
-    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
-      approved: true,
-    });
   });
 });

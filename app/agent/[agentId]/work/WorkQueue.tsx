@@ -20,13 +20,15 @@ import {
   QUEUE_FILTERS,
   QUEUE_FILTER_NAMES,
   type QueueFilter,
+  partlyDoneCount,
   queueFilterOf,
 } from '@/work/state-display';
 import { PendingDecisionsPanel, pendingDecisionMembers } from './PendingDecisionsPanel';
 import { planApprovalRequest } from './PlanApproval';
 import type { RefusedSkill } from './VerdictSection';
 import { EmptyQueue } from './EmptyQueue';
-import { WorkItemCard } from './WorkItemCard';
+import { WorkItemCard, type HoldingCard } from './WorkItemCard';
+import type { ConflictQuestionRow } from './ConflictQuestion';
 
 /**
  * What the queue says after "Check for new work".
@@ -80,14 +82,18 @@ export function CheckForNewWork({ agentId }: { agentId: Id<'agents'> }) {
 /**
  * The Work tab's filters (`agent-work.html`): All, Needs you, In progress, Done and Skipped, each
  * with its count, one pressed at a time. A filter that holds nothing is still offered, so the
- * row never shifts under the pointer.
+ * row never shifts under the pointer. Done keeps every finished row and says how many of them are
+ * partly done beside its count (RM23 (a)), so no count calls partly done work done.
  */
 export function QueueFilters({
   counts,
+  partly,
   selected,
   onSelect,
 }: {
   counts: Readonly<Record<QueueFilter, number>>;
+  /** How many of the rows under Done finished partly done. */
+  partly: number;
   selected: QueueFilter;
   onSelect: (filter: QueueFilter) => void;
 }) {
@@ -102,6 +108,9 @@ export function QueueFilters({
           onClick={() => onSelect(filter)}
         >
           {QUEUE_FILTER_NAMES[filter]} <span className="tabular-nums">{counts[filter]}</span>
+          {filter === 'done' && partly > 0 ? (
+            <span className="tabular-nums font-normal"> · {partly} partly</span>
+          ) : null}
         </Button>
       ))}
     </div>
@@ -132,7 +141,14 @@ function useItemAnchor(ready: boolean, showAll: () => void): void {
   }, [showAll]);
   useEffect(() => {
     if (!ready || !window.location.hash.startsWith('#item-')) return;
-    const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    // A fragment typed or mangled by hand may not be a valid escape: it names no card (W16-R28).
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+    const card = document.getElementById(id);
     if (!card) return;
     card.scrollIntoView({ block: 'start' });
     card.focus({ preventScroll: true });
@@ -232,6 +248,8 @@ export function WorkQueue({
   agentId,
   workItems,
   openQuestions,
+  conflictQuestions = [],
+  heldByCards,
   surfaces,
   registeredSkillCount,
   charterApproved,
@@ -263,6 +281,10 @@ export function WorkQueue({
   loading?: boolean;
   /** The charter's open questions still waiting on the manager, asked at a plan. */
   openQuestions: Doc<'managerQuestions'>[];
+  /** The conflict questions waiting beside the employee's plans (RM20 (a)). */
+  conflictQuestions?: readonly ConflictQuestionRow[];
+  /** The high-risk reorientation card holding each plan it names, by work item (W-9). */
+  heldByCards?: ReadonlyMap<string, HoldingCard>;
   surfaces: SurfaceRecord[];
   registeredSkillCount: number;
   charterApproved: boolean;
@@ -305,6 +327,7 @@ export function WorkQueue({
     for (const item of items) tally[queueFilterOf(item, needsYou)] += 1;
     return tally;
   }, [items, needsYou]);
+  const partly = useMemo(() => partlyDoneCount(items, needsYou), [items, needsYou]);
   const shown =
     filter === 'all' ? items : items.filter((item) => queueFilterOf(item, needsYou) === filter);
   const queue = useRef<HTMLElement>(null);
@@ -389,7 +412,7 @@ export function WorkQueue({
           <EmptyQueue agentId={agentId} charterApproved={charterApproved} />
         ) : (
           <>
-            <QueueFilters counts={counts} selected={filter} onSelect={setFilter} />
+            <QueueFilters counts={counts} partly={partly} selected={filter} onSelect={setFilter} />
             <PendingDecisionsPanel
               members={pendingDecisionMembers(items)}
               surfaces={surfaces}
@@ -413,6 +436,10 @@ export function WorkQueue({
                   surfaces={surfaces}
                   autonomousActions={autonomousActions}
                   questions={openQuestions.filter((question) => question.workItemId === item._id)}
+                  conflicts={conflictQuestions.filter(
+                    (question) => question.workItemId === item._id,
+                  )}
+                  heldByCard={heldByCards?.get(item._id)}
                   corrections={corrections}
                   agreements={agreements}
                   autonomyChanges={autonomyChanges}

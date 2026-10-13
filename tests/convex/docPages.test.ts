@@ -252,6 +252,10 @@ describe('docPages.listForSource', (): void => {
       'old-c.md': 'long-two.md',
       'old-d.md': 'long-three.md',
     });
+    // And the row says the name is a ref, so the table never quotes it as a title (W15-R48).
+    expect(
+      Object.fromEntries(result.page.map((row) => [row.ref, row.supersededByRef === true])),
+    ).toMatchObject({ 'old-a.md': false, 'old-c.md': true, 'old-d.md': true });
   });
 
   it('returns at most its row bound however many are asked for', async (): Promise<void> => {

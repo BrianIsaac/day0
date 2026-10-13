@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from 'playwright/test';
+import { THEMES, chooseTheme, expectDrawnIn } from './theme';
 
 /**
  * The pinned how-it-works frame, proved the way UX round four proved its prototype
@@ -135,159 +136,191 @@ function observe(page: Page): Promise<{ visible: number[]; active: number; scrol
   });
 }
 
-for (const viewport of WIDTHS) {
-  test.describe(`the pinned how-it-works frame at ${viewport.tag}`, () => {
-    test.use({
-      viewport: { width: viewport.width, height: viewport.height },
-      deviceScaleFactor: 1,
-      isMobile: viewport.mobile,
-      hasTouch: viewport.mobile,
-      colorScheme: 'dark',
-      reducedMotion: 'no-preference',
-    });
+for (const theme of THEMES)
+  for (const viewport of WIDTHS) {
+    test.describe(`the pinned how-it-works frame at ${viewport.tag} in ${theme}`, () => {
+      test.use({
+        viewport: { width: viewport.width, height: viewport.height },
+        deviceScaleFactor: 1,
+        isMobile: viewport.mobile,
+        hasTouch: viewport.mobile,
+        colorScheme: theme,
+        reducedMotion: 'no-preference',
+      });
+      // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+      test.beforeEach(async ({ page }) => {
+        if (theme === 'light') await chooseTheme(page, 'light');
+      });
+      // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+      test.afterEach(async ({ page }) => {
+        await expectDrawnIn(page, theme);
+      });
 
-    for (const speed of SPEEDS) {
-      test(`shows the step's own frame at every reader's stop, scrolled ${speed.tag}`, async ({
-        page,
-      }) => {
-        // The reader scrolls by the frame: the slow pass at 1440 is about 30 s of frames on its
-        // own, which the default 30 s budget cut short on every run, the product unchanged.
-        test.setTimeout(90_000);
-        const errors: string[] = [];
-        page.on('pageerror', (error) => {
-          // The proof runs with no Clerk frontend API to reach, by design (no live service);
-          // the landing is what a visitor sees before, or without, the sign-in script.
-          if (!String(error).includes('failed_to_load_clerk_js')) errors.push(String(error));
-        });
-        await page.goto('/');
-        await page.evaluate(() => document.fonts.ready);
-        await page.waitForTimeout(1500);
+      // The frame's geometry is the theme's to leave alone, so light runs the fast pass only: the
+      // three speeds again doubled the job's longest part, and the walkthrough's slow pass ran past
+      // its budget beside its own dark run (16-T).
+      for (const speed of theme === 'dark' ? SPEEDS : SPEEDS.filter(({ tag }) => tag === 'fast')) {
+        test(`shows the step's own frame at every reader's stop, scrolled ${speed.tag}`, async ({
+          page,
+        }) => {
+          // The reader scrolls by the frame: the slow pass at 1440 is about 30 s of frames on its
+          // own, which the default 30 s budget cut short on every run, the product unchanged.
+          test.setTimeout(90_000);
+          const errors: string[] = [];
+          page.on('pageerror', (error) => {
+            // The proof runs with no Clerk frontend API to reach, by design (no live service);
+            // the landing is what a visitor sees before, or without, the sign-in script.
+            if (!String(error).includes('failed_to_load_clerk_js')) errors.push(String(error));
+          });
+          await page.goto('/');
+          await page.evaluate(() => document.fonts.ready);
+          await page.waitForTimeout(1500);
 
-        for (const stop of viewport.stops) {
-          await page.evaluate(() => scrollTo(0, 0));
-          await page.waitForTimeout(400);
-          for (const [direction, order] of [
-            ['down', STEPS],
-            ['up', [...STEPS].reverse()],
-          ] as const) {
-            for (const step of order) {
-              const samples = await travel(page, await target(page, step, stop), speed.px);
-              await page.waitForTimeout(700);
-              const seen = await observe(page);
-              // Inline there is no tracker to follow: nothing pins, so no step is active.
-              const sequence =
-                stop === 'inline'
-                  ? []
-                  : samples
-                      .map(([, active]) => active)
-                      .filter((active, index, all) => index === 0 || active !== all[index - 1]);
-              const monotonic = sequence.every(
-                (active, index) =>
-                  index === 0 ||
-                  (direction === 'down'
-                    ? active >= (sequence[index - 1] ?? active)
-                    : active <= (sequence[index - 1] ?? active)),
-              );
-              const result: StopResult = {
-                width: viewport.tag,
-                speed: speed.tag,
-                stop,
-                direction,
-                step,
-                scrollY: seen.scrollY,
-                visible: seen.visible,
-                active: seen.active,
-                sequence,
-                pass:
-                  seen.visible.length === 1 &&
-                  seen.visible[0] === step &&
-                  seen.active === step &&
-                  monotonic,
-              };
-              results.push(result);
-              expect.soft(result, `${stop} ${direction} to step ${step}`).toMatchObject({
-                visible: [step],
-                active: step,
-              });
-              expect
-                .soft(
-                  monotonic,
-                  `the active step moved against the scroll: ${sequence.join(' > ')}`,
-                )
-                .toBe(true);
+          for (const stop of viewport.stops) {
+            await page.evaluate(() => scrollTo(0, 0));
+            await page.waitForTimeout(400);
+            for (const [direction, order] of [
+              ['down', STEPS],
+              ['up', [...STEPS].reverse()],
+            ] as const) {
+              for (const step of order) {
+                const samples = await travel(page, await target(page, step, stop), speed.px);
+                await page.waitForTimeout(700);
+                const seen = await observe(page);
+                // Inline there is no tracker to follow: nothing pins, so no step is active.
+                const sequence =
+                  stop === 'inline'
+                    ? []
+                    : samples
+                        .map(([, active]) => active)
+                        .filter((active, index, all) => index === 0 || active !== all[index - 1]);
+                const monotonic = sequence.every(
+                  (active, index) =>
+                    index === 0 ||
+                    (direction === 'down'
+                      ? active >= (sequence[index - 1] ?? active)
+                      : active <= (sequence[index - 1] ?? active)),
+                );
+                const result: StopResult = {
+                  width: viewport.tag,
+                  speed: speed.tag,
+                  stop,
+                  direction,
+                  step,
+                  scrollY: seen.scrollY,
+                  visible: seen.visible,
+                  active: seen.active,
+                  sequence,
+                  pass:
+                    seen.visible.length === 1 &&
+                    seen.visible[0] === step &&
+                    seen.active === step &&
+                    monotonic,
+                };
+                results.push(result);
+                expect.soft(result, `${stop} ${direction} to step ${step}`).toMatchObject({
+                  visible: [step],
+                  active: step,
+                });
+                expect
+                  .soft(
+                    monotonic,
+                    `the active step moved against the scroll: ${sequence.join(' > ')}`,
+                  )
+                  .toBe(true);
+              }
             }
           }
-        }
-        expect(errors).toEqual([]);
+          expect(errors).toEqual([]);
+        });
+      }
+    });
+  }
+
+for (const theme of THEMES) {
+  test.describe(`the landing on a phone in ${theme}`, () => {
+    test.use({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      colorScheme: theme,
+    });
+    // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+    test.beforeEach(async ({ page }) => {
+      if (theme === 'light') await chooseTheme(page, 'light');
+    });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
+    });
+
+    test('fits the screen, with nothing scrolling sideways', async ({ page }) => {
+      await page.goto('/');
+      const widths = await page.evaluate(() => ({
+        page: document.documentElement.scrollWidth,
+        screen: innerWidth,
+      }));
+      expect(widths).toEqual({ page: 390, screen: 390 });
+    });
+
+    test('draws every frame’s window at the band’s height, so no step shows an empty band under it', async ({
+      page,
+    }) => {
+      await page.goto('/');
+      await page.locator('[data-pin-stack]').waitFor();
+      const heights = await page.evaluate(() => {
+        const stack = document.querySelector<HTMLElement>('[data-pin-stack]');
+        return {
+          stack: stack?.offsetHeight ?? 0,
+          windows: Array.from(
+            stack?.querySelectorAll<HTMLElement>(':scope > [data-frame] > *') ?? [],
+            (window) => window.offsetHeight,
+          ),
+        };
       });
-    }
+      expect(heights.windows).toHaveLength(4);
+      expect(heights.windows).toEqual(heights.windows.map(() => heights.stack));
+    });
   });
 }
 
-test.describe('the landing on a phone', () => {
-  test.use({
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-    hasTouch: true,
-    colorScheme: 'dark',
-  });
-
-  test('fits the screen, with nothing scrolling sideways', async ({ page }) => {
-    await page.goto('/');
-    const widths = await page.evaluate(() => ({
-      page: document.documentElement.scrollWidth,
-      screen: innerWidth,
-    }));
-    expect(widths).toEqual({ page: 390, screen: 390 });
-  });
-
-  test('draws every frame’s window at the band’s height, so no step shows an empty band under it', async ({
-    page,
-  }) => {
-    await page.goto('/');
-    await page.locator('[data-pin-stack]').waitFor();
-    const heights = await page.evaluate(() => {
-      const stack = document.querySelector<HTMLElement>('[data-pin-stack]');
-      return {
-        stack: stack?.offsetHeight ?? 0,
-        windows: Array.from(
-          stack?.querySelectorAll<HTMLElement>(':scope > [data-frame] > *') ?? [],
-          (window) => window.offsetHeight,
-        ),
-      };
+for (const theme of THEMES) {
+  test.describe(`the landing under reduced motion in ${theme}`, () => {
+    test.use({
+      viewport: { width: 1440, height: 900 },
+      colorScheme: theme,
+      reducedMotion: 'reduce',
     });
-    expect(heights.windows).toHaveLength(4);
-    expect(heights.windows).toEqual(heights.windows.map(() => heights.stack));
-  });
-});
-
-test.describe('the landing under reduced motion', () => {
-  test.use({
-    viewport: { width: 1440, height: 900 },
-    colorScheme: 'dark',
-    reducedMotion: 'reduce',
-  });
-
-  test('shows every card at once and swaps the frame by opacity alone', async ({ page }) => {
-    await page.goto('/');
-    await page.evaluate(() => scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(300);
-    const cards = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('[data-cards] > *'), (card) => ({
-        opacity: getComputedStyle(card).opacity,
-        animation: getComputedStyle(card).animationName,
-      })),
-    );
-    expect(cards.length).toBeGreaterThan(0);
-    for (const card of cards) expect(card).toEqual({ opacity: '1', animation: 'none' });
-    const swap = await page.evaluate(() => {
-      const frame = document.querySelector('[data-frame]');
-      const style = frame ? getComputedStyle(frame) : null;
-      return { property: style?.transitionProperty, transform: style?.transform };
+    // Light is the viewer's own choice, stored before the page loads; dark is the default (16-T).
+    test.beforeEach(async ({ page }) => {
+      if (theme === 'light') await chooseTheme(page, 'light');
     });
-    expect(swap).toEqual({ property: 'opacity', transform: 'none' });
+    // Held to the theme it ran in, so a light run never passes on a page still drawn dark.
+    test.afterEach(async ({ page }) => {
+      await expectDrawnIn(page, theme);
+    });
+
+    test('shows every card at once and swaps the frame by opacity alone', async ({ page }) => {
+      await page.goto('/');
+      await page.evaluate(() => scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(300);
+      const cards = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[data-cards] > *'), (card) => ({
+          opacity: getComputedStyle(card).opacity,
+          animation: getComputedStyle(card).animationName,
+        })),
+      );
+      expect(cards.length).toBeGreaterThan(0);
+      for (const card of cards) expect(card).toEqual({ opacity: '1', animation: 'none' });
+      const swap = await page.evaluate(() => {
+        const frame = document.querySelector('[data-frame]');
+        const style = frame ? getComputedStyle(frame) : null;
+        return { property: style?.transitionProperty, transform: style?.transform };
+      });
+      expect(swap).toEqual({ property: 'opacity', transform: 'none' });
+    });
   });
-});
+}
 
 test.afterAll(() => {
   const directory = process.env.LANDING_SCROLL_LOG;

@@ -10,12 +10,13 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
-import { useMutation, useQueries } from 'convex/react';
+import { useMutation, useQueries, useQuery } from 'convex/react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { MAX_DECLINE_REASON_LENGTH } from '@/agent/manager-transfer';
 import { deploymentZone } from '@/lib/zone';
+import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
 import { Button } from '../components/Button';
 import { Dialog, DialogFooter } from '../components/Dialog';
 import { Field, INPUT_CLASS } from '../components/Field';
@@ -167,16 +168,25 @@ interface ReadsForItProps {
 
 /**
  * The sources the employee reads once taken on, each ticked until the new manager unticks it,
- * or the line that none is linked.
+ * or the line that none is linked; in the hosted office, what its employees read.
  */
 function ReadsForIt({ documentation, excluded, busy, onRead }: ReadsForItProps) {
+  // The hosted office links nothing, so it says what its employees read instead (RM26 (a)); until
+  // the mode answers, neither line is said, as the home's card and the Documentation page wait.
+  const mode = useQuery(api.config.surfaceMode)?.mode;
   return (
     <fieldset className="grid gap-1.5">
       <legend className="mb-1.5 text-[15px] font-medium text-[var(--color-fg)]">
         {READS_FOR_IT}
       </legend>
       {documentation.length === 0 ? (
-        <p className="text-sm text-[var(--color-muted)]">{NO_DOCUMENTATION}</p>
+        <p className="text-sm text-[var(--color-muted)]">
+          {mode === undefined
+            ? 'Loading'
+            : mode === 'mock'
+              ? MOCK_OFFICE_DOCUMENTATION
+              : NO_DOCUMENTATION}
+        </p>
       ) : (
         <>
           {documentation.map((source) => (

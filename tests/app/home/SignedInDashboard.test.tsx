@@ -147,6 +147,7 @@ const oneEmployeeMetrics = {
       ended: 0,
       medianToEndMs: null,
       completed: 0,
+      partlyDone: 0,
       medianToCompletionMs: null,
       p90ToCompletionMs: null,
     },
@@ -163,6 +164,8 @@ const state = vi.hoisted(() => ({
   sent: [] as string[],
   /** How many employees report to someone else, as `agents.employeesReportingElsewhere` counts. */
   reportingElsewhere: undefined as unknown,
+  /** Whether `config.surfaceMode` has yet to answer. */
+  modeLoading: false,
   /** The manager's finished handovers, as `managerTransfers.departures` lists them. */
   departures: undefined as unknown,
   /** A handover's preview, as `transferAcceptance.transferPreview` answers it. */
@@ -187,7 +190,9 @@ vi.mock('convex/react', () => {
     if (name === 'agents:employeesReportingElsewhere') return state.reportingElsewhere;
     if (name === 'managerTransfers:departures') return state.departures;
     if (name === 'transferAcceptance:transferPreview') return state.preview;
-    if (name === 'config:surfaceMode') return { mode: 'mock', label: 'mock' };
+    if (name === 'config:surfaceMode') {
+      return state.modeLoading ? undefined : { mode: 'mock', label: 'mock' };
+    }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     if (name === 'metrics:forOwner' && shown.length > 0) {
       const [first] = shown;
@@ -231,6 +236,8 @@ vi.mock('convex/react', () => {
       async (): Promise<void> => {
         state.sent.push(getFunctionName(reference));
       },
+    // The export card's actions (16-F), which no test here presses.
+    useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
   };
 });
 
@@ -321,6 +328,29 @@ describe('the signed-in home with nobody deployed', (): void => {
 
   it('keeps the documentation link', (): void => {
     expect(html()).toContain('href="/documentation"');
+  });
+
+  it("says what the hosted office reads on the documentation card, in the Documentation page's sentence (RM26 (a), the v0.19.0 walk's finding 6)", (): void => {
+    const card = /<h2[^>]*>Documentation<\/h2>.*?<\/section>/s.exec(html())?.[0] ?? '';
+    expect(card).toContain(
+      'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.',
+    );
+    expect(card).not.toContain('linked');
+    expect(card).not.toContain('No documentation linked yet');
+    // Nothing is managed there in the hosted office: the link views the seeded pages.
+    expect(card).toMatch(/<a [^>]*href="\/documentation"[^>]*>View<\/a>/);
+  });
+
+  it('names the documentation link only once the mode has answered, so it never reads Manage and then View (W16-R35)', (): void => {
+    state.modeLoading = true;
+    try {
+      const card = /<h2[^>]*>Documentation<\/h2>.*?<\/section>/s.exec(html())?.[0] ?? '';
+      expect(card).toContain('Loading');
+      expect(card).not.toContain('Manage');
+      expect(card).not.toContain('View');
+    } finally {
+      state.modeLoading = false;
+    }
   });
 });
 

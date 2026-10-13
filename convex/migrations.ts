@@ -20,7 +20,7 @@
  */
 import { v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc, Id } from './_generated/dataModel';
+import type { Doc } from './_generated/dataModel';
 import {
   internalAction,
   internalMutation,
@@ -36,6 +36,8 @@ import {
   purgeCredential,
 } from './credentials';
 import { ORGANISATION_SECRET_HOLD_MS } from './organisationSecrets';
+import { planSelectionOf } from './docConflicts';
+import { reseedOfficeDocuments } from './mockSeed';
 import {
   backfillAccessSetByPage,
   backfillWithheldToolsPage,
@@ -48,11 +50,8 @@ import { keepTicketListing, WORK_LISTED_EVENT } from './ticketListings';
 import type { TicketSnapshot } from '../src/work/ticket-ownership';
 import { AGENT_RETIRED_EVENT } from './reset';
 import { backfillLibraryPage, backfillOwnerKeyPage, backfillUseCountPage } from './skillVersions';
-import { replacePageBlocks } from './docBlocks';
-import { log } from '../src/lib/logger';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
 import { avatarById } from '../src/agent/avatar-pets';
-import { pageStatusOf } from '../src/docs/authority';
 import { mirroredDocSlug } from '../src/docs/types';
 import { legacyUnreadRecord, reasonWithoutLegacyRecord } from '../src/docs/sync-record';
 import { deploymentZone } from '../src/lib/zone';
@@ -69,8 +68,10 @@ import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../src/lib/organisa
  * with the kept-identity sweep's reason-word fallback (14-I);
  * `surfaces-messages-tab` (0.17.0) left at 0.19.0, its reader reading the
  * card alone since 13-FS, and `people-not-their-addresses` (0.18.0) with the
- * marker's reader, every reader reading the field since 14-FX (15-K). A
- * deployment's finished row of a migration that left stays as its record.
+ * marker's reader, every reader reading the field since 14-FX (15-K);
+ * `docs-backfill-blocks` (0.18.0) left at 0.20.0, every page a sync stores
+ * having been split as it is stored since 14-I (16-K; K-2). A deployment's
+ * finished row of a migration that left stays as its record.
  */
 export const MIGRATION_NAMES = [
   'surfaces-access-clock',
@@ -99,8 +100,10 @@ export const MIGRATION_NAMES = [
   'surfaces-intake-scope',
   'credentials-organisation-purge',
   'work-decision-closed',
-  'docs-backfill-blocks',
   'docs-blocks-status',
+  'docs-relations-remeasure',
+  'work-selected-blocks',
+  'mock-office-reseed',
 ] as const;
 
 /** One migration's name. */
@@ -173,17 +176,16 @@ const ACCESS_FOLLOW_UP_RELEASE = '0.15.0';
 const SUPERVISION_RELEASE = '0.16.0';
 
 /**
- * The release of retrieval (wave 14): the blocks the documentation search reads, split from every
- * page stored before it (14-I). Its people pass, which lifted the field wave 13 kept as evidence,
- * left at 0.19.0.
- */
-const RETRIEVAL_RELEASE = '0.18.0';
-
-/**
  * The release of document authority (wave 15): the status every block of the documentation
  * search carries, which its search now filters on (15-K).
  */
 const DOCUMENT_AUTHORITY_RELEASE = '0.19.0';
+
+/**
+ * The release of reorientation and the figures (wave 16): the dated successor signal's one
+ * measure of the library stored before it (16-K; RM19 (a), K-3).
+ */
+const REORIENTATION_RELEASE = '0.20.0';
 
 /** Every migration's description, keyed by name. */
 export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> = {
@@ -319,16 +321,28 @@ export const MIGRATIONS: Readonly<Record<MigrationName, MigrationDescription>> =
     does: 'records every decided request’s close edit claimed before the edit kept its result as made, as the release that claimed it took it, so the sweep that releases a close claim lost before its result finds only claims made from this release; a claim with a result, an unclaimed close and a row with no request are left',
     thenRemoves: 'nothing: the close records its result from here on',
   },
-  'docs-backfill-blocks': {
-    release: RETRIEVAL_RELEASE,
-    does: 'splits the stored, already redacted Markdown of every documentation page into the blocks the search index reads, under its source’s owner and the source’s last completed sync (its running one, or its newest, for a source that never completed); it asks nothing of the redaction component and changes no page; a page whose blocks already match is left, a page of a removed source is passed over, and mock mode stores no page',
-    thenRemoves: 'nothing: every page a sync writes from this release is split as it is stored',
-  },
   'docs-blocks-status': {
     release: DOCUMENT_AUTHORITY_RELEASE,
     does: 'writes active as the status of every block of the documentation search, the status every page had before this release, so the search’s filter on status finds it; a block that has a status is left, and mock mode stores no block',
     thenRemoves:
       'nothing: every block a split writes from this release carries its page’s status (15-A)',
+  },
+  'docs-relations-remeasure': {
+    release: REORIENTATION_RELEASE,
+    does: 'marks the relations measure owed, from its start, on every documentation source that stores a page, so the existing library is measured once by the dated successor signal; it measures nothing itself, a source with no stored page owes nothing, a source already owed keeps the place its measure reached, and mock mode stores no page',
+    thenRemoves:
+      'nothing: every page a sync stores from this release is measured by the signal as it is stored, and the measure clears each source’s mark as it reaches the end (16-FD)',
+  },
+  'work-selected-blocks': {
+    release: REORIENTATION_RELEASE,
+    does: 'keeps on every open work item whose plan cites nothing, and which has no kept selection, the blocks its newest plan selection record named, each at its hash now, so a conflict confirmed on them is asked and stops the run however many selections followed; an item whose record is no longer among the employee’s newest, or whose newer selection failed, gets an empty list, which reads as none, an item with cites or a kept selection is left, and mock mode makes no selection',
+    thenRemoves:
+      'nothing: every plan selection from this release is kept on its item as it is made (16-FD)',
+  },
+  'mock-office-reseed': {
+    release: REORIENTATION_RELEASE,
+    does: 'rewrites the documents each mock-mode employee’s hosted office already holds to the shipped text, so an office seeded before this release reads the shipped Slack guide and not the one that taught a draft held for the manager’s approval; a document that already reads as shipped, one the manager’s own documentation mirrors and every other row of the office are left, no document, message or channel is added, and a real-mode employee has no office',
+    thenRemoves: 'nothing: an office is seeded from the shipped text when its employee is deployed',
   },
   'surfaces-access-clock': {
     release: FIRST_MIGRATIONS_RELEASE,
@@ -950,115 +964,15 @@ const MIGRATION_PAGES: Readonly<
   'skills-owner-key': async (ctx, cursor) => await backfillOwnerKeyPage(ctx, cursor),
   'credentials-organisation-purge': purgeExpiredOrganisationSecrets,
   'work-decision-closed': recordClaimedCloses,
-  'docs-backfill-blocks': backfillBlocks,
   'docs-blocks-status': stampBlockStatus,
+  'docs-relations-remeasure': markRemeasureOwed,
+  'work-selected-blocks': keepPlanSelections,
+  'mock-office-reseed': reseedMockOffices,
 };
 
 /**
- * Stored pages one page of the block backfill reads: one, so a page of the pass writes one stored
- * page's blocks at most, which its bounded heading paths keep under a transaction's 16 MiB however
- * the page is cut (W14-R1: four pages a transaction let two pages of long nested headings write
- * past it, and the pass then failed on every call).
- */
-const BLOCK_BACKFILL_READ = { numItems: 1, maximumBytesRead: 1024 * 1024 } as const;
-
-/** The pages a pass-over note names before it counts the rest. */
-const PASSED_OVER_NAMED = 10;
-
-/**
- * The block backfill's note with one more page it could not split (W14-R1), read back from the
- * note it already holds: the count, then the first pages by ref.
- */
-export function passedOverNote(previous: string | undefined, ref: string): string {
-  const held = /^(\d+) pages? could not be split[^:]*: (.*?)(?: and \d+ more)?\.$/.exec(
-    previous ?? '',
-  );
-  const count = (held === null ? 0 : Number(held[1])) + 1;
-  const named = held === null ? [] : held[2].split(', ');
-  const listed = named.length < PASSED_OVER_NAMED ? [...named, ref] : named;
-  const more = count - listed.length;
-  return `${count} ${count === 1 ? 'page' : 'pages'} could not be split into sections for the documentation search, so the search does not find ${count === 1 ? 'it' : 'them'}: ${listed.join(', ')}${more > 0 ? ` and ${more} more` : ''}.`;
-}
-
-/**
- * Pass over the stored page the block backfill stands at, which it could not split, and record it
- * in the pass's note (W14-R1). Internal; `runPending` calls it when that page's run fails twice, so
- * the pass goes on to the next page and the passes after it still run. The page keeps its
- * Markdown and is split again when a sync next stores it.
- */
-export const passOverBlockPage = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<MigrationProgress> => {
-    const name = 'docs-backfill-blocks';
-    const row = await migrationRow(ctx, name);
-    if (row?.completedAt !== undefined) return { ...progressOf(name, row), finishedEarlier: true };
-    const page = await ctx.db
-      .query('docPages')
-      .paginate({ ...BLOCK_BACKFILL_READ, cursor: row?.cursor ?? null });
-    const [stored] = page.page;
-    return await recordPage(ctx, name, row, {
-      read: page.page.length,
-      changed: 0,
-      cursor: page.continueCursor,
-      isDone: page.isDone,
-      ...(stored === undefined ? {} : { note: passedOverNote(row?.note, stored.ref) }),
-    });
-  },
-});
-
-/** Whose blocks a source's pages are, and the run they are filed under; null for a gone source. */
-async function blockOwnerOf(
-  ctx: MutationCtx,
-  sourceId: Id<'docSources'>,
-): Promise<{ userId: string; generation: Id<'docSyncRuns'> } | null> {
-  const source = await ctx.db.get(sourceId);
-  if (source === null) return null;
-  const generation =
-    source.lastCompletedSyncId ??
-    source.activeSyncId ??
-    (
-      await ctx.db
-        .query('docSyncRuns')
-        .withIndex('by_source', (q) => q.eq('sourceId', sourceId))
-        .order('desc')
-        .first()
-    )?._id;
-  return generation === undefined ? null : { userId: source.userId, generation };
-}
-
-/**
- * One page of the block backfill (14-I): split each stored page's Markdown, as stored, into its
- * blocks. The Markdown was redacted when the sync stored it, so nothing is redacted again; a page
- * whose blocks already match changes nothing, so a second run changes nothing. Each block is
- * written under its page's status, so a run over a page that is no longer current leaves it out
- * of the search as it was.
- */
-async function backfillBlocks(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
-  const page = await ctx.db.query('docPages').paginate({ ...BLOCK_BACKFILL_READ, cursor });
-  const owners = new Map<Id<'docSources'>, Awaited<ReturnType<typeof blockOwnerOf>>>();
-  let changed = 0;
-  for (const stored of page.page) {
-    if (!owners.has(stored.sourceId)) {
-      owners.set(stored.sourceId, await blockOwnerOf(ctx, stored.sourceId));
-    }
-    const owner = owners.get(stored.sourceId);
-    if (owner === null || owner === undefined) continue;
-    const written = await replacePageBlocks(ctx, {
-      ...owner,
-      sourceId: stored.sourceId,
-      pageRef: stored.ref,
-      markdown: stored.markdown,
-      // The page's own status: the writer patches a kept block that says otherwise (15-A).
-      status: pageStatusOf(stored),
-    });
-    if (written > 0) changed += 1;
-  }
-  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
-}
-
-/**
- * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the block
- * backfill is, since each patch writes its block again; a CJK block's text and search text can
+ * Blocks one page of the status pass reads: bounded by bytes as well as rows, as the 0.18.0 block
+ * backfill was, since each patch writes its block again; a CJK block's text and search text can
  * reach about 16 KB (`SEARCH_BLOCKS_LIMIT`, `convex/docBlocks.ts`), so the byte bound ends a page
  * of such blocks at about 256.
  */
@@ -1078,6 +992,136 @@ async function stampBlockStatus(ctx: MutationCtx, cursor: string | null): Promis
     changed += 1;
   }
   return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/**
+ * Sources one page of the remeasure pass reads: an owner links a handful, and each row is small,
+ * bounded by bytes as well as rows as the other passes are.
+ */
+const REMEASURE_SOURCES_READ = { numItems: 100, maximumBytesRead: 4 * 1024 * 1024 } as const;
+
+/**
+ * One page of the relations remeasure pass (16-K; RM19 (a), K-3): every source that stores a page
+ * is marked owed the measure from its start (`relationsRemeasure`, a null cursor), which 16-FD's
+ * measure reads and clears; the pass measures nothing. A source with no stored page owes nothing
+ * (its pages are measured as a sync stores them), and one already marked keeps the place its
+ * measure reached, so a second run changes nothing. Once the measure clears a mark, an absent
+ * `relationsRemeasure` reads the same as one never set: the pass runs once on a deployment (a
+ * finished migration is never run again), so nothing marks the source a second time.
+ */
+async function markRemeasureOwed(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('docSources').paginate({ ...REMEASURE_SOURCES_READ, cursor });
+  let changed = 0;
+  for (const source of page.page) {
+    if (source.relationsRemeasure !== undefined) continue;
+    const stored = await ctx.db
+      .query('docPages')
+      .withIndex('by_source', (q) => q.eq('sourceId', source._id))
+      .first();
+    if (stored === null) continue;
+    await ctx.db.patch(source._id, { relationsRemeasure: { cursor: null } });
+    changed += 1;
+  }
+  return { read: page.page.length, changed, cursor: page.continueCursor, isDone: page.isDone };
+}
+
+/** The states of a work item whose plan may still run, so its selection may still be read. */
+const SELECTION_OWED_STATES: ReadonlySet<string> = new Set([
+  'plan-pending',
+  'plan-approved',
+  'executing',
+  'actions-pending',
+  'failed',
+]);
+
+/**
+ * The employee's newest plan selection records the selection pass looks through for an item's own:
+ * the decision read 64, which a busy employee's later selections pushed the item's past (W16-R11).
+ * A record names up to 512 block ids, so the read stays near 3.5 MiB.
+ */
+const SELECTION_RECORDS_READ = 200;
+
+/** The most block ids of one record the pass resolves: the selection's own bound. */
+const SELECTION_BLOCKS_READ = 512;
+
+/** Whether an item's plan cites nothing and no selection is kept on it, so the pass owes it one. */
+function selectionOwed(row: Doc<'workItems'>): boolean {
+  if (!SELECTION_OWED_STATES.has(row.state) || row.plan === undefined) return false;
+  if (row.selectedBlocks !== undefined) return false;
+  const cites = (row.plan as { cites?: unknown } | null)?.cites;
+  return !Array.isArray(cites) || cites.length === 0;
+}
+
+/**
+ * One page of the kept selection pass (16-PT; W16-R11): an open item whose plan cites nothing and
+ * that was selected before 0.20.0 has no kept selection, and the record its conflict checks fall
+ * back to drops out of the employee's newest 64 once later items are selected, after which it is
+ * asked nothing and never stopped. Each such item gets the blocks its newest plan-site record named,
+ * each at the block's hash now (the record holds ids only; a block rewritten in place reads at its
+ * new hash), or an empty list where no record is left among the newest or a newer selection failed (the plan
+ * read the whole mirror), which reads as none. One
+ * owed item is kept a call, since its record's blocks are read whole: a page with more is read
+ * again, and the items already kept are passed over.
+ */
+async function keepPlanSelections(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  if (SURFACE_MODE !== 'real') return { read: 0, changed: 0, cursor: '', isDone: true };
+  // An empty cursor is the first page read again: it held a second owed item (below).
+  const from = cursor === '' ? null : cursor;
+  const page = await ctx.db.query('workItems').paginate({ ...LARGE_ROWS_READ, cursor: from });
+  const owed = page.page.filter(selectionOwed);
+  const [first] = owed;
+  if (first === undefined) {
+    return { read: page.page.length, changed: 0, cursor: page.continueCursor, isDone: page.isDone };
+  }
+  // The item's newest plan-site selection as the conflict checks read it: a failure newer than the
+  // newest record means the plan was drafted from the whole mirror, and keeps no list.
+  const selection = await planSelectionOf(ctx, first, SELECTION_RECORDS_READ);
+  const blockIds =
+    selection === undefined || selection === 'fell-back'
+      ? []
+      : selection.blockIds.slice(0, SELECTION_BLOCKS_READ);
+  const selectedBlocks: NonNullable<Doc<'workItems'>['selectedBlocks']> = [];
+  for (const id of blockIds) {
+    const blockId = ctx.db.normalizeId('docBlocks', id);
+    const block = blockId === null ? null : await ctx.db.get(blockId);
+    if (block !== null) selectedBlocks.push({ id: block._id, hash: block.hash });
+  }
+  await ctx.db.patch(first._id, { selectedBlocks });
+  // The page is read again while it holds another owed item; the read is counted once, when it ends.
+  const more = owed.length > 1;
+  return {
+    read: more ? 0 : page.page.length,
+    changed: 1,
+    cursor: more ? (from ?? '') : page.continueCursor,
+    isDone: more ? false : page.isDone,
+  };
+}
+
+/** Employees one page of the office reseed reads: each rewrites at most its office's documents. */
+const OFFICE_RESEED_AGENTS = 25;
+
+/**
+ * One page of the hosted office reseed (16-PT; W16-R15, D-10 (a)): the documents the office of each
+ * mock-mode employee already holds are brought up to the shipped text
+ * (`mockSeed.reseedOfficeDocuments`). 0.20.0 moved the seeded Slack guide (16-FW), and an office
+ * seeded before it kept the guide whose examples the approval-tense tripwire reads. An employee
+ * counts as read when it has an office, and as changed when one of its documents was rewritten.
+ */
+async function reseedMockOffices(ctx: MutationCtx, cursor: string | null): Promise<MigrationPage> {
+  const page = await ctx.db.query('agents').paginate({ numItems: OFFICE_RESEED_AGENTS, cursor });
+  let read = 0;
+  let changed = 0;
+  for (const agent of page.page) {
+    if ((agent.mode ?? SURFACE_MODE) !== 'mock') continue;
+    const office = await ctx.db
+      .query('mockDocs')
+      .withIndex('by_agent_slug', (q) => q.eq('agentId', agent._id))
+      .first();
+    if (office === null) continue;
+    read += 1;
+    if ((await reseedOfficeDocuments(ctx, agent._id)) > 0) changed += 1;
+  }
+  return { read, changed, cursor: page.continueCursor, isDone: page.isDone };
 }
 
 /** A migration's row, if it has started. */
@@ -1207,7 +1251,6 @@ export const recordActionPage = internalMutation({
  * and record where it reached.
  */
 async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<MigrationProgress> {
-  if (name === 'docs-backfill-blocks') return await runBlockBackfillPage(ctx);
   if (!isActionMigration(name)) {
     return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
   }
@@ -1219,28 +1262,6 @@ async function runNextPage(ctx: ActionCtx, name: MigrationName): Promise<Migrati
     fromCursor: start.cursor,
     page,
   });
-}
-
-/**
- * Run the block backfill's next page, tried twice; a page that fails both is passed over and named
- * in the pass's note (W14-R1), so one page the backend will not write never stops the upgrade.
- */
-async function runBlockBackfillPage(ctx: ActionCtx): Promise<MigrationProgress> {
-  const name = 'docs-backfill-blocks';
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      return await ctx.runMutation(internal.migrations.runMigrationPage, { name });
-    } catch (error) {
-      // Each failure is logged with its reason, so a fault that is not the page's own (a bug, a
-      // backend restart) is seen in the log beside the page it passed over.
-      log.warn('migration page failed', {
-        migration: name,
-        attempt,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-  return await ctx.runMutation(internal.migrations.passOverBlockPage, {});
 }
 
 /**

@@ -45,6 +45,8 @@ const SCHEDULED_JOBS = {
     await ctx.runMutation(internal.transferAcceptance.settleDue, {}),
   'sourceRevocation:expireOverdue': async (ctx: ActionCtx): Promise<unknown> =>
     await ctx.runMutation(internal.sourceRevocation.expireOverdue, {}),
+  'reorientation:reopenDeferred': async (ctx: ActionCtx): Promise<unknown> =>
+    await ctx.runMutation(internal.reorientation.reopenDeferred, {}),
 } as const;
 
 /** A job `runScheduledJob` knows, named by the function it runs. */
@@ -152,6 +154,12 @@ crons.interval('settle finishing handovers', { minutes: 1 }, gate, {
 // scheduled purge was lost.
 crons.interval('close revocations past their 24 hours', { hours: 1 }, gate, {
   job: 'sourceRevocation:expireOverdue',
+});
+
+// A deferred reorientation card opens again on its date (A21); a quarter hour is the most a card
+// whose date has come waits for the sweep.
+crons.interval('reopen deferred reorientation cards', { minutes: 15 }, gate, {
+  job: 'reorientation:reopenDeferred',
 });
 
 export default crons;

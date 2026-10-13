@@ -32,6 +32,13 @@ export const RELATION_PAGES_PER_STEP = 100;
 /** The most other pages one page is measured against: the best of what its title and headings find. */
 export const RELATION_CANDIDATES_PER_PAGE = 3;
 
+/**
+ * How far apart two copies' edit times in their sources must be for the later to be proposed as
+ * the successor of the earlier (wave 16, 16-FD; RM19 (a)): a day, so two copies saved in one
+ * sitting stay a duplicate.
+ */
+export const DATED_SUCCESSOR_GAP_MS = 24 * 60 * 60 * 1000;
+
 /** The most block hashes one measure of a proposal keeps, so a relation row stays small. */
 export const RELATION_EVIDENCE_BLOCKS = 8;
 
@@ -52,8 +59,13 @@ export interface MeasuredPage {
   /** The page's Markdown as stored, for its front matter. */
   readonly markdown: string;
   readonly blocks: readonly MeasuredBlock[];
-  /** When the source last had the page: read only to order a pair nothing else orders. */
+  /** When the source last had the page: orders a pair nothing else orders. */
   readonly updatedAt: number;
+  /**
+   * Whether `updatedAt` is when the source says the page was edited, rather than when its reader
+   * read it (a list of URLs, an MCP server): only an edit time dates a successor (RM19 (a)).
+   */
+  readonly edited: boolean;
 }
 
 /** One measure's finding, as a relation row keeps it. */
@@ -276,7 +288,11 @@ export function headingFigures(
  * - a successor, when a page's front matter names the other, or the titles are one series the
  *   words order;
  * - a conflict, when under one heading the two say the same sentence with other figures;
- * - a duplicate, when they share `SHARED_TEXT_DUPLICATE` percent of their text or more.
+ * - a successor, when they share `SHARED_TEXT_DUPLICATE` percent of their text or more and their
+ *   sources dated their edits `DATED_SUCCESSOR_GAP_MS` or more apart, the later the successor
+ *   (wave 16, 16-FD; RM19 (a): a copy edited later is most often its next version, and the
+ *   manager confirms it on the card with both dates before anything reads it so);
+ * - a duplicate, when they share that much text and nothing dates one after the other.
  *
  * For a pair nothing orders, the page its source had later is `from`: recency orders the card's
  * question, and changes no page's status (A5).
@@ -313,8 +329,15 @@ export function measureRelation(
   if (later !== undefined) return { kind: 'possible_successor', ...ordered(later), evidence };
   const newer = left.updatedAt > right.updatedAt ? 'left' : 'right';
   if (conflicts.length > 0) return { kind: 'possible_conflict', ...ordered(newer), evidence };
-  if (shared.share >= SHARED_TEXT_DUPLICATE) {
-    return { kind: 'possible_duplicate', ...ordered(newer), evidence };
+  if (shared.share < SHARED_TEXT_DUPLICATE) return undefined;
+  const apart = Math.abs(left.updatedAt - right.updatedAt);
+  if (left.edited && right.edited && apart >= DATED_SUCCESSOR_GAP_MS) {
+    const days = Math.floor(apart / DATED_SUCCESSOR_GAP_MS);
+    return {
+      kind: 'possible_successor',
+      ...ordered(newer),
+      evidence: [...evidence, { measure: 'edit-dates', value: days }],
+    };
   }
-  return undefined;
+  return { kind: 'possible_duplicate', ...ordered(newer), evidence };
 }

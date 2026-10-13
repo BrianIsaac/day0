@@ -175,6 +175,8 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'agreement.activated': DECISIONS,
   'agreement.refused': REFUSED,
   'agreement.retired': DECISIONS,
+  'agreement.check-owed': NONE,
+  'agreement.checked': DECISIONS,
   'work.draft-resumed': NONE,
   'work.execution-resumed': NONE,
   'work.plan-held': NONE,
@@ -219,6 +221,13 @@ export const RECORD_FILTER_OF: { readonly [Type in EventType]: readonly RecordFi
   'work.manager-note-failed': WRITES,
   'work.manager-digest-sending': WRITES,
   'work.manager-digest-failed': WRITES,
+  'reorientation.opened': CHARTER,
+  'reorientation.proposed': CHARTER,
+  'reorientation.reopened': CHARTER,
+  'reorientation.approved': ['charter', 'decisions'],
+  'reorientation.dismissed': ['charter', 'decisions'],
+  'reorientation.deferred': ['charter', 'decisions'],
+  'manager.question-asked': DECISIONS,
 };
 
 /**

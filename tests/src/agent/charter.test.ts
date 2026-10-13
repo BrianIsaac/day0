@@ -33,6 +33,12 @@ import {
 } from '../../fixtures/charter-paraphrase-2026-09-30';
 import { REDEPLOY_NELL_DRAFT_2026_10_07 } from '../../fixtures/charter-redeploy-nell-2026-10-07';
 import { runThroughBody } from '../../fixtures/run-through-charter-2026-09-14';
+import {
+  LARK_ANSWERS_2026_10_11,
+  LARK_DRAFT_2026_10_11,
+  PIP_ANSWERS_2026_10_11,
+  PIP_DRAFT_2026_10_11,
+} from '../../fixtures/charter-hosted-walk-v0190-2026-10-11';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -259,6 +265,22 @@ describe('the evidence guard', (): void => {
     expect(rendered).toContain('  - Priya: pipeline; intro path: manager');
     expect(rendered).toContain('  - Finance ops: never booking revenue');
   });
+
+  it('closes an answered question the manager left unpunctuated before its answer (W15-R39)', (): void => {
+    const rendered = renderCharter({
+      ...runThroughBody(),
+      answeredQuestions: [
+        {
+          question: 'Which carrier handles Asia',
+          answer: 'DHL',
+          answeredAt: '2026-10-10T00:00:00.000Z',
+        },
+        { question: '谁负责周报？', answer: 'Aiko。', answeredAt: '2026-10-10T00:00:00.000Z' },
+      ],
+    });
+    expect(rendered).toContain('  - Which carrier handles Asia? Answer: DHL');
+    expect(rendered).toContain('  - 谁负责周报？ Answer: Aiko。');
+  });
 });
 
 describe('the charter prompt', (): void => {
@@ -444,13 +466,20 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
       'Promise a refund in a reply.',
     );
     const index = wren.constraints!.findIndex((rule) => rule.quote === refund);
+    // Re-pinned for RM27 (16-FX): the escalation clause is Wren's own routing sentence, "If a reply
+    // might involve a refund, talk to me before promising anything.", which now draws a rule of
+    // its own, so the refund rule's strike keeps it for that rule. "Go through me for both.", which
+    // binds it too without carrying it, is still not why it stays (the pre-tag bed's case).
     expect(strikePreview(wren, index)).toMatchObject({
-      removedClauses: [
-        'Promise a refund in a reply.',
-        'If a reply might involve a refund, talk to the manager before promising anything.',
-      ],
+      removedClauses: ['Promise a refund in a reply.'],
     });
-    expect(strikePreview(wren, index).keptClauses).toBeUndefined();
+    expect(strikePreview(wren, index).keptClauses).toEqual([
+      {
+        clause: 'If a reply might involve a refund, talk to the manager before promising anything.',
+        because: 'another-rule',
+        rule: 'If a reply might involve a refund, talk to me before promising anything.',
+      },
+    ]);
   });
 
   it("keeps Sage's main duty when its approval rule is struck, and says so (W13-R7)", (): void => {
@@ -671,6 +700,115 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     expect(CHARTER_SYSTEM_PROMPT).toContain(
       'shortTermGoals.stated says, for each of day30, day60 and day90, whether the manager gave that goal: false when they gave none, and that goal then says no goal was given rather than inventing one.',
     );
-    expect(CHARTER_SYSTEM_PROMPT).toBe(GLM_BINDS_PROMPT_2026_10_05);
+    // Re-pinned for RM27 (16-FX, 12 October 2026): the recorded drafts' prompt with the routing
+    // line added before the constraints' lines, and nothing else moved (the standard's 15.2).
+    expect(
+      CHARTER_SYSTEM_PROMPT.replace(
+        'A sentence that routes work through the manager ("through me", "go through me", "talk to me first", "ask me first", "check with me first", "run it by me") is a reporting-line rule: write an escalationTriggers clause that sends that work to the manager first, and list the rule as a reporting-line constraint quoting the sentence and binding that clause.\n',
+        '',
+      ),
+    ).toBe(GLM_BINDS_PROMPT_2026_10_05);
+  });
+});
+
+describe("a manager's routing sentence and the will-not-do heading (the v0.19.0 walk's finding 8, RM27)", (): void => {
+  const walkArgs = (answers: readonly string[]): Parameters<typeof assemble>[1] => ({
+    answers: Object.fromEntries(
+      DAY_ONE_TOPICS.map((topic, at): [string, string] => [topic, answers[at]!]),
+    ) as Parameters<typeof userPrompt>[0],
+    version: '0.0',
+    bossLabel: 'Manager',
+    office: MOCK_OFFICE_NAMED_SYSTEMS,
+  });
+  const pip = (): Charter =>
+    assemble(
+      charterSchema.parse(PIP_DRAFT_2026_10_11),
+      walkArgs(PIP_ANSWERS_2026_10_11),
+      '2026-10-11T14:38:00.000Z',
+    );
+  const lark = (): Charter =>
+    assemble(
+      charterSchema.parse(LARK_DRAFT_2026_10_11),
+      walkArgs(LARK_ANSWERS_2026_10_11),
+      '2026-10-11T14:38:00.000Z',
+    );
+
+  it('asks the drafter to write a routing sentence as an Escalates clause and a reporting-line rule bound to it', (): void => {
+    expect(CHARTER_SYSTEM_PROMPT).toContain(
+      'A sentence that routes work through the manager ("through me", "go through me", "talk to me first", "ask me first", "check with me first", "run it by me") is a reporting-line rule: write an escalationTriggers clause that sends that work to the manager first, and list the rule as a reporting-line constraint quoting the sentence and binding that clause.',
+    );
+  });
+
+  it('draws an Escalates clause and a rule bound to it from Pip\'s "Through me for now." where the draft routed nothing through the manager', (): void => {
+    const charter = pip();
+    expect(charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Escalate to the support lead when a reply needs a tone call or an escalation.',
+      'Escalate to product when an ask turns out to be a bug report.',
+      'Escalate to the manager when a reply would require promising a refund.',
+      'Go through the manager for now.',
+    ]);
+    const rule = charter.constraints?.find((c) => c.quote === 'Through me for now.');
+    expect(rule).toMatchObject({
+      kind: 'reporting-line',
+      origin: 'derived',
+      binds: [{ field: 'escalationTriggers', index: 3 }],
+    });
+    expect(rulePlacement(charter, rule!)).toMatchObject({ kind: 'bound', carriesWords: true });
+    expect(strikePreview(charter, charter.constraints!.indexOf(rule!)).removedClauses).toEqual([
+      'Go through the manager for now.',
+    ]);
+  });
+
+  it('binds a rule row to the Escalates clause Lark\'s "Anything unusual, talk to me first." drew, and adds no clause', (): void => {
+    const charter = lark();
+    expect(charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Anything unusual, talk to the manager first.',
+    ]);
+    const rule = charter.constraints?.find(
+      (c) => c.quote === 'Anything unusual, talk to me first.',
+    );
+    expect(rule).toMatchObject({
+      kind: 'reporting-line',
+      origin: 'derived',
+      binds: [{ field: 'escalationTriggers', index: 0 }],
+    });
+    expect(rulePlacement(charter, rule!)).toMatchObject({ kind: 'bound', carriesWords: true });
+  });
+
+  it('draws nothing for a routing sentence a listed rule already quotes', (): void => {
+    const quotes = (lark().constraints ?? []).map((c) => c.quote);
+    expect(quotes.filter((quote) => quote.includes('Go through me for both'))).toEqual([
+      'The sales lead owns the deals and finance owns the forecast. Go through me for both.',
+    ]);
+  });
+
+  it('draws no clause and no rule for a routing sentence the manager struck on an earlier draft', (): void => {
+    const charter = assemble(
+      charterSchema.parse(PIP_DRAFT_2026_10_11),
+      {
+        ...walkArgs(PIP_ANSWERS_2026_10_11),
+        changeRequests: [{ reason: '', struck: ['Through me for now.'] }],
+      },
+      '2026-10-11T14:38:00.000Z',
+    );
+    expect(charter.proposedBoundaries.escalationTriggers).toHaveLength(3);
+    expect(charter.constraints?.some((c) => c.quote === 'Through me for now.')).toBe(false);
+  });
+
+  it("writes Lark's will-not-do clauses as the acts, not negatives under the negative heading", (): void => {
+    const charter = lark();
+    expect(charter.proposedBoundaries.willNotDo).toEqual([
+      'Change a deal amount in the tracker.',
+      'Contact the sales lead directly without going through the manager for deal matters.',
+      'Contact finance directly without going through the manager for forecast matters.',
+    ]);
+    // The rules still bind the clauses they bound, and read as carried by them.
+    for (const quote of [
+      'Never change a deal amount in the tracker.',
+      'The sales lead owns the deals and finance owns the forecast. Go through me for both.',
+    ]) {
+      const rule = charter.constraints!.find((c) => c.quote === quote)!;
+      expect(rulePlacement(charter, rule)).toMatchObject({ kind: 'bound', carriesWords: true });
+    }
   });
 });

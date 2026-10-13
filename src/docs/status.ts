@@ -82,10 +82,13 @@ export interface FrontMatterStatus {
   readonly supersededBy: readonly string[];
 }
 
-/** One front matter value as written: quotes and a trailing comment taken off. */
+/**
+ * One front matter value as written: a trailing comment and quotes taken off. A quoted value is
+ * read to its closing quote, so a comment after it comes off and a `#` inside it stays (W15-R26).
+ */
 function scalar(value: string): string {
   const trimmed = value.trim();
-  const quoted = /^(["'])(.*)\1$/.exec(trimmed);
+  const quoted = /^(["'])(.*?)\1(?:\s+#.*)?$/.exec(trimmed);
   return (quoted ? quoted[2] : trimmed.replace(/\s+#.*$/, '')).trim();
 }
 

@@ -83,8 +83,9 @@ const HOST_TLDS =
  * What a printed name, role or scope never carries: an address (plain, in brackets, with no dot
  * in its lower-case domain, or written out: "ana at acme dot test", "ana(at)acme.test",
  * "ana%40acme.test"), a link of any scheme, a host (with a known top-level domain, a port or a
- * path), a Linear (or any) UUID, an `@handle`, a 32-character row id of either case. Slack ids and
- * phone numbers are read by their own rules below. A ticket key such as LOG-3, an upper-case word
+ * path), a Linear (or any) UUID, an IPv4 address (W15-R38), an `@handle`, a 32-character row id of
+ * either case. Slack ids, phone and card numbers, IBANs and IPv6 addresses are read by their own
+ * rules below. A ticket key such as LOG-3, an upper-case word
  * with digits in it, a date and a team written "Sales@HQ" are not a person's identity and stay.
  */
 const IDENTITY_PATTERNS: readonly RegExp[] = [
@@ -97,6 +98,7 @@ const IDENTITY_PATTERNS: readonly RegExp[] = [
   new RegExp(`\\b(?:[\\w-]+\\.)+(?:${HOST_TLDS})(?::\\d+)?(?:\\/\\S*)?(?![\\w-])(?!\\.\\w)`, 'gi'),
   /\b[\w-]+(?:\.[\w-]+)+:\d{2,5}\b(?:\/\S*)?/g,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+  /(?<![\w.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\w]|\.\d)/g,
   /(?<![\w@])@[\w.-]+/g,
   /\b[A-Za-z0-9]{32}\b/g,
 ];
@@ -116,12 +118,17 @@ const SLACK_ID_SHAPE = /(?<![A-Za-z0-9])[UWCGTDBASEF][A-Z0-9]{8,10}(?![A-Za-z0-9
  * prefix (`U0ANA12345`, `A0B1C2D3E4`), or, in older workspaces, with digits among letters that
  * spell nothing (`UL4E2FNRK`, `U1234ABCD`); `D365FINANCE`, `W2REPORTING` and `DEPT12345` are words.
  * Digits in two places or more make an id whatever letters run between them (`U1ABCDE2F`,
- * W14-R54); a token of letters alone (`UABCDEFGH`) cannot be told from an upper-case word
- * (`TREASURER`, `ENGINEERING`) and stays.
+ * W14-R54), unless a word of six letters runs between them or letters and digits take turns; a
+ * token of letters alone (`UABCDEFGH`) cannot be told from an upper-case word (`TREASURER`,
+ * `ENGINEERING`) and stays.
  */
 function isSlackId(token: string): boolean {
   if (!/\d/.test(token)) return false;
   if (token[1] === '0') return true;
+  // A word of six letters or more inside it, or letters and digits taking turns, is a name or a
+  // code written by a person ("S3BUCKET01", "G2NDLINE12", "A1B2C3D4E5"; W15-R38): a Slack id the
+  // owner's graph holds is taken out by its exact value whatever its letters (D-5).
+  if (/[A-Z]{6}/.test(token) || /^(?:[A-Z]\d){4,}[A-Z]?$/.test(token)) return false;
   const digitRuns = (token.match(/\d+/g) ?? []).length;
   if (digitRuns >= 2) return true;
   if (/[A-Z]{5}/.test(token)) return false;
@@ -172,12 +179,83 @@ function isPhoneNumber(run: string): boolean {
   const digits = run.replace(/\D/g, '').length;
   if (run.startsWith('+') || run.includes('(')) return digits >= 8;
   if (digits === 8) return isLocalNumber(run);
-  // Spaced digits with no country code or brackets are numbers in prose ("2024 2025 2026"); one
-  // separator, a dot or a dash, between three groups or more is how a bare number is written.
-  if (/\s/.test(run) || digits < 9) return false;
+  if (/\s/.test(run)) return isSpacedNumber(run, digits);
+  if (digits < 9) return false;
+  // One separator, a dot or a dash, between three groups or more of two digits or more is how a
+  // bare number is written; a group of one digit is a book's number ("978-3-16-148410-0").
   const separators = new Set(run.replace(/\d/g, ''));
-  return separators.size <= 1 && run.split(/[.-]/).length >= 3;
+  const groups = run.split(/[.-]/);
+  return separators.size <= 1 && groups.length >= 3 && groups.every((group) => group.length >= 2);
 }
+
+/**
+ * Whether spaced digits with no plus or brackets are a phone number (W15-R38): a country code of
+ * up to three digits before two groups of four that are not both years or times of day ("65 6123
+ * 4567"), or a national number that opens on its trunk 0 with ten or eleven digits in two or three
+ * groups ("020 7946 0958", "07700 900123"). Any other spaced digits are numbers in prose ("2024
+ * 2025 2026", "1000 2000 3000").
+ */
+function isSpacedNumber(run: string, digits: number): boolean {
+  const groups = run.split(/\s+/);
+  const local = /^(\d{1,3}) (\d{4}) (\d{4})$/.exec(run);
+  if (local !== null) {
+    const pair = [local[2] ?? '', local[3] ?? ''];
+    return (
+      !pair.every((group) => YEAR_SHAPE.test(group)) &&
+      !pair.every((group) => CLOCK_SHAPE.test(group)) &&
+      // Round figures ("100 2000 3000") are amounts in prose (the second pass).
+      !pair.every((group) => group.endsWith('00'))
+    );
+  }
+  return run.startsWith('0') && digits >= 10 && digits <= 11 && groups.length <= 3;
+}
+
+/** Whether digits pass the Luhn check every payment card number passes. */
+function passesLuhn(digits: string): boolean {
+  let sum = 0;
+  for (const [at, character] of [...digits].reverse().entries()) {
+    const digit = Number(character);
+    const doubled = at % 2 === 1 ? digit * 2 : digit;
+    sum += doubled > 9 ? doubled - 9 : doubled;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Whether a run is a payment card number (W15-R38): thirteen to nineteen digits, together or in
+ * groups of four joined by one kind of space or dash, that pass the Luhn check.
+ */
+function isCardNumber(run: string): boolean {
+  if (!/^\d{4}(?:([ -]?)\d{4}(?:\1\d{4})*(?:\1\d{1,4})?|\d{9,15})$/.test(run)) return false;
+  const digits = run.replace(/\D/g, '');
+  return digits.length >= 13 && digits.length <= 19 && passesLuhn(digits);
+}
+
+/**
+ * An IBAN as a person writes it: a country's two letters and two check digits, then up to thirty
+ * letters and digits, together or in groups of four (W15-R38). Read by {@link isIban}.
+ */
+const IBAN_SHAPE =
+  /(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,4})?(?![A-Za-z0-9])/g;
+
+/** Whether a run shaped like an IBAN carries the check digits of one (ISO 13616, modulo 97). */
+function isIban(run: string): boolean {
+  const compact = run.replace(/ /g, '');
+  const moved = `${compact.slice(4)}${compact.slice(0, 4)}`;
+  let remainder = 0;
+  for (const character of moved) {
+    const value = /\d/.test(character) ? character : String(character.charCodeAt(0) - 55);
+    for (const digit of value) remainder = (remainder * 10 + Number(digit)) % 97;
+  }
+  return remainder === 1;
+}
+
+/**
+ * An IPv6 address: eight groups, or fewer around a "::" (W15-R38: "fe80::1"). Read by its callback
+ * only where it holds a digit, so a bare "::" or a scope written "dead::beef" stays.
+ */
+const IPV6_SHAPE =
+  /(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?)(?![\w:])/gi;
 
 /**
  * A name, role or scope with every identity taken out and the brackets and spaces it leaves
@@ -190,8 +268,10 @@ export function withoutIdentities(text: string): string {
     (rest, pattern) => rest.replace(pattern, ' '),
     text.replace(HIDDEN_CHARACTERS, ''),
   )
+    .replace(IPV6_SHAPE, (run) => (/\d/.test(run) ? ' ' : run))
+    .replace(IBAN_SHAPE, (run) => (isIban(run) ? ' ' : run))
     .replace(SLACK_ID_SHAPE, (token) => (isSlackId(token) ? ' ' : token))
-    .replace(PHONE_SHAPE, (run) => (isPhoneNumber(run) ? ' ' : run))
+    .replace(PHONE_SHAPE, (run) => (isPhoneNumber(run) || isCardNumber(run) ? ' ' : run))
     .replace(/\(\s*\)|\[\s*\]|<\s*>/g, ' ')
     .replace(/\s+([,;:.)])/g, '$1')
     .replace(/\s+/g, ' ')

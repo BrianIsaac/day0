@@ -6,6 +6,14 @@ import type { OfficeSystem } from '../agent/charter';
  * both read these, so the two say one thing (round 0141 R-D item 3).
  */
 
+/**
+ * What the hosted office's employees read for documentation, said in one sentence in the three
+ * places a manager asks (RM26 (a), the v0.19.0 walk's finding 6; the wave file's section 7 draft):
+ * the home's documentation card, the Documentation page and the take-on dialog.
+ */
+export const MOCK_OFFICE_DOCUMENTATION =
+  'The hosted office reads its own seeded pages. Linking your documentation is part of a local install.';
+
 /** The office's systems, one tab each on the Surfaces tab, keyed by the tab that shows each. */
 export const MOCK_OFFICE_SYSTEMS = [
   { key: 'slack', label: 'Slack' },

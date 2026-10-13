@@ -123,13 +123,19 @@ const FORM_UNSAFE = /%(?![0-9A-Fa-f]{2})|[^A-Za-z0-9\-._~!*'()%+]/gu;
 
 /**
  * The pairs of a body written as a form, or nothing for a body that is not one: every piece
- * between `&` is a pair, and a lone pair has a value, so base64 padding (`dGVzdA==`, `dGVzdGE=`)
- * and prose that holds an equals sign are not forms.
+ * between `&` is a pair, and a lone pair has a value of one word, so base64 padding (`dGVzdA==`,
+ * `dGVzdGE=`) and prose that holds an equals sign ("Status=Done today") are not forms.
  */
 function formPairs(text: string): string[] | undefined {
   const pairs = text.split('&');
   if (!pairs.every((pair) => FORM_PAIR.test(pair))) return undefined;
-  return pairs.length === 1 && pairs[0]?.endsWith('=') === true ? undefined : pairs;
+  if (pairs.length > 1) return pairs;
+  // A lone pair is a form only with a value of one word: "Status=Done today" is a sentence that
+  // holds an equals sign (W15-R39), where "text=hello world" beside "channel=C1" is a field. The
+  // cost, taken knowingly: a one-field form of words ("text=Deploy finished", its channel in the
+  // query) goes as text, and Slack refuses it; an action writes the channel in the body.
+  const lone = pairs[0] ?? '';
+  return lone.endsWith('=') || /\s/.test(lone) ? undefined : pairs;
 }
 
 /**

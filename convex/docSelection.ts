@@ -1,5 +1,10 @@
 import { v } from 'convex/values';
-import { internalQuery, type DatabaseReader, type QueryCtx } from './_generated/server';
+import {
+  internalMutation,
+  internalQuery,
+  type DatabaseReader,
+  type QueryCtx,
+} from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -9,8 +14,7 @@ import {
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
-import { citeConflictOf, standingConflictsOn } from './docRelations';
-import { eventsOfType } from './eventLog';
+import { citeConflictOf, planSelectionOf, standingConflictsOn } from './docConflicts';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
@@ -19,7 +23,6 @@ import {
   sourceAuthorityOf,
   type PageStatus,
 } from '../src/docs/authority';
-import { isEventOf } from '../src/events/contract';
 import type { CiteConflict } from '../src/work/types';
 import {
   DOCUMENTATION_SITES,
@@ -471,29 +474,56 @@ export const changedCitedBlocks = internalQuery({
   },
 });
 
-/** The most of an employee's selection records read to find one item's. */
-const SELECTIONS_READ = 64;
+/**
+ * Keep the blocks an item's plan was selected from on the item, each with its hash then
+ * (`workItems.selectedBlocks`; wave 16, 16-FD; W15-R17): a block rewritten in place keeps its id,
+ * so the gone-cite check of a plan with no cites compares the hash, and reads the item's own
+ * record however many other items' selections the employee has had since. Internal; called by the
+ * work loop once the plan site's selection is read. A block given without a hash, or an id that is
+ * not a block's, is left out.
+ */
+export const recordPlanSelection = internalMutation({
+  args: {
+    workItemId: v.id('workItems'),
+    blocks: v.array(v.object({ id: v.string(), hash: v.optional(v.string()) })),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const item = await ctx.db.get(args.workItemId);
+    if (item === null) return null;
+    const selectedBlocks = args.blocks.flatMap((block) => {
+      const id = ctx.db.normalizeId('docBlocks', block.id);
+      return id === null || block.hash === undefined ? [] : [{ id, hash: block.hash }];
+    });
+    await ctx.db.patch(item._id, { selectedBlocks });
+    return null;
+  },
+});
 
 /**
- * The blocks an item's plan was drafted from, when its planner cited none: the block ids its
- * newest plan-site selection recorded (`work.documentation-selected`). The closing check reads
- * these for a plan with no cites, so it is not vacuous (W14-R25). Internal; reads the employee's
- * newest selection records, writes nothing.
+ * The blocks an item's plan was drafted from, when its planner cited none: those its plan-site
+ * selection kept on the item, with their hashes (`workItems.selectedBlocks`, W15-R17); for an
+ * item selected before that was kept, the block ids its newest plan-site selection recorded
+ * (`work.documentation-selected`), among the employee's newest selection records. The closing
+ * check reads these for a plan with no cites, so it is not vacuous (W14-R25). Internal; reads
+ * the item and, for an older item, the employee's newest selection records; writes nothing.
  *
- * @returns The block ids, or none when the item has no recorded plan selection.
+ * @returns The blocks, each with its hash where it was kept, or none when the item has no
+ *   recorded plan selection.
  */
 export const plannedFromBlocks = internalQuery({
   args: { agentId: v.id('agents'), workItemId: v.id('workItems') },
-  handler: async (ctx, args): Promise<string[]> => {
-    const recent = await eventsOfType(ctx, args.agentId, 'work.documentation-selected')
-      .order('desc')
-      .take(SELECTIONS_READ);
-    for (const event of recent) {
-      if (!isEventOf(event, 'work.documentation-selected')) continue;
-      if (event.payload.workItemId === args.workItemId && event.payload.site === 'plan') {
-        return [...event.payload.blockIds];
-      }
+  handler: async (ctx, args): Promise<Array<{ id: string; hash?: string }>> => {
+    // A kept selection that holds no block (its blocks came without hashes) says nothing: the
+    // event's ids are read instead, so the check is never vacuous.
+    const item = await ctx.db.get(args.workItemId);
+    if (item?.selectedBlocks !== undefined && item.selectedBlocks.length > 0) {
+      return item.selectedBlocks.map((block) => ({ id: block.id, hash: block.hash }));
     }
-    return [];
+    // A redraft whose selection failed read the whole mirror: an earlier draft's record names
+    // nothing it was drafted from (W16-R11).
+    const selection = await planSelectionOf(ctx, { _id: args.workItemId, agentId: args.agentId });
+    return selection === undefined || selection === 'fell-back'
+      ? []
+      : selection.blockIds.map((id) => ({ id }));
   },
 });

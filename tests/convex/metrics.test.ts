@@ -14,6 +14,10 @@ import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
+import {
+  WALK_EMPLOYEES,
+  type WalkEmployee,
+} from '../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 
 const OWNER = managerIdentity();
 
@@ -277,10 +281,16 @@ describe('agent evaluation metrics', (): void => {
           ended: 3,
           medianToEndMs: 619_999,
           completed: 1,
+          partlyDone: 0,
           medianToCompletionMs: 649_999,
           p90ToCompletionMs: 649_999,
         },
-        reorientation: { answered: 0, amended: 0, rate: null },
+        reorientation: {
+          cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+          answered: 0,
+          amended: 0,
+          rate: null,
+        },
         hoursSaved: { estimatedItems: 0, hours: null },
         // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
@@ -880,10 +890,16 @@ describe('supervision figures for a company of employees', (): void => {
           ended: 1,
           medianToEndMs: 122_999,
           completed: 0,
+          partlyDone: 0,
           medianToCompletionMs: null,
           p90ToCompletionMs: null,
         },
-        reorientation: { answered: 0, amended: 0, rate: null },
+        reorientation: {
+          cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+          answered: 0,
+          amended: 0,
+          rate: null,
+        },
         hoursSaved: { estimatedItems: 0, hours: null },
         // Re-pinned for W14-R6: no selection ran, so no recall is shown.
         retrieval: { tokens: null, recall: null },
@@ -2401,13 +2417,60 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
         ended: 3,
         medianToEndMs: 6_000,
         completed: 2,
+        partlyDone: 0,
         medianToCompletionMs: 90_000,
         p90ToCompletionMs: 120_000,
       },
-      reorientation: { answered: 2, amended: 1, rate: 0.5 },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 2,
+        amended: 1,
+        rate: 0.5,
+      },
       hoursSaved: { estimatedItems: 2, hours: 1.5 },
       // Re-pinned for W14-R6: no selection ran, so no recall is shown.
       retrieval: { tokens: null, recall: null },
+    });
+  });
+
+  it('counts the reorientation cards opened, approved, dismissed and deferred, a joined trigger once, beside the answered line (16-O; A9)', (): void => {
+    const card = (type: string, at: number, fields: Record<string, unknown> = {}) =>
+      event(type, { reorientationId: 'r1', summary: 'A skill is due a re-check', ...fields }, at);
+    const events = [
+      card('reorientation.opened', 1_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k1',
+        risk: 'low',
+      }),
+      card('reorientation.opened', 2_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k2',
+        risk: 'low',
+        joined: true,
+      }),
+      card('reorientation.opened', 3_000, {
+        reorientationId: 'r2',
+        trigger: 'access-ended',
+        triggerKey: 'k3',
+        risk: 'low',
+      }),
+      card('reorientation.opened', 3_500, {
+        reorientationId: 'r3',
+        trigger: 'access-revoked',
+        triggerKey: 'k4',
+        risk: 'high',
+      }),
+      card('reorientation.deferred', 4_000, { revisitAt: 9_000 }),
+      card('reorientation.reopened', 9_000, { revisitAt: 9_000 }),
+      card('reorientation.approved', 10_000, { kind: 'none', result: 'nothing needed to change' }),
+      card('reorientation.dismissed', 11_000, { reorientationId: 'r2' }),
+      event('charter.question-answered', { questionId: 'q1', amended: true }, 12_000),
+    ];
+    expect(computeAgentMetrics(events, [], []).pilot.reorientation).toEqual({
+      cards: { opened: 3, approved: 1, dismissed: 1, deferred: 1 },
+      answered: 1,
+      amended: 1,
+      rate: 1,
     });
   });
 
@@ -2434,8 +2497,343 @@ describe('the ledger walk and the pilot figures (step 29)', (): void => {
       ended: 1,
       medianToEndMs: 10_000,
       completed: 1,
+      partlyDone: 0,
       medianToCompletionMs: 10_000,
       p90ToCompletionMs: 10_000,
     });
+  });
+
+  it('counts a not-done answer retried to done as done, at its done completion (W16-R17, reader 5’s retry.ts)', (): void => {
+    const notDone = { workDone: 'not-done', workDoneWhy: 'The checks could not all be read.' };
+    const done = { workDone: 'done', workDoneWhy: 'Every check was read and posted.' };
+    const events = [
+      event('work.discovered', { workItemId: 'r' }, 1_000),
+      event('work.completed', { workItemId: 'r', output: notDone }, 5_000),
+      event(
+        'work.retry',
+        {
+          workItemId: 'r',
+          resumeState: 'plan-approved',
+          fromState: 'completed',
+          feedback: 'Read the rest.',
+        },
+        6_000,
+      ),
+      event('work.completed', { workItemId: 'r', output: done }, 9_000),
+    ];
+    expect(computeAgentMetrics(events, [item('r')], []).pilot.cycleTime).toMatchObject({
+      ended: 1,
+      completed: 1,
+      partlyDone: 0,
+      medianToCompletionMs: 8_000,
+    });
+  });
+});
+
+describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
+  let created = 0;
+  /** One employee of the v0.19.0 walk as its records: each finished card's completion carries its output. */
+  const recordsOf = (employee: WalkEmployee, agentId: string) => {
+    const events: Doc<'events'>[] = [];
+    const workItems: Doc<'workItems'>[] = [];
+    employee.cards.forEach((card, index) => {
+      const workItemId = `${agentId}-item-${index}`;
+      workItems.push({
+        _id: workItemId,
+        _creationTime: 1,
+        agentId,
+        state: card.state,
+        observedAt: 1_000,
+        createdAt: 1_000,
+        ...(card.output === undefined ? {} : { output: card.output }),
+      } as unknown as Doc<'workItems'>);
+      events.push({
+        _id: `event-${(created += 1)}`,
+        _creationTime: created,
+        agentId,
+        type: card.state === 'completed' ? 'work.completed' : 'work.skipped',
+        payload: card.output === undefined ? { workItemId } : { workItemId, output: card.output },
+        createdAt: 1_000 + 60_000 * (index + 1),
+      } as unknown as Doc<'events'>);
+    });
+    return {
+      agent: { _id: agentId as Id<'agents'>, name: employee.name, createdAt: 0 },
+      events,
+      workItems,
+      charters: [],
+    };
+  };
+
+  it('reads the walk’s nine finished cards as four done and five partly, where it printed nine done', (): void => {
+    const figures = computeCompanyMetrics(
+      WALK_EMPLOYEES.map((employee) => recordsOf(employee, employee.name.toLowerCase())),
+      { excludedAgents: 0, omittedEmployees: 0 },
+    );
+    expect(
+      figures.employees.map(({ name, metrics }) => [
+        name,
+        metrics.pilot.cycleTime.completed,
+        metrics.pilot.cycleTime.partlyDone,
+        metrics.pilot.cycleTime.ended,
+      ]),
+    ).toEqual([
+      ['Lark', 1, 2, 4],
+      ['Nell', 2, 1, 4],
+      ['Pip', 1, 2, 4],
+    ]);
+    expect(figures.company.pilot.cycleTime).toMatchObject({
+      completed: 4,
+      partlyDone: 5,
+      ended: 12,
+    });
+  });
+
+  it('takes the median to completion over the done answers alone', (): void => {
+    const lark = computeAgentMetrics(
+      recordsOf(WALK_EMPLOYEES[0]!, 'lark').events,
+      recordsOf(WALK_EMPLOYEES[0]!, 'lark').workItems,
+      [],
+    );
+    // Lark's one done card is its third, completed three minutes after its ask.
+    expect(lark.pilot.cycleTime.medianToCompletionMs).toBe(180_000);
+  });
+});
+
+describe('today in the employee’s zone (16-F)', (): void => {
+  /** An employee in Singapore with two plan decisions either side of its midnight, 16:00 UTC. */
+  async function singaporeEmployee() {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'Asia/Singapore',
+        createdAt: 1,
+      });
+      const at = (iso: string): number => Date.parse(iso);
+      const decide = async (
+        workItemId: string,
+        asked: string,
+        decided: string,
+        type: 'work.plan-approved' | 'work.cancelled',
+      ): Promise<void> => {
+        await ctx.db.insert('events', {
+          agentId: id,
+          type: 'work.decision-requesting',
+          payload: { workItemId, kind: 'plan', decisionId: `d-${workItemId}` },
+          createdAt: at(asked),
+        });
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, decidedVia: 'dashboard' },
+          createdAt: at(decided),
+        });
+      };
+      // 23:40 on 11 October in Singapore: yesterday there.
+      await decide('w1', '2026-10-11T15:30:00Z', '2026-10-11T15:40:00Z', 'work.plan-approved');
+      // 00:20 and 10:00 on 12 October in Singapore, though still 11 October in UTC for the first.
+      await decide('w2', '2026-10-11T16:10:00Z', '2026-10-11T16:20:00Z', 'work.plan-approved');
+      await decide('w3', '2026-10-12T01:00:00Z', '2026-10-12T02:00:00Z', 'work.cancelled');
+      return id;
+    });
+    return { harness, agentId };
+  }
+
+  it('counts the decisions made on the employee’s day, from its own midnight', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-12' });
+
+    expect(metrics.today?.day).toBe('2026-10-12');
+    expect(metrics.today?.decisions).toMatchObject({ approved: 1, rejected: 1 });
+    expect(metrics.decisions).toMatchObject({ approved: 2, rejected: 1 });
+  });
+
+  it('counts a decision asked yesterday and made today once, its row’s own record included (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'Asia/Singapore',
+        createdAt: 1,
+      });
+      const asked = Date.parse('2026-10-11T13:00:00Z'); // 21:00 on 11 October in Singapore
+      const decided = Date.parse('2026-10-12T01:00:00Z'); // 09:00 on 12 October there
+      const workItemId = await ctx.db.insert('workItems', {
+        agentId: id,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'REVOPS-9',
+        title: 'Close the month',
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'plan-approved',
+        decision: {
+          id: 'd-1',
+          kind: 'plan',
+          requestedAt: asked,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'slack',
+          surfaceName: 'Slack',
+          decidedAt: decided,
+          outcome: 'approved',
+          decidedVia: 'channel',
+        },
+        observedAt: asked,
+        createdAt: asked,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.decision-requesting',
+        payload: { workItemId, kind: 'plan', decisionId: 'd-1' },
+        createdAt: asked,
+      });
+      await ctx.db.insert('events', {
+        agentId: id,
+        type: 'work.plan-approved',
+        payload: { workItemId, decidedVia: 'channel', decisionId: 'd-1' },
+        createdAt: decided,
+      });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-12' });
+
+    expect(metrics.today?.decisions).toMatchObject({ approved: 1, rejected: 0 });
+  });
+
+  it('pairs a re-asked decision made today with its latest ask, not one an earlier decision or a redraft closed (W16-R16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const at = (iso: string): number => Date.parse(iso);
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'UTC',
+        createdAt: 1,
+      });
+      const event = async (type: string, workItemId: string, iso: string, extra = {}) =>
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, ...extra },
+          createdAt: at(iso),
+        });
+      const ask = { kind: 'plan' };
+      // Reader 5's ask.ts: asked and decided on 1 October, asked again on 3 October, decided on
+      // the 4th, 1,470 minutes after its second ask.
+      await event('work.decision-requesting', 'w1', '2026-10-01T00:00:00Z', {
+        ...ask,
+        decisionId: 'a',
+      });
+      await event('work.plan-approved', 'w1', '2026-10-01T01:00:00Z', { decidedVia: 'dashboard' });
+      await event('work.decision-requesting', 'w1', '2026-10-03T00:00:00Z', {
+        ...ask,
+        decisionId: 'b',
+      });
+      await event('work.plan-approved', 'w1', '2026-10-04T00:30:00Z', { decidedVia: 'dashboard' });
+      // Reader 5's ask2.ts: an ask a redraft withdrew, then the redraft's ask, decided 1,469
+      // minutes after it.
+      await event('work.decision-requesting', 'w2', '2026-10-01T00:00:00Z', {
+        ...ask,
+        decisionId: 'c',
+      });
+      await event('work.plan-redrafting', 'w2', '2026-10-02T00:00:00Z');
+      await event('work.decision-requesting', 'w2', '2026-10-03T00:00:00Z', {
+        ...ask,
+        decisionId: 'd',
+      });
+      await event('work.plan-approved', 'w2', '2026-10-04T00:29:00Z', { decidedVia: 'dashboard' });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-04' });
+
+    expect(metrics.today?.decisions).toMatchObject({ requested: 2, approved: 2 });
+    // The medians of 1,470 and 1,469 minutes: 1,469.5 minutes.
+    expect(metrics.today?.decisions.medianLatencyMs).toBe(1_469.5 * 60_000);
+  });
+
+  it('carries every ask still open at the day’s start, a resend with its first ask, and a wait only where something was held (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const at = (iso: string): number => Date.parse(iso);
+    const agentId = await harness.run(async (ctx) => {
+      const id = await ctx.db.insert('agents', {
+        bossEmail: MANAGER_ADDRESS,
+        name: 'Priya',
+        userId: 'owner',
+        state: 'active',
+        zone: 'UTC',
+        createdAt: 1,
+      });
+      const event = async (type: string, workItemId: string, iso: string, extra = {}) =>
+        await ctx.db.insert('events', {
+          agentId: id,
+          type,
+          payload: { workItemId, ...extra },
+          createdAt: at(iso),
+        });
+      // Two sets asked of one item before the day, neither decided: both are still owed.
+      await event('work.decision-requesting', 'w1', '2026-10-03T00:00:00Z', {
+        kind: 'actions',
+        decisionId: 'a',
+      });
+      await event('work.decision-requesting', 'w1', '2026-10-03T06:00:00Z', {
+        kind: 'actions',
+        decisionId: 'b',
+      });
+      await event('work.actions-approved', 'w1', '2026-10-04T01:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      await event('work.actions-approved', 'w1', '2026-10-04T02:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      // A wait that began with a held set, then a later set that held nothing: the wait stands.
+      await event('work.actions-pending', 'w2', '2026-10-03T12:00:00Z', { heldIndexes: [0] });
+      await event('work.actions-pending', 'w2', '2026-10-03T18:00:00Z', { heldIndexes: [] });
+      await event('work.actions-approved', 'w2', '2026-10-04T00:00:00Z', {
+        decidedVia: 'dashboard',
+        approvedIndexes: [0],
+        rejectedIndexes: [],
+      });
+      return id;
+    });
+
+    const metrics = await harness
+      .withIdentity(managerIdentity())
+      .query(api.metrics.forAgent, { agentId, day: '2026-10-04' });
+
+    // The two asks of w1 are both requests, paired oldest first as the whole record pairs them:
+    // 25 hours and 20 hours; w2 waited 12 hours from its held set. The median is 20 hours.
+    expect(metrics.today?.decisions).toMatchObject({ requested: 2, approved: 3 });
+    expect(metrics.today?.decisions.medianLatencyMs).toBe(20 * 3_600_000);
+  });
+
+  it('answers no day’s figures when none is asked, and refuses a day that is not one', async (): Promise<void> => {
+    const { harness, agentId } = await singaporeEmployee();
+    const owner = harness.withIdentity(managerIdentity());
+
+    expect(await owner.query(api.metrics.forAgent, { agentId })).not.toHaveProperty('today');
+    await expect(owner.query(api.metrics.forAgent, { agentId, day: '12 October' })).rejects.toThrow(
+      'not a day',
+    );
   });
 });

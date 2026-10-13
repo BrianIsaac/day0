@@ -41,7 +41,7 @@ function RuleRow({ rule, index }: { rule: CharterRule; index: number }) {
         >
           {rule.saidByManager ? `“${rule.quote}”` : rule.quote}
         </p>
-        <p className="mt-1.5 text-sm text-zinc-300">
+        <p className="mt-1.5 text-sm text-[var(--color-fg-2)]">
           {rule.kind} ·{' '}
           {struck ? (
             'derived by your employee · struck by you'

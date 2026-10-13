@@ -8,6 +8,7 @@ import {
   type ConstraintKind,
 } from '../agent/charter-constraints';
 import { formatStamp } from '../lib/zone';
+import { askedQuestion } from '../work/charter-answers';
 import { mockActsAsWords, mockOfficeSystemsPhrase } from '../surfaces/mock-office';
 
 /**
@@ -188,7 +189,7 @@ function charterLines(charter: ProjectedCharter | null, zone: string): string[] 
   for (const answered of records(field(body, 'answeredQuestions'))) {
     const question = text(answered.question);
     const answer = text(answered.answer);
-    if (question && answer) lines.push(`Answered: ${question} ${answer}`);
+    if (question && answer) lines.push(`Answered: ${askedQuestion(question)} ${answer}`);
   }
   return lines;
 }

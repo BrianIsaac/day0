@@ -18,6 +18,7 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
+import { openCard, ownerAgents, personAgreements } from './reorientation';
 import {
   EVIDENCE_SHOWN,
   GRAPH_READ_LIMIT,
@@ -53,6 +54,7 @@ import {
   OWNER_IS_THE_MANAGER,
   RELATIONSHIP_ENDED,
   RELATIONSHIP_HELD,
+  RELATIONSHIP_NOUNS,
   RELATIONSHIP_SCOPE_LIMIT,
   RELATIONSHIP_TYPE_FIXED,
   SAME_PERSON_CONFLICT,
@@ -448,12 +450,31 @@ export const dismiss = mutation({
       await ctx.db.patch(person._id, { status: 'dismissed', dismissedAt: now, updatedAt: now });
     }
     for (const edge of proposed) await ctx.db.patch(edge._id, { status: 'retired' });
-    await appendEvent(ctx, {
+    const eventId = await appendEvent(ctx, {
       agentId: args.agentId,
       type: 'person.dismissed',
       payload: { personId: person._id, person: person.displayName, edgesRetired: proposed.length },
       createdAt: now,
     });
+    const agreements = await personAgreements(ctx, person.userId, person._id);
+    const reached = new Set<Id<'agents'>>([args.agentId]);
+    for (const edge of proposed) if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+    for (const agentId of reached) {
+      const retired = proposed
+        .filter((edge) => edge.fromAgentId === undefined || edge.fromAgentId === agentId)
+        .map((edge) => edge._id);
+      // A dismissal that took no edge of the employee's and no agreement reaches nothing of its.
+      if (retired.length === 0 && agreements.length === 0) continue;
+      await openCard(ctx, {
+        agentId,
+        trigger: 'person-dismissed',
+        triggerKey: eventId,
+        summary: `You dismissed ${person.displayName}`,
+        evidence: { eventIds: agentId === args.agentId ? [eventId] : [], relationshipIds: retired },
+        affected: { agreements },
+        now,
+      });
+    }
     return { edgesRetired: proposed.length };
   },
 });
@@ -675,7 +696,7 @@ async function recordEdgeChange(
   const edge = await ctx.db.get(relationshipId);
   const person = edge === null ? null : await ctx.db.get(edge.toPersonId);
   if (edge === null || person === null) return;
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId,
     type: 'relationship.changed',
     payload: {
@@ -687,6 +708,60 @@ async function recordEdgeChange(
     },
     createdAt: now,
   });
+  await openEdgeCards(ctx, { agentId, edge, person, change, eventId, now });
+}
+
+/** The edge types whose change reaches an employee's work: who approves it, whom it escalates to. */
+const CARD_EDGE_TYPES: readonly RelationshipType[] = ['approval-authority', 'escalation-contact'];
+
+/** What a card says became of an edge, by its change. */
+function edgeChangeWords(person: string, noun: string, change: RelationshipChange): string {
+  if (change === 'added') return `${person} is now its ${noun}`;
+  if (change === 'retired') return `${person} is no longer its ${noun}`;
+  return `${person}, its ${noun}, changed`;
+}
+
+/**
+ * Open a reorientation card on every employee an approver's or an escalation contact's edge
+ * concerns (wave 16, 16-O; section 3's people row): the tab's employee, the edge's own employee,
+ * or every employee of the owner for an edge for everyone. The card holds the employee's open
+ * plans, which the approver or contact bears on, and the agreements about the person.
+ */
+async function openEdgeCards(
+  ctx: MutationCtx,
+  change: {
+    readonly agentId: Id<'agents'>;
+    readonly edge: Doc<'relationships'>;
+    readonly person: Doc<'people'>;
+    readonly change: RelationshipChange;
+    readonly eventId: Id<'events'>;
+    readonly now: number;
+  },
+): Promise<void> {
+  const { edge, person } = change;
+  if (!CARD_EDGE_TYPES.includes(edge.type)) return;
+  const forEveryone = edge.fromAgentId === undefined && edge.fromPersonId === undefined;
+  const reached = new Set<Id<'agents'>>([change.agentId]);
+  if (edge.fromAgentId !== undefined) reached.add(edge.fromAgentId);
+  if (forEveryone) {
+    for (const agent of await ownerAgents(ctx, edge.userId)) reached.add(agent._id);
+  }
+  const agreements = await personAgreements(ctx, edge.userId, person._id);
+  for (const agentId of reached) {
+    await openCard(ctx, {
+      agentId,
+      trigger: 'relationship-changed',
+      triggerKey: change.eventId,
+      summary: edgeChangeWords(person.displayName, RELATIONSHIP_NOUNS[edge.type], change.change),
+      evidence: {
+        eventIds: agentId === change.agentId ? [change.eventId] : [],
+        relationshipIds: [edge._id],
+      },
+      affected: { relationships: [edge._id], agreements },
+      reach: { kind: 'open-work' },
+      now: change.now,
+    });
+  }
 }
 
 /** A scope the manager typed, trimmed and bounded, or undefined for none. */
@@ -777,33 +852,54 @@ export const editRelationship = mutation({
   },
   returns: v.id('relationships'),
   handler: async (ctx, args): Promise<Id<'relationships'>> => {
-    const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
+    const edge = await assertOwnsRelationship(ctx, args.relationshipId);
     await assertOwnsAgent(ctx, args.agentId);
-    // An employee's edge keeps to an employee's kinds; an edge for everyone keeps its kind.
-    const allowed: readonly RelationshipType[] =
-      edge.fromAgentId === undefined ? [edge.type] : EMPLOYEE_RELATIONSHIP_TYPES;
-    if (!allowed.includes(args.type)) throw new ConvexError(RELATIONSHIP_TYPE_FIXED);
-    const scope = typedScope(args.scope);
-    const now = Date.now();
-    await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
-    const relationshipId = await ctx.db.insert('relationships', {
-      userId: edge.userId,
-      ...(edge.fromAgentId === undefined ? {} : { fromAgentId: edge.fromAgentId }),
-      ...(edge.fromPersonId === undefined ? {} : { fromPersonId: edge.fromPersonId }),
-      toPersonId: edge.toPersonId,
-      type: args.type,
-      ...(scope === undefined ? {} : { scope }),
-      effectiveFrom: now,
-      status: 'active',
-      supersedes: edge._id,
-      source: 'manager',
-      confirmedAt: now,
-      createdAt: now,
-    });
-    await recordEdgeChange(ctx, args.agentId, relationshipId, 'edited', now);
-    return relationshipId;
+    return await editRelationshipInTransaction(ctx, edge, args);
   },
 });
+
+/**
+ * Edit an edge in force in the caller's transaction ({@link editRelationship}; a reorientation
+ * card's Approve, 16-O): it is superseded by a new edge with the new type and scope.
+ *
+ * @returns The edge that replaced it.
+ * @throws ConvexError when the edge no longer stands, the kind may not change so, or the scope is
+ *   too long.
+ */
+export async function editRelationshipInTransaction(
+  ctx: MutationCtx,
+  stored: Doc<'relationships'>,
+  change: {
+    readonly agentId: Id<'agents'>;
+    readonly type: RelationshipType;
+    readonly scope?: string;
+  },
+): Promise<Id<'relationships'>> {
+  const edge = standingEdge(stored);
+  // An employee's edge keeps to an employee's kinds; an edge for everyone keeps its kind.
+  const allowed: readonly RelationshipType[] =
+    edge.fromAgentId === undefined ? [edge.type] : EMPLOYEE_RELATIONSHIP_TYPES;
+  if (!allowed.includes(change.type)) throw new ConvexError(RELATIONSHIP_TYPE_FIXED);
+  const scope = typedScope(change.scope);
+  const now = Date.now();
+  await ctx.db.patch(edge._id, { status: 'superseded', effectiveUntil: now });
+  const relationshipId = await ctx.db.insert('relationships', {
+    userId: edge.userId,
+    ...(edge.fromAgentId === undefined ? {} : { fromAgentId: edge.fromAgentId }),
+    ...(edge.fromPersonId === undefined ? {} : { fromPersonId: edge.fromPersonId }),
+    toPersonId: edge.toPersonId,
+    type: change.type,
+    ...(scope === undefined ? {} : { scope }),
+    effectiveFrom: now,
+    status: 'active',
+    supersedes: edge._id,
+    source: 'manager',
+    confirmedAt: now,
+    createdAt: now,
+  });
+  await recordEdgeChange(ctx, change.agentId, relationshipId, 'edited', now);
+  return relationshipId;
+}
 
 /**
  * Public, owner-level (`assertOwnsRelationship` first, then `assertOwnsAgent`): the manager retires
@@ -813,14 +909,29 @@ export const retireRelationship = mutation({
   args: { relationshipId: v.id('relationships'), agentId: v.id('agents') },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const edge = standingEdge(await assertOwnsRelationship(ctx, args.relationshipId));
+    const edge = await assertOwnsRelationship(ctx, args.relationshipId);
     await assertOwnsAgent(ctx, args.agentId);
-    const now = Date.now();
-    await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now });
-    await recordEdgeChange(ctx, args.agentId, edge._id, 'retired', now);
+    await retireRelationshipInTransaction(ctx, edge, args.agentId);
     return null;
   },
 });
+
+/**
+ * Retire an edge in force in the caller's transaction ({@link retireRelationship}; a reorientation
+ * card's Approve, 16-O).
+ *
+ * @throws ConvexError when the edge no longer stands.
+ */
+export async function retireRelationshipInTransaction(
+  ctx: MutationCtx,
+  stored: Doc<'relationships'>,
+  agentId: Id<'agents'>,
+): Promise<void> {
+  const edge = standingEdge(stored);
+  const now = Date.now();
+  await ctx.db.patch(edge._id, { status: 'retired', effectiveUntil: now });
+  await recordEdgeChange(ctx, agentId, edge._id, 'retired', now);
+}
 
 /** Whom a lookup resolved to, as `workItems.requesterPerson` stores it. */
 const resolutionValidator = v.union(
@@ -1569,11 +1680,27 @@ function sameResolution(
 }
 
 /**
+ * The resolution an item's requester keeps from a poll's answer: the answer, unless it is `unknown`
+ * and the item already resolved to a person (W15-R36). The requester's alone: intake never changes
+ * who asked, where the owner changes with the ticket's assignee (W16-R30). A Take of a changed address retires the identities
+ * a lookup of the old address recorded until a lookup of the new one answers, so the poll between
+ * them finds nobody; who asked is still who asked, and the person-scoped agreements, the planner's
+ * From line and "Keep this note for later asks from ..." keep reading them.
+ */
+function keptResolution(
+  stored: PersonResolution<Id<'people'>> | undefined,
+  answer: PersonResolution<Id<'people'>>,
+): PersonResolution<Id<'people'>> {
+  return answer.kind === 'unknown' && stored?.kind === 'person' ? stored : answer;
+}
+
+/**
  * Internal, called by intake's seed once the listed item's row lands (`convex/intakeActions.ts`):
  * whom the item's requester and owner are in the owner's graph ({@link resolvePerson}, a lookup
  * and never an insert), written as `requesterPerson` and `ownerPerson` beside the strings, never
  * in place of them. Fenced as the seed is: nothing once a handover moved the employee to another
- * owner since the sweep read it. Writes only a field whose answer changed.
+ * owner since the sweep read it. Writes only a field whose answer changed, and never turns a
+ * requester it resolved into nobody ({@link keptResolution}).
  *
  * @returns Whether it wrote the row.
  */
@@ -1603,16 +1730,28 @@ export const resolveItemPeople = internalMutation({
       .first();
     if (item === null) return false;
     const requesterPerson =
-      args.requester === undefined ? undefined : await resolveFirst(ctx, scope, args.requester);
+      args.requester === undefined
+        ? undefined
+        : keptResolution(item.requesterPerson, await resolveFirst(ctx, scope, args.requester));
     const ownerPerson =
-      args.owner === undefined ? undefined : await resolveFirst(ctx, scope, args.owner);
+      args.owner === undefined
+        ? undefined
+        : // The owner is whoever the ticket is assigned to now: intake re-lists it, so a
+          // reassignment to someone the graph does not hold lets the old owner go (W16-R30).
+          await resolveFirst(ctx, scope, args.owner);
+    // An item whose ticket has no assignee any more has no owner in the graph either: intake
+    // cleared the owner's name and lists no owner to look up (the second pass on W16-R30).
+    const unassigned =
+      args.owner === undefined && item.owner === undefined && item.ownerPerson !== undefined;
     const changes = {
       ...(requesterPerson === undefined || sameResolution(item.requesterPerson, requesterPerson)
         ? {}
         : { requesterPerson }),
-      ...(ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
-        ? {}
-        : { ownerPerson }),
+      ...(unassigned
+        ? { ownerPerson: undefined }
+        : ownerPerson === undefined || sameResolution(item.ownerPerson, ownerPerson)
+          ? {}
+          : { ownerPerson }),
     };
     if (Object.keys(changes).length === 0) return false;
     await ctx.db.patch(item._id, changes);

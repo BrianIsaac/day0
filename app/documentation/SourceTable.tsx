@@ -249,7 +249,7 @@ export function SourceTable({
                   key={column}
                   scope="col"
                   role="columnheader"
-                  className="px-3 py-2.5 font-medium first:pl-0"
+                  className="px-3 py-2.5 font-medium whitespace-nowrap first:pl-0"
                 >
                   {column}
                 </th>
@@ -287,13 +287,13 @@ export function SourceTable({
                     {source.lastDiscoveryError &&
                     source.lastDiscoveryError === source.lastPeopleExtractionError ? (
                       // Both passes failed alike: one failure, said once.
-                      <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                      <span className="mt-1 block text-[13px] [overflow-wrap:anywhere] text-[var(--color-warn)]">
                         System discovery and people from its pages: {source.lastDiscoveryError}
                       </span>
                     ) : (
                       <>
                         {source.lastDiscoveryError ? (
-                          <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                          <span className="mt-1 block text-[13px] [overflow-wrap:anywhere] text-[var(--color-warn)]">
                             System discovery: {source.lastDiscoveryError}
                           </span>
                         ) : null}
@@ -301,7 +301,7 @@ export function SourceTable({
                             name; a failure leaves the last proposals standing and nothing else
                             says so (W13-R9). */}
                         {source.lastPeopleExtractionError ? (
-                          <span className="mt-1 block text-[13px] text-[var(--color-warn)]">
+                          <span className="mt-1 block text-[13px] [overflow-wrap:anywhere] text-[var(--color-warn)]">
                             People from its pages: {source.lastPeopleExtractionError}
                           </span>
                         ) : null}
@@ -342,7 +342,8 @@ export function SourceTable({
                         </span>
                       ) : null}
                       {source.lastError ? (
-                        <span className="text-[13px] text-[var(--color-warn)]">
+                        // An error may quote an address, which breaks nowhere else (W15-R50).
+                        <span className="text-[13px] [overflow-wrap:anywhere] text-[var(--color-warn)]">
                           {source.lastError}
                         </span>
                       ) : null}

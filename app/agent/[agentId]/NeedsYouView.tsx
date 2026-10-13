@@ -131,10 +131,19 @@ function SkippedLine({ item, name, work }: { item: Doc<'workItems'>; name: strin
 /**
  * What waits on nobody: each item the employee set aside, newest first, in a short sentence with
  * the link to its card on the Work tab, where the manager can give it the work anyway, and the
- * employee's reason a disclosure away; and whether a reorientation card is open (none can be
- * yet, A11), with the page that says what it covers.
+ * employee's reason a disclosure away; and whether a reorientation card is open (16-O: an open
+ * card is an entry above), with the page its cards are on.
  */
-function SetAside({ title, skipped }: { title: string; skipped: readonly Doc<'workItems'>[] }) {
+function SetAside({
+  title,
+  skipped,
+  openCards,
+}: {
+  title: string;
+  skipped: readonly Doc<'workItems'>[];
+  /** The reorientation cards among the entries above. */
+  openCards: number;
+}) {
   const { agent } = useEmployee();
   const work = employeeTabHref(agent._id, 'work');
   // Newest first: what the employee set aside most recently is the likeliest to still matter.
@@ -151,8 +160,19 @@ function SetAside({ title, skipped }: { title: string; skipped: readonly Doc<'wo
             .map((item) => <SkippedLine key={item._id} item={item} name={agent.name} work={work} />)
         )}
         <RecordLine kind="noted">
-          No reorientation card is open.{' '}
-          <Link href={`/agent/${agent._id}/reorientation`}>What reorientation covers</Link>.
+          {openCards === 0 ? (
+            <>
+              No reorientation card is open.{' '}
+              <Link href={`/agent/${agent._id}/reorientation`}>What reorientation covers</Link>.
+            </>
+          ) : (
+            <>
+              {openCards === 1
+                ? 'A reorientation card is open, above.'
+                : `${openCards} reorientation cards are open, above.`}{' '}
+              <Link href={`/agent/${agent._id}/reorientation`}>Every reorientation card</Link>.
+            </>
+          )}
         </RecordLine>
       </ul>
       {more > 0 ? (
@@ -203,6 +223,7 @@ export function NeedsYouView() {
             waiting.length > 0 ? 'Nothing else is waiting on you' : 'Nothing is waiting on you'
           }
           skipped={skipped}
+          openCards={waiting.filter((entry) => entry.kind === 'reorientation').length}
         />
       ) : null}
     </Columns>

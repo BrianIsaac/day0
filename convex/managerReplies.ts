@@ -14,6 +14,8 @@ import { appendEvent } from './eventLog';
 import { providerTsToMs } from '../src/work/provider-ts';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 import { requestThreadOf } from './decisionRequests';
+import { answerConflictInTransaction, standingConflictQuestions } from './managerQuestions';
+import { CONFLICT_CHOICES, type ConflictChoice } from '../src/agent/reorientation-words';
 import {
   approveActionsInTransaction,
   approvePlanInTransaction,
@@ -298,6 +300,63 @@ async function managerReplyNoticeAnchor(
   );
 }
 
+/**
+ * Answer a plan's open conflict question from the manager's reply in the DM (RM20 (a)): the first
+ * question still open beside the plan, decided as the manager says, and acknowledged in the
+ * request's thread. A plan with none open says so.
+ */
+async function answerFromChannel(
+  ctx: MutationCtx,
+  surface: Doc<'surfaces'>,
+  request: {
+    readonly row: Doc<'workItems'>;
+    readonly decision: NonNullable<Doc<'workItems'>['decision']>;
+  },
+  args: {
+    userId: string;
+    messageTs: string;
+    reply: { verb: 'answer'; id: string; choice: ConflictChoice };
+  },
+) {
+  const { row, decision } = request;
+  // A reply is answered once: its acknowledgement is keyed by the message, so a poll that delivers
+  // the same message again finds it and answers no second question.
+  const answered = await ctx.db
+    .query('managerDecisionNotices')
+    .withIndex('by_surface_message', (q) =>
+      q.eq('surfaceId', surface._id).eq('messageTs', args.messageTs),
+    )
+    .unique();
+  if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
+  const [question] = await standingConflictQuestions(ctx, row._id);
+  const notice = async (text: string) =>
+    await queueManagerReplyNotice(ctx, {
+      surfaceId: surface._id,
+      workItemId: row._id,
+      decisionId: decision.id,
+      messageTs: args.messageTs,
+      kind: 'received',
+      text,
+    });
+  if (question === undefined) {
+    const notified = await notice(`Nothing is waiting on an answer for decision ${decision.id}.`);
+    return { status: 'ignored' as const, reason: 'no open question', notified };
+  }
+  // The reply's sender was checked against the card's manager: the relation is decided in the
+  // manager's name, as the Documentation tab's card decides it.
+  const agent = await ctx.db.get(row.agentId);
+  const { text } = await answerConflictInTransaction(ctx, question, {
+    choice: args.reply.choice,
+    via: 'slack',
+    decidedBy: agent?.bossEmail,
+  });
+  const notified = await notice(
+    // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
+    `Recorded: ${text}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
+  );
+  return { status: 'answered' as const, notified };
+}
+
 /** Resolve one parsed manager reply inside the same transaction as the dashboard controls. */
 /** Why a reply naming a replaced request decided nothing, on its ignored event. */
 export const REPLACED_DECISION_REASON = 'the request was replaced by a newer one';
@@ -307,11 +366,19 @@ export const managerReplyArgs = {
   surfaceId: v.id('surfaces'),
   userId: v.string(),
   messageTs: v.string(),
-  reply: v.object({
-    verb: v.union(v.literal('approve'), v.literal('reject')),
-    id: v.string(),
-    reason: v.optional(v.string()),
-  }),
+  reply: v.union(
+    v.object({
+      verb: v.union(v.literal('approve'), v.literal('reject')),
+      id: v.string(),
+      reason: v.optional(v.string()),
+    }),
+    /** The answer to a conflict's question in a plan's request (RM20 (a)). */
+    v.object({
+      verb: v.literal('answer'),
+      id: v.string(),
+      choice: v.union(...CONFLICT_CHOICES.map((choice) => v.literal(choice))),
+    }),
+  ),
 };
 
 /** A manager's reply in the DM, or a press of a request's button, read as a decision. */
@@ -373,18 +440,9 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       : false;
     return { ...(await ignored(reason)), notified };
   };
-  const row = await ctx.db
-    .query('workItems')
-    .withIndex('by_agent_decision', (q) =>
-      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
-    )
-    .first();
-  if (!row?.decision) {
-    const batch = await ctx.db
-      .query('decisionBatches')
-      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
-      .first();
-    if (batch) return await resolveChannelBatch(ctx, surface, batch, args);
+  // A code a newer request replaced (a redraft, a re-held set) is answered as replaced, whatever
+  // the reply's verb (W12-R19; an answer to a conflict's question too, the second pass's M1).
+  const replacedReply = async () => {
     const replaced = await ctx.db
       .query('replacedDecisionRequests')
       .withIndex('by_agent_decision', (q) =>
@@ -424,6 +482,42 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
       ...(answer.replacedBy === undefined ? {} : { replacedBy: answer.replacedBy }),
       notified,
     };
+  };
+  const row = await ctx.db
+    .query('workItems')
+    .withIndex('by_agent_decision', (q) =>
+      q.eq('agentId', surface.agentId).eq('decision.id', args.reply.id),
+    )
+    .first();
+  // An answer to a plan's conflict question names that plan's own request, decided or not: the
+  // plan goes on meanwhile, so the answer can come after the approval (RM20 (a)).
+  if (args.reply.verb === 'answer') {
+    if (!row?.decision) return await replacedReply();
+    if (
+      row.decision.kind !== 'plan' ||
+      row.decision.surfaceSlug !== surface.slug ||
+      row.decision.channel !== surface.managerDmChannelId
+    ) {
+      return await unknown('no plan request with that code on this channel');
+    }
+    return await answerFromChannel(
+      ctx,
+      surface,
+      { row, decision: row.decision },
+      {
+        ...args,
+        reply: args.reply,
+      },
+    );
+  }
+  if (!row?.decision) {
+    const batch = await ctx.db
+      .query('decisionBatches')
+      .withIndex('by_agent_id', (q) => q.eq('agentId', surface.agentId).eq('id', args.reply.id))
+      .first();
+    if (batch)
+      return await resolveChannelBatch(ctx, surface, batch, { ...args, reply: args.reply });
+    return await replacedReply();
   }
   if (
     row.decision.surfaceSlug !== surface.slug ||

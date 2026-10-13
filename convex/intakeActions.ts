@@ -2455,9 +2455,12 @@ export function convexRuntime(ctx: ActionCtx): IntakeRuntime {
       });
     },
     withdraw: async (
-      candidate: IntakeSeed & { leftQueue: string },
+      { people: _people, ...candidate }: IntakeSeed & { leftQueue: string },
       startedUnder: string | null,
     ): Promise<void> => {
+      // The people lookups are the seed's alone: the withdraw's validator takes no `people`, so a
+      // ticket whose issue names a creator or an assignee was never withdrawn (W16-R13, W12c).
+      void _people;
       await ctx.runMutation(internal.work.withdrawListedItem, { ...candidate, startedUnder });
     },
     resolveDecision: async (reply: IntakeDecisionReply): Promise<void> => {

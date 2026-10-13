@@ -13,7 +13,12 @@ import {
   recomputeFromTraces,
   runRecompute,
 } from '../../scripts/recompute-metrics';
-import { assembleTrace, type AgentTrace } from '../../src/export/trace';
+import {
+  assembleOwnerExport,
+  assembleTrace,
+  type AgentTrace,
+  type OwnerExport,
+} from '../../src/export/trace';
 import { allConvexModules } from '../convex/all-modules';
 import { hasHostTool } from '../setup/host-tools';
 import { MANAGER_ADDRESS, managerIdentity } from '../convex/fakes/manager-identity';
@@ -412,6 +417,46 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     expect(recomputed.source).toMatchObject({ kind: 'traces' });
   });
 
+  it('recomputes the reorientation cards from the traces as metrics:forOwner counts them (16-O; A9)', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await harness.run(async (ctx): Promise<void> => {
+      const priya = (await ctx.db.query('agents').collect()).find(
+        (agent) => agent.name === 'Priya',
+      );
+      if (priya === undefined) throw new Error('Priya is not seeded');
+      const card = (type: string, at: number, fields: Record<string, unknown>) =>
+        ctx.db.insert('events', {
+          agentId: priya._id,
+          type,
+          payload: { reorientationId: 'r1', summary: 'A skill is due a re-check', ...fields },
+          createdAt: at,
+        });
+      await card('reorientation.opened', 5_000, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k1',
+        risk: 'low',
+      });
+      await card('reorientation.opened', 5_100, {
+        trigger: 'skill-recheck-due',
+        triggerKey: 'k2',
+        risk: 'low',
+        joined: true,
+      });
+      await card('reorientation.approved', 6_000, {
+        kind: 'none',
+        result: 'nothing needed to change',
+      });
+    });
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    expect(live.company.pilot.reorientation.cards).toEqual({
+      opened: 1,
+      approved: 1,
+      dismissed: 0,
+      deferred: 0,
+    });
+    expect(recomputeFromTraces(await exportedTraces(harness)).figures).toEqual(live);
+  });
+
   it('reproduces metrics:forOwner for both managers after a handover, from the traces, each within the spans they held the employee (the v0.12.0 walk)', async (): Promise<void> => {
     const harness = await companyBackend();
     await handOverMateo(harness);
@@ -472,10 +517,84 @@ describe('recomputing the figures from the owner’s exported traces', (): void 
     writeFileSync(stray, JSON.stringify({ version: 1, events: [] }));
     const refused = capture();
     expect(runRecompute([stray], refused.io)).toBe(2);
-    expect(refused.err.join('\n')).toContain('is not a day0 trace (version 2, 3 or 4)');
+    // Re-pinned for 16-F: the refusal named versions 2 to 4 long after 5 to 7 were read; it now
+    // names what the command reads, a trace or an owner export.
+    expect(refused.err.join('\n')).toContain(
+      'is not a Day0 trace or owner export this release reads',
+    );
     const mixed = capture();
     expect(runRecompute([stray, directory], mixed.io)).toBe(2);
     expect(mixed.err.join('\n')).toContain('not both');
+  });
+});
+
+/** The owner export the owner's browser assembles, through the public actions. */
+async function exportedOwnerFile(
+  harness: ReturnType<typeof convexTest>,
+  owner: string = OWNER,
+): Promise<OwnerExport> {
+  const caller = harness.withIdentity(managerIdentity(owner));
+  return await assembleOwnerExport({
+    head: async () => await caller.action(api.exportActions.exportForOwner, {}),
+    page: async (cursor) => await caller.action(api.exportActions.exportOwnerPage, cursor),
+    employee: {
+      head: async ({ agentId }) =>
+        await caller.action(api.exportActions.exportForAgent, {
+          agentId: agentId as Id<'agents'>,
+        }),
+      page: async ({ agentId, page }) =>
+        await caller.action(api.exportActions.exportPage, {
+          agentId: agentId as Id<'agents'>,
+          ...page,
+        }),
+    },
+  });
+}
+
+describe('recomputing the figures from the owner export (wave 16, 16-F)', (): void => {
+  it('recomputes metrics:forOwner from the one file with --expect, the evaluation agent set aside', async (): Promise<void> => {
+    const harness = await companyBackend();
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-owner-'));
+    temporary.push(directory);
+    const file = join(directory, 'owner.json');
+    const expected = join(directory, 'expected.json');
+    writeFileSync(file, JSON.stringify(await exportedOwnerFile(harness)));
+    writeFileSync(expected, JSON.stringify(live));
+
+    const run = capture();
+    expect(runRecompute([file, '--expect', expected], run.io), run.err.join('\n')).toBe(0);
+    expect(run.out.at(-1)).toBe(`every figure in ${expected} holds`);
+    expect(live.excludedAgents).toBe(1);
+  });
+
+  it('names an employee handed elsewhere as not counted, and counts it with the other manager’s trace beside the file', async (): Promise<void> => {
+    const harness = await companyBackend();
+    await handOverMateo(harness);
+    const live = await harness.withIdentity(managerIdentity(OWNER)).query(api.metrics.forOwner, {});
+    const ownerFile = await exportedOwnerFile(harness);
+    const directory = mkdtempSync(join(tmpdir(), 'day0-recompute-owner-handover-'));
+    temporary.push(directory);
+    const file = join(directory, 'owner.json');
+    writeFileSync(file, JSON.stringify(ownerFile));
+
+    const alone = capture();
+    expect(runRecompute([file], alone.io)).toBe(0);
+    expect(alone.out.find((line) => line.startsWith('recomputed '))).toContain(
+      'handed to another manager and not read here, so not counted: Mateo',
+    );
+
+    const colleagues = (await exportedTraces(harness)).filter(
+      (trace) => trace.agent.userId === COLLEAGUE,
+    );
+    const beside = join(directory, 'mateo.json');
+    writeFileSync(beside, JSON.stringify(colleagues[0]));
+    const expected = join(directory, 'expected.json');
+    writeFileSync(expected, JSON.stringify(live));
+    const both = capture();
+    expect(runRecompute([file, beside, '--expect', expected], both.io), both.err.join('\n')).toBe(
+      0,
+    );
   });
 });
 
@@ -514,14 +633,23 @@ describe('the 17 September recording, as a tracked trace', (): void => {
       skillReuse: { runs: 3, reused: 0, adopted: 0, rate: 0 },
       // One item's stop was retried by the manager and it then completed, so
       // its end is the completion (review m36), not the stop.
+      // Re-pinned for 16-F (RM23 (a)): the Looker item's completion predates the run's answer and
+      // its own words say "The documented refresh could not be completed", so its card reads Not
+      // done; the cycle time now counts the two done completions, the third among the ended.
       cycleTime: {
         ended: 3,
         medianToEndMs: 382_466,
-        completed: 3,
-        medianToCompletionMs: 382_466,
-        p90ToCompletionMs: 616_459,
+        completed: 2,
+        partlyDone: 0,
+        medianToCompletionMs: 379_271,
+        p90ToCompletionMs: 382_466,
       },
-      reorientation: { answered: 0, amended: 0, rate: null },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      },
       hoursSaved: { estimatedItems: 0, hours: null },
       // The 16 September recording predates the selection (wave 14, 14-R): no item read one, so
       // the recompute shows no recall, as the backend does (re-pinned for W14-R6).

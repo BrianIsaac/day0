@@ -47,6 +47,11 @@ import {
   OWN_WRITES_COMMENT,
   STARTING_DM,
 } from '../../fixtures/work/revops-6-own-writes-2026-10-05';
+import {
+  PIP_COMMENT_AND_CLOSE,
+  PIP_MANAGER_DM,
+  PIP_SAME_SET,
+} from '../../fixtures/work/pip-same-set-report-2026-10-11';
 
 const documentation = [`${CHECKLIST_PAGE.title}\n${CHECKLIST_PAGE.body}`];
 
@@ -1019,18 +1024,12 @@ describe("the run's declared reports on a message (the wave 13 review's D-5 (b))
     ).toEqual([1]);
   });
 
-  it('holds a message whose words report a write its reports leave out, naming the sentence', (): void => {
-    const findings = unsupportedClaimFindings(
-      [NOTE_1, NOTE_2, comment('Posted both stop-drill notes in #revops.', [0])],
-      empty,
-    );
-    expect(findings).toEqual([
-      {
-        index: 2,
-        issue:
-          'action 2 (linear save_comment) reports a write its `reports` does not name: it says "Posted both stop-drill notes in #revops." and `reports` names [0], while its words report [0, 1]; list in `reports` every earlier write of this set the message reports, or word the message as what it reports',
-      },
-    ]);
+  // Re-taken for RM22 (a), 12 October 2026: the words bind the message to the write its reports
+  // leave out, so it waits for both and is sent after them, and the check withholds nothing.
+  it('binds a message to a write its words report and its reports leave out, and withholds nothing', (): void => {
+    const said = comment('Posted both stop-drill notes in #revops.', [0]);
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, said], empty)).toEqual([]);
+    expect(boundEarlierWrites(said, [NOTE_1, NOTE_2])).toEqual([0, 1]);
   });
 
   it('holds a message whose reports name a place that is not a write before it', (): void => {
@@ -1059,9 +1058,9 @@ describe("the run's declared reports on a message (the wave 13 review's D-5 (b))
       empty,
       () => false,
     );
-    expect(findings.map((finding) => finding.index)).toEqual([3, 3]);
+    // Re-taken for RM22 (a): the words' report of [1, 2] binds the comment and is no finding.
+    expect(findings.map((finding) => finding.index)).toEqual([3]);
     expect(findings[0]!.issue).toContain('names in `reports` [0], which is not a write before it');
-    expect(findings[1]!.issue).toContain('while its words report [1, 2]');
   });
 
   it('holds nothing when the reports cover what the words report, or are empty', (): void => {
@@ -1134,15 +1133,13 @@ describe('the declared reports in the claim floor and the binding (W14-R7, W14-R
     ).toEqual([]);
   });
 
-  it('asks for the field on a message whose words report a write and whose reports is null (W14-R8)', (): void => {
+  // Re-taken for RM22 (a), 12 October 2026: Pip's true comment was withheld on this tripwire on the
+  // v0.19.0 walk. A null `reports` is read by the words, as a reply from before the field is, and
+  // the words bind the message to the notes, so it is held with them and sent after them.
+  it('binds a message whose reports is null by its words, and asks nothing of it (W14-R8, RM22 (a))', (): void => {
     const said = 'Posted both stop-drill notes in #revops.';
-    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said, null)], empty)).toEqual([
-      {
-        index: 2,
-        issue:
-          'action 2 (linear save_comment) reports earlier writes of this set in its words and declares no `reports`: it says "Posted both stop-drill notes in #revops.", which reports [0, 1]; list in `reports` every earlier write of this set the message reports, or [] when it reports none',
-      },
-    ]);
+    expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said, null)], empty)).toEqual([]);
+    expect(boundEarlierWrites(comment(said, null), [NOTE_1, NOTE_2])).toEqual([0, 1]);
     // A reply recorded before the field has none, and its words bind it as before.
     expect(unsupportedClaimFindings([NOTE_1, NOTE_2, comment(said)], empty)).toEqual([]);
     expect(
@@ -1484,5 +1481,41 @@ describe("an earlier phase's write that only shares a word with the report (W15-
       prior: [STARTING_DM],
     });
     expect(findings.map((finding) => finding.index)).toEqual([0]);
+  });
+});
+
+describe('a true report of a write of its own set is held with it, not withheld (RM22 (a), W19-2)', (): void => {
+  // Pip's REVOPS-204 on the v0.19.0 walk: the comment and the DM report the post before them and
+  // declare no `reports`. Their words bind them to the post, so they wait for it and land after it.
+  it('finds nothing to withhold in Pip’s set, whose words report the post before them', (): void => {
+    expect(reportsFindings(PIP_SAME_SET)).toEqual([]);
+  });
+
+  it('binds the comment to the post and the DM to the post and the comment', (): void => {
+    expect(boundEarlierWrites(PIP_COMMENT_AND_CLOSE, PIP_SAME_SET.slice(0, 1))).toEqual([0]);
+    expect(boundEarlierWrites(PIP_MANAGER_DM, PIP_SAME_SET.slice(0, 2))).toEqual([0, 1]);
+  });
+
+  it('holds the comment and the DM with the post the manager decides', (): void => {
+    const held = { disposition: 'held' as const, reason: 'held for the manager' };
+    const auto = { disposition: 'auto' as const };
+    expect(
+      heldWithReportedWrites(PIP_SAME_SET, [held, auto, auto]).map(
+        (verdict) => verdict.disposition,
+      ),
+    ).toEqual(['held', 'held', 'held']);
+  });
+
+  it('withholds nothing of a message whose words name a write its reports leave out: they bind it', (): void => {
+    const said = 'Posted both stop-drill notes in #revops.';
+    const comment: MockAction = { ...commentOn('REVOPS-6', said), reports: [0] };
+    expect(
+      unsupportedClaimFindings([NOTE_1, NOTE_2, comment], {
+        ledger: '',
+        documentation: [],
+        managerFeedback: [],
+      }),
+    ).toEqual([]);
+    expect(boundEarlierWrites(comment, [NOTE_1, NOTE_2])).toEqual([0, 1]);
   });
 });

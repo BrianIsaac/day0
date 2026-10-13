@@ -860,3 +860,78 @@ describe('the batch lines when a member leaves a ticket close for its card (12-H
     ]);
   });
 });
+
+describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): void => {
+  const question =
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.';
+
+  it('asks at most three questions in the request and counts the rest (the second pass’s m14)', (): void => {
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [1, 2, 3, 4, 5].map((n) => `${question} (${n})`),
+    });
+    expect(text).toContain(`${question} (3)`);
+    expect(text).not.toContain(`${question} (4)`);
+    expect(text).toContain('And 2 more on the plan’s card in day0.');
+  });
+
+  it('carries the question and its answer line before the reply line, and only on a plan', (): void => {
+    expect(
+      decisionRequestText({
+        agentName: 'Priya',
+        title: 'Escalate the variance',
+        id: 'ab3xyz',
+        kind: 'plan',
+        plan: { summary: 'Message the finance lead.' },
+        questions: [question],
+      }),
+    ).toBe(
+      [
+        'Priya needs your decision on “Escalate the variance”.',
+        '',
+        'Plan: Message the finance lead.',
+        '',
+        question,
+        'Answer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.',
+        '',
+        'Reply “approve ab3xyz” or “reject ab3xyz <reason>”.',
+      ].join('\n'),
+    );
+    expect(
+      decisionRequestText({
+        agentName: 'Priya',
+        title: 'Escalate the variance',
+        id: 'ab3xyz',
+        kind: 'plan',
+        plan: { summary: 'Message the finance lead.' },
+        questions: [question],
+        typedCode: false,
+      }),
+    ).toContain(`${question}\nAnswer it on the plan’s card in day0.`);
+  });
+
+  it('reads an answer by its code and letter, however it is written, and nothing else as one', (): void => {
+    expect(parseDecisionReply('answer ab3xyz A')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      choice: 'from',
+    });
+    expect(parseDecisionReply('`Answer: AB3XYZ b`.')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      choice: 'to',
+    });
+    expect(parseDecisionReply('answer ab3xyz both')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      choice: 'both',
+    });
+    expect(parseDecisionReply('answer ab3xyz C')).toBeUndefined();
+    expect(parseDecisionReply('I think the answer ab3xyz A is right')).toBeUndefined();
+    expect(parseDecisionReply('approve ab3xyz')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+  });
+});

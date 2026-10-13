@@ -16,7 +16,7 @@ import {
   GATE_REFUSAL_STOP,
   managerStopNote,
 } from '@/work/stop';
-import { isOpenQuestionStop } from '@/work/obligations';
+import { isConflictQuestion, isOpenQuestionStop } from '@/work/obligations';
 import {
   INTERRUPTED_APPLY_REASON,
   landedRowCount,
@@ -28,10 +28,12 @@ import {
 import { type ActionVerdict, normaliseActionVerdict } from '@/surfaces/policy';
 import { clockTime } from '../../../components/time';
 import { EVALUATION_ATTEMPTS_SPENT, MAX_EVALUATION_ATTEMPTS } from '@/work/queue-order';
-import { notDoneStatements, runOwnWords } from '@/work/not-done';
+import { notDoneStatements } from '@/work/not-done';
 import {
   doneAgainstLedger,
+  finishedAnswerOf,
   landedClosings,
+  ownWordsOf,
   workDoneFactOf,
   workDoneFromLedger,
   type LandedClosing,
@@ -357,6 +359,8 @@ export function heldQuestionOf(
 ): string | undefined {
   if (item.state !== 'failed' || !item.skipReason || !isStopped(item.skipReason)) return undefined;
   if (!isOpenQuestionStop(stopDetail(item.skipReason))) return undefined;
+  // A documentation conflict is answered on its question above, never by a note (W16-R8).
+  if (isConflictQuestion(item.output)) return undefined;
   const output = item.output as
     | { openQuestion?: { question?: unknown }; initial?: { openQuestion?: { question?: unknown } } }
     | undefined;
@@ -471,6 +475,11 @@ export function failedItemReason(item: {
     const detail = stopDetail(item.skipReason);
     const questionOpen = Boolean(item.output?.openQuestion || item.output?.initial?.openQuestion);
     // The run asked its question and withheld the writes that wait on the answer.
+    if (questionOpen && isOpenQuestionStop(detail) && isConflictQuestion(item.output)) {
+      return unconfirmed
+        ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, answer the question above, then Retry: ${detail}`
+        : `stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry: ${detail}`;
+    }
     if (questionOpen && isOpenQuestionStop(detail)) {
       return unconfirmed
         ? `stopped with a question open for you, and the writes that wait on it were never sent; confirm what landed below, then answer it with Answer and retry: ${detail}`
@@ -646,11 +655,7 @@ const UNFINISHED_SHOWN = 3;
  * @returns The clauses, in order; empty when the words say nothing of the kind.
  */
 export function unfinishedInOwnWords(output: RunOutput | undefined): string[] {
-  if (!output) return [];
-  const initial = output.initial?.actions ?? [];
-  return notDoneStatements(
-    runOwnWords({ draft: output.draft, actions: [...initial, ...(output.actions ?? [])] }),
-  ).slice(0, UNFINISHED_SHOWN);
+  return notDoneStatements(ownWordsOf(output)).slice(0, UNFINISHED_SHOWN);
 }
 
 /** A finished run's end as the record says it: the word its card leads with (13-FD). */
@@ -658,17 +663,16 @@ export type { FinishedAs };
 
 /**
  * A finished run's end in the record's word, read from the output its `work.completed` event
- * carries exactly as the card reads it ({@link notDoneOnCard}): "partly done" or "not done" when
- * the run said so, "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
+ * carries exactly as the card reads it ({@link notDoneOnCard}), through the one reading every
+ * count takes (`finishedAnswerOf`, RM23 (a)): "partly done" or "not done" when the run said so,
+ * "done" otherwise. On the v0.16.0 redeploy the record said "done" of items whose
  * cards said "Partly done", the word the release reserves for the run's answer.
  *
  * @param output - The run's output as the event stores it.
  */
 export function finishedAs(output: unknown): FinishedAs {
-  const run = typeof output === 'object' && output !== null ? (output as RunOutput) : undefined;
-  const notDone = notDoneOnCard(run);
-  if (notDone === undefined) return 'done';
-  return notDone.answer === 'partial' ? 'partly done' : 'not done';
+  const answer = finishedAnswerOf(output);
+  return answer === 'done' ? 'done' : answer === 'partial' ? 'partly done' : 'not done';
 }
 
 /** What a finished run's card says was not done: the answer, whose it is, and the words it is said in. */

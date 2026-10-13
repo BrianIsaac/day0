@@ -688,7 +688,8 @@ export function composeImages(
  *   isPresent: Whether Docker holds an image by this reference.
  *   builtBase: The base digest a built image's label names (`baseLabelInspect`), when Docker
  *     holds the image and it carries one. Given, a built image is trusted by its label, never by
- *     its tag (W14-R20): one built from another base is a gap, as a missing one is.
+ *     its tag (W14-R20): one built from another base, or with no label (W15-R39), is a gap, as a
+ *     missing one is.
  *
  * Returns:
  *   The pre-flight item.
@@ -731,17 +732,29 @@ function shortDigest(digest: string): string {
 
 /**
  * Why a built image that is present cannot be trusted by its tag (W14-R20): its label names
- * another base than the one this checkout's Dockerfile pins. The tag is one name for the whole
- * machine, so another checkout's build may hold it. An image with no label was built before the
- * label and is left to the setup's layer comparison.
+ * another base than the one this checkout's Dockerfile pins, or it carries no label at all (built
+ * before the label, or the label unreadable), so nothing here says which base it was built from
+ * (W15-R39: the setup compares layers for such an image, the bed has no such comparison and
+ * trusted the tag). The tag is one name for the whole machine, so another checkout's build may
+ * hold it. Nothing when the caller reads no labels.
  */
 function staleBuiltImage(
   image: ComposeImage,
   builtBase: ((reference: string) => string | undefined) | undefined,
 ): string | undefined {
   const pinned = referenceDigest(image.reference);
-  const labelled = image.builtAs === undefined ? undefined : builtBase?.(image.builtAs);
-  if (pinned === undefined || labelled === undefined || labelled === pinned) return undefined;
+  if (pinned === undefined || image.builtAs === undefined || builtBase === undefined) {
+    return undefined;
+  }
+  const labelled = builtBase(image.builtAs);
+  if (labelled === undefined) {
+    return (
+      `unlabelled: ${image.service} (${image.builtAs} carries no base label Docker could read, so this checkout ` +
+      'cannot tell which base it was built from); build it with `pnpm backend:build` before ' +
+      'travelling, not at the venue'
+    );
+  }
+  if (labelled === pinned) return undefined;
   return (
     `stale: ${image.service} (${image.builtAs} was built from ${shortDigest(labelled)}, and this ` +
     `checkout pins ${shortDigest(pinned)}); build it with \`pnpm backend:build\` before travelling, ` +

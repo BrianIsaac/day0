@@ -278,6 +278,22 @@ describe('finishing and drafting (round two section 3.4)', (): void => {
     view.unmount();
   });
 
+  it("carries the drafting line once, in the region that says it (the v0.19.0 walk's finding 8)", async (): Promise<void> => {
+    room.messages = CONVERSATION.slice(0, 3);
+    room.session = HOLDING_FIRST_REPLY;
+    const view = mount(<ChatRoom agentId={AGENT} bossLabel="Sam" />);
+    await settle();
+    await press(view.container, 'Finish');
+    await press(document.body, 'Finish and draft');
+    await settle();
+    const text = view.container.textContent ?? '';
+    expect(text.split('Drafting your charter, usually under a minute.')).toHaveLength(2);
+    expect(said(view.container)).toEqual([
+      'Drafting your charter, usually under a minute. Your answers are kept beside it, so you can re-read what you said while you review.',
+    ]);
+    view.unmount();
+  });
+
   it('says why the one-to-one could not finish, and keeps it open to finish again (re-pinned)', async (): Promise<void> => {
     room.finishRefusal = new Error('Failed to fetch');
     room.messages = [...CONVERSATION.slice(0, 3)];

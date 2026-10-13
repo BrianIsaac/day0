@@ -17,6 +17,7 @@ import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
+import { skipClause } from '@/work/skip-reasons';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -160,6 +161,11 @@ function decidedFrom(via: unknown, dms: string): string {
   if (via === 'channel') return ` from ${dms} DMs`;
   if (via === 'dashboard') return ' from the dashboard';
   return '';
+}
+
+/** `: summary` for a reorientation card's line when the event carries its summary. */
+function cardAbout(summary: unknown): string {
+  return typeof summary === 'string' && summary.trim() !== '' ? `: ${summary.trim()}` : '';
 }
 
 /** The work item an event is about, quoted, or a plain stand-in when it names none. */
@@ -607,6 +613,8 @@ const PLAN_HELD_BECAUSE: {
       : 'their predecessor approved it, so it was to be approved again',
   'documentation-conflict': () =>
     'two pages disagree on a point it follows, to be decided on the Documentation tab',
+  'reorientation-pending': (subject) =>
+    `a reorientation card holds it until ${they(subject)} decide the card`,
 };
 
 /**
@@ -776,7 +784,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     }${
       p.via === 'plan-approval'
         ? ` as ${addressee(subject)} approved a plan`
-        : ` by ${addressee(subject)}`
+        : p.via === 'reorientation'
+          ? ` as ${addressee(subject)} approved a reorientation card`
+          : ` by ${addressee(subject)}`
     }${because(p.reason)}`,
   'charter.request_changes': (p, subject) =>
     `${decider(subject)} sent the charter back for changes${because(p.notes)}`,
@@ -929,8 +939,12 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `The skill ${text(p.name) ?? 'unnamed'} passed its check and can be called${
       typeof p.version === 'number' ? ` as version ${p.version}` : ''
     }`,
+  // What a re-check means for the work and what the manager can do (the v0.19.0 walk's finding
+  // 8): the skill keeps running (A13), and one of the library's offers Re-check now on its card.
   'skill.recheck-due': (p) =>
-    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}`,
+    `The skill ${text(p.name) ?? 'unnamed'} is due a re-check${because(p.reason)}. It keeps running meanwhile${
+      text(p.versionId) ? '; Re-check now on the Skills tab checks it' : ''
+    }`,
   'skill.adoption-offered': (p, subject) =>
     `${subject.name} was offered ${versionOfSkill(p, subject)} to adopt`,
   'skill.adopted': (p, subject) =>
@@ -1149,7 +1163,11 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       ? `${subject.name} evaluated ${itemOf(subject)}: ${decision?.replace(/-/g, ' ') ?? 'no verdict'}`
       : `${subject.name} judged ${itemOf(subject)} ${judged}`;
   },
-  'work.skipped': (p, subject) => `${subject.name} skipped ${itemOf(subject)}${because(p.reason)}`,
+  // The reason without its machine label, in the words the card says it in (W19-7).
+  'work.skipped': (p, subject) =>
+    `${subject.name} skipped ${itemOf(subject)}${because(
+      typeof p.reason === 'string' ? skipClause(p.reason) : p.reason,
+    )}`,
   'work.scope-judgement-unavailable': (p, subject) =>
     `The scope check on ${itemOf(subject)} could not be made${because(
       p.cause,
@@ -1208,6 +1226,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.how === 'dismissed'
       ? `${decider(subject)} set a proposed working agreement aside`
       : `${decider(subject)} retired a working agreement`,
+  'agreement.check-owed': (_, subject) =>
+    `Day0 could not check a working agreement for every employee against ${subject.name}'s amended charter: it stays in effect, and the check is owed`,
+  'agreement.checked': (_, subject) =>
+    `Day0 checked a working agreement for every employee against ${subject.name}'s charter: it stays in effect`,
   'work.draft-resumed': (p, subject) =>
     `The plan draft${forItem(subject)} restarted after it died${
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
@@ -1217,13 +1239,15 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    p.reason === 'documentation-conflict' && text(p.heading)
-      ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
-      : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-          typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-            ? PLAN_HELD_BECAUSE[p.reason](subject)
-            : `it waits for ${their(subject)} decision`
-        }`,
+    p.reason === 'reorientation-pending' && text(p.summary)
+      ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
+      : p.reason === 'documentation-conflict' && text(p.heading)
+        ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+        : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+            typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+              ? PLAN_HELD_BECAUSE[p.reason](subject)
+              : `it waits for ${their(subject)} decision`
+          }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;
@@ -1368,11 +1392,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       sections ? ` from ${sections}` : ''
     }`;
   },
+  // The reason is the backend's own error (a selection past its reads): the row's detail keeps
+  // it, and the sentence says what happened instead (W15-R48).
   'work.documentation-selection-failed': (p, subject) => {
     const site = text(p.site);
     return `The ${site ? (DOCUMENTATION_SITE[site] ?? site) : 'work'}${forItem(
       subject,
-    )} read every documentation page, since the pages it needed could not be selected${because(p.reason)}`;
+    )} read every documentation page, since the pages it needed could not be selected.`;
   },
   'work.manager-note-sending': (p, subject) =>
     `${subject.name} is sending ${addressee(subject)} a ${p.kind === 'stopped' ? 'stop' : 'landed-work'} note${forItem(
@@ -1384,6 +1410,28 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} is sending ${addressee(subject)} a digest of ${counted(p.count, 'note') ?? 'notes'}`,
   'work.manager-digest-failed': (p, subject) =>
     `A digest to ${addressee(subject)} was not delivered${because(p.reason)}`,
+  'reorientation.opened': (p, subject) =>
+    p.joined === true
+      ? `A further change joined ${subject.name}'s reorientation card${cardAbout(p.summary)}`
+      : `Something ${subject.name}'s charter assumed changed, and a reorientation card opened${cardAbout(p.summary)}`,
+  'reorientation.proposed': (p, subject) =>
+    `${p.kind === 'none' ? `${subject.name} found nothing needs to change` : `${subject.name} proposed a change`} on the reorientation card${
+      p.by === 'discussion' ? ` after talking it through with ${addressee(subject)}` : ''
+    }${cardAbout(p.summary)}`,
+  'reorientation.approved': (p, subject) =>
+    `${decider(subject)} approved the reorientation card${cardAbout(p.summary)}${
+      text(p.result) ? `, and ${text(p.result)}` : ''
+    }`,
+  'reorientation.dismissed': (p, subject) =>
+    `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
+  'reorientation.deferred': (p, subject) =>
+    `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
+  'manager.question-asked': (p, subject) =>
+    `${subject.name} asked ${addressee(subject)} beside the plan${forItem(subject)}${
+      text(p.question) ? `: ${text(p.question)}` : ''
+    }`,
+  'reorientation.reopened': (p) =>
+    `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */

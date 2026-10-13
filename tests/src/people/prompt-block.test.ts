@@ -494,3 +494,47 @@ describe('the People block after the second pass (14-FX)', (): void => {
     expect(withoutIdentities('Mehr‌dad Kh‍anna')).toBe('Mehr‌dad Kh‍anna');
   });
 });
+
+describe("the People block's remaining shapes (W15-R38, reader 5's p2 tokens)", (): void => {
+  it.each([
+    ['an ISBN', '978-3-16-148410-0'],
+    ['a bucket name', 'S3BUCKET01'],
+    ['a support line name', 'G2NDLINE12'],
+    ['a code of alternating letters and digits', 'A1B2C3D4E5'],
+  ])('keeps %s, which is no identity: %s', (_, token): void => {
+    expect(withoutIdentities(`Owner ${token} here`)).toBe(`Owner ${token} here`);
+  });
+
+  it.each([
+    ['a number with its country code and no plus', '65 6123 4567'],
+    ['a UK landline', '020 7946 0958'],
+    ['a UK mobile', '07700 900123'],
+    ['an IPv4 address outside the private ranges', '10.20.30.40'],
+    ['an IPv6 address', 'fe80::1'],
+    ['a full IPv6 address', '2001:0db8:85a3:0000:0000:8a2e:0370:7334'],
+    ['a card number in groups', '4111 1111 1111 1111'],
+    ['a card number unspaced', '4111111111111111'],
+    ['an IBAN', 'GB82WEST12345698765432'],
+    ['an IBAN in groups', 'GB82 WEST 1234 5698 7654 32'],
+  ])('takes out %s: %s', (_, token): void => {
+    expect(withoutIdentities(`Owner ${token} here`)).toBe('Owner here');
+  });
+
+  it('keeps the shapes beside them that are not identities', (): void => {
+    for (const words of [
+      'Invoices 2024 2025 2026 close',
+      'stand-up 10:30 daily',
+      'release 1.2.3',
+      'ticket REVOPS-204',
+      'Q3 2026 plan',
+      'SG12DBSS12345678901234',
+      'batch 1234567812345678 run',
+      'amounts 1000 2000 3000',
+      'scope a::b',
+      // Round amounts after a small number are figures, not a number with its country code.
+      'Budget 100 2000 3000',
+    ]) {
+      expect(withoutIdentities(words), words).toBe(words);
+    }
+  });
+});

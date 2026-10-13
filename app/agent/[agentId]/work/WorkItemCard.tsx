@@ -43,16 +43,20 @@ import { replyTargetFor } from '@/work/reply-target';
 import { OUT_OF_SCOPE_SKIP_PREFIX, QUALITY_FIT_SKIP_PREFIX } from '@/work/types';
 import { usePreviousValue } from '../../../components/previous-value';
 import { StatusRegion } from '../../../components/StatusRegion';
-import { useChange } from '../../../components/use-change';
+import { type Change, useChange } from '../../../components/use-change';
 import type { KeptCorrection } from '../corrections-panel';
 import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../components/time';
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
+import Link from 'next/link';
+import { heldByCardWords } from '@/agent/reorientation-words';
+import { employeeTabHref } from '../employee-tabs';
 import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
 import { PendingActions } from './PendingActions';
 import { type PlanApproval, PlanApprovalForm } from './PlanApproval';
 import { type ItemPlan, type PlanAgreement, PlanSection } from './PlanSection';
+import { ConflictQuestion, type ConflictQuestionRow } from './ConflictQuestion';
 import { RejectedSection, type RetryMode, RetrySection, SkippedSection } from './RetrySection';
 import { ManagerFeedbackNote, type ReconciliationRow, WorkingFromNote } from './RunDetails';
 import { RunRecord } from './RunRecord';
@@ -171,6 +175,12 @@ function retryDone(mode: RetryMode, title: string): string {
   }
 }
 
+/** The reorientation card that holds an item's plan: its id, for the link, and what changed. */
+export interface HoldingCard {
+  readonly reorientationId: string;
+  readonly summary: string;
+}
+
 /**
  * One work item in its state, as round two section 3.7 draws it: the head (the state in the
  * manager's words, where it came from, the ask), then what the state is about (a skip citing
@@ -186,6 +196,8 @@ export function WorkItemCard({
   employeeName = 'the employee',
   managerKey,
   questions = [],
+  conflicts = [],
+  heldByCard,
   corrections = [],
   agreements = [],
   autonomyChanges = [],
@@ -212,6 +224,10 @@ export function WorkItemCard({
   managerKey?: string;
   /** The charter's open questions asked at this item's plan and still waiting. */
   questions?: Doc<'managerQuestions'>[];
+  /** The questions this item's plan's conflicts ask beside it and nobody answered (RM20 (a)). */
+  conflicts?: readonly ConflictQuestionRow[];
+  /** The high-risk reorientation card that holds this item's plan from Day0's own approval (W-9). */
+  heldByCard?: HoldingCard;
   /** The employee's kept corrections, for the line saying this plan applied one. */
   corrections?: readonly KeptCorrection[];
   /** The employee's working agreements, for the line saying this plan applied one (W13-R29). */
@@ -248,8 +264,37 @@ export function WorkItemCard({
   const change = useChange(cardRef);
   const deciding = change.busy;
   const [stopping, setStopping] = useState(false);
-  const decide = (call: () => Promise<unknown> | void, done: string, refused: string): void =>
+  // The set an approval of held writes decided, by the state it was made in and when the row
+  // came to wait there: its "it applies now" is said while that set applies and not once the row
+  // has moved on, finished or parked with another set to decide (W19-8, 16-FW and 16-FX). Every
+  // other outcome stays, a cancellation's or a rejection's included, as does a refusal (the
+  // second pass).
+  const [appliedTo, setAppliedTo] = useState<
+    { state: Doc<'workItems'>['state']; since: number | undefined } | undefined
+  >(undefined);
+  const decide = (
+    call: () => Promise<unknown> | void,
+    done: string,
+    refused: string,
+    applies = false,
+  ): void => {
+    setAppliedTo(applies ? { state: item.state, since: item.waitingSince } : undefined);
     change.run(call, { done, refused });
+  };
+  // A conflict's answer is the card's change too: the question leaves the card once answered, so
+  // its outcome and focus stay with the card (W16-R26).
+  const answering: Change = {
+    ...change,
+    run: (call, words) => {
+      setAppliedTo(undefined);
+      change.run(call, words);
+    },
+  };
+  const outcomeOutlived =
+    appliedTo !== undefined &&
+    item.state !== 'executing' &&
+    (item.state !== appliedTo.state || item.waitingSince !== appliedTo.since) &&
+    change.outcome?.tone === 'done';
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -454,6 +499,7 @@ export function WorkItemCard({
       failed={failed}
       unknown={namedUnknown}
       title={item.title}
+      employeeName={employeeName}
     />
   );
   const ticketNow =
@@ -547,6 +593,22 @@ export function WorkItemCard({
           agreements={agreements}
         />
       ) : null}
+      {conflicts.map((question) => (
+        <ConflictQuestion key={question._id} question={question} change={answering} />
+      ))}
+      {item.state === 'plan-pending' && heldByCard !== undefined ? (
+        <ItemSection>
+          {/* The hold stops Day0's own approval only: the plan is still the manager's to approve. */}
+          <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
+            {heldByCardWords(heldByCard.summary)}{' '}
+            <Link
+              href={`${employeeTabHref(item.agentId, 'needs-you')}/reorientation#card-${heldByCard.reorientationId}`}
+            >
+              Open the card
+            </Link>
+          </p>
+        </ItemSection>
+      ) : null}
       {item.state === 'plan-pending' && plan ? (
         <PlanApprovalForm
           key={item._id}
@@ -610,6 +672,7 @@ export function WorkItemCard({
                     ? 'Approved 1 action: it applies now.'
                     : `Approved ${approvedIndexes.length} actions: they apply now.`,
                 'The actions were not approved.',
+                approvedIndexes.length > 0,
               )
             }
             onReject={(reason) =>
@@ -732,7 +795,7 @@ export function WorkItemCard({
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">
-        <StatusRegion outcome={change.outcome} />
+        <StatusRegion outcome={outcomeOutlived ? null : change.outcome} />
       </div>
     </article>
   );

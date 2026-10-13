@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  conflictConfirmedReason,
   goneCitesReason,
   isGoneCitesReason,
   resolvedPlanCites,
@@ -196,9 +197,65 @@ describe('resolvedPlanCites and a cite two pages disagree on (15-A)', (): void =
       ]);
     }
   });
+
+  it('keeps the tag of a label printed twice when only the later passage is disputed (W15-R18, the second input)', (): void => {
+    const twice = {
+      citations: [
+        {
+          label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+          blocks: [{ id: 'b0', hash: 'h0' }],
+        },
+        ...selection.citations,
+      ],
+    };
+    expect(
+      resolvedPlanCites([['Handbook/runbooks/pipeline-runbook.md#Thresholds']], 1, twice),
+    ).toEqual([
+      {
+        step: 1,
+        label: 'Handbook/runbooks/pipeline-runbook.md#Thresholds',
+        blocks: [
+          { id: 'b0', hash: 'h0' },
+          { id: 'b1', hash: 'h1' },
+        ],
+        conflict,
+      },
+    ]);
+  });
 });
 
 describe('isGoneCitesReason', (): void => {
+  it('reads a conflict confirmed since the approval as one, so Retry drafts the plan again (D-4 (b))', (): void => {
+    const reason = conflictConfirmedReason('Thresholds', [
+      { title: 'Finance escalation', source: 'Finance wiki' },
+      { title: 'Pipeline runbook', source: 'Handbook' },
+    ]);
+    expect(reason).toBe(
+      'Since you approved this plan, you confirmed that A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook) disagree under “Thresholds”. Retry drafts the plan again.',
+    );
+    expect(isGoneCitesReason(reason)).toBe(true);
+  });
+
+  it('names two same-titled pages by their sources, and keeps Retry’s sentence under the 300-character cut (W16-R12, W4a)', (): void => {
+    expect(
+      conflictConfirmedReason('Comment length', [
+        { title: 'Close comment limits', source: 'Revops folder' },
+        { title: 'Close comment limits', source: 'Policies folder' },
+      ]),
+    ).toBe(
+      'Since you approved this plan, you confirmed that A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder) disagree under “Comment length”. Retry drafts the plan again.',
+    );
+    const long = conflictConfirmedReason('A heading '.repeat(12).trim(), [
+      { title: 'A very long page title '.repeat(6).trim(), source: 'Revops folder' },
+      { title: 'A very long page title '.repeat(6).trim(), source: 'Policies folder' },
+    ]);
+    expect(long.length).toBeLessThanOrEqual(300);
+    expect(long.endsWith('Retry drafts the plan again.')).toBe(true);
+    expect(long).toContain('(Revops folder)');
+    expect(long).toContain('(Policies folder)');
+    expect(isGoneCitesReason(long)).toBe(true);
+  });
+
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
     expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);
     expect(isGoneCitesReason('the Linear MCP timed out')).toBe(false);

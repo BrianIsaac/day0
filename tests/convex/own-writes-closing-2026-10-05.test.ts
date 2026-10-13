@@ -357,7 +357,9 @@ describe("REVOPS-6 with the run's declared reports (the wave 13 review's D-5 (b)
     });
   });
 
-  it('withholds at authoring a comment whose words report a post its reports leave out, naming the sentence', async (): Promise<void> => {
+  // Re-taken for RM22 (a), 12 October 2026: the words bind the comment to the post its reports
+  // leave out, so the comment reaches the request beside both posts and is withheld from neither.
+  it('keeps in the held set a comment whose words report a post its reports leave out, held with both posts', async (): Promise<void> => {
     const harness = convexTest(contractSchema(), allConvexModules());
     const held = await heldClosingSet(
       harness,
@@ -367,11 +369,12 @@ describe("REVOPS-6 with the run's declared reports (the wave 13 review's D-5 (b)
       actions: unknown[];
       withheldActions?: Array<{ reason: string }>;
     };
-    expect(output.actions).toHaveLength(2);
-    expect(output.withheldActions?.map((row) => row.reason)).toEqual([
-      expect.stringContaining(
-        'reports a write its `reports` does not name: it says "Posted both stop-drill notes in #revops."',
-      ),
+    expect(output.actions).toHaveLength(3);
+    expect(output.withheldActions ?? []).toEqual([]);
+    expect(held.actionVerdicts?.map((verdict) => verdict.disposition)).toEqual([
+      'held',
+      'held',
+      'held',
     ]);
   });
 });

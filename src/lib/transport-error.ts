@@ -125,11 +125,19 @@ export class TransientProviderError extends Error {
 }
 
 /**
- * Milliseconds a `Retry-After` value asks for.
+ * Delta seconds as providers write them: whole (the form HTTP defines), with a fraction, or with
+ * a unit after them ("30 s", "2 seconds").
+ */
+const DELTA_SECONDS = /^(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds?)?$/i;
+
+/**
+ * Milliseconds a `Retry-After` value asks for (W15-R30: "3.5" and "-1" were read as dates in
+ * the past, a wait of nothing, and "30 s" as no wait at all).
  *
  * @param value - The header: delta seconds or an HTTP date.
  * @param now - The clock, in epoch milliseconds.
- * @returns The wait, never negative, or undefined when the value is neither form.
+ * @returns The wait, never negative, a fraction of a millisecond rounded up; undefined when the
+ *   value is neither form, is signed, or is past what a number holds exactly.
  */
 export function retryAfterMs(
   value: string | null | undefined,
@@ -137,7 +145,14 @@ export function retryAfterMs(
 ): number | undefined {
   const text = value?.trim();
   if (!text) return undefined;
-  if (/^\d+$/.test(text)) return Number(text) * 1_000;
+  const seconds = DELTA_SECONDS.exec(text);
+  if (seconds !== null) {
+    const wait = Math.ceil(Number(seconds[1]) * 1_000);
+    return Number.isSafeInteger(wait) ? wait : undefined;
+  }
+  // A number that is not delta seconds (signed, or under another unit) is no date either,
+  // whatever Date.parse makes of it; a date that begins with a digit is still read as one.
+  if (/^[+-]?\d+(?:\.\d+)?\s*[a-z]*$/i.test(text)) return undefined;
   const at = Date.parse(text);
   return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }

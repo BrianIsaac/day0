@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
-import { internalMutation } from './_generated/server';
-import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL } from '../src/work/office-asks';
+import { internalMutation, type MutationCtx } from './_generated/server';
+import type { Id } from './_generated/dataModel';
+import { OFFICE_ASKS, OFFICE_ASKS_CHANNEL, TEAM_ASKS } from '../src/work/office-asks';
 
 /**
  * Seed the per-agent mock work environment. Idempotent - safe to call
@@ -247,7 +248,7 @@ Set \`status: "done"\` only when your \`workDone\` is \`done\`; when it is \`par
     title: 'How to post to Slack (action guide)',
     body: `# How to post to Slack
 
-When you have a draft that should go to a Slack channel or DM thread, emit a \`slack.postMessage\` action.
+When a reply, a post or a message belongs in a Slack channel, a thread or a DM, emit a \`slack.postMessage\` action.
 
 ## Action shape
 
@@ -257,37 +258,36 @@ When you have a draft that should go to a Slack channel or DM thread, emit a \`s
   "args": {
     "channelSlug": "revops-asks",
     "threadKey": "thread-pipeline-coverage",
-    "body": "Draft for review: Enterprise pipeline coverage over the last 4 weeks…"
+    "body": "Hi Priya, enterprise pipeline coverage over the last four weeks is 3.1x, from the pipeline tab of the Q4 Revenue Tracker."
   }
 }
 \`\`\`
 
-- \`channelSlug\` is one of \`revops-asks\`, \`revops\`, \`dm-manager\`, \`dm-priya\`, \`dm-aman\`.
+- \`channelSlug\` is one of \`revops-asks\`, \`revops\`, \`office-asks\`, \`dm-manager\`, \`dm-priya\`, \`dm-aman\`.
 - \`threadKey\` is optional: supply it to keep the message threaded under an existing ask.
-- Cold-start posture: \`senderKind\` is set automatically to \`agent-draft\` so the manager can see + edit before forwarding.
+- The manager approves the set before anything in it lands, and a post lands as the employee's own: write it as it will read once posted, never as a draft for review or as waiting for approval.
 
 ## Discipline
 
 - One \`slack.postMessage\` action per logical message.
-- Address the recipient by their first name; reference the source ticket/doc inline.
+- Address the recipient by their first name; name the source ticket or page as a person would.
 - Never send to a channel that is not in the list above.
 
-## Closing the loop on a public-channel ask
+## Answering an ask where it was asked
 
-If the work item came from a public channel (e.g. the candidate body says "asked in #revops-asks") and you draft to \`dm-manager\`, you MUST also post a brief threaded ack to the originating channel so the asker knows it's in flight. Use the same \`threadKey\` named in the candidate body.
+When the work item came from a channel or a thread (the candidate names it, or says "asked in #office-asks"), post the answer in that thread with its \`threadKey\`, so the person who asked reads it there. Then send the manager a one-line recap in \`dm-manager\` of what was done: it reports the work, it is never the answer in place of the post, and never a draft for the manager to forward.
 
 \`\`\`json
 {
   "tool": "slack.postMessage",
   "args": {
-    "channelSlug": "revops-asks",
-    "threadKey": "thread-pipeline-coverage",
-    "body": "Drafting a tier-2 response for Manager review. Will post here once approved."
+    "channelSlug": "dm-manager",
+    "body": "Answered Priya's coverage ask in her #revops-asks thread: 3.1x over the last four weeks."
   }
 }
 \`\`\`
 
-That is two messages total: one to the manager (the full draft) and one threaded ack to the originating channel. Skip the channel ack only if the ask itself was already private (came in via DM).
+Skip the recap when the answer itself went to \`dm-manager\` because the manager asked.
 `,
   },
   {
@@ -345,32 +345,90 @@ For social asks (which are typically out-of-scope for the RevOps role), if you d
   },
 ];
 
+/** One document of the hosted office as it ships: a team document or a how-to guide. */
+interface ShippedDocument {
+  readonly slug: string;
+  readonly title: string;
+  readonly body: string;
+  readonly category: 'team-doc' | 'how-to-guide';
+}
+
+/** Every document the hosted office ships with, the team's first and then the guides. */
+const SHIPPED_DOCUMENTS: readonly ShippedDocument[] = [
+  ...TEAM_DOCS.map((doc) => ({ ...doc, category: 'team-doc' as const })),
+  ...HOW_TO_GUIDES.map((guide) => ({ ...guide, category: 'how-to-guide' as const })),
+];
+
+/**
+ * Write one shipped document into an employee's office: rewritten where its shipped words moved,
+ * left where it already reads as shipped, and added where the office has none unless the caller
+ * says an office keeps what it was seeded with. A page the manager's own documentation mirrors
+ * under the slug is theirs: it is never written over (the 13-FD second pass; `it-access` is a
+ * name a handbook may well use).
+ *
+ * @returns Whether a row was written.
+ */
+async function writeShippedDocument(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  shipped: ShippedDocument,
+  missing: 'add' | 'leave',
+): Promise<boolean> {
+  const existing = await ctx.db
+    .query('mockDocs')
+    .withIndex('by_agent_slug', (q) => q.eq('agentId', agentId).eq('slug', shipped.slug))
+    .unique();
+  if (existing?.sourceId !== undefined) return false;
+  const payload = {
+    title: shipped.title,
+    body: shipped.body,
+    category: shipped.category,
+    updatedAt: Date.now(),
+  };
+  if (existing === null) {
+    if (missing === 'leave') return false;
+    await ctx.db.insert('mockDocs', { agentId, slug: shipped.slug, ...payload });
+    return true;
+  }
+  if (
+    existing.title === shipped.title &&
+    existing.body === shipped.body &&
+    existing.category === shipped.category
+  ) {
+    return false;
+  }
+  await ctx.db.patch(existing._id, payload);
+  return true;
+}
+
+/**
+ * Bring the documents an employee's hosted office already holds up to the shipped text (W16-R15,
+ * D-10 (a)): the `mock-office-reseed` pass, for an office seeded before a release that moved a
+ * guide. Only documents are rewritten, and none is added: the office's messages are matched by
+ * their words, so seeding them again would post a second copy of any a release reworded (the
+ * pre-tag's bed, on production's own office), and an office keeps the shape it was seeded with.
+ *
+ * @param ctx - The pass's mutation context.
+ * @param agentId - The employee whose office it is.
+ * @returns How many documents were rewritten.
+ */
+export async function reseedOfficeDocuments(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<number> {
+  let rewritten = 0;
+  for (const shipped of SHIPPED_DOCUMENTS) {
+    if (await writeShippedDocument(ctx, agentId, shipped, 'leave')) rewritten += 1;
+  }
+  return rewritten;
+}
+
 export const seedMockEnvironment = internalMutation({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args) => {
-    const upsertDoc = async (
-      slug: string,
-      title: string,
-      body: string,
-      category: 'team-doc' | 'how-to-guide',
-    ) => {
-      const existing = await ctx.db
-        .query('mockDocs')
-        .withIndex('by_agent_slug', (q) => q.eq('agentId', args.agentId).eq('slug', slug))
-        .unique();
-      const payload = { title, body, category, updatedAt: Date.now() };
-      // A page the manager's own documentation mirrors under this slug is theirs: the seed never
-      // writes over it (the 13-FD second pass; `it-access` is a name a handbook may well use).
-      if (existing?.sourceId !== undefined) return;
-      if (existing) {
-        await ctx.db.patch(existing._id, payload);
-        return;
-      }
-      await ctx.db.insert('mockDocs', { agentId: args.agentId, slug, ...payload });
-    };
-
-    for (const d of TEAM_DOCS) await upsertDoc(d.slug, d.title, d.body, 'team-doc');
-    for (const g of HOW_TO_GUIDES) await upsertDoc(g.slug, g.title, g.body, 'how-to-guide');
+    for (const shipped of SHIPPED_DOCUMENTS) {
+      await writeShippedDocument(ctx, args.agentId, shipped, 'add');
+    }
 
     // Spreadsheet - Q4 Revenue Tracker, two tabs
     const sheetSlug = 'q4-revenue-tracker';
@@ -475,13 +533,10 @@ export const seedMockEnvironment = internalMutation({
         timestamp: Date.now(),
       });
     };
-    await seedMessage(
-      'revops-asks',
-      'thread-pipeline-coverage',
-      'Priya',
-      'requester',
-      'New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.',
-    );
+    // The revenue team's own ask, shown by the generator to a revenue role only (W19-3).
+    for (const ask of TEAM_ASKS) {
+      await seedMessage(ask.channelSlug, ask.threadKey, ask.sender, 'requester', ask.body);
+    }
     await seedMessage(
       'dm-manager',
       undefined,

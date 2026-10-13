@@ -787,6 +787,51 @@ describe('people.resolveItemPeople: intake writes whom the strings are, beside t
     });
   });
 
+  it('lets go of the owner when the ticket is reassigned to someone the graph does not hold (W16-R30)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const itemId = await listedItem(harness, agentId);
+    const sam = await seedPerson(harness, 'Sam Reyes');
+    await seedIdentity(harness, sam, {
+      provider: 'linear',
+      externalId: 'lin-sam',
+      displayName: 'Sam Reyes',
+    });
+    const listed = async (owner: string): Promise<boolean> =>
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'FIN-1',
+        startedUnder: 'owner',
+        requester: [{ provider: 'linear', externalId: 'lin-sam', displayName: 'Sam Reyes' }],
+        owner: [{ provider: 'linear', externalId: owner }],
+      });
+    await listed('lin-sam');
+    // The ticket goes to a contractor the graph does not hold: intake re-lists the new owner, and
+    // Sam is no longer whose it is. Who asked never changes, so the requester is kept.
+    expect(await listed('lin-contractor')).toBe(true);
+    expect(await harness.run(async (ctx) => await ctx.db.get(itemId))).toMatchObject({
+      requesterPerson: { kind: 'person', personId: sam },
+      ownerPerson: { kind: 'unknown' },
+    });
+    // Unassigned: intake clears the owner's name and lists no owner, so nobody is its owner
+    // (the second pass).
+    await listed('lin-sam');
+    await harness.run(async (ctx) => await ctx.db.patch(itemId, { owner: undefined }));
+    expect(
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'linear',
+        externalId: 'FIN-1',
+        startedUnder: 'owner',
+        requester: [{ provider: 'linear', externalId: 'lin-sam', displayName: 'Sam Reyes' }],
+      }),
+    ).toBe(true);
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(itemId)))?.ownerPerson,
+    ).toBeUndefined();
+  });
+
   it('writes nothing once a handover moved the employee since the sweep read it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -937,6 +982,14 @@ describe("the people graph in the employee's record", (): void => {
           change: 'added',
           type: 'escalation-contact',
         },
+      },
+      // An escalation contact's change opens a reorientation card (wave 16, 16-O; section 3).
+      {
+        type: 'reorientation.opened',
+        payload: expect.objectContaining({
+          trigger: 'relationship-changed',
+          summary: 'Aman Rao is now its escalation contact',
+        }),
       },
       {
         type: 'relationship.changed',

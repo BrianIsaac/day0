@@ -13,6 +13,12 @@ import { assertNamedInTransfer } from './ownership';
 import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
 import { appendEvent, eventsOfType } from './eventLog';
 import {
+  carriesReportingLine,
+  charterClausesWhere,
+  moveCardsToOwner,
+  openCard,
+} from './reorientation';
+import {
   assertKeepable,
   boundariesOf,
   cancelJobsFor,
@@ -36,6 +42,7 @@ import {
 import { endOneToOnesForHandover, oneToOnesAtHandoverRefusal } from './voice';
 import { returnApprovalsForHandover, voidDecisionRequestsForHandover } from './decisionRequests';
 import { stopRunsForHandover } from './workRuns';
+import { clearTalksForHandover } from './reorientationTalk';
 import { moveGraphInTransaction } from './peopleProposals';
 import {
   HANDOVER_ENDED_CANCEL_REASON,
@@ -369,7 +376,7 @@ async function recordMove(
   now: number,
 ): Promise<void> {
   await ctx.db.patch(transfer._id, { state: 'accepted', outcome });
-  await appendEvent(ctx, {
+  const eventId = await appendEvent(ctx, {
     agentId,
     type: 'manager.transferred',
     payload: {
@@ -389,6 +396,20 @@ async function recordMove(
       charterDiscarded: outcome.charterDiscarded,
     },
     createdAt: now,
+  });
+  // A card's owner key is a copy of the employee's (16-K's F2): the cards opened before the move
+  // follow the employee, closed where undecided and their talks' words cleared (W16-R1, D-5 (a)),
+  // and the new manager's first view has the card about the rules it carries.
+  await moveCardsToOwner(ctx, agentId, transfer.toOwnerKey, now);
+  await clearTalksForHandover(ctx, agentId, now);
+  await openCard(ctx, {
+    agentId,
+    trigger: 'manager-changed',
+    triggerKey: eventId,
+    summary: `${transfer.fromAddress} handed ${transfer.agentName} over to you`,
+    evidence: { eventIds: [eventId] },
+    affected: { charterClauses: await charterClausesWhere(ctx, agentId, carriesReportingLine) },
+    now,
   });
 }
 

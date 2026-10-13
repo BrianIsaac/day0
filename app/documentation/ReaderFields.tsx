@@ -98,15 +98,15 @@ export function ReaderCredentialFields(props: { kind: ReaderKind }): React.React
 }
 
 /**
- * What one of wave 15's reader kinds reaches, that nothing of day0's has to be running for it,
- * and where IT's guide to its credential is.
+ * What one of wave 15's reader kinds reaches, that no component beside the backend has to start
+ * for it, and where IT's guide to its credential is.
  *
  * @param props - The selected kind.
  */
 export function ReaderKindHelp(props: { kind: ReaderKind }): React.ReactNode {
   return (
     <p className={HELP}>
-      The backend reads {REACHES[props.kind]}. No day0 component has to be running.{' '}
+      The backend reads {REACHES[props.kind]}, with no other component to start.{' '}
       <a href={READER_GUIDE_URLS[props.kind]} target="_blank" rel="noreferrer">
         How IT sets it up
       </a>

@@ -69,6 +69,8 @@ export const AGENT_KEYED_TABLES = [
   'managerNotes',
   'corrections',
   'workingAgreements',
+  'reorientations',
+  'reorientationTalks',
   'decisionBatches',
   'skills',
   'permissionGrants',
@@ -348,6 +350,17 @@ const EMPLOYEE_ROWS: Readonly<Record<AgentKeyedTable, RowReader>> = {
   workingAgreements: (db, { agentId }, limit) =>
     upTo(
       db.query('workingAgreements').withIndex('by_agent_status', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  // Every card in every standing: an employee's reset leaves none behind (16-K).
+  reorientations: (db, { agentId }, limit) =>
+    upTo(
+      db.query('reorientations').withIndex('by_agent_status', (q) => q.eq('agentId', agentId)),
+      limit,
+    ),
+  reorientationTalks: (db, { agentId }, limit) =>
+    upTo(
+      db.query('reorientationTalks').withIndex('by_agent', (q) => q.eq('agentId', agentId)),
       limit,
     ),
   decisionBatches: (db, { agentId }, limit) =>

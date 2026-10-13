@@ -6,6 +6,7 @@ import type { SlackBlock } from './slack-blocks';
 import type { MockAction } from './types';
 import type { RunHold } from './item-display';
 import { quotedSentence } from './held-close';
+import { conflictReplyLine, type ConflictChoice } from '../agent/reorientation-words';
 
 /** How many characters a decision code has. */
 export const DECISION_ID_LENGTH = 6;
@@ -167,7 +168,9 @@ export function heldReplyCodes(
 /** A manager's reply as the channel parses it: approve or reject, with the code and any reason. */
 export type DecisionReply =
   | { verb: 'approve'; id: string }
-  | { verb: 'reject'; id: string; reason: string };
+  | { verb: 'reject'; id: string; reason: string }
+  /** The answer to a conflict's question in a plan's request (RM20 (a)): the first page, the second, or both. */
+  | { verb: 'answer'; id: string; choice: ConflictChoice };
 
 /**
  * The longest manager reason kept in full, from the card or from chat alike.
@@ -202,6 +205,17 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
     .replace(/^[\s"'“”‘’`*_]+/, '')
     .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
+  const answer = /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})\s+(a|b|both)$/i.exec(
+    flat,
+  );
+  if (answer) {
+    const letter = answer[2].toLowerCase();
+    return {
+      verb: 'answer',
+      id: answer[1].toLowerCase(),
+      choice: letter === 'a' ? 'from' : letter === 'b' ? 'to' : 'both',
+    };
+  }
   const match =
     /^(approve|reject)(?:e?d)?\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:[\s,;:]+(.*))?$/i.exec(
       flat,
@@ -456,6 +470,11 @@ export function decisionRequestText(args: {
    * action left beside them the request asks nothing a reply or a press could decide.
    */
   leftForCard?: { readonly indexes: readonly number[]; readonly clause?: string };
+  /**
+   * The questions a plan's conflicts ask beside it (RM20 (a)), each with its answer line: the plan
+   * goes on meanwhile, so they never stop the approval.
+   */
+  questions?: readonly string[];
 }): string {
   const closes = args.kind === 'actions' ? (args.leftForCard?.indexes ?? []) : [];
   if (closes.length > 0 && (args.heldIndexes ?? []).length === 0) {
@@ -532,6 +551,11 @@ export function decisionRequestText(args: {
           ]
         : []),
       ...(refused.length > 0 ? ['', ...refused] : []),
+      ...questionLines(
+        args.kind === 'plan' ? (args.questions ?? []) : [],
+        args.id,
+        args.typedCode !== false,
+      ),
       '',
       reply,
       ...(scope ? [scope] : []),
@@ -545,6 +569,28 @@ export function decisionRequestText(args: {
   }
   return frame(lines.slice(0, shown), lines.length - shown);
 }
+
+/**
+ * A plan's conflict questions as the request asks them, and how to answer: a typed answer where
+ * the employee's app takes messages, the plan's card in Day0 otherwise.
+ */
+function questionLines(questions: readonly string[], id: string, typedCode: boolean): string[] {
+  if (questions.length === 0) return [];
+  const asked = questions.slice(0, REQUEST_QUESTIONS_SHOWN);
+  const more = questions.length - asked.length;
+  return [
+    '',
+    ...asked.map((question) => slackEscaped(question)),
+    ...(more > 0 ? [`And ${more} more on the plan’s card in day0.`] : []),
+    typedCode ? conflictReplyLine(id) : 'Answer it on the plan’s card in day0.',
+  ];
+}
+
+/**
+ * The most conflict questions one request asks (the second pass's m14): the rest are counted and
+ * answered on the plan's card, so many long questions never push a request past the message limit.
+ */
+const REQUEST_QUESTIONS_SHOWN = 3;
 
 /**
  * A request's last line: how it is decided. The typed code only where the employee's app takes

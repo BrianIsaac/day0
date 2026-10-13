@@ -20,7 +20,7 @@ export function HeldWriteFrame() {
             1 action is waiting for you
           </p>
           <p className="mt-2 text-sm font-medium">{HELD_WRITE.target}</p>
-          <p className="mt-1.5 whitespace-pre-line rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs leading-relaxed text-zinc-300">
+          <p className="mt-1.5 whitespace-pre-line rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--color-fg-2)]">
             {HELD_WRITE.body}
           </p>
         </div>

@@ -11,6 +11,7 @@ import {
   WorkQueue,
 } from '../../../../../app/agent/[agentId]/work/WorkQueue';
 import { button, focusedName, mount, press, said, settle } from '../../../../fixtures/dom/press';
+import { WALK_EMPLOYEES } from '../../../../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 
 const backend = vi.hoisted(() => ({
   /** Mutations and actions that reject, by function name, with the text they reject with. */
@@ -261,6 +262,42 @@ describe('landing an inbox link on its card (U17 D13, A D8)', (): void => {
     view.unmount();
     window.location.hash = '';
   });
+
+  it('draws the queue and lands nowhere on a fragment that is not a valid escape (W16-R28)', (): void => {
+    window.location.hash = '#item-%';
+    try {
+      const view = mount(
+        <WorkQueue
+          agentId={'a1' as Id<'agents'>}
+          workItems={[
+            {
+              _id: 'w-plan',
+              _creationTime: 1,
+              agentId: 'a1',
+              state: 'plan-pending',
+              title: 'Plan',
+              sourceSystem: 'linear',
+              sourceCategory: 'ticket-queue',
+              externalId: 'w-plan',
+              contentSummary: 's',
+              contentRefs: [],
+              observedAt: 1,
+            } as unknown as Doc<'workItems'>,
+          ]}
+          openQuestions={[]}
+          surfaces={[]}
+          registeredSkillCount={0}
+          charterApproved
+          autonomousActions={false}
+          surfaceMode="real"
+        />,
+      );
+      expect(document.getElementById('item-w-plan')).not.toBeNull();
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
+  });
 });
 
 describe('the queue gliding its cards to their new places (second review x8)', (): void => {
@@ -467,5 +504,86 @@ describe('an empty queue whose seeding did not finish (12-J item 6, option C; 12
     expect(renderToStaticMarkup(queue())).toContain(
       'Nothing has come in yet. New work appears here as it is found.',
     );
+  });
+});
+
+describe('the Done filter says how many of its rows are partly done (RM23 (a))', (): void => {
+  it('draws Lark’s tab from the v0.19.0 walk as Done 3 with 2 partly beside it, every finished row kept', async (): Promise<void> => {
+    const lark = WALK_EMPLOYEES[0]!;
+    const items = lark.cards.map(
+      (card, index) =>
+        ({
+          _id: `w-${index}`,
+          _creationTime: 1,
+          agentId: 'a1',
+          sourceSystem: 'linear',
+          sourceCategory: 'ticket-queue',
+          externalId: `REVOPS-${index}`,
+          title: card.title,
+          contentSummary: 's',
+          contentRefs: [],
+          state: card.state,
+          ...(card.output === undefined ? {} : { output: card.output }),
+          observedAt: 1,
+          createdAt: 1,
+        }) as unknown as Doc<'workItems'>,
+    );
+    const view = mount(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={items}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="real"
+      />,
+    );
+    expect(button(view.container, 'Done 3 · 2 partly')).toBeDefined();
+    expect(button(view.container, 'All 4')).toBeDefined();
+    await press(view.container, 'Done 3 · 2 partly');
+    for (const card of lark.cards.slice(0, 3))
+      expect(view.container.textContent).toContain(card.title);
+    expect(view.container.textContent).not.toContain(lark.cards[3]!.title);
+    view.unmount();
+  });
+
+  it('draws the Done count alone when nothing under it is partly done', (): void => {
+    const view = mount(
+      <WorkQueue
+        agentId={'a1' as Id<'agents'>}
+        workItems={[
+          {
+            _id: 'w-landed',
+            _creationTime: 1,
+            agentId: 'a1',
+            sourceSystem: 'linear',
+            sourceCategory: 'ticket-queue',
+            externalId: 'REVOPS-1',
+            title: 'Landed',
+            contentSummary: 's',
+            contentRefs: [],
+            state: 'completed',
+            output: {
+              draft: 'Posted the reply.',
+              notes: '',
+              workDone: 'done',
+              workDoneWhy: 'Posted.',
+            },
+            observedAt: 1,
+            createdAt: 1,
+          } as unknown as Doc<'workItems'>,
+        ]}
+        openQuestions={[]}
+        surfaces={[]}
+        registeredSkillCount={0}
+        charterApproved
+        autonomousActions={false}
+        surfaceMode="real"
+      />,
+    );
+    expect(button(view.container, 'Done 1')).toBeDefined();
+    view.unmount();
   });
 });

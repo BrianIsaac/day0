@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   AGENT_EVENT_TYPES,
   CONNECTION_EVENT_TYPES,
@@ -9,7 +9,14 @@ import {
   isConnectionEventType,
   isEventOf,
   isEventType,
+  type AmendmentVia,
+  type CharterQuestionAnsweredPayload,
+  type EventPayloads,
+  type PlanHeldForReorientation,
+  type ReorientationNamed,
 } from '../../../src/events/contract';
+import type { Id } from '../../../convex/_generated/dataModel';
+import type { ManagerQuestionType } from '../../../src/agent/manager-questions';
 
 const ROOT = join(import.meta.dirname, '..', '..', '..');
 
@@ -170,5 +177,41 @@ describe('the event contract (decisions N10 and Q14)', (): void => {
       .filter((path) => /withIndex\(\s*['"]by_agent_type['"]/.test(readFileSync(path, 'utf8')))
       .map((path) => relative(ROOT, path));
     expect(direct).toEqual([]);
+  });
+});
+
+describe('the wave 16 types, declared by the schema step for 16-O (16-K)', (): void => {
+  it('lists the six reorientation events and the typed question, each with its writer (16-O)', (): void => {
+    for (const type of [
+      'reorientation.opened',
+      'reorientation.proposed',
+      'reorientation.reopened',
+      'reorientation.approved',
+      'reorientation.dismissed',
+      'reorientation.deferred',
+      'manager.question-asked',
+    ]) {
+      expect(isEventType(type), type).toBe(true);
+    }
+  });
+
+  it('types the seventh hold reason, the seven payloads, an amendment by reorientation and a charter answer by its two ways', (): void => {
+    expectTypeOf<AmendmentVia>().toEqualTypeOf<'dashboard' | 'plan-approval' | 'reorientation'>();
+    // A charter question is answered on the dashboard or with a plan approval; a reorientation
+    // amends without one, and a Slack answer decides what its question is about (16-O).
+    expectTypeOf<CharterQuestionAnsweredPayload['via']>().toEqualTypeOf<
+      'dashboard' | 'plan-approval'
+    >();
+    expectTypeOf<PlanHeldForReorientation['reason']>().toEqualTypeOf<'reorientation-pending'>();
+    expectTypeOf<PlanHeldForReorientation['reorientationId']>().toEqualTypeOf<
+      Id<'reorientations'>
+    >();
+    expectTypeOf<
+      EventPayloads['manager.question-asked']['type']
+    >().toEqualTypeOf<ManagerQuestionType>();
+    // A proposal an event records is never the pending one.
+    expectTypeOf<'pending'>().not.toMatchTypeOf<EventPayloads['reorientation.proposed']['kind']>();
+    expectTypeOf<'none'>().toMatchTypeOf<EventPayloads['reorientation.approved']['kind']>();
+    expectTypeOf<EventPayloads['reorientation.dismissed']>().toEqualTypeOf<ReorientationNamed>();
   });
 });

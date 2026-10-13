@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { splitPage } from '../../../src/docs/blocks';
 import {
+  DATED_SUCCESSOR_GAP_MS,
   RELATION_EVIDENCE_BLOCKS,
   RELATION_MEASURES,
   RELATION_PROPOSALS_PER_SYNC,
@@ -15,13 +16,20 @@ import {
 } from '../../../src/docs/relations';
 
 /** A page as the measures read it, its blocks split as the store splits them. */
-function page(key: string, title: string, markdown: string, updatedAt = 1): MeasuredPage {
+function page(
+  key: string,
+  title: string,
+  markdown: string,
+  updatedAt = 1,
+  edited = true,
+): MeasuredPage {
   return {
     key,
     ref: key.split(':').pop() ?? key,
     title,
     markdown,
     updatedAt,
+    edited,
     blocks: splitPage(markdown).map((block) => ({
       hash: block.hash,
       headingPath: block.headingPath,
@@ -49,13 +57,16 @@ const ESCALATION = [
 ].join('\n');
 
 describe('the relation measures and their caps', (): void => {
-  it('are four, named for the card, with the caps a sync and a row keep to', (): void => {
+  it('are five, named for the card, with the caps a sync and a row keep to', (): void => {
+    // `edit-dates` joined in wave 16 (16-FD, RM19 (a)): the dated successor between copies.
     expect(RELATION_MEASURES).toEqual([
       'shared-text',
       'title-version',
       'names-successor',
       'heading-figures',
+      'edit-dates',
     ]);
+    expect(DATED_SUCCESSOR_GAP_MS).toBe(24 * 60 * 60 * 1000);
     expect(RELATION_PROPOSALS_PER_SYNC).toBe(50);
     expect(RELATION_EVIDENCE_BLOCKS).toBe(8);
     expect(SHARED_TEXT_DUPLICATE).toBe(60);
@@ -286,6 +297,86 @@ describe('measureRelation', (): void => {
       to: 'wiki:escalation.md',
       evidence: [{ measure: 'shared-text', value: 100 }],
     });
+  });
+
+  // RM19 (a), the operator's remark of 11 October: a copy its source dated a day or more later is
+  // proposed as the successor, both dates on the card, and only the manager's answer applies it.
+  it('proposes a copy its source edited a day or more later as the successor, with the days between on its evidence', (): void => {
+    const day = DATED_SUCCESSOR_GAP_MS;
+    const older = page('wiki:escalation.md', 'Escalation paths', ESCALATION, 10 * day);
+    const newer = page(
+      'handbook:escalation-paths.md',
+      'Escalation paths for the close',
+      ESCALATION.replace('# Escalation paths', '# Escalation paths for the close'),
+      13 * day + 5,
+    );
+    const proposed = measureRelation(older, newer);
+    expect(proposed).toMatchObject({
+      kind: 'possible_successor',
+      from: 'handbook:escalation-paths.md',
+      to: 'wiki:escalation.md',
+    });
+    expect(proposed?.evidence.map(({ measure, value }) => ({ measure, value }))).toEqual([
+      { measure: 'shared-text', value: 100 },
+      { measure: 'edit-dates', value: 3 },
+    ]);
+    // The same pair the other way round is the same proposal.
+    expect(measureRelation(newer, older)).toMatchObject({
+      kind: 'possible_successor',
+      from: 'handbook:escalation-paths.md',
+      to: 'wiki:escalation.md',
+    });
+    // Exactly a day apart is a day.
+    expect(measureRelation(older, { ...newer, updatedAt: 11 * day })?.evidence.at(-1)).toEqual({
+      measure: 'edit-dates',
+      value: 1,
+    });
+  });
+
+  it('keeps a copy a duplicate when the two were edited under a day apart, or either time is when it was read', (): void => {
+    const day = DATED_SUCCESSOR_GAP_MS;
+    const older = page('wiki:escalation.md', 'Escalation paths', ESCALATION, 10 * day);
+    const copy = (updatedAt: number, edited = true): MeasuredPage =>
+      page(
+        'links:escalation-notes',
+        'My escalation notes',
+        ESCALATION.replace('# Escalation paths', '# My escalation notes'),
+        updatedAt,
+        edited,
+      );
+    for (const other of [copy(11 * day - 1), copy(20 * day, false)]) {
+      expect(measureRelation(older, other)).toMatchObject({
+        kind: 'possible_duplicate',
+        evidence: [{ measure: 'shared-text', value: 100 }],
+      });
+    }
+    // A page read from a list of URLs carries when it was read, whichever side it is on.
+    expect(measureRelation({ ...older, edited: false }, copy(20 * day))?.kind).toBe(
+      'possible_duplicate',
+    );
+  });
+
+  it('dates only a near-identical pair: a conflict stays a conflict, and pages that share little are nothing', (): void => {
+    const day = DATED_SUCCESSOR_GAP_MS;
+    const wiki = page('wiki:escalation.md', 'Escalation paths', ESCALATION, 1);
+    const changed = page(
+      'handbook:escalation.md',
+      'Close escalation',
+      ESCALATION.replace('# Escalation paths', '# Close escalation').replace('5,000', '50,000'),
+      30 * day,
+    );
+    expect(measureRelation(wiki, changed)?.kind).toBe('possible_conflict');
+    expect(
+      measureRelation(
+        wiki,
+        page(
+          'wiki:holidays.md',
+          'Office holidays',
+          '# Office holidays\n\nClosed in August.',
+          30 * day,
+        ),
+      ),
+    ).toBeUndefined();
   });
 
   it('proposes nothing for two pages that share little and name no version of each other', (): void => {

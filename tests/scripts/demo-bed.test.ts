@@ -727,10 +727,18 @@ describe('the compose file is pinned to digests', (): void => {
     expect(builtImagesRefusal(images, (reference) => !reference.startsWith('day0-'))).toBe(
       `the bed cannot start: missing: backend (day0-convex-backend:git, built from ${base}); build it with \`pnpm backend:build\``,
     );
-    // Labelled with the pinned base, or built before the label: the bed starts; a pulled image
-    // that is missing is the pre-flight's to say, not a reason to stop `up`.
+    // Labelled with the pinned base: the bed starts; a pulled image that is missing is the
+    // pre-flight's to say, not a reason to stop `up`.
     expect(builtImagesRefusal(images, present, () => `sha256:${'a'.repeat(64)}`)).toBeUndefined();
-    expect(builtImagesRefusal(images, present, () => undefined)).toBeUndefined();
+    // Re-pinned for W15-R39: a tag with no base label (built before the label, or by a setup that
+    // left one) was trusted by its name here, where the setup compares layers; the bed has no such
+    // comparison, so it says what it cannot tell and stops.
+    expect(builtImagesRefusal(images, present, () => undefined)).toBe(
+      'the bed cannot start: unlabelled: backend (day0-convex-backend:git carries no base label Docker could read, so this checkout cannot tell which base it was built from); build it with `pnpm backend:build`',
+    );
+    expect(imagesPreflightItem(images, present, () => undefined)).toMatchObject({
+      status: 'gap',
+    });
     expect(
       builtImagesRefusal(images, (reference) => reference.startsWith('day0-')),
     ).toBeUndefined();

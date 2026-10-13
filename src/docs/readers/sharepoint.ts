@@ -323,11 +323,15 @@ export class SharePointReader implements DocumentationReader {
     return {
       pages: taken.pages,
       unread: taken.unread,
-      nextCursor: cursorAfter(walk, url, taken, next, {
-        phase: 'pages',
-        siteId: walk.siteId,
-        skip: 0,
-      }),
+      // A delta page may be empty and still name the next: only the delta link ends the walk.
+      nextCursor: cursorAfter(
+        walk,
+        url,
+        taken,
+        next,
+        { phase: 'pages', siteId: walk.siteId, skip: 0 },
+        { followEmpty: true },
+      ),
     };
   }
 
@@ -633,6 +637,7 @@ interface Taken {
  * Graph names one, or the walk that follows this one.
  *
  * @param after - The walk to go on to once this one's listing ends; none ends the sync's read.
+ * @param options - `followEmpty` for a delta walk, which an empty page does not end.
  * @throws Error for a next link that is the page just read, which would never end.
  */
 function cursorAfter(
@@ -641,11 +646,14 @@ function cursorAfter(
   taken: Taken,
   next: string | undefined,
   after: Walk | undefined,
+  options: { readonly followEmpty?: boolean } = {},
 ): string | undefined {
   const cursor = (to: Walk): string => `${CURSOR_PREFIX}${JSON.stringify(to)}`;
   if (taken.taken < taken.listed) return cursor({ ...walk, link: url.href, skip: taken.taken });
-  // An empty page ends a delta walk, whatever link comes with it (the delta reference).
-  if (next !== undefined && taken.listed > 0) {
+  // A delta walk follows its next link whatever the page held, since only the delta link ends it
+  // (W15-R30); a listing's empty page ends it. A walk that keeps naming more is stopped by the
+  // run's own count of its listings (`listingOverrun`).
+  if (next !== undefined && (taken.listed > 0 || options.followEmpty === true)) {
     if (next === url.href) {
       throw new Error('Microsoft Graph named the page just read as the next one.');
     }

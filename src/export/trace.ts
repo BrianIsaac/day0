@@ -25,16 +25,22 @@ export const TRACE_FORMAT = 'day0-trace';
  * salted digest ({@link ownerKeyDigest}); 5 adds the organisation's ledger
  * lines about the connections the employee's cards use (wave 11, F17); 6 adds
  * the decision requests a newer one replaced (wave 12, 12-M; F2 D14); 7 adds the
- * owner's people graph, its people, identities and edges (wave 13, 13-P).
+ * owner's people graph, its people, identities and edges (wave 13, 13-P); 8 adds the employee's
+ * reorientation cards and the talks about them (wave 16), and is the version of the owner export
+ * ({@link OwnerExport}), which carries every employee's trace and the owner's rows in one file.
  */
-export const TRACE_VERSION = 7;
+export const TRACE_VERSION = 8;
+
+/** A trace version this release reads. */
+export type TraceVersion = 2 | 3 | 4 | 5 | 6 | 7 | typeof TRACE_VERSION;
 
 /**
  * The earlier versions this release still reads: a version 2 trace has no
  * delivery records, neither 2 nor 3 carries the handovers, none before 6
- * the replaced decision requests, and none before 7 the people graph.
+ * the replaced decision requests, none before 7 the people graph, and none before 8 the
+ * reorientation cards.
  */
-const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, 5, 6, TRACE_VERSION]);
+const READABLE_VERSIONS: ReadonlySet<unknown> = new Set([2, 3, 4, 5, 6, 7, TRACE_VERSION]);
 
 /** The most rows one page returns, far inside the backend's 8,192-element bound. */
 export const TRACE_PAGE_ROWS = 100;
@@ -53,6 +59,8 @@ export const TRACE_SECTIONS = [
   'people',
   'personIdentities',
   'relationships',
+  'reorientations',
+  'reorientationTalks',
   'events',
 ] as const;
 
@@ -64,6 +72,9 @@ const ADDED_IN_VERSION_6: readonly TraceSection[] = ['replacedRequests'];
 
 /** The sections a trace before version 7 did not carry, read from one as empty. */
 const ADDED_IN_VERSION_7: readonly TraceSection[] = ['people', 'personIdentities', 'relationships'];
+
+/** The sections a trace before version 8 did not carry, read from one as empty. */
+const ADDED_IN_VERSION_8: readonly TraceSection[] = ['reorientations', 'reorientationTalks'];
 
 /** One section of a trace. */
 export type TraceSection = (typeof TRACE_SECTIONS)[number];
@@ -98,6 +109,10 @@ export interface TraceRows {
   people: Doc<'people'>[];
   personIdentities: Doc<'personIdentities'>[];
   relationships: Doc<'relationships'>[];
+  /** The employee's reorientation cards, in every standing (wave 16; 16-K's table). */
+  reorientations: Doc<'reorientations'>[];
+  /** The talks the manager had with the employee about a card (wave 16, Discuss). */
+  reorientationTalks: Doc<'reorientationTalks'>[];
   events: Doc<'events'>[];
 }
 
@@ -150,7 +165,7 @@ export type TraceRetirement = Omit<Doc<'retirements'>, 'userId'> | TombstoneReti
 export interface TraceManifest {
   readonly format: typeof TRACE_FORMAT;
   /** This release's version, or the earlier one a file read from an older export keeps. */
-  readonly version: 2 | 3 | 4 | 5 | typeof TRACE_VERSION;
+  readonly version: TraceVersion;
   readonly exportedAt: number;
   /** The export's date, `YYYY-MM-DD`, in the agent's zone. */
   readonly exportedOn: string;
@@ -298,6 +313,8 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
  * @param agentId - The agent to export.
  * @param call - One call of the export: the head for a request with no page, one
  *   page otherwise. The command line passes `npx convex run`; a test passes the harness.
+ * @param skip - Sections not to read, left empty in the trace: the owner export carries the
+ *   owner's people graph once rather than in every employee's trace.
  * @returns The trace with every section in full and the counts in the manifest.
  * @throws Error when a page answers for a section other than the one asked for.
  */
@@ -307,6 +324,7 @@ export async function assembleTrace(
     head(request: TraceRequest): Promise<TraceHead>;
     page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
   },
+  skip: ReadonlySet<TraceSection> = new Set(),
 ): Promise<AgentTrace> {
   const head = await call.head({ agentId });
   const sections = Object.fromEntries(
@@ -315,6 +333,12 @@ export async function assembleTrace(
   const seen = new Set<string>();
   let next: TraceCursor | null = head.next;
   while (next !== null) {
+    if (skip.has(next.section)) {
+      // A section left to another part of the file is never read: it is carried there once.
+      const following = sectionAfter(next.section);
+      next = following === undefined ? null : { section: following, cursor: null };
+      continue;
+    }
     const page: TracePage = await call.page({ agentId, page: next });
     if (page.section !== next.section) {
       throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
@@ -372,7 +396,8 @@ export function readAgentTrace(value: unknown): AgentTrace | undefined {
       (carried[section] === undefined &&
         ((version === 2 && ADDED_IN_VERSION_3.includes(section)) ||
           (typeof version === 'number' && version < 6 && ADDED_IN_VERSION_6.includes(section)) ||
-          (typeof version === 'number' && version < 7 && ADDED_IN_VERSION_7.includes(section)))),
+          (typeof version === 'number' && version < 7 && ADDED_IN_VERSION_7.includes(section)) ||
+          (typeof version === 'number' && version < 8 && ADDED_IN_VERSION_8.includes(section)))),
   );
   if (!complete) return undefined;
   const filled = Object.fromEntries(
@@ -392,4 +417,291 @@ export function readAgentTrace(value: unknown): AgentTrace | undefined {
  */
 export function isAgentTrace(value: unknown): value is AgentTrace {
   return readAgentTrace(value) !== undefined;
+}
+
+/** The format name of the owner export, the one file of every employee's trace and the owner's rows. */
+export const OWNER_EXPORT_FORMAT = 'day0-owner-export';
+
+/**
+ * The owner's own rows an owner export carries once, in the order they are paged (wave 16, 16-F;
+ * the wave file's 5.4): the retired employees and the employees handed to another manager (wave
+ * 9), the documentation's sources by their labels and trust, the pages by their status and the
+ * relations between them, never a page's text (wave 15), the skill library (wave 10), and the
+ * people graph with the working agreements (wave 13). Organisation connections and their ledger
+ * are the administrator's, not an owner's.
+ */
+export const OWNER_SECTIONS = [
+  'retirements',
+  'departures',
+  'docSources',
+  'docPages',
+  'docRelations',
+  'skillVersions',
+  'people',
+  'personIdentities',
+  'relationships',
+  'workingAgreements',
+] as const;
+
+/** One section of the owner's rows. */
+export type OwnerSection = (typeof OWNER_SECTIONS)[number];
+
+/**
+ * The sections of an employee's trace that are the owner's rows (the people graph, read under the
+ * employee's owner scope): an owner export carries them once among the owner's rows, and leaves
+ * them empty in each employee's trace ({@link employeeTracesOf} fills them back).
+ */
+export const OWNER_SCOPED_SECTIONS: ReadonlySet<TraceSection> = new Set<TraceSection>([
+  'people',
+  'personIdentities',
+  'relationships',
+]);
+
+/**
+ * One documentation source as the owner export carries it: its label, kind and trust, and where
+ * it stands, never its locator or its secret.
+ */
+export interface OwnerDocSource {
+  readonly _id: string;
+  readonly _creationTime: number;
+  readonly label: string;
+  readonly kind: Doc<'docSources'>['kind'];
+  readonly authority?: Doc<'docSources'>['authority'];
+  readonly defaultStatus?: Doc<'docSources'>['defaultStatus'];
+  readonly status: Doc<'docSources'>['status'];
+  readonly lastSyncAt?: number;
+  readonly createdAt: number;
+}
+
+/**
+ * A page as the owner export names it from elsewhere: its source and the opaque key its own row
+ * in the file's `docPages` carries as `page`, never its ref, which for a list of URLs is the
+ * address itself (W16-R18).
+ */
+export interface OwnerPageRef {
+  readonly sourceId: string;
+  readonly page: string;
+}
+
+/**
+ * One stored page as the owner export carries it: its title and status with what decided it,
+ * never its text, its keyed hash, the words a marker was read from, who decided it, or its ref
+ * and address (W16-R18: a locator, which for a list of URLs carries any query-string
+ * credential); it carries an opaque key in their place, and the page that superseded it is named
+ * by that page's key.
+ */
+export type OwnerDocPage = Omit<
+  Doc<'docPages'>,
+  'markdown' | 'contentHash' | 'marker' | 'decidedBy' | 'ref' | 'url' | 'supersededBy'
+> & {
+  /** The page's opaque key in this owner's exports, which a relation's ends and a successor name. */
+  readonly page: string;
+  readonly marker?: Omit<NonNullable<Doc<'docPages'>['marker']>, 'quote'>;
+  readonly supersededBy?: OwnerPageRef;
+};
+
+/** One relation between pages as the owner export carries it: its ends by their pages' keys. */
+export type OwnerDocRelation = Omit<Doc<'docRelations'>, 'decidedBy' | 'from' | 'to'> & {
+  readonly from: OwnerPageRef;
+  readonly to: OwnerPageRef;
+};
+
+/**
+ * One employee the owner handed to another manager (wave 9): when it was asked and accepted. Its
+ * records since are the other manager's, so the file carries none of them and names neither
+ * manager; a recompute that should count the employee within the owner's span reads the other
+ * manager's trace of it beside this file.
+ */
+export interface OwnerDeparture {
+  /** The handover request's id. */
+  readonly _id: string;
+  readonly agentId: string;
+  readonly agentName: string;
+  readonly state: Doc<'managerTransfers'>['state'];
+  readonly requestedAt: number;
+  readonly decidedAt?: number;
+}
+
+/** The owner's rows, section by section, redacted as the export redacts. */
+export interface OwnerRows {
+  retirements: Array<Omit<Doc<'retirements'>, 'userId'>>;
+  departures: OwnerDeparture[];
+  docSources: OwnerDocSource[];
+  docPages: OwnerDocPage[];
+  docRelations: OwnerDocRelation[];
+  skillVersions: Doc<'skillVersions'>[];
+  people: Doc<'people'>[];
+  personIdentities: Doc<'personIdentities'>[];
+  relationships: Doc<'relationships'>[];
+  workingAgreements: Doc<'workingAgreements'>[];
+}
+
+/** Where the next page of the owner's rows starts: a section, and the cursor inside it. */
+export interface OwnerCursor {
+  readonly section: OwnerSection;
+  readonly cursor: string | null;
+}
+
+/**
+ * Who and what an owner export is of: the release and commit, the moment of the export and its
+ * date in the deployment's zone, and the employees it carries.
+ */
+export interface OwnerManifest {
+  readonly format: typeof OWNER_EXPORT_FORMAT;
+  readonly version: typeof TRACE_VERSION;
+  readonly exportedAt: number;
+  /** The export's date, `YYYY-MM-DD`, in {@link OwnerManifest.zone}. */
+  readonly exportedOn: string;
+  /** The deployment's zone: an owner has no zone of its own, each employee's trace carries its. */
+  readonly zone: string;
+  readonly release: string | null;
+  readonly commit: string | null;
+  readonly pageRows: number;
+  /** The owner key the export was made under: the one account the file names. */
+  readonly ownerKey: string;
+}
+
+/**
+ * The first call's answer: the manifest, the employees whose traces follow (every one the owner
+ * holds, by id), the agents set aside (evaluation agents and baseline arms, named only, as a
+ * trace names an agent, so the figures set them aside as `metrics:forOwner` does), and where the
+ * owner's rows start.
+ */
+export interface OwnerExportHead {
+  readonly manifest: OwnerManifest;
+  readonly employees: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  readonly setAside: readonly TraceAgent[];
+  /** How many more of the owner's agents there were than one export reads. */
+  readonly omittedAgents: number;
+  readonly next: OwnerCursor;
+}
+
+/** One later call's answer: one page of one section of the owner's rows. */
+export interface OwnerPage<Section extends OwnerSection = OwnerSection> {
+  readonly section: Section;
+  readonly rows: OwnerRows[Section];
+  readonly next: OwnerCursor | null;
+}
+
+/**
+ * The owner export assembled (decision F-1, one JSON file): the manifest with the counts, the
+ * owner's rows, and every employee's trace without the sections the owner's rows carry.
+ */
+export interface OwnerExport {
+  readonly manifest: OwnerManifest & {
+    readonly counts: Readonly<Record<OwnerSection, number>> & { readonly employees: number };
+  };
+  readonly owner: OwnerRows;
+  readonly employees: readonly AgentTrace[];
+  readonly setAside: readonly TraceAgent[];
+  readonly omittedAgents: number;
+}
+
+/** The owner export versions this release reads: 8 is the first, and a later one keeps it. */
+const OWNER_READABLE_VERSIONS: ReadonlySet<unknown> = new Set([TRACE_VERSION]);
+
+/** The owner section after the given one, or undefined after the last. */
+export function ownerSectionAfter(section: OwnerSection): OwnerSection | undefined {
+  return OWNER_SECTIONS[OWNER_SECTIONS.indexOf(section) + 1];
+}
+
+/**
+ * Assemble the owner export by calling the paged export until nothing is left: the head, the
+ * owner's rows page by page, then each employee's trace through the employee's own export, its
+ * owner-scoped sections left to the owner's rows.
+ *
+ * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
+ *   takes them).
+ * @returns The one file's contents, with the counts in its manifest.
+ * @throws Error when a page answers for a section other than the one asked for.
+ */
+export async function assembleOwnerExport(call: {
+  head(): Promise<OwnerExportHead>;
+  page(cursor: OwnerCursor): Promise<OwnerPage>;
+  employee: {
+    head(request: TraceRequest): Promise<TraceHead>;
+    page(request: TraceRequest & { page: TraceCursor }): Promise<TracePage>;
+  };
+}): Promise<OwnerExport> {
+  const head = await call.head();
+  const owner = Object.fromEntries(
+    OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
+  ) as Record<OwnerSection, unknown[]>;
+  const seen = new Set<string>();
+  let next: OwnerCursor | null = head.next;
+  while (next !== null) {
+    const page: OwnerPage = await call.page(next);
+    if (page.section !== next.section) {
+      throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
+    }
+    for (const row of page.rows) {
+      const id = String((row as { _id?: unknown })._id);
+      if (seen.has(`${page.section}:${id}`)) continue;
+      seen.add(`${page.section}:${id}`);
+      owner[page.section].push(row);
+    }
+    next = page.next;
+  }
+  const employees: AgentTrace[] = [];
+  // One employee at a time, so a company's traces are never all in flight at once.
+  for (const { id } of head.employees) {
+    employees.push(await assembleTrace(id, call.employee, OWNER_SCOPED_SECTIONS));
+  }
+  const counts = Object.fromEntries(
+    OWNER_SECTIONS.map((section) => [section, owner[section].length]),
+  ) as Record<OwnerSection, number>;
+  return {
+    manifest: { ...head.manifest, counts: { ...counts, employees: employees.length } },
+    owner: owner as unknown as OwnerRows,
+    employees,
+    setAside: head.setAside,
+    omittedAgents: head.omittedAgents,
+  };
+}
+
+/**
+ * A parsed file as an owner export this release reads, or undefined: its format, its version,
+ * every owner section, and every employee a trace this release reads.
+ *
+ * @param value - The parsed file.
+ */
+export function readOwnerExport(value: unknown): OwnerExport | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const { manifest, owner, employees, setAside } = value as Record<string, unknown>;
+  if (
+    manifest === null ||
+    typeof manifest !== 'object' ||
+    (manifest as Record<string, unknown>).format !== OWNER_EXPORT_FORMAT ||
+    !OWNER_READABLE_VERSIONS.has((manifest as Record<string, unknown>).version) ||
+    owner === null ||
+    typeof owner !== 'object' ||
+    !OWNER_SECTIONS.every((section) =>
+      Array.isArray((owner as Record<string, unknown>)[section]),
+    ) ||
+    !Array.isArray(employees) ||
+    !Array.isArray(setAside)
+  ) {
+    return undefined;
+  }
+  const traces = employees.map(readAgentTrace);
+  if (traces.some((trace) => trace === undefined)) return undefined;
+  return { ...(value as OwnerExport), employees: traces as AgentTrace[] };
+}
+
+/**
+ * Each employee's trace of an owner export with the owner's people graph filled back into it, so
+ * it reads as that employee's own export would.
+ *
+ * @param file - The owner export.
+ */
+export function employeeTracesOf(file: OwnerExport): AgentTrace[] {
+  return file.employees.map((trace) => ({
+    ...trace,
+    sections: {
+      ...trace.sections,
+      people: file.owner.people,
+      personIdentities: file.owner.personIdentities,
+      relationships: file.owner.relationships,
+    },
+  }));
 }

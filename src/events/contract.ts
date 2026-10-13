@@ -36,6 +36,12 @@ import type {
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
 import type { DecisionKind } from '../work/manager-channel';
+import type { AnswerVia, ManagerQuestionType } from '../agent/manager-questions';
+import type {
+  ReorientationProposalKind,
+  ReorientationRisk,
+  ReorientationTrigger,
+} from '../agent/reorientation-vocabulary';
 import type { ManagerNotificationMode } from '../work/manager-notes';
 import type { PlannerObligations } from '../work/plan-obligations';
 import type { RelationshipType } from '../people/vocabulary';
@@ -50,8 +56,18 @@ type CharterId = Id<'charters'>;
 type RunId = Id<'events'>;
 type SessionId = Id<'voiceSessions'>;
 
-/** Where a charter amendment came from. */
-export type AmendmentVia = 'dashboard' | 'plan-approval';
+/**
+ * Where a charter amendment came from: the charter card, a plan approval's answer, or a
+ * reorientation card's Approve (wave 16, 16-K for 16-O).
+ */
+export type AmendmentVia = 'dashboard' | 'plan-approval' | 'reorientation';
+
+/**
+ * How a charter question's answer arrived: the ways that both answer a question and amend the
+ * charter (16-K). A reorientation amends without a question, and a Slack answer decides what its
+ * question is about rather than the charter (RM20, 16-O).
+ */
+export type CharterAnswerVia = Extract<AmendmentVia, AnswerVia>;
 
 /** Where the manager decided a plan or a held set. */
 export type DecidedVia = 'dashboard' | 'channel';
@@ -415,7 +431,7 @@ export interface CharterQuestionAskedPayload {
  */
 export interface CharterQuestionAnsweredPayload {
   readonly questionId?: Id<'managerQuestions'>;
-  readonly via: AmendmentVia;
+  readonly via: CharterAnswerVia;
   readonly amended: boolean;
   readonly charterId?: CharterId;
 }
@@ -566,7 +582,7 @@ export interface DocumentationRelationProposedPayload {
 export interface DocumentationRelationDecidedPayload {
   readonly relationId: Id<'docRelations'>;
   readonly kind: RelationKind;
-  /** The card's answer (`RELATION_DECISIONS`, `convex/docRelations.ts`). */
+  /** The card's answer (`RELATION_DECISIONS`, `convex/docConflicts.ts`). */
   readonly decision:
     | 'supersedes'
     | 'keep-both'
@@ -1361,6 +1377,8 @@ export interface WorkEvaluatedPayload extends WorkItemNamed {
 /** The payload of `work.skipped`. */
 export interface WorkSkippedPayload extends WorkItemNamed {
   readonly reason?: string;
+  /** The willNotDo clause an out-of-scope skip quoted, as the charter writes it (16-O). */
+  readonly clause?: string;
 }
 
 /** The payload of `work.scope-judgement-unavailable`. */
@@ -1463,7 +1481,27 @@ export interface AgreementRefusedPayload extends AgreementNamed {
   readonly reason: AgreementRowRefusalReason;
   /** The `willNotDo` clause it contradicts, word for word. */
   readonly clause?: string;
+  /**
+   * A hold (`unchecked-for-employee`): the employee's own refused row that holds the agreement
+   * named, which the lift's `agreement.activated` names too (W15-R37). A hold written before
+   * v0.20.0 named its own row as `agreementId` and carries no `holdId`.
+   */
+  readonly holdId?: Id<'workingAgreements'>;
 }
+
+/**
+ * The payload of `agreement.check-owed` (RM28 (b)): an agreement for every employee stays in effect
+ * for an employee whose amended charter it could not be checked against (after the check's last
+ * retry, when the check died, or past the employees the check reads), and the check is owed.
+ * Written once until a check is had; the Agreements card says it with Check now.
+ */
+export interface AgreementCheckOwedPayload extends AgreementNamed {
+  /** When the agreement was last checked against this employee's charter. */
+  readonly since: number;
+}
+
+/** The payload of `agreement.checked`: a check that was owed was had and allowed it (RM28 (b)). */
+export type AgreementCheckedPayload = AgreementNamed;
 
 /** The payload of `agreement.retired`: retired by the manager, or a proposal set aside ("Not now"). */
 export interface AgreementRetiredPayload extends AgreementNamed {
@@ -1543,6 +1581,18 @@ export interface PlanHeldForConflict extends WorkItemNamed {
   readonly pages: ReadonlyArray<{ readonly title: string; readonly source: string }>;
 }
 
+/**
+ * `work.plan-held` for a plan whose row an undecided reorientation card holds, the seventh reason
+ * (wave 16, 16-K for 16-O): a high-risk card names the row in its `blockingWork`, so the switch
+ * does not run the plan until the card is approved or dismissed (`decidePlan`).
+ */
+export interface PlanHeldForReorientation extends WorkItemNamed {
+  readonly reason: 'reorientation-pending';
+  readonly reorientationId: Id<'reorientations'>;
+  /** The card's trigger summary, as the hold's words name it. */
+  readonly summary: string;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
@@ -1550,7 +1600,8 @@ export type WorkPlanHeldPayload =
   | PlanHeldObligationsFailedOpen
   | PlanHeldDraftedWithout
   | PlanHeldApprovedByPredecessor
-  | PlanHeldForConflict;
+  | PlanHeldForConflict
+  | PlanHeldForReorientation;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {
@@ -1876,6 +1927,70 @@ export interface WorkManagerDigestFailedPayload {
   readonly reason: string;
 }
 
+/** A reorientation event's card, by its id and its trigger summary. */
+export interface ReorientationNamed {
+  readonly reorientationId: Id<'reorientations'>;
+  /** The card's trigger summary when the event was written, so the record reads it alone. */
+  readonly summary: string;
+}
+
+/**
+ * The payload of `reorientation.opened`: a card opened on a trigger, or a trigger of the same
+ * kind the same day joined the card already open (`joined`, C6).
+ */
+export interface ReorientationOpenedPayload extends ReorientationNamed {
+  readonly trigger: ReorientationTrigger;
+  readonly triggerKey: string;
+  readonly risk: ReorientationRisk;
+  readonly joined?: boolean;
+}
+
+/**
+ * The payload of `reorientation.proposed`: what the card now proposes, never `pending`, written
+ * by the scheduled judgement (O-2) or a Discuss conversation that ended in a proposal (16-D).
+ */
+export interface ReorientationProposedPayload extends ReorientationNamed {
+  readonly kind: Exclude<ReorientationProposalKind, 'pending'>;
+  readonly by: 'judgement' | 'discussion';
+}
+
+/** The payload of `reorientation.approved`: what Approve applied, and what it did. */
+export interface ReorientationApprovedPayload extends ReorientationNamed {
+  readonly kind: Exclude<ReorientationProposalKind, 'pending'>;
+  /** What the target's transaction did, in the record's words. */
+  readonly result: string;
+  /** The charter version an approved charter change wrote. */
+  readonly charterId?: CharterId;
+}
+
+/** The payload of `reorientation.dismissed`: the card closed and nothing changed. */
+export type ReorientationDismissedPayload = ReorientationNamed;
+
+/** The payload of `reorientation.deferred`: the card set aside until a date (A21). */
+export interface ReorientationDeferredPayload extends ReorientationNamed {
+  readonly revisitAt: number;
+}
+
+/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date. */
+export interface ReorientationReopenedPayload extends ReorientationNamed {
+  readonly revisitAt: number;
+}
+
+/**
+ * The payload of `manager.question-asked`: a question of a type other than the charter's own
+ * open questions (`charter.question-asked` keeps those), whether it holds its plan, and what it
+ * is about (a conflict's relation, RM20; a reorientation card).
+ */
+export interface ManagerQuestionAskedPayload {
+  readonly questionId: Id<'managerQuestions'>;
+  readonly workItemId: WorkItemId;
+  readonly question: string;
+  readonly type: ManagerQuestionType;
+  readonly blocking: boolean;
+  readonly relationId?: Id<'docRelations'>;
+  readonly reorientationId?: Id<'reorientations'>;
+}
+
 /**
  * Every event type and its payload. The keys are the contract's types; the
  * tuple below lists the same keys at run time.
@@ -2028,6 +2143,8 @@ export interface EventPayloads {
   'agreement.activated': AgreementActivatedPayload;
   'agreement.refused': AgreementRefusedPayload;
   'agreement.retired': AgreementRetiredPayload;
+  'agreement.check-owed': AgreementCheckOwedPayload;
+  'agreement.checked': AgreementCheckedPayload;
   'work.draft-resumed': WorkDraftResumedPayload;
   'work.execution-resumed': WorkExecutionResumedPayload;
   'work.plan-held': WorkPlanHeldPayload;
@@ -2072,6 +2189,13 @@ export interface EventPayloads {
   'work.manager-note-failed': WorkManagerNoteFailedPayload;
   'work.manager-digest-sending': WorkManagerDigestSendingPayload;
   'work.manager-digest-failed': WorkManagerDigestFailedPayload;
+  'reorientation.opened': ReorientationOpenedPayload;
+  'reorientation.proposed': ReorientationProposedPayload;
+  'reorientation.reopened': ReorientationReopenedPayload;
+  'reorientation.approved': ReorientationApprovedPayload;
+  'reorientation.dismissed': ReorientationDismissedPayload;
+  'reorientation.deferred': ReorientationDeferredPayload;
+  'manager.question-asked': ManagerQuestionAskedPayload;
 }
 
 /** One event type of the contract. */
@@ -2236,6 +2360,8 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'agreement.activated',
   'agreement.refused',
   'agreement.retired',
+  'agreement.check-owed',
+  'agreement.checked',
   'work.draft-resumed',
   'work.execution-resumed',
   'work.plan-held',
@@ -2280,6 +2406,13 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'work.manager-note-failed',
   'work.manager-digest-sending',
   'work.manager-digest-failed',
+  'reorientation.opened',
+  'reorientation.proposed',
+  'reorientation.reopened',
+  'reorientation.approved',
+  'reorientation.dismissed',
+  'reorientation.deferred',
+  'manager.question-asked',
 ]);
 
 const LISTED: ReadonlySet<string> = new Set(EVENT_TYPES);

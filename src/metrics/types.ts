@@ -56,6 +56,19 @@ export interface AgentMetrics {
   auditTrail: { complete: number; total: number; fraction: number | null };
   /** A9's five pilot figures. */
   pilot: PilotFigures;
+  /**
+   * The decisions and actions of one day in the employee's zone, its "Today" (16-F): present when
+   * the page asked for its day (`metrics.forAgent` with `day`), absent otherwise.
+   */
+  today?: TodayFigures;
+}
+
+/** One day's decisions and actions in the employee's zone, for the page's "Today". */
+export interface TodayFigures {
+  /** The day, `YYYY-MM-DD`, in the employee's zone. */
+  day: string;
+  decisions: AgentMetrics['decisions'];
+  actions: AgentMetrics['actions'];
 }
 
 /**
@@ -70,17 +83,32 @@ export interface PilotFigures {
   skillReuse: { runs: number; reused: number; adopted: number; rate: number | null };
   /**
    * From the ask (`observedAt`: the provider's own time when intake had one)
-   * to the item's first terminal event, and to its first completion.
+   * to the item's first terminal event, and to its first completion where its run answered that
+   * the work was done; the items whose first completion answered partly done are counted beside
+   * (RM23 (a)), and every completion is among the ended.
    */
   cycleTime: {
     ended: number;
     medianToEndMs: number | null;
+    /** The items whose first completion answered done. */
     completed: number;
+    /** The items whose first completion answered partly done. */
+    partlyDone: number;
     medianToCompletionMs: number | null;
     p90ToCompletionMs: number | null;
   };
-  /** The charter questions the manager answered, and how many of the answers changed the charter. */
-  reorientation: { answered: number; amended: number; rate: number | null };
+  /**
+   * The reorientation cards (16-O; A9): opened (a trigger that joined an open card is not counted
+   * again), approved, dismissed and deferred; and, kept beside them for comparison with earlier
+   * releases, the charter questions the manager answered and how many of the answers changed it.
+   * `cards` is absent from a backend older than 0.20.0, which a page can meet mid-redeploy.
+   */
+  reorientation: {
+    cards?: { opened: number; approved: number; dismissed: number; deferred: number };
+    answered: number;
+    amended: number;
+    rate: number | null;
+  };
   /** N11: the manager's optional estimates over completed items. An internal gauge, never a claim. */
   hoursSaved: { estimatedItems: number; hours: number | null };
   /**

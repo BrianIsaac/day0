@@ -13,6 +13,7 @@ import { relationshipNoun } from '@/people/words';
 import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
+import { skipClause } from '@/work/skip-reasons';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -144,13 +145,6 @@ function documentationSelectedLabel(payload: Read<'work.documentation-selected'>
   return `documentation${siteWords}${amount}`;
 }
 
-/**
- * The feed's words for every event type the contract lists.
- *
- * Keyed by the contract's union, so a type the contract gains without a label
- * here fails the typecheck (review m37): the feed never falls back to a raw
- * type string for an event Day0 writes today.
- */
 /** Why a held plan waits, in the manager's words, by the hold's reason. */
 const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: string } = {
   'skip-overruled': 'you waived the skip',
@@ -159,6 +153,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'drafted-without-record': 'it was drafted without reading its ticket or thread',
   'approved-by-predecessor': 'approved by your predecessor; approve it again',
   'documentation-conflict': 'two pages disagree; decide on the Documentation tab',
+  'reorientation-pending': 'held until you decide the reorientation card',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */
@@ -344,6 +339,13 @@ function revokedAtSourceLabel(payload: Read<'credential.revoked-at-source'>): st
   }
 }
 
+/**
+ * The feed's words for every event type the contract lists.
+ *
+ * Keyed by the contract's union, so a type the contract gains without a label
+ * here fails the typecheck (review m37): the feed never falls back to a raw
+ * type string for an event Day0 writes today.
+ */
 const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'agent.deployed': (payload) =>
     `deployed, reporting to ${text(payload.bossEmail) ?? 'the manager'}${
@@ -418,7 +420,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   },
   'charter.amended': (payload) =>
     `charter amended to v${text(payload.version) ?? '?'}${
-      payload.via === 'plan-approval' ? ' with a plan approval' : ''
+      payload.via === 'plan-approval'
+        ? ' with a plan approval'
+        : payload.via === 'reorientation'
+          ? ' from a reorientation card'
+          : ''
     }`,
   'charter.request_changes': 'charter sent back for changes',
   'charter.question-asked': (payload) =>
@@ -697,7 +703,8 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
       : `not taken: ${text(name) ?? 'another employee'} settled ${text(settled.ticket) ?? 'the ticket it names'} with a comment${on ? ` on ${on}` : ''}`;
   },
   'work.evaluated': (payload) => evaluatedWords(payload.decision),
-  'work.skipped': (payload) => `skipped${because(payload.reason)}`,
+  'work.skipped': (payload) =>
+    `skipped${because(typeof payload.reason === 'string' ? skipClause(payload.reason) : payload.reason)}`,
   'work.scope-judgement-unavailable': (payload) =>
     `scope judgement unavailable${because(payload.cause)} · the item waits and is judged again`,
   'work.evaluation-parked': (payload) =>
@@ -739,6 +746,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     payload.how === 'dismissed'
       ? 'proposed working agreement set aside'
       : 'working agreement retired',
+  'agreement.check-owed':
+    'working agreement for every employee not checked against the amended charter: it stays in effect, the check owed',
+  'agreement.checked':
+    'working agreement for every employee checked against the charter: it stays in effect',
   'work.draft-resumed': (payload) =>
     `plan draft restarted after it died${typeof payload.attempt === 'number' ? ` (restart ${payload.attempt})` : ''}`,
   'work.execution-resumed': (payload) =>
@@ -746,7 +757,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-held': (payload) =>
     payload.reason === 'documentation-conflict' && text(payload.heading)
       ? `plan held for you: two pages disagree about "${payload.heading}"; decide on the Documentation tab`
-      : `plan held for you: ${planHeldWords(payload.reason)}`,
+      : payload.reason === 'reorientation-pending' && text(payload.summary)
+        ? `plan held until you decide the reorientation card: ${payload.summary}`
+        : `plan held for you: ${planHeldWords(payload.reason)}`,
   'work.plan-approved': (payload) =>
     payload.by === 'autonomous'
       ? 'plan approved under autonomous actions'
@@ -833,6 +846,22 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     `sending the manager a digest of ${counted(payload.count, 'note') ?? 'notes'}`,
   'work.manager-digest-failed': (payload) =>
     `manager digest not delivered${because(payload.reason)}`,
+  'reorientation.opened': (payload) =>
+    `${payload.joined === true ? 'joined the reorientation card' : 'reorientation card opened'}${
+      text(payload.summary) ? `: ${payload.summary}` : ''
+    }`,
+  'reorientation.proposed': (payload) =>
+    `${payload.kind === 'none' ? 'reorientation card proposes nothing needs to change' : 'reorientation card proposes a change'}${
+      payload.by === 'discussion' ? ' after the discussion' : ''
+    }`,
+  'reorientation.approved': (payload) =>
+    `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
+  'reorientation.dismissed': 'reorientation card dismissed; nothing changed',
+  'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
+  'manager.question-asked': (payload) =>
+    `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,
+  'reorientation.reopened': (payload) =>
+    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };
 
 /**

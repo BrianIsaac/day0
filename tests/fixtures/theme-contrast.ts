@@ -48,3 +48,31 @@ export function over(colour: string, alpha: number, background: string): string 
     )
     .join('')}`;
 }
+
+/** The selector the light set is declared under (`app/globals.css`). */
+export const LIGHT_SELECTOR = ":root[data-theme='light']";
+
+/**
+ * The declarations of the one rule whose selector list is exactly `selector`.
+ *
+ * @throws Error when the stylesheet has no such rule, or more than one.
+ */
+export function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const found = [...THEME_CSS.matchAll(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, 'g'))];
+  if (found.length !== 1) throw new Error(`${selector} is declared ${found.length} times`);
+  return found[0]?.[1] ?? '';
+}
+
+/**
+ * A `--color-*` token's hex value in the light set.
+ *
+ * @throws Error when the light set does not declare it as a six-digit hex value.
+ */
+export function lightToken(name: string): string {
+  const value = new RegExp(`--color-${name}:\\s*(#[0-9a-f]{6});`, 'i').exec(
+    ruleBody(LIGHT_SELECTOR),
+  )?.[1];
+  if (value === undefined) throw new Error(`the light --color-${name} is not a six-digit hex token`);
+  return value;
+}

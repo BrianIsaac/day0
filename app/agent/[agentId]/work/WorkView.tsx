@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { useMutation, useQuery } from 'convex/react';
+import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { autonomousActionsOn } from '@/work/autonomy';
 import { runHoldOf } from '@/work/item-display';
@@ -20,7 +21,29 @@ import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { StateGlossary } from './StateGlossary';
 import { refusedSkillsOf } from './VerdictSection';
+import type { HoldingCard } from './WorkItemCard';
 import { WorkQueue } from './WorkQueue';
+
+/**
+ * The plans a standing high-risk reorientation card holds, each by its work item (W-9): what
+ * `reorientation.heldByReorientation` stops Day0 approving on its own.
+ *
+ * @param cards - The employee's cards, as the reorientation page lists them.
+ */
+export function holdingCardsOf(
+  cards: FunctionReturnType<typeof api.reorientationDecisions.listForAgent>,
+): Map<string, HoldingCard> {
+  const held = new Map<string, HoldingCard>();
+  for (const { card } of cards) {
+    if (card.risk !== 'high' || card.status === 'applied' || card.status === 'dismissed') continue;
+    for (const workItemId of card.blockingWork) {
+      if (!held.has(workItemId)) {
+        held.set(workItemId, { reorientationId: card._id, summary: card.triggerSummary });
+      }
+    }
+  }
+  return held;
+}
 
 /**
  * The Work tab: the employee's queue, what needs the manager first, beside the corrections the
@@ -39,6 +62,15 @@ export function WorkView() {
   );
   const workItems = useQuery(api.work.listForAgent, { agentId });
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
+  // A plan's conflict question beside it (RM20 (a)): real mode only, as documentation conflicts are.
+  const conflictQuestions = useQuery(
+    api.managerQuestions.conflictsForAgent,
+    real ? { agentId } : 'skip',
+  );
+  // The high-risk reorientation cards that hold a plan from Day0's own approval, so the plan's
+  // card says so (W-9); the first card that names an item is the one said.
+  const reorientationCards = useQuery(api.reorientationDecisions.listForAgent, { agentId });
+  const heldByCards = useMemo(() => holdingCardsOf(reorientationCards ?? []), [reorientationCards]);
   const registeredSkills = useQuery(api.skills.registered, { agentId });
   // A card waiting on a skill whose draft failed its check says so and links to its Retry (D3).
   const failedSkills = useQuery(api.skills.verificationFailed, { agentId });
@@ -95,6 +127,8 @@ export function WorkView() {
         agentId={agentId}
         workItems={workItems ?? []}
         openQuestions={openQuestions ?? []}
+        conflictQuestions={conflictQuestions ?? []}
+        heldByCards={heldByCards}
         surfaces={surfaces}
         registeredSkillCount={(registeredSkills ?? []).length}
         charterApproved={!!charter?.approved}

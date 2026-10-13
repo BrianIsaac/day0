@@ -135,6 +135,82 @@ export function withoutProvenanceSuffixes(charter: Charter): Charter {
   };
 }
 
+/**
+ * The gerund of each verb a will-not-do's second half may open on to send the work elsewhere: "Do
+ * not contact finance directly, go through the manager." reads, as an act, "Contact finance
+ * directly without going through the manager." Only these: a second half opening on any other word
+ * is kept as written ("Never change a deal amount, even when a rep asks.").
+ */
+const REDIRECT_GERUNDS: Readonly<Record<string, string>> = {
+  go: 'going',
+  ask: 'asking',
+  talk: 'talking',
+  speak: 'speaking',
+  check: 'checking',
+  come: 'coming',
+  run: 'running',
+  bring: 'bringing',
+  leave: 'leaving',
+  hand: 'handing',
+  pass: 'passing',
+  send: 'sending',
+  refer: 'referring',
+  route: 'routing',
+  escalate: 'escalating',
+  use: 'using',
+  wait: 'waiting',
+};
+
+/**
+ * A will-not-do clause as the act it rules out (the v0.19.0 walk's finding 8): the "Will not do"
+ * heading says the negative, so "Never change a deal amount in the tracker." reads "Change a deal
+ * amount in the tracker.", and a second half that sends the work elsewhere is joined as what the
+ * act skips: "Do not contact the sales lead directly, go through the manager for deal matters."
+ * reads "Contact the sales lead directly without going through the manager for deal matters." A
+ * clause that opens on no prohibition is returned as it is, and so is one whose second half
+ * redirects to a destination the rule does not recognise (W16-R29).
+ */
+export function willNotDoAsAct(clause: string): string {
+  const trimmed = clause.trim();
+  const act = trimmed.replace(PROHIBITION_OPENING, '');
+  if (act === trimmed || act === '') return clause;
+  // One separator only: "Never change prices, run discounts, or send quotes." is a list of acts,
+  // each ruled out as written, never a redirect (the second pass).
+  const split =
+    (act.match(/[,;]/g) ?? []).length === 1
+      ? /^(.*?)\s*[,;]\s+(?:instead,?\s+|and\s+|but\s+)?([A-Za-z]+)\b(.*)$/.exec(act)
+      : null;
+  const gerund = split ? REDIRECT_GERUNDS[split[2]!.toLowerCase()] : undefined;
+  const redirects = split !== null && REDIRECT_DESTINATION.test(split[3] ?? '');
+  // A second half that opens on a redirect's verb and names no destination the rule knows ("use
+  // #revops", "ask Sam") cannot be joined as what the act skips, and read as an act of its own it
+  // says the opposite of the clause, so the clause stays as the manager wrote it (W16-R29).
+  if (split && gerund && !redirects) return clause;
+  const joined =
+    split && gerund && redirects
+      ? `${split[1]} without ${gerund}${split[3]!.replace(/\s+instead(?=[.!]?$)/i, '')}`
+      : act;
+  return joined.replace(/^[a-z]/, (first) => first.toUpperCase());
+}
+
+/** Where a redirect sends the work: a person, or the way it goes there. */
+const REDIRECT_DESTINATION = /\b(?:through|via|to|with|by|past)\b|\bthe manager\b/i;
+
+/**
+ * The charter with each will-not-do clause written as the act it rules out ({@link
+ * willNotDoAsAct}). Run before the rules are verified, so a rule quoting "Never ..." is matched
+ * against the act, as `verifiedPhrase` does.
+ */
+export function withWillNotDoAsActs(charter: Charter): Charter {
+  return {
+    ...charter,
+    proposedBoundaries: {
+      ...charter.proposedBoundaries,
+      willNotDo: charter.proposedBoundaries.willNotDo.map(willNotDoAsAct),
+    },
+  };
+}
+
 /** Every clause string the constraints may name. */
 export function clauseTexts(charter: Charter): string[] {
   const boundaries = charter.proposedBoundaries;
@@ -508,6 +584,157 @@ export function deriveConstraints(
     }
   }
   return [...byQuote.values()];
+}
+
+/** The manager's sentences as said, each with its closing punctuation, in answer order. */
+function managerSentencesAsSaid(answers: Partial<Record<DayOneTopic, string>>): string[] {
+  return Object.values(answers)
+    .flatMap((answer: string | undefined): string[] => (answer ?? '').split(/(?<=[.!?;])\s+|\n+/))
+    .map((sentence: string): string => sentence.trim())
+    .filter((sentence: string): boolean => sentence.length > 0 && !sentence.endsWith('?'));
+}
+
+/** The manager's first person in the third person the clauses are written in. */
+function inTheThirdPerson(sentence: string): string {
+  return sentence
+    .replace(/\bI['\u2019]m\b/g, 'the manager is')
+    .replace(/\bI['\u2019]ll\b/g, 'the manager will')
+    .replace(/\bI['\u2019]ve\b/g, 'the manager has')
+    .replace(/\bI['\u2019]d\b/g, 'the manager would')
+    .replace(/\b[Mm]y\b(?![.'\u2019]\w)/g, "the manager's")
+    .replace(FIRST_PERSON, 'the manager')
+    .replace(/\bthe manager am\b/g, 'the manager is');
+}
+
+/**
+ * The Escalates clause a routing sentence is written as when the draft carries it in no clause:
+ * the manager's own sentence in the third person, "Go" put before a sentence that opens on the
+ * route itself ("Through me for now." reads "Go through the manager for now."), closed by a full
+ * stop.
+ */
+function routingClause(sentence: string): string {
+  const said = inTheThirdPerson(sentence.replace(/[.;!]+$/, '').trim());
+  const clause = /^(?:through|via)\b/i.test(said)
+    ? `Go ${said.replace(/^[A-Z]/, (c) => c.toLowerCase())}`
+    : said;
+  return `${clause.replace(/^[a-z]/, (first) => first.toUpperCase())}.`;
+}
+
+/**
+ * Whether a rule already speaks for a sentence: it quotes it, alone or inside a longer quote.
+ */
+function quotedBy(sentence: string, quotes: readonly string[]): boolean {
+  const key = quoteKey(sentence);
+  return quotes.some((quote: string): boolean => quoteKey(quote).includes(key));
+}
+
+/** The words an instruction to route work through the manager may open on, before the route. */
+const ROUTE_OPENERS: ReadonlySet<string> = new Set([
+  'please',
+  'always',
+  'just',
+  'then',
+  'so',
+  'and',
+  'you',
+  'should',
+  'must',
+  'everything',
+  'anything',
+  'all',
+  'go',
+  'goes',
+  'send',
+  'route',
+  'bring',
+  'take',
+  'it',
+  'them',
+  'this',
+  'that',
+  'things',
+  'these',
+  'those',
+  'now',
+]);
+
+/**
+ * Whether a sentence asks for work to be routed through the manager (`THROUGH_ME`), as against
+ * lifting a route or describing one (the second pass): the words before the route, back to the
+ * clause's start, are an instruction's own ("Anything unusual, talk to me first.", "Go through me
+ * for both.", "Everything via me."), never a negative ("You do not need to check with me first.",
+ * "Don't ask me first.") or another subject ("Reps usually talk to me first.").
+ */
+function asksForARoute(sentence: string): boolean {
+  const route = THROUGH_ME.exec(sentence);
+  if (route === null) return false;
+  const before = sentence.slice(0, route.index);
+  const lead = before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(';')) + 1);
+  const words = lead.toLowerCase().match(/[a-z\u2019']+/g) ?? [];
+  return words.every((word) => ROUTE_OPENERS.has(word));
+}
+
+/** A charter and the rules a step drew on it. */
+export interface DrawnRules {
+  readonly charter: Charter;
+  readonly rules: CharterConstraint[];
+}
+
+/**
+ * The reporting-line rules the manager's routing sentences make (RM27: "Through me for now.",
+ * "Anything unusual, talk to me first."), drawn where the reply listed none: each is bound to the
+ * Escalates clauses that carry it (the manager's words, or the route through the manager), and a
+ * sentence no Escalates clause carries is written as one ({@link routingClause}) and bound to it,
+ * so the charter never escalates past the manager's own words. A sentence a listed rule already
+ * quotes, or one the manager struck on an earlier draft, draws nothing.
+ *
+ * @param charter - The assembled charter.
+ * @param answers - The manager's seven answers, the only source of a quote.
+ * @param listed - The rules already verified.
+ * @param struck - The quotes the manager struck on drafts sent back.
+ */
+export function withRoutingRules(
+  charter: Charter,
+  answers: Partial<Record<DayOneTopic, string>>,
+  listed: readonly CharterConstraint[],
+  struck: readonly string[],
+): DrawnRules {
+  let current = charter;
+  const rules: CharterConstraint[] = [];
+  const spoken = (): string[] => [...listed, ...rules].map((rule) => rule.quote);
+  for (const sentence of managerSentencesAsSaid(answers)) {
+    if (!asksForARoute(sentence)) continue;
+    if (quotedBy(sentence, spoken()) || quotedBy(sentence, struck)) continue;
+    const escalations = current.proposedBoundaries.escalationTriggers;
+    const placed = (test: (clause: string) => boolean): ClauseRef[] =>
+      escalations.flatMap((clause: string, index: number): ClauseRef[] =>
+        test(clause) ? [{ field: 'escalationTriggers', index }] : [],
+      );
+    // The manager's own words first; else a route through the manager no other rule binds.
+    const bound = [...listed, ...rules].flatMap((rule) => rule.binds ?? []);
+    const byWords = placed((clause) => holdsMostOf(sentence, clause));
+    const carrying =
+      byWords.length > 0
+        ? byWords
+        : placed((clause) => THROUGH_THE_MANAGER.test(clause)).filter(
+            (ref) => !bound.some((other) => sameRef(other, ref)),
+          );
+    const binds =
+      carrying.length > 0
+        ? carrying
+        : [{ field: 'escalationTriggers' as const, index: escalations.length }];
+    if (carrying.length === 0) {
+      current = {
+        ...current,
+        proposedBoundaries: {
+          ...current.proposedBoundaries,
+          escalationTriggers: [...escalations, routingClause(sentence)],
+        },
+      };
+    }
+    rules.push({ kind: 'reporting-line', quote: sentence, wording: [], origin: 'derived', binds });
+  }
+  return { charter: current, rules };
 }
 
 function withoutPhrases(clause: string, phrases: readonly string[]): string {
@@ -1277,16 +1504,20 @@ function forbidsAnAct(quote: string): boolean {
 /** The manager's first person, which the drafter writes as "the manager"; never the "i" of "i.e.". */
 const FIRST_PERSON = /\b(?:I|[Mm]e|[Mm]y|[Mm]yself)\b(?![.'\u2019]\w)/g;
 
-/** A sentence that routes work through the manager: "Go through me for both.", "Ask me first." */
-const THROUGH_ME = /\b(?:through|via)\s+me\b|\bask\s+me\s+(?:first|before)\b/i;
+/**
+ * A sentence that routes work through the manager: "Go through me for both.", "Ask me first.",
+ * "Anything unusual, talk to me first.", "Run it by me." (RM27: the kin of "through me").
+ */
+const THROUGH_ME =
+  /\b(?:through|via)\s+me\b|\b(?:ask|talk\s+to|speak\s+to|check\s+with|come\s+to)\s+me\s+(?:first|before)\b|\brun\s+(?:it|that|this|them|things)\s+(?:by|past)\s+me\b/i;
 
 /**
  * What such a sentence becomes in a will-not-do or an escalation clause: the contact going through
- * the manager, or a contact made "directly" (a bare "directly", as in "Edit the ledger directly.",
+ * the manager or run by the manager, or a contact made "directly" (a bare "directly", as in "Edit the ledger directly.",
  * names no contact).
  */
 const THROUGH_THE_MANAGER =
-  /\b(?:through|via)\s+the\s+manager\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b|\b(?:contact|message|email|ask|reach|call|talk to|write to|go to)\b[^.;]*\bdirectly\b/i;
+  /\b(?:through|via)\s+the\s+manager\b|\bwithout\s+asking\s+the\s+manager\b|\bthe\s+manager\s+first\b|\b(?:by|past)\s+the\s+manager\b|\b(?:contact|message|email|ask|reach|call|talk to|write to|go to)\b[^.;]*\bdirectly\b/i;
 
 /**
  * Whether one clause carries a rule, judged on its own (W13-R6). A will-do or the function, which

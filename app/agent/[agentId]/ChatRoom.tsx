@@ -11,8 +11,7 @@ import { Button, buttonClass } from '../../components/Button';
 import { Dialog } from '../../components/Dialog';
 import { EmployeeContext } from './employee-context';
 import { ROOM_HEIGHT } from './room-frame';
-import { DraftingNotice, draftingOutcome, draftingWords } from './one-to-one/DraftingNotice';
-import { StatusRegion } from '../../components/StatusRegion';
+import { DraftingNotice, draftingWords } from './one-to-one/DraftingNotice';
 import { notedAnswers, notedFromTranscript, type NotedAnswer } from './one-to-one/NotedSoFar';
 import { TopicProgress, type TopicProgressState } from './one-to-one/TopicProgress';
 import { TurnText } from './one-to-one/TurnText';
@@ -333,20 +332,17 @@ export function ChatRoom({
         ) : null}
       </div>
       <div className="border-t border-[var(--color-border)] px-4 py-3 sm:px-5">
-        {/* On the page before the words change, so the drafting line is said as it changes. */}
-        <div className="sr-only">
-          <StatusRegion outcome={words ? draftingOutcome(words) : null} />
-        </div>
-        {over ? (
-          <DraftingNotice
-            name={name}
-            phase={room.serverPhase}
-            post={room.post}
-            onDraftAgain={room.draftAgain}
-            onHoldAgain={room.holdAgain}
-            focusRef={noticeRef}
-          />
-        ) : (
+        {/* On the page before the line appears, so it is said as it does. */}
+        <DraftingNotice
+          name={name}
+          phase={room.serverPhase}
+          post={room.post}
+          open={over}
+          onDraftAgain={room.draftAgain}
+          onHoldAgain={room.holdAgain}
+          focusRef={noticeRef}
+        />
+        {over ? null : (
           <form
             className="grid gap-2"
             onSubmit={(e) => {

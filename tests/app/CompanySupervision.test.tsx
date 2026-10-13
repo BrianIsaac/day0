@@ -5,6 +5,7 @@ import {
   CompanySupervisionCard,
   decisionsCell,
   PILOT_FIGURES,
+  reorientationWords,
 } from '../../app/CompanySupervision';
 import type { AgentMetrics, OwnerMetrics, PilotFigures } from '../../src/metrics/types';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -86,10 +87,16 @@ function agentMetrics(overrides: {
         ended: 0,
         medianToEndMs: null,
         completed: 0,
+        partlyDone: 0,
         medianToCompletionMs: null,
         p90ToCompletionMs: null,
       },
-      reorientation: { answered: 0, amended: 0, rate: null },
+      reorientation: {
+        cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      },
       hoursSaved: { estimatedItems: 0, hours: null },
       retrieval: { tokens: null, recall: GRADED_RECALL },
     },
@@ -301,10 +308,16 @@ describe('the company supervision card', (): void => {
                     ended: 3,
                     medianToEndMs: 60_000,
                     completed: 2,
+                    partlyDone: 0,
                     medianToCompletionMs: 67_000,
                     p90ToCompletionMs: 300_000,
                   },
-                  reorientation: { answered: 2, amended: 1, rate: 0.5 },
+                  reorientation: {
+                    cards: { opened: 0, approved: 0, dismissed: 0, deferred: 0 },
+                    answered: 2,
+                    amended: 1,
+                    rate: 0.5,
+                  },
                   hoursSaved: { estimatedItems: 2, hours: 1.5 },
                   retrieval: { tokens: null, recall: GRADED_RECALL },
                 },
@@ -325,10 +338,15 @@ describe('the company supervision card', (): void => {
       expect(pilot).toContain(label);
     }
     expect(pilot).toContain('your estimates, internal gauge');
+    // W16-R32: Hours saved sat alone on its row below the wide breakpoint, between two wide
+    // figures; it spans both columns as they do.
+    const hoursCell = /<td[^>]*class="([^"]*)"[^>]*>(?:(?!<\/td>).)*Hours saved/s.exec(pilot);
+    expect(hoursCell?.[1]).toContain('max-lg:col-span-2');
     const priyaRow = rowOf(pilot, 'Priya');
     expect(priyaRow).toContain('1 of 4 (25%)');
     expect(priyaRow).toContain('1 min 7 s / 5 min (2 done)');
-    expect(priyaRow).toContain('1 of 2 answers');
+    // Re-pinned for 16-O: the figure counts cards first, and its answers line names what they amended.
+    expect(priyaRow).toContain('1 of 2 charter answers amended it');
     expect(priyaRow).toContain('1.5 h over 2 items');
     // No prompt of Priya's carried a selection yet; the recall is the labelled set's grade.
     expect(priyaRow).toContain(
@@ -338,6 +356,18 @@ describe('the company supervision card', (): void => {
     const companyRow = rowOf(pilot, 'Company');
     expect(companyRow).toContain('not yet');
     expect(companyRow).toContain('no estimates yet');
+  });
+});
+
+describe("the card's header on a phone (Q6, 16-T)", (): void => {
+  // 15-Q's phone shot (`wave15-q-2026-10-11-bed/card-phone.png`): at 390 the title and "3
+  // employees, one manager" shared one line with a few pixels between them. A column gap keeps
+  // them apart, and the count wraps under the title when the line has no room for both.
+  it('keeps a gap between the title and the count, and wraps the count under the title when there is no room', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} />);
+    const header = /<div class="([^"]*)"><h2[^>]*>Company supervision<\/h2>/.exec(html)?.[1] ?? '';
+    expect(header.split(' ')).toEqual(expect.arrayContaining(['flex', 'flex-wrap', 'gap-x-4']));
+    expect(header).toMatch(/\bgap-y-1\b/);
   });
 });
 
@@ -402,6 +432,41 @@ describe('the retrieval figure (14-R)', (): void => {
   });
 });
 
+describe('the retrieval figure where no selection ran (RM25 (a), the v0.19.0 walk’s finding 5)', (): void => {
+  const SENTENCE =
+    'The hosted office’s employees read its few seeded pages whole, so nothing here is selected or graded. A linked library is selected from, and graded.';
+  const unselected: OwnerMetrics = {
+    ...FIGURES,
+    employees: FIGURES.employees.map((employee) => ({
+      ...employee,
+      metrics: {
+        ...employee.metrics,
+        pilot: { ...employee.metrics.pilot, retrieval: { tokens: null, recall: null } },
+      },
+    })),
+    company: {
+      ...FIGURES.company,
+      pilot: { ...FIGURES.company.pilot, retrieval: { tokens: null, recall: null } },
+    },
+  };
+
+  it('says why once on the hosted office, where every row read "no documentation counted yet"', (): void => {
+    const html = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="mock" />);
+    expect(html).toContain(SENTENCE);
+    expect(html.split(SENTENCE)).toHaveLength(2);
+    expect(html).not.toContain('no documentation counted yet');
+    expect(rowOf(html.slice(html.indexOf('Pilot figures')), 'Company')).toContain('none selected');
+  });
+
+  it('keeps the rows’ own words where a library can be linked, or where a selection ran', (): void => {
+    const real = renderToStaticMarkup(<CompanySupervisionCard figures={unselected} mode="real" />);
+    expect(real).not.toContain(SENTENCE);
+    expect(real).toContain('no documentation counted yet');
+    const selected = renderToStaticMarkup(<CompanySupervisionCard figures={FIGURES} mode="mock" />);
+    expect(selected).not.toContain(SENTENCE);
+  });
+});
+
 describe('the skill reuse figure (A14, 10-A)', (): void => {
   const [reuse] = PILOT_FIGURES;
   const figures = (skillReuse: PilotFigures['skillReuse']): PilotFigures => ({
@@ -423,6 +488,63 @@ describe('the skill reuse figure (A14, 10-A)', (): void => {
   it('defines the adopted runs as part of the reuse they are counted in', (): void => {
     expect(reuse?.definition).toBe(
       'Of the distinct work item and skill runs, those run with a skill first made for another item. Runs of a skill adopted from another employee count as reuse, and are shown as adopted.',
+    );
+  });
+});
+
+describe('the cycle time counts done answers, partly done named beside (RM23 (a))', (): void => {
+  const cycle = PILOT_FIGURES[1];
+  const figures = (cycleTime: PilotFigures['cycleTime']): PilotFigures => ({
+    ...FIGURES.company.pilot,
+    cycleTime,
+  });
+
+  it('prints the walk’s company as four done with five partly done beside, not nine done', (): void => {
+    expect(cycle?.label).toBe('Cycle time');
+    expect(
+      cycle?.value(
+        figures({
+          ended: 12,
+          medianToEndMs: 60_000,
+          completed: 4,
+          partlyDone: 5,
+          medianToCompletionMs: 1_081_000,
+          p90ToCompletionMs: 1_212_000,
+        }),
+      ),
+    ).toBe('18 min 1 s / 20 min 12 s (4\u00a0done, 5\u00a0partly done)');
+  });
+
+  it('says partly done work where none was done, and nothing of it where there is none', (): void => {
+    expect(
+      cycle?.value(
+        figures({
+          ended: 2,
+          medianToEndMs: 60_000,
+          completed: 0,
+          partlyDone: 2,
+          medianToCompletionMs: null,
+          p90ToCompletionMs: null,
+        }),
+      ),
+    ).toBe('none done; 2 items ended after 1 min (2\u00a0partly done)');
+    expect(
+      cycle?.value(
+        figures({
+          ended: 1,
+          medianToEndMs: 60_000,
+          completed: 1,
+          partlyDone: 0,
+          medianToCompletionMs: 60_000,
+          p90ToCompletionMs: 60_000,
+        }),
+      ),
+    ).toBe('1 min / 1 min (1\u00a0done)');
+  });
+
+  it('defines the cycle time over the items whose run answered done', (): void => {
+    expect(cycle?.definition).toBe(
+      'From the ask (the provider’s own time when intake had one) to the item’s first completion, over the items whose run answered that the work was done. Items finished partly done are counted beside it.',
     );
   });
 });
@@ -516,5 +638,34 @@ describe('the company supervision card at a narrow width', (): void => {
 
   it('sets no type below the 12 px floor', (): void => {
     expect(html).not.toMatch(/text-\[(9|10|11)px\]/);
+  });
+});
+
+describe('the reorientation figure in words (16-O; A9)', (): void => {
+  const none = { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
+  it('says the cards and what was decided on them, then the answers, and not yet with neither', (): void => {
+    expect(reorientationWords({ cards: none, answered: 0, amended: 0, rate: null })).toBe(
+      'not yet',
+    );
+    expect(
+      reorientationWords({
+        cards: { opened: 3, approved: 1, dismissed: 1, deferred: 1 },
+        answered: 0,
+        amended: 0,
+        rate: null,
+      }),
+    ).toBe('3 cards: 1 approved, 1 dismissed, 1 deferred');
+    expect(
+      reorientationWords({
+        cards: { opened: 1, approved: 1, dismissed: 0, deferred: 0 },
+        answered: 2,
+        amended: 1,
+        rate: 0.5,
+      }),
+    ).toBe('1 card: 1 approved, 0 dismissed, 0 deferred; 1 of 2 charter answers amended it');
+    // A backend older than 0.20.0 counts no cards (mid-redeploy): its line is the answers alone.
+    expect(reorientationWords({ answered: 2, amended: 1, rate: 0.5 })).toBe(
+      '1 of 2 charter answers amended it',
+    );
   });
 });

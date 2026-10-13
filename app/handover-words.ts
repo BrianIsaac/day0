@@ -421,6 +421,62 @@ function waitingDecisionsLine(waiting: WaitingCounts): string[] {
   return [`${counted(total, 'decision', 'decisions')} waiting: ${listed(parts)}`];
 }
 
+/** The office's systems as a scope names them, in the words the manager reads them by. */
+const SCOPE_SYSTEM_WORDS: Readonly<Record<string, string>> = {
+  docs: 'the docs',
+  slack: 'Slack',
+  social: 'social mentions',
+  spreadsheet: 'the spreadsheet',
+  ticket: 'tickets',
+};
+
+/** What a scope's verb lets the employee do with its system, as a noun phrase. */
+const SCOPE_VERB_WORDS: Readonly<Record<string, string>> = {
+  read: 'reading',
+  write: 'writing',
+};
+
+/** A scope's system in words: the office's own by name, a connection's by its slug. */
+function scopeSystemWords(system: string): string {
+  return (
+    SCOPE_SYSTEM_WORDS[system] ??
+    system.replace(/-/g, ' ').replace(/^[a-z]/, (first) => first.toUpperCase())
+  );
+}
+
+/**
+ * An employee's access in a manager's words (the v0.19.0 walk's finding 7: the take-on dialog
+ * printed "boss:message, docs:read, ..."): messages to the manager first, then each set of systems
+ * by what the employee may do with them, "reading the docs, Slack and the spreadsheet; reading and
+ * writing tickets", in the order the scopes come.
+ *
+ * @param scopes - The scopes, `system:verb`, as the grants hold them.
+ */
+export function accessWords(scopes: readonly string[]): string {
+  const verbsBySystem = new Map<string, string[]>();
+  let messages = false;
+  for (const scope of scopes) {
+    const [system = scope, verb = ''] = scope.split(':');
+    if (system === 'boss') {
+      messages = true;
+      continue;
+    }
+    verbsBySystem.set(system, [...(verbsBySystem.get(system) ?? []), verb]);
+  }
+  const groups = new Map<string, string[]>();
+  for (const [system, verbs] of verbsBySystem) {
+    // A verb with no word of its own reads in its -ing form, and its system after "on".
+    const known = verbs.every((verb) => SCOPE_VERB_WORDS[verb] !== undefined);
+    const doing = `${listed(verbs.map((verb) => SCOPE_VERB_WORDS[verb] ?? `${verb.replace(/e$/, '')}ing`))}${known ? '' : ' on'}`;
+    groups.set(doing, [...(groups.get(doing) ?? []), scopeSystemWords(system)]);
+  }
+  const phrases = [
+    ...(messages ? ['messages to you'] : []),
+    ...[...groups].map(([doing, systems]) => `${doing} ${listed(systems)}`),
+  ];
+  return phrases.length === 0 ? 'none' : phrases.join('; ');
+}
+
 /**
  * What the new manager takes on, line by line (plan 7.3): the decisions waiting first, when any
  * do.
@@ -437,7 +493,7 @@ export function takesOnLines(preview: Pick<HandoverPreview, 'takesOn'>): string[
     taken.charter?.approved
       ? `charter version ${taken.charter.version}, approved`
       : 'no approved charter: you hold its Day-1 one-to-one',
-    `permissions: ${scopes.length === 0 ? 'none' : listed(scopes)}`,
+    `its access: ${accessWords(scopes)}`,
     `its record: ${countedAtLeast(taken.recordLength, taken.recordAtLeast, 'event', 'events')}, decisions included, as they were made`,
   ];
 }

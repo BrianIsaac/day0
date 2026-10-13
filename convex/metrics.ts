@@ -1,4 +1,4 @@
-import { v } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import type { Doc } from './_generated/dataModel';
 import { query, type QueryCtx } from './_generated/server';
 import {
@@ -11,17 +11,20 @@ import { toSurfaceRecord } from '../src/surfaces/records';
 import type { SurfaceRecord } from '../src/surfaces/types';
 import { droppedReadRefusal } from '../src/work/stop';
 import { ledgerPhases } from '../src/work/reconciliation';
+import { finishedAnswerOf } from '../src/work/work-done';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
 import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
 import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
+import { addDays, agentZone, dayStart } from '../src/lib/zone';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
   isWholeHistory,
   isWithinTenure,
   tenureWindowsOf,
+  WHOLE_HISTORY,
   type AcceptedHandover,
   type TenureWindow,
 } from '../src/metrics/tenure';
@@ -742,9 +745,14 @@ interface PilotTotals {
   /** Of the reused runs, those of a skill adopted from another employee (A14). */
   adopted: number;
   toEnd: number[];
+  /** From the ask to the first completion, of the items whose run answered done. */
   toCompletion: number[];
+  /** The items whose first completion answered partly done (RM23 (a)). */
+  partlyDone: number;
   answered: number;
   amended: number;
+  /** The reorientation cards opened (a joined trigger not again), approved, dismissed and deferred. */
+  cards: { opened: number; approved: number; dismissed: number; deferred: number };
   estimatedItems: number;
   estimatedMinutes: number;
   /** The items whose prompts carried a documentation selection, and their characters summed. */
@@ -811,9 +819,15 @@ function pilotTotals(
   let adopted = 0;
   const standingEnd = new Map<string, number>();
   const firstCompletion = new Map<string, number>();
+  // Every item's first completion, whatever its run answered: a later one is not the first.
+  const completedOnce = new Set<string>();
+  // Items whose first completion answered not done, which a Retry may yet finish (W16-R17).
+  const notDoneFirst = new Set<string>();
+  let partlyDone = 0;
   const discoveredAt = new Map<string, number>();
   let answered = 0;
   let amended = 0;
+  const cards = { opened: 0, approved: 0, dismissed: 0, deferred: 0 };
   const documentationChars = new Map<string, number>();
   const inputTokens = new Map<string, number>();
   for (const event of ordered) {
@@ -860,19 +874,37 @@ function pilotTotals(
     // anyway") did not end the item; its next end is the one that stands.
     if (isEventOf(event, 'work.retry') && workItemId) {
       standingEnd.delete(workItemId);
+      // A not-done answer Retry sent back did not finish the item either: the completion that
+      // follows is the one the cycle time reads (W16-R17).
+      if (notDoneFirst.delete(workItemId)) completedOnce.delete(workItemId);
       continue;
     }
     if (isEventType(event.type) && TERMINAL_WORK_EVENTS.has(event.type) && workItemId) {
       if (!standingEnd.has(workItemId)) standingEnd.set(workItemId, event.createdAt);
-      if (isEventOf(event, 'work.completed') && !firstCompletion.has(workItemId)) {
-        firstCompletion.set(workItemId, event.createdAt);
+      if (isEventOf(event, 'work.completed') && !completedOnce.has(workItemId)) {
+        completedOnce.add(workItemId);
+        // One reading, the run's answer held to its ledger (RM23 (a)): only a done answer is a
+        // completion the cycle time measures; a partly done one is named beside it.
+        const answer = finishedAnswerOf(event.payload.output);
+        if (answer === 'done') firstCompletion.set(workItemId, event.createdAt);
+        else if (answer === 'partial') partlyDone += 1;
+        else notDoneFirst.add(workItemId);
       }
       continue;
     }
     if (isEventOf(event, 'charter.question-answered')) {
       answered += 1;
       if (payload?.amended === true) amended += 1;
+      continue;
     }
+    // The reorientation figure counts cards (16-O; A9): a trigger that joined a card is not a card.
+    if (isEventOf(event, 'reorientation.opened')) {
+      if (payload?.joined !== true) cards.opened += 1;
+      continue;
+    }
+    if (isEventOf(event, 'reorientation.approved')) cards.approved += 1;
+    else if (isEventOf(event, 'reorientation.dismissed')) cards.dismissed += 1;
+    else if (isEventOf(event, 'reorientation.deferred')) cards.deferred += 1;
   }
   const askedAt = new Map(discoveredAt);
   for (const item of workItems) askedAt.set(item._id, item.observedAt);
@@ -892,8 +924,10 @@ function pilotTotals(
     adopted,
     toEnd: durations(standingEnd),
     toCompletion: durations(firstCompletion),
+    partlyDone,
     answered,
     amended,
+    cards,
     estimatedItems: estimates.length,
     estimatedMinutes: estimates.reduce((total, minutes) => total + minutes, 0),
     ...retrievalTotals(documentationChars, inputTokens),
@@ -913,10 +947,12 @@ function summarisePilot(totals: PilotTotals): PilotFigures {
       ended: totals.toEnd.length,
       medianToEndMs: latencySummary(totals.toEnd).medianLatencyMs,
       completed: totals.toCompletion.length,
+      partlyDone: totals.partlyDone,
       medianToCompletionMs: completion.medianLatencyMs,
       p90ToCompletionMs: completion.p90LatencyMs,
     },
     reorientation: {
+      cards: { ...totals.cards },
       answered: totals.answered,
       amended: totals.amended,
       rate: totals.answered > 0 ? totals.amended / totals.answered : null,
@@ -941,8 +977,15 @@ function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
     adopted: rows.reduce((total, row) => total + row.adopted, 0),
     toEnd: rows.flatMap((row) => row.toEnd),
     toCompletion: rows.flatMap((row) => row.toCompletion),
+    partlyDone: rows.reduce((total, row) => total + row.partlyDone, 0),
     answered: rows.reduce((total, row) => total + row.answered, 0),
     amended: rows.reduce((total, row) => total + row.amended, 0),
+    cards: {
+      opened: rows.reduce((total, row) => total + row.cards.opened, 0),
+      approved: rows.reduce((total, row) => total + row.cards.approved, 0),
+      dismissed: rows.reduce((total, row) => total + row.cards.dismissed, 0),
+      deferred: rows.reduce((total, row) => total + row.cards.deferred, 0),
+    },
     estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
     estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
     retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),
@@ -1313,23 +1356,155 @@ export function figuresForCurrentManager(
   return { ...whole, decisions: summariseDecisions(decisionTotals(held.events, held.workItems)) };
 }
 
+/** The events that start a manager's wait on a decision, which a decision made later is timed from. */
+const WAIT_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
+  'work.decision-requesting',
+  'work.plan-drafted',
+  'work.actions-pending',
+]);
+
+/**
+ * One employee's records of one day in its zone (N12): the events logged from that day's
+ * midnight to the next, and the earlier asks of the decisions made that day, so a plan asked
+ * yesterday and approved today counts once, today, and its wait from the ask. The work rows are
+ * read as a closed span reads them ({@link recordsWithinTenure}): their ledgers only from the
+ * day's events, and their own decision records not at all, which the events already carry.
+ *
+ * @param records - The employee's records, already cut to the reader's spans.
+ * @param day - The day, `YYYY-MM-DD`.
+ * @param zone - The employee's zone.
+ */
+export function recordsOfDay(records: EmployeeRecords, day: string, zone: string): EmployeeRecords {
+  const from = dayStart(day, zone);
+  const until = dayStart(addDays(day, 1), zone);
+  const ofDay = records.events.filter(
+    (event) => event.createdAt >= from && event.createdAt < until,
+  );
+  const decidedOnDay = new Set(
+    ofDay.flatMap((event) => {
+      const result = decisionResult(event);
+      return result === undefined ? [] : [result.workItemId];
+    }),
+  );
+  return {
+    ...records,
+    events: [...asksStillOpen(records.events, from, decidedOnDay), ...ofDay],
+    workItems: records.workItems.map(
+      (item): Doc<'workItems'> => ({
+        ...item,
+        output: undefined,
+        decision: undefined,
+        manualEstimateMinutes: undefined,
+      }),
+    ),
+    charters: [],
+  };
+}
+
+/**
+ * The asks of the items decided on a day that were still open at its start (W16-R16): for each item
+ * and kind, the requests no decision or redraft before the day closed, oldest first as
+ * `decisionTotals` pairs them, and the start of the wait where one is still running. Carrying every
+ * earlier ask paired the day's decision with an ask an earlier decision had already answered, so a
+ * re-asked decision read days long.
+ *
+ * @param events - The employee's records' events.
+ * @param from - The day's start.
+ * @param decided - The items decided on the day.
+ */
+function asksStillOpen(
+  events: readonly Doc<'events'>[],
+  from: number,
+  decided: ReadonlySet<string>,
+): Doc<'events'>[] {
+  const open = new Map<string, { requests: Doc<'events'>[]; wait?: Doc<'events'> }>();
+  for (const event of [...events].sort(byWriteOrder)) {
+    if (event.createdAt >= from) continue;
+    const payload = asRecord(event.payload);
+    const workItemId = asString(payload?.workItemId);
+    if (workItemId === undefined || !decided.has(workItemId)) continue;
+    if (isEventOf(event, 'work.plan-redrafting')) {
+      // A redraft withdraws every plan ask that was open.
+      open.delete(`${workItemId}:plan`);
+      continue;
+    }
+    const result = decisionResult(event);
+    if (result !== undefined) {
+      // A decision answers the oldest request, as the fold pairs them, and ends the wait.
+      const key = `${workItemId}:${result.kind}`;
+      const requests = (open.get(key)?.requests ?? []).slice(1);
+      if (requests.length === 0) open.delete(key);
+      else open.set(key, { requests });
+      continue;
+    }
+    if (!isEventType(event.type) || !WAIT_EVENTS.has(event.type)) continue;
+    if (isEventOf(event, 'work.decision-requesting')) {
+      const kind = payload?.kind;
+      // A resend after an undelivered DM is the same ask as the request it supersedes.
+      if ((kind !== 'plan' && kind !== 'actions') || asString(payload?.supersedes) !== undefined) {
+        continue;
+      }
+      const key = `${workItemId}:${kind}`;
+      const ask = open.get(key) ?? { requests: [] };
+      open.set(key, { ...ask, requests: [...ask.requests, event] });
+      continue;
+    }
+    // Only a set holding something for the manager starts a wait, as the fold reads it.
+    const held = isEventOf(event, 'work.actions-pending');
+    if (held && asIndexes(payload?.heldIndexes).length === 0) continue;
+    const key = `${workItemId}:${held ? 'actions' : 'plan'}`;
+    open.set(key, { requests: open.get(key)?.requests ?? [], wait: event });
+  }
+  return [...open.values()].flatMap((ask) => [
+    ...(ask.wait === undefined ? [] : [ask.wait]),
+    ...ask.requests,
+  ]);
+}
+
+/** A day as the page names it, `YYYY-MM-DD`, that is a day of the calendar. */
+function isDayKey(day: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && addDays(day, 0) === day;
+}
+
 /**
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
- * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}).
- * Writes nothing.
+ * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
+ * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
+ * employee's zone beside them, under `today`. Writes nothing.
  */
 export const forAgent = query({
-  args: { agentId: v.id('agents') },
+  args: { agentId: v.id('agents'), day: v.optional(v.string()) },
   handler: async (ctx, args): Promise<AgentMetrics> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
+    // The guard first: a caller it refuses learns nothing of the arguments (12-G).
+    const { day } = args;
+    if (day !== undefined && !isDayKey(day)) {
+      throw new ConvexError(`${day} is not a day; name it as YYYY-MM-DD`);
+    }
     const [records, transfers] = await Promise.all([
       readEmployeeRecords(ctx, agent),
       acceptedTransfersOf(ctx, agent._id),
     ]);
     // The guard has proved the caller owns the employee, so the row's owner is the reader.
-    return figuresForCurrentManager(records, handoversFromTransfers(transfers), agent.userId);
+    const handovers = handoversFromTransfers(transfers);
+    const figures = figuresForCurrentManager(records, handovers, agent.userId);
+    if (day === undefined) return figures;
+    // The day's decisions are the reader's as the whole record's are: within the spans it held
+    // the employee, or the whole record where the rows name no span of its own.
+    const held =
+      agent.userId === undefined ? [] : tenureWindowsOf(agent.userId, agent.userId, handovers);
+    const windows = held.length > 0 ? held : [WHOLE_HISTORY];
+    const ofDay = computeAgentMetrics(
+      ...recordsArgs(recordsOfDay(recordsWithinTenure(records, windows), day, agentZone(agent))),
+    );
+    return { ...figures, today: { day, decisions: ofDay.decisions, actions: ofDay.actions } };
   },
 });
+
+/** One employee's records as `computeAgentMetrics` takes them. */
+function recordsArgs(records: EmployeeRecords): Parameters<typeof computeAgentMetrics> {
+  return [records.events, records.workItems, records.charters, records.surfaces ?? []];
+}
 
 /**
  * One employee's records within the spans one owner held it (D12 (a)).

@@ -719,6 +719,15 @@ describe('the Feishu reads a batch keeps inside its time (second pass)', (): voi
         NODES.zh2.node,
         NODES.refresh.node,
       ]);
+      // A transient is no word that the document has no revision: the stored one stands, where
+      // on the base the sync cleared it for that sync (W15-R30).
+      expect(batch.pages.map((page) => page.revisionUnread)).toEqual([true, true, true, true]);
+      expect(batch.pages.map((page) => page.sourceRevision)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
     }
   });
 

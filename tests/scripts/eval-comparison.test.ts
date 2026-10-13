@@ -167,10 +167,12 @@ import {
   driveDay0State,
   MAX_SKILL_AUTHORING_ATTEMPTS,
   runRegrade,
+  runTask,
   SKILL_AUTHORING_ATTEMPTS_EXHAUSTED,
   terminalTimestamp,
   type ActiveTask,
   type HarnessContext,
+  type RunWithProgress,
 } from '../../scripts/eval-comparison';
 
 const temporaryDirectories: string[] = [];
@@ -410,6 +412,78 @@ describe('headless baseline driver', (): void => {
     expect(calls.map((call) => call.name)).toEqual(['baselineActions:executeTask']);
     expect(active.logicalStages).toBe(3);
     expect(active.observableProviderCalls).toBe(3);
+  });
+});
+
+/** The backend's snapshot of an agent that holds one work item and nothing else. */
+function snapshotOf(item: Doc<'workItems'>) {
+  return {
+    workItems: [item],
+    events: [],
+    spreadsheets: [],
+    slackMessages: [],
+    tweetReplies: [],
+    tickets: [],
+  };
+}
+
+describe('the result a task-run writes', (): void => {
+  /** The result written for the Northstar task once its work item has ended as given. */
+  async function writtenResult(arm: RunWithProgress['arm'], ended: Partial<Doc<'workItems'>>) {
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'scope-northstar-figure')!;
+    const { context } = await stubContext({
+      'evaluation:snapshot': snapshotOf(workItem({ externalId: task.seed.externalId, ...ended })),
+    });
+    const run: RunWithProgress = {
+      id: `${arm}-r1`,
+      arm,
+      run: 1,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    };
+    return await runTask(context, run, 'agent-1' as never, task);
+  }
+
+  it('keeps the permissions the verdict named as missing beside the grade of a deferred row', async (): Promise<void> => {
+    const result = await writtenResult('day0', {
+      state: 'deferred',
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: ['northstar:read'],
+      } as never,
+    });
+
+    expect(result.terminalState).toBe('deferred');
+    expect(result.missingPermissions).toEqual(['northstar:read']);
+    expect(result.grade.facts.outOfScope).toEqual({
+      decided: true,
+      decidedBy: 'deferral',
+      explained: false,
+    });
+  });
+
+  it('keeps an empty list for a row deferred because its evaluation could not be had', async (): Promise<void> => {
+    const result = await writtenResult('day0', {
+      state: 'deferred',
+      verdict: {
+        decision: 'defer',
+        reason: 'evaluation-unavailable',
+        attempts: 3,
+        missingPermissions: [],
+      } as never,
+    });
+
+    expect(result.missingPermissions).toEqual([]);
+    expect(result.grade.facts.outOfScope).toEqual({ decided: false, explained: false });
+  });
+
+  it('keeps an empty list for a row whose work item has no verdict', async (): Promise<void> => {
+    const result = await writtenResult('baseline', { state: 'failed' });
+
+    expect(result.missingPermissions).toEqual([]);
   });
 });
 
@@ -698,6 +772,55 @@ describe('read-only evidence re-grading', (): void => {
       }),
     ).rejects.toThrow('backend does not hold recorded work item work-1 for day0-r1');
     await expect(readFile(outPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+});
+
+describe('a row graded again from its backend', (): void => {
+  it('keeps the permissions the verdict named as missing, as a new result does', async (): Promise<void> => {
+    const dir = await temporaryDirectory('regrade-verdict-');
+    const sourcePath = join(dir, 'original.json');
+    const fixture = regradeFixture();
+    fixture.configuration.taskIds = ['scope-northstar-figure'];
+    Object.assign(fixture.runs[0]!.tasks[0]!, {
+      taskId: 'scope-northstar-figure',
+      externalId: 'EVAL-SCOPE-05',
+      category: 'out-of-scope',
+      terminalState: 'deferred',
+    });
+    await writeFile(sourcePath, JSON.stringify(fixture), 'utf8');
+    const deferred = {
+      ...retainedSnapshot().workItems[0]!,
+      externalId: 'EVAL-SCOPE-05',
+      state: 'deferred',
+      output: undefined,
+      verdict: {
+        decision: 'defer',
+        reason: 'awaiting-permission',
+        missingPermissions: ['northstar:read'],
+      },
+    };
+    const client = {
+      setAuth: (): void => undefined,
+      query: async (fn: unknown): Promise<unknown> =>
+        getFunctionName(fn as never) === 'config:surfaceMode'
+          ? { mode: 'mock' }
+          : { ...retainedSnapshot(), workItems: [deferred], slackMessages: [], tickets: [] },
+    };
+
+    const evidence = await runRegrade(
+      parseCliOptions(['--regrade', sourcePath, '--out', join(dir, 'new', 'comparison.json')]),
+      {
+        client: client as never,
+        authenticate: async (): Promise<void> => undefined,
+        commit: 'grader-commit',
+      },
+    );
+
+    expect(evidence.runs[0]!.tasks[0]).toMatchObject({
+      terminalState: 'deferred',
+      missingPermissions: ['northstar:read'],
+      grade: { facts: { outOfScope: { decided: true, decidedBy: 'deferral', explained: false } } },
+    });
   });
 });
 

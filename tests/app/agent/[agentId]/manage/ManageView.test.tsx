@@ -150,8 +150,17 @@ describe('ManageView: the manager DM setting waits for a manager channel (N7)', 
       'The hosted office has no pause: every write Priya drafts there waits for your decision.',
     );
     expect(mock).not.toContain('Pause Priya');
-    // Round two draws an Appearance card; the stylesheet has no light theme to choose.
-    expect(real).not.toContain('Appearance');
+  });
+
+  // Re-pinned (16-T): this test held the Appearance card absent while the stylesheet had no light
+  // theme to choose; the light set now exists, so the card is drawn as round two placed it.
+  it('draws the Appearance card after Pause and before Retire, in both modes and before the charter', (): void => {
+    for (const html of [manage([]), manage([], { mode: 'mock' }), manage([], { charter: null })]) {
+      expect(html).toMatch(/<h2[^>]*>Appearance<\/h2>/);
+      expect(html).toContain('Dark is the default. Light follows your system if you ask for it.');
+      expect(html.indexOf('>Pause<')).toBeLessThan(html.indexOf('>Appearance<'));
+      expect(html.indexOf('>Appearance<')).toBeLessThan(html.indexOf('>Retire Priya<'));
+    }
   });
 
   it('marks a paused employee on its card and offers Resume by name, in place of Pause', (): void => {

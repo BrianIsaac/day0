@@ -77,6 +77,21 @@ describe('projectKnowledge', (): void => {
     ]);
   });
 
+  it('closes an answered question the manager left unpunctuated before its answer (W15-R39)', (): void => {
+    const base = mira();
+    const { text } = projectKnowledge({
+      ...base,
+      charter: {
+        ...base.charter!,
+        body: {
+          ...(base.charter!.body as Record<string, unknown>),
+          answeredQuestions: [{ question: 'Which carrier handles Asia', answer: 'DHL' }],
+        },
+      },
+    });
+    expect(text.split('\n')).toContain('Answered: Which carrier handles Asia? DHL');
+  });
+
   it('lists a rule the charter enforces apart from one bound to no clause or to clauses without its words (W13-R34)', (): void => {
     const base = mira();
     const body = {

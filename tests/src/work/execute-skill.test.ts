@@ -2101,6 +2101,8 @@ describe('frozen prompt text', (): void => {
 
   // Re-pinned (W14-R48, v0.19.0): the head counts no items, the action format names `reports`,
   // and the action-mode line says the approval may be of part of the set.
+  // Re-pinned (W19-7, v0.20.0, 12 October 2026): one discipline line, name a record as the
+  // manager would.
   it('keeps the mock executor preamble byte-identical', (): void => {
     expect(executorPreamble('mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
@@ -2130,7 +2132,8 @@ describe('frozen prompt text', (): void => {
         - Every emitted action is held for the manager's literal approval: the manager approves the set or the writes of it they choose, each approved write is sent, and a message that reports a write of the set is sent only once that write has landed. A plan step that says a reply or a post waits for the manager's approval is fulfilled by emitting that reply or post itself where it belongs, never a holding message or a draft for review in its place. A post, a reply, a comment or a DM is read once it has landed: word it as it will stand then, never saying that it or another write of this response is drafted, held or waits for approval, and answer \`workDone\` as the work will stand once the set lands. Name an approval as the manager reads it, never by the name of a mode.
         - Stay inside charter boundaries.
         - Never invent values you do not have. If a cell value is unknown, leave it blank in \`cells\` and flag the gap in \`notes\`.
-        - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy."
+        - Follow the loaded procedures for supplemental audit actions, destinations and state changes. Take every literal from those procedures, the approved candidate or the approved plan; do not invent an office policy.
+        - In every message, the draft and the notes, name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://..."
     `);
   });
 
@@ -2462,8 +2465,10 @@ describe("the preambles' words against what the run is asked for and what the ap
   it('has the mock planner plan each write as the step that makes it, never a step that waits for approval', (): void => {
     const instruction = actionModeInstruction(false, 'mock');
     expect(instruction).not.toContain('waits for your approval');
+    // Re-taken for W15-R15 and W19-4, 12 October 2026: the sentence goes on to forbid a step
+    // worded as a draft or as framed for the manager's approval.
     expect(instruction).toContain(
-      'Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval.',
+      "Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval.",
     );
   });
 });

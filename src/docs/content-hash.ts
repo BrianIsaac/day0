@@ -10,8 +10,10 @@ const PAGE_CONTENT_LABEL = 'day0-page-content-v1';
  * sync. `tests/src/docs/content-hash.test.ts` pins a digest of that code beside it, so the
  * change cannot land without the question being asked: `src/docs/redaction.ts`,
  * `src/redaction/` however deep, the exact-value matcher they call (`src/surfaces/secrets.ts`),
- * the component that serves the span model (`redactor/server.py`) and the pins of the libraries
- * it runs on (`redactor/requirements.txt`, `redactor/requirements-cuda.txt`; W15-R41).
+ * the two modules they import outside their directory (`src/lib/organisation-key.ts`,
+ * `src/lib/transport-error.ts`), the component that serves the span model (`redactor/server.py`)
+ * and the pins of the libraries it runs on (`redactor/requirements.txt`,
+ * `redactor/requirements-cuda.txt`; W15-R41).
  *
  * 2 since 0.19.0 (W14-R16): the pin did not cover the matcher or the component, so a change to
  * either left every unchanged page with its old redaction for good. Bumped once as the pin

@@ -2,11 +2,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
+const backend = vi.hoisted(() => ({
+  queries: {} as Record<string, unknown>,
+  /** The arguments each query was last read with, by name. */
+  args: {} as Record<string, unknown>,
+}));
 
 vi.mock('convex/react', () => ({
-  useQuery: (reference: unknown, args: unknown): unknown =>
-    args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
+  useQuery: (reference: unknown, args: unknown): unknown => {
+    if (args === 'skip') return undefined;
+    backend.args[getFunctionName(reference as never)] = args;
+    return backend.queries[getFunctionName(reference as never)];
+  },
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));
@@ -19,11 +26,29 @@ import {
 import type { Doc } from '../../../../convex/_generated/dataModel';
 import type { SurfaceRecord } from '../../../../src/surfaces/types';
 import { dashboardMetrics } from '../../../fixtures/dashboard/metrics';
-import { asEmployee } from '../../../fixtures/dom/employee';
+import { asEmployee, EMPLOYEE_ROW } from '../../../fixtures/dom/employee';
 
 afterEach((): void => {
   backend.queries = {};
 });
+
+/**
+ * The page's figures with the day's window the rail draws (16-F): no decision made today, the
+ * whole record's figures otherwise as given.
+ */
+function withToday<Figures extends ReturnType<typeof dashboardMetrics>>(figures: Figures) {
+  return {
+    ...figures,
+    today: {
+      day: '2026-10-01',
+      decisions: { ...figures.decisions, approved: 0, rejected: 0, partiallyApproved: 0 },
+      actions: figures.actions,
+    },
+  };
+}
+
+/** The fixture's employee row, for a test that changes one field of it. */
+const asEmployeeRow = () => ({ ...EMPLOYEE_ROW });
 
 /** Markup with the React text separators taken out, so copy reads as it renders. */
 const text = (html: string): string => html.replace(/<!-- -->/g, '');
@@ -95,6 +120,29 @@ describe('railFigures for a manager who took the employee over (the v0.13.0 walk
     );
     expect(none[0]).toEqual({ label: 'Decisions', value: 'none since you took over' });
   });
+
+  it('says a day’s count as the day’s, never "since you took over" (W16-R32)', () => {
+    const metrics = dashboardMetrics();
+    const today = { tookOver: true, today: true };
+    expect(
+      railFigures(
+        {
+          ...metrics,
+          decisions: { ...metrics.decisions, approved: 1, rejected: 0, partiallyApproved: 0 },
+        },
+        today,
+      )[0],
+    ).toEqual({ label: 'Decisions', value: '1 by you (1 approved, 0 rejected)' });
+    expect(
+      railFigures(
+        {
+          ...metrics,
+          decisions: { ...metrics.decisions, approved: 0, rejected: 0, partiallyApproved: 0 },
+        },
+        today,
+      )[0],
+    ).toEqual({ label: 'Decisions', value: 'none today' });
+  });
 });
 
 describe('RecordLines', () => {
@@ -157,9 +205,10 @@ describe('RecordLines', () => {
 
 describe('EmployeeRail', () => {
   it('draws the figures, the record with a link to all of it, and where decisions reach the manager', () => {
-    backend.queries = { 'metrics:forAgent': dashboardMetrics(), 'events:recent': [] };
+    backend.queries = { 'metrics:forAgent': withToday(dashboardMetrics()), 'events:recent': [] };
     const html = text(renderToStaticMarkup(asEmployee(<EmployeeRail />)));
-    expect(html).toContain('>So far</h2>');
+    // Re-pinned for 16-F: the rail's figures are today's, in the employee's zone.
+    expect(html).toContain('>Today</h2>');
     expect(html).toContain('counts, not rates');
     expect(html).toContain('>Record</h2>');
     expect(html).toContain('href="/agent/agent-1/record"');
@@ -167,7 +216,7 @@ describe('EmployeeRail', () => {
     expect(html).toContain('Where decisions reach you');
   });
 
-  it('says the decisions count since the reader took over only when the employee came to them by a handover', () => {
+  it('says a day’s decisions as the day’s, whoever held the employee before', () => {
     const none = {
       ...dashboardMetrics(),
       decisions: {
@@ -179,16 +228,19 @@ describe('EmployeeRail', () => {
     };
     const decisionsLine = (earlier: unknown): string => {
       backend.queries = {
-        'metrics:forAgent': none,
+        'metrics:forAgent': withToday(none),
         'events:recent': [],
         'managerTransfers:earlierManagers': earlier,
       };
       return text(renderToStaticMarkup(asEmployee(<EmployeeRail />)));
     };
+    // Re-pinned by W16-R32: the rail's card is "Today", and a day's count is not "since" a
+    // handover, so the card of an employee the reader took over says "none today" too.
     expect(decisionsLine([{ fromAddress: 'earlier@day0.local', decidedAt: 1 }])).toContain(
-      'none since you took over',
+      '>none today<',
     );
-    expect(decisionsLine([])).toContain('>none yet<');
+    // Re-pinned for 16-F: the rail's figures are today's, so no decision reads "none today".
+    expect(decisionsLine([])).toContain('>none today<');
     // Handed back: the reader held the employee before, so its count is not "since" anything.
     for (const fromAddress of ['boss@day0.local', 'BOSS@day0.local']) {
       expect(
@@ -196,12 +248,12 @@ describe('EmployeeRail', () => {
           { fromAddress, decidedAt: 1 },
           { fromAddress: 'earlier@day0.local', decidedAt: 2 },
         ]),
-      ).toContain('>none yet<');
+      ).toContain('>none today<');
     }
     // Until both reads answer the line waits, so its words never change under the reader.
     const loading = decisionsLine(undefined);
     expect(loading).toContain('Loading the figures');
-    expect(loading).not.toContain('none yet');
+    expect(loading).not.toContain('none today');
   });
 
   it('gives the link to the whole record a 44 px target both ways, its word kept at the right (review C5)', () => {
@@ -242,5 +294,30 @@ describe('EmployeeRail', () => {
     expect(where('real', [channel])).toContain(
       'Here, and as a DM on the chat surface you connected.',
     );
+  });
+});
+
+describe('the rail’s figures are today’s, in the employee’s zone (16-F)', () => {
+  it('reads the figures of the employee’s own day and draws them under Today', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 18:00 UTC on 30 September is 1 October 02:00 in Singapore.
+    vi.setSystemTime(new Date('2026-09-30T18:00:00Z'));
+    const today = withToday(dashboardMetrics());
+    backend.queries = {
+      'metrics:forAgent': today,
+      'events:recent': [],
+      'managerTransfers:earlierManagers': [],
+    };
+    const html = text(
+      renderToStaticMarkup(
+        asEmployee(<EmployeeRail />, {
+          agent: { ...asEmployeeRow(), zone: 'Asia/Singapore' },
+        }),
+      ),
+    );
+    vi.useRealTimers();
+    expect(backend.args['metrics:forAgent']).toEqual({ agentId: 'agent-1', day: '2026-10-01' });
+    expect(html).toContain('>Today</h2>');
+    expect(html).toContain('>none today<');
   });
 });

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentJson, makeAgent } from '../lib/mastra';
 import type { Charter } from '../agent/charter';
+import { inPlainNames, refsInWords } from './plain-references';
 import { PLAIN_PUNCTUATION_IN_EVERY_FIELD } from '../agent/drafted-text-rules';
 import { CLOSING_STATES_WORDS } from './not-done';
 import type { AppliedAction, SurfaceMode, SurfaceRecord } from '../surfaces/types';
@@ -62,6 +63,15 @@ const SYSTEM_PROMPT_HEAD = [
   `  - ${PLAIN_PUNCTUATION_IN_EVERY_FIELD}`,
 ];
 
+/**
+ * How the hosted office's plan names a record, mock mode only (W19-7, 12 October 2026): on the
+ * v0.19.0 walk Pip's plans carried `docs-fixture/billing-replies` and
+ * `channel://office-asks#thread-double-charge`, references the manager cannot read. The plan's
+ * text is also read through `inPlainNames`, the floor under this line.
+ */
+export const PLAIN_NAMES_PLANNER =
+  '  - Name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...';
+
 /** How a plan rests on what it was shown, after the line that names where each part sits. */
 const EVIDENCE_RULE =
   'Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.';
@@ -76,11 +86,13 @@ const SELECTION_RULE =
 
 /**
  * What the real planner is told of a cite line the selection printed `[conflict]` (15-A): a
- * confirmed conflict between two pages of equal trust. The plan that cites one is held for the
- * manager whatever it says (`work.decidePlan`); this keeps the draft from resting on the point.
+ * confirmed conflict between two pages of equal trust. The question is asked only beside a plan
+ * that cites the disputed passage, and only the steps citing it are held (16-O, RM20 (a)), so the
+ * planner is told to plan and cite such a step rather than plan round it (W16-R7, D-1 (a)): a plan
+ * that works round the point is asked nothing and would tell the manager a question was asked.
  */
 const CONFLICT_RULE =
-  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.';
+  'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites` for that step, the one whose write the point decides: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, plan a step of your own that asks about it, or say that a question has been asked.';
 
 /**
  * Where the planner's two kinds of evidence sit. In real mode the documentation comes before the
@@ -162,8 +174,10 @@ export function actionModeInstruction(
     // The manager reads the plan's steps: a mode's name in them is the planner's jargon (the
     // hosted walk's m6 read "... before posting (mock comparison mode)."). A step that "waits for
     // your approval" sent a run to post a holding message in its place (14-FW's bed), so the
-    // plan is told the approval comes after the run has written every write (W14-R48).
-    return "Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval. Name the approval as the manager reads it, never by the name of a mode.";
+    // plan is told the approval comes after the run has written every write (W14-R48). A step
+    // worded "draft a reply ... and hold it for the manager's approval" left Hana's answer a draft
+    // in the manager's DM on the v0.19.0 walk (W19-4, W15-R15).
+    return "Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. Name the approval as the manager reads it, never by the name of a mode.";
   }
   return autonomousActions
     ? 'Autonomous actions are ON: every allowed write lands as emitted; do not say an action is queued or awaiting approval.'
@@ -187,7 +201,7 @@ export function planSystemPrompt(
           ...OWN_ITEM_READS_PLANNER,
           ...LIST_READ_PLANNER,
         ]
-      : []),
+      : [PLAIN_NAMES_PLANNER]),
     '',
     actionModeInstruction(autonomousActions, surfaceMode),
   ].join('\n');
@@ -956,7 +970,10 @@ export function planUserPrompt(args: Omit<DraftPlanArgs, 'autonomousActions'>): 
     // The owner is a provider's label, kept free of identities as the From line is (W13-R19).
     ...(candidate.owner ? [`Owner: ${withoutIdentities(candidate.owner) || '(unknown)'}`] : []),
     `Title: ${candidate.title}`,
-    `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
+    // The hosted office's references by what each record is, so a plan names none (W19-7).
+    args.surfaceMode !== 'real'
+      ? `Refs: ${refsInWords(candidate.contentRefs)}`
+      : `Refs: ${candidate.contentRefs.length > 0 ? candidate.contentRefs.join(', ') : '(none)'}`,
     ...(candidate.replyTarget ? [replyTargetLine(candidate.replyTarget)] : []),
     `Body:`,
     candidate.contentSummary,
@@ -995,6 +1012,16 @@ function materialisePlan(raw: z.infer<typeof planSchema>): ExecutionPlan {
   };
 }
 
+/** A hosted office plan with every reference its text carries written as the record it names (W19-7). */
+function inPlainPlan(plan: ExecutionPlan): ExecutionPlan {
+  return {
+    ...plan,
+    summary: inPlainNames(plan.summary),
+    steps: plan.steps.map(inPlainNames),
+    riskNotes: inPlainNames(plan.riskNotes),
+  };
+}
+
 /** Draft the execution plan for one candidate through the model, with its obligations judged. */
 export async function draftExecutionPlan(args: DraftPlanArgs): Promise<ExecutionPlan> {
   const { autonomousActions, onObligationEvent, ...prompt } = args;
@@ -1007,7 +1034,7 @@ export async function draftExecutionPlan(args: DraftPlanArgs): Promise<Execution
       user: userPrompt,
       schema: planSchema,
     });
-    return materialisePlan(raw);
+    return inPlainPlan(materialisePlan(raw));
   }
 
   const raw = await agentJson<RealPlanReply>({

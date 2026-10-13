@@ -2868,6 +2868,85 @@ describe('retrying an item the quality-fit filter skipped', (): void => {
     });
   });
 
+  it('clears the kept selection of a plan Retry drafts again, so the redraft’s own stands (W16-R11)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'cancelled');
+    await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Runbooks',
+        kind: 'folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const generation = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 1,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      const block = await ctx.db.insert('docBlocks', {
+        userId: 'owner',
+        sourceId,
+        pageRef: 'runbook.md',
+        generation,
+        index: 0,
+        headingPath: ['Runbook'],
+        text: 'Read the ticket.',
+        searchText: 'Runbook\nRead the ticket.',
+        kind: 'text',
+        hash: 'first-draft',
+        chars: 16,
+      });
+      await ctx.db.patch(workItemId, {
+        skipReason: 'plan cancelled by the manager: not like this',
+        selectedBlocks: [{ id: block, hash: 'first-draft' }],
+      });
+    });
+
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId });
+
+    const retried = await readItem(harness, workItemId);
+    expect(retried.plan).toBeUndefined();
+    expect(retried.selectedBlocks).toBeUndefined();
+  });
+
+  it('never reads a note on a stop held for a documentation conflict as its answer (W16-R8)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await seed(harness, 'failed');
+    const question =
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right?';
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        skipReason: `stopped: ${openQuestionStopReason({ question, steps: [1] })}`,
+        output: {
+          draft: '',
+          notes: '',
+          actions: [],
+          applied: [],
+          openQuestion: { question, steps: [1], relationId: 'relation-1' },
+        },
+      });
+    });
+
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.workRuns.retryFailed, { workItemId, feedback: 'The Revops page is right.' });
+
+    // The conflict is answered on its question, which decides the relation; a note decides
+    // nothing, so it is never told to the run as the answer.
+    const feedback = (await readItem(harness, workItemId)).managerFeedback;
+    expect(feedback).toMatchObject({ reason: 'The Revops page is right.', kind: 'retry-note' });
+    expect(feedback?.answersQuestion).toBeUndefined();
+  });
+
   it('records the eligibility waiver when the manager retries an out-of-scope skip', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -8599,7 +8678,9 @@ describe('work.listForAgent', (): void => {
     const { WORK_LIST_LIMIT } = await import('../../convex/work');
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
-    const states = ['discovered', 'completed', 'skipped'] as const;
+    // Re-taken for W15-R14, 12 October 2026: the oldest row is a finished one, since an open row
+    // is listed however old it is (the test below).
+    const states = ['completed', 'discovered', 'skipped'] as const;
     await harness.run(async (ctx): Promise<void> => {
       for (let item = 0; item <= WORK_LIST_LIMIT; item += 1) {
         await ctx.db.insert('workItems', {
@@ -8636,6 +8717,44 @@ describe('work.listForAgent', (): void => {
       ],
     ]);
     expect(listed.at(-1)?.state).toBe('completed');
+  });
+
+  it('lists an open item past the bound, which Needs you links to, beside the newest finished ones (W15-R14)', async (): Promise<void> => {
+    const { WORK_LIST_LIMIT } = await import('../../convex/work');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const row = (externalId: string, state: Doc<'workItems'>['state'], at: number) => ({
+      agentId,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      externalId,
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Synthetic.',
+      contentRefs: [],
+      state,
+      observedAt: at,
+      createdAt: at,
+    });
+    // The review's probe: a plan the manager has not decided and a stopped run, older than the
+    // newest 300 finished items, both of which Needs you lists and links to on the Work tab.
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', row('REVOPS-OLD-PLAN', 'plan-pending', 0));
+      await ctx.db.insert('workItems', row('REVOPS-OLD-STOP', 'failed', 1));
+      await ctx.db.insert('workItems', row('REVOPS-OLD-DONE', 'completed', 2));
+      for (let item = 0; item < WORK_LIST_LIMIT; item += 1) {
+        await ctx.db.insert('workItems', row(`REVOPS-${item}`, 'completed', 10 + item));
+      }
+    });
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    const ids = listed.map((item) => item.externalId);
+    expect(ids).toContain('REVOPS-OLD-PLAN');
+    expect(ids).toContain('REVOPS-OLD-STOP');
+    expect(ids).not.toContain('REVOPS-OLD-DONE');
+    expect(listed).toHaveLength(WORK_LIST_LIMIT + 2);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {

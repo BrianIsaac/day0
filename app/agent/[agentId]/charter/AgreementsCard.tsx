@@ -12,18 +12,21 @@ import {
   CHECK_HOLD_NOW,
   checkingHoldLine,
   checkingLine,
+  checkOwedLine,
   checkStale,
   checkUnavailableLine,
   CHECKING_AGAIN,
   keepForOneLabel,
   keptForOneLine,
   quotedSentence,
+  recheckLine,
   REFUSED_WITHOUT_REASON,
   refusalSentence,
   refusedKicker,
   sourceWords,
   WITHDRAWN,
   type AgreementView,
+  type RecheckOutcome,
 } from '@/work/agreement-words';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
@@ -42,7 +45,7 @@ export interface AgreementCalls {
   readonly onRetire: (agreementId: AgreementView['_id']) => Promise<unknown>;
   readonly onDismiss: (agreementId: AgreementView['_id']) => Promise<unknown>;
   /** Try a kept agreement's check again once it is stale (W13-R30), or check a hold now. */
-  readonly onRecheck: (agreementId: AgreementView['_id']) => Promise<unknown>;
+  readonly onRecheck: (agreementId: AgreementView['_id']) => Promise<RecheckOutcome>;
 }
 
 /**
@@ -121,7 +124,9 @@ function editControlOf(
  * employee (A10); an agreement kept here waiting on its check; a refusal of what was kept here,
  * with Dismiss, and, for a keep for every employee refused past the bound, Keep for this employee
  * alone; a hold of an agreement for every employee, with Check now once it can be checked
- * (W14-R15); and a proposal, which is decided on the Work tab. Real mode only, as agreements are.
+ * (W14-R15); an agreement for every employee whose check against the employee's amended charter is
+ * owed, which stays in effect, with Check now (RM28 (b)); and a proposal, which is decided on the
+ * Work tab. Real mode only, as agreements are.
  *
  * @param props - The agreements, the employee's name, the Work tab, and the calls.
  */
@@ -167,12 +172,16 @@ export function AgreementsCard({
       (row.sourceType === 'manager-card' || row.refusal?.reason === 'unchecked-for-employee'),
   );
   const waiting = agreements.filter(awaitingManager);
-  // A refused keep for every employee already kept for this employee offers no second keep.
+  // A refused keep for every employee already kept for this employee offers no second keep: the
+  // same words for the same work, as the backend compares them (W15-R37).
   const keptHere = (row: AgreementView): boolean =>
     agreements.some(
       (own) =>
         own.agentId !== undefined &&
         own.statement === row.statement &&
+        own.scope === row.scope &&
+        own.scopeRef === row.scopeRef &&
+        own.personId === row.personId &&
         (own.status === 'active' || awaitingCheck(own)),
     );
   const empty = inForce.length + checking.length + refused.length + waiting.length === 0;
@@ -201,6 +210,15 @@ export function AgreementsCard({
                   </>
                 ) : null}
               </p>
+              {row.checkOwed !== undefined ? (
+                <p className="mt-1 text-[13px] text-[var(--color-fg-2)]">
+                  {checkOwedLine(
+                    employeeName,
+                    clockTime(row.checkOwed.since, zone),
+                    row.checkOwed.checkable,
+                  )}
+                </p>
+              ) : null}
               {editing === row._id ? (
                 <AgreementEditor
                   statement={row.statement}
@@ -243,6 +261,22 @@ export function AgreementsCard({
                   >
                     Retire
                   </Button>
+                  {row.checkOwed?.checkable === true ? (
+                    <Button
+                      size="small"
+                      disabled={change.busy}
+                      aria-label={`Check “${row.statement}” against ${employeeName}'s charter now`}
+                      onClick={() =>
+                        change.run(() => onRecheck(row._id), {
+                          done: (outcome) =>
+                            recheckLine(outcome, checkingHoldLine(employeeName), employeeName),
+                          refused: 'The check was not started.',
+                        })
+                      }
+                    >
+                      {CHECK_HOLD_NOW}
+                    </Button>
+                  ) : null}
                   {row.agentId !== undefined ? (
                     <Button
                       size="small"
@@ -280,7 +314,7 @@ export function AgreementsCard({
                     aria-label={`Try the check of “${row.statement}” again`}
                     onClick={() =>
                       change.run(() => onRecheck(row._id), {
-                        done: CHECKING_AGAIN,
+                        done: (outcome) => recheckLine(outcome, CHECKING_AGAIN, employeeName),
                         refused: 'The check was not tried again.',
                       })
                     }
@@ -330,7 +364,8 @@ export function AgreementsCard({
                       aria-label={`Check “${row.statement}” against ${employeeName}'s charter now`}
                       onClick={() =>
                         change.run(() => onRecheck(row._id), {
-                          done: checkingHoldLine(employeeName),
+                          done: (outcome) =>
+                            recheckLine(outcome, checkingHoldLine(employeeName), employeeName),
                           refused: 'The check was not started.',
                         })
                       }

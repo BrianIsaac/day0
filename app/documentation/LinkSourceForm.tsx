@@ -220,7 +220,7 @@ export function SourceKindHelp(props: {
     return (
       <p className={HELP}>
         The backend reads this wiki space or folder through Feishu&apos;s or Lark&apos;s open
-        platform, as the app IT created. No day0 component has to be running.{' '}
+        platform, as the app IT created, with no other component to start.{' '}
         <a href={FEISHU_GUIDE_URL} target="_blank" rel="noreferrer">
           How IT sets up the app
         </a>
@@ -232,7 +232,7 @@ export function SourceKindHelp(props: {
     <p className={HELP}>
       {props.kind === 'mcp'
         ? `${serverKindHelp(props.serverKind)} The secret is encrypted when submitted and is never displayed again.`
-        : 'The backend reads this location itself. No day0 component has to be running.'}
+        : 'The backend reads this location itself, with no other component to start.'}
     </p>
   );
 }

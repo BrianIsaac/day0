@@ -21,9 +21,10 @@ import type { IntakeScope } from '../src/surfaces/intake-scope';
 import { assertCurrentGeneration } from '../src/docs/sync-generation';
 import { appendEvent } from './eventLog';
 import { mirroredDocSlug } from '../src/docs/types';
+import { sha256OfText } from '../src/lib/sha256';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
-import { forgetProposalsOf } from './docRelations';
+import { forgetProposalsOf } from './docRelationProposals';
 import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
@@ -1927,8 +1928,8 @@ export const syncReport = internalQuery({
  * generation has superseded that one, so a stale action can never write back
  * a page the newer sync removed.
  *
- * It stores the page's hash before redaction, schedules the split of every
- * page it writes into blocks (`docBlocks.splitStoredPage`), and, when a stored
+ * It schedules the split of every page it writes into blocks (`docBlocks.splitStoredPage`),
+ * which stores the page's hash before redaction once the blocks are the page's, and, when a stored
  * page's body changed, the Re-check due stamp on the skills whose version read
  * it (`skillVersions.stampChangedPage`; 14-I).
  *
@@ -1954,21 +1955,26 @@ export const upsertPage = internalMutation({
         index.eq('sourceId', args.sourceId).eq('ref', args.ref),
       )
       .unique();
-    // A changed page carries its new hash, or none, so an old hash never vouches for a new body.
+    // A changed page carries no hash until its split lands, so an old hash never vouches for a
+    // new body, and a new one vouches for its blocks too (W15-R25).
     const page = {
       title: args.title,
       url: args.url,
       markdown: args.markdown,
       updatedAt: args.updatedAt,
-      contentHash: args.contentHash,
+      contentHash: undefined,
     };
     // The page's blocks are split from the page as stored, in a job of their own that reads it
-    // then, so a later write of the page is never undone by an earlier split (14-I).
+    // then, so a later write of the page is never undone by an earlier split (14-I). The job
+    // writes the hash once the blocks are the page's, for the text it was scheduled for only.
     const splitStored = async (): Promise<void> => {
       await ctx.scheduler.runAfter(0, internal.docBlocks.splitStoredPage, {
         sourceId: args.sourceId,
         ref: args.ref,
         generation: args.syncRunId,
+        ...(args.contentHash !== undefined
+          ? { contentHash: args.contentHash, storedText: sha256OfText(args.markdown) }
+          : {}),
       });
     };
     if (existing) {
@@ -1979,15 +1985,10 @@ export const upsertPage = internalMutation({
         existing.url === page.url &&
         existing.markdown === page.markdown;
       if (unchanged) {
-        // A page stored before its hash or under another key takes the hash, with its body
-        // and time left as they were; and an unchanged page the sync stores again (its split
-        // never landed, or it was redacted again) is split again.
-        if (args.contentHash !== undefined) {
-          if (existing.contentHash !== args.contentHash) {
-            await ctx.db.patch(existing._id, { contentHash: args.contentHash });
-          }
-          await splitStored();
-        }
+        // A page stored before its hash or under another key takes the hash once its split lands,
+        // with its body and time left as they were; and an unchanged page the sync stores again
+        // (its split never landed, or it was redacted again) is split again.
+        if (args.contentHash !== undefined) await splitStored();
         return existing._id;
       }
       await ctx.db.patch(existing._id, page);
@@ -2026,7 +2027,6 @@ export const upsertPage = internalMutation({
       url: page.url,
       markdown: page.markdown,
       updatedAt: page.updatedAt,
-      ...(args.contentHash !== undefined ? { contentHash: args.contentHash } : {}),
     });
     await splitStored();
     return pageId;

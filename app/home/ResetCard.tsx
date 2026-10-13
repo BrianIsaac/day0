@@ -162,9 +162,15 @@ export function unlinkLabel(holdings: Holdings | null | undefined): string {
  * What the card says the deletion takes: in the hosted office, where no person and no working
  * agreement is kept, it names neither, as its dialog does not (the v0.17.0 redeploy's finding 4).
  *
- * @param mode - The deployment's mode, or undefined while it is read.
+ * @param mode - The deployment's mode, `loading` while it is read; undefined reads as a local
+ *   install's, which is what the card says where it is drawn without one.
  */
-export function whatItDeletes(mode: 'mock' | 'real' | undefined): string {
+export function whatItDeletes(mode: 'mock' | 'real' | 'loading' | undefined): string {
+  // Until the mode answers, only what both offices delete is said (W16-R35): the hosted office
+  // keeps no person and no working agreement, and never names them for a moment.
+  if (mode === 'loading') {
+    return 'Deletes your employees and everything they made. Your sign-in stays.';
+  }
   const takes =
     mode === 'mock'
       ? 'your employees and everything they made, your skill library and the notes on your handover requests'
@@ -185,15 +191,19 @@ function hasDataToDelete(holdings: Holdings, alsoUnlinkDocumentation: boolean): 
 
 /**
  * The deletion of the manager's data: every employee and what it made, the skill library, the
- * notes on their handover requests, and optionally the documentation. Live whenever the account
+ * notes on their handover requests, and optionally the documentation (a choice the hosted office,
+ * which links none, does not draw: RM26 (a)). Live whenever the account
  * holds anything the deletion would take, an employee or not (the v0.13.0 walk), and disabled
  * while it holds nothing or the page has not read it yet; the line under the words says which.
  * A danger card, as Retire's is. Pressing it opens the shared confirmation dialog, Keep my data
  * focused first; what the deletion came to is said on the card and focus comes back to the
  * button, or to the card once nothing is left for the button to take.
  */
-export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
-  const holdings = useQuery(api.reset.holdings);
+export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' | 'loading' } = {}) {
+  const stored = useQuery(api.reset.holdings);
+  // The hosted office draws no unlink choice, so nothing the card says points at one (RM26 (a)).
+  const holdings =
+    stored && mode === 'mock' ? { ...stored, documentation: false, credentials: false } : stored;
   const reset = useMutation(api.reset.deleteMyData);
   const [alsoUnlinkDocumentation, setAlsoUnlinkDocumentation] = useState(false);
   // What was stored when the dialog opened: its warning stays the one the manager is answering,
@@ -221,14 +231,17 @@ export function ResetCard({ mode }: { readonly mode?: 'mock' | 'real' } = {}) {
               ? heldNow(holdings, alsoUnlinkDocumentation)
               : 'Checking what is stored for you…'}
           </p>
-          <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
-            <input
-              type="checkbox"
-              checked={alsoUnlinkDocumentation}
-              onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
-            />
-            {unlinkLabel(holdings)}
-          </label>
+          {/* The hosted office links no documentation and stores no credential (RM26 (a)). */}
+          {mode === 'mock' || mode === 'loading' ? null : (
+            <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-2 text-sm text-[var(--color-muted)]">
+              <input
+                type="checkbox"
+                checked={alsoUnlinkDocumentation}
+                onChange={(event) => setAlsoUnlinkDocumentation(event.target.checked)}
+              />
+              {unlinkLabel(holdings)}
+            </label>
+          )}
         </div>
         <Button
           ref={opener}

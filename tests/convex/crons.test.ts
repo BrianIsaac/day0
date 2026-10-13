@@ -654,6 +654,23 @@ describe('the overdue revocation sweep (11-AR; F19)', (): void => {
   });
 });
 
+describe('the deferred reorientation cards’ sweep (16-O; A21)', (): void => {
+  it('runs every quarter hour behind the one gate, so a deferred card opens again soon after its date', (): void => {
+    expect(crons.crons['reopen deferred reorientation cards']).toMatchObject({
+      name: 'crons:runScheduledJob',
+      args: [{ job: 'reorientation:reopenDeferred' }],
+      schedule: { type: 'interval', minutes: 15 },
+    });
+  });
+
+  it('opens nothing when no card is deferred', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await expect(runCron(harness, 'reopen deferred reorientation cards')).resolves.toEqual({
+      reopened: 0,
+    });
+  });
+});
+
 describe('the crons pause switch', (): void => {
   afterEach((): void => {
     vi.unstubAllEnvs();
@@ -663,7 +680,7 @@ describe('the crons pause switch', (): void => {
 
   it('puts every scheduled job behind the one gate, the voice sweep included', (): void => {
     const jobs = Object.values(crons.crons);
-    expect(jobs).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
+    expect(jobs).toHaveLength(12); // wave 16 (16-O) added the deferred reorientation cards' sweep
     for (const job of jobs) expect(job.name).toBe('crons:runScheduledJob');
     expect(crons.crons['recover stalled voice finalisations']).toMatchObject({
       args: [{ job: 'voice:sweepStalledFinalisations' }],
@@ -709,7 +726,7 @@ describe('the crons pause switch', (): void => {
       ([line]) => JSON.parse(String(line)) as Record<string, unknown>,
     );
     printed.mockRestore();
-    expect(lines).toHaveLength(11); // wave 12 (12-W) added the manager-channel claims' lease job
+    expect(lines).toHaveLength(12); // wave 16 (16-O) added the deferred reorientation cards' sweep
     expect(lines[0]).toMatchObject({
       msg: 'scheduled job skipped: crons paused',
       reason: 'upgrade to 0.9.0',

@@ -4,10 +4,17 @@ import { v } from 'convex/values';
 import { action, type ActionCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { assertOwnsAgentAction } from './ownership';
+import { assertOwnsAgentAction, getCallerOrThrow } from './ownership';
 import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-values';
 import { redactFloorFor } from '../src/redaction/redact';
-import { TRACE_SECTIONS, type TraceHead, type TracePage } from '../src/export/trace';
+import {
+  OWNER_SECTIONS,
+  TRACE_SECTIONS,
+  type OwnerExportHead,
+  type OwnerPage,
+  type TraceHead,
+  type TracePage,
+} from '../src/export/trace';
 
 /*
  * The redacted trace one owner exports for an audit, a report or the pilot's
@@ -26,6 +33,10 @@ import { TRACE_SECTIONS, type TraceHead, type TracePage } from '../src/export/tr
  * returns the head and where the pages start; `exportPage` returns one page
  * and where the next starts. `scripts/export-trace.ts` calls both until
  * nothing is left and writes the one file `metrics:recompute` reads.
+ *
+ * The owner export (wave 16, 16-F) is the same, one level up: `exportForOwner` returns its head,
+ * `exportOwnerPage` the owner's own rows a page at a time, and each employee's trace follows
+ * through the two above, assembled into one file (`assembleOwnerExport`).
  */
 
 /**
@@ -87,6 +98,52 @@ export const exportPage = action({
     const page: TracePage = await ctx.runQuery(internal.events.exportPage, args);
     // The cursor is the backend's own position, never data: redacting it
     // could turn it into one the next call cannot read.
+    return { ...page, rows: redactStrings(page.rows, known) };
+  },
+});
+
+/** The caller's stored values, for the owner export's redaction. */
+async function knownValuesOfCaller(ctx: ActionCtx): Promise<readonly string[]> {
+  const { ownerKey } = await getCallerOrThrow(ctx);
+  return await ownerKnownValues(ctx, ownerKey);
+}
+
+/**
+ * The head of the caller's owner export (wave 16, 16-F; decision F-1): its manifest, every
+ * employee the caller holds, whose traces follow through `exportForAgent` and `exportPage`, the
+ * agents the figures set aside, and where the owner's rows start. Public, any signed-in caller,
+ * for the caller's own rows only (`getCallerOrThrow`; every read is keyed by the caller's owner
+ * key); reads, writes nothing.
+ */
+export const exportForOwner = action({
+  args: {},
+  handler: async (ctx): Promise<OwnerExportHead> => {
+    const known = await knownValuesOfCaller(ctx);
+    const head: OwnerExportHead = await ctx.runQuery(internal.events.exportOwnerHead, {
+      exportedAt: Date.now(),
+    });
+    // The owner key and the cursor are the file's own bearings, never data to redact.
+    return {
+      ...redactStrings(head, known),
+      manifest: { ...redactStrings(head.manifest, known), ownerKey: head.manifest.ownerKey },
+      next: head.next,
+    };
+  },
+});
+
+/**
+ * One page of one section of the caller's own rows, redacted, with where the next page starts
+ * (null after the last). Public, any signed-in caller, for the caller's own rows only; reads,
+ * writes nothing.
+ */
+export const exportOwnerPage = action({
+  args: {
+    section: v.union(...OWNER_SECTIONS.map((section) => v.literal(section))),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<OwnerPage> => {
+    const known = await knownValuesOfCaller(ctx);
+    const page: OwnerPage = await ctx.runQuery(internal.events.exportOwnerPage, args);
     return { ...page, rows: redactStrings(page.rows, known) };
   },
 });

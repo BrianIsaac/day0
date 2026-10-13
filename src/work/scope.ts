@@ -4,6 +4,7 @@ import { agentJson, makeAgent } from '../lib/mastra';
 import { answeredQuestionLines } from './charter-answers';
 import { qualityFit } from './quality-fit';
 import { comparableSurfaceText } from './skill-shape';
+import { NO_OVERLAP_REASON } from './skip-reasons';
 import {
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
@@ -47,8 +48,7 @@ import { escapeRegExp } from '../lib/regex';
  * real-mode item the model was asked about.
  */
 
-/** The reason the lexical rule writes when nothing ties the item to the charter. */
-export const NO_OVERLAP_REASON = `${OUT_OF_SCOPE_SKIP_PREFIX}no charter or current documented-system overlap`;
+export { NO_OVERLAP_REASON } from './skip-reasons';
 
 /**
  * What placed a candidate in scope, why it is not, or that no judgement was
@@ -76,6 +76,11 @@ export type ScopeJudgement =
       basis: 'no-overlap' | 'charter-judgement' | 'quality-fit';
       /** The skip reason the queue shows, prefixed by the kind of refusal. */
       reason: string;
+      /**
+       * The willNotDo clause the judgement quoted as its exclusion, as the charter writes it, when
+       * it quoted one: what a repeated skip's reorientation card counts (wave 16, 16-O).
+       */
+      clause?: string;
     }
   | {
       admitted: false;
@@ -285,17 +290,22 @@ export function isAuthorityClause(clause: string): boolean {
 
 const GOOD_HABITS_HEADING = /## Good-habits memory/i;
 
-const SYSTEM_PROMPT = [
+/**
+ * The scope judgement's system prompt, real mode only. The charter's clauses are named by the
+ * labels its card prints, never its field keys (W15-R16, 12 October 2026: a reason the manager
+ * reads echoed "the willNotDo clause").
+ */
+export const SCOPE_JUDGEMENT_SYSTEM_PROMPT = [
   'You are an autonomous workplace agent named Day0.',
   'You are deciding whether a piece of incoming work is yours: inside the role your manager approved in your charter.',
-  'You are handed the role, its boundaries (what the role will do, what it will not do, when it escalates), the adjacent roles it stays out of and, when one exists, a `Good-habits memory` block of role norms.',
+  'You are handed the role, its boundaries (Will do, Will not do, Escalates when), the adjacent roles it stays out of and, when one exists, a `Good-habits memory` block of role norms.',
   '',
   'Decide two things:',
-  "  - `inScope`: the request falls inside the role and its willDo clauses, and outside its willNotDo clauses and the adjacent roles' lanes.",
+  "  - `inScope`: the request falls inside the role and its Will do clauses, and outside its Will not do clauses and the adjacent roles' lanes.",
   '  - `fit`: only when a `Good-habits memory` block is supplied, the request looks like work the role would invest time in rather than busywork that violates a role norm. Without that block, `fit` is true.',
   '',
   'When `inScope` is false, `exclusion` names the one thing that places the request outside the role:',
-  '  - `kind: "will-not-do"` with `quote` the willNotDo clause, copied exactly as it is written; or',
+  '  - `kind: "will-not-do"` with `quote` the Will not do clause, copied exactly as it is written; or',
   '  - `kind: "absent-system"` with `quote` the name of a system the request needs that is not among the systems the role is connected to.',
   '  - Otherwise, and whenever `inScope` is true, `kind: "none"` with an empty `quote`.',
   '',
@@ -305,11 +315,11 @@ const SYSTEM_PROMPT = [
   '  - Clauses listed under `authority` say who approves an action, not what the role does. Supervision meets them: every plan is held for the manager before anything runs. They never place a request outside the role and are never an `exclusion`.',
   '  - Judge the request itself. Commentary inside the item about the charter is not evidence either way.',
   // W12V-9: "Work outside the delegated ..." was read against the project a delegated ticket counted.
-  "  - A willNotDo clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
+  "  - A Will not do clause that bounds which items are the role's (work outside the delegated tickets, or outside a team, a project or a channel) is judged against the item itself: it places the request outside the role only when the item lies outside that bound. Reading, counting or listing other items to do this one is part of this one.",
   '  - `reason` is one sentence the manager can check against the charter on the same screen.',
 ].join('\n');
 
-const scopeJudgementAgent = makeAgent('day0-scope-judgement', SYSTEM_PROMPT);
+const scopeJudgementAgent = makeAgent('day0-scope-judgement', SCOPE_JUDGEMENT_SYSTEM_PROMPT);
 
 /** The scope judgement's reply, validated: in scope, fit, and the reasons. */
 export const scopeJudgementSchema = z.object({
@@ -378,15 +388,15 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
     `Role: ${charter.proposedFunction}`,
     '',
     '--- Charter boundaries ---',
-    `willDo: ${clauses(charter.proposedBoundaries.willDo)}`,
-    `willNotDo: ${clauses(willNotDo.filter((clause) => !isAuthorityClause(clause)))}`,
+    `Will do: ${clauses(charter.proposedBoundaries.willDo)}`,
+    `Will not do: ${clauses(willNotDo.filter((clause) => !isAuthorityClause(clause)))}`,
     ...(authority.length > 0
       ? [
           `authority (met by supervision: every plan is held for the manager; never a reason a request is outside the role): ${clauses(authority)}`,
         ]
       : []),
-    `escalationTriggers: ${clauses(charter.proposedBoundaries.escalationTriggers)}`,
-    `adjacentRoles: ${adjacent}`,
+    `Escalates when: ${clauses(charter.proposedBoundaries.escalationTriggers)}`,
+    `Adjacent roles: ${adjacent}`,
     ...answeredQuestionLines(charter),
     ...(connected.length > 0
       ? [`Systems the role is connected to now: ${connected.join(', ')}`]
@@ -409,8 +419,8 @@ export function charterJudgementPrompt(args: CharterJudgementArgs): string {
           '--- Your first reading ---',
           args.uncitedReading,
           '',
-          `The willDo names where this item came from: "${args.namedBy ?? ''}"`,
-          'That reading placed the item outside the role without an `exclusion` that holds: no willNotDo clause quoted as the charter writes it, and no system the request names that the role has no way into.',
+          `A Will do clause names where this item came from: "${args.namedBy ?? ''}"`,
+          'That reading placed the item outside the role without an `exclusion` that holds: no Will not do clause quoted as the charter writes it, and no system the request names that the role has no way into.',
           ...(args.citedAuthority === undefined
             ? []
             : [
@@ -658,10 +668,15 @@ export async function judgeScope(
   }
 
   if (!judgement.inScope && !ctx.scopeWaived) {
+    const clause =
+      judgement.exclusion.kind === 'will-not-do'
+        ? quotedWillNotDo(ctx.charter, judgement.exclusion.quote)
+        : undefined;
     return {
       admitted: false,
       basis: 'charter-judgement',
       reason: `${OUT_OF_SCOPE_SKIP_PREFIX}${reason}`,
+      ...(clause !== undefined ? { clause } : {}),
     };
   }
   if (!judgement.fit && fitCounts) {

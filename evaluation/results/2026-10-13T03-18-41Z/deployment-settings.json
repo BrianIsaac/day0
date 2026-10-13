@@ -1,0 +1,14 @@
+{
+  "OPENAI_BASE_URL": "https://api.featherless.ai/v1",
+  "OPENAI_MODEL": "zai-org/GLM-5.3-Flash",
+  "OPENAI_JSON_MODE": "prompt",
+  "OPENAI_STRUCTURED_REPAIR_ATTEMPTS": "2",
+  "OPENAI_MAX_OUTPUT_TOKENS": "32768",
+  "OPENAI_REASONING_EFFORT": "low",
+  "DAY0_SURFACE_MODE": "mock",
+  "DAY0_EVALUATION_BED": "comparison",
+  "DAYTONA_API_KEY": null,
+  "project": "day0-w16q",
+  "target": "http://127.0.0.1:4960",
+  "backendImage": "sha256:fc322a2505a2cc1351918dbf425209ae534f969cde939a709f8087748f419cda"
+}

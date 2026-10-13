@@ -1,5 +1,6 @@
 import { MANAGER_REJECTION_PREFIX } from './needs-manager';
 import { type StateLabel, type WorkItemState, workItemStateLabel } from './state-labels';
+import { finishedAnswerOf } from './work-done';
 
 /**
  * The Work tab's reading of a work item's state: which of its filters the item falls under, and
@@ -86,6 +87,31 @@ export function openWorkCount(
     const filter = queueFilterOf(item, needsYou);
     return filter === 'needs-you' || filter === 'in-progress';
   }).length;
+}
+
+/**
+ * How many of the rows under the Done filter finished partly done (RM23 (a)): the filter keeps
+ * every finished row, and its count says how many of them are partly done, read as the card reads
+ * the run's answer (`finishedAnswerOf`). On the v0.19.0 walk every tab read "Done 3" above two
+ * cards that said PARTLY DONE.
+ *
+ * @param items - The employee's work items, with the output a finished one carries.
+ * @param needsYou - The items the inbox lists (`needsYouItemIds`), which are under Needs you.
+ */
+export function partlyDoneCount(
+  items: ReadonlyArray<{
+    readonly _id: string;
+    readonly state: WorkItemState;
+    readonly output?: unknown;
+  }>,
+  needsYou: ReadonlySet<string>,
+): number {
+  return items.filter(
+    (item) =>
+      item.state === 'completed' &&
+      queueFilterOf(item, needsYou) === 'done' &&
+      finishedAnswerOf(item.output) === 'partial',
+  ).length;
 }
 
 /** One line of the glossary: the chip's words and tone, what they mean, and the stored states. */

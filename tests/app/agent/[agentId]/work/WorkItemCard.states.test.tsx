@@ -52,6 +52,8 @@ function card(
     questions?: Doc<'managerQuestions'>[];
     autonomous?: boolean;
     loop?: boolean;
+    /** The reorientation card that holds the item's plan, when one does. */
+    heldByCard?: { reorientationId: string; summary: string };
     /** What the server answers a Stop with; it stops the run unless told otherwise. */
     stop?: StopRunAnswer;
   } = {},
@@ -74,6 +76,7 @@ function card(
         autonomousActions={options.autonomous ?? false}
         employeeName={EMPLOYEE}
         questions={options.questions ?? []}
+        heldByCard={options.heldByCard}
         onApprovePlan={record('approvePlan')}
         onCancelPlan={record('cancelPlan')}
         onRetryFailed={record('retry')}
@@ -127,6 +130,30 @@ describe('discovered, then skipped (work-discovered.html)', (): void => {
       'Taken: Refresh pipeline coverage view for quarterly forecasting goes back to be evaluated.',
     ]);
     expect(focusedName()).toBe('Take it anyway');
+  });
+});
+
+describe('a plan a reorientation card holds (W-9)', (): void => {
+  it('says Day0 approves nothing on its own until the card is decided, with the card a link away', (): void => {
+    const held = card(DRAWN.planPending, {
+      heldByCard: {
+        reorientationId: 'card-1',
+        summary: '“How to update a Linear ticket” was superseded',
+      },
+    });
+    expect(held.text()).toContain(
+      'Day0 approves nothing here on its own until you decide the reorientation card: “How to update a Linear ticket” was superseded.',
+    );
+    const link = [...held.container.querySelectorAll('a')].find(
+      (anchor) => anchor.textContent === 'Open the card',
+    );
+    expect(link?.getAttribute('href')).toBe(
+      `/agent/${DRAWN.planPending.agentId}/reorientation#card-card-1`,
+    );
+    held.unmount();
+    const free = card(DRAWN.planPending);
+    expect(free.text()).not.toContain('reorientation card');
+    free.unmount();
   });
 });
 
@@ -958,6 +985,28 @@ describe('the states round two does not page, pressed the same way', (): void =>
     ]);
   });
 
+  it('sends a stop held for a documentation conflict to its question, offering no Answer and retry (W16-R8)', async (): Promise<void> => {
+    const question =
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right?';
+    const view = card({
+      ...base,
+      state: 'failed',
+      skipReason: `stopped: ${openQuestionStopReason({ question, steps: [1] })}`,
+      output: {
+        draft: '',
+        notes: '',
+        actions: [],
+        applied: [],
+        openQuestion: { question, steps: [1], relationId: 'relation-1' },
+      },
+    } as unknown as Doc<'workItems'>);
+    expect(view.text()).toContain(
+      'stopped with a question open for you, and the writes that wait on it were never sent; answer the question above, then Retry:',
+    );
+    expect(view.text()).not.toContain('Answer and retry');
+    expect(() => field(view.container, `Your answer to: \u201c${question}\u201d`)).toThrow();
+  });
+
   it('drafts a new plan for a cancelled one from the note given', async (): Promise<void> => {
     const view = card({
       ...base,
@@ -1068,5 +1117,129 @@ describe('a close Day0 held, after an approval in Slack sent the rest (12-H, R-1
     expect(said(view.container)).toContain(
       'Finished without the ticket close: nothing more is sent on Draft response for new tier-two RevOps ask, and the close stays withheld.',
     );
+  });
+});
+
+describe('the approval line once the approved writes have applied (W19-8)', (): void => {
+  it('stops saying "they apply now" once the row has finished, and keeps saying it while it applies', async (): Promise<void> => {
+    // The v0.19.0 walk: every finished card kept "Approved 1 action: it applies now." after the
+    // actions applied.
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const view = mount(element(DRAWN.held));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void =>
+      view.root.render(element({ ...DRAWN.held, state: 'executing', applyPhase: 'approved' })),
+    );
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void => view.root.render(element({ ...DRAWN.landed, _id: DRAWN.held._id })));
+    expect(said(view.container)).toEqual([]);
+    expect(view.container.textContent).not.toContain('apply now');
+    view.unmount();
+  });
+
+  it('stops saying "they apply now" once the approved writes landed and the closing set waits on the manager (the joins: 16-FX beside 16-FW)', async (): Promise<void> => {
+    // 16-FX's case was the line kept once the approved writes had applied; 16-FW's fix reads a
+    // finished row, and an apply that lands its set and holds the closing one parks the row in
+    // `actions-pending` again, the state the approval was made in, with a new set to decide.
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const held = { ...DRAWN.held, waitingSince: 1_000 } as Doc<'workItems'>;
+    const output = DRAWN.held.output as { actions: unknown[] };
+    const closingHeld = {
+      ...held,
+      waitingSince: 2_000,
+      output: {
+        ...output,
+        applied: output.actions.map(() => ({ tool: 'http.request', ok: true, effect: 'Posted' })),
+        needsDependentPhase: true,
+      },
+    } as unknown as Doc<'workItems'>;
+    const view = mount(element(held));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void =>
+      view.root.render(element({ ...held, state: 'executing', applyPhase: 'approved' })),
+    );
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    act((): void => view.root.render(element(closingHeld)));
+    expect(view.container.textContent).not.toContain('apply now');
+    act((): void => view.root.render(element({ ...held, state: 'deferred' })));
+    expect(view.container.textContent).not.toContain('apply now');
+    view.unmount();
+  });
+
+  it('keeps a rejection said once the row has finished: it is still true (the second pass)', async (): Promise<void> => {
+    const element = (item: Doc<'workItems'>) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+        />
+      </AgentZoneContext>
+    );
+    const view = mount(element(DRAWN.held));
+    await press(view.container, 'Reject the run');
+    await press(view.container, 'Reject without a reason');
+    const rejected = said(view.container);
+    expect(rejected.join(' ')).toContain('Run rejected: nothing held on');
+    act((): void => view.root.render(element({ ...DRAWN.held, state: 'cancelled' })));
+    expect(said(view.container)).toEqual(rejected);
+    view.unmount();
   });
 });

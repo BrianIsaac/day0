@@ -220,3 +220,45 @@ export function registeredSourceChip(skill: {
 export function adoptedFromWords(source: Pick<AdoptedSource, 'version' | 'authorName'>): string {
   return `version ${source.version}, adopted from ${source.authorName}`;
 }
+
+/** An input the draft uses and never declares, as the check names it (`src/work/authored-skill.ts`). */
+const UNDECLARED_INPUT = /uses `<([^`>]+)>` without declaring it under `## Inputs`/;
+/** A sandbox run whose smoke test failed (`src/work/smoke-harness.ts`). */
+const SMOKE_FAILED = /\bsmoke test exited [1-9]\d*/;
+/** A smoke test that ran clean but showed nothing it checked (`src/lib/skill-sandbox.ts`). */
+const SMOKE_SILENT = /\bsmoke test exited 0 but printed\b/;
+/** A smoke test the syntax check refused, at its line (`src/work/smoke-test.ts`). */
+const DOES_NOT_PARSE = /\bdoes not parse at line (\d+)/;
+/** The opening of every refusal of a draft written for one item. */
+const NOT_REUSABLE = 'the authored skill is not a reusable procedure';
+
+/**
+ * Why a draft did not pass its check, in a manager's words (W19-8: Nell's refusals on the v0.19.0
+ * walk read "SKILL.md uses `<closed-state>` without declaring it under `## Inputs`" and "smoke
+ * test exited 1"). The check's own words stay on the row, where Retry feeds them back, and under
+ * the card's "What the check said".
+ *
+ * @param log - The reason the row keeps (`verificationLog`).
+ * @param employee - The employee's name, who writes the draft again.
+ * @returns A sentence or two, or the reason itself when it is already in words.
+ */
+export function checkInWords(log: string, employee: string): string {
+  const undeclared = UNDECLARED_INPUT.exec(log)?.[1];
+  if (undeclared !== undefined) {
+    return `The draft uses <${undeclared}> without listing it as one of its inputs, so it would not run for the next item like this one. Retry hands ${employee} the reason.`;
+  }
+  const line = DOES_NOT_PARSE.exec(log)?.[1];
+  if (line !== undefined) {
+    return `Its smoke test is not valid at line ${line}. Retry hands ${employee} the error to fix.`;
+  }
+  if (SMOKE_SILENT.test(log)) {
+    return `Its smoke test ran in the sandbox but did not show the skill following its inputs. Retry hands ${employee} the reason.`;
+  }
+  if (SMOKE_FAILED.test(log)) {
+    return `Its smoke test failed when it ran in the sandbox. Retry hands ${employee} the failure to fix.`;
+  }
+  if (log.startsWith(NOT_REUSABLE)) {
+    return `The draft is written for one item rather than as a procedure for any item like it. Retry hands ${employee} the reason.`;
+  }
+  return log;
+}

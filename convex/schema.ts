@@ -44,6 +44,20 @@ import {
   AGREEMENT_SOURCE_TYPES,
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
+import { CONSTRAINT_KINDS } from '../src/agent/charter-constraints';
+import { MANAGER_QUESTION_TYPES } from '../src/agent/manager-questions';
+import { SYSTEM_CLASSES } from '../src/agent/system-classes';
+import {
+  AGREEMENT_PROPOSAL_ACTIONS,
+  PAGE_STATUS_PROPOSALS,
+  REORIENTATION_RISKS,
+  REORIENTATION_STATUSES,
+  REORIENTATION_TALK_STATES,
+  REORIENTATION_TRIGGERS,
+  RELATIONSHIP_PROPOSAL_ACTIONS,
+  SCOPE_PROPOSAL_ACTIONS,
+  SKILL_PROPOSAL_ACTIONS,
+} from '../src/agent/reorientation-vocabulary';
 
 /** A documentation page's status (wave 15, 15-K): `PAGE_STATUSES`. */
 const pageStatus = v.union(...PAGE_STATUSES.map((status) => v.literal(status)));
@@ -205,6 +219,143 @@ export const pendingAuthorisationValidator = v.object({
     }),
   ),
 });
+
+/** A validator of one of a vocabulary's words. */
+const literals = <T extends string>(values: readonly T[]) =>
+  v.union(...(values.map((value) => v.literal(value)) as [ReturnType<typeof v.literal<T>>]));
+
+/** The charter's list clauses a change or a card can name. */
+const listClauseField = v.union(
+  v.literal('willDo'),
+  v.literal('willNotDo'),
+  v.literal('escalationTriggers'),
+);
+
+/**
+ * One typed change to an approved charter; see `src/agent/charter-amendment.ts`. Declared here
+ * since wave 16 (16-K), so a reorientation card's proposal stores the change Approve applies
+ * (`convex/charters.ts`'s `amend` takes the same validator).
+ */
+export const charterChangeValidator = v.union(
+  v.object({ kind: v.literal('edit-function'), text: v.string() }),
+  v.object({
+    kind: v.literal('edit-clause'),
+    field: listClauseField,
+    index: v.number(),
+    text: v.string(),
+  }),
+  v.object({ kind: v.literal('answer-question'), question: v.string(), answer: v.string() }),
+  v.object({
+    kind: v.literal('add-constraint'),
+    constraint: v.object({
+      kind: literals(CONSTRAINT_KINDS),
+      quote: v.string(),
+      clause: listClauseField,
+    }),
+  }),
+  v.object({ kind: v.literal('strike-constraint'), index: v.number() }),
+  v.object({
+    kind: v.literal('add-system'),
+    system: v.object({
+      name: v.string(),
+      class: literals(SYSTEM_CLASSES),
+      whereMentioned: v.string(),
+    }),
+  }),
+  v.object({ kind: v.literal('remove-system'), name: v.string() }),
+  v.object({
+    kind: v.literal('edit-adjacent-role'),
+    index: v.number(),
+    role: v.object({ who: v.string(), staysOutOfTheirLaneBy: v.string() }),
+  }),
+  v.object({
+    kind: v.literal('edit-collaborator'),
+    index: v.number(),
+    collaborator: v.object({
+      name: v.string(),
+      topic: v.string(),
+      introPath: v.union(v.literal('manager'), v.literal('self'), v.literal('tbd')),
+    }),
+  }),
+);
+
+/** A documentation page by its source and its ref, as `docPages.supersededBy` names one. */
+const pageRefValidator = v.object({ sourceId: v.id('docSources'), ref: v.string() });
+
+/**
+ * The changes a reorientation card can propose (wave 16, 16-K), each naming the target Approve
+ * applies it through, or none at all.
+ */
+const proposedChanges = [
+  v.object({ kind: v.literal('none'), rationale: v.string() }),
+  v.object({
+    kind: v.literal('charter-change'),
+    changes: v.array(charterChangeValidator),
+    rationale: v.string(),
+    before: v.optional(v.string()),
+    after: v.optional(v.string()),
+  }),
+  v.object({
+    kind: v.literal('agreement'),
+    agreementId: v.id('workingAgreements'),
+    action: literals(AGREEMENT_PROPOSAL_ACTIONS),
+    /** The statement an `edit` writes. */
+    statement: v.optional(v.string()),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('relationship'),
+    relationshipId: v.id('relationships'),
+    action: literals(RELATIONSHIP_PROPOSAL_ACTIONS),
+    /** The edge's type and scope an `edit` writes. */
+    type: v.optional(literals(RELATIONSHIP_TYPES)),
+    scope: v.optional(v.string()),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('page-status'),
+    page: pageRefValidator,
+    status: literals(PAGE_STATUS_PROPOSALS),
+    /** The page that supersedes it, for `superseded`. */
+    supersededBy: v.optional(pageRefValidator),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('scope'),
+    scope: v.string(),
+    action: literals(SCOPE_PROPOSAL_ACTIONS),
+    rationale: v.string(),
+  }),
+  v.object({
+    kind: v.literal('skill-action'),
+    skillId: v.id('skills'),
+    action: literals(SKILL_PROPOSAL_ACTIONS),
+    rationale: v.string(),
+  }),
+] as const;
+
+/**
+ * What a Discuss conversation ends in (16-D): a proposal that is never `pending`, written onto its
+ * card in place of the card's own.
+ */
+export const reorientationTalkProposalValidator = v.union(...proposedChanges);
+
+/**
+ * What a reorientation card proposes (wave 16, 16-K for 16-O and 16-D; K-1, O-2), tagged by
+ * `kind`: still `pending` while the scheduled judgement works (with when and why it last failed,
+ * when it did), `none` when nothing needs to change, or a change Approve applies through the
+ * target's own transaction helper, never applied by the writer. Every proposal but a pending one
+ * says why in `rationale`, the card's "What {name} proposes"; a charter change also carries the
+ * clause before and after as the card shows them.
+ */
+export const reorientationProposalValidator = v.union(
+  v.object({
+    kind: v.literal('pending'),
+    failedAt: v.optional(v.number()),
+    failure: v.optional(v.string()),
+  }),
+  ...proposedChanges,
+);
 
 /** Where a person, an identity or an edge of the owner's graph came from (13-K for 13-P). */
 const peopleSourceValidator = v.union(...PEOPLE_SOURCES.map((source) => v.literal(source)));
@@ -462,6 +613,13 @@ export default defineSchema({
         cursor: v.union(v.string(), v.null()),
       }),
     ),
+    /**
+     * The source's stored pages still to be measured once by the dated successor signal (wave 16,
+     * 16-K for 16-FD; RM19 (a), K-3): set on every source by the `docs-relations-remeasure` pass,
+     * with the place in the source's pages the measure has reached (null from its start), and
+     * cleared by the measure when it reaches the end. Absent when nothing is owed.
+     */
+    relationsRemeasure: v.optional(v.object({ cursor: v.union(v.string(), v.null()) })),
     /** The completed generation whose system candidates were reconciled. */
     lastDiscoverySyncId: v.optional(v.id('docSyncRuns')),
     discoveryFingerprint: v.optional(v.string()),
@@ -619,6 +777,12 @@ export default defineSchema({
      * the status it read, the words it read it from and when.
      */
     marker: v.optional(v.object({ status: pageStatus, quote: v.string(), judgedAt: v.number() })),
+    /**
+     * When the marker judgement last tried the page, whether or not it answered (wave 16, 16-K for
+     * 16-FD; W15-R22): the judgement asks the least recently tried page first, so a page it always
+     * fails on no longer starves the rest. Absent on a page never tried.
+     */
+    judgedAttemptAt: v.optional(v.number()),
     /** The manager's verified address, when the manager decided `status`. */
     decidedBy: v.optional(v.string()),
     /** When the manager decided `status`. */
@@ -655,6 +819,18 @@ export default defineSchema({
     to: v.object({ sourceId: v.id('docSources'), ref: v.string() }),
     kind: v.union(...RELATION_KINDS.map((kind) => v.literal(kind))),
     /**
+     * The kind the measures proposed, kept when the manager's answer changed `kind` (wave 16, 16-K
+     * for 16-FD; W15-R22), so "Undo" restores it. Absent where the answer left the kind as
+     * proposed, and on a relation decided before it.
+     */
+    proposedKind: v.optional(v.union(...RELATION_KINDS.map((kind) => v.literal(kind)))),
+    /**
+     * Set while the manager's answer stands the other way round from the proposal (16-PT; W15-R45's
+     * reverse button): "supersedes" answered with `from` and `to` turned, so "Undo" turns them
+     * back and the card asks again as the measures proposed it. Absent otherwise.
+     */
+    reversed: v.optional(v.boolean()),
+    /**
      * What proposed it, measure by measure: a shared share of the text, a title that differs only
      * by a version, a figure that differs under one heading; with the blocks each read, by their
      * hash (`docBlocks.hash`) on their page.
@@ -690,8 +866,8 @@ export default defineSchema({
    * split at headings after redaction by `splitPage` (`src/docs/blocks.ts`), so a block holds
    * nothing its page does not. Real mode only, as `docPages` is (R3: mock mode reads the whole
    * mirror). Written by `docBlocks.splitStoredPage`, which `upsertPage` schedules for each page
-   * it writes, and by the `docs-backfill-blocks` pass (both through `replacePageBlocks`,
-   * `convex/docBlocks.ts`); pruned with its page (`prunePages`, scheduling
+   * it writes, through `replacePageBlocks` (`convex/docBlocks.ts`; the 0.18.0 backfill that split
+   * the pages stored before it left the migration list at 0.20.0); pruned with its page (`prunePages`, scheduling
    * `docBlocks.prunePageBlocks`) and its source (`deleteSourceRows`). Read by
    * `docBlocks.searchBlocks` (14-R's selection), `docBlocks.unchangedPage` and by id.
    */
@@ -702,8 +878,8 @@ export default defineSchema({
     /** The page's `docPages.ref`. */
     pageRef: v.string(),
     /**
-     * The sync run that scheduled the split that wrote the block (the backfill's: the source's last
-     * completed run), not the last writer: a re-split keeps an unchanged block's row, and its
+     * The sync run that scheduled the split that wrote the block (for a block the 0.18.0 backfill
+     * wrote, the source's last completed run then), not the last writer: a re-split keeps an unchanged block's row, and its
      * generation with it (`replacePageBlocks`). Read through `by_source_generation` since wave 15
      * (15-A): the pages a run stored or changed are the pages whose blocks carry it
      * (`docRelations.pagesWrittenBy`), which is what a finishing sync measures for relations.
@@ -1302,6 +1478,19 @@ export default defineSchema({
      */
     scopeWaivedAt: v.optional(v.number()),
     /**
+     * When the manager chose "Take it anyway" on this item's settled skip (wave 16, 16-K for 16-FW;
+     * W15-R16): the waiver stamped on the row, as `scopeWaivedAt` is, so it never rests on the
+     * newest retries the employee's events happen to hold.
+     */
+    settledWaivedAt: v.optional(v.number()),
+    /**
+     * The documentation blocks the item's plan was selected from, each with its hash when
+     * selected (wave 16, 16-K for 16-FD; W15-R17): the gone-cite check reads the item's own
+     * record, never the newest selections of the employee's events. Absent on an item selected
+     * before it, and where no selection ran.
+     */
+    selectedBlocks: v.optional(v.array(v.object({ id: v.id('docBlocks'), hash: v.string() }))),
+    /**
      * Real mode: the charter judgement that placed this row in scope, and the
      * approved charter it was made against. While that charter is the latest,
      * a re-evaluation holds the judgement and asks no model; a skip a policy
@@ -1612,8 +1801,10 @@ export default defineSchema({
 
   /** One question for the manager per (agent, question key): an open
    * question of the charter, asked once at the first plan approval whose plan
-   * or candidate touched it. The answer becomes a charter amendment. The
-   * record shape is `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
+   * or candidate touched it, whose answer becomes a charter amendment; and from
+   * wave 16 (`type`) a question a plan's conflict or a reorientation card asks,
+   * whose answer decides what it is about. The record shape is
+   * `ManagerQuestionRecord` in `src/agent/manager-questions.ts`. */
   managerQuestions: defineTable({
     agentId: v.id('agents'),
     /** Stable across charter versions: the normalised question text. */
@@ -1628,18 +1819,135 @@ export default defineSchema({
     workItemId: v.id('workItems'),
     /** The charter version whose open question this was. */
     charterId: v.id('charters'),
+    /**
+     * Whether the plan waits for the answer (wave 16, 16-K for 16-O). Absent reads as blocking, as
+     * every question before wave 16 was (`isBlockingQuestion`, `src/agent/manager-questions.ts`);
+     * a conflict's question is not (RM20): the steps it does not touch run meanwhile.
+     */
+    blocking: v.optional(v.boolean()),
+    /** What the question is about (16-K); absent reads as `charter` (`questionTypeOf`). */
+    type: v.optional(literals(MANAGER_QUESTION_TYPES)),
+    /** The confirmed conflict a `retrieval` question asks about; its answer decides the relation. */
+    relationId: v.optional(v.id('docRelations')),
+    /** The reorientation card the question was asked from. */
+    reorientationId: v.optional(v.id('reorientations')),
     answer: v.optional(
       v.object({
         text: v.string(),
         answeredAt: v.number(),
-        via: v.union(v.literal('dashboard'), v.literal('plan-approval')),
+        /** Typed on the dashboard, given with a plan approval, or in the plan's Slack request (RM20). */
+        via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('slack')),
         amendedCharterId: v.optional(v.id('charters')),
       }),
     ),
   })
     .index('by_agent', ['agentId'])
     .index('by_agent_key', ['agentId', 'key'])
-    .index('by_work_item', ['workItemId']),
+    .index('by_work_item', ['workItemId'])
+    /** The questions about one relation: its answer's write-back, and the relation's decision. */
+    .index('by_relation', ['relationId']),
+
+  /**
+   * A reorientation card (wave 16, 16-K for 16-O; the wave file's sections 1 and 5.1): the
+   * organisation changed under an employee, and the card holds the evidence, what is affected and
+   * what the employee proposes. Opened by `openCard` inside the transaction of the trigger's own
+   * writer, at most one a day per trigger kind and employee, in the employee's zone (C6: a later
+   * trigger of the kind that day joins the open card's evidence); only Approve changes anything
+   * (A11). Agent-keyed: an employee's reset deletes its cards.
+   */
+  reorientations: defineTable({
+    agentId: v.id('agents'),
+    /** The owner's key (`agents.userId`): the owner's open cards across employees. */
+    userId: v.string(),
+    trigger: literals(REORIENTATION_TRIGGERS),
+    /**
+     * What makes a second write of the same trigger a no-op: the event's id, or the counted window
+     * for a repeated refusal, skip or rejection.
+     */
+    triggerKey: v.string(),
+    /** One line of what changed, in the card's words. */
+    triggerSummary: v.string(),
+    /** What the card rests on, every kind by id; a later trigger of the day adds to it. */
+    evidence: v.object({
+      eventIds: v.array(v.id('events')),
+      pageRefs: v.array(pageRefValidator),
+      relationIds: v.array(v.id('docRelations')),
+      correctionIds: v.array(v.id('corrections')),
+      relationshipIds: v.array(v.id('relationships')),
+      skillIds: v.array(v.id('skills')),
+      skillVersionIds: v.array(v.id('skillVersions')),
+    }),
+    /** What the change reaches, computed by index when the card opens. */
+    affected: v.object({
+      /** The charter's clauses, each by its list, its place in it and its text when read. */
+      charterClauses: v.array(
+        v.object({ field: listClauseField, index: v.number(), text: v.string() }),
+      ),
+      agreements: v.array(v.id('workingAgreements')),
+      relationships: v.array(v.id('relationships')),
+      skills: v.array(v.id('skills')),
+      surfaces: v.array(v.id('surfaces')),
+      workItems: v.array(v.id('workItems')),
+    }),
+    proposed: reorientationProposalValidator,
+    risk: literals(REORIENTATION_RISKS),
+    /**
+     * The work items the card holds at plan approval (the seventh hold reason,
+     * `reorientation-pending`), at most `REORIENTATION_BLOCKING_LIMIT`; empty on a low-risk card,
+     * which never holds work.
+     */
+    blockingWork: v.array(v.id('workItems')),
+    status: literals(REORIENTATION_STATUSES),
+    /** When a deferred card opens again (A21: a week, editable). */
+    revisitAt: v.optional(v.number()),
+    /** What the decision did, in the record's words, with the charter version an amendment wrote. */
+    outcome: v.optional(v.object({ summary: v.string(), charterId: v.optional(v.id('charters')) })),
+    /** The employee's day the card opened on (`dayKey(now, agentZone(agent))`, N12). */
+    day: v.string(),
+    createdAt: v.number(),
+    decidedAt: v.optional(v.number()),
+    /** The manager's verified address, once they decided it. */
+    decidedBy: v.optional(v.string()),
+  })
+    /** An employee's cards in one standing: the inbox, the hold, the open card a trigger joins. */
+    .index('by_agent_status', ['agentId', 'status'])
+    /** The daily cap: an employee's card of one trigger kind on one day. */
+    .index('by_agent_day_trigger', ['agentId', 'day', 'trigger'])
+    /** The Defer sweep: deferred cards whose date has come. */
+    .index('by_status_revisit', ['status', 'revisitAt'])
+    /** The owner's cards in one standing, across employees. */
+    .index('by_user_status', ['userId', 'status']),
+
+  /**
+   * A Discuss conversation about one reorientation card (wave 16, 16-K for 16-D; RM10 (a): its own
+   * table and route, never a one-to-one session, whose ten readers it leaves untouched). Kept turn
+   * by turn as the one-to-one keeps its own (`oneToOneTurnValidator`), with the reply being typed,
+   * so a room closed at any point reopens on the same conversation; ends in a proposal written
+   * onto the card, never an application. Chat only (N13). Agent-keyed.
+   */
+  reorientationTalks: defineTable({
+    agentId: v.id('agents'),
+    reorientationId: v.id('reorientations'),
+    state: literals(REORIENTATION_TALK_STATES),
+    turns: v.array(oneToOneTurnValidator),
+    /** The reply the manager was typing and had not sent. */
+    replyDraft: v.optional(v.string()),
+    /** Which conversation the row holds, moved on each time one is set aside (`conversationOf`). */
+    conversation: v.number(),
+    /**
+     * What the conversation ended in: the proposal that replaced the card's, and the manager's own
+     * words it rests on, after `withoutAgentQuotedEvidence` (the only evidence a talk gives).
+     */
+    outcome: v.optional(
+      v.object({ proposed: reorientationTalkProposalValidator, quotes: v.array(v.string()) }),
+    ),
+    startedAt: v.number(),
+    endedAt: v.optional(v.number()),
+  })
+    /** A card's conversations: the room opens the one still active. */
+    .index('by_reorientation', ['reorientationId'])
+    /** An employee's conversations, which its reset deletes (16-K's decision K-6). */
+    .index('by_agent', ['agentId']),
 
   /**
    * One code that decides every held action set open on the manager's

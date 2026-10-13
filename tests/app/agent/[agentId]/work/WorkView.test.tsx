@@ -12,7 +12,7 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../../convex/_generated/dataModel';
-import { WorkView } from '../../../../../app/agent/[agentId]/work/WorkView';
+import { WorkView, holdingCardsOf } from '../../../../../app/agent/[agentId]/work/WorkView';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 
 /** A row of the employee's queue with the fields the card reads for its run. */
@@ -56,7 +56,8 @@ describe('WorkView', () => {
     backend.queries = { 'work:listForAgent': [], 'corrections:listForAgent': [] };
     const mock = renderToStaticMarkup(asEmployee(<WorkView />));
     expect(mock).toContain('Work queue');
-    expect(mock).toContain('>So far</h2>');
+    // Re-pinned for 16-F: the rail's figures are today's.
+    expect(mock).toContain('>Today</h2>');
     expect(mock).not.toMatch(/correction/i);
     const real = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
     expect(real).toMatch(/correction/i);
@@ -155,5 +156,49 @@ describe('WorkView', () => {
     const html = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
     expect(html).toContain('Verified by you at');
     expect(html).not.toContain(`>${EMPLOYEE_ROW.userId}<`);
+  });
+});
+
+describe('holdingCardsOf: the plans a reorientation card holds (W-9)', (): void => {
+  const view = (fields: Record<string, unknown>): never =>
+    ({
+      card: {
+        _id: 'card-1',
+        risk: 'high',
+        status: 'open',
+        triggerSummary: '“How to update a Linear ticket” was superseded',
+        blockingWork: ['w1', 'w2'],
+        ...fields,
+      },
+    }) as never;
+
+  it('names the standing high-risk card for each plan it holds, the first card that names an item', (): void => {
+    const held = holdingCardsOf([
+      view({}),
+      view({ _id: 'card-2', triggerSummary: 'Another change', blockingWork: ['w2', 'w3'] }),
+    ]);
+    expect([...held]).toEqual([
+      [
+        'w1',
+        { reorientationId: 'card-1', summary: '“How to update a Linear ticket” was superseded' },
+      ],
+      [
+        'w2',
+        { reorientationId: 'card-1', summary: '“How to update a Linear ticket” was superseded' },
+      ],
+      ['w3', { reorientationId: 'card-2', summary: 'Another change' }],
+    ]);
+  });
+
+  it('holds nothing for a card that is low or medium risk, or decided', (): void => {
+    expect(
+      holdingCardsOf([
+        view({ risk: 'medium' }),
+        view({ status: 'applied' }),
+        view({ status: 'dismissed' }),
+      ]).size,
+    ).toBe(0);
+    // A deferred high-risk card keeps its hold (A21).
+    expect(holdingCardsOf([view({ status: 'deferred' })]).size).toBe(2);
   });
 });

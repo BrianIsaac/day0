@@ -77,24 +77,34 @@ export function RelationCard({
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
   const { from, to } = relation;
-  const answer = (decision: RelationAnswer, done: string): void =>
-    change.run(() => decide({ relationId: relation._id, decision }), {
-      done: (outcome) => supersedeWords(outcome, to.title) ?? done,
-      refused: 'The answer was not recorded.',
-      after: (outcome) =>
-        onAnswered?.({
-          relationId: relation._id,
-          text: supersedeWords(outcome, to.title) ?? done,
-          undo: true,
-        }),
-    });
+  // `older` is the page the answer supersedes: the proposed older one, or, answered the other
+  // way round (W15-R45's reverse button), the one the measures took for the later version.
+  const answer = (decision: RelationAnswer, done: string, reversed = false): void => {
+    const older = reversed ? from.title : to.title;
+    change.run(
+      () => decide({ relationId: relation._id, decision, ...(reversed ? { reversed } : {}) }),
+      {
+        done: (outcome) => supersedeWords(outcome, older) ?? done,
+        refused: 'The answer was not recorded.',
+        after: (outcome) =>
+          onAnswered?.({
+            relationId: relation._id,
+            text: supersedeWords(outcome, older) ?? done,
+            undo: true,
+          }),
+      },
+    );
+  };
   return (
     <Card
       title={
         <>
           These two look like versions of the same runbook
-          {/* Said, not shown: two such cards are two regions, each named by its older page. */}
-          <span className="sr-only">: “{to.title}”</span>
+          {/* Said, not shown: two such cards are two regions, each named by its pages and their
+              sources, since titles repeat across sources (W15-R51). */}
+          <span className="sr-only">
+            : “{to.title}” ({to.source}) and “{from.title}” ({from.source})
+          </span>
         </>
       }
       tone="warn"
@@ -115,6 +125,20 @@ export function RelationCard({
               onClick={() => answer('supersedes', `“${from.title}” now supersedes “${to.title}”.`)}
             >
               “{from.title}” ({from.source}) supersedes “{to.title}” ({to.source})
+            </Button>
+          ) : null}
+          {/* The measures name the later version by a date or a version word, which a reader that
+              gives no edit time gets wrong: the other direction is the manager's to say. */}
+          {relation.offered.includes('supersedes') ? (
+            <Button
+              size="small"
+              className="!whitespace-normal text-left [overflow-wrap:anywhere]"
+              disabled={change.busy}
+              onClick={() =>
+                answer('supersedes', `“${to.title}” now supersedes “${from.title}”.`, true)
+              }
+            >
+              “{to.title}” ({to.source}) supersedes “{from.title}” ({from.source})
             </Button>
           ) : null}
           {relation.offered.includes('keep-both') ? (

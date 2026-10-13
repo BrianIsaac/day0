@@ -47,6 +47,11 @@ export interface DocPage {
   nativeStatus?: PageStatus;
   /** The page's revision as its source numbers it, where it gives one (`docPages.sourceRevision`). */
   sourceRevision?: string;
+  /**
+   * Set when the page was read but its revision was not, for a reason that passes (a transient
+   * answer): the revision it was stored with stands, where none would clear it (W15-R30).
+   */
+  revisionUnread?: boolean;
 }
 
 /** What every documentation reader provides: one batch of pages at a time. */

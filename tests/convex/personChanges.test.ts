@@ -203,3 +203,51 @@ describe('personChanges', (): void => {
     expect((await graphRows(harness)).people[0]?.proposedChange).toEqual(CHANGE);
   });
 });
+
+describe('an item in flight across a Take of a changed address (W15-R36)', (): void => {
+  it("keeps the requester an item resolved to the person after Take and the next poll, before a lookup of the new address answers (reader 5's R5-C)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const ana = await seedAna(harness);
+    await seedIdentity(harness, ana, {
+      provider: 'slack',
+      externalId: 'U0ANA12345',
+      providerWorkspaceId: 'T1',
+      displayName: 'Ana Tan',
+    });
+    const itemId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'slack',
+          externalId: 'm-1',
+          title: 'Post',
+          contentSummary: 'x',
+          contentRefs: [],
+          requesterLabel: 'Ana',
+          requester: 'Ana',
+          state: 'plan-pending',
+          observedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const poll = async (): Promise<boolean> =>
+      await harness.mutation(internal.people.resolveItemPeople, {
+        agentId,
+        sourceSystem: 'slack',
+        externalId: 'm-1',
+        startedUnder: 'owner',
+        requester: [{ provider: 'slack', externalId: 'U0ANA12345', workspaceId: 'T1' }],
+      });
+    const requester = async (): Promise<Doc<'workItems'>['requesterPerson']> =>
+      await harness.run(async (ctx) => (await ctx.db.get(itemId))?.requesterPerson);
+    await poll();
+    expect(await requester()).toEqual({ kind: 'person', personId: ana });
+    await harness
+      .withIdentity(managerIdentity())
+      .mutation(api.personChanges.take, { personId: ana, agentId });
+    expect(await poll()).toBe(false);
+    expect(await requester()).toEqual({ kind: 'person', personId: ana });
+  });
+});

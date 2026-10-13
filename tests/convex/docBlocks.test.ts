@@ -7,6 +7,19 @@ import { copyPageStatusToBlocks, replacePageBlocks } from '../../convex/docBlock
 import type { PageStatus } from '../../src/docs/authority';
 import { allConvexModules } from './all-modules';
 
+/** Every split the backend runs, counted (W15-R25): the module's own, passed through. */
+const splits = vi.hoisted(() => ({ count: 0 }));
+vi.mock('../../src/docs/blocks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/docs/blocks')>();
+  return {
+    ...actual,
+    splitPage: (markdown: string) => {
+      splits.count += 1;
+      return actual.splitPage(markdown);
+    },
+  };
+});
+
 afterEach((): void => {
   vi.useRealTimers();
 });
@@ -52,6 +65,19 @@ async function sourceOf(
     });
     return { sourceId, runId };
   });
+}
+
+/**
+ * Mark a source's library as v0.19.0 left it: owed the relations remeasure the 0.20.0 pass marks
+ * every page-holding source with, until a sync has seen it (W15-R25).
+ */
+async function v019Library(
+  harness: TestConvex<typeof schema>,
+  sourceId: Id<'docSources'>,
+): Promise<void> {
+  await harness.run(
+    async (ctx) => await ctx.db.patch(sourceId, { relationsRemeasure: { cursor: null } }),
+  );
 }
 
 /** Split `markdown` into the page's stored blocks, as an upsert does. */
@@ -547,6 +573,10 @@ describe('unchangedPage and a split that never landed (second pass)', (): void =
   it('answers no page whose text holds blocks it has none of, so the sync stores and splits it again', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, runId } = await sourceOf(harness);
+    // Re-taken in wave 16 (16-FD, W15-R25): a hash written with the page, before its split, is a
+    // library as v0.19.0 left it, which is checked block for block until a 0.20.0 sync has seen
+    // it; since then the split writes the hash.
+    await v019Library(harness, sourceId);
     await harness.run(async (ctx) => {
       await ctx.db.insert('docPages', {
         sourceId,
@@ -579,10 +609,79 @@ describe('unchangedPage and a split that never landed (second pass)', (): void =
   });
 });
 
+describe('unchangedPage and the split a stored hash vouches for (W15-R25)', (): void => {
+  /** A source with a sync running, which `upsertPage` writes for. */
+  async function syncing(harness: TestConvex<typeof schema>) {
+    const { sourceId, runId } = await sourceOf(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(runId, { state: 'running' });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+    });
+    return { sourceId, runId };
+  }
+
+  const store = async (
+    harness: TestConvex<typeof schema>,
+    page: { sourceId: Id<'docSources'>; runId: Id<'docSyncRuns'> },
+    markdown: string,
+    contentHash: string,
+  ) =>
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId: page.sourceId,
+      syncRunId: page.runId,
+      ref: 'runbooks/refresh.md',
+      title: 'Refresh',
+      markdown,
+      updatedAt: 1,
+      contentHash,
+    });
+
+  it('keeps an unchanged page without splitting it again once its split has landed', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const page = await syncing(harness);
+    const ask = async (contentHash: string) =>
+      await harness.query(internal.docBlocks.unchangedPage, {
+        sourceId: page.sourceId,
+        ref: 'runbooks/refresh.md',
+        contentHash,
+      });
+    await store(harness, page, RUNBOOK, 'a'.repeat(32));
+    // Its split has not landed: the hash vouches for nothing yet, so the page is stored again.
+    expect(await ask('a'.repeat(32))).toBeNull();
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    splits.count = 0;
+    expect(await ask('a'.repeat(32))).toMatchObject({ title: 'Refresh', markdown: RUNBOOK });
+    // The review's reader 1 (splittime.mts): every unchanged page was split again at every sync.
+    expect(splits.count).toBe(0);
+    // A changed page's new hash vouches for nothing until its own split lands.
+    const edited = RUNBOOK.replace('Press refresh twice.', 'Press refresh three times.');
+    await store(harness, page, edited, 'b'.repeat(32));
+    expect(await ask('b'.repeat(32))).toBeNull();
+    expect(await ask('a'.repeat(32))).toBeNull();
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await ask('b'.repeat(32))).toMatchObject({ markdown: edited });
+  });
+
+  it('stamps no hash from a split that reads a page stored again since it was scheduled', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const page = await syncing(harness);
+    await store(harness, page, RUNBOOK, 'a'.repeat(32));
+    const edited = RUNBOOK.replace('Press refresh twice.', 'Press refresh three times.');
+    await store(harness, page, edited, 'b'.repeat(32));
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    const stored = await harness.run(async (ctx) => await ctx.db.query('docPages').unique());
+    expect([stored?.markdown, stored?.contentHash]).toEqual([edited, 'b'.repeat(32)]);
+  });
+});
+
 describe('unchangedPage and a re-split that never landed (W14-R23)', (): void => {
   it("answers no page whose stored blocks are an older version's, so the sync stores and splits it again", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { sourceId, runId } = await sourceOf(harness);
+    // Re-taken in wave 16 (16-FD, W15-R25), as the second pass's case above.
+    await v019Library(harness, sourceId);
     // The page changed and was stored; its split failed, so its blocks are still the old text's.
     await split(harness, { sourceId, runId }, RUNBOOK);
     const edited = RUNBOOK.replace('Press refresh twice.', 'Press refresh three times.');

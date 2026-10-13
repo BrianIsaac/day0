@@ -17,6 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
+import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
   failInTransaction,
@@ -37,16 +38,18 @@ import { retakeExternalClaim, settleWriteTargetClaims } from './workClaims';
 import { actionsOf, indexesWith, refusedReasonEntries, verdictList } from './workLedger';
 import { closingResume } from '../src/work/closing-resume';
 import { isGoneCitesReason } from '../src/work/plan-cites';
+import { planLeansOn } from '../src/work/conflict-hold';
 import type { ExecutionPlan, PlanStepOutcome } from '../src/work/types';
 import { EVALUATION_ATTEMPTS_SPENT } from '../src/work/queue-order';
 import { toSurfaceRecord } from '../src/surfaces/records';
 import { verdictFor } from '../src/surfaces/verdict';
 import { autonomousActionsOn } from '../src/work/autonomy';
-import { isOpenQuestionStop } from '../src/work/obligations';
+import { isConflictQuestion, isOpenQuestionStop } from '../src/work/obligations';
 import { replyTargetFor } from '../src/work/reply-target';
 import {
   type MockAction,
   type ReplyTarget,
+  CLAIMED_BY_COLLEAGUE_SKIP_PREFIX,
   OUT_OF_SCOPE_SKIP_PREFIX,
   QUALITY_FIT_SKIP_PREFIX,
 } from '../src/work/types';
@@ -142,11 +145,68 @@ function redraftedOutput(row: Doc<'workItems'>): Record<string, unknown> | undef
   };
 }
 
+/** The questions of one item a retry reads for an answered conflict. */
+const ITEM_QUESTIONS_READ = 50;
+
+/**
+ * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
+ * cites, or for a plan that cites nothing a page of the conflict it was asked about, is no longer
+ * current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on resuming and stop
+ * again on its gone cite, so the first Retry drafts the plan again. A plan that named the dispute in
+ * its own words and cited neither passage (D-1 (c)) is drafted again whichever page gave way: its
+ * steps were written round a question that is now answered.
+ */
+async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Promise<boolean> {
+  const cites =
+    (row.plan as { cites?: ReadonlyArray<{ sourceId?: string; pageRef?: string }> } | undefined)
+      ?.cites ?? [];
+  const questions = await ctx.db
+    .query('managerQuestions')
+    .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
+    .take(ITEM_QUESTIONS_READ);
+  for (const question of questions) {
+    if (question.relationId === undefined || question.answer === undefined) continue;
+    const relation = await ctx.db.get(question.relationId);
+    if (relation === null) continue;
+    const ends = [relation.from, relation.to];
+    const pages = await Promise.all(
+      ends.map(
+        async (end) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', end.sourceId).eq('ref', end.ref))
+            .first(),
+      ),
+    );
+    // The heading is the question's own context, kept when it was asked: the conflict no longer
+    // stands to be read once its answer superseded a page.
+    const leaned = planLeansOn((row.plan ?? {}) as Partial<ExecutionPlan>, {
+      heading: question.context.text,
+      titles: pages.flatMap((page) => (page === null ? [] : [page.title])),
+    });
+    for (const [index, end] of ends.entries()) {
+      // A plan that cites nothing was asked from its selection, which holds both pages: either
+      // page no longer current is one it was drafted from (the second pass).
+      if (
+        cites.length > 0 &&
+        !leaned &&
+        !cites.some((cite) => cite.sourceId === end.sourceId && cite.pageRef === end.ref)
+      ) {
+        continue;
+      }
+      const page = pages[index] ?? null;
+      if (page === null || (page.status ?? 'active') !== 'active') return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Public, owner-guarded: retries a failed or stopped item, keeping the manager's optional note as
  * feedback for the next run. A plan the manager declined, or one whose cited documentation has
  * since changed (recorded as `work.plan-redraft`, with the run's reason), is drafted again rather
- * than run as it stood.
+ * than run as it stood; so is one whose stop on a conflict's question was answered by superseding
+ * a page it cites (W16-R25).
  */
 export const retryFailed = mutation({
   args: { workItemId: v.id('workItems'), feedback: v.optional(v.string()) },
@@ -182,7 +242,10 @@ export const retryFailed = mutation({
       row.state === 'failed' &&
       row.plan !== undefined &&
       failure !== undefined &&
-      isGoneCitesReason(failure);
+      (isGoneCitesReason(failure) ||
+        (isOpenQuestionStop(failure) &&
+          isConflictQuestion(row.output) &&
+          (await answerSupersededCite(ctx, row))));
     // A cancelled plan is one the manager turned down: Retry drafts a new plan
     // that goes back to them, and never runs the rejected one.
     const redraft = (row.state === 'cancelled' && row.plan !== undefined) || citesChanged;
@@ -250,6 +313,9 @@ export const retryFailed = mutation({
             decision: undefined,
             planPendingAt: undefined,
             managerAnswers: undefined,
+            // The redraft's own plan site keeps its selection; the old draft's says nothing of
+            // what the new plan is drafted from (W16-R11).
+            selectedBlocks: undefined,
           }
         : {}),
       skipReason: undefined,
@@ -262,16 +328,23 @@ export const retryFailed = mutation({
       ...(row.dismissedAt !== undefined ? { dismissedAt: undefined } : {}),
       ...(waived === 'quality-fit' ? { qualityFitWaivedAt: Date.now() } : {}),
       ...(waived === 'scope' ? { scopeWaivedAt: Date.now() } : {}),
+      // "Take it anyway" on a colleague's settled ticket, stamped on the row, so the waiver never
+      // rests on the newest retries the employee's events hold (W15-R16).
+      ...(skipReason.startsWith(CLAIMED_BY_COLLEAGUE_SKIP_PREFIX)
+        ? { settledWaivedAt: Date.now() }
+        : {}),
       ...(feedback
         ? {
             managerFeedback: {
               reason: feedback,
               at: Date.now(),
               kind: 'retry-note' as const,
-              // Only a note on a question stop answers the question (review D2).
+              // Only a note on a question stop answers the question (review D2), and never a
+              // documentation conflict's, which is answered on the question itself (W16-R8).
               ...(row.state === 'failed' &&
               row.skipReason !== undefined &&
-              isOpenQuestionStop(stopDetail(row.skipReason))
+              isOpenQuestionStop(stopDetail(row.skipReason)) &&
+              !isConflictQuestion(row.output)
                 ? { answersQuestion: true }
                 : {}),
             },
@@ -625,6 +698,9 @@ export const setCompleted = internalMutation({
         },
         createdAt: Date.now(),
       });
+      if (withheld.some((held) => refusedScopeOf(held.reason) !== undefined)) {
+        await openRepeatedRefusalCards(ctx, row.agentId, Date.now());
+      }
     }
     await scheduleNextStep(ctx, { ...row, state: 'completed' });
     await settleHandoverAfterRun(ctx, row.agentId);

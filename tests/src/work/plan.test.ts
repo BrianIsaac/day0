@@ -322,11 +322,18 @@ describe('plan drafter grounding', (): void => {
     expect(planSystemPrompt(false, 'mock')).not.toContain('part selected for this item');
   });
 
-  it('tells the real planner what a [conflict] cite is, so it plans no step on the disputed point (15-A)', (): void => {
+  it('tells the real planner to cite the [conflict] passage a step relies on, never to plan round it (W16-R7, D-1 (a))', (): void => {
     const real = planSystemPrompt(false, 'real');
     expect(real).toContain(
-      'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree: your manager has been asked which is right, so plan no step that acts on that point and say in `riskNotes` that it waits for them.',
+      'A cite line that ends with [conflict] marks a point on which two pages your manager trusts equally disagree. If a step relies on that point, plan it and cite the tagged line in `stepCites` for that step, the one whose write the point decides: Day0 asks your manager which page is right and holds that step until they answer. Do not choose a side, plan round the point, plan a step of your own that asks about it, or say that a question has been asked.',
     );
+    // Wave 15's whole-plan hold: on GLM the walk's REVOPS-2 and REVOPS-3 obeyed it, cited no
+    // disputed block, worked round the dispute and told the manager a question was asked.
+    expect(real).not.toContain('plan no step that acts on that point');
+    expect(real).not.toContain('your manager has been asked');
+    // The pre-tag bed's REVOPS-2 on GLM: the tagged cite sat on a step of its own that asked the
+    // manager in the DM, so the hold named the message and not the comment the point decides.
+    expect(real).toContain('plan a step of your own that asks about it');
     expect(planSystemPrompt(false, 'mock')).not.toContain('[conflict]');
   });
 
@@ -399,6 +406,8 @@ describe('frozen planner text', (): void => {
   // the system prompt on 4 October.
   // Re-pinned (W14-R48, v0.19.0): the action-mode line no longer tells a step to say "waits for
   // your approval"; it says when the approval is asked and to plan each write as its own step.
+  // Re-pinned (W19-7, v0.20.0, 12 October 2026): one line, name a record as the manager would.
+  // Re-pinned (W15-R15, W19-4, the same day): the action-mode line forbids a step worded as a draft.
   it('keeps the mock planner system prompt byte-identical', (): void => {
     expect(planSystemPrompt(false, 'mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
@@ -412,11 +421,13 @@ describe('frozen planner text', (): void => {
         - 2-5 short concrete steps.
         - Punctuate every text field you return as the manager will read it: join clauses with a comma, a colon or a full stop, never a dash, and never run two clauses together unpunctuated. Spell in British English.
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
+        - Name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...
 
-      Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval. Name the approval as the manager reads it, never by the name of a mode."
+      Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. Name the approval as the manager reads it, never by the name of a mode."
     `);
   });
 
+  // Re-pinned (W19-7, v0.20.0, 12 October 2026): the Refs line reads each reference in words.
   it('keeps the ungrounded planner user prompt byte-identical', (): void => {
     expect(planUserPrompt({ candidate, charter })).toMatchInlineSnapshot(`
       "Role: Operations coordination
@@ -430,7 +441,7 @@ describe('frozen planner text', (): void => {
       Source: tracker / ticket-queue
       From: Manager
       Title: Refresh the dashboard tile
-      Refs: ticket://T-2
+      Refs: ticket T-2
       Body:
 
 
@@ -1597,5 +1608,71 @@ describe("the charter's clauses as the planner reads them (finding 3 of the v0.1
         ].join('\n'),
       );
     }
+  });
+});
+
+describe('the hosted office plan names records as a manager does (W19-7, the v0.19.0 walk)', (): void => {
+  /** Pip's docs item as the walk's row `A-Pip-docs-full.txt` shows it. */
+  const hanaAsk: WorkCandidate = {
+    sourceCategory: 'inbox',
+    sourceSystem: 'docs',
+    externalId: 'docs-billing-replies',
+    title: 'What does the billing doc say about duplicate charge replies',
+    contentSummary:
+      'Hana asked: "Before I send anything to Northwind, can you read the billing doc and tell me exactly what our first reply to a duplicate charge should say?"',
+    contentRefs: ['docs-fixture/billing-replies', 'channel://office-asks#thread-double-charge'],
+    observedAt: new Date('2026-10-11T14:40:00.000Z'),
+    priority: 'P2',
+    requesterLabel: 'Hana',
+  };
+
+  it('reads the item references in words and asks for records by name, in the mock prompt', async (): Promise<void> => {
+    await draftExecutionPlan({
+      candidate: hanaAsk,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'mock',
+    });
+    const user = planRecorded.users.at(-1) ?? '';
+    expect(user).toContain(
+      'Refs: the team document billing-replies; thread thread-double-charge in channel office-asks',
+    );
+    expect(user).not.toMatch(/docs-fixture\/|channel:\/\//);
+    expect(planSystemPrompt(false, 'mock')).toContain(
+      '  - Name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...',
+    );
+  });
+
+  it('writes the walk’s plan steps with the records named, never by reference', async (): Promise<void> => {
+    planRecorded.outputs.push({
+      summary: 'Read the billing replies doc and answer Hana.',
+      steps: [
+        'Read the customer billing replies doc at docs-fixture/billing-replies and extract the first-reply guidance for duplicate charges.',
+        'Read the customer billing replies doc and the Slack thread channel://office-asks#thread-double-charge to confirm the documented wording.',
+      ],
+      expectedOutputType: 'reply',
+      riskNotes: 'None (docs-fixture/billing-replies is the source).',
+      reversibility: 'reversible',
+      estimatedMinutes: 15,
+    });
+    const plan = await draftExecutionPlan({
+      candidate: hanaAsk,
+      charter,
+      autonomousActions: false,
+      surfaceMode: 'mock',
+    });
+    expect(JSON.stringify(plan)).not.toMatch(/docs-fixture\/|channel:\/\//);
+    expect(plan.steps[0]).toBe(
+      'Read the customer billing replies doc at the billing replies page and extract the first-reply guidance for duplicate charges.',
+    );
+    expect(plan.riskNotes).toBe('None (the billing replies page is the source).');
+  });
+});
+
+describe('the mock planner words no step as a draft for approval (W15-R15, W19-4)', (): void => {
+  it("says a step is never worded as a draft or as framed for the manager's approval", (): void => {
+    expect(actionModeInstruction(false, 'mock')).toContain(
+      "never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval",
+    );
   });
 });

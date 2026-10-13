@@ -15,9 +15,11 @@ documentation. It only reads: it writes nothing to Yuque.
 - A sheet, a data table, a board or a thread is named as not read.
 - The repository is read again on the same schedule as every other source. Yuque allows 5,000
   requests an hour for a token, so day0 spaces its requests about 0.7 seconds apart, and waits
-  when Yuque says it is busy (HTTP 429). Each document costs one request at every read, so a
-  repository of more than about 1,200 documents cannot be read inside that limit at the usual
-  schedule: link the part of it that matters as its own repository.
+  when Yuque says it is busy (HTTP 429). The documents are listed a hundred at a time, and a
+  document is read only when its listing says it was edited since day0 last read it, so a read
+  that finds nothing changed costs a request for every hundred documents. The first read of a
+  repository reads every document, a request each (about fifteen minutes for 1,200 documents at
+  that spacing); the reads after it ask only for the documents that changed.
 
 ## 1. Create the token
 

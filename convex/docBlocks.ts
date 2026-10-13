@@ -16,6 +16,7 @@ import {
   type DocBlock,
 } from '../src/docs/blocks';
 import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/authority';
+import { sha256OfText } from '../src/lib/sha256';
 
 /*
  * The block store behind the documentation search (wave 14, 14-I; the wave file's section 6.1).
@@ -24,7 +25,8 @@ import { PAGE_STATUSES, pageStatusOf, type PageStatus } from '../src/docs/author
  *
  * Writers: `replacePageBlocks`, through `splitStoredPage`, which `docSources.upsertPage`
  * schedules for each page it writes (it splits the page as stored when it runs, so it converges
- * on the newest write), and directly in the `docs-backfill-blocks` pass;
+ * on the newest write; the 0.18.0 `docs-backfill-blocks` pass, which also called it, left the
+ * migration list at 0.20.0);
  * `copyPageStatusToBlocks`, for a page whose status changed and whose text did not (wave 15,
  * 15-A: every block carries its page's status, which the search filters on); `prunePageBlocks`,
  * scheduled by `docSources.prunePages` for a page a finish removed; and
@@ -393,7 +395,19 @@ export const prunePageBlocks = internalMutation({
  * @returns How many block rows it inserted, rewrote, restated or deleted.
  */
 export const splitStoredPage = internalMutation({
-  args: { sourceId: v.id('docSources'), ref: v.string(), generation: v.id('docSyncRuns') },
+  args: {
+    sourceId: v.id('docSources'),
+    ref: v.string(),
+    generation: v.id('docSyncRuns'),
+    /**
+     * The page's hash before redaction, written once its blocks are split (W15-R25): a page kept
+     * by its hash at a later sync is then kept with its blocks, and is not split again to prove
+     * it. Absent where the deployment has no key.
+     */
+    contentHash: v.optional(v.string()),
+    /** The SHA-256 of the stored text the hash is of: a page stored again since takes none. */
+    storedText: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<number> => {
     const [source, page] = await Promise.all([
       ctx.db.get(args.sourceId),
@@ -403,7 +417,7 @@ export const splitStoredPage = internalMutation({
         .unique(),
     ]);
     if (source === null || page === null) return 0;
-    return await replacePageBlocks(ctx, {
+    const changed = await replacePageBlocks(ctx, {
       userId: source.userId,
       sourceId: args.sourceId,
       pageRef: args.ref,
@@ -411,6 +425,14 @@ export const splitStoredPage = internalMutation({
       markdown: page.markdown,
       status: pageStatusOf(page),
     });
+    if (
+      args.contentHash !== undefined &&
+      page.contentHash !== args.contentHash &&
+      args.storedText === sha256OfText(page.markdown)
+    ) {
+      await ctx.db.patch(page._id, { contentHash: args.contentHash });
+    }
+    return changed;
   },
 });
 
@@ -446,6 +468,21 @@ async function blocksAreThePages(
 }
 
 /**
+ * Whether a page's first stored block holds the page's status, as every block does once the
+ * status is copied onto them in the transaction that writes it: one row read.
+ */
+async function firstBlockHasPageStatus(
+  ctx: QueryCtx,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'status'>,
+): Promise<boolean> {
+  const first = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
+    .first();
+  return first === null || (first.status ?? 'active') === pageStatusOf(page);
+}
+
+/**
  * The stored page under a ref whose hash is the one given: the sync keeps it as stored, with no
  * redaction and no split (P8-10). Internal; reads one page and its blocks, writes nothing.
  *
@@ -463,8 +500,15 @@ export const unchangedPage = internalQuery({
       .withIndex('by_source_ref', (q) => q.eq('sourceId', args.sourceId).eq('ref', args.ref))
       .unique();
     if (page === null || page.contentHash !== args.contentHash) return null;
-    // A page whose split did not land is not kept: its next store schedules the split again.
-    if (!(await blocksAreThePages(ctx, page))) return null;
+    // Its split wrote the hash, so its blocks are its text's (W15-R25); a library v0.19.0 left,
+    // whose hashes were written before their splits landed, is checked block for block until a
+    // 0.20.0 sync has seen it (its source is owed the remeasure until then), and a page whose
+    // split did not land is not kept: its next store schedules the split again.
+    const source = await ctx.db.get(args.sourceId);
+    if (source?.relationsRemeasure !== undefined && !(await blocksAreThePages(ctx, page))) {
+      return null;
+    }
+    if (!(await firstBlockHasPageStatus(ctx, page))) return null;
     return {
       title: page.title,
       ...(page.url !== undefined ? { url: page.url } : {}),
