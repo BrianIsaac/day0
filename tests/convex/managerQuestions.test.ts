@@ -406,8 +406,8 @@ describe('a question closed without an answer (17-K, N10: additive and optional)
           }),
         );
       });
-    await expect(close({ reason: 'expired', at: 6 })).rejects.toThrow(/closed|validat/i);
-    await expect(close({ reason: 'settled' })).rejects.toThrow(/closed|validat/i);
+    await expect(close({ reason: 'expired', at: 6 })).rejects.toThrow(/Validator error/);
+    await expect(close({ reason: 'settled' })).rejects.toThrow(/Validator error/);
   });
 });
 

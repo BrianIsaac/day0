@@ -2088,7 +2088,11 @@ export default defineSchema({
     .index('by_agent_active', ['agentId', 'retiredAt'])
     .index('by_agent_active_createdAt', ['agentId', 'retiredAt', 'createdAt']),
 
-  /** One idempotent manager-DM acknowledgement per parsed provider reply. */
+  /**
+   * A notice Day0 posts in the manager's DM beside a decision request, one per replay key
+   * (`surfaceId`, `messageTs`): the acknowledgement of a parsed provider reply, keyed by that
+   * reply's own message, and from wave 17 a conflict's question in the request's thread (`kind`).
+   */
   managerDecisionNotices: defineTable({
     agentId: v.id('agents'),
     surfaceId: v.id('surfaces'),

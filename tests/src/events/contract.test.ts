@@ -254,6 +254,10 @@ describe('the wave 17 types, declared by the schema step for 17-O and 17-C (17-K
     expect(UNLISTED_EVENT_TYPES).toEqual(['reorientation.card-not-opened']);
     // Not one of the contract's types yet: a listed type no writer writes fails the test above.
     expect(UNLISTED_EVENT_TYPES.filter((type) => isEventType(type))).toEqual([]);
+    expectTypeOf<keyof UnlistedEventPayloads & keyof EventPayloads>().toEqualTypeOf<never>();
+    expectTypeOf<(typeof UNLISTED_EVENT_TYPES)[number]>().toEqualTypeOf<
+      keyof UnlistedEventPayloads
+    >();
     expectTypeOf<
       UnlistedEventPayloads['reorientation.card-not-opened']
     >().toEqualTypeOf<ReorientationCardNotOpenedPayload>();

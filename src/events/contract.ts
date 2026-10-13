@@ -2255,10 +2255,10 @@ export interface UnlistedEventPayloads {
   'reorientation.card-not-opened': ReorientationCardNotOpenedPayload;
 }
 
-/** The types of {@link UnlistedEventPayloads}, at run time. */
-export const UNLISTED_EVENT_TYPES = [
+/** The types of {@link UnlistedEventPayloads}, at run time: every key, checked as the list below is. */
+export const UNLISTED_EVENT_TYPES = everyKey<keyof UnlistedEventPayloads>()([
   'reorientation.card-not-opened',
-] as const satisfies readonly (keyof UnlistedEventPayloads)[];
+]);
 
 /**
  * A tuple checked to name every key of `Of`: a key it leaves out makes the

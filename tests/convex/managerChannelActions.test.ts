@@ -636,9 +636,11 @@ describe('the outbound manager-channel action', (): void => {
       });
     });
 
+    // Nothing is sent. The reason the action gives is the acknowledgement path's own and is not
+    // held here: 17-C's send replaces the guard and says what it did.
     await expect(
       harness.action(internal.managerChannelActions.sendManagerReplyNotice, { noticeId }),
-    ).resolves.toEqual({ sent: false, reason: 'notice already claimed' });
+    ).resolves.toMatchObject({ sent: false });
     // The request went out; the question did not follow it as an acknowledgement.
     expect(sent).toHaveLength(1);
     const after = await harness.run(async (ctx) => ({
