@@ -16,13 +16,13 @@
  * 0: written; 2: usage, or a call the deployment refused.
  */
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { closeSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
-  assembleOwnerExport,
   assembleTrace,
+  streamOwnerExport,
   type AgentTrace,
   type OwnerAgentsPage,
   type OwnerExport,
@@ -84,34 +84,61 @@ export async function exportTrace(
 }
 
 /**
- * Export the caller's owner export (wave 16, 16-F): every employee's trace and the owner's own
- * rows, assembled through the paged actions into the one file `metrics:recompute` reads.
+ * Export the caller's owner export (wave 16, 16-F) to a file: every employee's trace and the
+ * owner's own rows, read through the paged actions and written as each arrives (wave 17, 17-F),
+ * so the command holds one employee's trace however many there are. The pieces go to
+ * `<out>.partial`, which takes the file's name once it is whole; a call the deployment refuses
+ * part way leaves neither.
  *
+ * @param out - The file to write.
  * @param run - How a deployed function is called.
  * @param subject - The caller's subject, the no-auth one a local bed runs as by default.
- * @returns The whole file.
+ * @returns The file's manifest, with its counts.
+ * @throws Error carrying the refused call's own message; nothing is left on disk.
  */
 export async function exportOwner(
+  out: string,
   run: ConvexRun,
   subject: string = DEV_NO_AUTH_SUBJECT,
-): Promise<OwnerExport> {
-  return await assembleOwnerExport({
-    head: async () => (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
-    agents: async (cursor) =>
-      (await run('exportActions:exportOwnerAgents', { cursor }, subject)) as OwnerAgentsPage,
-    page: async (cursor) =>
-      (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
-    employee: {
-      head: async ({ agentId }) =>
-        (await run('exportActions:exportForAgent', { agentId }, subject)) as TraceHead,
-      page: async ({ agentId, page }) =>
-        (await run(
-          'exportActions:exportPage',
-          { agentId, section: page.section, cursor: page.cursor },
-          subject,
-        )) as TracePage,
-    },
-  });
+): Promise<OwnerExport['manifest']> {
+  const partial = `${out}.partial`;
+  const file = openSync(partial, 'w');
+  let manifest: OwnerExport['manifest'];
+  try {
+    manifest = await streamOwnerExport(
+      {
+        head: async () =>
+          (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
+        agents: async (cursor) =>
+          (await run('exportActions:exportOwnerAgents', { cursor }, subject)) as OwnerAgentsPage,
+        page: async (cursor) =>
+          (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
+        employee: {
+          head: async ({ agentId }) =>
+            (await run('exportActions:exportForAgent', { agentId }, subject)) as TraceHead,
+          page: async ({ agentId, page }) =>
+            (await run(
+              'exportActions:exportPage',
+              { agentId, section: page.section, cursor: page.cursor },
+              subject,
+            )) as TracePage,
+        },
+      },
+      {
+        write: async (chunk) => {
+          writeSync(file, chunk, null, 'utf8');
+          await Promise.resolve();
+        },
+      },
+    );
+  } catch (error) {
+    closeSync(file);
+    rmSync(partial, { force: true });
+    throw error;
+  }
+  closeSync(file);
+  renameSync(partial, out);
+  return manifest;
 }
 
 function parseArguments(
@@ -160,15 +187,13 @@ export async function runExportTrace(
     return 2;
   }
   if (options.agentId === 'owner') {
-    let file: OwnerExport;
+    let manifest: OwnerExport['manifest'];
     try {
-      file = await exportOwner(run, options.subject);
+      manifest = await exportOwner(options.out, run, options.subject);
     } catch (error) {
       io.error(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
     }
-    writeFileSync(options.out, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-    const { manifest } = file;
     io.log(
       `${options.out}: the owner export, exported ${manifest.exportedOn} (${manifest.zone}) at release ${manifest.release ?? 'unstamped'}, commit ${manifest.commit ?? 'unknown'}; ${Object.entries(
         manifest.counts,

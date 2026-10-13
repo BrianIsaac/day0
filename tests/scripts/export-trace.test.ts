@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -180,5 +180,86 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
       OWNER_SECTIONS.length,
     );
     expect(logged[0]).toContain('the owner export, exported 2026-09-27 (UTC) at release 0.20.0');
+  });
+
+  /** An owner's deployment of two employees, whose second trace can be watched or refused. */
+  function twoEmployees(onSecondEmployee: () => void): ConvexRun {
+    const employee = fakeDeployment([]);
+    return (name, args, subject) => {
+      if (name === 'exportActions:exportForOwner') {
+        return {
+          manifest: {
+            format: 'day0-owner-export',
+            version: 8,
+            exportedAt: HEAD.manifest.exportedAt,
+            exportedOn: '2026-09-27',
+            zone: 'UTC',
+            release: '0.20.0',
+            commit: 'abc12345',
+            pageRows: 100,
+            ownerKey: 'dev-no-auth|local-boss',
+          },
+          employees: [
+            { id: 'agent-1', name: 'Priya' },
+            { id: 'agent-2', name: 'Mateo' },
+          ],
+          setAside: [],
+          moreAgents: null,
+          next: { section: OWNER_SECTIONS[0], cursor: null },
+        };
+      }
+      if (name === 'exportActions:exportOwnerPage') {
+        const section = args.section as OwnerSection;
+        const following = ownerSectionAfter(section);
+        return {
+          section,
+          rows: [],
+          next: following === undefined ? null : { section: following, cursor: null },
+        };
+      }
+      if (name === 'exportActions:exportForAgent' && args.agentId === 'agent-2') {
+        onSecondEmployee();
+      }
+      return employee(name, args, subject);
+    };
+  }
+
+  it('writes each employee’s trace as it arrives: the first is on disk before the second is read (wave 17, 17-F)', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    const out = join(directory, 'owner.json');
+    const seen: Array<{ whole: boolean; partial: string }> = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: () => undefined },
+      twoEmployees((): void => {
+        seen.push({ whole: existsSync(out), partial: readFileSync(`${out}.partial`, 'utf8') });
+      }),
+    );
+    expect(code).toBe(0);
+    // When the second employee was first asked for, the first one's three events were written
+    // and the file did not yet carry its own name.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.whole).toBe(false);
+    expect(seen[0]?.partial.match(/"_id": "e\d"/g)).toHaveLength(3);
+    expect(readdirSync(directory)).toEqual(['owner.json']);
+    expect(readOwnerExport(JSON.parse(readFileSync(out, 'utf8')))?.employees).toHaveLength(2);
+  });
+
+  it('leaves no file, whole or partial, when a call is refused part way', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    const out = join(directory, 'owner.json');
+    const errors: string[] = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: (line) => errors.push(line) },
+      twoEmployees((): void => {
+        throw new Error('exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS');
+      }),
+    );
+    expect(code).toBe(2);
+    expect(errors).toEqual([
+      'Export failed: exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS',
+    ]);
+    expect(readdirSync(directory)).toEqual([]);
   });
 });
