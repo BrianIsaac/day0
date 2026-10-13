@@ -27,6 +27,14 @@ vi.mock('convex/react', () => ({
           loadMore: (): void => undefined,
         };
   },
+  // Several queries at once answer each from the same fixture, by function name.
+  useQueries: (queries: Record<string, { query: unknown }>): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { query }]) => [
+        key,
+        backend.queries[getFunctionName(query as never)],
+      ]),
+    ),
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));

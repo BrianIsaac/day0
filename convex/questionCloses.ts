@@ -97,9 +97,9 @@ export async function closeQuestionsOfRelation(
  * Close the open questions of every confirmed conflict one page is an end of, because the page
  * stopped being current (superseded, archived, gone) and no conflict stands on a page that is not
  * (`docConflicts.standingConflictOf`). Called by the relation's decision for the page an answer
- * takes out of use. A page that leaves `active` by another path (the Documentation tab's status,
- * the sync) closes nothing at that moment: its questions hold nothing and draw no button from
- * then on, and are closed by the next run that reads them (`managerQuestions.closeSettled`).
+ * takes out of use, and by the step a page's change of status schedules when it leaves `active`
+ * by another path (the Documentation tab's status, the sync: `docRelations.turnPageQuestions`,
+ * the joins). A run that reads a question first still closes it (`managerQuestions.closeSettled`).
  *
  * @param ctx - The transaction that changed the page.
  * @param page - The page that is no longer current.

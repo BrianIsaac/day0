@@ -138,7 +138,7 @@ describe('sendBackToDrafting', (): void => {
     });
 
     await harness.run(async (ctx) => {
-      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, surface, NOW);
+      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, { surface }, NOW);
     });
 
     const row = await rowOf(harness, workItemId);
@@ -177,7 +177,7 @@ describe('sendBackToDrafting', (): void => {
     );
 
     await harness.run(async (ctx) => {
-      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, surface, NOW);
+      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, { surface }, NOW);
     });
 
     expect((await questionOf(harness, open.questionId)).closed).toEqual({
@@ -199,7 +199,7 @@ describe('sendBackToDrafting', (): void => {
     });
 
     await harness.run(async (ctx) => {
-      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, surface, NOW);
+      await sendBackToDrafting(ctx, (await ctx.db.get(workItemId))!, { surface }, NOW);
     });
 
     const row = await rowOf(harness, workItemId);

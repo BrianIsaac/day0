@@ -28,7 +28,6 @@ import { managerIdentity } from './fakes/manager-identity';
 import { LINEAR_TOKEN_PLACEHOLDER, notionPageTemplate } from '../fixtures/notion-pages';
 import {
   categoryForPage,
-  type DatedDocPage,
   keptByRevision,
   LISTING_RESTARTS_REASON,
   persistPageBatch,
@@ -580,7 +579,7 @@ describe('whether a page’s source dated it, at the persistence boundary (D-8 (
     markdown: '# Runbook\n\nPress refresh.',
     updatedAt: 1,
   };
-  const page: DatedDocPage = { ...unsaid, datedBySource: true };
+  const page: DocPage = { ...unsaid, datedBySource: true };
   const STORED = { title: 'Runbook', markdown: '# Runbook\n\nStored.' };
   const UPSERT = getFunctionName(internal.docSources.upsertPage);
   const RECORD = getFunctionName(internal.docStatus.recordRead);

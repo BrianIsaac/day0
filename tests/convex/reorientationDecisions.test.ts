@@ -446,6 +446,20 @@ describe('approve: the proposal applied through its target', (): void => {
         outcome: { summary: 'decided on Priya’s card: the relationship was changed' },
       });
     }
+    // Each sibling's own record says how its card closed (17-O's F6: the record held only the
+    // card opened, and the pilot figure counted a deferred one as still deferred).
+    for (const [agentId, cardId] of [
+      [mateo, mateos],
+      [aiko, aikos],
+    ] as const) {
+      expect(await payloadsOf(harness, agentId, 'reorientation.dismissed')).toEqual([
+        {
+          reorientationId: cardId,
+          summary: 'Priya, its approver, changed',
+          outcome: 'decided on Priya’s card: the relationship was changed',
+        },
+      ]);
+    }
     // The red input's own press: Approve on Aiko's card is refused as decided, and no longer
     // reaches the ended edge.
     await expect(
@@ -459,10 +473,12 @@ describe('approve: the proposal applied through its target', (): void => {
           .first(),
     );
     expect([talk?.state, talk?.replyDraft]).toEqual(['closed', undefined]);
-    // The plan Mateo's card held is asked for its decision again.
+    // The plan Mateo's card held was drafted under the edge Priya's Approve changed, so it is
+    // drafted again rather than asked for its decision (re-pinned by the joins for V17-9 (a)).
+    expect((await harness.run(async (ctx) => await ctx.db.get(held)))?.state).toBe('claimed');
     expect(
       (await scheduledAs(harness, 'work:decidePlan')).map((job) => job.args[0]),
-    ).toContainEqual({ workItemId: held, recovery: true });
+    ).not.toContainEqual({ workItemId: held, recovery: true });
   });
 
   it('leaves a sibling card that also names something else standing, and asks again for a proposal that named the ended edge', async (): Promise<void> => {
@@ -1299,41 +1315,60 @@ describe('the hold: the seventh reason at the plan’s decision', (): void => {
     });
   });
 
-  it.fails(
-    // V17-9, traced and not fixed here: under the autonomy switch, the plan a card held is
-    // approved by Day0 itself once Approve has changed what the plan was drafted under. The fix
-    // is a gate of `work.decidePlan` (convex/work.ts), which this unit does not own; the work
-    // loop's recovery re-runs the same decision, so holding it at the release alone would not hold.
-    'does not approve on its own a plan drafted before the change that Approve made (V17-9)',
-    async (): Promise<void> => {
-      const harness = convexTest(schema, allConvexModules());
-      const { agentId, workItemId } = await autonomous(harness);
-      const cardId = await proposedCard(
-        harness,
-        agentId,
-        {
-          kind: 'charter-change',
-          changes: [
-            {
-              kind: 'edit-clause',
-              field: 'willNotDo',
-              index: 0,
-              text: 'Reply to a tier-2 ask without the manager',
-            },
-          ],
-          rationale: 'The manager now answers tier-2 asks.',
-        },
-        { affected: { workItems: [workItemId] } },
-      );
-      await harness
-        .withIdentity(OWNER)
-        .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
-      // The release asks the plan's decision again, as the scheduler runs it.
-      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true });
-      const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
-      expect(row?.state).toBe('plan-pending');
-    },
-  );
+  it('sends a plan it held back to drafting when Approve changed what the plan was drafted under, so Day0 never approves it on its own (V17-9, (a))', async (): Promise<void> => {
+    // 17-O's trace (F5): under the autonomy switch, the plan a card held was approved by Day0
+    // itself once Approve had amended the charter it was drafted under.
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'charter-change',
+        changes: [
+          {
+            kind: 'edit-clause',
+            field: 'willNotDo',
+            index: 0,
+            text: 'Reply to a tier-2 ask without the manager',
+          },
+        ],
+        rationale: 'The manager now answers tier-2 asks.',
+      },
+      { affected: { workItems: [workItemId] } },
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    // The work loop's recovery asks the decision again, as the scheduler runs it: nothing to
+    // decide, for the plan is being drafted again under the amended charter.
+    await expect(
+      harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
+    ).resolves.toEqual({ approved: false });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect([row?.state, row?.plan, row?.decision]).toEqual(['claimed', undefined, undefined]);
+    expect(await payloadsOf(harness, agentId, 'work.plan-redrafting')).toEqual([
+      expect.objectContaining({ workItemId, reorientationId: cardId }),
+    ]);
+  });
+
+  it('releases a plan it held to its decision when Approve changed nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      { kind: 'none', rationale: 'Nothing.' },
+      { affected: { workItems: [workItemId] } },
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    expect(await payloadsOf(harness, agentId, 'work.plan-redrafting')).toEqual([]);
+    await expect(harness.mutation(internal.work.decidePlan, { workItemId })).resolves.toEqual({
+      approved: true,
+    });
+  });
 
   it('lets the plan go on Dismiss, and keeps the hold while the card is deferred', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

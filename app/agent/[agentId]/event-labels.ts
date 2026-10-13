@@ -722,7 +722,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-grounding-read': 'plan read what it rests on',
   'work.plan-drafted': 'plan drafted',
   'work.plan-redrafting': (payload) =>
-    `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
+    payload.reorientationId !== undefined
+      ? 'plan drafted again: a card changed what it was drafted under'
+      : `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
   'work.plan-redraft': 'plan drafted again: documentation it followed has changed',
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
@@ -859,7 +861,10 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'reorientation.approved': (payload) =>
     `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
-  'reorientation.dismissed': 'reorientation card dismissed; nothing changed',
+  'reorientation.dismissed': (payload) =>
+    payload.outcome !== undefined
+      ? 'reorientation card closed: decided on another employee’s card'
+      : 'reorientation card dismissed; nothing changed',
   'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,

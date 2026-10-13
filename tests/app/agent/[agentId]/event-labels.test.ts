@@ -201,6 +201,21 @@ describe('the live feed labels', (): void => {
     ).toBe('charter amended to v0.2 from a reorientation card');
   });
 
+  it('labels a plan drafted again by why: its system connected, or a card changed its ground (V17-9)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.plan-redrafting',
+        payload: { workItemId: 'w1', surfaceId: 's1', slug: 'linear' },
+      }),
+    ).toBe('plan drafted again: linear is connected, so the ticket can be read');
+    expect(
+      eventLabel({
+        type: 'work.plan-redrafting',
+        payload: { workItemId: 'w1', reorientationId: 'card-1', summary: 'Its approver changed' },
+      }),
+    ).toBe('plan drafted again: a card changed what it was drafted under');
+  });
+
   it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {
     expect(
       eventLabel({

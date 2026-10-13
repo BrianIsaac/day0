@@ -82,18 +82,6 @@ export const MAX_LISTING_RESTARTS = 3;
 export const LISTING_RESTARTS_REASON =
   'The source kept changing while it was read: its listing changed under the sync and again after each of three fresh starts, so this sync stopped. The next scheduled sync reads it again from the first page.';
 
-/**
- * A page as its reader returned it, with whether the reader was given the page's time by its
- * source (`docPages.datedBySource`; D-8 (a)): true for a source's own edit time (a folder's file
- * time counts, X-3), false for the time the reader read the page, absent where a reader does not
- * say. The field is the readers' (wave 17, 17-X adds it to `DocPage`); the store reads it through
- * this type until the two are one.
- */
-export type DatedDocPage = DocPage & { readonly datedBySource?: boolean };
-
-/** A page a reader kept by its revision ({@link DatedDocPage}; 17-X adds the field to `KeptPage`). */
-export type DatedKeptPage = KeptPage & { readonly datedBySource?: boolean };
-
 /** What one batch persisted, and the pages it could not. */
 export interface PersistedBatch {
   refs: string[];
@@ -247,7 +235,7 @@ async function mirrorPages(
 export async function persistPageBatch(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  pages: DatedDocPage[],
+  pages: DocPage[],
   agents: Doc<'agents'>[],
   model: SpanModel | undefined = spanModelFromEnv(),
   knownValues?: readonly string[],
@@ -318,7 +306,7 @@ function pageHashKey(key: string | undefined): string | undefined {
 async function persistPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  page: DatedDocPage,
+  page: DocPage,
   syncRunId: Id<'docSyncRuns'>,
   redaction: {
     readonly model: SpanModel | undefined;
@@ -380,7 +368,7 @@ async function persistPage(
     });
     credentialRefs.push(ref);
   }
-  const safePage: DatedDocPage = {
+  const safePage: DocPage = {
     ...page,
     title: markdownPageTitle(result.markdown, result.title),
     markdown: result.markdown,
@@ -414,7 +402,7 @@ async function persistPage(
 async function keptUnchangedPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
-  page: DatedDocPage,
+  page: DocPage,
   contentHash: string,
   known: readonly string[],
 ): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
@@ -497,7 +485,7 @@ export async function keptByRevision(
   source: Doc<'docSources'>,
   agents: Doc<'agents'>[],
   syncRunId: Id<'docSyncRuns'>,
-  kept: readonly DatedKeptPage[],
+  kept: readonly KeptPage[],
   stored: ReadonlyMap<string, StoredForRevision>,
 ): Promise<Array<{ ref: string }>> {
   const pages: DocPage[] = [];

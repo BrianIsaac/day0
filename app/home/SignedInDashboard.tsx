@@ -297,7 +297,8 @@ function AfterDeploy() {
 
 /**
  * The owner's documentation: how much is linked, and where it is managed; in the hosted office,
- * what its employees read instead, and a link to the page that says the same (RM26 (a)).
+ * what its employees read instead (RM26 (a)), with no link: the Documentation page there says the
+ * same sentence and draws no page, so a "View" showed nothing (FD-9 (b), the joins).
  */
 function DocumentationCard({
   sources,
@@ -311,17 +312,17 @@ function DocumentationCard({
       {/* The link's 44 px target (N14) takes the header's height; the padding makes up the rest. */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)] py-1 pl-5 pr-2">
         <h2 className="text-sm font-semibold">Documentation</h2>
-        {/* Named once the mode answers, so it never reads Manage and then View (W16-R35); the
-            placeholder keeps the header's 44 px height meanwhile. */}
-        {mode === undefined ? (
-          <span aria-hidden="true" className="inline-block min-h-11" />
-        ) : (
+        {/* Drawn once the mode answers, so it never reads Manage and then goes (W16-R35); the
+            placeholder keeps the header's 44 px height meanwhile, and in the hosted office. */}
+        {mode === 'real' ? (
           <Link
             href="/documentation"
             className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
           >
-            {mode === 'mock' ? 'View' : 'Manage'}
+            Manage
           </Link>
+        ) : (
+          <span aria-hidden="true" className="inline-block min-h-11" />
         )}
       </div>
       <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
@@ -331,7 +332,9 @@ function DocumentationCard({
             ? 'Loading'
             : sources === 0
               ? 'No documentation linked yet. Your employees learn the team from what you link.'
-              : `${sources} ${sources === 1 ? 'source' : 'sources'} linked. Every employee reads them unless you leave one out at deploy.`}
+              : sources === 1
+                ? '1 source linked. Every employee reads it unless you leave it out at deploy.'
+                : `${sources} sources linked. Every employee reads them unless you leave one out at deploy.`}
       </p>
     </section>
   );

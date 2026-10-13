@@ -16,6 +16,7 @@ import {
 import { CharterView } from '../../../../app/agent/[agentId]/charter/CharterView';
 import { useEmployee } from '../../../../app/agent/[agentId]/employee-context';
 import { WorkView } from '../../../../app/agent/[agentId]/work/WorkView';
+import { RecordView } from '../../../../app/agent/[agentId]/record/RecordView';
 import { ManageView } from '../../../../app/agent/[agentId]/manage/ManageView';
 import { RetiredNotice, RetiredNoticeProvider } from '../../../../app/RetiredNotice';
 import {
@@ -67,6 +68,23 @@ vi.mock('convex/react', () => {
       if (answer instanceof Error) throw answer;
       return answer;
     },
+    // Several queries at once: an `Error` is answered, not thrown, as `useQueries` gives it.
+    useQueries: (
+      queries: Record<string, { query: unknown; args?: unknown }>,
+    ): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(queries).map(([key, { query, args }]) => [
+          key,
+          args === 'skip' ? undefined : backend.queries[getFunctionName(query as never)],
+        ]),
+      ),
+    // A paginated read (the Record tab's list) answers one exhausted, empty page.
+    usePaginatedQuery: () => ({
+      results: [],
+      status: 'Exhausted',
+      isLoading: false,
+      loadMore: (): void => undefined,
+    }),
     useMutation: call,
     useAction: call,
   };
@@ -374,6 +392,41 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     const crumb = view.container.querySelector('nav[aria-label="Breadcrumb"]');
     expect(crumb?.querySelector('a')?.getAttribute('href')).toBe('/');
     expect(crumb?.querySelector('[aria-current="page"]')?.textContent).toBe('Mira');
+    view.unmount();
+  });
+
+  it('draws the page and its tab when the figures cannot be read, and says so where they would be (C1, 17-FW; W16-R31)', async (): Promise<void> => {
+    // 17-FW's bed: an employee with 24 finished items of 900 KB each, whose figures' read met the
+    // backend's limit and took the whole page down with it.
+    const limit = new Error(
+      'Too many bytes read in a single function execution (limit: 16777216 bytes).',
+    );
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'metrics:forAgent': limit,
+    };
+    const view = mount(page(<WorkView />));
+    await settle();
+    expect([...view.container.querySelectorAll('h1')].map((h) => h.textContent)).toEqual(['Mira']);
+    expect(view.container.textContent).toContain('Day0 could not read these figures.');
+    expect(view.container.textContent).not.toContain('This tab did not load');
+    view.unmount();
+  });
+
+  it('draws the Record tab whole when the figures cannot be read, its So far card saying so (C1)', async (): Promise<void> => {
+    backend.queries = {
+      'agents:get': row('active'),
+      'charters:latest': approved,
+      'metrics:forAgent': new Error('Too many bytes read in a single function execution.'),
+    };
+    const view = mount(page(<RecordView />));
+    await settle();
+    const card = [...view.container.querySelectorAll('section')].find(
+      (section) => section.querySelector('h2')?.textContent === 'So far',
+    );
+    expect(card?.textContent).toContain('Day0 could not read these figures.');
+    expect(view.container.textContent).toContain('Every event');
     view.unmount();
   });
 

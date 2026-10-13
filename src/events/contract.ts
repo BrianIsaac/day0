@@ -1415,12 +1415,18 @@ export interface WorkPlanDraftedPayload extends WorkItemNamed {
 }
 
 /**
- * The payload of `work.plan-redrafting`: a plan drafted while its system was
- * not connected, sent back to drafting now that it is (P7-18).
+ * The payload of `work.plan-redrafting`: a plan sent back to drafting before
+ * anyone decided it. Either it was drafted while its system was not
+ * connected, and that system is connected now (P7-18: `surfaceId` and
+ * `slug`), or a reorientation card held it and the card's Approve changed
+ * what it was drafted under (V17-9: `reorientationId` and the card's
+ * `summary`; wave 17, the joins).
  */
 export interface WorkPlanRedraftingPayload extends WorkItemNamed {
-  readonly surfaceId: Id<'surfaces'>;
-  readonly slug: string;
+  readonly surfaceId?: Id<'surfaces'>;
+  readonly slug?: string;
+  readonly reorientationId?: Id<'reorientations'>;
+  readonly summary?: string;
 }
 
 /**
@@ -1998,7 +2004,14 @@ export interface ReorientationApprovedPayload extends ReorientationNamed {
 }
 
 /** The payload of `reorientation.dismissed`: the card closed and nothing changed. */
-export type ReorientationDismissedPayload = ReorientationNamed;
+/**
+ * The payload of `reorientation.dismissed`: the manager dismissed the card, or (with `outcome`)
+ * it closed because another employee's card decided the edge for everyone it was about, in that
+ * card's words ("decided on {name}'s card: {result}"; 17-O's F6, the joins).
+ */
+export interface ReorientationDismissedPayload extends ReorientationNamed {
+  readonly outcome?: string;
+}
 
 /** The payload of `reorientation.deferred`: the card set aside until a date (A21). */
 export interface ReorientationDeferredPayload extends ReorientationNamed {

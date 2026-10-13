@@ -72,6 +72,8 @@ export async function standingWithPages(
   relation: Doc<'docRelations'> | null,
 ): Promise<
   | {
+      /** The relation's row, as the card draws its evidence and answers. */
+      relation: Doc<'docRelations'>;
       conflict: StandingConflict;
       from: Doc<'docPages'>;
       to: Doc<'docPages'>;
@@ -98,6 +100,7 @@ export async function standingWithPages(
   const trust = authorityOf(from, fromSource);
   if (trust !== authorityOf(to, toSource)) return undefined;
   return {
+    relation,
     trust,
     conflict: {
       relationId: relation._id,
@@ -170,7 +173,7 @@ export const CARRIED_PAGES_READ = 64;
  * read by the page, so how many conflicts the owner has confirmed and settled since never hides
  * one. The index names the page; the kind and the status are read off the rows it gives.
  */
-async function confirmedConflictsOfPages(
+export async function confirmedConflictsOfPages(
   ctx: QueryCtx,
   userId: string,
   pages: readonly CarriedPage[],

@@ -1192,9 +1192,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} read what the plan${forItem(subject)} rests on`,
   'work.plan-drafted': (_, subject) => `${subject.name} drafted a plan${forItem(subject)}`,
   'work.plan-redrafting': (p, subject) =>
-    `The plan${forItem(subject)} is drafted again: ${
-      text(p.slug) ?? 'its system'
-    } is connected, so the ticket can be read`,
+    p.reorientationId !== undefined
+      ? `The plan${forItem(subject)} is drafted again: ${
+          text(p.summary) !== undefined ? `the card about “${text(p.summary)}”` : 'a card'
+        } changed what it was drafted under`
+      : `The plan${forItem(subject)} is drafted again: ${
+          text(p.slug) ?? 'its system'
+        } is connected, so the ticket can be read`,
   'work.plan-redraft': (p, subject) =>
     `The plan${forItem(subject)} is drafted again. ${
       text(p.reason) ?? 'Documentation the plan followed has since been changed or removed.'
@@ -1427,7 +1431,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.result) ? `, and ${text(p.result)}` : ''
     }`,
   'reorientation.dismissed': (p, subject) =>
-    `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
+    text(p.outcome) !== undefined
+      ? `The reorientation card${text(p.summary) !== undefined ? ` about “${text(p.summary)}”` : ''} closed as ${text(p.outcome)}`
+      : `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
   'reorientation.deferred': (p, subject) =>
     `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
   'manager.question-asked': (p, subject) =>

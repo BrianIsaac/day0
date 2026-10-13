@@ -348,7 +348,8 @@ async function scheduleRunbookStamps(
  * current: superseded, archived or marked a draft (the wave file's section 6.2). A page that
  * came back to active stamps nothing: a skill is checked against a runbook that stopped
  * standing, never for one that stands again. Every registered function that restates a page
- * calls it once with all its changes, so one transaction schedules one scan.
+ * calls it once with all its changes, so one transaction schedules one scan; the pages' conflict
+ * questions are handed over beside it (`scheduleQuestionTurns`).
  *
  * @param ctx - The writing mutation's context.
  * @param source - The pages' source, for its owner's library.
@@ -367,6 +368,27 @@ export async function stampStatusChanges(
       : [{ sourceId: change.sourceId, ref: change.ref, title: change.title, change: change.to }],
   );
   await scheduleRunbookStamps(ctx, source.userId, pages, now);
+  await scheduleQuestionTurns(ctx, changes);
+}
+
+/**
+ * Hand the conflict questions of the pages that left `active` or came back to it over to one
+ * scheduled step (`docRelations.turnPageQuestions`; 17-C): a page that left closes the questions
+ * about its confirmed conflicts, which hold nothing from then on, at the flip and not at the next
+ * run; a page that came back asks them again beside the drafted plans resting on them (F13). One
+ * function a transaction however many pages changed, so the status walk's bound holds.
+ */
+async function scheduleQuestionTurns(
+  ctx: MutationCtx,
+  changes: ReadonlyArray<StatusChange | null>,
+): Promise<void> {
+  const pages = changes.flatMap((change) =>
+    change === null || (change.from === 'active') === (change.to === 'active')
+      ? []
+      : [{ sourceId: change.sourceId, ref: change.ref, back: change.to === 'active' }],
+  );
+  if (pages.length === 0) return;
+  await ctx.scheduler.runAfter(0, internal.docRelations.turnPageQuestions, { pages });
 }
 
 /**

@@ -400,11 +400,14 @@ describe('signed-in landing', () => {
     }
   };
 
-  it('renders the owner’s company home, with the employee and documentation links', () => {
+  it('renders the owner’s company home, with the employee links and the hosted documentation card’s sentence', () => {
     const html = signedIn();
     expect(html).toContain('Your employees');
     expect(html).toContain('href="/agent/synthetic-owner-agent"');
-    expect(html).toContain('href="/documentation"');
+    // Re-pinned by the joins for FD-9 (b): the hosted card says its sentence and links nowhere,
+    // where its "View" opened a page that said the sentence again and drew no page.
+    expect(html).toContain('The hosted office reads its own seeded pages.');
+    expect(html).not.toContain('href="/documentation"');
     expect(html).not.toContain('Try the demo');
   });
 

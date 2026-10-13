@@ -16,6 +16,7 @@ import {
 } from './workingAgreements';
 import { editRelationshipInTransaction, retireRelationshipInTransaction } from './people';
 import { clearPageStatusInTransaction, decideByHand } from './docStatus';
+import { sendBackToDrafting } from './planRedraft';
 import { grantScopeInTransaction, revokeScopeInTransaction } from './agents';
 import {
   recheckSkillInTransaction,
@@ -123,11 +124,26 @@ async function decidableCard(
   return { card, agent };
 }
 
-/** Ask the plan's decision again for each row a decided card held, so a released plan goes on. */
-async function releaseHeldWork(ctx: MutationCtx, card: Doc<'reorientations'>): Promise<void> {
+/**
+ * Let go the rows a decided card held. Where the decision changed what their plans were drafted
+ * under (`changed`: an Approve that amended the charter, changed an edge, a page, an access or a
+ * skill), an undecided plan is sent back to drafting, so neither Day0 under the autonomy switch
+ * nor the manager decides a plan written for what no longer holds (V17-9, option (a); the
+ * joins). Otherwise each plan's decision is asked again, so a released plan goes on.
+ */
+async function releaseHeldWork(
+  ctx: MutationCtx,
+  card: Doc<'reorientations'>,
+  changed: boolean,
+): Promise<void> {
+  const now = Date.now();
   for (const workItemId of card.blockingWork) {
     const row = await ctx.db.get(workItemId);
     if (row?.state !== 'plan-pending') continue;
+    if (changed && row.decision?.decidedAt === undefined) {
+      await sendBackToDrafting(ctx, row, { card }, now);
+      continue;
+    }
     await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
   }
 }
@@ -183,8 +199,19 @@ async function closeSiblingCards(
           ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
           outcome: { summary: decision.outcome },
         });
+        await appendEvent(ctx, {
+          agentId,
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: card._id,
+            summary: card.triggerSummary,
+            outcome: decision.outcome,
+          },
+          createdAt: decision.now,
+        });
         await closeTalkOfCard(ctx, card._id);
-        await releaseHeldWork(ctx, card);
+        // Another card's Approve changed the edge this card's plans were drafted under.
+        await releaseHeldWork(ctx, card, true);
       } else if (
         card.proposed.kind === 'relationship' &&
         card.proposed.relationshipId === decision.relationshipId
@@ -263,15 +290,28 @@ async function closeSiblingsAfterApprove(
   );
 }
 
+/** What Approve did to the card's target. */
+interface Applied {
+  /** What it did, in words. */
+  readonly result: string;
+  readonly charterId?: Id<'charters'>;
+  /**
+   * Whether it changed what a plan the card held was drafted under: the charter, an agreement in
+   * force, an edge, a page's status, an access or a skill (V17-9). A keep, a re-check and a
+   * proposal of nothing change nothing a plan rests on.
+   */
+  readonly changed: boolean;
+}
+
 /** Apply a card's proposal through its target's transaction helper; what it did, in words. */
 async function applyProposal(
   ctx: MutationCtx,
   card: Doc<'reorientations'>,
   proposed: JudgedProposal,
-): Promise<{ result: string; charterId?: Id<'charters'> }> {
+): Promise<Applied> {
   switch (proposed.kind) {
     case 'none':
-      return { result: approvedResultWords.none };
+      return { result: approvedResultWords.none, changed: false };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
       // The charter's own refusals are each the charter no longer taking the change, said in the
@@ -293,7 +333,11 @@ async function applyProposal(
         }
         throw new ConvexError(CARD_ACTION_REFUSALS.moved);
       });
-      return { result: approvedResultWords.charter(amended.version), charterId: amended.charterId };
+      return {
+        result: approvedResultWords.charter(amended.version),
+        charterId: amended.charterId,
+        changed: true,
+      };
     }
     case 'agreement': {
       const agreement = await ctx.db.get(proposed.agreementId);
@@ -333,7 +377,11 @@ async function applyProposal(
           throw new Error(`unhandled agreement action ${String(unknown)}`);
         }
       }
-      return { result: approvedResultWords.agreement[action] };
+      // A proposed agreement set aside was never in force, so no plan rests on it.
+      return {
+        result: approvedResultWords.agreement[action],
+        changed: action === 'edit' || action === 'retire',
+      };
     }
     case 'relationship': {
       const edge = await ctx.db.get(proposed.relationshipId);
@@ -349,17 +397,17 @@ async function applyProposal(
       } else {
         await retireRelationshipInTransaction(ctx, edge, card.agentId);
       }
-      return { result: approvedResultWords.relationship[proposed.action] };
+      return { result: approvedResultWords.relationship[proposed.action], changed: true };
     }
     case 'page-status':
-      return await applyPageStatus(ctx, proposed, card.userId);
+      return { ...(await applyPageStatus(ctx, proposed, card.userId)), changed: true };
     case 'scope':
       if (proposed.action === 'revoke') {
         await revokeScopeInTransaction(ctx, { agentId: card.agentId, scope: proposed.scope });
       } else {
         await grantScopeInTransaction(ctx, card.agentId, proposed.scope, 'manager');
       }
-      return { result: approvedResultWords.scope(proposed.action, proposed.scope) };
+      return { result: approvedResultWords.scope(proposed.action, proposed.scope), changed: true };
     case 'skill-action': {
       const skill = await ctx.db.get(proposed.skillId);
       if (skill === null || skill.agentId !== card.agentId) {
@@ -369,7 +417,10 @@ async function applyProposal(
       else if (proposed.action === 'retire') {
         await retireSkillInTransaction(ctx, skill, proposed.rationale.slice(0, 500));
       } else await withdrawSkillInTransaction(ctx, skill, proposed.rationale.slice(0, 500));
-      return { result: approvedResultWords.skill(proposed.action, skill.name) };
+      return {
+        result: approvedResultWords.skill(proposed.action, skill.name),
+        changed: proposed.action !== 'recheck',
+      };
     }
     default: {
       const unknown: never = proposed;
@@ -512,7 +563,7 @@ export const approve = mutation({
       },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card);
+    await releaseHeldWork(ctx, card, applied.changed);
     await closeSiblingsAfterApprove(ctx, card, { result: applied.result, decidedBy, now });
     return { result: applied.result };
   },
@@ -542,7 +593,7 @@ export const dismiss = mutation({
       payload: { reorientationId: card._id, summary: card.triggerSummary },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card);
+    await releaseHeldWork(ctx, card, false);
     return null;
   },
 });

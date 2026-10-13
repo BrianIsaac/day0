@@ -235,26 +235,36 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     expect(next).toBeNull();
   });
 
-  it.fails(
-    // The joins give `listOpen` the read by page (C-1: the cards are 17-FD's); until then its query throws "Too many index ranges" for this owner, as W15-R19 recorded.
-    'draws the cards of an owner with a window of settled conflicts (R2-F)',
-    async (): Promise<void> => {
-      useSurfaceMode('real');
-      const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
-      const { relation } = await behindSettled(harness, 4);
-      expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
-        { _id: relation._id },
-      ]);
-    },
-  );
-
-  it('fails the cards’ query today with the limit the probe met, which is what the expected-fail above holds (R2-F)', async (): Promise<void> => {
+  it('draws the cards of an owner with a window of settled conflicts, each read going on from where the last stopped (R2-F)', async (): Promise<void> => {
     useSurfaceMode('real');
+    // Convex's own limits enforced: at v0.20.0 the cards' one read threw "Too many index ranges"
+    // for this owner (W15-R19), and no single read reaches past the settled ones (F12).
     const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
-    await behindSettled(harness, 4);
-    await expect(asManager(harness).query(api.docRelations.listOpen, {})).rejects.toThrow(
-      /Too many index ranges/,
-    );
+    const { relation } = await behindSettled(harness, 4);
+    const manager = asManager(harness);
+    const first = await manager.query(api.docRelations.listOpen, {});
+    expect(first.cards).toEqual([]);
+    const drawn = [...first.cards];
+    let next = first.next;
+    for (let read = 0; next !== null && read < 8; read += 1) {
+      const later = await manager.query(api.docRelations.listOpen, { conflictsBefore: next });
+      drawn.push(...later.cards);
+      next = later.next;
+    }
+    expect(drawn).toMatchObject([{ _id: relation._id, status: 'confirmed' }]);
+    expect(next).toBeNull();
+  });
+
+  it('draws the proposals on the first read alone, so a read going on from a cursor repeats none', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const pages = await twoThatDisagree(harness);
+    await measure(harness, pages.finance, 'escalation.md');
+    const manager = asManager(harness);
+    const first = await manager.query(api.docRelations.listOpen, {});
+    expect(first).toMatchObject({ cards: [{ status: 'proposed' }], next: null });
+    const later = await manager.query(api.docRelations.listOpen, { conflictsBefore: Date.now() });
+    expect(later).toEqual({ cards: [], next: null });
   });
 
   it('stops a walk at its byte bound with the conflict that passed it still to come, and passes over a relation the reader does not read for no lookup', async (): Promise<void> => {
@@ -469,7 +479,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       '[cite: Finance wiki/escalation.md#Finance escalation > Thresholds] [conflict]',
       '[cite: Handbook/runbooks/pipeline-runbook.md#Pipeline runbook > Thresholds] [conflict]',
     ]);
-    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
+    expect((await asManager(harness).query(api.docRelations.listOpen, {})).cards).toMatchObject([
       { _id: relationId, kind: 'possible_conflict', status: 'confirmed' },
     ]);
   });
@@ -876,6 +886,66 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await questionsOf(harness, workItemId)).toEqual([
       expect.objectContaining({ question: ASKED, relationId, blocking: false }),
     ]);
+  });
+
+  it('closes the question when a page of its conflict leaves current, and asks it again when the page comes back (17-C’s two docStatus lines; F13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const label = 'Finance wiki/escalation.md#Finance escalation > Thresholds';
+    const { citations } = await selection(harness, agentId);
+    const cited = citations.find((citation) => citation.label === label)!;
+    const workItemId = await planned(harness, agentId, {
+      cites: [
+        {
+          step: 1,
+          label,
+          sourceId: relation.from.sourceId,
+          pageRef: relation.from.ref,
+          blocks: cited.blocks.map((block) => ({ id: block.id, hash: block.hash! })),
+        },
+      ],
+    });
+    const manager = asManager(harness);
+    await manager.mutation(api.docRelations.decide, { relationId, decision: 'disagree' });
+    await ranAsks(harness);
+    const closes = async (): Promise<Array<string | undefined>> =>
+      (await questionsOf(harness, workItemId)).map((question) => question.closed?.reason);
+    expect(await closes()).toEqual([undefined]);
+    const pageId = await harness.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', relation.to.sourceId).eq('ref', relation.to.ref),
+          )
+          .unique())!._id,
+    );
+    // The manager archives one page: the conflict no longer stands, so its question closes at
+    // the flip, not at the plan's next run.
+    await manager.mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    await ranAsks(harness);
+    expect(await closes()).toEqual(['settled']);
+    // The page made current again: the conflict stands once more and the plan is asked again.
+    await manager.mutation(api.docStatus.clearPageStatus, { pageId });
+    await ranAsks(harness);
+    await ranAsks(harness);
+    expect(await closes()).toEqual(['settled', undefined]);
+    expect((await questionsOf(harness, workItemId))[1]).toMatchObject({
+      question: ASKED,
+      relationId,
+    });
   });
 
   it('asks out of the confirming transaction, a page of the reader’s drafted plans a step, until every plan was read (17-C; the pre-tag’s second pass)', async (): Promise<void> => {

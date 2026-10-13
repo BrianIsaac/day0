@@ -336,7 +336,7 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
     const { finance, handbook } = await twoThatDisagree(harness, { finance: 'official' });
     await measure(harness, finance, 'escalation.md');
     const [relation] = await relations(harness);
-    const [card] = await asManager(harness).query(api.docRelations.listOpen, {});
+    const [card] = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(card.offered).toEqual(['from-is-right', 'to-is-right', 'both-hold']);
     expect([card.from.authority, card.to.authority]).toEqual(['official', 'team']);
     await expect(
@@ -398,7 +398,7 @@ describe('decide: the manager’s answer on a relation’s card', (): void => {
         (event) => event.decision,
       ),
     ).toEqual(['supersedes', 'undo']);
-    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toMatchObject([
+    expect((await asManager(harness).query(api.docRelations.listOpen, {})).cards).toMatchObject([
       {
         _id: relation._id,
         status: 'proposed',
@@ -519,7 +519,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       updatedAt: 3,
     });
     await measure(harness, finance, 'escalation.md');
-    const cards = await asManager(harness).query(api.docRelations.listOpen, {});
+    const cards = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(cards.map((card) => [card.kind, card.status, card.offered])).toEqual([
       ['possible_conflict', 'proposed', ['disagree', 'from-is-right', 'to-is-right', 'both-hold']],
       ['possible_successor', 'proposed', ['supersedes', 'keep-both', 'not-the-same']],
@@ -538,7 +538,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       relationId: cards[0]._id,
       decision: 'disagree',
     });
-    const after = await asManager(harness).query(api.docRelations.listOpen, {});
+    const after = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(after.map((card) => [card.kind, card.status, card.offered])).toEqual([
       ['possible_successor', 'proposed', ['supersedes', 'keep-both', 'not-the-same']],
       ['possible_conflict', 'confirmed', ['from-is-right', 'to-is-right', 'both-hold']],
@@ -551,7 +551,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     ]);
     await harness.run(async (ctx) => await ctx.db.patch(finance.sourceId, { kind: 'urls' }));
     await harness.run(async (ctx) => await ctx.db.patch(official.sourceId, { kind: 'mcp' }));
-    const read = await asManager(harness).query(api.docRelations.listOpen, {});
+    const read = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(read.map((card) => [card.kind, card.from.edited, card.to.edited])).toEqual([
       ['possible_successor', false, true],
       ['possible_conflict', false, true],
@@ -570,7 +570,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       });
     await dated('escalation.md', true);
     await dated('runbooks/pipeline-runbook.md', false);
-    const said = await asManager(harness).query(api.docRelations.listOpen, {});
+    const said = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(
       said.map((card) => [
         card.kind,
@@ -584,7 +584,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     // Another manager sees none of them.
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),
-    ).toEqual([]);
+    ).toEqual({ cards: [], next: null });
   });
 
   it('draws a live card behind any number of proposals whose pages are no longer current', async (): Promise<void> => {
@@ -627,7 +627,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
         });
       });
     }
-    const cards = await asManager(harness).query(api.docRelations.listOpen, {});
+    const cards = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(cards.map((card) => [card.kind, card.to.title])).toEqual([
       ['possible_successor', 'Pipeline runbook'],
     ]);
@@ -667,7 +667,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
         });
       });
     }
-    const drawn = await asManager(harness).query(api.docRelations.listOpen, {});
+    const drawn = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(drawn.map((card) => [card.kind, card.status])).toContainEqual([
       'possible_conflict',
       'confirmed',
@@ -702,7 +702,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
         });
       });
     }
-    const drawn = await asManager(harness).query(api.docRelations.listOpen, {});
+    const drawn = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(drawn.length).toBeGreaterThan(0);
     expect(drawn.length).toBeLessThan(4);
     expect(drawn[0].from.title).toBe('Long 3 b');
@@ -713,7 +713,7 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
         decision: 'not-the-same',
       });
     }
-    const next = await asManager(harness).query(api.docRelations.listOpen, {});
+    const next = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(next[0].from.title).not.toBe('Long 3 b');
     expect(next.length).toBeGreaterThan(0);
   }, 30_000);
@@ -762,7 +762,7 @@ describe('a conflict whose page’s title is renamed (W15-R21)', (): void => {
       decision: 'disagree',
     });
     await restore(harness, handbook, a, RENAMED);
-    const cards = await asManager(harness).query(api.docRelations.listOpen, {});
+    const cards = (await asManager(harness).query(api.docRelations.listOpen, {})).cards;
     expect(cards).toMatchObject([
       {
         _id: proposed._id,
@@ -824,7 +824,9 @@ describe('the functions convex/docRelations.ts registers', (): void => {
       })
       .sort((left, right) => left.localeCompare(right));
     // Re-taken by 17-C for one internal mutation added, `askConfirmed`: the asking a confirmation
-    // schedules out of its own transaction. No function it registered at v0.19.0 moved.
+    // schedules out of its own transaction; and by the joins for `turnPageQuestions`, the step a
+    // page's change of status schedules for its conflict questions. No function it registered at
+    // v0.19.0 moved.
     expect(registered).toEqual([
       'askConfirmed internal mutation',
       'decide public mutation',
@@ -834,6 +836,7 @@ describe('the functions convex/docRelations.ts registers', (): void => {
       'measuringPlan internal query',
       'pagesWrittenBy internal query',
       'settleRelationsOwed internal mutation',
+      'turnPageQuestions internal mutation',
     ]);
   });
 });

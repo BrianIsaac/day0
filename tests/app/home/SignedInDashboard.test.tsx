@@ -166,6 +166,8 @@ const state = vi.hoisted(() => ({
   reportingElsewhere: undefined as unknown,
   /** Whether `config.surfaceMode` has yet to answer. */
   modeLoading: false,
+  /** What `config.surfaceMode` answers once it has: the hosted office unless a test says. */
+  mode: 'mock' as 'mock' | 'real',
   /** The manager's finished handovers, as `managerTransfers.departures` lists them. */
   departures: undefined as unknown,
   /** A handover's preview, as `transferAcceptance.transferPreview` answers it. */
@@ -191,7 +193,7 @@ vi.mock('convex/react', () => {
     if (name === 'managerTransfers:departures') return state.departures;
     if (name === 'transferAcceptance:transferPreview') return state.preview;
     if (name === 'config:surfaceMode') {
-      return state.modeLoading ? undefined : { mode: 'mock', label: 'mock' };
+      return state.modeLoading ? undefined : { mode: state.mode, label: state.mode };
     }
     if (name === 'docSources:listMine') return [{ _id: 'synthetic-doc-source', label: 'Handbook' }];
     if (name === 'metrics:forOwner' && shown.length > 0) {
@@ -349,8 +351,23 @@ describe('the signed-in home with nobody deployed', (): void => {
     );
     expect(card).not.toContain('linked');
     expect(card).not.toContain('No documentation linked yet');
-    // Nothing is managed there in the hosted office: the link views the seeded pages.
-    expect(card).toMatch(/<a [^>]*href="\/documentation"[^>]*>View<\/a>/);
+    // Nothing is managed there in the hosted office, and the page draws no page of its own: the
+    // card says the sentence and links nowhere (FD-9 (b), the joins; re-pinned from a "View" link
+    // to /documentation, which said the sentence again and showed no page).
+    expect(card).not.toContain('<a ');
+    expect(card).not.toContain('View');
+  });
+
+  it('says one linked source in the singular on a local install’s documentation card (the joins’ walk, W1)', (): void => {
+    state.mode = 'real';
+    try {
+      const card = /<h2[^>]*>Documentation<\/h2>.*?<\/section>/s.exec(html())?.[0] ?? '';
+      expect(card).toContain(
+        '1 source linked. Every employee reads it unless you leave it out at deploy.',
+      );
+    } finally {
+      state.mode = 'mock';
+    }
   });
 
   it('names the documentation link only once the mode has answered, so it never reads Manage and then View (W16-R35)', (): void => {
@@ -448,7 +465,15 @@ describe('the company home', (): void => {
     const names = [...page.matchAll(/<th scope="row"[^>]*><a [^>]*>/g)].map(([tag]) => tag);
     expect(names.length).toBeGreaterThan(0);
     for (const tag of names) expect(tag).toMatch(/\bmin-h-11\b/);
-    expect(/<a [^>]*href="\/documentation"[^>]*>/.exec(page)?.[0]).toMatch(/\bmin-h-11\b/);
+    // The documentation card's Manage is a local install's (FD-9 (b): the hosted card links nowhere).
+    state.mode = 'real';
+    try {
+      expect(/<a [^>]*href="\/documentation"[^>]*>/.exec(render(roster))?.[0]).toMatch(
+        /\bmin-h-11\b/,
+      );
+    } finally {
+      state.mode = 'mock';
+    }
   });
 
   it('lists what waits on the manager from the inbox, and the roster counts it per employee', (): void => {

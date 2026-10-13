@@ -234,7 +234,7 @@ describe('measurePage: the relations a finishing sync proposes', (): void => {
     const [first] = await relations(harness);
     // Unanswered, and the page is edited to another figure: the row names blocks that are gone.
     await editFinance('20,000');
-    expect(await asManager(harness).query(api.docRelations.listOpen, {})).toEqual([]);
+    expect((await asManager(harness).query(api.docRelations.listOpen, {})).cards).toEqual([]);
     expect(await measure(harness, finance, 'escalation.md')).toBe(1);
     const afterEdit = await relations(harness);
     expect(afterEdit.map((row) => [row.kind, row.status])).toEqual([

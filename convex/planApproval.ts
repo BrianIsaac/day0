@@ -130,7 +130,7 @@ export const setPlan = internalMutation({
         .unique();
       const now = Date.now();
       if (source && verdictFor(toSurfaceRecord(source), now) === 'connected') {
-        await sendBackToDrafting(ctx, row, source, now);
+        await sendBackToDrafting(ctx, row, { surface: source }, now);
         return { stored: false, redrafting: true };
       }
     }

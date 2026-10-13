@@ -565,7 +565,7 @@ export function employeePage(): Record<string, unknown> {
     ],
     'docSources:byIds': SOURCES,
     'docSources:listMine': SOURCES,
-    'docRelations:listOpen': RELATIONS,
+    'docRelations:listOpen': { cards: RELATIONS, next: null },
     'docPages:readState': { completedAt: minutes(40), unreadCount: 1, unreadNamed: 1 },
     'docPages:listForSource': (args: { readonly sourceId?: string }) =>
       PAGES[args.sourceId ?? ''] ?? [],

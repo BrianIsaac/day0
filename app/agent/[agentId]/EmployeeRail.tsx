@@ -8,6 +8,7 @@ import type { Doc } from '@convex/_generated/dataModel';
 import type { AgentMetrics } from '@/metrics/types';
 import { decidedCount, formatMetricDuration } from '../../metric-format';
 import { Card } from '../../components/Card';
+import { ReadBoundary } from '../../components/ReadBoundary';
 import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
@@ -97,6 +98,45 @@ export function RecordLines({ events, titles, lines }: RecordLinesProps) {
   );
 }
 
+/** What a figures card says when its read failed: the rest of the page stands (C1). */
+export const FIGURES_UNREAD = 'Day0 could not read these figures.';
+
+/** A figures card's line in place of the figures its read could not give. */
+export function FiguresUnread() {
+  return <p className="text-sm text-[var(--color-muted)]">{FIGURES_UNREAD}</p>;
+}
+
+/**
+ * The rail's figures for the employee's day: read here, under the rail's `ReadBoundary`, so a read
+ * that fails leaves the rest of the page standing (C1, 17-FW; W16-R31).
+ *
+ * @param tookOver - Whether the reader took the employee over; undefined while that is loading.
+ */
+function TodayFigures({
+  agentId,
+  day,
+  tookOver,
+}: {
+  agentId: Doc<'agents'>['_id'];
+  day: string;
+  tookOver: boolean | undefined;
+}) {
+  const today = useQuery(api.metrics.forAgent, { agentId, day })?.today;
+  if (today === undefined || tookOver === undefined) {
+    return <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>;
+  }
+  return (
+    <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-1.5">
+      {railFigures(today, { tookOver, today: true }).map((figure) => (
+        <div key={figure.label} className="contents">
+          <dt className="mt-2 text-[var(--color-muted)] first:mt-0 sm:mt-0">{figure.label}</dt>
+          <dd className="m-0 text-[var(--color-fg)]">{figure.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 /**
  * The employee page's aside (round two section 3.6): today's figures in the employee's zone, the newest lines of the
  * record, and where decisions reach the manager. Each tab that draws the aside puts it beside its
@@ -108,8 +148,6 @@ export function EmployeeRail() {
   const now = useNow();
   // The employee's own day (N12, 16-F): the rail's figures are that day's, in its zone.
   const day = dayKey(now, agentZone(agent));
-  const metrics = useQuery(api.metrics.forAgent, { agentId, day });
-  const today = metrics?.today;
   const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: RECENT_EVENTS });
   const workItems = useQuery(api.work.listForAgent, { agentId });
@@ -128,20 +166,13 @@ export function EmployeeRail() {
   return (
     <>
       <Card title="Today" meta="counts, not rates">
-        {today === undefined || earlier === undefined ? (
-          <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>
-        ) : (
-          <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-[max-content_minmax(0,1fr)] sm:gap-y-1.5">
-            {railFigures(today, { tookOver, today: true }).map((figure) => (
-              <div key={figure.label} className="contents">
-                <dt className="mt-2 text-[var(--color-muted)] first:mt-0 sm:mt-0">
-                  {figure.label}
-                </dt>
-                <dd className="m-0 text-[var(--color-fg)]">{figure.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
+        <ReadBoundary what="metrics.forAgent" fallback={<FiguresUnread />}>
+          <TodayFigures
+            agentId={agentId}
+            day={day}
+            tookOver={earlier === undefined ? undefined : tookOver}
+          />
+        </ReadBoundary>
       </Card>
       <Card
         title="Record"
