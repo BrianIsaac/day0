@@ -46,6 +46,13 @@ export interface EvaluationTaskResult {
   /** Harness-counted skill-authoring invocations; absent only on retained v1 evidence. */
   skillAuthoringAttempts?: number;
   grade: EvaluationGrade;
+  /**
+   * The permissions the work item's scope verdict named as missing, kept
+   * beside the grade since 13 October 2026 so that a stored deferred row can be
+   * checked against them and not read from its state alone. Empty when the
+   * verdict names none or the item has no verdict; absent on older evidence.
+   */
+  missingPermissions?: string[];
   actionAudit?: ActionArgumentAudit;
   error?: string;
 }

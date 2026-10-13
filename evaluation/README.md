@@ -821,6 +821,15 @@ permission; the verdict's words still never meet a reason word. The sentence the
 writes on a deferred row since v0.19.0 ("Deferred: this work needs ..., a permission ...
 does not hold.") is the product's own, so such a row is decided and not explained.
 
+Since 13 October 2026 each task result also keeps `missingPermissions` beside its grade:
+the permissions the work item's scope verdict named as missing, and an empty list when the
+verdict named none or the item has no verdict. A live grade reads the verdict itself, so the
+field moves no figure; it is kept for a stored result read again after its backend is gone.
+There a deferred row is a deferral for a missing permission only when the list names one,
+because the product also defers a row whose evaluation could not be had, with an empty list.
+A result written before that date kept no verdict, so its deferred rows are still read from
+the terminal state alone.
+
 Documented-procedure adherence is fixed a priori from the task definition. Every
 task-run carries the completion-report obligation; a ticket-queue task with a
 named originating ticket also carries the originating-ticket-note obligation.
