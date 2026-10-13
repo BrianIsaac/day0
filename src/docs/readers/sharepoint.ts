@@ -425,6 +425,7 @@ export class SharePointReader implements DocumentationReader {
             title: stem,
             markdown: underTitle(stem, 'This file was deleted in SharePoint.'),
             updatedAt: this.now(),
+            datedBySource: false,
             nativeStatus: 'archived',
           };
     }
@@ -459,6 +460,7 @@ export class SharePointReader implements DocumentationReader {
       ...(url?.startsWith('https://') ? { url } : {}),
       markdown: extension === 'md' ? markdown : underTitle(stem, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };
   }
@@ -587,6 +589,7 @@ export class SharePointReader implements DocumentationReader {
       ...(webUrl?.startsWith('https://') ? { url: webUrl } : {}),
       markdown: underTitle(title, body),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(nativeStatus === undefined ? {} : { nativeStatus }),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };

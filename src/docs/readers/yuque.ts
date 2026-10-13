@@ -172,7 +172,12 @@ export class YuqueReader implements DocumentationReader {
           mark.url === this.documentUrl(session.locator, textField(entry, 'slug'))
         ) {
           const nativeStatus = yuqueNativeStatus(field(entry, 'status'));
-          kept.push({ ref, ...(nativeStatus === undefined ? {} : { nativeStatus }) });
+          kept.push({
+            ref,
+            ...(nativeStatus === undefined ? {} : { nativeStatus }),
+            // The revision is the content's own time: where it parses, it dated the stored page.
+            ...(Number.isFinite(Date.parse(revision)) ? { datedBySource: true } : {}),
+          });
           continue;
         }
       }
@@ -327,6 +332,7 @@ export class YuqueReader implements DocumentationReader {
       ...(url === undefined ? {} : { url }),
       markdown: underTitle(title, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(nativeStatus === undefined ? {} : { nativeStatus }),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };
@@ -345,6 +351,7 @@ export class YuqueReader implements DocumentationReader {
       title,
       markdown: underTitle(title, 'This document was deleted in Yuque.'),
       updatedAt: Number.isFinite(deletedAt) ? deletedAt : this.now(),
+      datedBySource: Number.isFinite(deletedAt),
       nativeStatus: 'archived',
     };
   }

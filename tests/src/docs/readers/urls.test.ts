@@ -395,3 +395,32 @@ describe('URL documentation reader', (): void => {
     expect(htmlPageTitle('<p>none</p>', 'fallback')).toBe('fallback');
   });
 });
+
+describe("a URL page's date (wave 17, D-8)", (): void => {
+  it('says a fetched page is dated by the read: a URL gives no edit time Day0 reads', async (): Promise<void> => {
+    const connection = connectionTo(
+      async (): Promise<Response> =>
+        new Response('# Runbook', {
+          headers: {
+            'content-type': 'text/markdown',
+            'last-modified': 'Wed, 07 Oct 2026 03:15:00 GMT',
+          },
+        }),
+    );
+    const source: DocSourceRecord = {
+      _id: 'source-urls' as Id<'docSources'>,
+      label: 'Pages',
+      kind: 'urls',
+      locator: 'https://example.com/runbook',
+    };
+    const [page] = (
+      await new UrlsReader(PROVIDER_BACKOFF, connection).listPageBatch(
+        source,
+        undefined,
+        undefined,
+        25,
+      )
+    ).pages;
+    expect(page.datedBySource).toBe(false);
+  });
+});

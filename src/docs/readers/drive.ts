@@ -325,6 +325,7 @@ export class GoogleDriveReader implements DocumentationReader {
       ...(url?.startsWith('https://') ? { url } : {}),
       markdown: underTitle(title, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(field(file, 'trashed') === true ? { nativeStatus: 'archived' as const } : {}),
       ...(typeof version === 'string' || typeof version === 'number'
         ? { sourceRevision: String(version) }

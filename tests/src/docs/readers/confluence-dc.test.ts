@@ -3,7 +3,12 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { ConfluenceDataCenterReader } from '../../../../src/docs/readers/confluence-dc';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureJsonWithout,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
 
 const TOKEN = 'fixture-confluence-pat';
 
@@ -346,4 +351,27 @@ describe('the Confluence Data Center documentation reader', (): void => {
       '2+2 body.storage,version',
     ]);
   }, 60_000);
+});
+
+describe("a Confluence Data Center page's date (wave 17, D-8)", (): void => {
+  it("says a page is dated by its source when the server gives its version's time", async (): Promise<void> => {
+    const { reader } = readerOnServer();
+    const { pages } = await wholeSpace(reader);
+    expect(pages.map((page) => page.datedBySource)).toEqual([true, true, true, true]);
+  });
+
+  it('says a page with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnServer((request) =>
+      request.url.pathname.endsWith('/rest/api/content') &&
+      request.url.searchParams.get('status') === 'current' &&
+      request.url.searchParams.get('start') === '0'
+        ? json(200, fixtureJsonWithout('confluence-dc', 'content-current-0.json', 'when'))
+        : undefined,
+    );
+    const { pages } = await reader.listPageBatch(space, TOKEN, undefined, 2);
+    expect(pages.map((page) => [page.ref, page.updatedAt, page.datedBySource])).toEqual([
+      ['4587521', Date.UTC(2026, 9, 10, 9, 0, 0), false],
+      ['4587522', Date.UTC(2026, 9, 10, 9, 0, 0), false],
+    ]);
+  });
 });

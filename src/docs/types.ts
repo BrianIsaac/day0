@@ -52,6 +52,14 @@ export interface DocPage {
    * answer): the revision it was stored with stands, where none would clear it (W15-R30).
    */
   revisionUnread?: boolean;
+  /**
+   * Whether `updatedAt` is the source's own edit time (true) or the time the reader read the page,
+   * its source having given no date it could read (false); stored as `docPages.datedBySource`
+   * (wave 17, D-8). Every reader sets it: a folder's file time counts as its source's (X-3), and a
+   * page from a git checkout, a list of URLs or an MCP server is dated by the read. Absent only on
+   * a page object no reader made.
+   */
+  datedBySource?: boolean;
 }
 
 /** What every documentation reader provides: one batch of pages at a time. */

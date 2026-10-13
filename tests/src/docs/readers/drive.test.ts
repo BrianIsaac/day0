@@ -4,7 +4,12 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { GoogleDriveReader } from '../../../../src/docs/readers/drive';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureJsonWithout,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -136,6 +141,8 @@ describe('the Google Drive documentation reader', (): void => {
       markdown:
         '# Close the quarter\n\n## Steps\n\n1. Lock the ledger.\n2. Refresh the pipeline tile.\n\n| Step | Owner |\n| :--- | :--- |\n| Lock the ledger | Finance |',
       updatedAt: Date.UTC(2026, 9, 1, 9, 30, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '41',
     });
     const exported = requests.find((request) => request.url.pathname.endsWith('/export'));
@@ -344,5 +351,29 @@ describe('the Google Drive documentation reader', (): void => {
       "A Google Drive source reads as a service account, and this one has no key: use Rotate on the source's row to paste the service account's JSON key.",
     );
     expect(requests).toEqual([]);
+  });
+});
+
+describe("a Google Drive document's date (wave 17, D-8)", (): void => {
+  it('says a document is dated by its source when Drive gives its modified time', async (): Promise<void> => {
+    const { reader } = readerOnDrive();
+    const { pages } = await wholeFolder(reader);
+    expect(pages.length).toBeGreaterThan(0);
+    expect(pages.map((page) => page.datedBySource)).toEqual(pages.map(() => true));
+  });
+
+  it('says a document with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnDrive((request) =>
+      request.url.pathname.endsWith('/drive/v3/files') &&
+      !request.url.searchParams.has('pageToken') &&
+      (request.url.searchParams.get('q') ?? '').startsWith(`'${ROOT}'`)
+        ? json(200, fixtureJsonWithout('drive', 'list-root-1.json', 'modifiedTime'))
+        : undefined,
+    );
+    const { pages } = await reader.listPageBatch(folder, SECRET, undefined, 3);
+    expect(pages.map((page) => [page.title, page.updatedAt, page.datedBySource])).toEqual([
+      ['Close the quarter', T0, false],
+      ['Escalation paths', T0, false],
+    ]);
   });
 });

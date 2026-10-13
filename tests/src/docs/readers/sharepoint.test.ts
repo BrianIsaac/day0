@@ -10,6 +10,7 @@ import { sharePointReaderSecret } from '../../../../src/docs/sharepoint-source';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
 import {
   fixtureBytes,
+  fixtureJsonWithout,
   providerFake,
   type FakeOverride,
   type FakeRequest,
@@ -160,6 +161,8 @@ describe('the SharePoint documentation reader', (): void => {
       markdown:
         '# Close the quarter\n\n1. Lock the ledger.\n2. Refresh the pipeline tile.\n\n| Step | Owner |\n| --- | --- |\n| Lock the ledger | Finance |\n',
       updatedAt: Date.UTC(2026, 9, 1, 9, 30, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '"c:{11111111-1111-4111-8111-111111111111},7"',
     });
     const download = requests.find((request) => request.url.host === 'acme.sharepoint.com');
@@ -192,6 +195,8 @@ describe('the SharePoint documentation reader', (): void => {
       title: 'old-process',
       markdown: '# old-process\n\nThis file was deleted in SharePoint.',
       updatedAt: T0,
+      // Re-pinned for wave 17 (D-8): a deletion's delta item carries no date, so the read dates it.
+      datedBySource: false,
       nativeStatus: 'archived',
     });
     expect(pages.find((page) => page.title === 'Escalation paths 2027')?.nativeStatus).toBe(
@@ -218,6 +223,8 @@ describe('the SharePoint documentation reader', (): void => {
         'Ask in #revops when the tile stays grey.',
       ].join('\n\n'),
       updatedAt: Date.UTC(2026, 8, 28, 7, 0, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '3.0',
     });
     const chinese = pages.filter((page) => !/[A-Za-z]/.test(page.title));
@@ -242,6 +249,8 @@ describe('the SharePoint documentation reader', (): void => {
         '夜间请致电值班经理。',
       ].join('\n\n'),
       updatedAt: Date.UTC(2026, 8, 12, 10, 0, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '"c:{22222222-2222-4222-8222-222222222222},3"',
     });
   });
@@ -595,5 +604,39 @@ describe('the SharePoint documentation reader', (): void => {
       reason: '"Escalation paths.docx" is larger than the 16 MiB Day0 reads of one Word document.',
     });
     expect(batch.pages.map((page) => page.ref)).toEqual(['file-01CLOSE']);
+  });
+});
+
+describe("a SharePoint page's date (wave 17, D-8)", (): void => {
+  it('says a file and a site page that SharePoint dates are dated by their source', async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    const { pages } = await wholeSite(reader);
+    const dated = new Map(pages.map((page) => [page.ref, page.datedBySource]));
+    expect(dated.get('file-01CLOSE')).toBe(true);
+    expect(dated.get('page-0a1b2c3d-0000-4000-8000-000000000001')).toBe(true);
+    // A deleted file's time is the read's: the delta item of a deletion carries no date.
+    expect(dated.get('file-01OLD')).toBe(false);
+    expect([...dated.values()].every((value) => typeof value === 'boolean')).toBe(true);
+  });
+
+  it('says a page with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) => {
+      const path = request.url.pathname;
+      if (path.endsWith('/drive/root/delta') && !request.url.searchParams.has('token')) {
+        return json(200, fixtureJsonWithout('sharepoint', 'delta-1.json', 'lastModifiedDateTime'));
+      }
+      return path.endsWith('/pages/0a1b2c3d-0000-4000-8000-000000000001/microsoft.graph.sitePage')
+        ? json(200, fixtureJsonWithout('sharepoint', 'page-refresh.json', 'lastModifiedDateTime'))
+        : undefined;
+    });
+    const { pages } = await wholeSite(reader);
+    for (const ref of ['file-01CLOSE', 'page-0a1b2c3d-0000-4000-8000-000000000001']) {
+      expect(pages.find((page) => page.ref === ref)).toMatchObject({
+        updatedAt: T0,
+        datedBySource: false,
+      });
+    }
+    // The file beside it, which the second delta page dates, is still its source's.
+    expect(pages.find((page) => page.ref === 'file-01OPSZH')?.datedBySource).toBe(true);
   });
 });

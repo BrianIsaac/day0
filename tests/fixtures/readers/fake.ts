@@ -95,6 +95,19 @@ export function fixtureBytes(kind: string, name: string): Uint8Array<ArrayBuffer
   return new Uint8Array(readFileSync(join(DIRECTORY, kind, name)));
 }
 
+/**
+ * A fixture's JSON with fields taken out wherever they occur, as a source that gives no such
+ * field answers (a listing with no date, an item with no revision).
+ *
+ * @param name - The fixture file beside the provider's `provider.json`.
+ * @param keys - The fields' names, each removed at every depth.
+ */
+export function fixtureJsonWithout(kind: string, name: string, ...keys: string[]): unknown {
+  return JSON.parse(readFileSync(join(DIRECTORY, kind, name), 'utf8'), (field, value: unknown) =>
+    keys.includes(field) ? undefined : value,
+  );
+}
+
 /** Whether a route's pairs are exactly the request's, `*` standing for any value. */
 function samePairs(
   expected: ReadonlyArray<readonly [string, string]>,

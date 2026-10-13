@@ -640,6 +640,7 @@ export class FeishuReader implements DocumentationReader {
       ...(entry.url === undefined ? {} : { url: entry.url }),
       markdown,
       updatedAt: entry.editedAt ?? this.now(),
+      datedBySource: entry.editedAt !== undefined,
       ...(typeof revision === 'number' ? { sourceRevision: String(revision) } : {}),
       ...(revision === 'unread' ? { revisionUnread: true } : {}),
     };

@@ -52,6 +52,12 @@ export interface KeptPage {
   readonly ref: string;
   /** What the listing says of the page's status now; absent, it says nothing. */
   readonly nativeStatus?: PageStatus;
+  /**
+   * Whether the listing dates the page itself, so the `updatedAt` it was stored with at this
+   * revision is its source's own edit time (`DocPage.datedBySource`); absent where the listing
+   * cannot say. For the sync's one patch of a page stored before the field existed (wave 17, D-8).
+   */
+  readonly datedBySource?: boolean;
 }
 
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */

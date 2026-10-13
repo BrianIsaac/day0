@@ -730,6 +730,7 @@ export class McpReader implements DocumentationReader {
               Number.isFinite(Date.parse(file.modifiedTime))
                 ? Date.parse(file.modifiedTime)
                 : Date.now(),
+            datedBySource: false,
             ...(file.trashed === true ? { nativeStatus: 'archived' as const } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -831,6 +832,7 @@ export class McpReader implements DocumentationReader {
             markdown: unwrapWholePageFence(markdown),
             updatedAt:
               modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
+            datedBySource: false,
             ...(nativeStatus !== undefined ? { nativeStatus } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -892,6 +894,7 @@ export class McpReader implements DocumentationReader {
               Number.isFinite(Date.parse(result.last_edited_time))
                 ? Date.parse(result.last_edited_time)
                 : Date.now(),
+            datedBySource: false,
             ...(archived ? { nativeStatus: 'archived' as const } : {}),
           };
         }),
@@ -934,6 +937,7 @@ export class McpReader implements DocumentationReader {
             url: /^https?:\/\//.test(resource.uri) ? resource.uri : undefined,
             markdown,
             updatedAt: Date.now(),
+            datedBySource: false,
           };
         }),
       );

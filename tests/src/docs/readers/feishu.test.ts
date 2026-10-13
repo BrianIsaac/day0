@@ -781,3 +781,36 @@ describe("the Feishu reader's guide", (): void => {
     for (const reason of reasons) expect(guide).toContain(reason);
   });
 });
+
+describe("a Feishu document's date (wave 17, D-8)", (): void => {
+  it('says a document is dated by its source when its node gives an edit time', async (): Promise<void> => {
+    const { reader } = readerOnTenant();
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages.length).toBeGreaterThan(0);
+    expect(batch.pages.map((page) => page.datedBySource)).toEqual(batch.pages.map(() => true));
+  });
+
+  it('says a document with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnTenant({
+      override: (request) =>
+        request.url.pathname.endsWith('/nodes') &&
+        request.url.searchParams.get('parent_node_token') === null &&
+        request.url.searchParams.get('page_token') === null
+          ? nodePage([
+              {
+                node_token: NODES.refresh.node,
+                obj_token: NODES.refresh.obj,
+                obj_type: 'docx',
+                node_type: 'origin',
+                has_child: false,
+                title: 'How to refresh the Looker pipeline tile',
+              },
+            ])
+          : undefined,
+    });
+    const batch = await reader.listPageBatch(wiki, SECRET, undefined, 25);
+    expect(batch.pages.map((page) => [page.ref, page.updatedAt, page.datedBySource])).toEqual([
+      [NODES.refresh.node, T0, false],
+    ]);
+  });
+});

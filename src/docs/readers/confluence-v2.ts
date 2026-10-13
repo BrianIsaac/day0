@@ -156,6 +156,7 @@ export function confluencePage(
     ...(listed.url === undefined ? {} : { url: listed.url }),
     markdown: underTitle(title, body),
     updatedAt: Number.isFinite(edited) ? edited : now(),
+    datedBySource: Number.isFinite(edited),
     ...(nativeStatus === undefined ? {} : { nativeStatus }),
     ...(typeof listed.versionNumber === 'number'
       ? { sourceRevision: String(listed.versionNumber) }

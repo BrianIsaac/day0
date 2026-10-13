@@ -3,7 +3,12 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError } from '../../../../src/docs/readers/batch';
 import { ConfluenceCloudReader } from '../../../../src/docs/readers/confluence-v2';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureJsonWithout,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -396,4 +401,26 @@ describe('the Confluence Cloud documentation reader', (): void => {
     const after = await reader.listPageBatch(space, TOKEN, batch.nextCursor, 1);
     expect(after.pages.map((page) => page.ref)).toEqual(['8']);
   }, 60_000);
+});
+
+describe("a Confluence Cloud page's date (wave 17, D-8)", (): void => {
+  it("says a page is dated by its source when Confluence gives its version's time", async (): Promise<void> => {
+    const { reader } = readerOnSite();
+    const { pages } = await wholeSpace(reader);
+    expect(pages.map((page) => page.datedBySource)).toEqual([true, true, true, true, true]);
+  });
+
+  it('says a page with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnSite((request) =>
+      request.url.searchParams.has('cursor')
+        ? undefined
+        : json(200, fixtureJsonWithout('confluence-v2', 'pages-1.json', 'createdAt')),
+    );
+    const { pages } = await reader.listPageBatch(space, TOKEN, undefined, 3);
+    expect(pages.map((page) => [page.ref, page.updatedAt, page.datedBySource])).toEqual([
+      ['98311', T0, false],
+      ['98312', T0, false],
+      ['98313', T0, false],
+    ]);
+  });
 });

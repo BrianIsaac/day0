@@ -268,6 +268,7 @@ export class UrlsReader implements DocumentationReader {
       url: url.href,
       markdown,
       updatedAt: Date.now(),
+      datedBySource: false,
     };
   }
 }
