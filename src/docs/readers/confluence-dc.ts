@@ -264,6 +264,22 @@ export class ConfluenceDataCenterReader implements DocumentationReader {
       if (!(error instanceof AnswerTooLargeError)) throw error;
       return confluencePage(source, { ...listed, oversize: true }, now);
     }
+    // A server that lists its archived pages is not known to give one by its id under that
+    // status (V15-1b): where it will not, that is this page's, whose last version stands, and
+    // the walk goes on. Read before any refusal is worded, as the walk's own refusal is.
+    if (at.phase === 'archived' && answer.status >= 400 && answer.status < 500) {
+      log.info('confluence data center lists an archived page and does not give it by id', {
+        host: url.host,
+        status: answer.status,
+      });
+      return {
+        ref: listed.id,
+        reason:
+          `Confluence listed "${listed.title?.trim() || 'Untitled'}" among its archived pages and ` +
+          `then answered HTTP ${answer.status} for the page itself, so Day0 keeps what it last ` +
+          'read of it.',
+      };
+    }
     const body = this.ownBody(answer, locator);
     if (answer.status === 404) return goneSinceListed(listed);
     const page = accepted(answer, body);

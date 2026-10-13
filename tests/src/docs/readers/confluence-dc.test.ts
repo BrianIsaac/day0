@@ -541,6 +541,32 @@ describe('the Confluence Data Center reader contract by revision (wave 17, 17-X)
     expect(batch).not.toHaveProperty('kept');
   });
 
+  it('names an archived page the server lists and then will not give by its id unread, and reads the rest of the space (the second pass)', async (): Promise<void> => {
+    // Whether a server gives an archived page by its id under status=archived is unverified
+    // (V15-1b): one that lists it and then refuses the page fails that page, not the sync.
+    const library = libraryFake('confluence-dc', { pages: 4 });
+    library.archive(2);
+    const reader = new ConfluenceDataCenterReader({
+      fetch: async (input, init) => {
+        const url = new URL(input);
+        return /\/content\/\d+$/.test(url.pathname) && url.searchParams.get('status') === 'archived'
+          ? json(400, { statusCode: 400, message: 'Illegal status: archived' })
+          : await library.fetch(input, init);
+      },
+      now: (): number => Date.UTC(2026, 9, 10, 9, 0, 0),
+      sleep: async (): Promise<void> => undefined,
+    });
+    const whole = await readWhole(reader, space, TOKEN, new Map());
+    expect(whole.read.map((page) => page.ref)).toEqual([0, 1, 3].map(libraryRef));
+    expect(whole.unread).toEqual([
+      {
+        ref: libraryRef(2),
+        reason:
+          'Confluence listed "Runbook 2" among its archived pages and then answered HTTP 400 for the page itself, so Day0 keeps what it last read of it.',
+      },
+    ]);
+  });
+
   it('says a kept page with no date from its source was dated by the read', async (): Promise<void> => {
     const library = libraryFake('confluence-dc', { pages: 3 });
     library.pages[1].editedAt = undefined;

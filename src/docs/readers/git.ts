@@ -399,7 +399,7 @@ export class GitReader implements DocumentationReader {
       source,
       secret,
       async (checkout: string): Promise<ReadPageBatch> =>
-        await readMarkdownDirectoryBatch(source, checkout, cursor, limit, false),
+        await readMarkdownDirectoryBatch(source, checkout, cursor, limit, { datedBySource: false }),
     );
   }
 

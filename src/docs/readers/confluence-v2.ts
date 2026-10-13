@@ -302,15 +302,34 @@ export class ConfluenceCloudReader implements DocumentationReader {
    * The changed pages of a listing page with their bodies in the storage format, asked for by id
    * in one request (X-2); none is asked where none changed.
    *
-   * @returns Each page the answer carried, by id.
+   * An answer that says more of it follows gave a part of the pages asked for: the rest are asked
+   * for again, so a page is named gone only by an answer that says nothing follows it.
+   *
+   * @returns Each page the answers carried, by id.
    * @throws AnswerTooLargeError when the pages together are past what one answer may hold.
    */
   private async byId(
     session: Session,
     changed: readonly ListedConfluencePage[],
   ): Promise<ReadonlyMap<string, ListedConfluencePage>> {
-    if (changed.length === 0) return new Map();
-    const ids = changed.map((entry) => entry.id);
+    const read = new Map<string, ListedConfluencePage>();
+    let wanted = changed.map((entry) => entry.id);
+    while (wanted.length > 0) {
+      const answered = await this.askById(session, wanted);
+      for (const page of answered.pages) read.set(page.id, page);
+      const left = wanted.filter((id) => !read.has(id));
+      // Nothing follows, or the answer gave none of what was asked: what is left is gone.
+      if (!answered.more || left.length === wanted.length) break;
+      wanted = left;
+    }
+    return read;
+  }
+
+  /** One request for the named pages with their bodies, and whether its answer says more follows. */
+  private async askById(
+    session: Session,
+    ids: readonly string[],
+  ): Promise<{ readonly pages: readonly ListedConfluencePage[]; readonly more: boolean }> {
     const url = this.address(session.locator, '/wiki/api/v2/pages');
     url.searchParams.set('id', ids.join(','));
     // The statuses the listing asked for, so an archived page's body is found.
@@ -331,12 +350,12 @@ export class ConfluenceCloudReader implements DocumentationReader {
       throw new Error('Confluence answered pages asked for by id in a shape Day0 does not read.');
     }
     const base = textField(field(body, '_links'), 'base');
-    return new Map(
-      results.map((result: unknown): [string, ListedConfluencePage] => {
-        const page = listedPage(result, base);
-        return [page.id, page];
-      }),
-    );
+    return {
+      pages: results.map((result: unknown) => listedPage(result, base)),
+      more:
+        /;\s*rel="?next"?/.test(answer.headers.get('link') ?? '') ||
+        textField(field(body, '_links'), 'next') !== undefined,
+    };
   }
 
   /** The numeric id of the space the locator names by key. */
