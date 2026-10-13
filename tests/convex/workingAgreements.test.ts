@@ -1496,9 +1496,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await seedEmployee(harness);
     const agreementId = await everyEmployeeAgreement(harness);
     const hired = await seedEmployee(harness, { name: 'Ines' });
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: hired,
+      agreementIds: [agreementId],
       tried: false,
     });
     for (let start = 0; start < 300; start += 100) {
@@ -1987,9 +1987,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     const ines = await seedEmployee(harness, { name: 'Ines' });
     const agreementId = await everyEmployeeAgreement(harness);
     await letGo(harness, ines);
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: ines,
+      agreementIds: [agreementId],
       tried: true,
     });
     await harness.mutation(internal.workingAgreements.settleCharterCheck, {
