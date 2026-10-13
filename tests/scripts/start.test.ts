@@ -139,6 +139,10 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
       'HTTPS_PROXY names a proxy, and this Node (v22.12.0) does not read one from the ' +
         'environment: Node 22.21.0 or later does. Its requests would go out directly.',
     );
+    // An address no client can use would send the app's requests nowhere it can say.
+    expect(startRefusal({}, 'HTTPS_PROXY=proxy.acme.test:3128\n', 'v22.23.2')).toBe(
+      'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
   });
 });
 

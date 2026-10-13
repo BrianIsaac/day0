@@ -21,6 +21,7 @@ import { pathToFileURL } from 'node:url';
 import { fromEnvText, resolveAppPort } from './dev';
 import {
   hostProxyEnvironment,
+  proxyAddressGap,
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
@@ -87,8 +88,8 @@ export function startEnvironment<Given extends Shell>(
 }
 
 /**
- * Why the app is not started, or undefined when it may be: a proxy is named and this Node would
- * ignore it.
+ * Why the app is not started, or undefined when it may be: a proxy is named by an address no
+ * client can use, or this Node would ignore it.
  *
  * @param shell - The environment `pnpm start` was run from.
  * @param envText - The env file's text, or undefined when there is none.
@@ -99,7 +100,8 @@ export function startRefusal(
   envText: string | undefined,
   nodeVersion: string,
 ): string | undefined {
-  return proxyNodeGap(nodeVersion, wayOut(shell, envText));
+  const proxy = wayOut(shell, envText);
+  return proxyAddressGap(proxy) ?? proxyNodeGap(nodeVersion, proxy);
 }
 
 function main(): void {

@@ -4,6 +4,7 @@ import {
   hostProxyEnvironment,
   mergedNoProxy,
   missingFromDeployment,
+  proxyAddressGap,
   nodeReadsEnvProxy,
   noProxyEntries,
   proxyConfigured,
@@ -176,5 +177,27 @@ describe('a command run by hand on an install that names a proxy', (): void => {
       ...WANTED,
       HTTPS_PROXY: 'http://other.acme.test:8080',
     });
+  });
+});
+
+describe('a proxy address a client cannot use', (): void => {
+  it('is one with no http or https scheme, said by its name and never its value', (): void => {
+    expect(proxyAddressGap({ httpsProxy: 'http://proxy.acme.test:3128' })).toBeUndefined();
+    expect(proxyAddressGap({ httpsProxy: 'https://u:p@proxy.acme.test:3129' })).toBeUndefined();
+    expect(proxyAddressGap({})).toBeUndefined();
+    // The usual slip: the host and port alone, which a URL parser reads as a scheme.
+    expect(proxyAddressGap({ httpsProxy: 'proxy.acme.test:3128' })).toBe(
+      'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
+    expect(proxyAddressGap({ httpsProxy: 'http://p:3128', httpProxy: 'hunter2@proxy' })).toBe(
+      'HTTP_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
+    expect(proxyAddressGap({ httpsProxy: 'socks5://proxy.acme.test:1080' })).toBe(
+      'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
+  });
+
+  it('is shown as that, never as an empty host', (): void => {
+    expect(proxyForDisplay('proxy.acme.test:3128')).toBe('an address that is not a URL');
   });
 });

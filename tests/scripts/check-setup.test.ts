@@ -1082,6 +1082,37 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(lines).toContain('NO_PROXY also keeps out: day0.acme.test, login.acme.test.');
   });
 
+  it('is a gap when the proxy’s address is not one a client can use', (): void => {
+    const section = wayOutSection(
+      { ...REAL, HTTPS_PROXY: 'proxy.acme.test:3128' },
+      [],
+      'v22.23.2',
+      'x64',
+    );
+    expect(section.status).toBe('gap');
+    expect(section.title).toBe(
+      'The way out: through the proxy at an address that is not a URL - needs fixing',
+    );
+    expect(section.lines).toContain(
+      'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
+    );
+  });
+
+  it('reads a NO_PROXY entry that carries a port as keeping its host out', (): void => {
+    const lines = wayOutSection(
+      {
+        ...REAL,
+        HTTPS_PROXY: 'http://proxy.acme.test:3128',
+        NO_PROXY: 'day0.acme.test:443',
+        DAY0_PUBLIC_URL: 'https://day0.acme.test',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines.join('\n');
+    expect(lines).not.toContain('NO_PROXY does not list');
+  });
+
   it('is a gap when a proxy is named and this Node would dial out without it', (): void => {
     const section = wayOutSection(
       { ...REAL, HTTPS_PROXY: 'http://proxy.acme.test:3128' },

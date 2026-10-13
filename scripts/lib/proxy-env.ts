@@ -223,10 +223,37 @@ export function proxyNodeGap(version: string, settings: ProxySettings): string |
  * @param address - The proxy's URL as configured.
  */
 export function proxyForDisplay(address: string): string {
+  // Not a URL a client can use: said as that, so the value (which may hold a password) is never
+  // echoed, and a host and port written without a scheme is not shown as an empty host.
+  return usableProxyAddress(address) ? new URL(address).host : 'an address that is not a URL';
+}
+
+/** Whether a proxy's address is one an HTTP client can use: an http or https URL with a host. */
+function usableProxyAddress(address: string): boolean {
   try {
-    return new URL(address).host;
+    const url = new URL(address);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host !== '';
   } catch {
-    // Not a URL: said as that, so the value (which may hold a password) is never echoed.
-    return 'an address that is not a URL';
+    return false;
   }
+}
+
+/**
+ * Why a named proxy cannot be used, or undefined when each address is one a client can use (or
+ * none is named). The usual slip is the host and port with no scheme, which a URL parser reads as
+ * a scheme and no host; a client given that dials nothing it can name. Said by the setting's name
+ * and never its value, which may hold a password.
+ *
+ * @param settings - The way out as configured.
+ */
+export function proxyAddressGap(settings: ProxySettings): string | undefined {
+  const unusable = (
+    [
+      ['HTTPS_PROXY', settings.httpsProxy],
+      ['HTTP_PROXY', settings.httpProxy],
+    ] as const
+  ).find(([, address]) => address !== undefined && !usableProxyAddress(address));
+  return unusable === undefined
+    ? undefined
+    : `${unusable[0]} is not an address a client can use: write it as http://<host>:<port>.`;
 }

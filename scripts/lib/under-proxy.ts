@@ -21,5 +21,8 @@ export function runUnderProxy(
     stdio: 'inherit',
     env: { ...process.env, ...wanted },
   });
+  if (again.error !== undefined) {
+    console.error(`error: this command could not be started again (${again.error.message}).`);
+  }
   return again.status ?? 1;
 }

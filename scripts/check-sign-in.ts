@@ -608,14 +608,17 @@ const FAILURE_WORDS = 'String(e&&e.cause&&e.cause.code||e&&e.message||e)';
  * redirect carries the mark.
  *
  * @param origin - The app's public origin.
+ * @param env - The environment the asking process runs in: this one's unless the caller has a
+ *   proxy to hand it, as the setup does for every child.
  */
-export function probeApp(origin: string): AppProbe {
+export function probeApp(origin: string, env: NodeJS.ProcessEnv = process.env): AppProbe {
   const script =
     `fetch(process.argv[1],{redirect:'manual',signal:AbortSignal.timeout(${PROBE_SECONDS * 1000})})` +
     ".then(r=>process.stdout.write(JSON.stringify({status:r.status,day0:r.headers.get('x-day0')==='app'})))" +
     `.catch(e=>process.stdout.write(JSON.stringify({error:${FAILURE_WORDS}})))`;
   const run = spawnSync(process.execPath, ['-e', script, `${origin}/`], {
     encoding: 'utf8',
+    env,
     timeout: (PROBE_SECONDS + 5) * 1000,
   });
   return childAnswer<AppProbe>(run);
@@ -627,8 +630,9 @@ export function probeApp(origin: string): AppProbe {
  * answers the first and refuses the second.
  *
  * @param origin - The backend's public origin.
+ * @param env - The environment the asking process runs in, as for `probeApp`.
  */
-export function probeLive(origin: string): LiveProbe {
+export function probeLive(origin: string, env: NodeJS.ProcessEnv = process.env): LiveProbe {
   const script =
     `const base=process.argv[1];const limit=${PROBE_SECONDS * 1000};` +
     'const say=o=>{process.stdout.write(JSON.stringify(o));process.exit(0)};' +
@@ -641,6 +645,7 @@ export function probeLive(origin: string): LiveProbe {
     `}).catch(e=>say({error:${FAILURE_WORDS}}))`;
   const run = spawnSync(process.execPath, ['-e', script, origin], {
     encoding: 'utf8',
+    env,
     timeout: (PROBE_SECONDS * 2 + 5) * 1000,
   });
   return childAnswer<LiveProbe>(run);

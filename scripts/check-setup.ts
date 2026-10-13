@@ -108,6 +108,7 @@ import {
   noProxyEntries,
   SERVICE_NO_PROXY,
   PROXY_VARIABLES,
+  proxyAddressGap,
   proxyConfigured,
   proxyForDisplay,
   proxyNodeGap,
@@ -1997,7 +1998,11 @@ function ownHost(url: string | undefined): string | undefined {
 /** Whether an exclusion list keeps a host out of the proxy, by its name or a suffix of it. */
 function keptOut(host: string, noProxy: readonly string[]): boolean {
   return noProxy.some((entry) => {
-    const name = entry.replace(/^\*?\./, '').toLowerCase();
+    // A leading dot or `*.` covers a domain; a port narrows the entry and still names the host.
+    const name = entry
+      .replace(/^\*?\./, '')
+      .replace(/:\d+$/, '')
+      .toLowerCase();
     return name === '*' || host === name || host.endsWith(`.${name}`);
   });
 }
@@ -2054,6 +2059,11 @@ export function wayOutSection(
           `${through.join(' and ')}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
         'list them in NO_PROXY if the proxy does not serve hosts inside your network.',
       );
+    }
+    const addressGap = proxyAddressGap(settings);
+    if (addressGap !== undefined) {
+      worsen('gap');
+      lines.push(addressGap);
     }
     const nodeGap = proxyNodeGap(nodeVersion, settings);
     if (nodeGap !== undefined) {

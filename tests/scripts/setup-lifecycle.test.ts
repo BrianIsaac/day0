@@ -1121,6 +1121,27 @@ describe('backup, restore and upgrade (step 15)', (): void => {
       rmSync(homeDirectory, { recursive: true, force: true });
     });
 
+    it('still prints the way back, and records it, when a step after the backup throws', async (): Promise<void> => {
+      const homeDirectory = home();
+      const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });
+      const io: typeof h.io = {
+        ...h.io,
+        run: (command, args, options) => {
+          if (command === 'pnpm' && args[0] === 'install') throw new Error('spawn pnpm EAGAIN');
+          return h.io.run(command, args, options);
+        },
+      };
+      expect(await runCommand(verb('upgrade'), io)).toBe(1);
+      const file = backupIn(homeDirectory);
+      expect(h.output).toContain(
+        `The way back: ./setup.sh restore ${file} from a checkout of v0.3.0 (commit 26d76e0d31d2). ` +
+          'Never start the old image over this volume.',
+      );
+      expect(h.output).toContain('error: spawn pnpm EAGAIN');
+      expect(recordIn(homeDirectory)).toContain('- Outcome: stopped: spawn pnpm EAGAIN');
+      rmSync(homeDirectory, { recursive: true, force: true });
+    });
+
     it("describes an upgrade's backup by the commit that wrote its rows as well as the one that took it (17-K's F5)", async (): Promise<void> => {
       const homeDirectory = home();
       const h = configured({ ...UPGRADED, environment: { HOME: homeDirectory } });

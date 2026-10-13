@@ -5525,23 +5525,31 @@ export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<nu
         ...(wayBack === undefined ? {} : { wayBack }),
       });
     };
-    io.log('');
-    io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
-    const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
-      inherit: true,
-      timeoutMs: 1_800_000,
-    });
-    if (installed.status !== 0) {
-      io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
-      unfinishedPauseNote(io, target, options);
-      finish(`stopped: pnpm install failed (status ${installed.status}); nothing was pushed`);
-      return 1;
+    try {
+      io.log('');
+      io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
+      const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
+        inherit: true,
+        timeoutMs: 1_800_000,
+      });
+      if (installed.status !== 0) {
+        io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
+        unfinishedPauseNote(io, target, options);
+        finish(`stopped: pnpm install failed (status ${installed.status}); nothing was pushed`);
+        return 1;
+      }
+      io.log('');
+      const resumed = await runResume(resume, io);
+      if (resumed !== 0) unfinishedPauseNote(io, target, options);
+      finish(
+        resumed === 0 ? 'completed' : `stopped: the resume on this checkout exited ${resumed}`,
+      );
+      return resumed;
+    } catch (error) {
+      // The backup is taken: whatever stopped the upgrade after it, the way back is owed.
+      finish(`stopped: ${errorMessage(error)}`);
+      throw error;
     }
-    io.log('');
-    const resumed = await runResume(resume, io);
-    if (resumed !== 0) unfinishedPauseNote(io, target, options);
-    finish(resumed === 0 ? 'completed' : `stopped: the resume on this checkout exited ${resumed}`);
-    return resumed;
   } catch (error) {
     io.log(`error: ${errorMessage(error)}`);
     if (target !== undefined) unfinishedPauseNote(io, target, options);
@@ -5795,7 +5803,9 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     record();
     return status === 0 ? 1 : status;
   };
-  const passed = (step: string): void => void steps.push({ step, outcome: 'passed' });
+  const passed = (step: string): void => {
+    steps.push({ step, outcome: 'passed' });
+  };
 
   io.log('\n== 1. The company sign-in ==');
   const secret = answers?.get(SIGN_IN_SECRET);
@@ -6284,11 +6294,14 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
     checkProxy: (values: Readonly<Record<string, string>>): readonly SignInCheck[] => {
       const app = proxiedAppOrigin(values);
       const backend = proxiedBackendOrigin(values);
+      // Asked as every child of the setup is started, so this step and `pnpm check:setup` cannot
+      // disagree about one address: through the proxy unless NO_PROXY keeps the host out of it.
+      const env = { ...process.env, ...childProxyEnvironment(cwd, process.env) };
       return proxyChecks(
         values,
         {
-          ...(app === undefined ? {} : { app: probeApp(app) }),
-          ...(backend === undefined ? {} : { live: probeLive(backend) }),
+          ...(app === undefined ? {} : { app: probeApp(app, env) }),
+          ...(backend === undefined ? {} : { live: probeLive(backend, env) }),
         },
         { strict: true },
       );
