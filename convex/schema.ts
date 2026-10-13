@@ -45,7 +45,10 @@ import {
   AGREEMENT_STATUSES,
 } from '../src/work/agreement-vocabulary';
 import { CONSTRAINT_KINDS } from '../src/agent/charter-constraints';
-import { MANAGER_QUESTION_TYPES } from '../src/agent/manager-questions';
+import {
+  MANAGER_QUESTION_CLOSE_REASONS,
+  MANAGER_QUESTION_TYPES,
+} from '../src/agent/manager-questions';
 import { SYSTEM_CLASSES } from '../src/agent/system-classes';
 import {
   AGREEMENT_PROPOSAL_ACTIONS,
@@ -1848,6 +1851,16 @@ export default defineSchema({
         via: v.union(v.literal('dashboard'), v.literal('plan-approval'), v.literal('slack')),
         amendedCharterId: v.optional(v.id('charters')),
       }),
+    ),
+    /**
+     * Set when the question was closed without an answer (wave 17, 17-K for 17-C), with why
+     * (`MANAGER_QUESTION_CLOSE_REASONS`: its plan was drafted again, or what it asked about
+     * stopped standing) and when. Not an answer: `answer` stays absent and `answer.via` keeps its
+     * three ways. Absent on a question written before 0.21.0, where an unanswered one reads as
+     * open (`isOpenQuestion`, `src/agent/manager-questions.ts`).
+     */
+    closed: v.optional(
+      v.object({ reason: literals(MANAGER_QUESTION_CLOSE_REASONS), at: v.number() }),
     ),
   })
     .index('by_agent', ['agentId'])
