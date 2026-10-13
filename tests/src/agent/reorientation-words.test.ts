@@ -136,6 +136,12 @@ describe('the conflict question says what it holds (W16-R10)', (): void => {
       'Which is right? Priya holds every write of the plan until you answer and Retry.',
     );
   });
+
+  it('says nothing of the item waits beside one that is done or turned down (the joins’ W3k)', (): void => {
+    expect(conflictQuestionText('Priya', 'Comment length', pages, 'nothing')).toBe(
+      'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Nothing of this item waits on the answer: other plans of Priya’s that rest on these pages do.',
+    );
+  });
 });
 
 describe('the question as the thread of a delivered request asks it (17-C; section 7)', (): void => {

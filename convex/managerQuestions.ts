@@ -790,7 +790,10 @@ export const conflictsForAgent = query({
                 agent.name,
                 conflict.heading,
                 conflict.pages,
-                await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
+                // An item that is done, or whose plan was turned down, holds nothing (W3k).
+                plan.state === 'completed' || plan.state === 'cancelled'
+                  ? 'nothing'
+                  : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
               ),
         pages: [conflict.pages[0], conflict.pages[1]],
       });

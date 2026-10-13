@@ -122,22 +122,26 @@ const SURFACE_LIST = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjun
  * “{heading}”: A, {A} ({source}), and B, {B} ({source}). Which is right? {name} runs the other
  * steps now and holds the ones that may rely on this until you answer and Retry." Where the
  * hold's surfaces are known it names them, "holds its writes to {surfaces}", or says every write
- * where the plan declares none to tell apart (W16-R10).
+ * where the plan declares none to tell apart (W16-R10). Beside an item that is done or whose plan
+ * was turned down nothing is held, and the question says that (`nothing`; the joins' W3k: a
+ * finished card went on saying the employee held its writes until the answer and a Retry).
  */
 export function conflictQuestionText(
   name: string,
   heading: string,
   pages: readonly [NamedPageWords, NamedPageWords],
-  holds?: readonly string[] | 'every',
+  holds?: readonly string[] | 'every' | 'nothing',
 ): string {
   // What the hold withholds is every write to a surface a held step writes (W16-R10), so the
   // question names those surfaces, or says every write where the plan cannot tell them apart.
   const held =
-    holds === 'every'
-      ? `${name} holds every write of the plan until you answer and Retry.`
-      : holds !== undefined && holds.length > 0
-        ? `${name} runs the other steps now and holds its writes to ${SURFACE_LIST.format(holds)} until you answer and Retry.`
-        : `${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
+    holds === 'nothing'
+      ? `Nothing of this item waits on the answer: other plans of ${name}’s that rest on these pages do.`
+      : holds === 'every'
+        ? `${name} holds every write of the plan until you answer and Retry.`
+        : holds !== undefined && holds.length > 0
+          ? `${name} runs the other steps now and holds its writes to ${SURFACE_LIST.format(holds)} until you answer and Retry.`
+          : `${name} runs the other steps now and holds the ones that may rely on this until you answer and Retry.`;
   return `Two pages disagree under ${conflictFacts(heading, pages)} Which is right? ${held}`;
 }
 

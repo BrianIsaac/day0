@@ -1931,6 +1931,17 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya runs the other steps now and holds its writes to Team chat until you answer and Retry.',
     );
     expect((await questionsOf(harness, workItemId))[0].question).toBe(ASKED);
+    // Beside an item that is done or whose plan was turned down nothing is held, and the card
+    // says so, its answers still offered: they decide the relation (the joins' W3k).
+    for (const state of ['completed', 'cancelled'] as const) {
+      await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state }));
+      const [finished] = await drawn();
+      expect(finished.question).toBe(
+        'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Nothing of this item waits on the answer: other plans of Priya’s that rest on these pages do.',
+      );
+      expect(finished.pages).not.toBeNull();
+    }
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { state: 'plan-pending' }));
     // Answered: no card draws it, and the stop beside it reads the answer.
     await asManager(harness).mutation(api.managerQuestions.answerConflict, {
       questionId: live._id,
