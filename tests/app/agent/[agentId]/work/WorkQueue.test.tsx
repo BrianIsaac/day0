@@ -262,6 +262,42 @@ describe('landing an inbox link on its card (U17 D13, A D8)', (): void => {
     view.unmount();
     window.location.hash = '';
   });
+
+  it('draws the queue and lands nowhere on a fragment that is not a valid escape (W16-R28)', (): void => {
+    window.location.hash = '#item-%';
+    try {
+      const view = mount(
+        <WorkQueue
+          agentId={'a1' as Id<'agents'>}
+          workItems={[
+            {
+              _id: 'w-plan',
+              _creationTime: 1,
+              agentId: 'a1',
+              state: 'plan-pending',
+              title: 'Plan',
+              sourceSystem: 'linear',
+              sourceCategory: 'ticket-queue',
+              externalId: 'w-plan',
+              contentSummary: 's',
+              contentRefs: [],
+              observedAt: 1,
+            } as unknown as Doc<'workItems'>,
+          ]}
+          openQuestions={[]}
+          surfaces={[]}
+          registeredSkillCount={0}
+          charterApproved
+          autonomousActions={false}
+          surfaceMode="real"
+        />,
+      );
+      expect(document.getElementById('item-w-plan')).not.toBeNull();
+      view.unmount();
+    } finally {
+      window.location.hash = '';
+    }
+  });
 });
 
 describe('the queue gliding its cards to their new places (second review x8)', (): void => {

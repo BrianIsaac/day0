@@ -141,7 +141,14 @@ function useItemAnchor(ready: boolean, showAll: () => void): void {
   }, [showAll]);
   useEffect(() => {
     if (!ready || !window.location.hash.startsWith('#item-')) return;
-    const card = document.getElementById(decodeURIComponent(window.location.hash.slice(1)));
+    // A fragment typed or mangled by hand may not be a valid escape: it names no card (W16-R28).
+    let id: string;
+    try {
+      id = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+    const card = document.getElementById(id);
     if (!card) return;
     card.scrollIntoView({ block: 'start' });
     card.focus({ preventScroll: true });
