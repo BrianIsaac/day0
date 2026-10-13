@@ -576,11 +576,13 @@ function reportedWriteIndexes(
   if (!kindGuess || !namesMessageKind(said)) return sharing;
   // A report that names a message's kind binds every message of that kind, unless some carry its
   // own words: then those alone, so an unrelated post beside the reported ones is not bound
-  // (W13-R2). Where fewer messages carry its words than it says were made ("both notes" beside
-  // one post that shares a word), the count is the kind's, so every message of the kind is bound
-  // with them and a declined one keeps the report back (W16-R31).
+  // (W13-R2). Where it counts more messages than carry its words ("both notes" beside one post
+  // that shares a word), the count is the kind's, so every message of the kind is bound with them
+  // and a declined one keeps the report back (W16-R31). A plural or "all" is no count: "all the
+  // stop-drill notes" beside one such note and an unrelated post reports the one.
+  if (sharing.length === 0) return ofKind;
   const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
-  if (sharing.length > 0 && sharingMessages >= messagesNamed(said)) return sharing;
+  if (sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
   return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
 }
 
@@ -625,14 +627,21 @@ const COUNTED_MESSAGES = new RegExp(
 const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
 
 /**
- * How many messages a report sentence says were made: the count it gives ("both stop-drill
- * notes", "all three posts"), two or more for a plural with none, and one otherwise. So "Posted
+ * The count of messages a report sentence gives in so many words ("both stop-drill notes", "all
+ * three posts", "2 notes"), or undefined when it gives none.
+ */
+function messagesCounted(said: string): number | undefined {
+  const counted = COUNTED_MESSAGES.exec(said)?.[1]?.toLowerCase();
+  return counted === undefined ? undefined : (COUNT_WORDS[counted] ?? Number(counted));
+}
+
+/**
+ * How many messages a report sentence says were made: the count it gives
+ * ({@link messagesCounted}), two or more for a plural with none, and one otherwise. So "Posted
  * the second note." asks one write of its declaration and "Posted both notes." two (W15-R2).
  */
 function messagesNamed(said: string): number {
-  const counted = COUNTED_MESSAGES.exec(said)?.[1]?.toLowerCase();
-  if (counted !== undefined) return COUNT_WORDS[counted] ?? Number(counted);
-  return SEVERAL_MESSAGES.test(said) ? 2 : 1;
+  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(said) ? 2 : 1);
 }
 
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
@@ -856,13 +865,21 @@ function reportsDisagreements(
       if (negatesReport(sentence)) continue;
       const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
       // The writes the words name bind the message beside its declaration
-      // (`boundEarlierWrites`): it is held with them and sent after them. A kind of message
-      // ("both notes") binds nothing beside a declaration, so the two together must hold as many
-      // of that kind as the sentence says: one post that shares a word is not both (W16-R31).
-      const covered = new Set([...named, ...reportedWriteIndexes(clause, earlier, false)]);
+      // (`boundEarlierWrites`): it is held with them and sent after them, unless the sentence
+      // counts more messages than its words name: one post that shares a word is not "both"
+      // (W16-R31).
+      const said = withoutIntentions(clause);
+      const byWords = reportedWriteIndexes(clause, earlier, false);
       const ofKind = reportedWriteIndexes(clause, earlier);
-      const wanted = Math.min(messagesNamed(withoutIntentions(clause)), ofKind.length);
-      if (ofKind.filter((at) => covered.has(at)).length >= wanted) continue;
+      const covered = new Set([...named, ...byWords]);
+      const holds = ofKind.filter((at) => covered.has(at)).length;
+      if (byWords.length > 0 && holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)) {
+        continue;
+      }
+      // The words name only a kind of message ("both notes"), or fewer than they count, which
+      // binds nothing beside a declaration: the declaration and the words must then hold as many
+      // of that kind as the sentence says.
+      if (holds >= Math.min(messagesNamed(said), ofKind.length)) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );

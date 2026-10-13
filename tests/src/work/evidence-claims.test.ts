@@ -1557,6 +1557,23 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
     expect(boundEarlierWrites(both(null), [NOTE_1, NOTE_2, unrelated])).toEqual([0, 1]);
   });
 
+  // The second pass: a plural or "all" is no count. "Posted all the stop-drill notes" beside one
+  // post that carries its words and an unrelated DM reports the one post, as it did before.
+  it('widens for a count the sentence gives, never for a bare plural or "all" (the second pass)', (): void => {
+    const lunch = slackPost('D0SARA', 'Lunch is in the kitchen at noon today.');
+    const all = (reports?: number[]): MockAction => ({
+      ...commentOn('REVOPS-6', 'Posted all the stop-drill notes in #revops.'),
+      ...(reports === undefined ? {} : { reports }),
+    });
+    expect(boundEarlierWrites(all(), [worded, lunch])).toEqual([0]);
+    expect(unsupportedClaimFindings([worded, lunch, all([0])], empty)).toEqual([]);
+    const every = commentOn('REVOPS-6', 'Posted the stop-drill note for every team in #revops.');
+    expect(boundEarlierWrites(every, [worded, lunch])).toEqual([0]);
+    // A count is a count in digits too.
+    const two = commentOn('REVOPS-6', 'Posted 2 stop-drill notes in #revops.');
+    expect(boundEarlierWrites(two, [plain, worded])).toEqual([0, 1]);
+  });
+
   it('asks a declaration that names the one post sharing a word for the other as well (W15-R2)', (): void => {
     const findings = unsupportedClaimFindings([plain, worded, both([1])], empty);
     expect(findings.map((finding) => finding.index)).toEqual([2]);
