@@ -8811,6 +8811,39 @@ describe('work.listForAgent', (): void => {
     expect(bytes).toBeLessThan(WORK_LIST_BYTES + 400 * 1024);
   }, 60_000);
 
+  it('reads the newest rows in one bounded read, not a few rows at a time (the second pass)', async (): Promise<void> => {
+    // Three hundred light finished rows: taken eight at a time they are some forty reads of a
+    // query the Work tab re-runs at every change.
+    const { WORK_LIST_LIMIT } = await import('../../convex/work');
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { databaseQueries: 24 },
+    });
+    const agentId = await seedEmployee(harness);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let item = 0; item < WORK_LIST_LIMIT; item += 1) {
+        await ctx.db.insert('workItems', {
+          agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `REVOPS-${item}`,
+          title: 'Add the close-summary audit note',
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          observedAt: item,
+          createdAt: item,
+        });
+      }
+    });
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    expect(listed).toHaveLength(WORK_LIST_LIMIT);
+    expect(listed[0]?.externalId).toBe(`REVOPS-${WORK_LIST_LIMIT - 1}`);
+  }, 60_000);
+
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
