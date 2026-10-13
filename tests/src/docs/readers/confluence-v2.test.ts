@@ -9,6 +9,8 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
+import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -78,7 +80,9 @@ describe('the Confluence Cloud documentation reader', (): void => {
     expect(batches).toBe(2);
     expect(pages.map((page) => page.ref)).toEqual(['98311', '98312', '98313', '98314', '98316']);
     expect(unread.map((page) => page.ref)).toEqual(['98315']);
-    const listings = requests.filter((request) => request.url.pathname.endsWith('/pages'));
+    const listings = requests.filter((request) =>
+      request.url.pathname.endsWith('/spaces/1048578/pages'),
+    );
     expect(listings.map((request) => request.url.searchParams.get('cursor'))).toEqual([
       null,
       'fixture-cursor-2',
@@ -89,11 +93,20 @@ describe('the Confluence Cloud documentation reader', (): void => {
         `/ex/confluence/${CLOUD_ID}/wiki/api/v2/spaces/1048578/pages`,
       );
       expect(listing.url.searchParams.getAll('status')).toEqual(['current', 'archived']);
-      expect(listing.url.searchParams.get('body-format')).toBe('storage');
+      // Re-pinned for wave 17 (X-2): the listing carries no body; the pages are asked for by id.
+      expect(listing.url.searchParams.has('body-format')).toBe(false);
       expect(listing.url.searchParams.get('sort')).toBe('id');
       expect(listing.url.searchParams.get('limit')).toBe('3');
       expect(listing.authorization).toBe(`Bearer ${TOKEN}`);
     }
+    const byId = requests.filter((request) =>
+      request.url.pathname.endsWith(`/ex/confluence/${CLOUD_ID}/wiki/api/v2/pages`),
+    );
+    expect(byId.map((request) => Object.fromEntries(request.url.searchParams))).toEqual([
+      { id: '98311,98312,98313', status: 'archived', 'body-format': 'storage', limit: '3' },
+      { id: '98314,98315,98316', status: 'archived', 'body-format': 'storage', limit: '3' },
+    ]);
+    expect(byId.every((request) => request.authorization === `Bearer ${TOKEN}`)).toBe(true);
     // The space's id is looked up once, and carried in the cursor after that.
     expect(requests.filter((request) => request.url.pathname.endsWith('/spaces'))).toHaveLength(1);
   });
@@ -318,15 +331,21 @@ describe('the Confluence Cloud documentation reader', (): void => {
     const body = `<p>${'y'.repeat(Math.floor(3.9 * 1024 * 1024))}</p>`;
     const { reader, requests } = readerOnSite((request) => {
       if (!request.url.pathname.endsWith('/pages')) return undefined;
+      const page = (id: string, withBody: boolean): unknown => ({
+        id,
+        title: `P${id}`,
+        status: 'current',
+        ...(withBody ? { body: { storage: { value: body } } } : {}),
+        version: { number: 1 },
+      });
+      // Wave 17 (X-2): the pages asked for by id come with their bodies; the listing has none.
+      const ids = request.url.searchParams.get('id');
+      if (ids !== null) return json(200, { results: ids.split(',').map((id) => page(id, true)) });
       const limit = Number(request.url.searchParams.get('limit'));
       const from = Number(request.url.searchParams.get('cursor') ?? 0);
-      const results = Array.from({ length: Math.min(limit, 13 - from) }, (_unused, index) => ({
-        id: String(from + index + 1),
-        title: `P${from + index + 1}`,
-        status: 'current',
-        body: { storage: { value: body } },
-        version: { number: 1 },
-      }));
+      const results = Array.from({ length: Math.min(limit, 13 - from) }, (_unused, index) =>
+        page(String(from + index + 1), false),
+      );
       const next = from + results.length;
       return json(
         200,
@@ -344,40 +363,41 @@ describe('the Confluence Cloud documentation reader', (): void => {
     expect(second.pages.map((page) => page.ref)).toEqual(['13']);
     expect(second.nextCursor).toBeUndefined();
     const asked = requests
-      .filter((request) => request.url.pathname.endsWith('/pages'))
+      .filter((request) => request.url.pathname.endsWith('/spaces/1048578/pages'))
       .map((request) => request.url.searchParams.get('limit'));
     expect(asked).toEqual(['25', '12', '25']);
+    // Each window's pages are asked for by id once: the thirteen that were too many, then twelve.
+    const byId = requests
+      .filter((request) => request.url.searchParams.has('id'))
+      .map((request) => request.url.searchParams.get('limit'));
+    expect(byId).toEqual(['13', '12', '1']);
   }, 60_000);
 
   it('names a single page past what it reads of one answer unread, from a listing without its body (W15-R11)', async (): Promise<void> => {
     const huge = 'z'.repeat(49 * 1024 * 1024);
     const { reader, requests } = readerOnSite((request) => {
       if (!request.url.pathname.endsWith('/pages')) return undefined;
-      const withBody = request.url.searchParams.get('body-format') === 'storage';
+      const seven = (withBody: boolean): unknown => ({
+        id: '7',
+        title: 'Everything we ever wrote',
+        status: 'current',
+        ...(withBody ? { body: { storage: { value: huge } } } : {}),
+        version: { number: 4 },
+      });
+      const eight = (withBody: boolean): unknown => ({
+        id: '8',
+        title: 'After it',
+        status: 'current',
+        ...(withBody ? { body: { storage: { value: '<p>fine</p>' } } } : {}),
+        version: { number: 1 },
+      });
+      // Wave 17 (X-2): a page asked for by id comes with its body; the listing has none.
+      const id = request.url.searchParams.get('id');
+      if (id !== null) return json(200, { results: [id === '7' ? seven(true) : eight(true)] });
       const from = request.url.searchParams.get('cursor');
-      const results =
-        from === null
-          ? [
-              {
-                id: '7',
-                title: 'Everything we ever wrote',
-                status: 'current',
-                ...(withBody ? { body: { storage: { value: huge } } } : {}),
-                version: { number: 4 },
-              },
-            ]
-          : [
-              {
-                id: '8',
-                title: 'After it',
-                status: 'current',
-                body: { storage: { value: '<p>fine</p>' } },
-                version: { number: 1 },
-              },
-            ];
       return json(
         200,
-        { results },
+        { results: [from === null ? seven(false) : eight(false)] },
         from === null
           ? { link: '</wiki/api/v2/spaces/1048578/pages?cursor=after-7>; rel="next"' }
           : {},
@@ -393,10 +413,12 @@ describe('the Confluence Cloud documentation reader', (): void => {
       },
     ]);
     expect(batch.nextCursor).toBe('v2|1048578|after-7');
-    const listings = requests.filter((request) => request.url.pathname.endsWith('/pages'));
-    expect(listings.map((request) => request.url.searchParams.get('body-format'))).toEqual([
-      'storage',
+    // Re-pinned for wave 17 (X-2): the listing has no body to be too large; the page asked for by
+    // id is, and being one page it is named unread there.
+    const asked = requests.filter((request) => request.url.pathname.endsWith('/pages'));
+    expect(asked.map((request) => request.url.searchParams.get('body-format'))).toEqual([
       null,
+      'storage',
     ]);
     const after = await reader.listPageBatch(space, TOKEN, batch.nextCursor, 1);
     expect(after.pages.map((page) => page.ref)).toEqual(['8']);
@@ -411,16 +433,197 @@ describe("a Confluence Cloud page's date (wave 17, D-8)", (): void => {
   });
 
   it('says a page with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
-    const { reader } = readerOnSite((request) =>
-      request.url.searchParams.has('cursor')
-        ? undefined
-        : json(200, fixtureJsonWithout('confluence-v2', 'pages-1.json', 'createdAt')),
-    );
+    const { reader } = readerOnSite((request) => {
+      if (request.url.searchParams.has('cursor')) return undefined;
+      return request.url.searchParams.has('id')
+        ? json(200, fixtureJsonWithout('confluence-v2', 'pages-by-id.json', 'createdAt'))
+        : json(200, fixtureJsonWithout('confluence-v2', 'pages-1.json', 'createdAt'));
+    });
     const { pages } = await reader.listPageBatch(space, TOKEN, undefined, 3);
     expect(pages.map((page) => [page.ref, page.updatedAt, page.datedBySource])).toEqual([
       ['98311', T0, false],
       ['98312', T0, false],
       ['98313', T0, false],
     ]);
+  });
+});
+
+/** A reader on a generated library, its clock still. */
+function readerOnLibrary(library: LibraryFake): ConfluenceCloudReader {
+  return new ConfluenceCloudReader({
+    fetch: library.fetch,
+    now: (): number => T0,
+    sleep: async (): Promise<void> => undefined,
+  });
+}
+
+/** The ref of a library's page by its place in the library. */
+const libraryRef = (index: number): string => String(100_000 + index);
+
+/** The requests that asked for pages by id, as the ids each named. */
+function askedById(library: LibraryFake): string[][] {
+  return library.requests
+    .filter((request) => request.url.pathname.endsWith('/wiki/api/v2/pages'))
+    .map((request) => (request.url.searchParams.get('id') ?? '').split(','));
+}
+
+describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', (): void => {
+  it("reads a thousand unchanged pages for the listing's requests and no body request, and one changed page alone", async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 1_000 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, space, TOKEN, marks);
+    expect(first.read).toHaveLength(1_000);
+    expect(library.counts().bodies).toBe(1_000);
+
+    library.reset();
+    const unchanged = await readWhole(reader, space, TOKEN, marks);
+    expect(unchanged.read).toEqual([]);
+    expect(unchanged.kept).toHaveLength(1_000);
+    // Forty listing pages of 25, none with a body, and the space looked up once.
+    expect(library.counts()).toEqual({ token: 0, lookup: 1, listing: 40, body: 0, bodies: 0 });
+
+    library.edit(500);
+    library.reset();
+    const edited = await readWhole(reader, space, TOKEN, marks);
+    expect(edited.read.map((page) => [page.ref, page.sourceRevision])).toEqual([
+      [libraryRef(500), '2'],
+    ]);
+    expect(edited.read[0].markdown).toContain('Edited 1.');
+    expect(edited.kept).toHaveLength(999);
+    expect(library.counts()).toEqual({ token: 0, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    expect(askedById(library)).toEqual([[libraryRef(500)]]);
+  });
+
+  it('lists without bodies, and asks the changed ids of a listing page in one request (X-2)', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 60 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    for (const listing of library.requests.filter((request) => request.kind === 'listing')) {
+      expect(listing.url.searchParams.has('body-format')).toBe(false);
+      expect(listing.bodies).toBe(0);
+    }
+    // Nothing stored: each listing page's 25 ids, then the last ten, one request each.
+    expect(askedById(library).map((ids) => ids.length)).toEqual([25, 25, 10]);
+
+    // Three pages of the first listing page and one of the third changed: two requests.
+    for (const index of [2, 9, 24, 55]) library.edit(index);
+    library.reset();
+    const edited = await readWhole(reader, space, TOKEN, marks);
+    expect(edited.read.map((page) => page.ref)).toEqual([2, 9, 24, 55].map(libraryRef));
+    expect(askedById(library)).toEqual([[2, 9, 24].map(libraryRef), [libraryRef(55)]]);
+    const [byId] = library.requests.filter((request) => request.kind === 'body');
+    expect(byId.url.searchParams.get('body-format')).toBe('storage');
+    expect(byId.url.searchParams.getAll('status')).toEqual(['current', 'archived']);
+    expect(byId.url.searchParams.get('limit')).toBe('3');
+    // The contract is asked once a listing page, by every page it lists.
+    expect(edited.asked.map((refs) => refs.length)).toEqual([25, 25, 10]);
+  });
+
+  it('reads a page the listing gives no revision for as before, at every sync', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 30 });
+    library.pages[3].listsRevision = false;
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    for (const sync of [2, 3]) {
+      const again = await readWhole(reader, space, TOKEN, marks);
+      expect(
+        again.read.map((page) => page.ref),
+        `sync ${sync}`,
+      ).toEqual([libraryRef(3)]);
+      expect(again.kept).toHaveLength(29);
+    }
+  });
+
+  it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 30 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    library.rename(7, 'Close the quarter');
+    const renamed = await readWhole(reader, space, TOKEN, marks);
+    expect(renamed.read.map((page) => [page.ref, page.title, page.sourceRevision])).toEqual([
+      [libraryRef(7), 'Close the quarter', '1'],
+    ]);
+    expect(renamed.kept).toHaveLength(29);
+    // Once stored under its new title and address, it is kept again.
+    expect((await readWhole(reader, space, TOKEN, marks)).read).toEqual([]);
+  });
+
+  it('keeps a page archived at its source and unchanged, and marks it archived', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 30 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    library.archive(12);
+    library.reset();
+    const after = await readWhole(reader, space, TOKEN, marks);
+    expect(after.read).toEqual([]);
+    expect(library.counts().body).toBe(0);
+    expect(after.kept.find((page) => page.ref === libraryRef(12))).toEqual({
+      ref: libraryRef(12),
+      nativeStatus: 'archived',
+      datedBySource: true,
+    });
+    expect(after.kept.find((page) => page.ref === libraryRef(11))).toEqual({
+      ref: libraryRef(11),
+      datedBySource: true,
+    });
+  });
+
+  it('reads a page whose listing says no status, since a kept page takes its status from the listing', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 4, withheld: ['status'] });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    const again = await readWhole(reader, space, TOKEN, marks);
+    expect(again.read).toHaveLength(4);
+    expect(again.kept).toEqual([]);
+  });
+
+  it('names a changed page that is gone when its body is asked for unread, and reads the rest', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 5 });
+    // Listed, then deleted before its body was asked for: the answer by id leaves it out.
+    const reader = new ConfluenceCloudReader({
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input);
+        const ids = url.searchParams.get('id');
+        if (ids !== null) {
+          url.searchParams.set(
+            'id',
+            ids
+              .split(',')
+              .filter((id) => id !== libraryRef(1))
+              .join(','),
+          );
+        }
+        return await library.fetch(url, init);
+      },
+      now: (): number => T0,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const batch = await reader.listPageBatch(space, TOKEN, undefined, 25, storedIn(new Map()));
+    expect(batch.pages.map((page) => page.ref)).toEqual([0, 2, 3, 4].map(libraryRef));
+    expect(batch.unread).toEqual([
+      {
+        ref: libraryRef(1),
+        reason: '"Runbook 1" was deleted or moved in Confluence after it was listed.',
+      },
+    ]);
+  });
+
+  it('says a kept page with no date from its source was dated by the read, and reads as before with no contract to ask', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 3 });
+    library.pages[1].editedAt = undefined;
+    const reader = readerOnLibrary(library);
+    const plain = await reader.listPageBatch(space, TOKEN, undefined, 25);
+    expect(plain.pages).toHaveLength(3);
+    expect(plain).not.toHaveProperty('kept');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    const kept = (await readWhole(reader, space, TOKEN, marks)).kept;
+    expect(kept.map((page) => page.datedBySource)).toEqual([true, false, true]);
   });
 });

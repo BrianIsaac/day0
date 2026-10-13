@@ -40,6 +40,7 @@ import {
 import type { DocPage, DocSourceRecord } from '../types';
 import {
   ListingChangedError,
+  storedMarks,
   type DocumentationReader,
   type KeptPage,
   type ReadPageBatch,
@@ -787,14 +788,6 @@ function listedFile(item: unknown): ListedFile | undefined {
     kind: Object.hasOwn(READ_KINDS, extension) ? READ_KINDS[extension] : undefined,
     deleted: field(item, 'deleted') !== undefined,
   };
-}
-
-/** What the sync stored the named pages with; nothing where there is no contract or no page to ask of. */
-async function storedMarks(
-  stored: StoredRevisions | undefined,
-  refs: readonly string[],
-): Promise<ReadonlyMap<string, StoredMark>> {
-  return stored === undefined || refs.length === 0 ? new Map() : await stored(refs);
 }
 
 /** What one batch took of a listing page. */

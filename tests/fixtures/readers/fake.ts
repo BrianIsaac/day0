@@ -33,6 +33,12 @@ export interface FixtureRoute {
   readonly headers?: Readonly<Record<string, string>>;
   /** The file beside `provider.json` that is the body, sent as its bytes. */
   readonly body?: string;
+  /**
+   * A list in the body answered only for the entries a query parameter names, as an API that
+   * takes ids answers: `list` is the body's field holding the entries, `by` the field of an entry
+   * the parameter's comma-separated values name. The entries keep the body's order.
+   */
+  readonly pick?: { readonly query: string; readonly list: string; readonly by: string };
 }
 
 /** One provider's fixtures. */
@@ -223,6 +229,21 @@ export function providerFake(
         : request.headers.get(fixture.tokenHeader.name) === fixture.tokenHeader.value;
     if (route.open !== true && !authorised) {
       return answer(fixture.unauthorised.status, fixture.unauthorised.body);
+    }
+    if (route.pick !== undefined && route.body !== undefined) {
+      const { query, list, by } = route.pick;
+      const wanted = new Set((request.url.searchParams.get(query) ?? '').split(','));
+      const whole = JSON.parse(readFileSync(join(DIRECTORY, kind, route.body), 'utf8')) as Record<
+        string,
+        unknown
+      >;
+      const entries = (whole[list] as Array<Record<string, unknown>>).filter((entry) =>
+        wanted.has(String(entry[by])),
+      );
+      return new Response(JSON.stringify({ ...whole, [list]: entries }), {
+        status: route.status,
+        headers: { 'content-type': 'application/json; charset=utf-8', ...route.headers },
+      });
     }
     return answer(route.status, route.body, route.headers);
   };

@@ -47,6 +47,20 @@ export interface StoredMark {
  */
 export type StoredRevisions = (refs: readonly string[]) => Promise<ReadonlyMap<string, StoredMark>>;
 
+/**
+ * What the sync stored the named pages with, for a reader that asks once a listing page.
+ *
+ * @param stored - The sync's contract; none for a read with nothing to keep by.
+ * @param refs - The listed pages a reader could keep.
+ * @returns The marks the sync answers; none where there is no contract or no page to ask of.
+ */
+export async function storedMarks(
+  stored: StoredRevisions | undefined,
+  refs: readonly string[],
+): Promise<ReadonlyMap<string, StoredMark>> {
+  return stored === undefined || refs.length === 0 ? new Map() : await stored(refs);
+}
+
 /** A listed page kept as stored by its revision, its body unread (X-13). */
 export interface KeptPage {
   readonly ref: string;

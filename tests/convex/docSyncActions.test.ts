@@ -2060,6 +2060,10 @@ describe('documentation sync batching', (): void => {
           fetch: async (url: URL): Promise<Response> => {
             if (url.pathname.endsWith('/spaces'))
               return loopAnswer(200, { results: [{ id: '10' }] });
+            // Wave 17 (17-X): the reader asks a listing page's changed pages by id. Only a
+            // listing moves the probe's cursor; the pages asked for are answered as it listed them.
+            const ids = url.searchParams.get('id');
+            if (ids !== null) return loopAnswer(200, { results: ids.split(',').map(loopPage) });
             call += 1;
             return loopAnswer(
               200,

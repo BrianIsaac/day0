@@ -353,7 +353,7 @@ function sharePointRoutes(pages: readonly LibraryPage[], options: LibraryOptions
 }
 
 /** The Confluence Cloud routes: the space's listing, and pages asked for by id. */
-function confluenceCloudRoutes(pages: readonly LibraryPage[]): Routes {
+function confluenceCloudRoutes(pages: readonly LibraryPage[], options: LibraryOptions): Routes {
   const idOf = (page: LibraryPage): string => String(100_000 + page.index);
   const item = (page: LibraryPage, body: boolean): Record<string, unknown> => ({
     id: idOf(page),
@@ -394,7 +394,10 @@ function confluenceCloudRoutes(pages: readonly LibraryPage[]): Routes {
         kind: 'listing',
         bodies: bodies ? taken.length : 0,
         response: json(
-          { results: taken.map((page) => item(page, bodies)), _links: { base: CLOUD_BASE } },
+          {
+            results: taken.map((page) => selected(item(page, bodies), null, options.withheld)),
+            _links: { base: CLOUD_BASE },
+          },
           200,
           { link: links.join(', ') },
         ),
@@ -421,7 +424,7 @@ function confluenceCloudRoutes(pages: readonly LibraryPage[]): Routes {
 }
 
 /** The Confluence Data Center routes: the two walks of the space, and one page by id. */
-function confluenceServerRoutes(pages: readonly LibraryPage[]): Routes {
+function confluenceServerRoutes(pages: readonly LibraryPage[], options: LibraryOptions): Routes {
   const idOf = (page: LibraryPage): string => String(4_600_000 + page.index);
   const item = (page: LibraryPage, expand: readonly string[]): Record<string, unknown> => ({
     id: idOf(page),
@@ -459,7 +462,7 @@ function confluenceServerRoutes(pages: readonly LibraryPage[]): Routes {
         kind: 'listing',
         bodies: carried ? taken.length : 0,
         response: json({
-          results: taken.map((page) => item(page, expand)),
+          results: taken.map((page) => selected(item(page, expand), null, options.withheld)),
           start,
           limit: size,
           size: taken.length,
@@ -491,7 +494,7 @@ function confluenceServerRoutes(pages: readonly LibraryPage[]): Routes {
 }
 
 /** The Google Drive routes: the folder's listing and each document's export. */
-function driveRoutes(pages: readonly LibraryPage[]): Routes {
+function driveRoutes(pages: readonly LibraryPage[], options: LibraryOptions): Routes {
   const idOf = (page: LibraryPage): string => `1LibDoc${String(page.index).padStart(26, '0')}`;
   const file = (page: LibraryPage): Record<string, unknown> => ({
     id: idOf(page),
@@ -519,7 +522,7 @@ function driveRoutes(pages: readonly LibraryPage[]): Routes {
           kind: 'drive#fileList',
           incompleteSearch: false,
           ...(next === undefined ? {} : { nextPageToken: `lib.${next}` }),
-          files: taken.map((page) => selected(file(page), wanted)),
+          files: taken.map((page) => selected(file(page), wanted, options.withheld)),
         }),
       };
     }
@@ -546,11 +549,11 @@ function routesFor(kind: LibraryKind, pages: LibraryPage[], options: LibraryOpti
     case 'sharepoint':
       return sharePointRoutes(pages, options);
     case 'confluence-v2':
-      return confluenceCloudRoutes(pages);
+      return confluenceCloudRoutes(pages, options);
     case 'confluence-dc':
-      return confluenceServerRoutes(pages);
+      return confluenceServerRoutes(pages, options);
     case 'drive':
-      return driveRoutes(pages);
+      return driveRoutes(pages, options);
   }
 }
 
