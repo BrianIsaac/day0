@@ -101,9 +101,10 @@ Read from the code and the compose file; none of these was run on the bed.
   the daemon to use a proxy").
 - **`pnpm install`**, which reads a proxy from the shell it runs in.
 
-Next.js's own usage telemetry is turned off for every build and start
-(`next.config.mjs`): before that, the bed's proxy logged
-`telemetry.nextjs.org` from the machine, a host nobody had listed.
+Next.js's own usage telemetry is turned off for the build and for the app
+(`pnpm build` and `pnpm start` set `NEXT_TELEMETRY_DISABLED=1` before Next
+starts): before that, the bed's proxy logged `telemetry.nextjs.org` from the
+machine, a host nobody had listed.
 
 ## The hosts
 

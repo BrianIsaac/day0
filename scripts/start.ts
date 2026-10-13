@@ -64,8 +64,11 @@ function wayOut(shell: Shell, envText: string | undefined): ProxySettings {
 }
 
 /**
- * The environment `next start` runs with: the shell's, the chosen port, and the proxy on the way
- * out when one is named.
+ * The environment `next start` runs with: the shell's, the chosen port, the proxy on the way out
+ * when one is named, and Next's own usage telemetry off unless the shell names its switch. Next
+ * sends its maker figures from a start unless told not to before it starts, and
+ * `telemetry.nextjs.org` is a host no list Day0 prints names (found at a bed's forward proxy, 13
+ * October 2026; docs/running/egress.md). The build is told the same by its script.
  *
  * @param shell - The environment `pnpm start` was run from.
  * @param envText - The env file's text, or undefined when there is none.
@@ -76,7 +79,12 @@ export function startEnvironment<Given extends Shell>(
   envText: string | undefined,
   port: string,
 ): Given & Record<string, string | undefined> {
-  return { ...shell, PORT: port, ...hostProxyEnvironment(wayOut(shell, envText)) };
+  return {
+    NEXT_TELEMETRY_DISABLED: '1',
+    ...shell,
+    PORT: port,
+    ...hostProxyEnvironment(wayOut(shell, envText)),
+  };
 }
 
 /**

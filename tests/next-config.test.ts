@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import nextConfig from '../next.config.mjs';
 
 describe('next.config.mjs', (): void => {
@@ -66,31 +66,5 @@ describe('behind a reverse proxy (wave 17, 17-P)', (): void => {
 
   it('names itself on every response, so a check can tell Day0 from whatever else a proxy forwards to', async (): Promise<void> => {
     expect((await headersFor('/:path*'))['X-Day0']).toBe('app');
-  });
-});
-
-describe('Next.js’s own telemetry (wave 17, 17-P)', (): void => {
-  const shell = process.env.NEXT_TELEMETRY_DISABLED;
-
-  afterEach((): void => {
-    if (shell === undefined) delete process.env.NEXT_TELEMETRY_DISABLED;
-    else process.env.NEXT_TELEMETRY_DISABLED = shell;
-    vi.resetModules();
-  });
-
-  // The bed day0-w17p's forward proxy logged four CONNECT telemetry.nextjs.org:443 from the
-  // machine during the install's build and the app's start: a host no list Day0 prints names.
-  it('is off for every build and start, which read this file before they would send any', async (): Promise<void> => {
-    delete process.env.NEXT_TELEMETRY_DISABLED;
-    vi.resetModules();
-    await import('../next.config.mjs');
-    expect(process.env.NEXT_TELEMETRY_DISABLED).toBe('1');
-  });
-
-  it('is left as the shell set it, where the shell names it at all', async (): Promise<void> => {
-    process.env.NEXT_TELEMETRY_DISABLED = '';
-    vi.resetModules();
-    await import('../next.config.mjs');
-    expect(process.env.NEXT_TELEMETRY_DISABLED).toBe('');
   });
 });

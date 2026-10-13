@@ -36,7 +36,7 @@
     "demo:bed": "tsx scripts/demo-bed.ts",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "build": "next build",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "start": "tsx scripts/start.ts",
     "lint": "eslint . && prettier --check src convex app scripts tests",
     "typecheck": "tsc --noEmit",
