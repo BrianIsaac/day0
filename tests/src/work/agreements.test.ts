@@ -10,6 +10,7 @@ import {
   executorAgreementLines,
   plannerAgreementLines,
   redactedStatement,
+  REFUSAL_JUDGEMENT_SYSTEM,
   refusalJudgementPrompt,
   refusalOf,
   sameGroups,
@@ -202,6 +203,18 @@ describe('the refusal before a proposal is shown (F11)', (): void => {
     expect(prompt).toContain('[1] email customers directly');
     expect(prompt).toContain('[2] change carrier contracts');
     expect(prompt).toContain('--- Statement ---\nEmail the customer the new sailing.');
+  });
+
+  it('names the charter’s lists by their labels, never by a field name, as the other prompts do (W15-R16, 16-PT)', (): void => {
+    const prompt = refusalJudgementPrompt('Email the customer the new sailing.', charters);
+    expect(prompt).toContain('Priya: Will do: shipment exception tickets');
+    expect(prompt).toContain('  Will not do:\n  [1] email customers directly');
+    for (const text of [prompt, REFUSAL_JUDGEMENT_SYSTEM]) {
+      expect(text).not.toMatch(/willDo|willNotDo/);
+    }
+    expect(REFUSAL_JUDGEMENT_SYSTEM).toContain(
+      'the number of the Will not do clause the statement contradicts, or null',
+    );
   });
 
   it('quotes the clause the judgement names, word for word from the charter', (): void => {

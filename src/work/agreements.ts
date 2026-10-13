@@ -294,15 +294,16 @@ export type RefusalJudgement = z.infer<typeof refusalJudgementSchema>;
 export const REFUSAL_JUDGEMENT_SYSTEM = [
   "You are reading a standing preference a manager wants to keep for an AI employee's later work, beside the employee's charter.",
   'Decide one thing: would keeping it go beyond the charter?',
-  "It goes beyond the charter when it widens the work the charter gives the employee (work its willDo does not cover), grants a permission (to write, send, approve or reach something without the approval the work needs), names a credential (a password, a token, a key or a secret), or contradicts one of the charter's numbered willNotDo clauses.",
+  "It goes beyond the charter when it widens the work the charter gives the employee (work its Will do list does not cover), grants a permission (to write, send, approve or reach something without the approval the work needs), names a credential (a password, a token, a key or a secret), or contradicts one of the charter's numbered Will not do clauses.",
   'A preference about how work the charter already gives is done (a format, a tone, a template, an order, who to tell) does not go beyond it, however strict it is.',
   '',
-  'Answer `verdict`: `keep`, or the first of `contradicts-will-not-do`, `widens-scope`, `grants-permission` and `names-credential` that applies. Answer `clause`: the number of the willNotDo clause the statement contradicts, or null.',
+  'Answer `verdict`: `keep`, or the first of `contradicts-will-not-do`, `widens-scope`, `grants-permission` and `names-credential` that applies. Answer `clause`: the number of the Will not do clause the statement contradicts, or null.',
 ].join('\n');
 
 /**
- * The refusal judgement's user prompt: each charter's willDo and its willNotDo clauses numbered
- * across every charter, then the statement, fenced.
+ * The refusal judgement's user prompt: each charter's Will do list and its Will not do clauses
+ * numbered across every charter, by their labels and never the field names (W15-R16, as the scope,
+ * obligations and closing prompts say them), then the statement, fenced.
  *
  * @param statement - The statement, redacted.
  * @param charters - The charters it would bind: its employee's, or every employee's of the owner.
@@ -314,8 +315,8 @@ export function refusalJudgementPrompt(
   const lines = ['--- Charters ---'];
   let number = 0;
   for (const charter of charters) {
-    lines.push(`${charter.name}: willDo: ${charter.willDo.join(' | ') || '(none)'}`);
-    lines.push('  willNotDo:');
+    lines.push(`${charter.name}: Will do: ${charter.willDo.join(' | ') || '(none)'}`);
+    lines.push('  Will not do:');
     for (const clause of charter.willNotDo) {
       number += 1;
       lines.push(`  [${number}] ${clause}`);
