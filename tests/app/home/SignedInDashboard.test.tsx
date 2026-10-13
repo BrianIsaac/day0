@@ -358,6 +358,18 @@ describe('the signed-in home with nobody deployed', (): void => {
     expect(card).not.toContain('View');
   });
 
+  it('says one linked source in the singular on a local install’s documentation card (the joins’ walk, W1)', (): void => {
+    state.mode = 'real';
+    try {
+      const card = /<h2[^>]*>Documentation<\/h2>.*?<\/section>/s.exec(html())?.[0] ?? '';
+      expect(card).toContain(
+        '1 source linked. Every employee reads it unless you leave it out at deploy.',
+      );
+    } finally {
+      state.mode = 'mock';
+    }
+  });
+
   it('names the documentation link only once the mode has answered, so it never reads Manage and then View (W16-R35)', (): void => {
     state.modeLoading = true;
     try {

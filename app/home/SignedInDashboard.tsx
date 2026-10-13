@@ -332,7 +332,9 @@ function DocumentationCard({
             ? 'Loading'
             : sources === 0
               ? 'No documentation linked yet. Your employees learn the team from what you link.'
-              : `${sources} ${sources === 1 ? 'source' : 'sources'} linked. Every employee reads them unless you leave one out at deploy.`}
+              : sources === 1
+                ? '1 source linked. Every employee reads it unless you leave it out at deploy.'
+                : `${sources} sources linked. Every employee reads them unless you leave one out at deploy.`}
       </p>
     </section>
   );
