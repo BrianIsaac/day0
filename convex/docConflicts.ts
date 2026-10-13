@@ -173,7 +173,7 @@ export const CARRIED_PAGES_READ = 64;
  * read by the page, so how many conflicts the owner has confirmed and settled since never hides
  * one. The index names the page; the kind and the status are read off the rows it gives.
  */
-async function confirmedConflictsOfPages(
+export async function confirmedConflictsOfPages(
   ctx: QueryCtx,
   userId: string,
   pages: readonly CarriedPage[],

@@ -824,7 +824,9 @@ describe('the functions convex/docRelations.ts registers', (): void => {
       })
       .sort((left, right) => left.localeCompare(right));
     // Re-taken by 17-C for one internal mutation added, `askConfirmed`: the asking a confirmation
-    // schedules out of its own transaction. No function it registered at v0.19.0 moved.
+    // schedules out of its own transaction; and by the joins for `turnPageQuestions`, the step a
+    // page's change of status schedules for its conflict questions. No function it registered at
+    // v0.19.0 moved.
     expect(registered).toEqual([
       'askConfirmed internal mutation',
       'decide public mutation',
@@ -834,6 +836,7 @@ describe('the functions convex/docRelations.ts registers', (): void => {
       'measuringPlan internal query',
       'pagesWrittenBy internal query',
       'settleRelationsOwed internal mutation',
+      'turnPageQuestions internal mutation',
     ]);
   });
 });

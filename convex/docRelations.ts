@@ -25,6 +25,7 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
+  confirmedConflictsOfPages,
   conflictsUnderPlan,
   decisionsOffered,
   standingConflictOf,
@@ -633,6 +634,55 @@ export const askConfirmed = internalMutation({
       });
     }
     return { asked };
+  },
+});
+
+/** The pages one step of `turnPageQuestions` turns; the rest ride the next step. */
+const QUESTION_TURN_PAGES = 4;
+
+/**
+ * Turn the conflict questions of pages whose status left `active` or came back to it, a few pages
+ * a step (17-C's two lines for `docStatus`, which schedules it). A page that left closes every
+ * open question about its confirmed conflicts as settled: none of them stands while the page is
+ * not current, so nothing holds on them, and they read closed at once rather than at the plan's
+ * next run. A page that came back starts the confirmation's asking again for each of its
+ * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
+ * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
+ * it). Internal; schedules itself for the pages left.
+ */
+export const turnPageQuestions = internalMutation({
+  args: {
+    pages: v.array(
+      v.object({
+        sourceId: v.id('docSources'),
+        ref: v.string(),
+        /** True for a page that came back to `active`; false for one that left it. */
+        back: v.boolean(),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<{ closed: number; asked: number }> => {
+    const now = Date.now();
+    let closed = 0;
+    let asked = 0;
+    for (const page of args.pages.slice(0, QUESTION_TURN_PAGES)) {
+      if (!page.back) {
+        closed += await closeQuestionsOnPage(ctx, page, now);
+        continue;
+      }
+      const source = await ctx.db.get(page.sourceId);
+      if (source === null) continue;
+      for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
+        if ((await standingConflictOf(ctx, relation)) === undefined) continue;
+        await scheduleConfirmationAsks(ctx, relation);
+        asked += 1;
+      }
+    }
+    const rest = args.pages.slice(QUESTION_TURN_PAGES);
+    if (rest.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.docRelations.turnPageQuestions, { pages: rest });
+    }
+    return { closed, asked };
   },
 });
 
