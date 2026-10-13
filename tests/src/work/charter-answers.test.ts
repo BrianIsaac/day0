@@ -9,6 +9,43 @@ describe('askedQuestion', (): void => {
   });
 });
 
+describe('a question left on another script’s mark, or on a comma (W16-R31)', (): void => {
+  it('takes the Arabic question mark as the question’s close, and adds no second mark', (): void => {
+    expect(askedQuestion('من يملك لوحة المبيعات؟')).toBe('من يملك لوحة المبيعات؟');
+    expect(askedQuestion('من يملك «لوحة المبيعات؟»')).toBe('من يملك «لوحة المبيعات؟»');
+  });
+
+  it('closes a question left on a comma, a semicolon or a dash in place of it, never after it', (): void => {
+    expect(askedQuestion('Which carrier handles Asia,')).toBe('Which carrier handles Asia?');
+    expect(askedQuestion('Which carrier handles Asia ;')).toBe('Which carrier handles Asia?');
+    expect(askedQuestion('Which carrier handles Asia -')).toBe('Which carrier handles Asia?');
+    expect(askedQuestion('亚洲由哪家承运商负责，')).toBe('亚洲由哪家承运商负责?');
+    expect(askedQuestion('Which carrier handles “Asia”,')).toBe('Which carrier handles “Asia”?');
+  });
+
+  it('leaves a question that is only such marks as it was written', (): void => {
+    expect(askedQuestion(',')).toBe(',');
+    expect(askedQuestion('  ')).toBe('');
+  });
+
+  it('prints the answer after the one mark in a prompt’s line', (): void => {
+    expect(
+      answeredQuestionLines({
+        answeredQuestions: [
+          {
+            question: 'Which carrier handles Asia,',
+            answer: 'DHL',
+            answeredAt: '2026-10-10T00:00:00.000Z',
+          },
+        ],
+      }),
+    ).toEqual([
+      'Questions the manager answered in the charter (they hold for this work):',
+      '  - Which carrier handles Asia? DHL',
+    ]);
+  });
+});
+
 describe('answeredQuestionLines', (): void => {
   it('closes a question the manager left unpunctuated before its answer (W15-R39)', (): void => {
     expect(
