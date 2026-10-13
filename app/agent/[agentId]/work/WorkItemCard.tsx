@@ -175,6 +175,36 @@ function retryDone(mode: RetryMode, title: string): string {
   }
 }
 
+/**
+ * What holds the apply of a set the manager approved, as the row stands: a pause holds it while
+ * the row still waits at its claim, and once the apply is claimed it is under way whatever the
+ * pause says (`waitsAtClaim`).
+ */
+function applyHoldOf(
+  item: Pick<Doc<'workItems'>, 'state' | 'applyAttemptId'>,
+  hold: RunHold | undefined,
+): RunHold | undefined {
+  return item.state === 'actions-pending' && item.applyAttemptId === undefined ? hold : undefined;
+}
+
+/**
+ * What an approval of held actions says in the card's live region: how many, and when they
+ * apply. Wording drafts (the wave 17 file's section 7, RM24): "now", or, while a pause holds the
+ * apply, when the pause ends, so the line never says "now" beside the card's "Held while {name}
+ * is paused" (W16-R31).
+ */
+function approvedActionsWords(approved: number, hold: RunHold | undefined): string {
+  const head =
+    approved === 1 ? 'Approved 1 action: it applies' : `Approved ${approved} actions: they apply`;
+  if (hold === undefined) return `${head} now.`;
+  switch (hold.by) {
+    case 'employee':
+      return `${head} when ${hold.employeeName} is unpaused.`;
+    case 'deployment':
+      return `${head} once this deployment’s scheduled work runs again.`;
+  }
+}
+
 /** The reorientation card that holds an item's plan: its id, for the link, and what changed. */
 export interface HoldingCard {
   readonly reorientationId: string;
@@ -270,15 +300,17 @@ export function WorkItemCard({
   // other outcome stays, a cancellation's or a rejection's included, as does a refusal (the
   // second pass).
   const [appliedTo, setAppliedTo] = useState<
-    { state: Doc<'workItems'>['state']; since: number | undefined } | undefined
+    { state: Doc<'workItems'>['state']; since: number | undefined; approved: number } | undefined
   >(undefined);
   const decide = (
     call: () => Promise<unknown> | void,
     done: string,
     refused: string,
-    applies = false,
+    approved = 0,
   ): void => {
-    setAppliedTo(applies ? { state: item.state, since: item.waitingSince } : undefined);
+    setAppliedTo(
+      approved > 0 ? { state: item.state, since: item.waitingSince, approved } : undefined,
+    );
     change.run(call, { done, refused });
   };
   // A conflict's answer is the card's change too: the question leaves the card once answered, so
@@ -295,6 +327,18 @@ export function WorkItemCard({
     item.state !== 'executing' &&
     (item.state !== appliedTo.state || item.waitingSince !== appliedTo.since) &&
     change.outcome?.tone === 'done';
+  // An approval's line says when its set applies as the row and the pause stand at this render,
+  // never as they stood at the press: a pause holds the apply at its claim, and "they apply now"
+  // beside "Held while {name} is paused" was untrue (W16-R31).
+  const outcome =
+    outcomeOutlived || change.outcome === null
+      ? null
+      : appliedTo !== undefined && change.outcome.tone === 'done'
+        ? {
+            ...change.outcome,
+            text: approvedActionsWords(appliedTo.approved, applyHoldOf(item, hold)),
+          }
+        : change.outcome;
   const verdict = item.verdict as ItemVerdict | undefined;
   const verdictReason = typeof verdict?.reason === 'string' ? verdict.reason : undefined;
   const plan = item.plan as ItemPlan | undefined;
@@ -668,11 +712,9 @@ export function WorkItemCard({
                   ? decidedEarlier.length > 0
                     ? `Finished without the ticket close: nothing more is sent on ${item.title}, and the close stays withheld.`
                     : `Approved with nothing selected: ${item.title} lands nothing.`
-                  : approvedIndexes.length === 1
-                    ? 'Approved 1 action: it applies now.'
-                    : `Approved ${approvedIndexes.length} actions: they apply now.`,
+                  : approvedActionsWords(approvedIndexes.length, applyHoldOf(item, hold)),
                 'The actions were not approved.',
-                approvedIndexes.length > 0,
+                approvedIndexes.length,
               )
             }
             onReject={(reason) =>
@@ -795,7 +837,7 @@ export function WorkItemCard({
       ) : null}
       {/* Always in the page, so its first outcome is announced; padded only once it speaks. */}
       <div className="px-4 sm:px-5 [&>p:not(:empty)]:pb-3">
-        <StatusRegion outcome={outcomeOutlived ? null : change.outcome} />
+        <StatusRegion outcome={outcome} />
       </div>
     </article>
   );
