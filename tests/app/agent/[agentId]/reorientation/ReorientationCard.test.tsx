@@ -14,31 +14,59 @@ const backend = vi.hoisted(() => ({
   onCard: true,
   /** Whether the join asked the judgement again. */
   asks: true,
+  /**
+   * What a mutation does to the queries before it answers, as the backend's own sync does: a
+   * query the mutation changed is drawn again before the call's promise settles.
+   */
+  lands: undefined as ((name: string) => void) | undefined,
+  listeners: new Set<() => void>(),
+  version: 0,
 }));
 
-vi.mock('convex/react', () => ({
-  useMutation:
-    (reference: unknown) =>
-    async (args: unknown): Promise<unknown> => {
-      const name = getFunctionName(reference as never);
-      backend.calls.push({ name, args });
-      if (name === 'reorientationDecisions:approve') {
-        return { result: 'the charter was amended to version 0.2' };
-      }
-      if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
-      if (name === 'reorientationDecisions:openByHand') {
-        return {
-          reorientationId: 'card-1',
-          joined: backend.joins,
-          asked: backend.asks,
-          onCard: backend.onCard,
-        };
-      }
-      return null;
+vi.mock('convex/react', async () => {
+  const { useSyncExternalStore } = await import('react');
+  return {
+    useMutation:
+      (reference: unknown) =>
+      async (args: unknown): Promise<unknown> => {
+        const name = getFunctionName(reference as never);
+        backend.calls.push({ name, args });
+        if (backend.lands !== undefined) {
+          backend.lands(name);
+          backend.version += 1;
+          for (const listener of backend.listeners) listener();
+        }
+        return answerOf(name);
+      },
+    useQuery: (reference: unknown, args: unknown): unknown => {
+      useSyncExternalStore(
+        (listener: () => void) => {
+          backend.listeners.add(listener);
+          return (): void => void backend.listeners.delete(listener);
+        },
+        () => backend.version,
+      );
+      return args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)];
     },
-  useQuery: (reference: unknown, args: unknown): unknown =>
-    args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
-}));
+  };
+});
+
+/** What each of the page's mutations answers. */
+function answerOf(name: string): unknown {
+  if (name === 'reorientationDecisions:approve') {
+    return { result: 'the charter was amended to version 0.2' };
+  }
+  if (name === 'reorientationDecisions:defer') return { revisitAt: Date.UTC(2026, 9, 3, 9) };
+  if (name === 'reorientationDecisions:openByHand') {
+    return {
+      reorientationId: 'card-1',
+      joined: backend.joins,
+      asked: backend.asks,
+      onCard: backend.onCard,
+    };
+  }
+  return null;
+}
 
 import {
   ReorientationCard,
@@ -143,6 +171,8 @@ beforeEach((): void => {
   backend.joins = false;
   backend.onCard = true;
   backend.asks = true;
+  backend.lands = undefined;
+  backend.listeners.clear();
 });
 
 afterEach((): void => {
@@ -668,6 +698,39 @@ describe('a reorientation card', (): void => {
     expect(view.container.querySelector('a[href$="/talk/card-1"]')).toBeNull();
     view.unmount();
   });
+});
+
+describe('a decision leaves the manager on the card and says what it did (the v0.20.0 hosted walk’s finding 5)', (): void => {
+  // The walk's rows `A-Nell-reorientation-approved.txt` and `A-Lark-reorientation-dismissed.txt`:
+  // after Approve and after Dismiss the card moved under Decided, no live region carried the
+  // outcome and focus was on `body`; Defer said "Deferred until 20 October." and kept focus.
+  it.each([
+    ['Approve', 'applied', 'Approved: the charter was amended to version 0.2.'],
+    ['Dismiss', 'dismissed', 'Dismissed: nothing changed.'],
+  ] as const)(
+    '%s: focus is on the card under Decided, and the outcome is in the region the card already had',
+    async (control, status, words): Promise<void> => {
+      const list = 'reorientationDecisions:listForAgent';
+      backend.queries[list] = [BASE];
+      backend.lands = (): void => {
+        backend.queries[list] = [
+          withCard({ status, decidedAt: OPENED + 60_000, outcome: { summary: 'what it did' } }),
+        ];
+      };
+      const view = mount(asEmployee(<ReorientationView />, { surfaceMode: 'real' }));
+      // A region is announced when its words change, so it is the one drawn before the press.
+      const region = view.container.querySelector('#card-card-1 [role="status"]');
+      expect(region?.textContent).toBe('');
+      await press(view.container, control);
+      const card = view.container.querySelector('#card-card-1');
+      expect(card?.getAttribute('data-reorientation-status')).toBe(status);
+      expect(view.container.textContent).toContain('Decided');
+      expect(document.activeElement).toBe(card);
+      expect(region?.isConnected).toBe(true);
+      expect(region?.textContent).toBe(words);
+      view.unmount();
+    },
+  );
 });
 
 describe('an address naming a card lands on it once the cards are drawn (16-D’s W-3)', (): void => {

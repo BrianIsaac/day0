@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { Button } from '../../../components/Button';
@@ -14,7 +14,7 @@ import { useChange } from '../../../components/use-change';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
-import { ReorientationCard } from './ReorientationCard';
+import { ReorientationCard, type CardView } from './ReorientationCard';
 
 /** The longest description of a change of role a card takes. */
 const SUMMARY_LIMIT = 300;
@@ -149,6 +149,9 @@ export function ReorientationView() {
   const decided = (views ?? []).filter(
     (view) => view.card.status === 'applied' || view.card.status === 'dismissed',
   );
+  const cardOf = (view: CardView): ReactNode => (
+    <ReorientationCard key={view.card._id} view={view} name={agent.name} zone={zone} now={now} />
+  );
   return (
     <Columns
       arriving={arriving}
@@ -163,49 +166,42 @@ export function ReorientationView() {
         <p role="status" className="text-sm text-[var(--color-muted)]">
           Loading the reorientation cards
         </p>
-      ) : standing.length === 0 ? (
-        <Card title="No reorientation card is open">
-          {surfaceMode === 'real' ? (
-            <p className="text-sm text-[var(--color-fg-2)]">
-              A card opens when a person, a page, a skill or an access {agent.name} relies on
-              changes. Meanwhile you can amend the charter on the {charter}.
-            </p>
-          ) : (
-            <p className="text-sm text-[var(--color-fg-2)]">
-              The hosted office&apos;s pages do not change, so a card opens here when {agent.name}{' '}
-              is handed over to you, or when you open one below. You can amend the charter on the{' '}
-              {charter}.
-            </p>
-          )}
-        </Card>
       ) : (
-        standing.map((view) => (
-          <ReorientationCard
-            key={view.card._id}
-            view={view}
-            name={agent.name}
-            zone={zone}
-            now={now}
-          />
-        ))
+        // One keyed list, the standing cards, the by-hand form, then the decided ones: a card that
+        // Approve or Dismiss moves under Decided stays the element it was, so focus has the card
+        // to come back to and its live region says the outcome (the v0.20.0 hosted walk's finding
+        // 5: drawn as two lists, the decided card was a new element and focus fell to the page).
+        [
+          standing.length === 0 ? (
+            <Card key="none-open" title="No reorientation card is open">
+              {surfaceMode === 'real' ? (
+                <p className="text-sm text-[var(--color-fg-2)]">
+                  A card opens when a person, a page, a skill or an access {agent.name} relies on
+                  changes. Meanwhile you can amend the charter on the {charter}.
+                </p>
+              ) : (
+                <p className="text-sm text-[var(--color-fg-2)]">
+                  The hosted office&apos;s pages do not change, so a card opens here when{' '}
+                  {agent.name} is handed over to you, or when you open one below. You can amend the
+                  charter on the {charter}.
+                </p>
+              )}
+            </Card>
+          ) : null,
+          ...standing.map(cardOf),
+          <OpenByHand key="open-by-hand" name={agent.name} />,
+          decided.length > 0 ? (
+            <h2
+              key="decided-cards"
+              id="decided-cards"
+              className="text-sm font-semibold text-[var(--color-muted)]"
+            >
+              Decided
+            </h2>
+          ) : null,
+          ...decided.map(cardOf),
+        ]
       )}
-      {views !== undefined ? <OpenByHand name={agent.name} /> : null}
-      {decided.length > 0 ? (
-        <section aria-labelledby="decided-cards" className="grid gap-3">
-          <h2 id="decided-cards" className="text-sm font-semibold text-[var(--color-muted)]">
-            Decided
-          </h2>
-          {decided.map((view) => (
-            <ReorientationCard
-              key={view.card._id}
-              view={view}
-              name={agent.name}
-              zone={zone}
-              now={now}
-            />
-          ))}
-        </section>
-      ) : null}
     </Columns>
   );
 }

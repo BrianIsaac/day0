@@ -402,9 +402,16 @@ export function ReorientationCard({
                   : {}),
               })}
             </p>
-            <StatusRegion outcome={change.outcome} />
           </div>
         )}
+        {/*
+          After the decisions, in one place whatever the card's state: a decision that moves the
+          card under Decided keeps this region, so what it did is announced there. Decided, the
+          card's own outcome line says it to the eye, and the region says it only to a reader.
+        */}
+        <div className={decided ? 'sr-only' : undefined}>
+          <StatusRegion outcome={change.outcome} />
+        </div>
       </div>
     </Card>
   );
