@@ -29,8 +29,21 @@ export interface ExportFile {
    * @returns The name it was saved under.
    */
   close(fileName: string): Promise<string>;
-  /** The export stopped: leave no file. */
-  discard(): Promise<void>;
+  /**
+   * The export stopped: leave no file. It never rejects, so the reason the export stopped is the
+   * one said.
+   *
+   * @returns The name of an empty file it could not remove, or undefined when nothing is left.
+   */
+  discard(): Promise<string | undefined>;
+}
+
+/** How long a held file's address is kept after the download is started, before it is let go. */
+const DOWNLOAD_ADDRESS_KEPT_MS = 60_000;
+
+/** A reason a file operation was refused, for the log: the error's name, never its message. */
+function reasonOf(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown';
 }
 
 /** The picker of the File System Access API, which the DOM's own types do not carry yet. */
@@ -62,7 +75,9 @@ function isDismissal(error: unknown): boolean {
  * name; where the picker made a new, empty file for the name, a stopped export removes it too.
  */
 async function pickedFile(handle: RemovableFileHandle): Promise<ExportFile> {
-  // An existing file the manager chose to replace is theirs and stays if the export stops.
+  // An existing file the manager chose to replace is theirs and stays if the export stops. The
+  // browser does not say whether the picker made the file, so an empty one is read as made by it:
+  // an empty file chosen for replacing held nothing to keep.
   const madeByPicker = (await handle.getFile()).size === 0;
   const writable = await handle.createWritable();
   return {
@@ -72,8 +87,24 @@ async function pickedFile(handle: RemovableFileHandle): Promise<ExportFile> {
       return handle.name;
     },
     discard: async () => {
-      await writable.abort();
-      if (madeByPicker) await handle.remove?.();
+      try {
+        await writable.abort();
+      } catch (error) {
+        // The pieces were in the browser's own temporary copy either way: the name still holds
+        // what it held when it was picked.
+        log.warn('the unfinished export could not be aborted', { reason: reasonOf(error) });
+      }
+      if (!madeByPicker) return undefined;
+      if (handle.remove === undefined) return handle.name;
+      try {
+        await handle.remove();
+        return undefined;
+      } catch (error) {
+        log.warn('the empty file the picker made could not be removed', {
+          reason: reasonOf(error),
+        });
+        return handle.name;
+      }
     },
   };
 }
@@ -106,13 +137,14 @@ function heldFile(maxBytes: number): ExportFile {
       link.click();
       link.remove();
       pieces = [];
-      // Revoked on the next task: some browsers cancel a download whose URL goes before it starts.
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      // Kept a minute: a browser that has not yet started a large download when its address goes
+      // cancels it.
+      setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_ADDRESS_KEPT_MS);
       return await Promise.resolve(fileName);
     },
     discard: async () => {
       pieces = [];
-      await Promise.resolve();
+      return await Promise.resolve(undefined);
     },
   };
 }
@@ -142,7 +174,7 @@ export async function openExportFile(
     // The picker is there and may not be used here (a frame without the permission, a policy):
     // the file is held and downloaded instead, as in a browser without it.
     log.warn('the save picker could not be used; the export is held and downloaded', {
-      reason: error instanceof Error ? error.name : 'unknown',
+      reason: reasonOf(error),
     });
     return heldFile(maxBytes);
   }

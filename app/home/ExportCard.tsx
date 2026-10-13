@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAction } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
@@ -14,7 +14,7 @@ import {
 import { dayKey, deploymentZone } from '@/lib/zone';
 import { Button } from '../components/Button';
 import { StatusRegion } from '../components/StatusRegion';
-import { useChange } from '../components/use-change';
+import { refusalText, useChange } from '../components/use-change';
 import { openExportFile } from './export-file';
 
 /**
@@ -34,9 +34,21 @@ function counted(count: number, noun: string): string {
 /** What a stopped export says, whoever stopped it (section 7's draft, RM24). */
 export const EXPORT_CANCELLED = 'Cancelled: nothing was saved.';
 
+/** What an export that did not finish says when the refusal carries no words of its own. */
+const EXPORT_REFUSED = 'The export did not finish; nothing was saved.';
+
+/**
+ * What is added when the empty file the browser made for the chosen name could not be removed.
+ *
+ * @param fileName - The file's name.
+ */
+function leftBehind(fileName: string): string {
+  return ` The empty file ${fileName} could not be removed; delete it yourself.`;
+}
+
 /** How an export ended: saved under a name, or stopped by the manager with nothing kept. */
 type Exported =
-  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'cancelled'; readonly left?: string }
   | {
       readonly kind: 'saved';
       readonly fileName: string;
@@ -62,6 +74,8 @@ export function ExportCard() {
   const change = useChange();
   const [progress, setProgress] = useState<OwnerExportProgress | null>(null);
   const running = useRef<AbortController | null>(null);
+  // A manager who leaves the page stops the export: no file is written behind their back.
+  useEffect(() => (): void => running.current?.abort(), []);
 
   const calls: OwnerExportCalls = {
     head: async () => await head({}),
@@ -85,13 +99,16 @@ export function ExportCard() {
     if (file === undefined) return { kind: 'cancelled' };
     try {
       const manifest = await streamOwnerExport(calls, file, { signal, onProgress: setProgress });
+      // Cancel pressed as the last piece went: the file is not kept.
+      if (signal.aborted) throw new OwnerExportCancelled();
       const fileName = await file.close(ownerExportFileName(manifest.exportedOn));
       const rows = OWNER_SECTIONS.reduce((total, section) => total + manifest.counts[section], 0);
       return { kind: 'saved', fileName, employees: manifest.counts.employees, rows };
     } catch (error) {
-      await file.discard();
-      if (error instanceof OwnerExportCancelled) return { kind: 'cancelled' };
-      throw error;
+      const left = await file.discard();
+      if (error instanceof OwnerExportCancelled) return { kind: 'cancelled', left };
+      if (left === undefined) throw error;
+      throw new Error(`${refusalText(error, EXPORT_REFUSED)}${leftBehind(left)}`);
     } finally {
       setProgress(null);
     }
@@ -103,10 +120,10 @@ export function ExportCard() {
     change.run(async () => await exportToFile(controller.signal), {
       done: (exported) =>
         exported.kind === 'cancelled'
-          ? EXPORT_CANCELLED
+          ? `${EXPORT_CANCELLED}${exported.left === undefined ? '' : leftBehind(exported.left)}`
           : // An owner who keeps nothing of their own yet has no rows to name (the 16-F bed).
             `Exported ${counted(exported.employees, 'employee')}${exported.rows > 0 ? ` and ${counted(exported.rows, 'row')} of yours` : ''} to ${exported.fileName}, redacted as the export's policy says.`,
-      refused: 'The export did not finish; nothing was saved.',
+      refused: EXPORT_REFUSED,
     });
   }
 

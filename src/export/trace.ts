@@ -693,11 +693,13 @@ function printedAt(value: unknown, depth: number): string {
 /**
  * Write the owner export to a sink as it is read (wave 17, 17-F; decision F-1): the head and the
  * rest of the owner's agents, the owner's rows page by page, then each employee's trace through
- * the employee's own export, its owner-scoped sections left to the owner's rows. The owner's rows,
- * which hold no page's text, are held until they are written; an employee's trace is written the
- * moment it is whole and let go before the next is read, so the export holds one trace however
- * many employees there are. The pieces together are the file `JSON.stringify(file, null, 2)` and
- * a line break would print of the whole {@link OwnerExport}, byte for byte.
+ * the employee's own export, its owner-scoped sections left to the owner's rows. The owner's rows
+ * are held until they are written, since the manifest that goes first carries their counts: they
+ * hold no stored page's text, and the skill library's bodies are the heaviest thing among them.
+ * An employee's trace is written the moment it is whole and let go before the next is read, so
+ * the export holds one trace however many employees there are. The pieces together are the file
+ * `JSON.stringify(file, null, 2)` and a line break would print of the whole {@link OwnerExport},
+ * byte for byte.
  *
  * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
  *   takes them).

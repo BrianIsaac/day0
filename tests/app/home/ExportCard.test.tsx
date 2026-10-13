@@ -93,15 +93,36 @@ interface PickedFile {
   closed: boolean;
   aborted: boolean;
   removed: boolean;
+  /** Let a held write through. */
+  release: () => void;
 }
 
-/**
- * Give the window the File System Access API's picker, answering with one file.
- *
- * @param size - The size of the file the name already holds: 0 for one the picker just made.
- */
-function pickerOf(name: string, size = 0): PickedFile {
-  const file: PickedFile = { written: [], closed: false, aborted: false, removed: false };
+/** How the picked file behaves: by default one the picker just made, in a current Chromium. */
+interface PickedFileOptions {
+  /** The size of the file the name already holds: 0 for one the picker just made. */
+  readonly size?: number;
+  /** Whether the handle can remove its file, as Chromium's can since 110. */
+  readonly removable?: boolean;
+  /** Whether the browser refuses to abort the writable. */
+  readonly abortRefused?: boolean;
+  /** The write, counted from 1, that waits for `release`. */
+  readonly holdWrite?: number;
+}
+
+/** Give the window the File System Access API's picker, answering with one file. */
+function pickerOf(name: string, options: PickedFileOptions = {}): PickedFile {
+  const { size = 0, removable = true, abortRefused = false, holdWrite } = options;
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const file: PickedFile = {
+    written: [],
+    closed: false,
+    aborted: false,
+    removed: false,
+    release: (): void => release(),
+  };
   (window as { showSaveFilePicker?: unknown }).showSaveFilePicker = async (): Promise<unknown> =>
     await Promise.resolve({
       name,
@@ -109,8 +130,8 @@ function pickerOf(name: string, size = 0): PickedFile {
       createWritable: async () =>
         await Promise.resolve({
           write: async (chunk: string): Promise<void> => {
+            if (file.written.length + 1 === holdWrite) await held;
             file.written.push(chunk);
-            await Promise.resolve();
           },
           close: async (): Promise<void> => {
             file.closed = true;
@@ -118,13 +139,19 @@ function pickerOf(name: string, size = 0): PickedFile {
           },
           abort: async (): Promise<void> => {
             file.aborted = true;
+            if (abortRefused)
+              throw new DOMException('The writable is locked.', 'InvalidStateError');
             await Promise.resolve();
           },
         }),
-      remove: async (): Promise<void> => {
-        file.removed = true;
-        await Promise.resolve();
-      },
+      ...(removable
+        ? {
+            remove: async (): Promise<void> => {
+              file.removed = true;
+              await Promise.resolve();
+            },
+          }
+        : {}),
     });
   return file;
 }
@@ -279,7 +306,7 @@ describe('the export card at fifty employees: progress, Cancel and the file (wav
   });
 
   it('keeps a file the manager chose to replace when the export is cancelled', async (): Promise<void> => {
-    const file = pickerOf('last-month.json', 2_048);
+    const file = pickerOf('last-month.json', { size: 2_048 });
     const second = twoEmployeesTheSecondHeld();
     const view = mount(<ExportCard />);
     await press(view.container, 'Export');
@@ -331,6 +358,92 @@ describe('the export card at fifty employees: progress, Cancel and the file (wav
 
     await vi.waitFor((): void => {
       expect(said(view.container)).toEqual(['EMPLOYEE_NOT_YOURS']);
+    });
+    expect([file.closed, file.aborted, file.removed]).toEqual([false, true, true]);
+    view.unmount();
+  });
+
+  it('says so when the browser cannot remove the empty file it made, and still that it was cancelled', async (): Promise<void> => {
+    const file = pickerOf('october-export.json', { removable: false });
+    const second = twoEmployeesTheSecondHeld();
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+    await press(view.container, 'Cancel');
+    second.release();
+    await settle();
+
+    await vi.waitFor((): void => {
+      expect(said(view.container)).toEqual([
+        'Cancelled: nothing was saved. The empty file october-export.json could not be removed; delete it yourself.',
+      ]);
+    });
+    expect([file.closed, file.aborted]).toEqual([false, true]);
+    view.unmount();
+  });
+
+  it('says it was cancelled, and removes the file, when the browser refuses to abort the write', async (): Promise<void> => {
+    vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    const file = pickerOf('october-export.json', { abortRefused: true });
+    const second = twoEmployeesTheSecondHeld();
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+    await press(view.container, 'Cancel');
+    second.release();
+    await settle();
+
+    await vi.waitFor((): void => {
+      expect(said(view.container)).toEqual(['Cancelled: nothing was saved.']);
+    });
+    expect([file.closed, file.removed]).toEqual([false, true]);
+    view.unmount();
+  });
+
+  it('says the refusal and the file left behind when a call is refused and the file cannot be removed', async (): Promise<void> => {
+    pickerOf('october-export.json', { removable: false });
+    backend.results['exportActions:exportPage'] = (): never => {
+      throw new Error('EMPLOYEE_NOT_YOURS');
+    };
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+
+    await vi.waitFor((): void => {
+      expect(said(view.container)).toEqual([
+        'EMPLOYEE_NOT_YOURS The empty file october-export.json could not be removed; delete it yourself.',
+      ]);
+    });
+    view.unmount();
+  });
+
+  it('stops and keeps no file when the manager leaves the page while it runs', async (): Promise<void> => {
+    const file = pickerOf('october-export.json');
+    const second = twoEmployeesTheSecondHeld();
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+    const before = backend.calls.length;
+
+    view.unmount();
+    second.release();
+    await settle();
+
+    await vi.waitFor((): void => {
+      expect([file.closed, file.aborted, file.removed]).toEqual([false, true, true]);
+    });
+    expect(backend.calls.slice(before)).toEqual([]);
+  });
+
+  it('keeps no file when Cancel is pressed as the last piece goes to it', async (): Promise<void> => {
+    // One employee: the owner's rows, its trace, the file's end. The end waits on the disk.
+    const file = pickerOf('october-export.json', { holdWrite: 3 });
+    const view = mount(<ExportCard />);
+    await press(view.container, 'Export');
+    expect(file.written).toHaveLength(2);
+
+    await press(view.container, 'Cancel');
+    file.release();
+    await settle();
+
+    await vi.waitFor((): void => {
+      expect(said(view.container)).toEqual(['Cancelled: nothing was saved.']);
     });
     expect([file.closed, file.aborted, file.removed]).toEqual([false, true, true]);
     view.unmount();

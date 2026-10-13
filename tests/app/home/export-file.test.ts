@@ -45,7 +45,7 @@ describe('the file the home’s export is saved to (wave 17, 17-F; decision F-1)
     const file = await openExportFile('suggested.json', 10);
     await file?.write('12345');
     await expect(file?.write('6789012')).rejects.toThrow(EXPORT_TOO_LARGE);
-    await file?.discard();
+    expect(await file?.discard()).toBeUndefined();
     expect(downloaded.names).toEqual([]);
     expect(EXPORT_TOO_LARGE).toBe(
       'This export is too large for this browser to hold before it saves it. Export from Chrome or Edge, which save it as it arrives, or ask IT to run the export from the command line.',
@@ -66,6 +66,22 @@ describe('the file the home’s export is saved to (wave 17, 17-F; decision F-1)
     await file?.write('{}\n');
     await file?.close('held.json');
     expect(downloaded.names).toEqual(['held.json']);
+  });
+
+  it('keeps the download’s address for a minute, so a browser slow to start a large download still finds it', async (): Promise<void> => {
+    vi.useFakeTimers();
+    const revoked: string[] = [];
+    URL.revokeObjectURL = (url: string): void => {
+      revoked.push(url);
+    };
+    const file = await openExportFile('suggested.json');
+    await file?.write('{}\n');
+    await file?.close('held.json');
+    vi.advanceTimersByTime(59_999);
+    expect(revoked).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(revoked).toEqual(['blob:export']);
+    vi.useRealTimers();
   });
 
   it('answers no file when the manager closes the picker', async (): Promise<void> => {
