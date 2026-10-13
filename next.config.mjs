@@ -14,6 +14,21 @@ const securityHeaders = [
   { key: 'Permissions-Policy', value: 'camera=(), geolocation=(), microphone=(self)' },
 ];
 
+/**
+ * How the app names itself to `pnpm check:setup` (wave 17, 17-P): a customer's reverse proxy can
+ * answer at the public address and forward to something else (its default site, the backend's
+ * port), and the check reads this to tell. It says nothing the sign-in page does not.
+ */
+const appMarker = { key: 'X-Day0', value: 'app' };
+
+/**
+ * The routes that stream a reply as the model writes it: the 1:1 and the Discuss talk. nginx
+ * buffers an upstream's answer unless this header says otherwise, and a buffered reply arrives
+ * whole at its end (docs/running/proxy.md, "The app").
+ */
+const streamedRoutes = ['/api/voice/chat', '/api/reorientation/chat'];
+const unbuffered = [{ key: 'X-Accel-Buffering', value: 'no' }];
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -31,7 +46,10 @@ const nextConfig = {
     return [{ source: '/demo', destination: '/walkthrough', permanent: true }];
   },
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    return [
+      { source: '/:path*', headers: [...securityHeaders, appMarker] },
+      ...streamedRoutes.map((source) => ({ source, headers: unbuffered })),
+    ];
   },
 };
 
