@@ -2151,6 +2151,23 @@ export function wayOutSection(
           'fails there.',
         );
       }
+      // A git clone a Node action starts reads the address from there too (P-14); compared, never
+      // printed, since it may carry a password.
+      const unheld = (
+        [
+          ['HTTPS_PROXY', settings.httpsProxy],
+          ['HTTP_PROXY', settings.httpProxy],
+        ] as const
+      )
+        .filter(([name, address]) => (deployment.values[name] ?? '').trim() !== (address ?? ''))
+        .map(([name]) => name);
+      if (unheld.length > 0) {
+        worsen('gap');
+        lines.push(
+          "The deployment does not hold the proxy's address as .env.local names it " +
+            `(${unheld.join(' and ')}), which a git clone in a Node action reads: run \`pnpm sync:env\`.`,
+        );
+      }
     }
     if (settings.httpsProxy === undefined) {
       worsen('warn');

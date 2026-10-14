@@ -1166,8 +1166,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
       NO_PROXY: 'day0.acme.test',
     };
+    // Re-taken (P-14): the deployment holds the proxy's address too, as `pnpm sync:env` puts it.
     const held = wayOutSection(proxied, [], 'v22.23.2', 'x64', {
-      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test'), HTTPS_PROXY: proxied.HTTPS_PROXY },
     });
     expect(held.status).toBe('ok');
     expect(held.lines.join(' ')).toContain(
@@ -1193,7 +1194,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       [],
       'v22.23.2',
       'x64',
-      { values: { NO_PROXY: deploymentNoProxy('day0.acme.test') } },
+      {
+        values: { NO_PROXY: deploymentNoProxy('day0.acme.test'), HTTPS_PROXY: proxied.HTTPS_PROXY },
+      },
     );
     expect(asChild.status).toBe('ok');
     expect(asChild.lines).toContain('NO_PROXY also keeps out: day0.acme.test.');
@@ -1340,6 +1343,36 @@ describe('check:setup and a proxy the shell names (D-9 (a))', (): void => {
     });
     expect(section.status).toBe('warn');
     expect(section.lines.join(' ')).toContain('The shell names a proxy (HTTPS_PROXY)');
+  });
+});
+
+// P-14 (17-P's F6): a git clone a Node action starts reads the proxy's address from the
+// deployment, which `pnpm sync:env` now puts there; read back, never printed.
+describe("check:setup: the proxy's address on the deployment (P-14)", (): void => {
+  const PROXIED = {
+    DAY0_SURFACE_MODE: 'real',
+    OPENAI_API_KEY: 'k',
+    HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
+    NO_PROXY: 'day0.acme.test',
+  };
+
+  it('is a gap when the deployment does not hold the address the file names, said without it', (): void => {
+    const lacking = wayOutSection(PROXIED, [], 'v22.23.2', 'x64', {
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+    });
+    expect(lacking.status).toBe('gap');
+    expect(lacking.lines).toContain(
+      "The deployment does not hold the proxy's address as .env.local names it (HTTPS_PROXY), " +
+        'which a git clone in a Node action reads: run `pnpm sync:env`.',
+    );
+    expect(lacking.lines.join('\n')).not.toContain('hunter2');
+    const held = wayOutSection(PROXIED, [], 'v22.23.2', 'x64', {
+      values: {
+        NO_PROXY: deploymentNoProxy('day0.acme.test'),
+        HTTPS_PROXY: PROXIED.HTTPS_PROXY,
+      },
+    });
+    expect(held.status).toBe('ok');
   });
 });
 

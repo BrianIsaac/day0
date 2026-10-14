@@ -2,8 +2,9 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deploymentNoProxy } from '../../scripts/lib/proxy-env';
+import { cloneEnvironment } from '../../src/docs/readers/git';
 import { hasHostTool } from '../setup/host-tools';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
@@ -344,10 +345,11 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
       'localhost',
       '127.0.0.1',
     ]);
-    // The proxy's own address stays off the deployment: Node read it when it started, and it
-    // may carry a password.
-    expect(proxied.calls.join('\n')).not.toContain('hunter2');
-    expect(proxied.calls.join('\n')).not.toContain('HTTPS_PROXY');
+    // Re-taken (wave 18, P-14; 17-P's F6): the proxy's address is on the deployment too, since a
+    // git clone a Node action starts reads it from there (the test below).
+    expect(proxied.calls).toContain(
+      'convex env set HTTPS_PROXY -- http://day0:hunter2@proxy.acme.test:3128',
+    );
 
     const plainOnly = runSync(
       [],
@@ -404,6 +406,44 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(spaces.calls.join('\n')).not.toContain('convex env set NO_PROXY');
     expect(spaces.calls.join('\n')).not.toContain('convex env set OPENAI_MODEL');
     expect(spaces.childEnvironment[0]).toContain('HTTPS_PROXY= ');
+  });
+
+  // 17-P's F6: a Node action runs with the deployment's variables in place of the container's, so
+  // a `git clone` of a GitHub or GitLab source it starts never had the proxy's address and dialled
+  // directly. With the address on the deployment, the clone's child carries it; a host
+  // DAY0_GIT_HOSTS lists keeps its direct, pinned route.
+  it("puts the proxy's address on the deployment, so a Node action's git clone of GitHub carries it and a listed host's does not (17-P's F6)", (): void => {
+    const proxied = runSync(
+      [],
+      'DAY0_SURFACE_MODE=mock\nHTTPS_PROXY=http://proxy.acme.test:3128\nHTTP_PROXY=http://proxy.acme.test:3128\nNO_PROXY=day0.acme.test\n',
+    );
+    expect(proxied.status).toBe(0);
+    const deployment = Object.fromEntries(
+      proxied.deployment.map((line) => [
+        line.slice(0, line.indexOf('=')),
+        line.slice(line.indexOf('=') + 1),
+      ]),
+    );
+    expect(deployment.HTTPS_PROXY).toBe('http://proxy.acme.test:3128');
+    expect(deployment.HTTP_PROXY).toBe('http://proxy.acme.test:3128');
+    for (const [name, value] of Object.entries(deployment)) vi.stubEnv(name, value);
+    try {
+      expect(cloneEnvironment(true)).toMatchObject({
+        HTTPS_PROXY: 'http://proxy.acme.test:3128',
+        NO_PROXY: deploymentNoProxy('day0.acme.test'),
+      });
+      expect(cloneEnvironment(false).HTTPS_PROXY).toBeUndefined();
+      expect(cloneEnvironment(false).HTTP_PROXY).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const dropped = runSync(
+      ['HTTPS_PROXY=http://proxy.acme.test:3128', 'HTTP_PROXY=http://proxy.acme.test:3128'],
+      'DAY0_SURFACE_MODE=mock\n',
+    );
+    expect(dropped.calls).toContain('convex env remove HTTPS_PROXY');
+    expect(dropped.calls).toContain('convex env remove HTTP_PROXY');
   });
 
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {
