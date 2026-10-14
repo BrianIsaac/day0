@@ -108,6 +108,8 @@ interface ProposalCards {
   readonly more: number | undefined;
   /** Whether the read a press asked for is still loading. */
   readonly loading: boolean;
+  /** Whether the read a press asked for failed: the press reads it again. */
+  readonly failed: boolean;
   /** Read the next proposals, from where the last read stopped. */
   readonly showMore: () => void;
 }
@@ -127,26 +129,31 @@ function useProposalCards(
   cards: readonly RelationCardRow[],
 ): ProposalCards {
   const [cursors, setCursors] = useState<readonly number[]>([]);
+  // Each try again subscribes afresh: a failed read keeps its error under its old key.
+  const [attempt, setAttempt] = useState(0);
+  const keyOf = (before: number): string => `proposals-${before}-${attempt}`;
   const queries = useMemo(
     () =>
       Object.fromEntries(
         cursors.map((before) => [
-          `proposals-${before}`,
+          `proposals-${before}-${attempt}`,
           { query: api.docRelations.listOpen, args: { proposalsBefore: before } },
         ]),
       ),
-    [cursors],
+    [cursors, attempt],
   );
   const later: Record<string, RelationCardsRead | undefined | Error> = useQueries(queries);
   const drawn = [...cards];
   const ids = new Set(drawn.map((card) => card._id));
   let last = first;
   let loading = false;
+  let failed = false;
   for (const before of cursors) {
-    const read = later[`proposals-${before}`];
+    const read = later[keyOf(before)];
     // A read still loading, or one that failed, ends the chain here; the cards before it stand.
     if (read === undefined || read instanceof Error) {
       loading = read === undefined;
+      failed = read instanceof Error;
       break;
     }
     for (const card of read.cards) {
@@ -167,8 +174,10 @@ function useProposalCards(
         ? undefined
         : Math.min(last.notShown.proposals, RELATION_CARDS_READ),
     loading,
+    failed,
     showMore: () => {
-      if (next !== null && !cursors.includes(next)) setCursors([...cursors, next]);
+      if (failed) setAttempt(attempt + 1);
+      else if (next !== null && !cursors.includes(next)) setCursors([...cursors, next]);
     },
   };
 }
@@ -198,6 +207,7 @@ export function DocumentationView() {
     notShown,
     more,
     loading,
+    failed,
     showMore,
   } = useProposalCards(firstRead, useRelationCards(firstRead));
   const [picked, setPicked] = useState<Id<'docSources'> | undefined>(undefined);
@@ -287,9 +297,18 @@ export function DocumentationView() {
       {notShown !== undefined ? (
         <p className="text-sm text-[var(--color-muted)]">{notShown}</p>
       ) : null}
-      {more !== undefined ? (
+      {failed ? (
+        <p className="text-sm text-[var(--color-muted)]">The next relations could not be read.</p>
+      ) : null}
+      {more !== undefined || failed ? (
         <Button size="small" className="justify-self-start" disabled={loading} onClick={showMore}>
-          {loading ? 'Loading…' : more === 0 ? 'Show more' : `Show ${more} more`}
+          {loading
+            ? 'Loading…'
+            : failed
+              ? 'Try again'
+              : more === 0
+                ? 'Show more'
+                : `Show ${more} more`}
         </Button>
       ) : null}
       {shown ? <PageTable key={shown._id} source={shown} zone={zone} /> : null}

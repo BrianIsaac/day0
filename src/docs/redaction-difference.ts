@@ -28,8 +28,10 @@ const MAX_LINE_MARKERS = 16;
  * texts are judged changed. The walk is bounded a line by its length, but a page of fifty lines
  * each built to line up only at the end of its walk (sixteen markers a letter apart against
  * fifteen hundred of that letter) cost about a second inside the page store's mutation, which
- * then failed at every sync. An ordinary page compares a few hundred places a marker, so this
- * judges a page of hundreds of redacted lines and costs a hostile page a stamp, not a sync.
+ * then failed at every sync. An ordinary redacted line compares up to about 120 places a marker,
+ * so this judges a page of up to about 1,600 redacted lines; past that a difference that is only
+ * the redaction's is judged a change and stamps the skills that read the page (the safe side), and
+ * a hostile page costs a stamp, not a sync.
  */
 export const REDACTION_WALK_STEPS = 200_000;
 

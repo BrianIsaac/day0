@@ -507,6 +507,33 @@ describe('DocumentationView', () => {
     view.unmount();
   });
 
+  it('says when the next proposals could not be read, and reads them again on Try again (the second pass)', async () => {
+    populated();
+    const proposals = (from: number, count: number) =>
+      Array.from({ length: count }, (_unused, n) => ({
+        ...RELATIONS[0],
+        _id: `proposal-${from + n}`,
+      }));
+    backend.queries['docRelations:listOpen'] = read(
+      proposals(0, 20),
+      null,
+      { proposals: 5, atLeast: false },
+      900,
+    );
+    backend.proposalReads = { 900: new Error('the read failed') };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    await press(view.container, 'Show 5 more');
+    expect(view.container.textContent).toContain('The next relations could not be read.');
+    backend.proposalReads = { 900: read(proposals(20, 5)) };
+    await press(view.container, 'Try again');
+    expect(backend.readOnProposals.filter((before) => before === 900).length).toBeGreaterThan(1);
+    expect(
+      (view.container.textContent ?? '').split('These two look like versions of the same runbook'),
+    ).toHaveLength(26);
+    expect(view.container.textContent).not.toContain('The next relations could not be read.');
+    view.unmount();
+  });
+
   it('reads no further once the cards hold as many confirmed conflicts as one read gives', () => {
     populated();
     const conflicts = Array.from({ length: 20 }, (_unused, n) => ({
