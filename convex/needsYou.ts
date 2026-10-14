@@ -57,6 +57,41 @@ const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
 /** Bound on the questions read for one plan. */
 const NEEDS_YOU_QUESTION_READ_LIMIT = 20;
 
+/** One employee's rows in one state, newest first, to a bound. */
+export type StateRows = (
+  state: Doc<'workItems'>['state'],
+  limit: number,
+) => Promise<Doc<'workItems'>[]>;
+
+/**
+ * One employee's rows by state, each state read once a transaction at each bound, however many
+ * readers ask for it: the roster counts the very rows its inbox entries list, and a row read twice
+ * is charged twice against the transaction's bytes (18-W's F1, at the joins: eleven parked rows of
+ * 900 KB, read by both, took the roster's page past its read). The roster's bounds equal this
+ * module's (a hundred a state, twenty-five stopped), so the two share each read.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @returns The reader; the rows it answers are shared, never to be changed in place.
+ */
+export function stateRowsOnce(ctx: QueryCtx, agentId: Id<'agents'>): StateRows {
+  const reads = new Map<string, Promise<Doc<'workItems'>[]>>();
+  return async (state, limit) => {
+    const key = `${state}:${limit}`;
+    let read = reads.get(key);
+    if (read === undefined) {
+      read = ctx.db
+        .query('workItems')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+        // Newest first: past a bound, what the manager has not seen yet is what is kept.
+        .order('desc')
+        .take(limit);
+      reads.set(key, read);
+    }
+    return await read;
+  };
+}
+
 /**
  * How many of an employee's events of one type the inbox reads back to find
  * when each waiting item entered its state. The rows record no entry time of
@@ -365,21 +400,18 @@ async function connectReadyCards(
  * @param ctx - Query context.
  * @param agentId - The employee.
  * @param now - The instant an authoring claim is judged against.
+ * @param rows - The employee's rows by state ({@link stateRowsOnce}).
  */
 async function waitingRowsOf(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   now: number,
+  rows: StateRows,
 ): Promise<WaitingRows> {
   const rowsIn = async (
     state: Doc<'workItems'>['state'],
     limit: number = NEEDS_YOU_STATE_READ_LIMIT,
-  ): Promise<Doc<'workItems'>[]> =>
-    await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      .order('desc')
-      .take(limit);
+  ): Promise<Doc<'workItems'>[]> => await rows(state, limit);
   const [charter, planRows, heldRows, deferredRows, skillRows, failedRows, surfaces] =
     await Promise.all([
       ctx.db
@@ -450,13 +482,15 @@ async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promis
  * @param ctx - Query context.
  * @param agent - The employee.
  * @param now - The instant an authoring claim is judged against.
+ * @param rows - The employee's rows by state, shared with a reader that counts them (the roster).
  */
 export async function needsYouOfEmployee(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,
+  rows: StateRows = stateRowsOnce(ctx, agent._id),
 ): Promise<NeedsYouEntry[]> {
-  const waiting = await waitingRowsOf(ctx, agent._id, now);
+  const waiting = await waitingRowsOf(ctx, agent._id, now, rows);
   // Only a row that entered its wait before the stamp existed is dated by reading events.
   const unstamped = (row: Doc<'workItems'>): boolean => row.waitingSince === undefined;
   const [

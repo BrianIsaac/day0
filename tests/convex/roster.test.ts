@@ -453,3 +453,53 @@ describe('the roster of an employee whose month of completions passes one read (
     expect(aiko?.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0)).toBeGreaterThan(0);
   });
 });
+
+describe('the roster of an employee whose unfinished rows pass one read (18-W’s F1, at the joins)', (): void => {
+  it('answers the page with an employee of eleven parked rows of 900 KB and its stopped rows', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T06:00:00Z'));
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const aiko = await seedWorkedEmployee(harness, 'Aiko', '');
+    await seedWorkedEmployee(harness, 'Mateo', '');
+    // 18-W's bed shape (`wave18-w-2026-10-14-bed/kit/heavy.py`): eleven deferred rows whose output
+    // weighs 900 KB, two stopped rows, each row in a transaction of its own.
+    const base = {
+      agentId: aiko,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      contentRefs: [],
+      contentSummary: 'Seeded: a parked row whose output is heavy.',
+      observedAt: Date.now(),
+      createdAt: Date.now(),
+    };
+    for (let n = 0; n < 11; n += 1) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('workItems', {
+          ...base,
+          externalId: `REVOPS-${600 + n}`,
+          title: `Parked audit note ${n + 1}`,
+          state: 'deferred',
+          output: { draft: '', notes: HEAVY_NOTES, actions: [], applied: [] },
+        });
+      });
+    }
+    for (const externalId of ['REVOPS-500', 'REVOPS-501']) {
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('workItems', {
+          ...base,
+          externalId,
+          title: `Stopped ${externalId}`,
+          state: 'failed',
+          skipReason: 'stopped: the model call failed: 429 Too Many Requests',
+          output: { draft: '', notes: HEAVY_NOTES, actions: [], applied: [] },
+        });
+      });
+    }
+
+    const rows = await rosterRows(harness.withIdentity(managerIdentity('owner')));
+
+    const row = rows.find((one) => one.name === 'Aiko');
+    expect(row).toMatchObject({ parkedCount: 11, stoppedCount: 2 });
+    expect(rows.map((one) => one.name).sort()).toEqual(['Aiko', 'Mateo']);
+  });
+});
