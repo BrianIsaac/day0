@@ -29,8 +29,8 @@ import {
   heldStageOf,
   markApproving,
   openCard,
-  unboundReportingLines,
 } from './reorientation';
+import { unboundReportingLines } from './reorientationJudgementInput';
 import type { Charter } from '../src/agent/charter';
 import {
   BY_HAND_CARDS_A_DAY,

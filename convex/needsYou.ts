@@ -30,10 +30,11 @@ import { actionsOf, verdictList } from './workLedger';
  * The needs-you projection (the wave 14 review's D-6, the standard's 9.2): everything one employee
  * waits on the manager for, each entry dated by when it began to wait, and the inbox's one order;
  * moved out of `convex/work.ts` unchanged. The registered inbox reads (`work:needsYou`,
- * `work:needsYouForAgent`) and their `returns` validators stay in `convex/work.ts` and build on the
- * entry validator here, which `NeedsYouEntry` is inferred from. This module sits below
- * `convex/work.ts`: `convex/work.ts` imports it and it never imports `./work`, so the move closes no
- * import cycle. It registers no function.
+ * `work:needsYouForAgent`) stay registered in `convex/work.ts`; their bodies and `returns`
+ * validators are in `convex/workLists.ts` (wave 18, 18-s) and build on the entry validator here,
+ * which `NeedsYouEntry` is inferred from. This module sits below `convex/work.ts`: `convex/work.ts`
+ * imports it and it never imports `./work`, so the move closes no import cycle. It registers no
+ * function.
  */
 
 /**

@@ -7,6 +7,7 @@ import * as reorientationReachModule from '../../convex/reorientationReach';
 import {
   OPEN_WORK_STATES,
   REACH_ROW_BUDGET,
+  agreementsApplying,
   blockingWorkOf,
   hasOpenWork,
   openWorkCache,
@@ -14,6 +15,7 @@ import {
   openWorkOf,
   openWorkUsingSkills,
   ownerAgents,
+  personAgreements,
   reachOf,
   scopeReach,
   skillReach,
@@ -498,6 +500,86 @@ describe('an owner’s employees, for a change that reaches every one', (): void
     const agents = await harness.run(async (ctx) => await ownerAgents(ctx, OWNER_SUBJECT));
     expect(agents.map((agent) => agent._id)).toEqual([mira, pip]);
     expect(await harness.run(async (ctx) => await ownerAgents(ctx, 'nobody'))).toEqual([]);
+  });
+});
+
+/** An active working agreement of the owner's, for every employee unless the test says otherwise. */
+const AGREEMENT = {
+  userId: OWNER_SUBJECT,
+  kind: 'preference',
+  statement: 'Copy the regional lead on refunds.',
+  scope: 'global',
+  sourceType: 'manager-card',
+  status: 'active',
+  createdAt: 1,
+  appliedTo: [],
+} as const satisfies Partial<Doc<'workingAgreements'>>;
+
+describe('the working agreements a change reaches (moved here in wave 18, 18-s)', (): void => {
+  it('about a person are the owner’s active ones about that person, and no other', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [dana, sam] = await harness.run(async (ctx) => {
+      const person = async (displayName: string): Promise<Id<'people'>> =>
+        await ctx.db.insert('people', {
+          userId: OWNER_SUBJECT,
+          displayName,
+          nameKey: displayName.toLowerCase(),
+          status: 'active',
+          source: 'manager',
+          evidence: [],
+          confirmedAt: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      return await Promise.all([person('Dana'), person('Sam')]);
+    });
+    const about = await harness.run(async (ctx) => {
+      const insert = async (
+        fields: Partial<Doc<'workingAgreements'>>,
+      ): Promise<Id<'workingAgreements'>> =>
+        await ctx.db.insert('workingAgreements', {
+          ...AGREEMENT,
+          scope: 'person',
+          personId: dana,
+          appliedTo: [],
+          ...fields,
+        });
+      const active = await insert({});
+      await insert({ status: 'retired' });
+      await insert({ personId: sam });
+      await insert({ userId: 'another-owner' });
+      return active;
+    });
+    expect(
+      await harness.run(async (ctx) => await personAgreements(ctx, OWNER_SUBJECT, dana)),
+    ).toEqual([about]);
+  });
+
+  it('on an item are the employee’s own and the owner’s for everyone whose plans applied it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const mira = await seedEmployee(harness);
+    const pip = await seedEmployee(harness, { name: 'Pip' });
+    const item = await seedWork(harness, mira, 'plan-pending');
+    const [own, everyone] = await harness.run(async (ctx) => {
+      const insert = async (
+        fields: Partial<Doc<'workingAgreements'>>,
+      ): Promise<Id<'workingAgreements'>> =>
+        await ctx.db.insert('workingAgreements', { ...AGREEMENT, appliedTo: [item], ...fields });
+      const reached = [await insert({ agentId: mira }), await insert({})];
+      await insert({ agentId: mira, appliedTo: [] });
+      await insert({ agentId: pip });
+      await insert({ agentId: mira, status: 'retired' });
+      return reached;
+    });
+    const applying = await harness.run(
+      async (ctx) => await agreementsApplying(ctx, { _id: mira, userId: OWNER_SUBJECT }, item),
+    );
+    expect(applying).toEqual([own, everyone]);
+    expect(
+      await harness.run(
+        async (ctx) => await agreementsApplying(ctx, { _id: mira, userId: undefined }, item),
+      ),
+    ).toEqual([]);
   });
 });
 

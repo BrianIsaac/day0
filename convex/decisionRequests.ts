@@ -9,15 +9,16 @@ import { isOpenQuestion } from '../src/agent/manager-questions';
 import { compareProviderTs } from '../src/work/provider-ts';
 
 /*
- * A decision request's lifecycle (the wave 14 review's D-6, the standard's 9.2): asking the
- * manager through a channel they can be reached on, keeping a replaced or taken-back code
- * answerable, closing what a previous manager was asked at a handover, the requests and batches
- * open on a channel and the thread an answer goes in; moved out of `convex/work.ts` unchanged. The
- * registered request functions (`work:prepareDecisionRequest`, `work:recordDecisionRequest`,
- * `work:openDecisions` and their kin) stay in `convex/work.ts` and call these, and the jobs these
- * schedule keep their `managerChannelActions:*` names. This module sits below `convex/work.ts`:
- * `convex/work.ts` imports it and it never imports `./work`, so the move closes no import cycle.
- * It registers no function.
+ * A decision request's lifecycle (the wave 14 review's D-6, the standard's 9.2): asking the manager
+ * through a channel they can be reached on, keeping a replaced or taken-back code answerable,
+ * closing what a previous manager was asked at a handover, the requests and batches open on a
+ * channel and the thread an answer goes in; moved out of `convex/work.ts` unchanged. The registered
+ * request functions (`work:prepareDecisionRequest`, `work:recordDecisionRequest`,
+ * `work:openDecisions` and their kin) stay registered in `convex/work.ts`, their bodies in
+ * `convex/workManagerChannel.ts` (wave 18, 18-s) call these, and the jobs these schedule keep their
+ * `managerChannelActions:*` names. This module sits below `convex/work.ts`: `convex/work.ts`
+ * imports it and it never imports `./work`, so the move closes no import cycle. It registers no
+ * function.
  */
 
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */

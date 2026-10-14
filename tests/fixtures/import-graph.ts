@@ -169,3 +169,24 @@ export function runtimeCycleThrough(entry: string): readonly string[] | null {
   }
   return null;
 }
+
+/**
+ * Every module a chain of runtime imports leads to from one module of a graph, itself left out
+ * unless a chain leads back to it.
+ *
+ * @param graph - Each module with the modules it imports at runtime.
+ * @param entry - The module the chains start from.
+ */
+export function reachedFrom(
+  graph: ReadonlyMap<string, readonly string[]>,
+  entry: string,
+): Set<string> {
+  const reached = new Set<string>();
+  const queue = [...(graph.get(entry) ?? [])];
+  for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+    if (reached.has(at)) continue;
+    reached.add(at);
+    queue.push(...(graph.get(at) ?? []));
+  }
+  return reached;
+}

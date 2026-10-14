@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { convexRuntimeImports, importCycles, runtimeSpecifiers } from '../fixtures/import-graph';
+import {
+  convexRuntimeImports,
+  importCycles,
+  reachedFrom,
+  runtimeSpecifiers,
+} from '../fixtures/import-graph';
 
 /**
  * The standard's 10.2: no import cycle between modules, since a cycle makes each member's
@@ -59,6 +64,21 @@ describe('the cycles of a module graph', (): void => {
         ]),
       ),
     ).toEqual([['self']]);
+  });
+});
+
+describe('the modules a module reaches', (): void => {
+  it('are every module a chain of its runtime imports leads to, and itself only on a cycle', (): void => {
+    const graph = new Map<string, string[]>([
+      ['parent', ['child', 'floor']],
+      ['child', ['floor']],
+      ['floor', []],
+      ['loop', ['back']],
+      ['back', ['loop']],
+    ]);
+    expect([...reachedFrom(graph, 'parent')].sort()).toEqual(['child', 'floor']);
+    expect([...reachedFrom(graph, 'child')]).toEqual(['floor']);
+    expect([...reachedFrom(graph, 'loop')].sort()).toEqual(['back', 'loop']);
   });
 });
 
