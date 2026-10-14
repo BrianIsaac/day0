@@ -1285,9 +1285,11 @@ async function holdDay0Actions(
     reason?: string;
   }): { ok: boolean; reason?: string; additionalModelCalls?: number } =>
     additionalModelCalls > 0 ? { ...value, additionalModelCalls } : value;
+  let knownValues: readonly string[] = [];
   try {
     const agent = await ctx.runQuery(internal.agents.getInternal, { agentId: args.agentId });
     if (!agent) throw new Error('agent not found');
+    knownValues = await knownValuesForAgent(ctx, agent);
     await refuseGoneCites(ctx, args.plan, { agentId: args.agentId, workItemId: args.workItemId });
     const surfaces = SURFACE_MODE === 'real' ? await loadSurfaces(ctx, args.agentId) : [];
     const mockEnv = await siteSnapshot(ctx, {
@@ -1466,30 +1468,36 @@ async function holdDay0Actions(
     // One scrubbed line for the card, the resume ladder and the caller alike:
     // a provider error can echo the header it was sent, and a client library
     // appends its stack.
-    const reason = safeFailureMessage(err, '', 'the execution failed');
+    const reason = safeFailureMessage(err, '', 'the execution failed', 300, knownValues);
     // A reply the executor's contract refused after its one repair is kept on the row where the
-    // run stops, at once or once its resumes are spent (17-FW; 16-Q's write-priya-verification).
+    // run stops (17-FW; 16-Q's write-priya-verification), scrubbed with the owner's known values
+    // as the closing phase's is (W17-R22).
     const kept =
       err instanceof ActionContractRefusal
-        ? withCarriedWrites(outputKeepingRefusedReply(err), {
-            landedWrites: args.landedWrites ?? [],
-            unsentWrites: args.unsentWrites ?? [],
-          })
+        ? scrubKnownValues(
+            withCarriedWrites(outputKeepingRefusedReply(err), {
+              landedWrites: args.landedWrites ?? [],
+              unsentWrites: args.unsentWrites ?? [],
+            }),
+            knownValues,
+          )
         : undefined;
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
     // Gone or changed documentation is about the item: a resume would read the same blocks.
+    // So is a reply the contract refused after its repair: the same prompt draws the same
+    // refusal, so it stops at once in real mode as in mock mode (RM39 (b), 14 October 2026).
     if (
       SURFACE_MODE === 'real' &&
       itemBoundModelFailure(err) === undefined &&
-      !(err instanceof GoneCitesError)
+      !(err instanceof GoneCitesError) &&
+      kept === undefined
     ) {
       const resumed = await ctx.runMutation(internal.work.resumeExecution, {
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
-        ...(kept === undefined ? {} : { output: kept }),
       });
       if (resumed.outcome === 'resumed') {
         return result({ ok: false, reason: `execution will be tried again: ${reason}` });
