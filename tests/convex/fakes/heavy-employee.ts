@@ -118,3 +118,42 @@ export async function seedWorkedEmployee(
   }
   return agentId;
 }
+
+/**
+ * How many light events the review's bed gave Priya (W18-R1, wave 18 review): a busy employee's
+ * history after months, about fifty events a day.
+ */
+export const LIGHT_EVENTS = 12_000;
+
+/** The events written in one transaction of the seed, under the bound on what one may write. */
+const LIGHT_EVENTS_A_WRITE = 3_000;
+
+/**
+ * Light events on an employee, as the review's bed 1 wrote them for Priya (W18-R1): each a
+ * `work.discovered` of about 166 bytes, about 2 MB in all, written in transactions of their own.
+ *
+ * @param harness - The harness.
+ * @param agentId - The employee.
+ * @param count - How many events.
+ */
+export async function seedLightHistory(
+  harness: Harness,
+  agentId: Id<'agents'>,
+  count = LIGHT_EVENTS,
+): Promise<void> {
+  for (let first = 0; first < count; first += LIGHT_EVENTS_A_WRITE) {
+    await harness.run(async (ctx): Promise<void> => {
+      for (let n = first; n < Math.min(count, first + LIGHT_EVENTS_A_WRITE); n += 1) {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.discovered',
+          payload: {
+            externalId: `REVOPS-${String(n).padStart(5, '0')}`,
+            note: 'seen in the queue',
+          },
+          createdAt: DEPLOYED_AT + n,
+        });
+      }
+    });
+  }
+}

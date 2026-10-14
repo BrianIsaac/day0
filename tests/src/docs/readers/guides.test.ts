@@ -120,7 +120,7 @@ describe("wave 15's reader guides", (): void => {
       const text = guide(name);
       const section = text.slice(text.indexOf(`## ${heading}`), text.indexOf('## 1'));
       expect(section).toContain(`## ${heading}`);
-      expect(section).toMatch(/test doubles? of .* that day0's own tests use, not on a/);
+      expect(section).toMatch(/test doubles? of .* that Day0's own tests use, not on a/);
     },
   );
 

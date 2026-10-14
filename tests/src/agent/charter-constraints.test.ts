@@ -1769,6 +1769,36 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
     expect(willNotDoAsAct(clause)).toBe(act);
   });
 
+  // W18-R5 (the wave 18 review, its probe of `willNotDoAsAct`): a relative clause was read as
+  // qualifying the act whatever it said, so "Never delete tickets, which means archive them." was
+  // written "Delete tickets, which means archive them.", which under Will not do forbids the
+  // archiving. One that asks for something, or says what a person does, is no qualifier.
+  it.each([
+    'Never delete tickets, which means archive them.',
+    'Never delete tickets, which you must archive.',
+    'Never discuss pricing with customers, who should ask the sales lead.',
+    'Never approve a refund, which I do myself.',
+  ])(
+    'keeps the drafted %j as drafted, its relative clause asking for another thing (W18-R5)',
+    (clause): void => {
+      expect(willNotDoAsAct(clause)).toBe(clause);
+    },
+  );
+
+  // W18-R5: the emphatic "ever" was dropped after "Never", "Do not" and "Don't" only, so "Must
+  // not ever share a password." was written "Ever share a password.".
+  it.each([
+    ['Must not ever share a password.', 'Share a password.'],
+    ['Should not ever share a password.', 'Share a password.'],
+    ['I will not ever share a password.', 'Share a password.'],
+    ["Mustn't ever share a password.", 'Share a password.'],
+  ])(
+    'writes %j as the act %j, the "ever" after any prohibition dropped (W18-R5)',
+    (clause, act): void => {
+      expect(willNotDoAsAct(clause)).toBe(act);
+    },
+  );
+
   // W17-R22: "NEVER SHARE A PASSWORD." was written "SHARE A PASSWORD.", a clause in capitals.
   it('writes a clause in capitals as the act in sentence case (W17-R22)', (): void => {
     expect(willNotDoAsAct('NEVER SHARE A PASSWORD.')).toBe('Share a password.');
@@ -2197,6 +2227,28 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
     expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
       'Own the deals, which belong to the sales lead.',
     ]);
+  });
+
+  // W18-R5: a relative clause that asks for another thing, or says what the manager does, is no
+  // qualifier of the act, so the floor writes no clause for it and leaves it to the card's check.
+  it('writes nothing for a sentence whose relative clause asks for another thing (W18-R5)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule('Never delete tickets, which means archive them.', []),
+      rule('Never delete tickets, which you must archive.', []),
+      rule('Never discuss pricing with customers, who should ask the sales lead.', []),
+      rule('Never approve a refund, which I do myself.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('writes the act of a sentence whose "ever" follows any prohibition (W18-R5)', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('Must not ever share a password.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual(['Share a password.']);
   });
 
   // W17-R19 (reader 4's sentences): "I" became "the manager" and its verb stayed in the first

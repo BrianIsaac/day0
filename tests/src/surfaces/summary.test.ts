@@ -3,6 +3,7 @@ import {
   excerpt,
   OFFICE_THREAD_SUBJECTS,
   officeWriteWords,
+  threadSubjectOf,
   SUMMARY_TEXT_LIMIT,
   summariseAction,
 } from '../../../src/surfaces/summary';
@@ -378,6 +379,18 @@ describe('the mock office’s writes in a manager’s words (W17-R30)', (): void
     expect(officeWriteWords(post('revops', 'thread-made-up'))).toBe(
       'A message in #revops in Slack, in a thread: "Logged the three deals."',
     );
+  });
+
+  // W18-R21 (the wave 18 review, reader 6's probe): the thread key is the model's to choose, and
+  // a plain-object lookup read "constructor" as the object's own function, printed as the subject.
+  it('names a thread whose key is an object member’s name as a thread, never by what the lookup finds (W18-R21)', (): void => {
+    for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(officeWriteWords(post('revops', key))).toBe(
+        'A message in #revops in Slack, in a thread: "Logged the three deals."',
+      );
+      expect(threadSubjectOf(key)).toBeUndefined();
+    }
+    expect(threadSubjectOf('thread-double-charge')).toBe('Northwind’s double charge');
   });
 
   it('names what every seeded ask’s thread is about, so no thread is drawn by its key', (): void => {

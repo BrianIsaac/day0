@@ -702,7 +702,7 @@ describe('keeping an agreement on a card', (): void => {
     expect(rows.find((row) => row._id === agreementId)?.status).toBe('proposed');
   });
 
-  it('holds an every-employee agreement for the 51st employee alone when its charter is past the check, and keeps it for the other fifty (W14-R15)', async (): Promise<void> => {
+  it('holds an every-employee agreement for the 61st employee alone when its charter is past the check, and keeps it for the other sixty (W14-R15)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const first = await seedEmployee(harness);
     for (let index = 2; index <= EMPLOYEES_CHECKED; index += 1) {
@@ -742,7 +742,7 @@ describe('keeping an agreement on a card', (): void => {
       statement: 'Name the vessel in every comment.',
       refusal: { reason: 'unchecked-for-employee', judgedAt: expect.any(Number) },
     });
-    // The other fifty's planners still read it; the new hire's does not.
+    // The other sixty's planners still read it; the new hire's does not.
     const read = async (agentId: Id<'agents'>, externalId: string): Promise<string[]> =>
       (
         await harness.query(internal.workingAgreements.selectedForCandidate, {
@@ -1507,7 +1507,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     );
   }
 
-  /** Fifty employees, an agreement for every one, and Ines, the 51st, held at her charter. */
+  /** Sixty employees, an agreement for every one, and Ines, the 61st, held at her charter. */
   async function heldOffice(
     harness: Harness,
     options: { statement?: string; inesWillNotDo?: string[] } = {},
@@ -1707,7 +1707,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     });
   }, 60_000);
 
-  it('lifts the hold once the owner is back at fifty: checked against the held employee’s charter on Check now, then in effect for it', async (): Promise<void> => {
+  it('lifts the hold once the owner is back at sixty: checked against the held employee’s charter on Check now, then in effect for it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { last, hired, agreementId, holdId } = await heldOffice(harness);
     await letGo(harness, last);
@@ -1733,7 +1733,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     ]);
   }, 60_000);
 
-  it('lifts the hold by itself at the held employee’s next stored plan once the owner is back at fifty', async (): Promise<void> => {
+  it('lifts the hold by itself at the held employee’s next stored plan once the owner is back at sixty', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { last, hired, agreementId, holdId } = await heldOffice(harness);
     await planApplying(harness, hired, 'LOG-3', []);
@@ -1948,9 +1948,10 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     return agentId;
   }
 
-  it('holds nothing for an established employee whose charter is amended past the 50 the check reads: the agreement stays in effect for it (W15-R12)', async (): Promise<void> => {
-    // Reader 5's probe1.test.ts R5-A: 51 employees with approved charters, one active agreement
-    // for every employee, and `charters.amend` on the first with a harmless clause edit.
+  it('holds nothing for an established employee whose charter is amended past the sixty the check reads: the agreement stays in effect for it (W15-R12)', async (): Promise<void> => {
+    // Reader 5's probe1.test.ts R5-A, one employee past the check (51 then, 61 since D-5 (a)):
+    // approved charters, one active agreement for every employee, and `charters.amend` on the
+    // first with a harmless clause edit.
     const harness = convexTest(schema, allConvexModules());
     const seedWhole = async (name: string): Promise<Id<'agents'>> =>
       await harness.run(async (ctx) => {

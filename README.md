@@ -582,7 +582,7 @@ Closing actions carry a different approval identity from phase one, so a delayed
 
 Run one Day0 deployment per Slack workspace and per Linear team. Two deployments on one Slack bot or one Linear team read the same mentions and the same tickets, each answers them, and nothing on either side says which copy is real. A deployment takes only the Slack mentions written after its agent was deployed, so one started later does not answer a channel's history again, but every new ask and every open ticket would still be worked twice.
 
-### Fifty employees or fewer
+### Built for fifty, checked to sixty
 
 Day0 is built for a manager of fifty employees or fewer, and its cards, figures and exports were run on a bed of fifty-one. One part stops at sixty: a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer. Past that, a company-wide agreement a new charter would carry is held for that employee as not checked, and Check now on it says why, until you have sixty or fewer again.
 
@@ -1727,7 +1727,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 工作章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在工作章程或计划卡片作答，旧卡片与当前工作章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
 
-#### 五十名员工或更少
+#### 为五十名员工而建，检查到六十名
 
 Day0 面向管理五十名或更少员工的经理，其卡片、数字与导出已在五十一名员工的测试床上跑过。只有一处止于六十：公司范围的工作约定，只在你拥有六十名或更少员工时，才会对照每位员工的章程进行检查。超过六十名时，新章程会带上的公司范围约定对该员工保持为未检查，在其上点击 Check now 会说明原因，直到你的员工回到六十名或更少。
 

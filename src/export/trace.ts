@@ -466,6 +466,24 @@ export const OWNER_SECTIONS = [
 export type OwnerSection = (typeof OWNER_SECTIONS)[number];
 
 /**
+ * Each owner section in a manager's words, for the export's refusal when a counted row is gone
+ * before it is read (W18-R3): a sync that removes a proposed relation, or a skill version retired,
+ * between the head's count and the section's write.
+ */
+const OWNER_SECTION_WORDS: Readonly<Record<OwnerSection, string>> = {
+  retirements: 'retired employees',
+  departures: 'handovers',
+  docSources: 'documentation',
+  docPages: 'documentation',
+  docRelations: 'documentation',
+  skillVersions: 'skills',
+  people: 'people',
+  personIdentities: 'people',
+  relationships: 'people',
+  workingAgreements: 'working agreements',
+};
+
+/**
  * The sections of an employee's trace that are the owner's rows (the people graph, read under the
  * employee's owner scope): an owner export carries them once among the owner's rows, and leaves
  * them empty in each employee's trace ({@link employeeTracesOf} fills them back).
@@ -836,7 +854,7 @@ async function writeOwnerRows(
     }
     if (written.size !== counted[section].size) {
       throw new Error(
-        `the owner’s ${section} changed while the export read them: ${counted[section].size} were counted and ${written.size} of them read; export again`,
+        `Something changed in your ${OWNER_SECTION_WORDS[section]} while the export was reading; export again.`,
       );
     }
     pending += written.size === 0 ? ']' : `\n${FILE_INDENT.repeat(2)}]`;

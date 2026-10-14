@@ -47,12 +47,42 @@ type PlanParts = Partial<Pick<ExecutionPlan, 'summary' | 'steps' | 'riskNotes' |
   readonly cites?: ReadonlyArray<{ readonly sourceId?: string; readonly pageRef?: string }>;
 };
 
-/** The plan's own content words: its summary, its steps and its risk notes. */
-function planWords(plan: PlanParts): Set<string> {
+/** The plan's own text: its summary, its steps and its risk notes. */
+function planText(plan: PlanParts): string {
   const steps = Array.isArray(plan.steps)
     ? plan.steps.filter((step) => typeof step === 'string')
     : [];
-  return new Set(contentWords([plan.summary ?? '', ...steps, plan.riskNotes ?? ''].join(' ')));
+  return [plan.summary ?? '', ...steps, plan.riskNotes ?? ''].join(' ');
+}
+
+/** The words of a text in any script, in lower case: "José" is one word, never "jos". */
+function wordsOf(text: string): string[] {
+  return text
+    .normalize('NFC')
+    .toLocaleLowerCase()
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
+    .filter((word) => word.length > 0);
+}
+
+/** The fewest letters of a name word the person test reads: "Li" or "Na" could be any word. */
+const NAME_WORD_AT_LEAST = 3;
+
+/** A word of a script written without spaces, found inside the plan's text rather than as a word. */
+const UNSPACED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+
+/**
+ * Whether a plan names a person: any one word of the name of three letters or more, in any script
+ * (W18-R9: "Ask Priya to approve ..." names Priya Raman). Undefined where the name has no such
+ * word ("Li Na", "李明"), which the test cannot tell.
+ */
+function namesPerson(text: string, person: string): boolean | undefined {
+  const testable = wordsOf(person).filter((word) => [...word].length >= NAME_WORD_AT_LEAST);
+  if (testable.length === 0) return undefined;
+  const said = wordsOf(text);
+  const whole = said.join(' ');
+  return testable.some((word) =>
+    UNSPACED_SCRIPT.test(word) ? whole.includes(word) : said.includes(word),
+  );
 }
 
 /** The phrases a scope is made of: "journal changes and REVOPS close plans" is two. */
@@ -86,18 +116,19 @@ function names(words: ReadonlySet<string>, phrase: readonly string[]): boolean {
  * @param row - The held row, its plan as stored.
  * @param moved - What the Approve changed.
  * @returns True where its cites, the people it names or its own words reach the change, or where
- *   the test cannot tell.
+ *   the test cannot tell (a person with no name word it reads, {@link namesPerson}).
  */
 export function planRestsOn(row: HeldPlanRow, moved: MovedGround): boolean {
   if (moved.kind === 'everything') return true;
   if (typeof row.plan !== 'object' || row.plan === null) return true;
   const plan = row.plan as PlanParts;
-  const words = planWords(plan);
+  const text = planText(plan);
+  const words = new Set(contentWords(text));
   if (words.size === 0) return true;
   switch (moved.kind) {
     case 'edge':
       return (
-        names(words, contentWords(moved.person)) ||
+        namesPerson(text, moved.person) !== false ||
         moved.scopes.some((scope) => scopePhrases(scope).some((phrase) => names(words, phrase)))
       );
     case 'clauses':

@@ -328,6 +328,16 @@ describe('the way out’s page and the runbook, on where the proxy is named (W17
     expect(EGRESS).toContain('The backend container has no route to');
   });
 
+  // W18-R20 (the wave 18 review, reader 5): the one new environment name was in no page, and the
+  // password the deployment holds beside the proxy's address was not said (D-9 (a)).
+  it('names the shell-proxy mark, and says the proxy’s password sits on the deployment with Day0’s other keys (W18-R20, D-9 (a))', (): void => {
+    expect(EGRESS).toContain('`DAY0_SHELL_PROXY`');
+    expect(EGRESS).toContain(
+      "the address on the deployment (below), its password included, which holds it as it holds Day0's other keys",
+    );
+    expect(EGRESS).toContain('`npx convex env list`');
+  });
+
   // W17-R27 and 17-P's F6 on the 18-P bed: NO_PROXY as Node reads it, and nothing left saying the
   // Notion component, the browser or a GitHub source dials past the proxy.
   it('reads NO_PROXY as Node does, and names what the beds found takes the proxy and what does not', (): void => {
@@ -374,15 +384,43 @@ describe('the readers’ guides on a page with no text, and the README on fifty 
     },
   );
 
-  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`.
+  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`. The
+  // heading said fifty over a body that says sixty (W18-R23): it says both now, in both halves.
   it('says in the README that a company-wide agreement is checked only while the owner has sixty employees or fewer', (): void => {
     const readme = flat('README.md');
-    expect(readme).toContain('### Fifty employees or fewer');
+    expect(readme).toContain('### Built for fifty, checked to sixty');
+    expect(readme).toContain('#### 为五十名员工而建，检查到六十名');
+    expect(readme).not.toContain('Fifty employees or fewer');
     expect(readme).toContain(
       "a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer",
     );
     expect(readme).toContain('until you have sixty or fewer again');
     expect(readme).toContain('只在你拥有六十名或更少员工时');
     expect(readme).toContain('直到你的员工回到六十名或更少');
+  });
+});
+
+// W18-R23 (the wave 18 review, reader 6; W17-R29's remainder): the reader guides' prose said
+// "day0" in about twenty-five lines, the habit of the guides before W17-R29 named the product
+// Day0 everywhere else. A host, an address or a code span keeps its own spelling.
+describe('the running pages’ prose (W18-R23)', (): void => {
+  /** A page's prose: its fenced blocks and code spans taken out. */
+  const prose = (name: string): string =>
+    readFileSync(new URL(`../../../docs/running/${name}`, import.meta.url), 'utf8')
+      .replace(/^```[\s\S]*?^```/gm, '')
+      .replace(/`[^`\n]*`/g, '');
+
+  it('names the product Day0 in every sentence, never "day0"', (): void => {
+    const pages = readdirSync(new URL('../../../docs/running/', import.meta.url)).filter((name) =>
+      name.endsWith('.md'),
+    );
+    expect(pages.length).toBeGreaterThan(10);
+    const lowerCase = pages.flatMap((name) =>
+      prose(name)
+        .split('\n')
+        .filter((line) => /(?<![\w@./-])day0(?![\w@-]|\.\w)/.test(line))
+        .map((line) => `${name}: ${line.trim()}`),
+    );
+    expect(lowerCase).toEqual([]);
   });
 });

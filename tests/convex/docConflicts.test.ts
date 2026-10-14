@@ -2162,6 +2162,32 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
   });
 
+  // W18-R16 (the wave 18 review, reader 2): one question was said as "numbered 1 to 1", and the
+  // run-together example repeated the typed number, "answer abc 1000 B" for a plan of two.
+  it('says a plan’s only question as the one, and gives an example by a number that exists (W18-R16)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { surfaceId } = asked;
+    const typed = async (messageTs: string, text: string) =>
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: parseDecisionReply(text)!,
+      });
+    await typed('1790000000.000100', 'answer ab3xyz 2 B');
+    await typed('1790000001.000100', 'answer ab3xyz 2B');
+    await secondQuestion(harness, asked);
+    await typed('1790000002.000100', 'answer ab3xyz 1000B');
+    expect(await noticeTexts(harness)).toEqual([
+      'This plan has no question 2: its only question is 1.',
+      'Write the question’s number and the letter apart, for example “answer ab3xyz 1 B”: this plan’s only question is 1.',
+      'Write the question’s number and the letter apart, for example “answer ab3xyz 1 B”: this plan’s questions are numbered 1 to 2.',
+    ]);
+  });
+
   it('takes a numbered answer to the first question while a second stands, and says one more is open (17-C)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

@@ -582,6 +582,7 @@ function readerTokenKey(): string | undefined {
     credentialKeyId(key);
     return key;
   } catch {
+    // Not a credential key's shape: no key, and the page hash's warning says so (6.2's probe).
     return undefined;
   }
 }
@@ -609,6 +610,8 @@ function openReaderToken(
   try {
     token = readerTokenOf(JSON.parse(decrypt({ iv, ciphertext }, key, binding)));
   } catch {
+    // Not a token sealed for this run under this key (another run, source or owner, a rotated
+    // key, a malformed value): none, and the reader asks for a new one (6.2's probe).
     return undefined;
   }
   return token !== undefined && readerTokenServes(token, now) ? token : undefined;
@@ -662,7 +665,9 @@ export const syncSource = internalAction({
 });
 
 /**
- * Read and persist at most 25 pages, then schedule a secret-free continuation.
+ * Read and persist at most 25 pages, then schedule the continuation. Its cursor may carry a
+ * reader's token, sealed under the credential key and bound to the run, never one in clear (X-1);
+ * the scheduler keeps the arguments after the run, sealed as they were.
  *
  * After the last batch the run holds `FINISHING_CURSOR` and the same action
  * finishes it; a batch scheduled at that cursor (a resumed run) only finishes.

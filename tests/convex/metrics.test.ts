@@ -17,7 +17,13 @@ import * as metricsModule from '../../convex/metrics';
 import { registeredIn } from './registered-functions';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
-import { HEAVY_ITEMS, HEAVY_NOTES, seedWorkedEmployee } from './fakes/heavy-employee';
+import {
+  HEAVY_ITEMS,
+  HEAVY_NOTES,
+  LIGHT_EVENTS,
+  seedLightHistory,
+  seedWorkedEmployee,
+} from './fakes/heavy-employee';
 import { FIGURES_READ_BY_PAGES } from '../../src/metrics/figures-output';
 import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
@@ -3168,4 +3174,30 @@ describe('an employee whose records pass the read bound (C1, wave 18, 18-F)', ()
     expect(every.company.decisions.approved).toBe(HEAVY_ITEMS * 2);
     expect(every.omittedEmployees).toBe(0);
   });
+
+  // W18-R1 (the wave 18 review's bed 1, reader 5's probe): twelve thousand light events read eight
+  // rows a take ran past the operations one function may perform, so the subscribed reads died
+  // and held the employee's page blank; the read now stops at its takes and documents, and says so.
+  it('reads an employee of twelve thousand light events by pages, where the subscribed reads stop at their takes and say so (W18-R1)', async (): Promise<void> => {
+    const harness = limited();
+    const busy = await seedWorkedEmployee(harness, 'Priya', '');
+    await seedLightHistory(harness, busy);
+    await seedWorkedEmployee(harness, 'Mateo', '');
+    const owner = harness.withIdentity(OWNER);
+
+    await expect(owner.query(api.metrics.forAgent, { agentId: busy })).rejects.toMatchObject({
+      data: FIGURES_READ_BY_PAGES,
+    });
+    const read = await owner.action(api.metrics.forAgentByPages, { agentId: busy });
+    expect(read.decisions.approved).toBe(HEAVY_ITEMS);
+
+    const bounded = await owner.query(api.metrics.forOwner, {});
+    expect(bounded.omittedEmployees).toBeGreaterThanOrEqual(1);
+    expect(bounded.employees.map((row) => row.name)).not.toContain('Priya');
+    const every = await owner.action(api.metrics.forOwnerByPages, {});
+    expect(every.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
+    expect(every.company.decisions.approved).toBe(HEAVY_ITEMS * 2);
+    expect(every.omittedEmployees).toBe(0);
+    expect(LIGHT_EVENTS).toBe(12_000);
+  }, 240_000);
 });

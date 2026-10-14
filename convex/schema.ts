@@ -658,7 +658,8 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
 
-  // Phase 2 lane A - generation fences and safe cursors for 25-page sync batches.
+  // Phase 2 lane A - generation fences and cursors for 25-page sync batches; a cursor may carry
+  // a reader's token sealed under the credential key and bound to the run (X-1), never in clear.
   docSyncRuns: defineTable({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),

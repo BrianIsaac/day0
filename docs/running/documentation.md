@@ -1,12 +1,12 @@
-# Writing documentation day0 acts on
+# Writing documentation Day0 acts on
 
-This page is for the person who writes the team's handbook: the pages day0 reads before it does
-any work. day0 reads ordinary Markdown, and most of a page is read as context. A few shapes are
+This page is for the person who writes the team's handbook: the pages Day0 reads before it does
+any work. Day0 reads ordinary Markdown, and most of a page is read as context. A few shapes are
 read as instructions: they decide which systems an employee is offered, how it connects to each,
 which credential it may bind, which queue it reads, and which pages it treats as procedures. This
 page lists those shapes. The examples below are run through the code that reads them by
 `tests/src/docs/author-guide.test.ts`, so an example that stops working fails the gate; the
-documented-API example is checked that way once day0 reads that grammar.
+documented-API example is checked that way once Day0 reads that grammar.
 
 ## Which pages are read
 
@@ -22,11 +22,11 @@ documented-API example is checked that way once day0 reads that grammar.
   `DAY0_PRIVATE_HOSTS` lists, and only while that host answers with addresses inside your
   network: a listed name that answers a public address is read over `https` like any other page.
   A page an earlier release read over public `http` is not read again, but **the copy it stored
-  stays in the employee's reading**: day0 does not remove it by itself. Unlink the source, or
+  stays in the employee's reading**: Day0 does not remove it by itself. Unlink the source, or
   link the page by its `https` address, to stop it being read.
 - A machine behind a fake-IP proxy (one that answers every name from `198.18.0.0/15`) sees every
   public host refused, since the address says nothing of what it reaches: set the proxy's DNS to
-  answer real addresses, or list the hosts day0 reads in `DAY0_PRIVATE_HOSTS`.
+  answer real addresses, or list the hosts Day0 reads in `DAY0_PRIVATE_HOSTS`.
 - A repository is cloned, which needs a `git` binary in the backend: from this release a
   GitHub or GitLab repository is cloned first too, and read through the host's archive only when
   the clone fails. The backend image an install builds carries git
@@ -51,19 +51,19 @@ documented-API example is checked that way once day0 reads that grammar.
   or a board is named as not read. [reader-yuque.md](reader-yuque.md).
 - A Google Drive source reads one folder and the folders under it as a service account the
   folder is shared with: Google Docs and Word documents. [reader-drive.md](reader-drive.md).
-- A Word document is converted to Markdown where day0 runs: its headings, lists and tables are
+- A Word document is converted to Markdown where Day0 runs: its headings, lists and tables are
   kept and its pictures are left out. A heading must be made with Word's heading styles to be
   read as one.
 - On SharePoint, Confluence, Yuque and Google Drive a page's title is the title its source
-  gives it (for a Word document, its file's name), and day0 puts it first in the page.
+  gives it (for a Word document, its file's name), and Day0 puts it first in the page.
 - A page's title is its first `# ` heading, or its file name when it has none.
-- Each linked source is read again on a schedule. A change reaches day0 at the next sync, not when
+- Each linked source is read again on a schedule. A change reaches Day0 at the next sync, not when
   you save.
 
 ## Naming a system
 
 A system is something an employee may be given access to: a ticket tracker, a chat workspace, a
-dashboard. day0 finds systems in two places, and nowhere else by rule:
+dashboard. Day0 finds systems in two places, and nowhere else by rule:
 
 - A table whose first header cell is `System`, `Product`, `Service` or `Tool`. The first cell of
   each row is the system's name.
@@ -112,7 +112,7 @@ Linear's MCP endpoint is https://mcp.linear.app/mcp.
 No approved API or MCP server is recorded for Northstar CRM.
 ```
 
-- For a system reached through its web page, write the page title day0 should see after it opens
+- For a system reached through its web page, write the page title Day0 should see after it opens
   the page, so it can tell it reached the right one.
 
 <!-- example: probe-marker -->
@@ -122,7 +122,7 @@ Probe marker: page title `Pipeline coverage`
 ```
 
 - When the page needs a login, also name one element the page shows only once you are signed in,
-  and write the account name beside the login's credential. day0 then signs in with the
+  and write the account name beside the login's credential. Day0 then signs in with the
   credential when it checks the connection, and looks for that element: a password that was
   rotated, or a login page that was redesigned, leaves the system unconnected with a card that
   says so, instead of being found by the first piece of work.
@@ -136,24 +136,24 @@ Probe marker: page title `Pipeline coverage`
 ```
 
 - The element is named as the page names it to a screen reader: a heading, a field or a button's
-  label. Any element with that name will do. It must be on the page the login lands on: day0
+  label. Any element with that name will do. It must be on the page the login lands on: Day0
   presses nothing after `Sign in`, so an element behind a "stay signed in" question or a menu is
   not found.
-- day0 types the account name into the field labelled for it (`Username`, `User name`, `Email`)
+- Day0 types the account name into the field labelled for it (`Username`, `User name`, `Email`)
   and the credential only into the field labelled for it (`Password`, `Passcode`, `Access code`,
   `API key`, `Token`), then presses the page's `Sign in` (or `Log in`) control. A login that asks
   for the account on one page and the password on the next is followed through its `Next`
   control. Nothing else on the page is clicked.
-- A page with only a title marker is checked by its title. day0 does not sign in to it, so a
+- A page with only a title marker is checked by its title. Day0 does not sign in to it, so a
   rotated password is found by the first piece of work that signs in.
-- A single sign-on or a second factor cannot be completed by day0; a page that sends the login to
+- A single sign-on or a second factor cannot be completed by Day0; a page that sends the login to
   another address is left unconnected.
 
 ## A documented API that is not Slack
 
 When a system is reached through its own HTTP API rather than an MCP server or Slack, the page
 names the API's base address in a sentence that names the system, the operations the employee may
-call, the one read day0 checks the key with, and the header the key goes in. day0 checks the key
+call, the one read Day0 checks the key with, and the header the key goes in. Day0 checks the key
 with that read before the connection is used, and the operations you list are the only ones the
 employee may call.
 
@@ -186,14 +186,14 @@ The Tracker API base is https://tracker.example.com/api/v2/.
   with a scheme (`Authorization: Bearer`). A page that shows neither gets a bearer token. The key
   goes only in a header: a request that puts `{{secret}}` in its body or its path is refused, so
   a key can never be posted as a comment.
-- The probe read is the one request day0 sends, with the key, when it checks the connection:
+- The probe read is the one request Day0 sends, with the key, when it checks the connection:
   on approval and every hour after. Write it on its own line, `Probe read:` and a `GET` in
   backticks, and pick a request that changes nothing, such as the API's "who am I" call. It must
-  be a plain path under the base with no `{id}` segment. day0 never guesses one from your list,
+  be a plain path under the base with no `{id}` segment. Day0 never guesses one from your list,
   because a `GET` can change things (`GET /auth/logout`); a page with no probe read leaves the
   system unconnected with a card that says so. The probe read is also callable by the employee.
-- day0 does not follow a redirect with the key, and a page with no operation leaves the system
-  unconnected; both are day0's limitation, not evidence that the system is unavailable.
+- Day0 does not follow a redirect with the key, and a page with no operation leaves the system
+  unconnected; both are Day0's limitation, not evidence that the system is unavailable.
 - The base address follows the same rule as an MCP endpoint: public `https`, or a host the
   operator lists in `DAY0_PRIVATE_HOSTS`. The address is checked again on every request, not only
   when the connection is checked, so a name that later points somewhere private is refused.
@@ -201,14 +201,14 @@ The Tracker API base is https://tracker.example.com/api/v2/.
   wait the API asks for; it never marks the system unavailable on its own.
 - Only the system's own pages are read for its operations. An operation written on another
   system's page is not admitted for this one.
-- A chat system is the exception. day0 reads chat over a documented API only through Slack's Web
+- A chat system is the exception. Day0 reads chat over a documented API only through Slack's Web
   API, so a chat system other than Slack (Microsoft Teams, Feishu) is not connected on this path,
   however well its page documents the API. Its card says so. Document it anyway: the page is what
   a chat reader for it will read.
 
 ## Writing a credential on a page
 
-A credential written on a page is removed from every copy day0 keeps and stored encrypted; the
+A credential written on a page is removed from every copy Day0 keeps and stored encrypted; the
 employee binds it by its label. Write the label, a colon, and the value in backticks.
 
 <!-- example: credential -->
@@ -279,7 +279,7 @@ context when it is saved as `revops/q3-close-checklist.md`.
 ## The Slack app manifest
 
 When the chat workspace is Slack, the first fenced JSON block on a page that has both
-`redirect_urls` and `scopes.bot` is the app manifest day0 asks the administrator to install.
+`redirect_urls` and `scopes.bot` is the app manifest Day0 asks the administrator to install.
 
 <!-- example: manifest -->
 

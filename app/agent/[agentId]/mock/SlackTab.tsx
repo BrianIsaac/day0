@@ -6,7 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { Chip } from '../../../components/Chip';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
-import { OFFICE_THREAD_SUBJECTS } from '../../../../src/surfaces/summary';
+import { threadSubjectOf } from '../../../../src/surfaces/summary';
 
 /** What an empty channel list means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */
@@ -29,15 +29,8 @@ export const EMPLOYEE_POSTED = 'Employee';
  * @returns The words drawn after the arrow.
  */
 export function threadWords(threadKey: string): string {
-  const subject = threadSubject(threadKey);
+  const subject = threadSubjectOf(threadKey);
   return subject === undefined ? 'in a thread' : `about “${subject}”`;
-}
-
-/** A seeded thread's subject, read as the map's own entry only. */
-function threadSubject(threadKey: string): string | undefined {
-  return Object.hasOwn(OFFICE_THREAD_SUBJECTS, threadKey)
-    ? OFFICE_THREAD_SUBJECTS[threadKey]
-    : undefined;
 }
 
 /**
@@ -221,7 +214,7 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
             // Wraps, never cut off: a subject runs to about fifty characters (the second pass).
             <span className="min-w-0 text-xs text-[var(--color-muted)]">
               <span aria-hidden="true">↳ </span>
-              {threadSubject(m.threadKey) === undefined ? null : (
+              {threadSubjectOf(m.threadKey) === undefined ? null : (
                 <span className="sr-only">in the thread </span>
               )}
               {threadWords(m.threadKey)}

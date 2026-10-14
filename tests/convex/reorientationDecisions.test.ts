@@ -6,6 +6,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { openCards } from '../../convex/reorientation';
 import { proposalFingerprint } from '../../src/agent/reorientation-words';
+import { landedWritesOf } from '../../src/work/landed-writes';
 import { allConvexModules } from './all-modules';
 import { OWNER_SUBJECT, managerIdentity } from './fakes/manager-identity';
 import {
@@ -2312,6 +2313,115 @@ describe('a plan approved while its card stood (V17-9’s remainder, W17-R8)', (
         (payload) => (payload as { workItemId: string }).workItemId,
       ),
     ).toEqual([approved, waiting]);
+  });
+
+  // W18-R8 (the wave 18 review, reader 1): the send-back cleared the row's whole output, the
+  // ledger of writes already landed with it, so the redrafted plan did not know a write had gone
+  // and could send it again. It keeps what landed, as Retry's redraft does.
+  it('keeps the writes a parked run already landed when Approve sends it back to drafting (W18-R8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const edge = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Ines Duarte',
+        nameKey: 'ines duarte',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return await ctx.db.insert('relationships', {
+        userId: OWNER_SUBJECT,
+        toPersonId: person,
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const comment = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_comment',
+        toolArgsJson: '{"issueId":"REVOPS-2","body":"Audit note."}',
+      },
+    };
+    const status = {
+      tool: 'mcp.call',
+      args: {
+        surface: 'linear',
+        tool: 'save_issue',
+        toolArgsJson: '{"id":"REVOPS-2","state":"Done"}',
+      },
+    };
+    const parked = await seedWork(harness, agentId, 'actions-pending', {
+      externalId: 'REVOPS-2',
+      plan: { summary: 'Ask Ines Duarte to approve the journal entry.', steps: ['Ask'] },
+      decision: {
+        id: 'decision-2',
+        kind: 'actions',
+        requestedAt: 2,
+        channel: 'D0MANAGER',
+        surfaceSlug: 'slack',
+        surfaceName: 'Slack',
+        decidedAt: 3,
+        outcome: 'approved',
+      },
+      approvedIndexes: [1],
+      applyPhase: 'approved',
+      // The run's own phase landed the comment; the status change waits on the card.
+      output: {
+        draft: 'd',
+        notes: '',
+        actions: [comment, status],
+        applied: [
+          {
+            tool: 'mcp.call',
+            ok: true,
+            effect: 'comment on REVOPS-2',
+            providerId: 'comment-1',
+            authority: 'manager',
+            landedAt: 1_000,
+            idempotencyKey: 'key-0',
+          },
+        ],
+      },
+    });
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'relationship',
+        relationshipId: edge,
+        action: 'edit',
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes and REVOPS close plans',
+        rationale: 'Widened.',
+      },
+      {
+        evidence: { relationshipIds: [edge] },
+        affected: { relationships: [edge], workItems: [parked] },
+      },
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, await shownOf(harness, cardId));
+
+    const row = await harness.run(async (ctx) => await ctx.db.get(parked));
+    expect(row?.state).toBe('claimed');
+    expect([row?.plan, row?.approvedIndexes, row?.applyPhase]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(landedWritesOf(row?.output).map((write) => write.action)).toEqual([comment]);
   });
 });
 

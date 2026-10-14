@@ -384,6 +384,19 @@ export const OFFICE_THREAD_SUBJECTS: Readonly<Record<string, string>> = {
   'thread-pipeline-coverage': 'enterprise pipeline coverage',
 };
 
+/**
+ * What a seeded thread is about, read as the map's own entry only: the key is the model's to
+ * choose, and a plain lookup reads "constructor" as the object's own function (W18-R21).
+ *
+ * @param threadKey - A message's thread key.
+ * @returns The thread's subject, or undefined for a thread the office did not seed.
+ */
+export function threadSubjectOf(threadKey: string): string | undefined {
+  return Object.hasOwn(OFFICE_THREAD_SUBJECTS, threadKey)
+    ? OFFICE_THREAD_SUBJECTS[threadKey]
+    : undefined;
+}
+
 /** A ticket's state as the office's board shows it. */
 function ticketStateWords(status: string): string {
   return label(status.replace(/-/g, ' '), 40);
@@ -420,7 +433,7 @@ export function officeWriteWords(
   switch (action.tool) {
     case 'slack.postMessage': {
       const place = officeMessagePlace(args.channelSlug);
-      const subject = args.threadKey ? OFFICE_THREAD_SUBJECTS[args.threadKey] : undefined;
+      const subject = args.threadKey ? threadSubjectOf(args.threadKey) : undefined;
       const thread = args.threadKey
         ? subject
           ? `, in the thread about “${subject}”`
