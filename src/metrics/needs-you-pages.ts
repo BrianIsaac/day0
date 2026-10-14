@@ -42,8 +42,9 @@ export function byLongestWait(left: WaitingEntry, right: WaitingEntry): number {
  * {@link NEEDS_YOU_LIMIT} in all, in one order, the totals summed and every employee's count, as
  * one read of the inbox answered before 0.22.0 (no employee's page lists a handover, so none is
  * cut, however recent). Each page holds its own employees' longest waits up to the limit, and the
- * first holds every handover, so the longest waits of all are among them. An employee two pages both answered (one deployed between the
- * reads moves the rest along) is counted once, as the later page has it.
+ * first holds every handover, so the longest waits of all are among them. An employee two pages
+ * both answered (one deployed between the reads moves the rest along) is counted once, as the
+ * later page has it.
  *
  * @param pages - Every page, in the order they were read.
  * @returns The whole inbox.

@@ -1162,7 +1162,7 @@ function noRows(): RecordRows {
 }
 
 /** The bytes a read may still hold, shared by the reads that draw on it. */
-interface ReadRoom {
+export interface ReadRoom {
   left: number;
 }
 
@@ -1847,8 +1847,7 @@ async function heldEmployees(
  * subscribe to it: it covers the most recent `MAX_COMPANY_EMPLOYEES` employees, their records
  * within {@link FIGURES_READ_BYTES} (an employee whose records do not fit what is left is left out
  * too: C1, wave 18), and says how many it left out (`omittedEmployees`); `forOwnerByPages` reads
- * them all. Writes
- * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
+ * them all. Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwner = query({
   args: {},
@@ -1988,9 +1987,9 @@ async function pageOfEmployees(
  * One page of the figures of the caller's company (wave 17, 17-F; RM33 (a), F-2): at most
  * `COMPANY_PAGE_EMPLOYEES` employees' records within one room, each counted within the spans the
  * caller held it, with the lists a company figure pools; an employee whose records do not fit
- * what is left of the room is named for the action to read by pages (C1, wave 18). The employees the caller holds now come first,
- * in deploy order; then those it handed over that still exist, an employee it holds again left to
- * the first walk. Internal; `forOwnerByPages` runs it under the caller's identity, and every
+ * what is left of the room is named for the action to read by pages (C1, wave 18). The employees
+ * the caller holds now come first, in deploy order; then those it handed over that still exist,
+ * an employee it holds again left to the first walk. Internal; `forOwnerByPages` runs it under the caller's identity, and every
  * read is keyed by the caller's own owner key. Reads; writes nothing.
  */
 export const ownerFiguresPage = internalQuery({

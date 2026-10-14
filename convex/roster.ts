@@ -8,7 +8,7 @@ import { getCallerOrThrow } from './ownership';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
 import { needsYouOfEmployee } from './needsYou';
-import { byWriteOrder, isEvaluationAgent } from './metrics';
+import { byWriteOrder, isEvaluationAgent, type ReadRoom } from './metrics';
 import {
   holdsLiveStepClaim,
   isManagerChannel,
@@ -100,11 +100,6 @@ const MONTH_LANDED_BYTES = 1024 * 1024;
  */
 const PAGE_LANDED_BYTES = 6 * 1024 * 1024;
 
-/** The bytes a read may still hold, shared by the reads that draw on it. */
-interface ReadRoom {
-  left: number;
-}
-
 /**
  * The bytes an employee's send-backs of one month may read before the count is a floor (T5, wave
  * 18): the month's send-backs are read to its start, where the newest hundred alone left out a
@@ -137,11 +132,13 @@ async function monthCompleted(
   for await (const event of eventsOfType(ctx, agentId, 'work.completed', {
     from: monthStart,
   }).order('desc')) {
-    if (completed.length === MONTH_LANDED_READ_LIMIT || room <= 0) return { completed, more: true };
+    // Counted before anything else: the event that ends the read was read too.
     const size = getDocumentSize(event);
     room -= size;
     page.left -= size;
+    if (completed.length === MONTH_LANDED_READ_LIMIT) return { completed, more: true };
     completed.push(event);
+    if (room <= 0) return { completed, more: true };
   }
   return { completed, more: false };
 }
@@ -165,9 +162,9 @@ async function monthSentBack(
   for await (const event of eventsOfType(ctx, agentId, 'work.retry', { from: monthStart }).order(
     'desc',
   )) {
-    if (room <= 0) return { sentBack, more: true };
     room -= getDocumentSize(event);
     sentBack.push(event);
+    if (room <= 0) return { sentBack, more: true };
   }
   return { sentBack, more: false };
 }
