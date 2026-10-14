@@ -594,8 +594,8 @@ function sealReaderToken(token: ReaderToken, key: string, binding: string): stri
 
 /**
  * A sealed reader token opened for the next batch, or nothing: sealed under another key, owner,
- * source or run, malformed, or within `READER_TOKEN_MARGIN_MS` (`batch.ts`) of its expiry (the reader then asks
- * for a new one).
+ * source or run, malformed, or inside the margin before its expiry (`readerTokenServes`; the
+ * reader then asks for a new one).
  */
 function openReaderToken(
   sealed: string,
@@ -740,13 +740,14 @@ export const syncBatch = internalAction({
       // gives is kept with no body read. A page whose stored text holds a value the owner stored
       // since it was redacted is not offered, so it is read and redacted again.
       const storedByRevision = new Map<string, StoredForRevision>();
-      // A stored title's keyed hash goes to the reader with the means to take a listed title's,
-      // never the key itself (18-X): a page whose stored title is redacted is kept by it.
-      const titleKey = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
+      // The deployment's key seals the reader's token and keys a listed title's hash; a stored
+      // title's hash goes to the reader with the means to take a listed title's, never the key
+      // itself (18-X), so a page whose stored title is redacted is kept by it.
+      const tokenKey = readerTokenKey();
       const hashTitle =
-        titleKey === undefined
+        tokenKey === undefined
           ? undefined
-          : (title: string): string => pageTitleHash(title, titleKey, source.userId);
+          : (title: string): string => pageTitleHash(title, tokenKey, source.userId);
       const storedRevisions: StoredRevisions = async (refs) => {
         const rows: StoredForRevision[] = await ctx.runQuery(internal.docPages.storedForRevision, {
           sourceId: source._id,
@@ -775,7 +776,6 @@ export const syncBatch = internalAction({
       // The reader's place, and the token it handed back at the last batch (X-1): opened here for
       // this batch alone, and past its expiry not handed at all.
       const stored = storedCursorParts(args.cursor);
-      const tokenKey = readerTokenKey();
       const binding = readerTokenBinding(source, args.runId);
       const handed =
         stored.sealed === undefined || tokenKey === undefined
