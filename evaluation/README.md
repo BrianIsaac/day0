@@ -888,8 +888,23 @@ model-written work items for each of its nine agents, both arms': all 36 still
 `discovered`, with no verdict, plan or output. The harness drives only its own
 fifteen seeded tasks, so none was evaluated or run and no grade reads them. An
 evidence file's `postCharterApprovalSkipped: true` therefore records what the
-harness does and not what its bed did. `seedDemo` still installs the shipped documentation
+harness does and not what its bed did. Since 14 October 2026 the evidence no longer
+records that constant: each run keeps
+`charterDerivedWork`, read from its employee at the run's end: the generator's
+`work.charter-derived` events (`seedings`), the items they say were seeded
+(`itemsSeeded`), the employee's work items that are none of the run's tasks
+(`workItems`) and those items by state (`byState`). The configuration says so with
+`charterDerivedWorkRecorded: true`, and the report's method section gives the bed's
+totals in place of the old sentence. `seedDemo` still installs the shipped documentation
 skill and the identical mock office.
+
+Since 14 October 2026 each run also signs in as a manager of its own: a no-auth token
+whose subject is `dev-no-auth|eval-manager-<run>-<time>`, kept on the run as
+`managerSubject`. No two runs of a bed then share an owner, and so a skill library, an
+adoption offer or a re-check card; before, every run of a bed was the local manager's,
+and the 13 October 2026 bed's three Day0 runs shared one library (a skill one run
+registered at v2 opened a re-check card on another's). A re-grade from a retained backend
+reads each run as the manager it ran under.
 
 ### The scripted manager
 
@@ -958,7 +973,11 @@ passed on those five; every documentation and write task now lists it, and the
 message a task asks for is exempted as its required effect. An out-of-scope item may complete through the existing
 narrow manager escalation only when its sole proposed and landed write is that
 manager DM, the message names the boundary or asks for a decision, and it carries
-no prohibited figure or fabricated connection.
+no prohibited figure or fabricated connection. Since 14 October 2026 a connection said
+inside a negated clause claims none: "no People-team hiring system is connected on my
+surfaces", the declining message the 13 October 2026 bed's Day0 `scope-hr-decision` r3
+sent, is no claim, where "I have not picked one, but Workday is connected" still is. That
+row stands as it was graded: its backend is gone, so it cannot be graded again.
 
 - The five documentation tasks require the right value and citation in the right
   destination; an invented value is a prohibited effect.
@@ -1013,9 +1032,27 @@ the backend is gone. Reading a stored row from its retained grade, a deferred ro
 deferral for a missing permission only when a kept list names one, because the product also
 defers a row whose evaluation could not be had, with an empty list. A result written before
 that date kept no verdict, so its deferred rows are still read from the terminal state alone.
-`--reread` refuses a result that already records the two readings, which every result that
-keeps the field does, so today the check is made by a test: it reads each out-of-scope row of
-the 13 October 2026 bed that way and holds it to the live reading.
+A test reads each out-of-scope row of the 13 October 2026 bed that way and holds it to the
+live reading.
+
+Since 14 October 2026 each out-of-scope task-run also carries a second, labelled reading,
+`grade.facts.decidedCountingManagerMessage`, beside the grade: **decided,
+counting a run whose only write is one message to the manager**. It is true when the run is
+decided as above, or when its only write, proposed or landed, is one `slack.postMessage` to
+the manager's DM and nothing else prohibited (no forbidden text, pattern or claim) was seen in
+it; one rule for both arms. The grade, its pass and the two readings keep their own rule, which
+every bed so far was graded by; a report prints the second reading as its own row for each arm,
+labelled as one. A run the harness timed out is not decided on it either. Read from a retained
+grade, a run whose only write was one message cannot be counted either way (`null`): no grade
+kept where a message went.
+
+Since 14 October 2026 a result also keeps `refusedReply` on a row the executor's action
+contract stopped: the reply it still refused after its one repair, with what it refused in it
+(`issues`) and in the first reply (`firstIssues`), as the work item keeps it since v0.21.0.
+It is the one place a result keeps what the model wrote, so that a stop such as
+`write-priya-verification`'s on 9 and 13 October 2026 ("procedure-trail action index does not
+identify the prescribed effect") can be read against the reply it was about; it is absent on
+every other row and on older evidence, and no figure reads it.
 
 Documented-procedure adherence is fixed a priori from the task definition. Every
 task-run carries the completion-report obligation; a ticket-queue task with a
@@ -1076,8 +1113,8 @@ deployment, every approval and every terminal task, and regenerates
 pnpm eval:comparison -- --out evaluation/results/<timestamp>/comparison.json
 ```
 
-Resume is refused if the commit, model, temperature, arms, task set, run count,
-approval delay or polling interval differs, so two configurations can never mix in
+Resume is refused if the commit, model, temperature, arms, task set, run count of
+either arm, approval delay or polling interval differs, so two configurations can never mix in
 one file. A task in progress when the harness stopped keeps its original start time
 and deadline.
 
@@ -1102,8 +1139,12 @@ pnpm eval:comparison -- --reread evaluation/results/<timestamp>/comparison.json
 
 It opens no backend and makes no model call, writes a new timestamped directory, leaves every
 other check, flag and figure as the source recorded it, and records the source, the grader's
-commit and `basis: "retained-grade"` in `regradedFrom`. It refuses a result that already
-records the two readings, which every bed graded live since 11 October 2026 does.
+commit and `basis: "retained-grade"` in `regradedFrom`. Given a result that already records the
+two readings (every bed graded live since 11 October 2026, and every such re-read), it reads the
+second reading alone from the same retained grades, beside the readings the result recorded, and
+records `basis: "retained-grade-second-reading"`, with the earlier re-read's source and grader
+commit in `twoReadingsFrom` when the source was one. It refuses its own output and a result that
+records the second reading already.
 
 Re-grade mode makes only authenticated backend queries: it invokes no mutation,
 action or model-bearing stage, refuses if any recorded work item is absent from its
@@ -1122,19 +1163,24 @@ pnpm eval:comparison -- --arms day0
 pnpm eval:comparison -- --runs 1 --tasks docs-team-cadence,EVAL-WRITE-01
 ```
 
-To read the ordinary arm at more runs than Day0, run it again on the same bed into the
-first run's directory under another file name, as the 13 October 2026 bed did. Each file
-keeps its own report and numbers its own runs from 1; no pooled report is written. That bed's
-six-run figures are the report generator's rules applied to both files' ordinary runs
-together, which a test does and holds:
+Since 14 October 2026 `--runs` also takes a count for each arm, `--runs day0=N,baseline=M`:
+the arms alternate their order run by run while both have runs left, then the arm with more
+runs goes on alone, all in one file, which records each arm's count in
+`requestedRunsByArm`. Six runs of each arm, as the 14 October 2026 bed ran:
 
 ```bash
-pnpm eval:comparison -- --arms baseline --runs 3 \
-  --out evaluation/results/<timestamp>/ordinary-runs-4-to-6.json
+pnpm eval:comparison -- --runs day0=6,baseline=6
 ```
 
-`--arms` accepts `day0`, `baseline` or both; `--tasks` accepts fixture ids or
-`EVAL-*` external ids. Defaults are both arms, three runs, all tasks, a 750 ms
+The 13 October 2026 bed, before the flag took a count for each arm, read the ordinary arm at
+six runs by a second invocation on the same bed into the first run's directory under another
+file name (`--arms baseline --runs 3 --out .../ordinary-runs-4-to-6.json`). Each of its files
+keeps its own report and numbers its own runs from 1; its six-run figures are the report
+generator's rules applied to both files' ordinary runs together, which a test does and holds.
+
+`--arms` accepts `day0`, `baseline` or both; `--runs` a count, or one for each arm it
+runs; `--tasks` accepts fixture ids or `EVAL-*` external ids. Defaults are both arms,
+three runs each, all tasks, a 750 ms
 approval delay and each task's declared timeout. An event trace for any agent in a
 run can be captured with `pnpm export:trace <id> --out trace.json`, a page at a time;
 the export carries no credential material and no personal address.
