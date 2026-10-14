@@ -482,14 +482,14 @@ export interface OwnerPageRef {
 
 /**
  * One stored page as the owner export carries it: its title and status with what decided it,
- * never its text, its keyed hash, the words a marker was read from, who decided it, or its ref
+ * never its text, its keyed hashes (of the page and of its title), the words a marker was read from, who decided it, or its ref
  * and address (W16-R18: a locator, which for a list of URLs carries any query-string
  * credential); it carries an opaque key in their place, and the page that superseded it is named
  * by that page's key.
  */
 export type OwnerDocPage = Omit<
   Doc<'docPages'>,
-  'markdown' | 'contentHash' | 'marker' | 'decidedBy' | 'ref' | 'url' | 'supersededBy'
+  'markdown' | 'contentHash' | 'titleHash' | 'marker' | 'decidedBy' | 'ref' | 'url' | 'supersededBy'
 > & {
   /** The page's opaque key in this owner's exports, which a relation's ends and a successor name. */
   readonly page: string;

@@ -43,6 +43,7 @@ import {
   openOwnedCredential as openSpy,
 } from '../../src/lib/credential-crypto';
 import { credentialSourceRef } from '../../src/docs/credential-ref';
+import { pageTitleHash } from '../../src/docs/content-hash';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { providerFake } from '../fixtures/readers/fake';
 import { temporaryDirectories } from '../setup/temporary-directories';
@@ -440,9 +441,13 @@ describe('the status a source gives a page, beside its hash (15-A; A-2)', (): vo
   ): { ctx: ActionCtx; writes: Array<{ name: string; args: Record<string, unknown> }> } {
     const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
     const ctx = {
+      // A row stored by 0.22.0 holds its listed title's hash (18-D), as these fakes' rows now do:
+      // one without is filled once, which the title hash's own describe holds.
       runQuery: async (reference: unknown): Promise<unknown> =>
         getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
-          ? stored
+          ? stored === null
+            ? null
+            : { titleHash: pageTitleHash('Runbook', KEY, 'owner-contract'), ...stored }
           : [],
       runAction: async (): Promise<string> => 'f'.repeat(32),
       runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
@@ -558,9 +563,13 @@ describe('whether a page’s source dated it, at the persistence boundary (D-8 (
   ): { ctx: ActionCtx; writes: Array<{ name: string; args: Record<string, unknown> }> } {
     const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
     const ctx = {
+      // A row stored by 0.22.0 holds its listed title's hash (18-D), as these fakes' rows now do:
+      // one without is filled once, which the title hash's own describe holds.
       runQuery: async (reference: unknown): Promise<unknown> =>
         getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
-          ? stored
+          ? stored === null
+            ? null
+            : { titleHash: pageTitleHash('Runbook', KEY, 'owner-contract'), ...stored }
           : [],
       runAction: async (): Promise<string> => 'f'.repeat(32),
       runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
@@ -670,6 +679,130 @@ describe('whether a page’s source dated it, at the persistence boundary (D-8 (
       new Map([['runbook.md', { ...row, datedBySource: true }]]),
     );
     expect(again.writes).toEqual([]);
+  });
+});
+
+describe('the listed title’s keyed hash, at the persistence boundary (18-D; the 17-X F4 residual)', (): void => {
+  /** A fixed 32-byte credential key in standard base64. */
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  /** A fake action context: the stored page the skip reads, and each write the batch asks for. */
+  function contextWith(stored: { title: string; markdown: string; titleHash?: string } | null): {
+    ctx: ActionCtx;
+    writes: Array<{ name: string; args: Record<string, unknown> }>;
+  } {
+    const writes: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const ctx = {
+      runQuery: async (reference: unknown): Promise<unknown> =>
+        getFunctionName(reference as never) === getFunctionName(internal.docBlocks.unchangedPage)
+          ? stored
+          : [],
+      runAction: async (): Promise<string> => 'f'.repeat(32),
+      runMutation: async (reference: unknown, args: Record<string, unknown>): Promise<unknown> => {
+        writes.push({ name: getFunctionName(reference as never), args });
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    return { ctx, writes };
+  }
+
+  const UPSERT = getFunctionName(internal.docSources.upsertPage);
+  const RECORD = getFunctionName(internal.docStatus.recordRead);
+  // A title holding a value the owner stores, built at runtime: stored redacted, so a reader that
+  // compared the listed title with the stored one read the page again at every sync.
+  const secret = token(['lin', 'api'], '_', 'title-contract-0123456789abcdef');
+  const listed = `Rotate ${secret} quarterly`;
+  const page: DocPage = {
+    sourceId: 'source-contract' as Id<'docSources'>,
+    ref: 'rotate.md',
+    title: listed,
+    markdown: `# ${listed}\n\nRotate the key.`,
+    updatedAt: 1,
+  };
+
+  it('stores a page whose listed title holds a redacted value with its title’s keyed hash', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { ctx, writes } = contextWith(null);
+    await persistPageBatch(ctx, source(), [page], [], undefined, [secret]);
+    const [upsert] = writes.filter((write) => write.name === UPSERT);
+    expect(upsert.args.title).not.toContain(secret);
+    expect(upsert.args.titleHash).toBe(pageTitleHash(listed, KEY, 'owner-contract'));
+    expect(JSON.stringify(writes)).not.toContain(secret);
+  });
+
+  it('hands no hash where the deployment has no key', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    const { ctx, writes } = contextWith(null);
+    await persistPageBatch(ctx, source(), [page], [], undefined, [secret]);
+    expect(writes.find((write) => write.name === UPSERT)?.args).not.toHaveProperty('titleHash');
+  });
+
+  it('writes it for a page kept by its hash where the row has none, one small write and nothing stored again, and not again', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const stored = {
+      title: 'Rotate <credential: api key, stored> quarterly',
+      markdown: '# Stored',
+    };
+    const first = contextWith(stored);
+    await persistPageBatch(first.ctx, source(), [page], [], undefined, [secret]);
+    expect(first.writes).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'rotate.md',
+          titleHash: pageTitleHash(listed, KEY, 'owner-contract'),
+        },
+      },
+    ]);
+    const again = contextWith({
+      ...stored,
+      titleHash: pageTitleHash(listed, KEY, 'owner-contract'),
+    });
+    await persistPageBatch(again.ctx, source(), [page], [], undefined, [secret]);
+    expect(again.writes).toEqual([]);
+  });
+
+  it('writes it for a page kept by its revision from its stored title, which its listing matched, and not again', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const row = {
+      ref: 'runbook.md',
+      title: 'Runbook',
+      markdown: '# Runbook\n\nStored.',
+      updatedAt: 1,
+      sourceRevision: '12',
+    };
+    const keep = async (stored: typeof row & { titleHash?: string }) => {
+      const context = contextWith(null);
+      await keptByRevision(
+        context.ctx,
+        source(),
+        [],
+        'run-contract' as Id<'docSyncRuns'>,
+        [{ ref: 'runbook.md' }],
+        new Map([['runbook.md', stored]]),
+      );
+      return context.writes;
+    };
+    const titleHash = pageTitleHash('Runbook', KEY, 'owner-contract');
+    expect(await keep(row)).toEqual([
+      {
+        name: RECORD,
+        args: {
+          sourceId: 'source-contract',
+          syncRunId: 'run-contract',
+          ref: 'runbook.md',
+          titleHash,
+          keepRevision: true,
+        },
+      },
+    ]);
+    expect(await keep({ ...row, titleHash })).toEqual([]);
   });
 });
 

@@ -10,7 +10,7 @@ import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
-import { pageContentHash } from '../src/docs/content-hash';
+import { pageContentHash, pageTitleHash } from '../src/docs/content-hash';
 import { knownValueSpans } from '../src/redaction/redact';
 import { credentialKeyId } from '../src/lib/credential-crypto';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
@@ -323,6 +323,12 @@ async function persistPage(
   }
   const contentHash =
     redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  // The listed title's, before redaction: what a reader compares against when the stored title
+  // is redacted (18-D).
+  const titleHash =
+    redaction.key === undefined
+      ? undefined
+      : pageTitleHash(page.title, redaction.key, source.userId);
   const said = {
     sourceId: source._id,
     syncRunId,
@@ -333,11 +339,20 @@ async function persistPage(
     ...(page.revisionUnread === true ? { keepRevision: true } : {}),
     ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
   };
-  if (contentHash !== undefined) {
-    const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
+  if (contentHash !== undefined && titleHash !== undefined) {
+    const kept = await keptUnchangedPage(ctx, source, page, {
+      contentHash,
+      titleHash,
+      known: redaction.known,
+    });
     if (kept !== undefined) {
-      if (kept.saidOtherwise) await ctx.runMutation(internal.docStatus.recordRead, said);
-      return kept;
+      if (kept.saidOtherwise || kept.titleStale) {
+        await ctx.runMutation(internal.docStatus.recordRead, {
+          ...said,
+          ...(kept.titleStale ? { titleHash } : {}),
+        });
+      }
+      return { page: kept.page, credentialRefs: kept.credentialRefs };
     }
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
@@ -385,6 +400,7 @@ async function persistPage(
     ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
+    ...(titleHash !== undefined ? { titleHash } : {}),
   });
   await ctx.runMutation(internal.docStatus.recordRead, said);
   return { page: safePage, credentialRefs };
@@ -396,16 +412,24 @@ async function persistPage(
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
  * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
- * revision) is no longer the one the row holds, or that the row does not yet say whether its
- * source dated it and the reader does (K-2).
+ * revision) is no longer the one the row holds, that the row does not yet say whether its source
+ * dated it and the reader does (K-2); `titleStale`, that the row's listed-title hash is absent or
+ * another (18-D).
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
   page: DocPage,
-  contentHash: string,
-  known: readonly string[],
-): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
+  hashes: {
+    readonly contentHash: string;
+    readonly titleHash: string;
+    readonly known: readonly string[];
+  },
+): Promise<
+  | { page: DocPage; credentialRefs: string[]; saidOtherwise: boolean; titleStale: boolean }
+  | undefined
+> {
+  const { contentHash, known } = hashes;
   const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
     sourceId: source._id,
     ref: page.ref,
@@ -434,6 +458,7 @@ async function keptUnchangedPage(
       stored.nativeStatus !== page.nativeStatus ||
       (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision) ||
       (stored.datedBySource === undefined && page.datedBySource !== undefined),
+    titleStale: stored.titleHash !== hashes.titleHash,
   };
 }
 
@@ -474,9 +499,11 @@ async function keptUnreadPages(
 /**
  * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
  * for the source's readers from its stored text, as a page kept by its hash is, and, where its
- * listing now says another status than the one stored, or the row does not yet say whether its
- * source dated it and the listing does (K-2), that is recorded (`recordRead`) with its revision
- * as stored. Its refs and stored credentials are added to the batch's by the caller.
+ * listing now says another status than the one stored, the row does not yet say whether its
+ * source dated it and the listing does (K-2), or the row holds no listed-title hash (18-D), that
+ * is recorded (`recordRead`) with its revision as stored. A page kept by its revision was kept
+ * because its listed title is its stored one, so its title's hash is taken from the row's title.
+ * Its refs and stored credentials are added to the batch's by the caller.
  *
  * @returns The refs of the pages kept.
  */
@@ -489,17 +516,23 @@ export async function keptByRevision(
   stored: ReadonlyMap<string, StoredForRevision>,
 ): Promise<Array<{ ref: string }>> {
   const pages: DocPage[] = [];
+  const key = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
   for (const entry of kept) {
     const row = stored.get(entry.ref);
     if (row === undefined) continue;
     const undated = row.datedBySource === undefined && entry.datedBySource !== undefined;
-    if (row.nativeStatus !== entry.nativeStatus || undated) {
+    const titleHash =
+      key === undefined || row.titleHash !== undefined
+        ? undefined
+        : pageTitleHash(row.title, key, source.userId);
+    if (row.nativeStatus !== entry.nativeStatus || undated || titleHash !== undefined) {
       await ctx.runMutation(internal.docStatus.recordRead, {
         sourceId: source._id,
         syncRunId,
         ref: row.ref,
         ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
         ...(entry.datedBySource !== undefined ? { datedBySource: entry.datedBySource } : {}),
+        ...(titleHash !== undefined ? { titleHash } : {}),
         keepRevision: true,
       });
     }

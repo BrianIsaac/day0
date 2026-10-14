@@ -1931,7 +1931,10 @@ export const syncReport = internalQuery({
  *
  * A page it writes takes its reader's word on whether its time is its source's
  * (`datedBySource`; D-8 (a)) with the time; an unchanged page keeps both as stored, but for a
- * row that does not say, which takes the reader's word once (K-2).
+ * row that does not say, which takes the reader's word once (K-2). The listed title's keyed hash
+ * (`titleHash`; wave 18, 18-D) goes with the page: written with a new or changed one, none
+ * handed with a changed page clearing a stale one, and on an unchanged page written where the
+ * row has none or another (the listed title's redacted value changed, or the key rotated).
  *
  * It schedules the split of every page it writes into blocks (`docBlocks.splitStoredPage`),
  * which stores the page's hash before redaction once the blocks are the page's, and, when a stored
@@ -1957,8 +1960,8 @@ export const upsertPage = internalMutation({
     /** The page's hash before redaction (`pageContentHash`); absent where the deployment has no key. */
     contentHash: v.optional(v.string()),
     /**
-     * The listed title's keyed hash (`docPages.titleHash`; 18-K). Taken here so a sync can hand
-     * it over; storing it is the store region's (18-D), and until then it is not written.
+     * The listed title's keyed hash (`docPages.titleHash`; 18-K's field, `pageTitleHash`):
+     * written with the page; absent where the deployment has no key.
      */
     titleHash: v.optional(v.string()),
   },
@@ -1980,6 +1983,8 @@ export const upsertPage = internalMutation({
       // Said of this time, so stored with it; a reader that does not say clears an older word.
       datedBySource: args.datedBySource,
       contentHash: undefined,
+      // Said of this title: a changed page with none handed keeps no stale one.
+      titleHash: args.titleHash,
     };
     // The page's blocks are split from the page as stored, in a job of their own that reads it
     // then, so a later write of the page is never undone by an earlier split (14-I). The job
@@ -2009,9 +2014,17 @@ export const upsertPage = internalMutation({
         // What its reader says of its time is filled where the row does not say, once, and never
         // over a stored word, as for a page kept by its hash (K-2, `docStatus.recordRead`): with
         // no credential key no page is kept that way, and every unchanged page comes here.
-        if (existing.datedBySource === undefined && args.datedBySource !== undefined) {
-          await ctx.db.patch(existing._id, { datedBySource: args.datedBySource });
-        }
+        const filled = {
+          ...(existing.datedBySource === undefined && args.datedBySource !== undefined
+            ? { datedBySource: args.datedBySource }
+            : {}),
+          // The listed title's hash where the row's is absent or another; never cleared here, by
+          // a sync that hands none.
+          ...(args.titleHash !== undefined && existing.titleHash !== args.titleHash
+            ? { titleHash: args.titleHash }
+            : {}),
+        };
+        if (Object.keys(filled).length > 0) await ctx.db.patch(existing._id, filled);
         return existing._id;
       }
       await ctx.db.patch(existing._id, page);
@@ -2053,6 +2066,7 @@ export const upsertPage = internalMutation({
       markdown: page.markdown,
       updatedAt: page.updatedAt,
       ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
+      ...(page.titleHash !== undefined ? { titleHash: page.titleHash } : {}),
     });
     await splitStored();
     return pageId;

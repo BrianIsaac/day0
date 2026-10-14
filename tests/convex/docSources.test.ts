@@ -3907,4 +3907,59 @@ describe('the listed title’s keyed hash, in the page store’s argument (18-K 
     ).rejects.toThrow('Validator error: Expected `string`, got `7`');
     expect(await refs()).toEqual(['page.md', 'rotation.md']);
   });
+
+  it('stores the hash with a new page, takes a changed page’s new one or none, and fills or replaces it on an unchanged page (18-D)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      ref: 'rotation.md',
+      title: 'Rotation for <credential: api key, stored>',
+      markdown: '# Rotation',
+      updatedAt: 2,
+    };
+    const stored = async () =>
+      await harness.run(
+        async (ctx) =>
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId).eq('ref', 'rotation.md'))
+            .unique(),
+      );
+    const first = 'a'.repeat(32);
+    await harness.mutation(internal.docSources.upsertPage, { ...page, titleHash: first });
+    expect((await stored())?.titleHash).toBe(first);
+    // Unchanged, from a reader that hands no hash: the stored one stands.
+    await harness.mutation(internal.docSources.upsertPage, page);
+    expect((await stored())?.titleHash).toBe(first);
+    // Unchanged as stored, but the listed title's value changed or the key rotated: replaced.
+    await harness.mutation(internal.docSources.upsertPage, { ...page, titleHash: 'b'.repeat(32) });
+    expect((await stored())?.titleHash).toBe('b'.repeat(32));
+    // A changed page takes the hash its sync hands it, and a stale one goes with no hash handed.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      title: 'Rotation',
+      markdown: '# Rotation\n\nRotate.',
+      titleHash: 'c'.repeat(32),
+    });
+    expect((await stored())?.titleHash).toBe('c'.repeat(32));
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      title: 'Rotation, again',
+      markdown: '# Rotation, again',
+    });
+    expect(await stored()).not.toHaveProperty('titleHash');
+    // A row stored before the field takes it once a sync meets it unchanged.
+    await harness.mutation(internal.docSources.upsertPage, {
+      ...page,
+      title: 'Rotation, again',
+      markdown: '# Rotation, again',
+      titleHash: 'd'.repeat(32),
+    });
+    expect((await stored())?.titleHash).toBe('d'.repeat(32));
+  });
 });
