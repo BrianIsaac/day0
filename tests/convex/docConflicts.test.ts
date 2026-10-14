@@ -1129,6 +1129,110 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     );
   });
 
+  it('stops a step of plans that read the whole mirror at its lookup bound, one walk a step, and goes on in the next (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    // Three drafted plans whose selection failed, so each read the whole mirror.
+    const items: Id<'workItems'>[] = [];
+    for (let plan = 0; plan < 3; plan += 1) {
+      const workItemId = await planned(harness, agentId, {});
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('events', {
+          agentId,
+          type: 'work.documentation-selection-failed',
+          payload: { workItemId, site: 'plan', reason: 'the library is past its reads' },
+          createdAt: 2,
+        });
+      });
+      items.push(workItemId);
+    }
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId,
+      decision: 'disagree',
+    });
+    const askedOf = async (): Promise<number> =>
+      (await harness.run(async (ctx) => await ctx.db.query('managerQuestions').collect())).length;
+    // Each walk of the whole mirror may cost the walk's whole lookup bound: one a step.
+    await ranAsks(harness);
+    expect(await askedOf()).toBe(1);
+    await ranAsks(harness);
+    expect(await askedOf()).toBe(2);
+    await ranAsks(harness);
+    expect(await askedOf()).toBe(3);
+    const asked = await harness.run(
+      async (ctx) => await ctx.db.query('managerQuestions').collect(),
+    );
+    expect(new Set(asked.map((question) => question.workItemId))).toEqual(new Set(items));
+  });
+
+  it('goes on from the page cursor a step scheduled before 0.22.0 carries, then by creation time (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const label = 'Finance wiki/escalation.md#Finance escalation > Thresholds';
+    const { citations } = await selection(harness, agentId);
+    const cited = citations.find((citation) => citation.label === label)!;
+    const cites = [
+      {
+        step: 1,
+        label,
+        sourceId: relation.from.sourceId,
+        pageRef: relation.from.ref,
+        blocks: cited.blocks.map((block) => ({ id: block.id, hash: block.hash! })),
+      },
+    ];
+    const items: Id<'workItems'>[] = [];
+    for (let plan = 0; plan < 15; plan += 1) items.push(await planned(harness, agentId, { cites }));
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(relationId, { status: 'confirmed' });
+    });
+    // The cursor the old step wrote after the first ten plans.
+    const cursor = await harness.run(
+      async (ctx) =>
+        (
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) =>
+              q.eq('agentId', agentId).eq('state', 'plan-pending'),
+            )
+            .paginate({ numItems: 10, cursor: null })
+        ).continueCursor,
+    );
+    await expect(
+      harness.mutation(internal.docRelations.askConfirmed, {
+        relationId,
+        readers: [agentId],
+        cursor,
+      }),
+    ).resolves.toEqual({ asked: 5 });
+    const asked = await harness.run(
+      async (ctx) => await ctx.db.query('managerQuestions').collect(),
+    );
+    expect(new Set(asked.map((question) => question.workItemId))).toEqual(new Set(items.slice(10)));
+  });
+
   it('asks beside a pending plan that cites nothing, from its kept selection, once the manager confirms the conflict after it (W16-R9)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

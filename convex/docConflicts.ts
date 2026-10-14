@@ -503,6 +503,18 @@ async function planBlocks(
 }
 
 /**
+ * Whether reading the conflicts a plan rests on walks the whole mirror (its selection failed and
+ * the planner read every page): such a read may make {@link CONFLICT_WALK_LOOKUPS} lookups, so a
+ * caller reading many plans in one transaction counts it (W17-R13, `docRelations.askConfirmed`).
+ */
+export async function planReadsWholeMirror(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
+): Promise<boolean> {
+  return (await planBlocks(ctx, row)) === 'fell-back';
+}
+
+/**
  * The most conflicts a plan that read the whole mirror is asked about at one decision: each is a
  * question beside it, and a request shows three.
  */
