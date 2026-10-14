@@ -648,6 +648,7 @@ export function home(): Record<string, unknown> {
   return {
     // The home reads its roster by pages (wave 17, 17-F); the stub answers one exhausted page.
     'roster:page': roster,
+    // The home reads its inbox by pages too (wave 18, 18-F); the stub answers the one last page.
     'work:needsYou': {
       total: 2,
       entries: (employeePage()['work:needsYouForAgent'] as { entries: unknown[] }).entries,
@@ -656,6 +657,8 @@ export function home(): Record<string, unknown> {
         { agentId: 'agent-2', waiting: 0 },
         { agentId: 'agent-3', waiting: 0 },
       ],
+      isDone: true,
+      continueCursor: '',
     },
     'metrics:forOwner': {
       employees: roster.map(employee),

@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { useQueries, useQuery } from 'convex/react';
+import { useQuery } from 'convex/react';
 import Link from 'next/link';
 import { api } from '@convex/_generated/api';
 import { employeeStateTally } from '@/work/state-labels';
@@ -11,6 +11,7 @@ import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
 import { useCompanyFigures } from './use-company-figures';
 import { useOwnerPerson } from './use-owner-person';
+import { useNeedsYou } from './use-needs-you';
 import { useRoster } from './use-roster';
 import { AcceptTransfer } from './AcceptTransfer';
 import { AuthorisationUnfinished } from './AuthorisationUnfinished';
@@ -28,22 +29,6 @@ import { RetiredNotice } from '../RetiredNotice';
 import { ResetCard } from './ResetCard';
 import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
 import type { Boss, NeedsYouInbox, RosterRow } from './types';
-
-/**
- * The inbox's read, subscribed through `useQueries` so a failure comes back as a value: the
- * query reads the most of any on the page, and an overrun of Convex's read limits must lose the
- * inbox only, not the roster, the office, the month and Reset with it.
- */
-const NEEDS_YOU = { inbox: { query: api.work.needsYou, args: {} } };
-
-/**
- * The needs-you inbox, undefined while it loads and an `Error` when the backend refused the read.
- * Nothing is swallowed: the list says it could not be read, and the rest of the page reads on.
- */
-function useNeedsYou(): NeedsYouInbox | undefined | Error {
-  const { inbox }: Record<string, NeedsYouInbox | undefined | Error> = useQueries(NEEDS_YOU);
-  return inbox;
-}
 
 /**
  * The signed-in home at `/`. With nobody deployed it is the deploy page: the
@@ -82,9 +67,10 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         .map(({ agentId, name }) => ({ agentId: String(agentId), name })),
     [roster],
   );
-  // The inbox reaches the newest employees only (`work.needsYou`, twenty), where the roster lists
-  // every one: what waits for the rest is counted from their own rows, which the same reader
-  // fills, so the page's count, the roster's column and the inbox's last line agree.
+  // The inbox reads every employee by pages (`work.needsYou`; wave 18), but an employee deployed
+  // since its last whole read is on the roster before it: what waits for such a one is counted
+  // from its own row, which the same reader fills, so the page's count, the roster's column and
+  // the inbox's last line agree.
   const beyondInbox = useMemo(() => waitingBeyondInbox(roster, inbox), [roster, inbox]);
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
@@ -238,8 +224,8 @@ interface BeyondInbox {
 }
 
 /**
- * What waits for the employees the roster lists and the inbox does not reach (it reads the
- * newest twenty), counted from each one's own row: nothing until both are read.
+ * What waits for the employees the roster lists and the inbox's last whole read does not reach
+ * (one deployed since), counted from each one's own row: nothing until both are read.
  */
 function waitingBeyondInbox(
   roster: readonly RosterRow[] | undefined,

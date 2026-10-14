@@ -27,6 +27,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { strikeRefusalBody } from '../fixtures/charter-strike-refusal-2026-09-15';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { acceptedHandoverWords, seedAcceptingHandover } from './fakes/accepting-handover';
+import { rosterRows } from './fakes/roster';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -427,7 +428,7 @@ describe('amending an approved charter', (): void => {
 
     await owner.mutation(api.charters.requestChanges, { charterId: draftId });
     expect((await harness.run(async (ctx) => await ctx.db.get(agentId)))?.state).toBe('active');
-    expect(await owner.query(api.agents.rosterForUser, {})).toMatchObject([
+    expect(await rosterRows(owner)).toMatchObject([
       { agentId, state: 'active', roleLine: clipRoleLine(runThroughBody().proposedFunction) },
     ]);
   });
@@ -466,7 +467,7 @@ describe('amending an approved charter', (): void => {
       owner.mutation(api.charters.requestChanges, { charterId: amendment.charterId }),
     ).rejects.toThrow(/approved/i);
     expect((await latestCharter(harness, agentId))._id).toBe(amendment.charterId);
-    expect(await owner.query(api.agents.rosterForUser, {})).toMatchObject([
+    expect(await rosterRows(owner)).toMatchObject([
       { agentId, state: 'active', roleLine: 'Own the finance close.' },
     ]);
   });

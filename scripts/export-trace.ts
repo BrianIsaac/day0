@@ -24,9 +24,9 @@ import {
   assembleTrace,
   streamOwnerExport,
   type AgentTrace,
+  type CountedOwnerExportHead,
   type OwnerAgentsPage,
   type OwnerExport,
-  type OwnerExportHead,
   type OwnerPage,
   type TraceHead,
   type TracePage,
@@ -169,7 +169,7 @@ export async function exportOwner(
     const manifest = await streamOwnerExport(
       {
         head: async () =>
-          (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
+          (await run('exportActions:exportForOwner', {}, subject)) as CountedOwnerExportHead,
         agents: async (cursor) =>
           (await run('exportActions:exportOwnerAgents', { cursor }, subject)) as OwnerAgentsPage,
         page: async (cursor) =>

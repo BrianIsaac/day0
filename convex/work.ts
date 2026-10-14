@@ -101,6 +101,7 @@ import { queueManagerNote } from './managerNotes';
 import {
   listForAgentArgs,
   listForAgentInTransaction,
+  needsYouArgs,
   needsYouForAgentInTransaction,
   needsYouForAgentValidator,
   needsYouInTransaction,
@@ -2547,24 +2548,27 @@ export const findExistingClaimInternal = internalQuery({
 });
 
 /**
- * Public, owner-scoped: everything waiting on the manager across their
- * employees, and every handover naming the caller's verified address (the
- * ninth kind, read by address through `incomingTransfersOf`), longest wait
- * first, for the needs-you inbox on the signed-in home (N7). Evaluation agents
- * and the baseline arm are left out, as on the roster. A handover is counted
- * in `total` and on no employee in `waitingByEmployee`, since its employee is
- * not the caller's yet. A caller with no identity is refused (12-G). Writes
- * nothing.
+ * Public, owner-scoped: everything waiting on the manager across one page of
+ * their employees (twenty at most, newest first), and on the first page every
+ * handover naming the caller's verified address (the ninth kind, read by
+ * address through `incomingTransfersOf`), longest wait first, for the needs-you
+ * inbox on the signed-in home (N7), which reads every page (wave 18, 18-F).
+ * Evaluation agents and the baseline arm are left out, as on the roster. A
+ * handover is counted in `total` and on no employee in `waitingByEmployee`,
+ * since its employee is not the caller's yet. With no `paginationOpts` it
+ * answers the first page, as a page loaded before 0.22.0 asks. A caller with no
+ * identity is refused (12-G). Writes nothing.
  *
- * @returns At most `NEEDS_YOU_LIMIT` (`convex/workLists.ts`) entries, how many
- *   there are in all, and how many wait on each employee.
+ * @returns At most `NEEDS_YOU_LIMIT` (`src/metrics/needs-you-pages.ts`) entries, how
+ *   many there are in all on the page, how many wait on each of its employees,
+ *   and where the next page starts.
  */
 export const needsYou = query({
-  args: {},
+  args: needsYouArgs,
   returns: needsYouValidator,
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const caller = await getCallerOrThrow(ctx);
-    return await needsYouInTransaction(ctx, caller);
+    return await needsYouInTransaction(ctx, caller, args);
   },
 });
 
@@ -2572,9 +2576,9 @@ export const needsYou = query({
  * Public, owner-guarded (`assertOwnsAgent`): what one employee waits on the manager for, longest
  * wait first, for the Needs you tab of the employee's page (N7). The same rows, kinds and dating as
  * `needsYou`, read by the same `needsYouOfEmployee`, so for an employee the home lists, the tab
- * lists the same entries in the same order. The home leaves out evaluation agents and reads at most
- * `NEEDS_YOU_EMPLOYEE_LIMIT` (`convex/workLists.ts`) employees; the tab answers for the one
- * employee its page is about, whichever it is. Writes nothing.
+ * lists the same entries in the same order. The home leaves out evaluation agents and reads every
+ * employee by pages of `NEEDS_YOU_EMPLOYEE_LIMIT` (`convex/workLists.ts`); the tab answers for the
+ * one employee its page is about, whichever it is. Writes nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
  */

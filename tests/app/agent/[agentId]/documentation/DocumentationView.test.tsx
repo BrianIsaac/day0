@@ -32,10 +32,17 @@ vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
   useQueries: (
-    queries: Record<string, { args: { conflictsBefore?: number; proposalsBefore?: number } }>,
+    queries: Record<
+      string,
+      { query: unknown; args: { conflictsBefore?: number; proposalsBefore?: number } }
+    >,
   ): Record<string, unknown> =>
     Object.fromEntries(
-      Object.entries(queries).map(([key, { args }]) => {
+      Object.entries(queries).map(([key, { query, args }]) => {
+        // The rail's figures, read through `useQueries` too since wave 18 (18-F).
+        if (getFunctionName(query as never) !== 'docRelations:listOpen') {
+          return [key, backend.queries[getFunctionName(query as never)]];
+        }
         if (args.proposalsBefore !== undefined) {
           backend.readOnProposals.push(args.proposalsBefore);
           return [key, backend.proposalReads[args.proposalsBefore]];
