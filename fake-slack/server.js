@@ -612,7 +612,7 @@ const server = createServer(async (request, response) => {
     tickets.set(ticket, app.appId);
     const origin =
       process.env.FAKE_SLACK_SOCKET_ORIGIN ||
-      `ws://${request.headers.host || `fake-slack:${port}`}`;
+      `ws://${request.headers.host || `fake-slack:${server.address().port}`}`;
     return json(response, 200, { ok: true, url: `${origin}/link/?ticket=${ticket}` });
   }
   const bot = botOf(request);
@@ -926,7 +926,7 @@ server.on('upgrade', (request, socket) => {
     socket,
     appId,
     // The address the app dialled, which its presses' response_urls are served at.
-    host: request.headers.host || `fake-slack:${port}`,
+    host: request.headers.host || `fake-slack:${server.address().port}`,
     buffer: Buffer.alloc(0),
     // A text message's frames read so far, until its last (FIN) arrives.
     fragments: [],
@@ -1037,6 +1037,11 @@ async function press({ channel, ts, button, userId }) {
   return { delivered: true, acknowledged, envelopeId, actionTs };
 }
 
+// The port it bound, on its first line of output: a test starts it on port 0 and reads where it
+// listens, where a free port it guessed could be taken by another process first (18-G).
+server.on('listening', () => {
+  process.stdout.write(`fake-slack listening on ${server.address().port}\n`);
+});
 server.listen(port, '0.0.0.0');
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
