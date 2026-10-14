@@ -1670,6 +1670,39 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
     });
   });
 
+  // W17-R21's count edges, ruled with D-4 (b): a number before a plural counts the messages only
+  // where it counts them. "3 weeks of notes" counts weeks, and "the 40 messages backlog" names a
+  // backlog, so each sentence reports the one post that carries its words.
+  it('‘Posted the stop-drill note, 3 weeks of notes.’ and ‘the 40 messages backlog’ count one message', (): void => {
+    for (const words of [
+      'Posted the stop-drill note, 3 weeks of notes.',
+      'Posted the stop-drill note on the 40 messages backlog.',
+      'Posted the stop-drill note after two days of replies.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
+      expect(
+        reportsFindings([plain, worded, { ...commentOn('REVOPS-6', words), reports: [1] }]),
+        words,
+      ).toEqual([]);
+    }
+    // Without a post that carries its words the sentence asks the declaration for one post, not two.
+    const kindOnly = {
+      ...commentOn('REVOPS-6', 'Posted the note, 3 weeks of notes.'),
+      reports: [1],
+    };
+    expect(reportsFindings([plain, worded, kindOnly])).toEqual([]);
+  });
+
+  it('‘a couple of’, ‘one more’ and ‘several’ count nothing', (): void => {
+    for (const words of [
+      'Posted a couple of stop-drill notes in #revops.',
+      'Posted one more stop-drill note in #revops.',
+      'Posted several stop-drill notes in #revops.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
+    }
+  });
+
   it('asks a declaration that names the one post sharing a word for the other as well (W15-R2)', (): void => {
     const findings = unsupportedClaimFindings([plain, worded, both([1])], empty);
     expect(findings.map((finding) => finding.index)).toEqual([2]);

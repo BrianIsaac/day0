@@ -645,6 +645,24 @@ const COUNTED_MESSAGES = new RegExp(
  */
 const NOT_COUNTING_BEFORE = /(?:\bof\s+(?:the\s+)?|[\d:.,/%-])$/i;
 const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
+/**
+ * A message plural that names no messages the run wrote (W17-R21, with D-4 (b)): a span of time
+ * measured in them ("3 weeks of notes", "two days of replies") or a heap of them named by its own
+ * noun ("the 40 messages backlog"). The number in such a span counts the weeks or the backlog's
+ * rows, never the messages a report made.
+ */
+const UNCOUNTED_MESSAGES = new RegExp(
+  [
+    `\\b(?:\\w+\\s+)?(?:minute|hour|day|week|fortnight|month|quarter|year)s?(?:'|'s)?\\s+(?:worth\\s+)?of\\s+(?:\\w+\\s+){0,2}?(?:${MESSAGES_PLURAL})\\b`,
+    `\\b(?:\\d+\\s+|(?:${Object.keys(COUNT_WORDS).join('|')})\\s+)?(?:${MESSAGES_PLURAL})\\s+(?:backlog|queue|pile|inbox|archive|history)\\b`,
+  ].join('|'),
+  'gi',
+);
+
+/** A report sentence without the spans of it that name messages it did not write ({@link UNCOUNTED_MESSAGES}). */
+function withoutUncountedMessages(said: string): string {
+  return said.replace(UNCOUNTED_MESSAGES, ' ');
+}
 
 /**
  * The count of messages a report sentence gives in so many words ("both stop-drill notes", "all
@@ -654,8 +672,9 @@ const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|ever
  * wrote.
  */
 function messagesCounted(said: string): number | undefined {
-  for (const match of said.matchAll(COUNTED_MESSAGES)) {
-    if (NOT_COUNTING_BEFORE.test(said.slice(0, match.index))) continue;
+  const counting = withoutUncountedMessages(said);
+  for (const match of counting.matchAll(COUNTED_MESSAGES)) {
+    if (NOT_COUNTING_BEFORE.test(counting.slice(0, match.index))) continue;
     const counted = match[1]!.toLowerCase();
     return COUNT_WORDS[counted] ?? Number(counted);
   }
@@ -668,7 +687,7 @@ function messagesCounted(said: string): number | undefined {
  * the second note." asks one write of its declaration and "Posted both notes." two (W15-R2).
  */
 function messagesNamed(said: string): number {
-  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(said) ? 2 : 1);
+  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(withoutUncountedMessages(said)) ? 2 : 1);
 }
 
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
