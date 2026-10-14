@@ -121,6 +121,20 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
     });
   });
 
+  it('hands Node a proxy the file quotes and comments as a shell file would, never refusing it (W17-R24)', (): void => {
+    const envText = [
+      "export HTTPS_PROXY='http://proxy.acme.test:3128' # corp",
+      'NO_PROXY="day0.acme.test"',
+      '',
+    ].join('\r\n');
+    expect(startRefusal({}, envText, 'v22.23.2')).toBeUndefined();
+    expect(startEnvironment({ PATH: '/usr/bin' }, envText, '3000')).toMatchObject({
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
+      NODE_USE_ENV_PROXY: '1',
+    });
+  });
+
   it('lets the shell name the proxy over the file', (): void => {
     expect(
       startEnvironment(

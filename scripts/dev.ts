@@ -18,6 +18,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { parseEnvText } from './lib/env-text';
 
 const ENV_FILE = '.env.local';
 const APP_PORT_VAR = 'DAY0_APP_PORT';
@@ -25,16 +26,13 @@ const DEFAULT_APP_PORT = '3000';
 const APP_HOST_VAR = 'DAY0_APP_HOST';
 const DEFAULT_APP_HOST = 'localhost';
 
-/** One name's value in the env file's text, unquoted, or undefined when unset or empty. */
+/**
+ * One name's value in the env file's text as dotenv reads it (`parseEnvText`, W17-R24), or
+ * undefined when unset or empty.
+ */
 export function fromEnvText(envText: string | undefined, name: string): string | undefined {
-  for (const line of (envText ?? '').split('\n')) {
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (match && match[1] === name) {
-      const value = match[2].trim().replace(/^"(.*)"$/, '$1');
-      if (value !== '') return value;
-    }
-  }
-  return undefined;
+  const value = parseEnvText(envText ?? '').get(name);
+  return value === undefined || value === '' ? undefined : value;
 }
 
 /**

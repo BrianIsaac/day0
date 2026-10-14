@@ -115,6 +115,7 @@ import {
   proxySettings,
 } from './lib/proxy-env';
 import { runUnderProxy } from './lib/under-proxy';
+import { readEnvFileValues } from './lib/env-text';
 import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -230,14 +231,14 @@ export interface Section {
 
 type Values = Record<string, string>;
 
-function readEnvFile(path: string): Values {
-  const values: Values = {};
-  if (!existsSync(path)) return values;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (match) values[match[1]] = match[2].trim().replace(/^"(.*)"$/, '$1');
-  }
-  return values;
+/**
+ * The env file's values, as every script reads it (`readEnvFileValues`, W17-R24).
+ *
+ * @param path - The env file's path.
+ * @returns The declared values; empty when the file does not exist.
+ */
+export function readEnvFile(path: string): Values {
+  return readEnvFileValues(path);
 }
 
 /** File values, then the process environment wherever it declares one at all. */
