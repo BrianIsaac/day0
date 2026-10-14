@@ -324,3 +324,38 @@ describe('the way out’s page and the runbook, on where the proxy is named (W17
     expect(before).toContain('reachable from the machine’s containers');
   });
 });
+
+// W17-R14 (reader 3): a page with no block is never kept by its listed revision
+// (`docPages.ts`'s `firstBlockStatus === undefined`), so its text is asked for at every sync, where
+// the three guides said an unchanged read asks for no page's text. W17-R23 with D-5 (b): the
+// agreements' check stops past fifty employees, and the README says so.
+describe('the readers’ guides on a page with no text, and the README on fifty employees (W17-R14, W17-R23)', (): void => {
+  const flat = (path: string): string =>
+    readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8').replace(/\s+/g, ' ');
+
+  it.each([
+    [
+      'docs/running/reader-confluence.md',
+      'a parent page that holds only a children or include macro',
+    ],
+    ['docs/running/reader-sharepoint.md', 'a site page of image web parts alone'],
+    ['docs/running/reader-drive.md', 'a document that holds a title and images alone'],
+  ])(
+    '%s says a page with no text under its title is asked for at every read',
+    (path, example): void => {
+      const page = flat(path);
+      expect(page).toContain('Another: a page with no text under its title');
+      expect(page).toContain(example);
+      expect(page).toContain('is asked for at every read');
+    },
+  );
+
+  it('says in the README that a company-wide agreement is checked only while the owner has fifty employees or fewer', (): void => {
+    const readme = flat('README.md');
+    expect(readme).toContain('### Fifty employees or fewer');
+    expect(readme).toContain(
+      "a company-wide working agreement is checked against each employee's charter only while you have fifty employees or fewer",
+    );
+    expect(readme).toContain('五十名或更少');
+  });
+});

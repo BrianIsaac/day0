@@ -35,7 +35,10 @@ nothing. Google moves a file's version with every change on its servers, among t
 sees in the text (a new share, a comment), so a document is read again more often than its text
 changes and never less often. One exception: a document whose name holds a value day0 takes out
 of what it stores (a password written into a name) is read at every read of the folder, because
-the name it was stored under is no longer the one its listing gives.
+the name it was stored under is no longer the one its listing gives. Another: a page with no
+text under its title, such as a document that holds a title and images alone, is asked for at
+every read and then kept by its text, since a listing's version is kept only for a page with text
+to keep.
 
 Counted on the test double of the Drive API that day0's own tests use, not on a project. The bed
 is a running day0 in real mode reading a folder of 250 Google Docs; the second column is the same
