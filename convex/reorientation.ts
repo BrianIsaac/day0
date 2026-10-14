@@ -76,8 +76,8 @@ import {
  * counted rows (three refusals, skips or rejections) a module beside it,
  * `convex/reorientationPatterns.ts`, which calls `openCard`. A writer that can reach more than one
  * employee hands its cards over once (`openCards`): the first open in its transaction, within a
- * budget of work rows read, and the rest ride one scheduled function that opens what its own budget
- * allows and schedules one more (`openCardsLater`; wave 17, 17-O, D-9 (a)), so no transaction
+ * budget of the bytes of work rows read, and the rest ride one scheduled function that opens what its
+ * own budget allows and schedules one more (`openCardsLater`; wave 17, 17-O, D-9 (a)), so no transaction
  * schedules more than one function for cards.
  *
  * What a card reaches and holds is read a module below, `convex/reorientationReach.ts` (wave 17,
@@ -165,7 +165,7 @@ type LaterCard = Infer<typeof laterCardValidator>;
 
 /**
  * How many cards a writer's own transaction opens or joins: of a list handed to `openCards`, the
- * first eight the row budget allows, the rest riding the chain; and the most `openCard` opens one
+ * first eight the byte budget allows, the rest riding the chain; and the most `openCard` opens one
  * at a time in one transaction before it throws (O-2), so a writer that fans out (an approver for
  * everyone, an organisation's connection, a page's readers, a skill's holders) cannot bring back
  * one scheduled function a card by calling `openCard` in a loop.
@@ -351,7 +351,8 @@ export interface OneCardLimits extends ReachLimits {
  * or deferred on an earlier one (W16-R24).
  * A change the employee's standing cards already carry (by its key, or a joined event's id) writes
  * nothing; an employee that is gone, or has no owner key, gets no card. Every read comes before the
- * first write, so a report whose reach needs more work rows than `room` leaves nothing behind.
+ * first write, so a report whose reach needs more bytes of work rows than `room` leaves nothing
+ * behind.
  */
 async function openOne(
   ctx: MutationCtx,
