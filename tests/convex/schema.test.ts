@@ -3881,4 +3881,38 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
       }),
     ).rejects.toThrow();
   });
+
+  it('adds the two indexes and nothing else: 48 tables, 128 indexes and one search index (N10)', (): void => {
+    const pushed = schema as unknown as { readonly export: () => string };
+    const exported = JSON.parse(pushed.export()) as {
+      readonly tables: readonly {
+        readonly tableName: string;
+        readonly indexes: readonly {
+          readonly indexDescriptor: string;
+          readonly fields: string[];
+        }[];
+        readonly searchIndexes: readonly unknown[];
+      }[];
+    };
+    const indexesOf = (table: string): Record<string, string[]> =>
+      Object.fromEntries(
+        exported.tables
+          .find((entry) => entry.tableName === table)!
+          .indexes.map((index) => [index.indexDescriptor, index.fields]),
+      );
+    expect(exported.tables).toHaveLength(48);
+    // 126 at 0.21.0 (17-K's count), and the two of this step.
+    expect(exported.tables.flatMap((entry) => entry.indexes)).toHaveLength(128);
+    expect(exported.tables.flatMap((entry) => entry.searchIndexes)).toHaveLength(1);
+    expect(indexesOf('workItems')).toMatchObject({
+      by_skill: ['skillId'],
+      by_skill_state: ['skillId', 'state'],
+    });
+    expect(indexesOf('managerNotes')).toEqual({
+      by_agent: ['agentId'],
+      by_agent_unsent: ['agentId', 'claimedAt', 'providerTs'],
+      by_agent_claim_open: ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt'],
+      by_agent_digest: ['agentId', 'digestId'],
+    });
+  });
 });

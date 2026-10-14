@@ -2204,3 +2204,11 @@ describe('the people graph and the working agreements at a retire and a deletion
     expect(await harness.run(async (ctx) => await ctx.db.get(ownRow))).toBeNull();
   });
 });
+
+describe('the reset list through the wave 18 schema step (18-K: no table)', (): void => {
+  it('enumerates the same 28 agent-keyed tables as 0.21.0, the two record tables beside them', (): void => {
+    expect(AGENT_KEYED_TABLES).toHaveLength(28);
+    expect([...RETIRE_RECORD_TABLES]).toEqual(['retirements', 'managerTransfers']);
+    expect(Object.keys(schema.tables)).toHaveLength(48);
+  });
+});
