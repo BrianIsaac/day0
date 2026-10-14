@@ -13,8 +13,10 @@ function exercise(scenario: string) {
   executable('getent', '#!/bin/sh\necho "127.0.0.1 STREAM local"\n');
   executable(
     'openssl',
+    // A peer that stalls after TCP for longer than the 25 s cap on the whole run below, so the
+    // run can only end by the probe's own one-second bound (18-G).
     `#!/bin/sh
-if [ "$1" = s_client ] && [ "$SCENARIO" = tls ]; then exec sleep 3; fi
+if [ "$1" = s_client ] && [ "$SCENARIO" = tls ]; then exec sleep 60; fi
 exit 0
 `,
   );
@@ -61,7 +63,6 @@ if arg('-o'):
 print(code,end='')
 `,
   );
-  const start = Date.now();
   try {
     const result = spawnSync(
       'bash',
@@ -85,7 +86,6 @@ print(code,end='')
     );
     return {
       ...result,
-      elapsed: Date.now() - start,
       remainingProbeDirectories: readdirSync(directory).filter((name) =>
         name.startsWith('day0-probe.'),
       ),
@@ -103,9 +103,15 @@ describe.skipIf(!hasHostTools('bash', 'python3'))(
   { timeout: 30_000 },
   () => {
     it('bounds certificate inspection when TCP connects but TLS stalls', () => {
+      // Bounded by what the run did, not how long it took: the stalled peer outlasts the cap, so
+      // a run that ends by itself cut the inspection short (an elapsed bound of 2.5 s failed at
+      // 2,595 ms with six CPU workers on the test's one core).
       const result = exercise('tls');
+      expect(result.signal).toBeNull();
+      expect(result.stdout).toMatch(
+        /note\s+tls certificate\s+openssl could not read a certificate \(handshake blocked or reset\)/,
+      );
       expect(result.stdout).toContain('Summary');
-      expect(result.elapsed).toBeLessThan(2500);
     });
     it('keeps timed-out JSON-format checks advisory', () => {
       const result = exercise('advisory');
