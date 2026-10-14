@@ -872,7 +872,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,
   'reorientation.reopened': (payload) =>
-    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
+    `deferred reorientation card open again${
+      payload.joined === true ? ': a further change joined it' : ''
+    }${text(payload.summary) ? `: ${payload.summary}` : ''}`,
   'reorientation.card-not-opened': (payload) =>
     `reorientation card not opened${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };

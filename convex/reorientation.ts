@@ -681,7 +681,12 @@ export const openCardLater = internalMutation({
   },
 });
 
-/** Join a change to the card of its kind standing that day: its lists grow, its risk can rise. */
+/**
+ * Join a change to the card of its kind standing that day, or deferred on an earlier one: its
+ * lists grow, its risk can rise. A deferred card the change makes riskier, or makes hold work it
+ * did not, opens again with its date cleared (W17-R3, D-3 (a)): left deferred, it held the new
+ * plans under a card the Needs you inbox does not list until its date, up to a year on.
+ */
 async function joinCard(
   ctx: MutationCtx,
   card: Doc<'reorientations'>,
@@ -693,7 +698,29 @@ async function joinCard(
   const affected = joinedAffected(card.affected, input.affected);
   const risk = higher(card.risk, riskOf(affected, input.writeScope === true));
   const blockingWork = await blockingWorkOf(ctx, affected, risk);
-  await ctx.db.patch(card._id, { evidence, affected, risk, blockingWork });
+  const reopens =
+    card.status === 'deferred' &&
+    (risk !== card.risk || blockingWork.some((id) => !card.blockingWork.includes(id)));
+  await ctx.db.patch(card._id, {
+    evidence,
+    affected,
+    risk,
+    blockingWork,
+    ...(reopens ? { status: 'open' as const, revisitAt: undefined } : {}),
+  });
+  if (reopens) {
+    await appendEvent(ctx, {
+      agentId: card.agentId,
+      type: 'reorientation.reopened',
+      payload: {
+        reorientationId: card._id,
+        summary: card.triggerSummary,
+        revisitAt: card.revisitAt ?? now,
+        joined: true,
+      },
+      createdAt: now,
+    });
+  }
   await appendEvent(ctx, {
     agentId: card.agentId,
     type: 'reorientation.opened',

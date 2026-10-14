@@ -1441,7 +1441,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.question) ? `: ${text(p.question)}` : ''
     }`,
   'reorientation.reopened': (p) =>
-    `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+    p.joined === true
+      ? `A deferred reorientation card opened again before its date, since a further change joined it${cardAbout(p.summary)}`
+      : `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
   'reorientation.card-not-opened': (p, subject) =>
     `Day0 could not open a reorientation card for ${subject.name}${
       text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''

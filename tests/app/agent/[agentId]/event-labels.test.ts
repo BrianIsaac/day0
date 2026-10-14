@@ -42,6 +42,15 @@ describe('the live feed labels', (): void => {
     );
   });
 
+  it('labels a deferred card a change opened again by the change, not by its date (W17-R3)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.reopened',
+        payload: { reorientationId: 'r1', summary: 'x', revisitAt: 1, joined: true },
+      }),
+    ).toBe('deferred reorientation card open again: a further change joined it: x');
+  });
+
   it('labels a card a fan-out could not open by what it was about (17-O; W16-R23)', (): void => {
     expect(
       eventLabel({

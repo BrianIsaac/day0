@@ -700,6 +700,69 @@ describe('a change of a kind whose card is deferred (W16-R24)', (): void => {
   });
 });
 
+// W17-R3 with D-3 (a) (reader 1): a change joined a deferred card and left it deferred, so a high
+// change holding the employee's plans sat under a card the Needs you inbox, which reads open and
+// discussing cards only, did not list until its date, up to a year on.
+describe('a change that raises a deferred card’s risk or adds held work (W17-R3, D-3 (a))', (): void => {
+  it('opens the card again, its date cleared and the record saying why, and leaves one the change does not raise deferred', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const row = await seedWork(harness, agentId, 'plan-approved');
+    const deferred = (await openTestCard(harness, {
+      agentId,
+      trigger: 'access-revoked',
+      triggerKey: 'event-1',
+      summary: 'Access linear:read was revoked',
+      now: MORNING_UTC,
+    }))!;
+    expect((await cardOf(harness, deferred)).risk).toBe('low');
+    const yearOn = MORNING_UTC + 365 * 86_400_000;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(deferred, { status: 'deferred', revisitAt: yearOn });
+    });
+    // A change of the same weight joins and leaves the card deferred.
+    await openTestCard(harness, {
+      agentId,
+      trigger: 'access-revoked',
+      triggerKey: 'event-2',
+      summary: 'Access slack:read was revoked',
+      now: MORNING_UTC + 86_400_000,
+    });
+    expect(await cardOf(harness, deferred)).toMatchObject({
+      status: 'deferred',
+      revisitAt: yearOn,
+      risk: 'low',
+    });
+    // A high change that holds a plan opens it again.
+    const joined = await openTestCard(harness, {
+      agentId,
+      trigger: 'access-revoked',
+      triggerKey: 'event-3',
+      summary: 'Access linear:write was revoked',
+      writeScope: true,
+      affected: { workItems: [row] },
+      now: MORNING_UTC + 2 * 86_400_000,
+    });
+    expect(joined).toBe(deferred);
+    const card = await cardOf(harness, deferred);
+    expect(card).toMatchObject({ status: 'open', risk: 'high', blockingWork: [row] });
+    expect(card.revisitAt).toBeUndefined();
+    const reopened = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'reorientation.reopened',
+      ),
+    );
+    expect(reopened.map((event) => event.payload)).toEqual([
+      {
+        reorientationId: deferred,
+        summary: 'Access linear:read was revoked',
+        revisitAt: yearOn,
+        joined: true,
+      },
+    ]);
+  });
+});
+
 describe('reopenDeferred: the Defer sweep', (): void => {
   it('opens again every deferred card whose date has come, and leaves the rest', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
