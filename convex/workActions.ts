@@ -1472,16 +1472,16 @@ async function holdDay0Actions(
     // A reply the executor's contract refused after its one repair is kept on the row where the
     // run stops (17-FW; 16-Q's write-priya-verification), scrubbed with the owner's known values
     // as the closing phase's is (W17-R22).
-    const kept =
-      err instanceof ActionContractRefusal
-        ? scrubKnownValues(
-            withCarriedWrites(outputKeepingRefusedReply(err), {
-              landedWrites: args.landedWrites ?? [],
-              unsentWrites: args.unsentWrites ?? [],
-            }),
-            knownValues,
-          )
-        : undefined;
+    const refused = err instanceof ActionContractRefusal;
+    const kept = refused
+      ? scrubKnownValues(
+          withCarriedWrites(outputKeepingRefusedReply(err), {
+            landedWrites: args.landedWrites ?? [],
+            unsentWrites: args.unsentWrites ?? [],
+          }),
+          knownValues,
+        )
+      : undefined;
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
@@ -1492,7 +1492,7 @@ async function holdDay0Actions(
       SURFACE_MODE === 'real' &&
       itemBoundModelFailure(err) === undefined &&
       !(err instanceof GoneCitesError) &&
-      kept === undefined
+      !refused
     ) {
       const resumed = await ctx.runMutation(internal.work.resumeExecution, {
         workItemId: args.workItemId,
