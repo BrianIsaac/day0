@@ -11,6 +11,17 @@ import { allConvexModules } from './all-modules';
 import * as workModule from '../../convex/work';
 import { registeredIn } from './registered-functions';
 import {
+  eventsOfType,
+  type Harness,
+  OWNER,
+  pend,
+  pendAnother,
+  pendingOutput,
+  readItem,
+  scheduledFunctionNames,
+  seed,
+} from './fakes/work-items';
+import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
   INTERRUPTED_APPLY_REASON,
@@ -66,143 +77,6 @@ afterEach((): void => {
   restoreSurfaceMode();
 });
 
-type Harness = TestConvex<typeof schema>;
-
-const OWNER = managerIdentity();
-const pendingOutput = {
-  draft: 'Prepared the close summary.',
-  notes: '',
-  actions: [
-    {
-      tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_comment', toolArgsJson: '{"issueId":"i","body":"b"}' },
-    },
-    {
-      tool: 'mcp.call',
-      args: { surface: 'linear', tool: 'save_issue', toolArgsJson: '{"id":"i","state":"Done"}' },
-    },
-  ],
-};
-
-/**
- * Seed an owned agent with one work item in the given state and a run claim.
- *
- * Args:
- *   harness: Convex test harness.
- *   state: Initial work item state.
- *
- * Returns:
- *   The agent, work item and claim event ids.
- */
-interface SeedOptions {
-  /** The agent's autonomous-actions switch; absent seeds a row without the field (off). */
-  autonomousActions?: boolean;
-  /** A connected Slack surface beside Linear. */
-  withSlack?: boolean;
-}
-
-async function seed(
-  harness: Harness,
-  state: Doc<'workItems'>['state'] = 'executing',
-  grants: string[] = ['boss:message', 'linear:read', 'linear:write'],
-  options: SeedOptions = {},
-): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
-  return await harness.run(async (ctx) => {
-    const agentId = await ctx.db.insert('agents', {
-      bossEmail: MANAGER_ADDRESS,
-      name: 'Priya',
-      userId: 'owner',
-      state: 'active',
-      ...(options.autonomousActions !== undefined
-        ? { autonomousActions: options.autonomousActions }
-        : {}),
-      createdAt: 1,
-    });
-    for (const scope of grants) {
-      await ctx.db.insert('permissionGrants', { agentId, scope, createdAt: 1 });
-    }
-    await ctx.db.insert('surfaces', {
-      agentId,
-      slug: 'linear',
-      displayName: 'Linear',
-      class: 'kanban',
-      verdict: 'connected',
-      endpoint: 'https://mcp.linear.app/mcp',
-      path: 'mcp',
-      toolAllowlist: ['get_issue', 'save_comment', 'save_issue'],
-      credentialLanded: true,
-      lastVerifiedAt: Date.now(),
-      whereFound: [],
-      createdAt: 1,
-    });
-    if (options.withSlack) {
-      const credentialId = await ctx.db.insert('credentials', {
-        userId: 'owner',
-        kind: 'value',
-        label: 'team chat token',
-        ciphertext: 'ciphertext',
-        iv: 'iv',
-        source: 'entered',
-        createdAt: 1,
-      });
-      await ctx.db.insert('surfaces', {
-        agentId,
-        slug: 'slack',
-        displayName: 'Slack',
-        class: 'chat',
-        verdict: 'connected',
-        endpoint: 'https://slack.com/api/',
-        path: 'documented-api',
-        toolAllowlist: ['chat.postMessage'],
-        toolArguments: [{ tool: 'chat.postMessage', arguments: ['channel', 'text'] }],
-        managerDmChannelId: 'D0MANAGER',
-        managerUserId: 'UMANAGER',
-        credentialId,
-        credentialLanded: true,
-        lastVerifiedAt: Date.now(),
-        whereFound: [],
-        createdAt: 1,
-      });
-    }
-    const workItemId = await ctx.db.insert('workItems', {
-      agentId,
-      sourceCategory: 'ticket-queue',
-      sourceSystem: 'linear',
-      externalId: 'REVOPS-1',
-      title: 'Add the close-summary audit note',
-      contentSummary: 'Synthetic.',
-      contentRefs: [],
-      state,
-      plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
-      observedAt: 1,
-      createdAt: 1,
-    });
-    const runId = await ctx.db.insert('events', {
-      agentId,
-      type: 'work.execution-claimed',
-      payload: { workItemId },
-      createdAt: 1,
-    });
-    if (state === 'executing') await ctx.db.patch(workItemId, { executionRunId: runId });
-    return { agentId, workItemId, runId };
-  });
-}
-
-async function eventsOfType(
-  harness: Harness,
-  agentId: Id<'agents'>,
-  type: string,
-): Promise<Doc<'events'>[]> {
-  return await harness.run(
-    async (ctx) =>
-      await ctx.db
-        .query('events')
-        .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-        .filter((q) => q.eq(q.field('type'), type))
-        .collect(),
-  );
-}
-
 const readIssue = {
   tool: 'mcp.call',
   args: { surface: 'linear', tool: 'get_issue', toolArgsJson: '{"id":"REVOPS-1"}' },
@@ -234,12 +108,6 @@ const publicReply = {
   },
 };
 
-async function readItem(harness: Harness, workItemId: Id<'workItems'>): Promise<Doc<'workItems'>> {
-  const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
-  if (!row) throw new Error('work item missing');
-  return row;
-}
-
 async function eventTypes(harness: Harness, agentId: Id<'agents'>): Promise<string[]> {
   const rows = await harness.run(
     async (ctx) =>
@@ -249,58 +117,6 @@ async function eventTypes(harness: Harness, agentId: Id<'agents'>): Promise<stri
         .collect(),
   );
   return rows.map((row) => row.type);
-}
-
-async function scheduledFunctionNames(harness: Harness): Promise<string[]> {
-  const rows = await harness.run(
-    async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
-  );
-  return rows.map((row) => row.name).sort();
-}
-
-async function pend(
-  harness: Harness,
-): Promise<{ agentId: Id<'agents'>; workItemId: Id<'workItems'>; runId: Id<'events'> }> {
-  const ids = await seed(harness, 'executing');
-  await harness.mutation(internal.workRuns.setActionsPending, {
-    workItemId: ids.workItemId,
-    runId: ids.runId,
-    output: pendingOutput,
-  });
-  return ids;
-}
-
-/** A second parked run under the same agent, so a batch has two members. */
-async function pendAnother(
-  harness: Harness,
-  agentId: Id<'agents'>,
-  title = 'Close REVOPS-2',
-): Promise<{ workItemId: Id<'workItems'>; runId: Id<'events'> }> {
-  const ids = await harness.run(async (ctx) => {
-    const workItemId = await ctx.db.insert('workItems', {
-      agentId,
-      sourceCategory: 'ticket-queue',
-      sourceSystem: 'linear',
-      externalId: title,
-      title,
-      contentSummary: 'Synthetic.',
-      contentRefs: [],
-      state: 'executing',
-      plan: { summary: 'Comment then close.', steps: ['comment', 'close'] },
-      observedAt: 1,
-      createdAt: 1,
-    });
-    const runId = await ctx.db.insert('events', {
-      agentId,
-      type: 'work.execution-claimed',
-      payload: { workItemId },
-      createdAt: 1,
-    });
-    await ctx.db.patch(workItemId, { executionRunId: runId });
-    return { workItemId, runId };
-  });
-  await harness.mutation(internal.workRuns.setActionsPending, { ...ids, output: pendingOutput });
-  return ids;
 }
 
 describe('batched decisions', (): void => {
