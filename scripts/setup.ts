@@ -5286,9 +5286,12 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
     const testValues = TEST_PROFILE_KEYS.filter((key) => (existing[key] ?? '').trim() !== '');
     if (testValues.length > 0) {
       io.log(
-        `error: ${ENV_FILE} sets ${testValues.join(' and ')}, which point Slack at the test double. ` +
+        // In number with the names set: one "points" and is emptied as "it" (W17-R17's bed 3).
+        `error: ${ENV_FILE} sets ${testValues.join(' and ')}, which ` +
+          `${testValues.length === 1 ? 'points' : 'point'} Slack at the test double. ` +
           'A restore brings a real deployment back and never runs on the test profile: empty ' +
-          'them first, or restore a demo snapshot with `pnpm demo:bed restore`.',
+          `${testValues.length === 1 ? 'it' : 'them'} first, or restore a demo snapshot with ` +
+          '`pnpm demo:bed restore`.',
       );
       return 1;
     }

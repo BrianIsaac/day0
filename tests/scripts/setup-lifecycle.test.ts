@@ -993,8 +993,25 @@ describe('backup, restore and upgrade (step 15)', (): void => {
       DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
     });
     expect(await runCommand(verb('restore', { restoreFrom: file }), test.io)).toBe(1);
-    expect(test.output.join('\n')).toContain('point Slack at the test double');
+    // The review's bed 3 (W17-R17's neighbour, `:233`): one name set read "which point Slack".
+    expect(test.output.join('\n')).toContain(
+      'error: .env.local sets DAY0_TEST_SLACK_API_URL, which points Slack at the test double. ' +
+        'A restore brings a real deployment back and never runs on the test profile: empty it ' +
+        'first, or restore a demo snapshot with `pnpm demo:bed restore`.',
+    );
     expect(ran(test)).not.toContain('volume rm');
+
+    const both = configured({ services: ['backend'] });
+    writeEnvValues(join(both.directory, '.env.local'), {
+      DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
+      DAY0_TEST_SLACK_AUTHORIZE_URL: 'http://127.0.0.1:8090/oauth/v2/authorize',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), both.io)).toBe(1);
+    expect(both.output.join('\n')).toContain(
+      'error: .env.local sets DAY0_TEST_SLACK_API_URL and DAY0_TEST_SLACK_AUTHORIZE_URL, which point ' +
+        'Slack at the test double. A restore brings a real deployment back and never runs on the ' +
+        'test profile: empty them first,',
+    );
 
     writeFileSync(file, 'something else', 'utf8');
     const tampered = configured({ services: ['backend'] });
