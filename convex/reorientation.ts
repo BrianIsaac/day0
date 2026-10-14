@@ -1103,24 +1103,37 @@ export const recordProposalFailure = internalMutation({
 /** How long a card's proposal may stay pending before the sweep says it did not finish. */
 export const PROPOSAL_PENDING_MS = 10 * 60_000;
 
-/** The newest open cards the sweep reads for a proposal that never finished. */
+/** The open cards one run of the sweep reads for a proposal that never finished: one page. */
 const PENDING_SWEEP_READ = 200;
 
 /**
- * Mark failed every open card whose proposal has been pending past `PROPOSAL_PENDING_MS` with
- * nothing said (W16-R23): an action killed, or a failure that could not be recorded, left such a
- * card waiting for good. A judgement that answers after all still writes its proposal.
+ * Mark failed every open card of one page whose proposal has been pending past
+ * `PROPOSAL_PENDING_MS` with nothing said (W16-R23): an action killed, or a failure that could not
+ * be recorded, left such a card waiting for good. A judgement that answers after all still writes
+ * its proposal. The open cards are paged newest first, and a page that is not the last hands its
+ * cursor to the sweep's next run, scheduled at once (W17-R6, O-3 (a)): the newest two hundred alone
+ * left an old stuck card behind them unmet for good. A card already marked is passed over.
  *
+ * @param cursor - Where the previous run's page ended; absent for the first page.
  * @returns How many cards were marked.
  */
-async function failStalePending(ctx: MutationCtx, now: number): Promise<number> {
-  const open = await ctx.db
+async function failStalePending(
+  ctx: MutationCtx,
+  now: number,
+  cursor: string | undefined,
+): Promise<number> {
+  const page = await ctx.db
     .query('reorientations')
     .withIndex('by_status_revisit', (q) => q.eq('status', 'open'))
     .order('desc')
-    .take(PENDING_SWEEP_READ);
+    .paginate({ cursor: cursor ?? null, numItems: PENDING_SWEEP_READ });
+  if (!page.isDone) {
+    await ctx.scheduler.runAfter(0, internal.reorientation.reopenDeferred, {
+      staleCursor: page.continueCursor,
+    });
+  }
   let marked = 0;
-  for (const card of open) {
+  for (const card of page.page) {
     if (card.proposed.kind !== 'pending' || card.proposed.failedAt !== undefined) continue;
     if (card.createdAt > now - PROPOSAL_PENDING_MS) continue;
     await ctx.db.patch(card._id, {
@@ -1135,14 +1148,17 @@ async function failStalePending(ctx: MutationCtx, now: number): Promise<number> 
  * Open again every deferred card whose date has come (A21), up to a bound a run: the Defer sweep,
  * run every fifteen minutes through `crons.runScheduledJob`. A card that opens again with nothing
  * proposed, pending or failed, is asked for its proposal again; and an open card whose proposal
- * has been pending ten minutes with nothing said is marked as not finished (W16-R23). Internal.
- * Writes `reorientation.reopened`.
+ * has been pending ten minutes with nothing said is marked as not finished (W16-R23), page by page
+ * over runs this function schedules for itself, each given the cursor the last page ended at
+ * (W17-R6), which reads only the next page and opens nothing. Internal. Writes
+ * `reorientation.reopened`.
  */
 export const reopenDeferred = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<{ reopened: number; stale?: number }> => {
+  args: { staleCursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ reopened: number; stale?: number }> => {
     const now = Date.now();
-    const stale = await failStalePending(ctx, now);
+    const stale = await failStalePending(ctx, now, args.staleCursor);
+    if (args.staleCursor !== undefined) return { reopened: 0, ...(stale > 0 ? { stale } : {}) };
     const due = await ctx.db
       .query('reorientations')
       .withIndex('by_status_revisit', (q) => q.eq('status', 'deferred').lte('revisitAt', now))

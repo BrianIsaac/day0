@@ -749,6 +749,66 @@ describe('reopenDeferred: the Defer sweep', (): void => {
       rationale: 'Nothing needs to change.',
     });
   });
+
+  it('marks a card pending past ten minutes failed with three hundred open cards newer than it, paging over its own scheduled runs, and marks it no more (W17-R6; red at 200)', async (): Promise<void> => {
+    // The review's W17-R6: the sweep read the newest 200 open cards, so an old stuck card behind
+    // them was never met (bed 1 held 150 open cards after its three fan-outs).
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    vi.setSystemTime(MORNING_UTC);
+    const stuck = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-old',
+      summary: 'A skill is due a re-check',
+      now: MORNING_UTC,
+    }))!;
+    const template = fieldsOf(await cardOf(harness, stuck));
+    const newer = MORNING_UTC + PROPOSAL_PENDING_MS + 60_000;
+    await harness.run(async (ctx) => {
+      for (let at = 0; at < 300; at += 1) {
+        // Open, each with the proposal its judgement wrote: the cards a manager has yet to decide.
+        await ctx.db.insert('reorientations', {
+          ...template,
+          triggerKey: `event-new-${at}`,
+          proposed: { kind: 'none', rationale: 'Nothing needs to change.' },
+          createdAt: newer,
+        });
+      }
+    });
+    // The sweep's own continuations, run as the scheduler would; the cards' judgements stay
+    // unasked, so no test reaches a model.
+    const ran = new Set<string>();
+    const sweep = async (): Promise<unknown> => {
+      const first = await harness.mutation(internal.reorientation.reopenDeferred, {});
+      for (;;) {
+        const [next] = (await scheduledAs(harness, 'reorientation:reopenDeferred')).filter(
+          (job) => !ran.has(job._id),
+        );
+        if (next === undefined) return first;
+        ran.add(next._id);
+        await harness.mutation(
+          internal.reorientation.reopenDeferred,
+          next.args[0] as { staleCursor?: string },
+        );
+      }
+    };
+    vi.setSystemTime(newer);
+    await sweep();
+    expect((await cardOf(harness, stuck)).proposed).toEqual({
+      kind: 'pending',
+      failedAt: newer,
+      failure: 'did not finish',
+    });
+    // The next sweep pages the same cards and marks nothing again: the mark stands as written.
+    vi.setSystemTime(newer + 15 * 60_000);
+    await expect(sweep()).resolves.toEqual({ reopened: 0 });
+    expect((await cardOf(harness, stuck)).proposed).toMatchObject({ failedAt: newer });
+    const marked = (await cardsOf(harness, agentId)).filter(
+      (card) => card.proposed.kind === 'pending' && card.proposed.failedAt !== undefined,
+    );
+    expect(marked.map((card) => card._id)).toEqual([stuck]);
+  });
 });
 
 describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
