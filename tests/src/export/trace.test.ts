@@ -620,3 +620,111 @@ describe('the owner export streamed to its file (wave 17, 17-F)', (): void => {
     expect(asked).toEqual([]);
   });
 });
+
+/*
+ * A walk of the export's pages ends at a null cursor; a backend that answered a cursor it had
+ * already given would have the export read the same pages for ever (W17-R28, `trace.ts:731` at the
+ * review's tip). Each fake below answers its own cursor again, and stops itself at forty calls, so
+ * a walk without the guard fails here and does not hang.
+ */
+describe('a cursor the export answers twice (W17-R28)', (): void => {
+  /** A call that refuses to be made more than forty times. */
+  function bounded<Args extends unknown[], Result>(
+    call: (...args: Args) => Promise<Result>,
+  ): (...args: Args) => Promise<Result> {
+    let calls = 0;
+    return async (...args) => {
+      calls += 1;
+      if (calls > 40) throw new Error('read the same pages forty times');
+      return await call(...args);
+    };
+  }
+
+  /** An owner with one employee and no rows, every page ending its section. */
+  function owner(): OwnerExportCalls {
+    return {
+      head: async () => ({
+        manifest: { format: 'day0-owner-export', version: 8 } as never,
+        employees: [{ id: 'a', name: 'Priya' }],
+        setAside: [],
+        moreAgents: null,
+        next: { section: OWNER_SECTIONS[0], cursor: null },
+      }),
+      agents: async () => await Promise.reject(new Error('the head named every agent')),
+      page: async (cursor) => {
+        const following = ownerSectionAfter(cursor.section);
+        return {
+          section: cursor.section,
+          rows: [],
+          next: following === undefined ? null : { section: following, cursor: null },
+        } as never;
+      },
+      employee: {
+        head: async () => HEAD,
+        page: async ({ page }) =>
+          ({
+            section: page.section,
+            rows: [],
+            next: sectionAfter(page.section)
+              ? { section: sectionAfter(page.section), cursor: null }
+              : null,
+          }) as unknown as TracePage,
+      },
+    };
+  }
+
+  const sink = { write: async (): Promise<void> => await Promise.resolve() };
+
+  it('ends the stream with an error when a page of the owner’s rows answers a cursor it gave before', async (): Promise<void> => {
+    const calls = owner();
+    await expect(
+      streamOwnerExport(
+        {
+          ...calls,
+          page: bounded(async (cursor) =>
+            cursor.section === 'people'
+              ? ({
+                  section: 'people',
+                  rows: [],
+                  next: { section: 'people', cursor: 'p2' },
+                } as never)
+              : await calls.page(cursor),
+          ),
+        },
+        sink,
+      ),
+    ).rejects.toThrow('the export answered the same cursor of the owner’s people twice');
+  });
+
+  it('ends the stream with an error when a page of the owner’s agents answers a cursor it gave before', async (): Promise<void> => {
+    const calls = owner();
+    await expect(
+      streamOwnerExport(
+        {
+          ...calls,
+          head: async () => ({ ...(await calls.head()), moreAgents: 'after-a' }),
+          agents: bounded(async () => ({ employees: [], setAside: [], moreAgents: 'after-a' })),
+        },
+        sink,
+      ),
+    ).rejects.toThrow('the export answered the same cursor of the owner’s agents twice');
+  });
+
+  it('ends an employee’s trace with an error when one of its pages answers a cursor it gave before', async (): Promise<void> => {
+    const calls = owner();
+    await expect(
+      assembleTrace('a', {
+        head: calls.employee.head,
+        page: bounded(async (request) =>
+          request.page.section === 'events'
+            ? ({
+                section: 'events',
+                rows: [],
+                next: { section: 'events', cursor: 'e2' },
+              } as unknown as TracePage)
+            : await calls.employee.page(request),
+        ),
+      }),
+    ).rejects.toThrow('the export answered the same cursor of the trace’s events twice');
+  });
+});

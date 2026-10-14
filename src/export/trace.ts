@@ -308,6 +308,25 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
 }
 
 /**
+ * A walk's guard against a cursor the export answers twice (W17-R28): a walk ends at a null
+ * cursor, and a backend that handed back one it had already given would have the walk read the
+ * same pages for ever. Each cursor asked is remembered by its printed form.
+ *
+ * @param what - What the walk reads, as the error names it ("the owner’s agents").
+ * @returns A check of the next cursor, which throws when it was asked before.
+ */
+function cursorWalk(what: (cursor: unknown) => string): (cursor: unknown) => void {
+  const asked = new Set<string>();
+  return (cursor) => {
+    const printed = JSON.stringify(cursor);
+    if (asked.has(printed)) {
+      throw new Error(`the export answered the same cursor of ${what(cursor)} twice`);
+    }
+    asked.add(printed);
+  };
+}
+
+/**
  * Assemble a whole trace by calling the paged export until nothing is left.
  *
  * @param agentId - The agent to export.
@@ -316,7 +335,8 @@ export function sectionAfter(section: TraceSection): TraceSection | undefined {
  * @param skip - Sections not to read, left empty in the trace: the owner export carries the
  *   owner's people graph once rather than in every employee's trace.
  * @returns The trace with every section in full and the counts in the manifest.
- * @throws Error when a page answers for a section other than the one asked for.
+ * @throws Error when a page answers for a section other than the one asked for, or a cursor it
+ *   gave before.
  */
 export async function assembleTrace(
   agentId: string,
@@ -328,6 +348,7 @@ export async function assembleTrace(
     TRACE_SECTIONS.map((section): [TraceSection, unknown[]] => [section, []]),
   ) as Record<TraceSection, unknown[]>;
   const seen = new Set<string>();
+  const once = cursorWalk((cursor) => `the trace’s ${(cursor as TraceCursor).section}`);
   let next: TraceCursor | null = head.next;
   while (next !== null) {
     if (skip.has(next.section)) {
@@ -336,6 +357,7 @@ export async function assembleTrace(
       next = following === undefined ? null : { section: following, cursor: null };
       continue;
     }
+    once(next);
     const page: TracePage = await call.page({ agentId, page: next });
     if (page.section !== next.section) {
       throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
@@ -642,8 +664,10 @@ async function everyOwnerAgent(
 ): Promise<Pick<OwnerAgentsPage, 'employees' | 'setAside'>> {
   const employees = new Map(head.employees.map((employee) => [employee.id, employee]));
   const setAside = new Map(head.setAside.map((agent) => [agent.id, agent]));
+  const once = cursorWalk(() => 'the owner’s agents');
   let more = head.moreAgents;
   while (more !== null) {
+    once(more);
     const page = await agents(more);
     for (const employee of page.employees) employees.set(employee.id, employee);
     for (const agent of page.setAside) setAside.set(agent.id, agent);
@@ -707,7 +731,8 @@ interface OwnerRowsRequest {
  * stream's.
  *
  * @returns The manifest as written.
- * @throws Error when a page answers for a section other than the one asked for.
+ * @throws Error when a page answers for a section other than the one asked for, or a cursor it
+ *   gave before.
  */
 async function writeOwnerRows(
   call: OwnerExportCalls,
@@ -718,9 +743,11 @@ async function writeOwnerRows(
     OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
   ) as Record<OwnerSection, unknown[]>;
   const seen = new Set<string>();
+  const once = cursorWalk((cursor) => `the owner’s ${(cursor as OwnerCursor).section}`);
   let next: OwnerCursor | null = head.next;
   while (next !== null) {
     live();
+    once(next);
     const page: OwnerPage = await call.page(next);
     if (page.section !== next.section) {
       throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
@@ -765,7 +792,8 @@ async function writeOwnerRows(
  * @param options - The signal that cancels the export, and who hears how far it has got.
  * @returns The file's manifest, with its counts.
  * @throws OwnerExportCancelled when the signal is aborted; the sink then holds part of a file.
- * @throws Error when a page answers for a section other than the one asked for.
+ * @throws Error when a page answers for a section other than the one asked for, or a cursor it
+ *   gave before.
  */
 export async function streamOwnerExport(
   call: OwnerExportCalls,
@@ -818,7 +846,8 @@ export async function streamOwnerExport(
  * @param call - The owner export's head and pages, and one employee's (as {@link assembleTrace}
  *   takes them).
  * @returns The one file's contents, with the counts in its manifest.
- * @throws Error when a page answers for a section other than the one asked for.
+ * @throws Error when a page answers for a section other than the one asked for, or a cursor it
+ *   gave before.
  */
 export async function assembleOwnerExport(call: OwnerExportCalls): Promise<OwnerExport> {
   const pieces: string[] = [];
