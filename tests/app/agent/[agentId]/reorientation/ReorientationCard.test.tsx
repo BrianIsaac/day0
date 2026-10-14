@@ -374,6 +374,16 @@ describe('a reorientation card', (): void => {
     sibling.unmount();
   });
 
+  it('says a sibling card the edge’s close could not close was decided elsewhere, and leaves its decisions (W17-R7; section 7)', async (): Promise<void> => {
+    const view = drawn(withCard({ outcome: { summary: 'not closed: decided on Priya’s card' } }));
+    expect(view.container.textContent).toContain(
+      'Decided on Priya’s card, but this card could not be closed: dismiss it.',
+    );
+    expect(controls(view.container)).toContain('Dismiss');
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('draws the organisation’s ledger line a card rests on as evidence, in the record’s words (17-O)', (): void => {
     const revoked = drawn(
       withCard(

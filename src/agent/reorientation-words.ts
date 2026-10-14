@@ -39,6 +39,27 @@ export const CARD_ACTION_REFUSALS = {
   summary: 'Say what changed in up to 300 characters.',
 } as const;
 
+/** How the outcome of a sibling card that could not be closed opens. */
+const NOT_CLOSED = 'not closed: decided on ';
+
+/**
+ * Whose card decided the edge a standing card could not be closed for, or undefined for any other
+ * outcome (W17-R7).
+ */
+export function notClosedOf(summary: string | undefined): string | undefined {
+  const match = /^not closed: decided on (.+?)’s card$/u.exec(summary ?? '');
+  return match === null ? undefined : match[1];
+}
+
+/**
+ * What a standing card says when another employee's Approve decided its edge and it could not be
+ * closed (section 7; W17-R7): "Decided on {other}'s card, but this card could not be closed:
+ * dismiss it."
+ */
+export function notClosedWords(name: string): string {
+  return `Decided on ${name}’s card, but this card could not be closed: dismiss it.`;
+}
+
 /** How the outcome of a card closed because it is no longer needed opens. */
 const NO_LONGER_NEEDED = 'no longer needed: ';
 
@@ -62,6 +83,11 @@ export const approvedResultWords = {
    */
   decidedElsewhere: (name: string, result: string): string =>
     `decided on ${name}’s card: ${result}`,
+  /**
+   * A sibling card the close of an edge for everyone could not close (W17-R7): it stays standing
+   * with this as its outcome, read back by {@link notClosedOf}.
+   */
+  notClosed: (name: string): string => `${NOT_CLOSED}${name}’s card`,
   /**
    * A page's status card closed by the page's return (W17-R2, D-1 (a)): read back by {@link
    * closedAsNoLongerNeeded}.

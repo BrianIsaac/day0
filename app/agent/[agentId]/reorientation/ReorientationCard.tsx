@@ -16,6 +16,8 @@ import {
   deferredWords,
   failedProposalWords,
   heldWords,
+  notClosedOf,
+  notClosedWords,
   pendingWords,
   proposalFingerprint,
   sentenceOf,
@@ -367,6 +369,11 @@ export function ReorientationCard({
           ) : null
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-4">
+            {notClosedOf(card.outcome?.summary) !== undefined ? (
+              <p className="text-[var(--color-fg-2)]">
+                {notClosedWords(notClosedOf(card.outcome?.summary) ?? '')}
+              </p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="approve"

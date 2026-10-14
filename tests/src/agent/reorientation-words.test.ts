@@ -15,6 +15,8 @@ import {
   failedProposalWords,
   deferredWords,
   heldWords,
+  notClosedOf,
+  notClosedWords,
   pendingWords,
   proposalFingerprint,
   sentenceOf,
@@ -188,6 +190,18 @@ describe('a card decided on another employee’s card, and one closed at a hando
     expect(decidedElsewhereOf(approvedResultWords.dismissed)).toBeUndefined();
     expect(decidedElsewhereOf(approvedResultWords.handedOver)).toBeUndefined();
     expect(decidedElsewhereOf(undefined)).toBeUndefined();
+  });
+
+  it('stores whose card decided a sibling that could not be closed, and reads it back for its line (W17-R7)', (): void => {
+    const stored = approvedResultWords.notClosed('Priya');
+    expect(stored).toBe('not closed: decided on Priya’s card');
+    expect(notClosedOf(stored)).toBe('Priya');
+    expect(notClosedWords('Priya')).toBe(
+      'Decided on Priya’s card, but this card could not be closed: dismiss it.',
+    );
+    // Neither reads the other's outcome.
+    expect(notClosedOf(approvedResultWords.decidedElsewhere('Priya', 'x'))).toBeUndefined();
+    expect(decidedElsewhereOf(stored)).toBeUndefined();
   });
 
   it('says who opened a by-hand card a handover closed, and none of what they typed (D-5’s remainder)', (): void => {

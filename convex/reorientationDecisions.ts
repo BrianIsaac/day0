@@ -39,6 +39,7 @@ import {
   PROPOSAL_CHANGED,
   approvedResultWords,
   byHandLimitWords,
+  decidedElsewhereOf,
   proposalFingerprint,
   type HeldCounts,
 } from '../src/agent/reorientation-words';
@@ -238,11 +239,60 @@ const siblingDecisionValidator = v.object({
 type SiblingDecision = typeof siblingDecisionValidator.type;
 
 /**
+ * Whether a sibling card is about the decided edge and nothing else, so that deciding the edge
+ * decides it: no other edge, clause, page, skill, correction or agreement in what it rests on or
+ * reaches, and a proposal that is about the edge or about nothing (W17-R7: one proposing an
+ * agreement change about the person was closed and its proposal lost).
+ */
+function aboutTheEdgeAlone(card: Doc<'reorientations'>, edges: ReadonlySet<string>): boolean {
+  return (
+    edges.size === 1 &&
+    card.affected.charterClauses.length === 0 &&
+    card.affected.agreements.length === 0 &&
+    card.evidence.pageRefs.length === 0 &&
+    card.evidence.skillIds.length === 0 &&
+    card.evidence.correctionIds.length === 0 &&
+    ['relationship', 'none', 'pending'].includes(card.proposed.kind)
+  );
+}
+
+/** Close one sibling card as decided on another, the work it held released first. */
+async function closeOneSibling(
+  ctx: MutationCtx,
+  card: Doc<'reorientations'>,
+  decision: SiblingDecision,
+): Promise<void> {
+  // Another card's Approve changed the edge this card's plans were drafted under. Released before
+  // the card closes, so a release that throws leaves the card standing for the manager.
+  await releaseHeldWork(ctx, card, decision.moved ?? [{ kind: 'everything' }], decision.now);
+  await ctx.db.patch(card._id, {
+    status: 'dismissed',
+    decidedAt: decision.now,
+    revisitAt: undefined,
+    ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
+    outcome: { summary: decision.outcome },
+  });
+  await appendEvent(ctx, {
+    agentId: card.agentId,
+    type: 'reorientation.dismissed',
+    payload: {
+      reorientationId: card._id,
+      summary: card.triggerSummary,
+      outcome: decision.outcome,
+    },
+    createdAt: decision.now,
+  });
+  await closeTalkOfCard(ctx, card._id);
+}
+
+/**
  * Close one employee's undecided cards about an edge for everyone that another employee's card
  * decided (the pre-tag's row 6: Approve on a sibling met "This relationship has already ended",
  * and the only way out was Dismiss, one card an employee). A card about that edge alone closes as
  * decided there, its talk with it, and the work it held goes on; a card that also names something
- * else stays, and a proposal on it that names the ended edge is asked for again.
+ * else stays, and a proposal on it that names the ended edge is asked for again. Each card closes
+ * in its own try, as `openWithinBudget` opens each (W17-R7): one that cannot be closed says so on
+ * itself and in the function log, and the Approve and the other siblings go on.
  */
 async function closeSiblingCards(
   ctx: MutationCtx,
@@ -255,35 +305,27 @@ async function closeSiblingCards(
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
       .take(STANDING_CARDS_READ);
     for (const card of cards) {
-      const edges = new Set([...card.evidence.relationshipIds, ...card.affected.relationships]);
+      const edges = new Set<string>([
+        ...card.evidence.relationshipIds,
+        ...card.affected.relationships,
+      ]);
       if (!edges.has(decision.relationshipId)) continue;
-      const alone =
-        edges.size === 1 &&
-        card.affected.charterClauses.length === 0 &&
-        card.evidence.pageRefs.length === 0 &&
-        card.evidence.skillIds.length === 0 &&
-        card.evidence.correctionIds.length === 0;
-      if (alone) {
-        await ctx.db.patch(card._id, {
-          status: 'dismissed',
-          decidedAt: decision.now,
-          revisitAt: undefined,
-          ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
-          outcome: { summary: decision.outcome },
-        });
-        await appendEvent(ctx, {
-          agentId,
-          type: 'reorientation.dismissed',
-          payload: {
+      if (aboutTheEdgeAlone(card, edges)) {
+        try {
+          await closeOneSibling(ctx, card, decision);
+        } catch (error) {
+          log.warn('reorientation: a sibling card could not be closed', {
             reorientationId: card._id,
-            summary: card.triggerSummary,
-            outcome: decision.outcome,
-          },
-          createdAt: decision.now,
-        });
-        await closeTalkOfCard(ctx, card._id);
-        // Another card's Approve changed the edge this card's plans were drafted under.
-        await releaseHeldWork(ctx, card, decision.moved ?? [{ kind: 'everything' }], decision.now);
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          await ctx.db.patch(card._id, {
+            outcome: {
+              summary: approvedResultWords.notClosed(
+                decidedElsewhereOf(decision.outcome)?.name ?? 'another employee',
+              ),
+            },
+          });
+        }
       } else if (
         card.proposed.kind === 'relationship' &&
         card.proposed.relationshipId === decision.relationshipId
