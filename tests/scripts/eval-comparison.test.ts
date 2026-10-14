@@ -955,3 +955,111 @@ describe('the re-graded source path a result records', (): void => {
     expect(recordedSourcePath('/tmp/day0-regrade-abc/original.json')).toBe('original.json');
   });
 });
+
+import { vi } from 'vitest';
+import { executeRun } from '../../scripts/eval-comparison';
+
+describe('a manager identity for each run', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function stubSigningKey(): Promise<void> {
+    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ]);
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+    vi.stubEnv('DEV_NO_AUTH_SIGNING_KEY', Buffer.from(pkcs8).toString('base64'));
+  }
+
+  const subjectOf = (token: string): unknown =>
+    (
+      JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as {
+        sub: unknown;
+      }
+    ).sub;
+
+  it('signs each run in as its own manager, so no two runs share an owner or a skill library', async (): Promise<void> => {
+    await stubSigningKey();
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'docs-team-cadence')!;
+    const { context, calls } = await stubContext({
+      'baselineActions:deployBaseline': { agentId: 'agent-1', charterId: 'charter-1' },
+      'evaluation:snapshot': snapshotOf(
+        workItem({ externalId: task.seed.externalId, state: 'completed' }),
+      ),
+    });
+    const tokens: string[] = [];
+    context.client.setAuth = (token: string): void => {
+      tokens.push(token);
+      calls.push({ kind: 'query', name: 'setAuth', args: subjectOf(token) });
+    };
+    const run = (number: number): RunWithProgress => ({
+      id: `baseline-r${number}`,
+      arm: 'baseline',
+      run: number,
+      status: 'pending',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    });
+    const first = run(1);
+    const second = run(2);
+
+    await executeRun(context, first, [task]);
+    await executeRun(context, second, [task]);
+
+    expect(first.managerSubject).toMatch(/^dev-no-auth\|eval-manager-baseline-r1-\d+$/);
+    expect(second.managerSubject).toMatch(/^dev-no-auth\|eval-manager-baseline-r2-\d+$/);
+    expect(tokens.map(subjectOf)).toEqual([first.managerSubject, second.managerSubject]);
+    const signIns = calls.flatMap((call, index) => (call.name === 'setAuth' ? [index] : []));
+    const deploys = calls.flatMap((call, index) =>
+      call.name === 'baselineActions:deployBaseline' ? [index] : [],
+    );
+    expect(signIns[0]!).toBeLessThan(deploys[0]!);
+    expect(signIns[1]!).toBeLessThan(deploys[1]!);
+
+    const resumed = { ...run(3), managerSubject: 'dev-no-auth|eval-manager-baseline-r3-7' };
+    await executeRun(context, resumed, [task]);
+    expect(resumed.managerSubject).toBe('dev-no-auth|eval-manager-baseline-r3-7');
+    expect(subjectOf(tokens.at(-1)!)).toBe('dev-no-auth|eval-manager-baseline-r3-7');
+  });
+
+  it('reads each run back as the manager it ran under when graded again from its backend', async (): Promise<void> => {
+    const dir = await temporaryDirectory('regrade-subject-');
+    const sourcePath = join(dir, 'original.json');
+    const fixture = regradeFixture();
+    (fixture.runs[0] as { managerSubject?: string }).managerSubject =
+      'dev-no-auth|eval-manager-day0-r1-5';
+    await writeFile(sourcePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
+    const signedInAs: Array<string | undefined> = [];
+    const reads: string[] = [];
+    const client = {
+      setAuth: (): void => undefined,
+      query: async (fn: unknown): Promise<unknown> => {
+        const name = getFunctionName(fn as never);
+        reads.push(`${name} as ${signedInAs.at(-1) ?? 'the local manager'}`);
+        if (name === 'config:surfaceMode') return { mode: 'mock' };
+        if (name === 'evaluation:snapshot') return retainedSnapshot();
+        throw new Error(`unexpected read ${name}`);
+      },
+    };
+
+    await runRegrade(
+      parseCliOptions(['--regrade', sourcePath, '--out', join(dir, 'new', 'comparison.json')]),
+      {
+        client: client as never,
+        authenticate: async (subject?: string): Promise<void> => {
+          signedInAs.push(subject);
+        },
+        commit: 'grader-commit',
+        now: new Date('2026-10-14T05:00:00.000Z'),
+      },
+    );
+
+    expect(reads).toEqual([
+      'config:surfaceMode as the local manager',
+      'evaluation:snapshot as dev-no-auth|eval-manager-day0-r1-5',
+    ]);
+  });
+});

@@ -107,6 +107,10 @@ interface EvidenceWithProgress extends EvaluationEvidence {
 export interface HarnessContext {
   client: Pick<ConvexHttpClient, 'query' | 'mutation' | 'action' | 'setAuth'>;
   authenticatedAt: number;
+  /** The manager the client signs in as: the current run's, or the local manager before any run. */
+  managerSubject?: string;
+  /** The manager the client's token names. */
+  authenticatedSubject?: string;
   evidence: EvidenceWithProgress;
   outPath: string;
   reportPath: string;
@@ -390,9 +394,29 @@ async function persist(context: HarnessContext): Promise<void> {
 }
 
 async function authenticate(context: HarnessContext): Promise<void> {
-  if (Date.now() - context.authenticatedAt < TOKEN_REFRESH_MS) return;
-  context.client.setAuth(await mintDevNoAuthToken());
+  if (
+    Date.now() - context.authenticatedAt < TOKEN_REFRESH_MS &&
+    context.authenticatedSubject === context.managerSubject
+  ) {
+    return;
+  }
+  context.client.setAuth(await managerToken(context.managerSubject));
   context.authenticatedAt = Date.now();
+  context.authenticatedSubject = context.managerSubject;
+}
+
+/** A token for a run's manager, or for the local manager when no subject is given. */
+async function managerToken(subject: string | undefined): Promise<string> {
+  return await mintDevNoAuthToken(undefined, undefined, undefined, subject);
+}
+
+/**
+ * The subject a run's manager signs in as: one of its own, so that no two runs
+ * of a bed share an owner, and so a skill library, an adoption offer or a
+ * re-check card.
+ */
+export function evaluationManagerSubject(runId: string, at: number): string {
+  return `dev-no-auth|eval-manager-${runId}-${at}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -873,7 +897,12 @@ function scheduledRuns(options: CliOptions): Array<{ arm: EvaluationArm; run: nu
   return rows;
 }
 
-async function executeRun(
+/**
+ * Run one arm's run over the tasks, or resume it, writing each result as it ends.
+ *
+ * @throws on a fatal provider failure, after marking the run failed.
+ */
+export async function executeRun(
   context: HarnessContext,
   run: RunWithProgress,
   tasks: EvaluationTask[],
@@ -882,6 +911,8 @@ async function executeRun(
     console.log(`[eval] ${run.id}: already complete`);
     return;
   }
+  run.managerSubject ??= evaluationManagerSubject(run.id, Date.now());
+  context.managerSubject = run.managerSubject;
   run.status = 'running';
   await persist(context);
   await authenticate(context);
@@ -919,7 +950,8 @@ async function executeRun(
 export interface RegradeDependencies {
   /** A query-only seam for fixtures; production constructs this from CONVEX_SELF_HOSTED_URL. */
   client?: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
-  authenticate?: () => Promise<void>;
+  /** Sign in as a run's manager, or as the local manager when no subject is given. */
+  authenticate?: (subject?: string) => Promise<void>;
   commit?: string;
   now?: Date;
 }
@@ -1005,10 +1037,14 @@ async function readRegradeSource(
   return { sourcePath, outPath, source };
 }
 
+/** A query-only client and the way it signs in as a run's manager. */
+interface RegradeClient {
+  client: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
+  signInAs: (subject?: string) => Promise<void>;
+}
+
 /** An authenticated, query-only client on a backend that reports mock mode. */
-async function regradeClient(
-  dependencies: RegradeDependencies,
-): Promise<Pick<ConvexHttpClient, 'query' | 'setAuth'>> {
+async function regradeClient(dependencies: RegradeDependencies): Promise<RegradeClient> {
   const modeUrl = process.env.CONVEX_SELF_HOSTED_URL;
   if (!dependencies.client && !modeUrl) throw new Error('CONVEX_SELF_HOSTED_URL is required');
   const convexClient =
@@ -1021,27 +1057,30 @@ async function regradeClient(
     query: convexClient.query.bind(convexClient),
     setAuth: convexClient.setAuth.bind(convexClient),
   };
-  if (dependencies.authenticate) {
-    await dependencies.authenticate();
-  } else {
-    client.setAuth(await mintDevNoAuthToken());
-  }
+  const signInAs =
+    dependencies.authenticate ??
+    (async (subject?: string): Promise<void> => client.setAuth(await managerToken(subject)));
+  await signInAs();
   const mode = await client.query(api.config.surfaceMode, {});
   if (mode.mode !== 'mock') {
     throw new Error(`evaluation re-grade requires mock mode; backend reports ${mode.mode}`);
   }
-  return client;
+  return { client, signInAs };
 }
 
-/** Each recorded run's retained backend state, refusing a run whose work items are gone. */
+/**
+ * Each recorded run's retained backend state, read as the manager the run ran
+ * under, refusing a run whose work items are gone.
+ */
 async function retainedSnapshots(
-  client: Pick<ConvexHttpClient, 'query'>,
+  { client, signInAs }: RegradeClient,
   source: EvaluationEvidence,
 ): Promise<Map<string, RawSnapshot>> {
   const snapshots = new Map<string, RawSnapshot>();
   for (const run of source.runs) {
     if (run.tasks.length === 0) continue;
     if (!run.agentId) throw new Error(`recorded run ${run.id} has tasks but no agentId`);
+    if (run.managerSubject) await signInAs(run.managerSubject);
     const raw = await client.query(api.evaluation.snapshot, {
       agentId: run.agentId as Id<'agents'>,
     });

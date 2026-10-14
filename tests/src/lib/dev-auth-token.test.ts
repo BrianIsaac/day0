@@ -64,6 +64,25 @@ describe('mintDevNoAuthToken', (): void => {
     expect(claims).not.toHaveProperty('sid');
   });
 
+  it('names another subject when one is given, as the evaluation harness signs each run in', async (): Promise<void> => {
+    const { encodedPrivate } = await keypair();
+    const claims = decodeSegment(
+      (
+        await mintDevNoAuthToken(
+          undefined,
+          encodedPrivate,
+          'manager@example.com',
+          'dev-no-auth|eval-manager-day0-r1-1',
+        )
+      ).split('.')[1]!,
+    );
+    expect(claims).toMatchObject({
+      sub: 'dev-no-auth|eval-manager-day0-r1-1',
+      iss: DEV_NO_AUTH_ISSUER,
+      email: 'manager@example.com',
+    });
+  });
+
   it('says which variable to set when no key is available', async (): Promise<void> => {
     await expect(mintDevNoAuthToken('s', undefined)).rejects.toThrow(
       'DEV_NO_AUTH_SIGNING_KEY is not set',

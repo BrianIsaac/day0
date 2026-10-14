@@ -64,6 +64,12 @@ export interface EvaluationRun {
   run: number;
   status: 'pending' | 'running' | 'completed' | 'failed';
   agentId?: string;
+  /**
+   * The subject the run's manager signed in as. Each run has its own since
+   * 14 October 2026, so no two runs share an owner or a skill library; absent
+   * before, when every run of a bed was the local manager's.
+   */
+  managerSubject?: string;
   deployedAt?: string;
   completedAt?: string;
   humanWaitMs: number;
