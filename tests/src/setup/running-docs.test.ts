@@ -396,3 +396,28 @@ describe('the readers’ guides on a page with no text, and the README on fifty 
     expect(readme).toContain('直到你的员工回到六十名或更少');
   });
 });
+
+// W18-R23 (the wave 18 review, reader 6; W17-R29's remainder): the reader guides' prose said
+// "day0" in about twenty-five lines, the habit of the guides before W17-R29 named the product
+// Day0 everywhere else. A host, an address or a code span keeps its own spelling.
+describe('the running pages’ prose (W18-R23)', (): void => {
+  /** A page's prose: its fenced blocks and code spans taken out. */
+  const prose = (name: string): string =>
+    readFileSync(new URL(`../../../docs/running/${name}`, import.meta.url), 'utf8')
+      .replace(/^```[\s\S]*?^```/gm, '')
+      .replace(/`[^`\n]*`/g, '');
+
+  it('names the product Day0 in every sentence, never "day0"', (): void => {
+    const pages = readdirSync(new URL('../../../docs/running/', import.meta.url)).filter((name) =>
+      name.endsWith('.md'),
+    );
+    expect(pages.length).toBeGreaterThan(10);
+    const lowerCase = pages.flatMap((name) =>
+      prose(name)
+        .split('\n')
+        .filter((line) => /(?<![\w@./-])day0(?![\w@-]|\.\w)/.test(line))
+        .map((line) => `${name}: ${line.trim()}`),
+    );
+    expect(lowerCase).toEqual([]);
+  });
+});

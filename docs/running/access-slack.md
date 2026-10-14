@@ -146,8 +146,8 @@ that issues an app-level token, so a person generates one per app:
    - A press the component took from Slack and could not hand to Day0 is
      answered to the person who pressed, and only to them: "Day0 did not
      receive this press, so nothing was decided. Press it again in a minute, or
-     decide in day0." when Day0 did not answer for a minute, and "Day0 could
-     not take this press, so nothing was decided. Decide in day0." when Day0
+     decide in Day0." when Day0 did not answer for a minute, and "Day0 could
+     not take this press, so nothing was decided. Decide in Day0." when Day0
      refused it.
 
 Slack sets no expiry on the token. It ends when the app is deleted (a retire
