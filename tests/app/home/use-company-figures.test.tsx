@@ -388,3 +388,40 @@ describe('the company’s figures under change and failure (W17-R28, wave 18)', 
     view.unmount();
   });
 });
+
+describe('the company’s figures, the second pass (wave 18)', (): void => {
+  it('keeps the cool-down when a change lands late in a read that then ends', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-0" />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    drawn(view, 'roster-1');
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
+    expect(backend.byPages).toHaveLength(2);
+    // A change while the second read is on its way, which ends at once after it.
+    drawn(view, 'roster-2');
+    await elapse(500);
+    backend.byPages[1]!.resolve(figuresOf(52));
+    await elapse(WHOLE_COMPANY_REREAD_MS * 2);
+    expect(backend.byPages).toHaveLength(2);
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
+    expect(backend.byPages).toHaveLength(3);
+    view.unmount();
+  });
+
+  it('draws no answer of a read that began before the company shrank to twenty and grew back', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    backend.bounded = figuresOf(20, 0);
+    drawn(view, 'roster-2');
+    backend.bounded = figuresOf(20, 3);
+    drawn(view, 'roster-3');
+    // The read that began before the shrink answers now, with the company it read then.
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    expect(drawn(view, 'roster-3')).toBe('20 {"kind":"reading","read":20,"of":23}');
+    view.unmount();
+  });
+});

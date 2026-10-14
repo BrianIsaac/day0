@@ -60,6 +60,11 @@ interface ReadsByPages {
   retry: ReturnType<typeof setTimeout> | undefined;
   /** How many reads have failed in a row. */
   failures: number;
+  /**
+   * How many times the employees stopped being wanted by pages: a read that began before the
+   * company was back within the bound answers for a company that is gone (the second pass).
+   */
+  generation: number;
 }
 
 /** Drop both waits: a read is starting, or the page has no more use for one. */
@@ -118,6 +123,7 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
     timer: undefined,
     retry: undefined,
     failures: 0,
+    generation: 0,
   });
   const past = bounded !== undefined && bounded.omittedEmployees > 0;
   // What was read by pages is the company's while it stays past the bound: once the bounded read
@@ -147,6 +153,7 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
       at.started = false;
       at.again = false;
       at.failures = 0;
+      at.generation += 1;
       return;
     }
     const read = (): void => {
@@ -158,7 +165,15 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
         at.again = true;
         return;
       }
+      const resting = coolDownLeft(at);
+      if (resting > 0) {
+        // A wait set while the last read was on its way ends inside its cool-down: wait it out.
+        at.timer = setTimeout(read, resting);
+        return;
+      }
       at.running = true;
+      const generation = at.generation;
+      const current = (): boolean => at.mounted && at.wanted && at.generation === generation;
       // Not awaited: an effect and a timer return nothing. Both outcomes are handled here, a
       // refusal as the figures of the most recent employees with the count of the rest; the call
       // is made inside the chain, so one that throws before it answers is a refusal like any other.
@@ -166,20 +181,20 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
         .then(async () => await readEvery({}))
         .then(
           (figures): void => {
+            // An answer for a company since back within the bound is not kept, nor counted.
+            if (!current()) return;
             at.failures = 0;
-            // An answer that arrives once the company is back within the bound is not kept.
-            if (at.mounted && at.wanted) setEvery({ kind: 'read', figures });
+            setEvery({ kind: 'read', figures });
           },
           (error: unknown): void => {
+            if (!current()) return;
             at.failures += 1;
             log.warn('the company figures could not be read by pages', {
               reason: error instanceof Error ? error.message : 'unknown',
             });
             // Figures already read stay drawn; with none, the bounded ones say what they cover.
             const tries = at.failures;
-            if (at.mounted && at.wanted) {
-              setEvery((kept) => (kept.kind === 'read' ? kept : { kind: 'failed', tries }));
-            }
+            setEvery((kept) => (kept.kind === 'read' ? kept : { kind: 'failed', tries }));
           },
         )
         .finally((): void => {
