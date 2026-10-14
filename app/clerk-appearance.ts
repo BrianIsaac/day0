@@ -59,6 +59,20 @@ export const clerkAppearance = {
     // A primary button's label is the page's colour already (`colorPrimaryForeground`), so the one
     // style is the form buttons' whatever their scheme: the danger one is the only one it moves.
     formButtonPrimary: { color: 'var(--color-bg)' },
+    // RM40 (c): the page colours the mark. Clerk draws `logoImageUrl` as an image, which WebKit
+    // colours by the system's scheme rather than the page's (17-FX's F1: the head 1.81:1 on a
+    // light card, 3.31:1 on a dark one). The image's own pixels are moved out of its box, and the
+    // box is filled with the page's accent through the mark's shape, the eyes cut, exactly where
+    // `objectFit: contain` put the image: the head is the accent of the theme the viewer chose,
+    // in every engine.
+    logoImage: {
+      objectPosition: '-10000px 0',
+      backgroundColor: 'var(--color-accent)',
+      maskImage: `url(${DAY0_MARK_URL})`,
+      maskSize: 'contain',
+      maskPosition: 'center',
+      maskRepeat: 'no-repeat',
+    },
   },
 } satisfies Appearance;
 
