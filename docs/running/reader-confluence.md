@@ -32,6 +32,39 @@ other for a space, not both.
 - The space is read again on the same schedule as every other source. When Confluence says it is
   busy (HTTP 429, or 503), day0 waits the time Confluence names before it asks again.
 
+## What a read asks of Confluence
+
+day0 lists the space at every read, twenty-five pages a request, without the pages' text, and
+asks for a page's text only when its listing says it changed since day0 last read it: its
+version number moved, or its title or address did. A read that finds nothing changed therefore
+asks for no page's text. On **Cloud** the pages of one listing that changed are asked for
+together, by their ids, in one request; on **Data Center** each page that changed is asked for by
+its id, a request a page. One exception: a page whose title holds a value day0 takes out of what
+it stores (a password written into a title) is asked for at every read, because the title it was
+stored under is no longer the one its listing gives. Another: a page with no text under its
+title, such as a parent page that holds only a children or include macro, is asked for at every
+read and then kept by its text, since a listing's version is kept only for a page with text to
+keep.
+
+Counted on the test doubles of Confluence that day0's own tests use, not on a site. The bed is a
+running day0 in real mode reading a space of 250 pages; the thousand-page figures are the same
+doubles read by the readers' tests:
+
+| Read                          | Cloud, 250 pages (the bed) | Cloud, 1,000 pages (the tests) | Data Center, 250 pages (the bed) | Data Center, 1,000 pages (the tests) |
+| ----------------------------- | -------------------------- | ------------------------------ | -------------------------------- | ------------------------------------ |
+| The first read                | 21                         | 81                             | 262                              | 1,042                                |
+| A read with nothing changed   | 11                         | 41                             | 12                               | 42                                   |
+| A read after one page changed | 12                         | 42                             | 13                               | 43                                   |
+
+On Cloud the 41 are one lookup of the space and 40 listings; the first read adds a request by id
+for each listing. On Data Center the 42 are one check of the space, 40 listings of its current
+pages and one request for its archived pages; the first read adds a request for every page.
+
+Atlassian's page on rate limiting (last updated 12 October 2026) says the points-based limits of
+March 2026 apply to Forge, Connect and OAuth 2.0 apps, and that traffic with an API token, which
+is how day0 reads Cloud, stays under the existing burst limits; it publishes no figure for
+those. A Data Center server's limits are whatever its administrator has set.
+
 ## 1a. Confluence Cloud: the service account (IT)
 
 1. In **Atlassian Administration** (`admin.atlassian.com`), create a **service account** for
@@ -88,6 +121,12 @@ only.
 A page day0 does not read is named on the source's row with its reason:
 
 - `Confluence gave no body in its storage format for "Quarter board", so Day0 does not read it.`
+- `"Quarter board" was deleted or moved in Confluence after it was listed.` The page went between
+  day0's listing of the space and its request for the page; the next read sorts it out.
+- `Confluence listed "Escalation paths (2024)" among its archived pages and then answered HTTP 400
+for the page itself, so Day0 keeps what it last read of it.` Data Center only: the server lists
+  its archived pages and does not give one by its id. Tell the day0 maintainers which Confluence
+  version it is.
 
 When the whole space cannot be read, its status says why. On Confluence Cloud:
 
@@ -140,6 +179,9 @@ v2 specification and the Confluence Data Center REST reference for 8.9.3, read 1
 with test answers written from that reference, not recorded from a site: **no tenant read yet**.
 Until one is, these are known only from the reference: that a service account's scoped token
 reads a space as described; what Atlassian's gateway answers for a wrong token or cloud ID; the
-shapes of the macros in a page's storage format beyond the common ones; and whether a Data
-Center server lists its archived pages. If a first install finds any of them different, tell the
-day0 maintainers so this page can say what is true.
+shapes of the macros in a page's storage format beyond the common ones; whether a Data Center
+server lists its archived pages, and, where it lists one, whether it gives that page by its id
+(where it does not, the page is named as not read and what day0 last read of it stands); and
+that Cloud answers several pages asked for by id in one request as the specification describes.
+The request counts above are from day0's own test doubles. If a first install finds any of them
+different, tell the day0 maintainers so this page can say what is true.

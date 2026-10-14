@@ -135,7 +135,8 @@ describe('the completion DM, from the same rows', (): void => {
       rows: landedNoteRows(priya.output, surfaces, priya.replyTarget),
     });
     expect(text.split('\n')[0]).toBe(
-      'Priya stopped on “Slack mention in #ops-requests” after 5 changes landed: the reply was refused. Reconcile the provider in day0 before a retry.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Priya stopped on “Slack mention in #ops-requests” after 5 changes landed: the reply was refused. Reconcile the provider in Day0 before a retry.',
     );
     expect(text.split('\n')).toHaveLength(6);
   });

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MANAGER_QUESTION_CLOSE_REASONS,
   MANAGER_QUESTION_TYPES,
   contentWords,
   isBlockingQuestion,
+  isOpenQuestion,
   managerOpenQuestions,
   questionTypeOf,
   questionKey,
@@ -99,5 +101,18 @@ describe('what kind of question it is, and whether it holds the plan (16-K)', ()
       'tool',
       'preference',
     ]);
+  });
+});
+
+describe('whether a question still stands (17-K)', (): void => {
+  it('reads a question with neither an answer nor `closed` as open, as every unanswered question before 0.21.0 was', (): void => {
+    expect(isOpenQuestion({})).toBe(true);
+    expect(isOpenQuestion({ answer: { text: 'A', answeredAt: 1, via: 'slack' } })).toBe(false);
+    expect(isOpenQuestion({ closed: { reason: 'redrafted', at: 2 } })).toBe(false);
+    expect(isOpenQuestion({ closed: { reason: 'settled', at: 2 } })).toBe(false);
+  });
+
+  it('closes a question for a redraft or for what it asked about no longer standing, and for nothing else', (): void => {
+    expect(MANAGER_QUESTION_CLOSE_REASONS).toEqual(['redrafted', 'settled']);
   });
 });

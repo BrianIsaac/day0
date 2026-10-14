@@ -12,7 +12,8 @@ function strings(value: unknown): string[] {
 describe('the landing copy', () => {
   it('carries the operator’s replacement for the second problem card word for word (UX round four, 1.1)', () => {
     expect(copy.PROBLEM.cards[1]).toEqual({
-      title: 'What day0 does instead',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      title: 'What Day0 does instead',
       body: 'Day0 is deployed with a name and nothing else. It reads the documentation you point it at, holds a Day-1 one-to-one with you, and drafts its own work charter (like a JD) for your approval. From there it works with you, with clear, distinct roles, and drives work autonomously under your supervision.',
     });
     expect(copy.PROBLEM.heading).toBe('Today, deploying an agent means engineering one.');

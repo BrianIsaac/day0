@@ -18,7 +18,8 @@ import { browserComponentRefusal, withBrowserComponentState } from '../src/surfa
 import { grantScopeInTransaction } from './agents';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { appendEvent } from './eventLog';
-import { openCard, skillReach } from './reorientation';
+import { openCard } from './reorientation';
+import { skillReach } from './reorientationReach';
 import { assertNotBeingHandedOver } from './handoverFence';
 import { skillOwnerKeyOf, STORED_COPY_CLEARED } from './skillVersions';
 import { holdsParkedStoredCopy } from '../src/work/skill-adoption';

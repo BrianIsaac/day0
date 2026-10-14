@@ -5,20 +5,28 @@ import { useMutation } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
 import { nextCharterVersion } from '@/agent/charter-amendment';
+import { CLAUSE_WORDS } from '@/agent/reorientation-proposal';
 import {
   approvedResultWords,
   cardTitle,
+  closedAsNoLongerNeeded,
+  decidedElsewhereOf,
+  decidedElsewhereWords,
   decisionWords,
+  deferredWords,
   failedProposalWords,
   heldWords,
   pendingWords,
+  proposalFingerprint,
   sentenceOf,
+  unproposedWords,
   revisitDay,
 } from '@/agent/reorientation-words';
 import { Button, ButtonLink } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { clockTime } from '../../../components/time';
+import { recordWords } from '../record/record-words';
 import { useChange } from '../../../components/use-change';
 
 /** One card as the reorientation page draws it (`reorientationDecisions.listForAgent`). */
@@ -26,6 +34,12 @@ export type CardView = FunctionReturnType<typeof api.reorientationDecisions.list
 
 /** A card's proposal, once there is one. */
 type Proposed = CardView['card']['proposed'];
+
+/**
+ * The most charter clauses a card names in full. Past it the card only counts them: a card opened
+ * by hand reaches the whole charter, which the Charter tab already draws.
+ */
+const CLAUSES_NAMED = 5;
 
 /** A week, as Defer sets it by default (A21). */
 const WEEK_MS = 7 * 86_400_000;
@@ -122,10 +136,13 @@ function ProposalBody({
       return (
         <>
           <p>
-            {agreement !== undefined ? (
-              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
-            ) : (
+            {agreement === undefined ? (
               'A working agreement.'
+            ) : proposed.action === 'keep' || proposed.action === 'recheck' ? (
+              // Kept or checked again, the agreement stands as written: nothing is struck.
+              agreement.statement
+            ) : (
+              <s className="text-[var(--color-muted)]">{agreement.statement}</s>
             )}
           </p>
           {proposed.statement !== undefined ? <p>{proposed.statement}</p> : null}
@@ -185,7 +202,20 @@ function closedAtHandover(card: CardView['card']): boolean {
 /** How a decided card was decided, as its muted line says it. */
 function decidedWords(card: CardView['card']): string {
   if (card.status === 'applied') return 'approved';
+  if (decidedElsewhereOf(card.outcome?.summary) !== undefined) return 'decided on another card';
+  if (closedAsNoLongerNeeded(card.outcome?.summary)) return 'closed';
   return closedAtHandover(card) ? 'closed at the handover' : 'dismissed';
+}
+
+/** A decided card's outcome line: what its decision did, or where it was decided. */
+function outcomeWords(card: CardView['card'], zone: string | undefined): string {
+  if (closedAtHandover(card)) return `Closed at the handover: ${handedOverReason}.`;
+  if (closedAsNoLongerNeeded(card.outcome?.summary)) return `Closed as ${card.outcome?.summary}.`;
+  const elsewhere = decidedElsewhereOf(card.outcome?.summary);
+  if (elsewhere !== undefined) {
+    return decidedElsewhereWords(elsewhere, revisitDay(card.decidedAt ?? card.createdAt, zone));
+  }
+  return `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome?.summary ?? ''}.`;
 }
 
 /** The card's muted line: when it opened, how much it can hold up, and what it holds now. */
@@ -251,9 +281,19 @@ export function ReorientationCard({
     // A decided card holds nothing, and a standing one says what its hold stops (M3).
     decided ? undefined : held.plans + held.runs > 0 ? heldWords(held) : '0 plans held',
   ].filter((words): words is string => words !== undefined);
+  // The clauses it reaches, each under its list's name and in the words it had when the card
+  // opened (the v0.20.0 hosted walk's finding 5: a handover's card counted two and named none).
+  const clauses =
+    card.affected.charterClauses.length <= CLAUSES_NAMED
+      ? card.affected.charterClauses
+          .filter((clause) => clause.text.trim() !== '')
+          .map((clause) => `${CLAUSE_WORDS[clause.field]}: “${clause.text}”`)
+      : [];
   const evidence = [
     ...view.pages.map((page) => `“${page.title}”`),
     ...view.people.map((edge) => edge.words),
+    // The organisation's ledger lines an organisation's change rests on, in the record's words.
+    ...view.ledger.map((line) => recordWords(line, { name }).replace(/\.$/u, '')),
     // A rule drafted before rules were bound carries no clause, so its own words say it (W16-R21).
     ...(view.carriedRules ?? []).map((quote) => `Its reporting-line rule: “${quote}”`),
   ];
@@ -281,6 +321,12 @@ export function ReorientationCard({
               <dd className="[overflow-wrap:anywhere]">{affected.join(' · ')}</dd>
             </>
           ) : null}
+          {clauses.length > 0 ? (
+            <>
+              <dt className="text-[var(--color-muted)]">Clauses</dt>
+              <dd className="[overflow-wrap:anywhere]">{clauses.join(' · ')}</dd>
+            </>
+          ) : null}
           {evidence.length > 0 ? (
             <>
               <dt className="text-[var(--color-muted)]">Evidence</dt>
@@ -301,9 +347,11 @@ export function ReorientationCard({
           <div className="mt-2 grid gap-2 rounded-lg border border-[var(--color-border)] p-3 [overflow-wrap:anywhere]">
             {proposed.kind === 'pending' ? (
               <p>
-                {proposed.failedAt !== undefined
-                  ? failedProposalWords(name)
-                  : pendingWords(name, held)}
+                {decided
+                  ? unproposedWords(name, proposed)
+                  : proposed.failedAt !== undefined
+                    ? failedProposalWords(name, proposed.failure)
+                    : pendingWords(name, held)}
               </p>
             ) : (
               <ProposalBody view={view} proposed={proposed} />
@@ -315,11 +363,7 @@ export function ReorientationCard({
         </div>
         {decided ? (
           card.outcome !== undefined ? (
-            <p className="text-[var(--color-fg-2)]">
-              {closedAtHandover(card)
-                ? `Closed at the handover: ${handedOverReason}.`
-                : `${card.status === 'applied' ? 'Approved' : 'Dismissed'}: ${card.outcome.summary}.`}
-            </p>
+            <p className="text-[var(--color-fg-2)]">{outcomeWords(card, zone)}</p>
           ) : null
         ) : (
           <div className="grid gap-3 border-t border-[var(--color-border)] pt-4">
@@ -329,10 +373,13 @@ export function ReorientationCard({
                 size="large"
                 disabled={change.busy || proposed.kind === 'pending'}
                 onClick={() =>
-                  change.run(() => approve({ reorientationId }), {
-                    done: (outcome) => `Approved: ${outcome.result}.`,
-                    refused: 'The card was not approved.',
-                  })
+                  change.run(
+                    () => approve({ reorientationId, shown: proposalFingerprint(proposed) }),
+                    {
+                      done: (outcome) => `Approved: ${outcome.result}.`,
+                      refused: 'The card was not approved.',
+                    },
+                  )
                 }
               >
                 Approve
@@ -342,7 +389,7 @@ export function ReorientationCard({
                   disabled={change.busy}
                   onClick={() =>
                     change.run(() => defer({ reorientationId }), {
-                      done: (outcome) => `Deferred until ${revisitDay(outcome.revisitAt, zone)}.`,
+                      done: (outcome) => deferredWords(revisitDay(outcome.revisitAt, zone), held),
                       refused: 'The card was not deferred.',
                     })
                   }
@@ -383,9 +430,16 @@ export function ReorientationCard({
                   : {}),
               })}
             </p>
-            <StatusRegion outcome={change.outcome} />
           </div>
         )}
+        {/*
+          After the decisions, in one place whatever the card's state: a decision that moves the
+          card under Decided keeps this region, so what it did is announced there. Decided, the
+          card's own outcome line says it to the eye, and the region says it only to a reader.
+        */}
+        <div className={decided ? 'sr-only' : undefined}>
+          <StatusRegion outcome={change.outcome} />
+        </div>
       </div>
     </Card>
   );

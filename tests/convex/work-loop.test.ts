@@ -1715,6 +1715,35 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     expect(untouched.replaced?.editFailure).toBeUndefined();
   });
 
+  it('releases a digest’s note that stands behind a window of per-run notes the lease leaves (the continuation’s second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    // Sixty per-run notes claimed before the digest's: they head the open claims' index, and the
+    // lease leaves each to its own switch. Read fifty at a time with the digest's notes, they
+    // were the whole read at every pass, and the digest's note behind them was never released.
+    await harness.run(async (ctx) => {
+      for (let note = 0; note < 60; note += 1) {
+        await ctx.db.insert('managerNotes', {
+          agentId: seeded.agentId,
+          workItemId: seeded.workItemId,
+          kind: 'landed',
+          text: 'Landed.',
+          createdAt: 1,
+          claimedAt: Date.now() - LAPSED - 60_000 - note,
+        });
+      }
+    });
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    const released = await harness.run(async (ctx) => await ctx.db.get(seeded.digestNote));
+    expect(released).toMatchObject({ failure: MANAGER_CLAIM_LAPSED_REASON });
+    expect(released?.claimedAt).toBeUndefined();
+    // The per-run notes are as they were.
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(seeded.perRunNote)))?.failure,
+    ).toBeUndefined();
+  });
+
   it('runs as a job of its own, apart from the stalled-step sweep', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
@@ -1752,6 +1781,174 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     for (const one of seeded) expect(await failure(one.notice)).toBe(MANAGER_CLAIM_LAPSED_REASON);
     vi.useRealTimers();
   });
+
+  /** More lapsed acknowledgements for one employee's item, each its own claim. */
+  async function moreNotices(
+    harness: TestConvex<typeof schema>,
+    seeded: Awaited<ReturnType<typeof claims>>,
+    count: number,
+  ): Promise<void> {
+    await harness.run(async (ctx) => {
+      const surface = await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) => q.eq('agentId', seeded.agentId))
+        .first();
+      for (let index = 0; index < count; index += 1) {
+        await ctx.db.insert('managerDecisionNotices', {
+          agentId: seeded.agentId,
+          surfaceId: surface!._id,
+          workItemId: seeded.workItemId,
+          decisionId: 'abc234',
+          messageTs: `3.${index}`,
+          kind: 'received',
+          text: 'Approval abc234 received.',
+          createdAt: 1,
+          claimedAt: Date.now() - LAPSED,
+        });
+      }
+    });
+  }
+
+  /** How many claims of every kind an action died holding are still unsettled. */
+  async function unsettled(harness: TestConvex<typeof schema>): Promise<number> {
+    return await harness.run(async (ctx) => {
+      const notices = await ctx.db.query('managerDecisionNotices').collect();
+      const notes = await ctx.db.query('managerNotes').collect();
+      const items = await ctx.db.query('workItems').collect();
+      const edits = await ctx.db.query('replacedDecisionRequests').collect();
+      return (
+        notices.filter((row) => row.failure === undefined).length +
+        notes.filter((row) => row.digestId !== undefined && row.failure === undefined).length +
+        items.filter((row) => row.decision?.closeFailure === undefined).length +
+        items.filter((row) => row.decision?.duplicateNoticeFailure === undefined).length +
+        edits.filter((row) => row.editFailure === undefined).length
+      );
+    });
+  }
+
+  it('sizes a page of fifty employees by what it writes, and settles the rest in the transactions after (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review: a page is 50 employees, five claim kinds and 50 claims a kind, up to
+    // 12,500 patches in one mutation, which past the write limit rolls back and starts at the
+    // same page on every run. Here fifteen claims and an event an employee, 800 writes a page,
+    // against a limit of 600 a transaction.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const { SETTLE_AGENTS_PER_SWEEP, SETTLE_WRITES_PER_SWEEP } =
+      await import('../../convex/workLoop');
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsWritten: 600 },
+    });
+    for (let agent = 0; agent < SETTLE_AGENTS_PER_SWEEP; agent += 1) {
+      await moreNotices(harness, await claims(harness, Date.now() - LAPSED), 10);
+    }
+    expect(await unsettled(harness)).toBe(SETTLE_AGENTS_PER_SWEEP * 15);
+
+    const first = await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    expect(first.settled).toBeGreaterThan(0);
+    expect(first.settled).toBeLessThanOrEqual(SETTLE_WRITES_PER_SWEEP);
+    expect(await unsettled(harness)).toBe(SETTLE_AGENTS_PER_SWEEP * 15 - first.settled);
+
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    // One digest's failure an employee, however many transactions the page took.
+    const failed = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('events').collect()).filter(
+          (event) => event.type === 'work.manager-digest-failed',
+        ).length,
+    );
+    expect(failed).toBe(SETTLE_AGENTS_PER_SWEEP);
+    vi.useRealTimers();
+  }, 120_000);
+
+  it('sizes a page by the bytes of the rows it rewrites: work items that carry a run’s output (W16-R31)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesWritten: 8 * 1024 * 1024, bytesRead: 12 * 1024 * 1024 },
+    });
+    // Ten employees, four finished items each whose close was claimed and never recorded, each
+    // row 300 KB with its output: 12 MB a page, read and written whole.
+    const output = { actions: [], applied: [], notes: 'x'.repeat(300 * 1024) };
+    for (let agent = 0; agent < 10; agent += 1) {
+      const seeded = await claims(harness, Date.now() - LAPSED);
+      await harness.run(async (ctx) => {
+        const first = await ctx.db.get(seeded.workItemId);
+        const { _id, _creationTime, ...row } = first!;
+        void _id;
+        void _creationTime;
+        await ctx.db.patch(seeded.workItemId, { output });
+        for (let item = 1; item < 4; item += 1) {
+          await ctx.db.insert('workItems', { ...row, externalId: `REVOPS-${item + 1}`, output });
+        }
+      });
+    }
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    vi.useRealTimers();
+  }, 120_000);
+
+  it('reads no more work items at a time than fit its room at a document’s largest size (the second pass)', async (): Promise<void> => {
+    // Ten finished items of one employee, each row 900 KB with its output, their closes claimed
+    // and never recorded: read ten at a time they are 9 MB in one read, though the transaction
+    // may rewrite only 4 MiB of them. A row it settles is read by its index and again by its
+    // patch, so a transaction that reads only what it may settle stays near 9 MB, under this
+    // limit, and one that reads ten at a time passes it.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesRead: 12 * 1024 * 1024 },
+    });
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    const output = { actions: [], applied: [], notes: 'x'.repeat(900 * 1024) };
+    for (let item = 0; item < 10; item += 1) {
+      await harness.run(async (ctx) => {
+        const first = await ctx.db.get(seeded.workItemId);
+        const { _id, _creationTime, ...row } = first!;
+        void _id;
+        void _creationTime;
+        if (item === 0) await ctx.db.patch(seeded.workItemId, { output });
+        else await ctx.db.insert('workItems', { ...row, externalId: `REVOPS-${item + 1}`, output });
+      });
+    }
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    vi.useRealTimers();
+  }, 120_000);
+
+  it('goes on at the same page while a read comes back full and something settled, and stops when only per-run notes are left (the second pass)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    // One employee with 120 lapsed acknowledgements: more than one read of a kind takes.
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    await moreNotices(harness, seeded, 60);
+    await moreNotices(harness, seeded, 59);
+    const first = await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    expect(first.settled).toBeLessThan(124);
+    await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    expect(await unsettled(harness)).toBe(0);
+    // The per-run note is read at every pass and never settled here: with nothing else left to
+    // settle, the sweep schedules no further pass of the page.
+    const again = await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+    expect(again).toEqual({ settled: 0 });
+    const queued = await harness.run(
+      async (ctx) =>
+        (await ctx.db.system.query('_scheduled_functions').collect()).filter(
+          (job) => job.state.kind === 'pending',
+        ).length,
+    );
+    expect(queued).toBe(0);
+    vi.useRealTimers();
+  }, 120_000);
 
   it('leaves a claim whose result was recorded, and settles one claim once', async (): Promise<void> => {
     useSurfaceMode('real');

@@ -2,9 +2,10 @@
  * The two model judgements of working agreements (decision N20: the model declares; W1 and W2,
  * F10 and F11): whether a statement would go beyond the charter, asked before any proposal is
  * shown and before any statement is kept, and whether two of an employee's corrections say the
- * same thing, asked at most once per new correction. Each call is injected, so a test answers it
- * in-process; each failure is answered as `unavailable`, and the caller shows and keeps nothing
- * unchecked.
+ * same thing, asked at most once per new correction; and a charter's check of an agreement already
+ * in effect for every employee, whose refusal is judged twice (RM32 (a)). Each call is injected, so
+ * a test answers it in-process; each failure is answered as `unavailable`, and the caller shows and
+ * keeps nothing unchecked.
  */
 
 import type { SpanModel } from '../redaction/client';
@@ -13,6 +14,7 @@ import { agentJson, makeAgent } from '../lib/mastra';
 import {
   REFUSAL_JUDGEMENT_SYSTEM,
   SAMENESS_JUDGEMENT_SYSTEM,
+  judgedTwice,
   redactedStatement,
   refusalJudgementPrompt,
   refusalJudgementSchema,
@@ -87,6 +89,40 @@ export interface StatementCheck {
   readonly known: readonly string[];
 }
 
+/** A statement as the redaction leaves it, with the refusal the redaction alone amounts to. */
+interface RedactedForCheck {
+  readonly statement: string;
+  readonly degraded: { readonly redaction?: 'structural-only' };
+  /** Set when the redaction removed a secret: refused with no judgement. */
+  readonly refused?: Extract<CheckedStatement, { outcome: 'refused' }>;
+}
+
+/** Redact a statement for its check: one that named a credential is refused there, unjudged. */
+async function redactedForCheck(text: string, check: StatementCheck): Promise<RedactedForCheck> {
+  const redacted = await redactedStatement(text, { model: check.model, known: check.known });
+  const degraded = redacted.redaction ? { redaction: redacted.redaction } : {};
+  if (!redacted.namesCredential) return { statement: redacted.statement, degraded };
+  return {
+    statement: redacted.statement,
+    degraded,
+    refused: {
+      outcome: 'refused',
+      statement: redacted.statement,
+      refusal: { reason: 'names-credential' },
+      ...degraded,
+    },
+  };
+}
+
+/** One judgement of a redacted statement: the refusal it amounts to, or undefined when kept. */
+async function judgedOnce(
+  statement: string,
+  charters: readonly CharterBounds[],
+  call: RefusalJudgementCall,
+): Promise<StatementRefusal | undefined> {
+  return refusalOf(await call(refusalJudgementPrompt(statement, charters)), charters);
+}
+
 /**
  * Check a statement before it is shown as a proposal or kept as an agreement (F11): redact it as
  * every stored manager text is, refuse it at once when the redaction removed a secret (it named a
@@ -103,30 +139,61 @@ export async function checkStatement(
   check: StatementCheck,
   call: RefusalJudgementCall = refusalModelCall,
 ): Promise<CheckedStatement> {
-  const redacted = await redactedStatement(text, { model: check.model, known: check.known });
-  const degraded = redacted.redaction ? { redaction: redacted.redaction } : {};
-  if (redacted.namesCredential) {
-    return {
-      outcome: 'refused',
-      statement: redacted.statement,
-      refusal: { reason: 'names-credential' },
-      ...degraded,
-    };
-  }
-  let reply: RefusalJudgement;
+  const { statement, degraded, refused } = await redactedForCheck(text, check);
+  if (refused) return refused;
+  let refusal: StatementRefusal | undefined;
   try {
-    reply = await call(refusalJudgementPrompt(redacted.statement, check.charters));
+    refusal = await judgedOnce(statement, check.charters, call);
   } catch (err: unknown) {
-    return {
-      outcome: 'unavailable',
-      statement: redacted.statement,
-      reason: unavailableReason(err),
-    };
+    return { outcome: 'unavailable', statement, reason: unavailableReason(err) };
   }
-  const refusal = refusalOf(reply, check.charters);
   return refusal
-    ? { outcome: 'refused', statement: redacted.statement, refusal, ...degraded }
-    : { outcome: 'kept', statement: redacted.statement, ...degraded };
+    ? { outcome: 'refused', statement, refusal, ...degraded }
+    : { outcome: 'kept', statement, ...degraded };
+}
+
+/**
+ * An agreement for every employee after a charter's check (RM32 (a)): as {@link CheckedStatement},
+ * and `disputed` when one of the two judgements refused it and the other kept it, with the one
+ * refusal.
+ */
+export type CharterChecked =
+  | CheckedStatement
+  | {
+      readonly outcome: 'disputed';
+      readonly statement: string;
+      readonly refusal: StatementRefusal;
+      readonly redaction?: 'structural-only';
+    };
+
+/**
+ * Check an agreement already in effect for every employee against one employee's newly approved
+ * charter (RM32 (a)): as {@link checkStatement}, except that a refusal, which would end the
+ * agreement for every employee, is judged a second time with the same prompt. Refused only when
+ * both judgements refuse; `disputed` when the second keeps it, which holds the agreement for that
+ * employee alone. A second judgement that could not be had leaves the check `unavailable`, to be
+ * tried again, never settled on the one. A credential the redaction removed is refused at once:
+ * that is no judgement, and a second reading of it would find the same.
+ *
+ * @param text - The agreement's words.
+ * @param check - The employee's charter, the span model and the owner's stored values.
+ * @param call - The model call; the deployment's client unless a test injects one.
+ */
+export async function checkAgainstCharter(
+  text: string,
+  check: StatementCheck,
+  call: RefusalJudgementCall = refusalModelCall,
+): Promise<CharterChecked> {
+  const { statement, degraded, refused } = await redactedForCheck(text, check);
+  if (refused) return refused;
+  try {
+    const first = await judgedOnce(statement, check.charters, call);
+    if (first === undefined) return { outcome: 'kept', statement, ...degraded };
+    const second = await judgedOnce(statement, check.charters, call);
+    return { ...judgedTwice(first, second), statement, ...degraded };
+  } catch (err: unknown) {
+    return { outcome: 'unavailable', statement, reason: unavailableReason(err) };
+  }
 }
 
 /** The sameness judgement's answer, or why it could not be had. */

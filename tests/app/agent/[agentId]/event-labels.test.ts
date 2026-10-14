@@ -28,6 +28,55 @@ describe('the live feed labels', (): void => {
     ).toBe('reorientation card proposes nothing needs to change');
   });
 
+  it('labels a card closed with an outcome by what closed it, not always by another employee’s card (W17-R2)', (): void => {
+    const closed = (outcome: string) =>
+      eventLabel({
+        type: 'reorientation.dismissed',
+        payload: { reorientationId: 'r1', summary: '“Escalation paths” was archived', outcome },
+      });
+    expect(closed('no longer needed: “Escalation paths” is current again')).toBe(
+      'reorientation card closed as no longer needed: “Escalation paths” is current again',
+    );
+    expect(closed('decided on Priya’s card: the relationship was changed')).toBe(
+      'reorientation card closed: decided on another employee’s card',
+    );
+  });
+
+  it('labels a deferred card a change opened again by the change, not by its date (W17-R3)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.reopened',
+        payload: { reorientationId: 'r1', summary: 'x', revisitAt: 1, joined: true },
+      }),
+    ).toBe('deferred reorientation card open again: a further change joined it: x');
+  });
+
+  it('labels a failed run’s model call in the manager’s words (W17-R22)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.failed',
+        payload: {
+          reason:
+            'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-1-initial): prompt reply did not satisfy the schema',
+        },
+      }),
+    ).toBe('run failed (the model’s reply was not in the form Day0 reads)');
+  });
+
+  it('labels a card a fan-out could not open by what it was about (17-O; W16-R23)', (): void => {
+    expect(
+      eventLabel({
+        type: 'reorientation.card-not-opened',
+        payload: {
+          trigger: 'page-status-changed',
+          triggerKey: 'event-1',
+          summary: '“Escalation paths” was archived',
+          reason: 'the card could not be written',
+        },
+      }),
+    ).toBe('reorientation card not opened: “Escalation paths” was archived');
+  });
+
   it('says a ticket a colleague settled as that, with who and when, as the record does (W15-R16)', (): void => {
     const holder = { name: 'Mateo', title: 'Post the September close status note' };
     expect(eventLabel({ type: 'work.claim-refused', payload: { holder } })).toBe(
@@ -185,6 +234,21 @@ describe('the live feed labels', (): void => {
         payload: { version: '0.2', via: 'reorientation', reason: 'Aman Rao now approves' },
       }),
     ).toBe('charter amended to v0.2 from a reorientation card');
+  });
+
+  it('labels a plan drafted again by why: its system connected, or a card changed its ground (V17-9)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.plan-redrafting',
+        payload: { workItemId: 'w1', surfaceId: 's1', slug: 'linear' },
+      }),
+    ).toBe('plan drafted again: linear is connected, so the ticket can be read');
+    expect(
+      eventLabel({
+        type: 'work.plan-redrafting',
+        payload: { workItemId: 'w1', reorientationId: 'card-1', summary: 'Its approver changed' },
+      }),
+    ).toBe('plan drafted again: a card changed what it was drafted under');
   });
 
   it('labels the adoption of the owner’s own address apart from a change on the dashboard (D17)', (): void => {
@@ -443,6 +507,8 @@ describe('the live feed labels', (): void => {
     expect(answered('replaced')).toBe(
       'a reply to a replaced request answered with the request that replaced it',
     );
+    // A conflict's question posted under a request already delivered rides the same event (17-C).
+    expect(answered('question')).toBe('a question about two pages asked in the request’s thread');
   });
 
   it('says which credential the documentation dropped and how many cards need one again', (): void => {
@@ -860,6 +926,21 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
     ).toBe(
       // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
       'working agreement for every employee not in effect for this employee: not checked against its charter',
+    );
+    // RM32 (a), wave 17: a hold two judgements disagreed on.
+    expect(
+      eventLabel({
+        type: 'agreement.refused',
+        payload: {
+          agreementId: 'a2',
+          everyEmployee: true,
+          reason: 'unchecked-for-employee',
+          holdId: 'h1',
+          refusedOnce: { reason: 'widens-scope' },
+        },
+      }),
+    ).toBe(
+      'working agreement for every employee not in effect for this employee: two checks against its charter disagreed',
     );
     expect(
       eventLabel({

@@ -1,5 +1,6 @@
 import { dayKey, deploymentZone } from '@/lib/zone';
 import type { OwnerMetrics } from '@/metrics/types';
+import { coverageLine, type CompanyCoverage } from './company-coverage';
 import { MonthGrid, monthName } from './MonthGrid';
 import { SupervisionFigures } from './SupervisionFigures';
 import type { RosterRow } from './types';
@@ -52,20 +53,24 @@ export function companyToday(roster: readonly RosterRow[], now: number): string 
  *
  * @param roster - The owner's employees, each with what it landed this month.
  * @param figures - The owner's figures, absent until the first employee has any.
+ * @param coverage - Which employees the figures cover: past twenty, said over them (RM33 (a)).
  * @param waiting - What waits on the manager now, placed on today.
  * @param now - The page's clock; the month and today are the employees' ({@link companyToday}).
  */
 export function MonthCard({
   roster,
   figures,
+  coverage = { kind: 'all' },
   waiting,
   now,
 }: {
   roster: readonly RosterRow[];
   figures: OwnerMetrics | null | undefined;
+  coverage?: CompanyCoverage;
   waiting: number;
   now: number;
 }) {
+  const covered = coverageLine(coverage);
   const today = companyToday(roster, now);
   const month = today.slice(0, 7);
   const finished = finishedByDay(roster, month);
@@ -87,7 +92,14 @@ export function MonthCard({
           waitingToday={waiting}
         />
         {figures && figures.employees.length > 0 ? (
-          <SupervisionFigures company={figures.company} />
+          covered === undefined ? (
+            <SupervisionFigures company={figures.company} />
+          ) : (
+            <div className="grid gap-2">
+              <p className="text-xs tabular-nums text-[var(--color-muted)]">{covered}</p>
+              <SupervisionFigures company={figures.company} />
+            </div>
+          )
         ) : null}
       </div>
       <p className="px-5 pb-4 text-xs text-[var(--color-muted)]">

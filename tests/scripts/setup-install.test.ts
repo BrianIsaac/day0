@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +12,7 @@ import {
   setupEnvUpdates,
   type AppWait,
 } from '../../scripts/setup';
+import type { SignInCheck } from '../../scripts/check-sign-in';
 import { harness, type Harness, type HarnessOptions } from './setup-harness';
 
 /** An installation the setup made, before the company sign-in. */
@@ -59,11 +60,18 @@ const INSTALL = [
 interface InstallBed {
   readonly bed: Harness;
   readonly landed: string[];
+  /** The day's install record as the run left it, or nothing when none was written. */
+  record(): string;
   run(args: readonly string[]): Promise<number>;
 }
 
 function installBed(
-  options: HarnessOptions & { readonly appAnswers?: boolean; readonly lastError?: string } = {},
+  options: HarnessOptions & {
+    readonly appAnswers?: boolean;
+    readonly lastError?: string;
+    /** What the proxy check finds once the app is up; absent means it is not asked. */
+    readonly proxy?: readonly SignInCheck[];
+  } = {},
 ): InstallBed {
   const bed = harness({ envLocal: INSTALLED, ...options });
   mkdirSync(join(bed.directory, 'docs-local'), { recursive: true });
@@ -76,9 +84,16 @@ function installBed(
   return {
     bed,
     landed,
+    record: (): string =>
+      readdirSync(record)
+        .map((name) => readFileSync(join(record, name), 'utf8'))
+        .join('\n'),
     run: async (args: readonly string[]): Promise<number> =>
       await runCommand(parseSetupArguments(['--mode', 'real', ...args, '--record', record]), {
         ...bed.io,
+        ...(options.proxy === undefined
+          ? {}
+          : { checkProxy: (): readonly SignInCheck[] => options.proxy ?? [] }),
         readStdin: async (): Promise<string> => STDIN,
         waitForApp: async (url: string): Promise<AppWait> => {
           expect(url).toBe('https://day0.acme.test');
@@ -205,6 +220,131 @@ describe('setup: the install verb', (): void => {
       "This machine's Node does not trust the certificate the proxy presents: run the install again with NODE_EXTRA_CA_CERTS naming the customer's CA bundle (docs/running/install.md, step 6).",
     );
     expect(said).toContain('The install stopped at the app');
+  });
+
+  it('says the address and port pnpm start serves on, which the proxy forwards to (P-1)', async (): Promise<void> => {
+    const bed = installBed();
+    expect(await bed.run(INSTALL)).toBe(0);
+    expect(bed.bed.output.join('\n')).toContain(
+      '`pnpm start` serves on 127.0.0.1:3000, which the proxy forwards https://day0.acme.test to.',
+    );
+    const moved = installBed({ envLocal: `${INSTALLED}DAY0_APP_PORT=5372\n` });
+    expect(await moved.run(INSTALL)).toBe(0);
+    expect(moved.bed.output.join('\n')).toContain('`pnpm start` serves on 127.0.0.1:5372,');
+  });
+
+  describe('the install record (wave 17, 17-P)', (): void => {
+    const IMAGE = { id: `sha256:${'5'.repeat(64)}`, base: `sha256:${'d'.repeat(64)}` };
+    const HOME = '/home/it';
+    // The backend is up, as it is at an install: its container is what names the image.
+    const INSTALLED_AS = {
+      services: ['backend'],
+      headCommit: '0123456789ab',
+      backendImage: IMAGE,
+    };
+    const PASSING: readonly SignInCheck[] = [
+      {
+        name: 'proxy-app',
+        status: 'ok',
+        line: 'https://day0.acme.test answers as Day0 over https.',
+      },
+      {
+        name: 'proxy-backend',
+        status: 'ok',
+        line: 'https://convex.acme.test carries the live connection.',
+      },
+    ];
+
+    it('says what is installed when only the sign-in half ran: the release, the commit, the image and where backups go', async (): Promise<void> => {
+      const bed = installBed({
+        ...INSTALLED_AS,
+        environment: { HOME },
+        failing: [{ match: 'run check:access', status: 1, stderr: 'gap' }],
+      });
+      expect(await bed.run(INSTALL)).toBe(1);
+      const record = bed.record();
+      const install = record.slice(record.indexOf('## The install of'));
+      expect(install).toContain('- Release: v0.3.0');
+      expect(install).toContain('- Commit: 0123456789ab');
+      expect(install).toContain('- Day0’s public address: https://day0.acme.test');
+      expect(install).toContain(`- Backend image: ${IMAGE.id}`);
+      expect(install).toContain(`- Built from the pinned backend: ${IMAGE.base}`);
+      expect(install).toContain('- Backups go to: /home/it/day0-backups/day0-w11ai');
+      expect(install).toContain('- Issuer: https://id.acme.test');
+      expect(install).toContain(
+        '- Redirect URI registered at the issuer: https://day0.acme.test/api/auth/oidc/callback',
+      );
+      expect(install).toContain('- the sign-in: passed');
+      expect(install).toContain('- access: stopped: it exited 1, and nothing after it ran');
+      expect(install).not.toContain('check:setup');
+      expect(record).not.toContain(CLIENT_SECRET);
+      expect(bed.bed.output.join('\n')).toContain('The install record: ');
+    });
+
+    it('is written by an install that stopped at the sign-in itself, before anything was connected', async (): Promise<void> => {
+      const bed = installBed({
+        ...INSTALLED_AS,
+        failing: [{ match: 'run check:setup', status: 1, stderr: 'gap' }],
+      });
+      expect(await bed.run(INSTALL)).toBe(1);
+      const record = bed.record();
+      expect(record).toContain('# Day0 install record: day0-w11ai');
+      expect(record).toContain('- Release: v0.3.0');
+      expect(record).toContain('- the sign-in: stopped: it exited 1, and nothing after it ran');
+      expect(record).not.toContain('## The run of');
+    });
+
+    it('ends on the proxy check: a gap stops it before the live sign-in, and the record carries the row', async (): Promise<void> => {
+      const refused: readonly SignInCheck[] = [
+        PASSING[0]!,
+        {
+          name: 'proxy-backend',
+          status: 'gap',
+          line:
+            'https://convex.acme.test did not complete the WebSocket upgrade: add the upgrade ' +
+            'headers (docs/running/proxy.md, "The backend").',
+        },
+      ];
+      const bed = installBed({ ...INSTALLED_AS, proxy: refused });
+      expect(await bed.run([...INSTALL, '--backend-url', 'https://convex.acme.test'])).toBe(1);
+      const said = bed.bed.output.join('\n');
+      expect(said).toContain('pass https://day0.acme.test answers as Day0 over https.');
+      expect(said).toContain(
+        'gap  https://convex.acme.test did not complete the WebSocket upgrade',
+      );
+      expect(said).toContain('The install stopped at the proxy check');
+      expect(checkOrder(bed.bed)).toEqual(['check:setup', 'check:access', 'check:setup', 'build']);
+      const record = bed.record();
+      expect(record).toContain('- The backend’s public address: https://convex.acme.test');
+      expect(record).toContain(
+        '### The reverse proxy\n\n- pass https://day0.acme.test answers as Day0 over https.',
+      );
+      expect(record).toContain('- gap  https://convex.acme.test did not complete');
+      expect(record).toContain('- the proxy check: stopped: it exited 1');
+    });
+
+    it('records every step and both proxy rows of an install that passed', async (): Promise<void> => {
+      const bed = installBed({ ...INSTALLED_AS, proxy: PASSING });
+      expect(await bed.run([...INSTALL, '--backend-url', 'https://convex.acme.test'])).toBe(0);
+      const record = bed.record();
+      const install = record.slice(record.indexOf('## The install of'));
+      for (const step of [
+        'the sign-in',
+        'access',
+        'check:setup',
+        'the build',
+        'the app',
+        'the proxy check',
+        'check:sign-in',
+      ]) {
+        expect(install, step).toContain(`- ${step}: passed`);
+      }
+      expect(install).toContain('- pass https://convex.acme.test carries the live connection.');
+      // The access half's own section, with the connection it landed, is in the same day's record.
+      expect(record.indexOf('## The run of')).toBeGreaterThan(-1);
+      expect(record.indexOf('## The run of')).toBeLessThan(record.indexOf('## The install of'));
+      expect(record.match(/^# Day0 install record/gm)).toHaveLength(1);
+    });
   });
 
   it('runs the lifecycle verbs’ target checks first, which the sign-in verb alone skips', async (): Promise<void> => {

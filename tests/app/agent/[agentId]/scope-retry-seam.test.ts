@@ -3,7 +3,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { convexTest, type TestConvex } from 'convex-test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MANAGER_ADDRESS, managerIdentity } from '../../../convex/fakes/manager-identity';
 
 vi.mock('convex/react', () => ({
@@ -115,8 +115,22 @@ function card(item: Doc<'workItems'>, onRetryFailed: (feedback?: string) => void
   );
 }
 
-// The seam loads every Convex module and renders the card; on a loaded machine
-// that alone can pass the default five-second timeout.
+/** The Convex modules the seam's three calls load, each with everything it imports. */
+const SEAM_MODULES = ['work', 'workActions', 'workRuns'] as const;
+
+// The seam's calls load most of the Convex tree, and the harness loads a module at the first call
+// that needs it, so the test's own clock used to hold that cold load: about five seconds alone
+// and several times that beside other suites, which is what timed the test out at 30 s once
+// (16-F's F7: one run in a five-file targeted run while another unit's bed was up). The load is
+// taken here, under its own bound, so the test's timeout measures the seam and nothing else. A
+// reset of the module registry (`useSurfaceMode`) evaluates the modules again and transforms none.
+beforeAll(async (): Promise<void> => {
+  useSurfaceMode('mock');
+  const modules = allConvexModules();
+  await Promise.all(SEAM_MODULES.map(async (name) => await modules[`../../convex/${name}.ts`]?.()));
+  restoreSurfaceMode();
+}, 180_000);
+
 describe(
   'the manager retries an out-of-scope skip from the card',
   { timeout: 30_000 },
@@ -205,8 +219,8 @@ describe(
       });
       expect(nextItemToEvaluate(await items())).toBeUndefined();
       expect(card(claimed, noop)).not.toContain('>Retry<');
-      // The whole seam in one test: the card's render, the retry, the evaluation. It passes in
-      // under two seconds alone and overran the default five beside other suites on a loaded machine.
+      // The whole seam in one test: the card's render, the retry, the evaluation, with the
+      // modules already loaded by the hook above.
     }, 30_000);
   },
 );

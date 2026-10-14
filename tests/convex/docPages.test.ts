@@ -1,7 +1,8 @@
 import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
-import { api } from '../../convex/_generated/api';
+import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
+import { replacePageBlocks } from '../../convex/docBlocks';
 import { PAGE_TABLE_ROWS } from '../../convex/docPages';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
@@ -321,5 +322,65 @@ describe('docPages.readState', (): void => {
     await expect(owner.query(api.docPages.readState, { sourceId })).resolves.toBeNull();
     await harness.run(async (ctx) => await ctx.db.delete(sourceId));
     await expect(owner.query(api.docPages.readState, { sourceId })).resolves.toBeNull();
+  });
+});
+
+describe('docPages.storedForRevision', (): void => {
+  it('offers a page stored with a revision, the hash its split wrote and its blocks, and none whose blocks never landed (W16-R34)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: 'owner',
+        label: 'Wiki',
+        kind: 'yuque',
+        locator: 'https://acme.yuque.com/revops/runbooks',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 1,
+        credentialRefs: [],
+        pageCount: 3,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 2,
+      });
+      const page = async (ref: string, markdown: string, split: boolean): Promise<void> => {
+        await ctx.db.insert('docPages', {
+          sourceId,
+          ref,
+          title: ref,
+          markdown,
+          updatedAt: 1,
+          contentHash: 'a'.repeat(32),
+          sourceRevision: '7',
+          datedBySource: true,
+        });
+        if (!split) return;
+        await replacePageBlocks(ctx, {
+          userId: 'owner',
+          sourceId,
+          pageRef: ref,
+          generation: runId,
+          markdown,
+        });
+      };
+      await page('split.md', '# Split\n\nIts blocks landed.', true);
+      // A hash a v0.19.0 store wrote before the split, which then never landed.
+      await page('unsplit.md', '# Unsplit\n\nIts blocks never landed.', false);
+      await page('heading.md', '# Only a heading', false);
+      return { sourceId };
+    });
+    const kept = await harness.query(internal.docPages.storedForRevision, {
+      sourceId,
+      refs: ['split.md', 'unsplit.md', 'heading.md', 'missing.md'],
+    });
+    // A page with no block is read as before, a page of headings alone among them: telling the
+    // two apart means splitting the page, which this read does for none (the second pass).
+    expect(kept.map((page) => [page.ref, page.sourceRevision, page.datedBySource])).toEqual([
+      ['split.md', '7', true],
+    ]);
   });
 });

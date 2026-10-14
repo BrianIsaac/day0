@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { devServerEnvironment, resolveAppHost, resolveAppPort } from '../../scripts/dev';
+import {
+  devServerEnvironment,
+  fromEnvText,
+  resolveAppHost,
+  resolveAppPort,
+} from '../../scripts/dev';
 
 describe('the port pnpm dev serves on', (): void => {
   it('takes the shell, then the file, then 3000', (): void => {
@@ -50,5 +55,25 @@ describe('what the dev server runs with (C-34)', (): void => {
     expect(readFileSync('scripts/dev.ts', 'utf8')).toContain(
       'env: devServerEnvironment(process.env, port)',
     );
+  });
+});
+
+// W17-R24 (reader 5's probe): IT writes `.env.local` as a shell file is written, and the four
+// readers of it read such a line four ways.
+describe('a value read from an env file written as a shell file is written (W17-R24)', (): void => {
+  it('reads a single-quoted value, an inline comment, an export line, a CRLF file and a duplicate key as dotenv does', (): void => {
+    expect(fromEnvText("HTTPS_PROXY='http://p.acme.test:3128'\n", 'HTTPS_PROXY')).toBe(
+      'http://p.acme.test:3128',
+    );
+    expect(fromEnvText('HTTPS_PROXY=http://p.acme.test:3128 # corp\n', 'HTTPS_PROXY')).toBe(
+      'http://p.acme.test:3128',
+    );
+    expect(fromEnvText('export HTTPS_PROXY=http://p.acme.test:3128\n', 'HTTPS_PROXY')).toBe(
+      'http://p.acme.test:3128',
+    );
+    expect(
+      fromEnvText('DAY0_APP_PORT=4000\r\nHTTPS_PROXY=http://p.acme.test:3128\r\n', 'DAY0_APP_PORT'),
+    ).toBe('4000');
+    expect(fromEnvText('DAY0_APP_PORT=4000\nDAY0_APP_PORT=5000\n', 'DAY0_APP_PORT')).toBe('5000');
   });
 });

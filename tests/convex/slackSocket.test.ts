@@ -621,7 +621,7 @@ describe('the bridge’s heartbeat (wave 13, 13-FS; D-6 (b), W12-R16)', (): void
     expect(text).not.toContain('Press Approve or Reject');
     // The fixture's app is not recorded as taking messages, so day0 is the way to decide (W12V-7).
     expect(text).toContain(
-      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
   });
 

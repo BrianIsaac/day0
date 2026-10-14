@@ -1,0 +1,148 @@
+# A bed's additions to docker-compose.yml for the two proxies a customer's network puts around
+# Day0 (wave 17, 17-P; decision P-2): a reverse proxy in front, terminating TLS for the app's
+# origin and the backend's, and a forward proxy as the only route out. It is how
+# docs/running/proxy.md's two configurations and docs/running/egress.md's findings were run
+# before they were printed. Never on a customer install, and no setup verb starts it: a
+# customer's IT runs its own proxies, and `pnpm check:setup` checks those.
+#
+# Compose reads COMPOSE_FILE from the process environment, not from the --env-file, and the
+# setup pins it to the main file for its own children; so a bed runs the setup, then exports
+#
+#   COMPOSE_FILE=docker-compose.yml:fake-oidc/compose.bed.yml:docker/proxy.bed.yml
+#
+# and recreates the stack (`docker compose ... down`, then `up -d --wait`; the volumes are kept).
+# The test issuer's overlay comes first: it gives the project network the subnet the addresses
+# below are in. `./setup.sh upgrade` recreates the backend from the main file alone, so a bed
+# re-applies the overlays after one.
+#
+# What it changes:
+#
+# - No network has a route out. `default`, and the two networks the main file gives the Slack
+#   socket bridge and Nango for their own way out, become internal; the forward proxy alone joins
+#   `proxy-egress`, the one network that leaves the machine. A service reaches the internet
+#   through it or not at all, which is what the bed is for. A customer's proxy is one address
+#   every service and this machine reach; the bed's is PROXY_BED_FORWARD_ADDRESS on the project
+#   network, so the bridge and Nango's server, which the main file keeps off that network, join
+#   it here to reach the proxy. A bed's concession, never the product's.
+# - Docker publishes no port on an internal network, so the backend's two loopback ports are
+#   carried by `host-relay` instead, and the setup, the Convex CLI, the app and the reverse proxy
+#   reach the backend at 127.0.0.1 as they do on a customer's machine.
+# - The reverse proxy runs on the host's network, as a customer's does on the machine itself or
+#   beside it: `--profile caddy` or `--profile nginx`, one at a time, each with the configuration
+#   proxy.md prints. Its two origins listen on PROXY_BED_ADDRESS, this machine's own address on
+#   the project network (the subnet's first), which is not loopback, so Day0 treats it as the
+#   public address it is standing in for.
+#
+# The bed's `.env.local` names the forward proxy as a customer's would name theirs, by one
+# address: HTTPS_PROXY=http://<PROXY_BED_FORWARD_ADDRESS>:3128 (and HTTP_PROXY), with the test
+# issuer's address and PROXY_BED_ADDRESS in NO_PROXY, since both are inside the bed's own network.
+#
+# The certificate is a throwaway authority's (fake-oidc/make-tls.sh <dir> <PROXY_BED_ADDRESS>);
+# this machine's Node trusts it through NODE_EXTRA_CA_CERTS, as it would a customer's own.
+networks:
+  default:
+    internal: true
+  slack-socket-egress:
+    internal: true
+  nango-egress:
+    internal: true
+  # The forward proxy's own way out, and nothing else's.
+  proxy-egress:
+
+services:
+  backend:
+    networks:
+      default:
+        ipv4_address: ${PROXY_BED_BACKEND_ADDRESS:?the backend's address on the project network, which host-relay carries this machine's two ports to}
+    environment:
+      # The fake Slack is plain http, and the curl that `pnpm check:access` dials a vendor with
+      # from inside this container reads a proxy for plain http by its lower-case name alone. A
+      # real vendor is https, which HTTPS_PROXY carries.
+      - http_proxy=${HTTP_PROXY:-}
+
+  forward-proxy:
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+    command: ['node', '/app/forward-proxy.js']
+    user: node
+    read_only: true
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 2s
+    networks:
+      default:
+        ipv4_address: ${PROXY_BED_FORWARD_ADDRESS:?the forward proxy's address on the project network, which every service and this machine name it by}
+      proxy-egress:
+    environment:
+      - FORWARD_PROXY_PORT=3128
+    volumes:
+      - ./docker/proxy-bed:/app:ro
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3128/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+
+  # Joined to the project network only to reach the forward proxy (see the head of this file).
+  slack-socket:
+    networks: ['default']
+
+  nango-server:
+    networks: ['default']
+
+  host-relay:
+    image: node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32
+    command: ['node', '/app/relay.js']
+    network_mode: host
+    user: node
+    read_only: true
+    cap_drop: ['ALL']
+    security_opt: ['no-new-privileges:true']
+    restart: unless-stopped
+    stop_grace_period: 2s
+    environment:
+      # PROXY_BED_EXTRA_RELAYS carries any other port a bed's tools reach on this machine, such as
+      # the fake Slack's, which `pnpm check:access` asks at its published port: `<port>=<address>:<port>`.
+      - RELAYS=${CONVEX_PORT:-3210}=${PROXY_BED_BACKEND_ADDRESS:?}:3210,${CONVEX_SITE_PROXY_PORT:-3211}=${PROXY_BED_BACKEND_ADDRESS:?}:3211${PROXY_BED_EXTRA_RELAYS:+,${PROXY_BED_EXTRA_RELAYS}}
+    volumes:
+      - ./docker/proxy-bed:/app:ro
+
+  # Caddy, with docs/running/proxy.md's configuration.
+  reverse-proxy-caddy:
+    profiles: ['caddy']
+    image: caddy:2-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 2s
+    environment: &reverse-proxy-environment
+      - PROXY_BED_ADDRESS=${PROXY_BED_ADDRESS:?this machine's address on the project network, which the two https origins listen on}
+      - PROXY_BED_APP_PORT=${PROXY_BED_APP_PORT:?the port of the app's https origin}
+      - PROXY_BED_BACKEND_PORT=${PROXY_BED_BACKEND_PORT:?the port of the backend's https origin}
+      - DAY0_APP_PORT=${DAY0_APP_PORT:-3000}
+      - CONVEX_PORT=${CONVEX_PORT:-3210}
+    volumes:
+      - ./docker/proxy-bed/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${PROXY_BED_TLS_DIR:?the directory fake-oidc/make-tls.sh wrote the proxy's certificate into}:/tls:ro
+
+  # nginx, with docs/running/proxy.md's configuration. PROXY_BED_NGINX_TEMPLATE names another
+  # template for the walk's one deliberate fault: the same file with the upgrade headers taken
+  # out, which `pnpm check:setup` must name as a gap.
+  reverse-proxy-nginx:
+    profiles: ['nginx']
+    image: nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+    network_mode: host
+    restart: unless-stopped
+    stop_grace_period: 2s
+    environment: *reverse-proxy-environment
+    volumes:
+      - ${PROXY_BED_NGINX_TEMPLATE:-./docker/proxy-bed/nginx.conf.template}:/etc/nginx/templates/day0.conf.template:ro
+      # The image's own site listens on port 80 of every interface, which on the host's network
+      # would be this machine's: an empty file stands in its place.
+      - /dev/null:/etc/nginx/conf.d/default.conf:ro
+      - ${PROXY_BED_TLS_DIR:?the directory fake-oidc/make-tls.sh wrote the proxy's certificate into}:/tls:ro

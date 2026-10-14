@@ -284,13 +284,44 @@ describe('the company supervision card', (): void => {
     expect(crowded).not.toContain('evaluation employees left out');
   });
 
-  it('renders nothing until the owner has an employee', (): void => {
-    for (const result of [undefined, null, 0, { ...FIGURES, employees: [] }]) {
-      query.result = result;
-      expect(renderToStaticMarkup(<CompanySupervision />)).toBe('');
+  it('renders nothing until the owner has an employee and the mode is known', (): void => {
+    const drawn = (figures: OwnerMetrics | undefined): string =>
+      renderToStaticMarkup(<CompanySupervision company={{ figures, coverage: { kind: 'all' } }} />);
+    // The one query the card itself reads is the deployment's mode.
+    query.result = { mode: 'real', label: 'real' };
+    for (const figures of [undefined, { ...FIGURES, employees: [] }]) {
+      expect(drawn(figures)).toBe('');
     }
-    query.result = FIGURES;
-    expect(renderToStaticMarkup(<CompanySupervision />)).toContain('Company supervision');
+    expect(drawn(FIGURES)).toContain('Company supervision');
+    query.result = undefined;
+    expect(drawn(FIGURES)).toBe('');
+  });
+
+  it('says how many employees its figures are of while every employee is read by pages, then the whole count (RM33 (a))', (): void => {
+    // The review's bed 1: the subscribed read keeps twenty of fifty-one.
+    const twenty = { ...FIGURES, excludedAgents: 0, omittedEmployees: 31 };
+    const reading = renderToStaticMarkup(
+      <CompanySupervisionCard figures={twenty} coverage={{ kind: 'reading', read: 20, of: 51 }} />,
+    );
+    expect(reading).toContain('>20 of 51 read<');
+    expect(reading).not.toContain('employees, one manager');
+    expect(reading).not.toContain('most recent');
+
+    const every = renderToStaticMarkup(
+      <CompanySupervisionCard
+        figures={{ ...FIGURES, company: { ...FIGURES.company, employees: 51 }, excludedAgents: 0 }}
+        coverage={{ kind: 'every', employees: 51 }}
+      />,
+    );
+    expect(every).toContain('51 employees, one manager');
+    expect(every).not.toContain(' read<');
+    expect(every).not.toContain('most recent');
+
+    // A read by pages that failed leaves the most recent employees' figures, and says so.
+    const recent = renderToStaticMarkup(
+      <CompanySupervisionCard figures={twenty} coverage={{ kind: 'recent', read: 20, of: 51 }} />,
+    );
+    expect(recent).toContain('most recent employees; 31 earlier ones are not counted');
   });
 
   it("prints A9's five pilot figures for each employee and the company, hours saved as an internal gauge", (): void => {

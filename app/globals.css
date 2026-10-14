@@ -16,7 +16,18 @@
   --color-muted: #a1a1aa;
   --color-accent: #22d3ee;
   --color-warn: #f59e0b;
-  --color-danger: #ef4444;
+  /* One step lighter than the design's red (#ef4444), in the dark set only (D-7 (b), wave 17): on
+     its 15% chip fill that red read 4.03:1 on a card, the one drawn text pair under 4.5:1 in
+     either set (W16-R33). This step reads 5.98, 5.15 and 5.59 on the page, a card and an inset,
+     and 5.90 on danger-soft. The danger fill and line below keep the values mixed from the
+     design's red: the chip's text moved, not its ground. */
+  --color-danger: #f87171;
+  /* The red a solid fill is drawn in under white text, and the one a widget that takes a single
+     danger colour gets (Clerk: its destructive button's fill and its error text,
+     `clerk-appearance.ts`). The design's own red: white reads 3.76:1 on it and it reads 4.71:1 on
+     a card, as at v0.20.0. No one red does 4.5:1 both ways on the dark card, and the lighter text
+     step above put white on it at 2.77:1 (the second pass on 17-FX). */
+  --color-danger-solid: #ef4444;
   --color-ok: #34d399;
   --color-card: #18181b;
   --color-border: #27272a;
@@ -62,6 +73,7 @@
   --color-accent: #0e7490;
   --color-warn: #92400e;
   --color-danger: #991b1b;
+  --color-danger-solid: #991b1b;
   --color-ok: #065f46;
   --color-card: #ffffff;
   --color-border: #e4e4e7;

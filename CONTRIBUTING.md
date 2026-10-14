@@ -32,7 +32,7 @@ Every `pnpm` script, in the order a contributor meets them. The ones marked real
 | `./setup.sh cloud <verb> --target <file>` | Convex cloud and Vercel, no Docker: `setup` (the first push to an empty production deployment, and the app), `upgrade` (an export, then the checkout's tag pushed, migrated, stamped and deployed), `backup`, `pause`, `unpause`; each proves its target with a dry run before it writes, and setup and upgrade end with their rollback |
 | `pnpm setup:local` | The same setup in mock mode, the seeded office the evaluation harness and the hosted demo run on |
 | `pnpm dev` | The app under `next dev`, with the unlock URL printed first |
-| `pnpm start` | `next start` on 3000 after a `pnpm build`; the hosted build's server, not the local way to run it |
+| `pnpm start` | The built app on `127.0.0.1`, its port `PORT`, then `DAY0_APP_PORT`, then 3000, after a `pnpm build`, with the proxy `.env.local` names; a customer's install behind its https proxy, not the local way to run it |
 | `pnpm dev:no-auth-key` | Writes the no-auth keys, the credential key and the Notion component's token into `.env.local` once |
 | `pnpm check:setup` | Reports each setup, fails only on what is broken; `--report` prints the support bundle as JSON |
 | `pnpm sync:env` | Pushes the deployment's env from `.env.local` |

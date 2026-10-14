@@ -1,21 +1,18 @@
 /** @vitest-environment node */
 
-import { convexTest, type TestConvex } from 'convex-test';
-import { describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { convexTest } from 'convex-test';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../convex/_generated/api';
+import { OWNER_ROW_EMPLOYEE_ID_FIELDS } from '../../convex/exportActions';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import {
-  assembleOwnerExport,
-  employeeTracesOf,
-  OWNER_SECTIONS,
-  readOwnerExport,
-  type OwnerExport,
-} from '../../src/export/trace';
-import { personNameKey } from '../../src/people/vocabulary';
+import { employeeTracesOf, readOwnerExport } from '../../src/export/trace';
+import { encrypt } from '../../src/lib/credential-crypto';
 import { allConvexModules } from './all-modules';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
+import { ownerExportOf, seedOwner, type Harness } from './fakes/owner-export';
 
 describe('the export redacts by its own policy row (review M9)', (): void => {
   it("removes an e-mail, a phone number and a labelled address from a work item's text", async (): Promise<void> => {
@@ -118,241 +115,6 @@ describe("the export drops a person a provider's answer names (the real-Linear w
  * the owner's own rows in one file, read only under the caller's own owner key.
  */
 
-type Harness = TestConvex<typeof schema>;
-
-/** What one owner's seeded rows are called, so a test can look for them in another's file. */
-interface Seeded {
-  readonly agentId: Id<'agents'>;
-  readonly evaluationId: Id<'agents'>;
-  readonly marks: readonly string[];
-  readonly pageText: string;
-}
-
-/**
- * One owner's company: an employee with a finished item and a reorientation card, an evaluation
- * agent, a documentation source with a stored page and a relation, a person with an identity and
- * an edge, a skill version, a working agreement, a retired employee and one handed elsewhere.
- * Every name carries the tag, so another owner's file can be searched for it.
- */
-async function seedOwner(harness: Harness, owner: string, tag: string): Promise<Seeded> {
-  const pageText = `${tag} PAGE TEXT that never leaves the deployment`;
-  return await harness.run(async (ctx): Promise<Seeded> => {
-    const bossEmail = fixtureAddressOf(owner);
-    const agentId = await ctx.db.insert('agents', {
-      bossEmail,
-      name: `${tag} Employee`,
-      userId: owner,
-      state: 'active',
-      createdAt: 1,
-    });
-    const evaluationId = await ctx.db.insert('agents', {
-      bossEmail: `eval-day0-r1-${String(1_760_000_000_000 + tag.length)}@day0.local`,
-      name: 'Day0 evaluation 1',
-      userId: owner,
-      state: 'active',
-      createdAt: 2,
-    });
-    const workItemId = await ctx.db.insert('workItems', {
-      agentId,
-      sourceCategory: 'ticket-queue',
-      sourceSystem: 'linear',
-      externalId: `${tag}-1`,
-      title: `${tag} ticket`,
-      contentSummary: 'Synthetic.',
-      contentRefs: [],
-      state: 'completed',
-      observedAt: 1,
-      createdAt: 1,
-    });
-    await ctx.db.insert('events', {
-      agentId,
-      type: 'work.completed',
-      payload: { workItemId, output: { workDone: 'done', workDoneWhy: 'Posted.', draft: '' } },
-      createdAt: 60_000,
-    });
-    await ctx.db.insert('reorientations', {
-      agentId,
-      userId: owner,
-      trigger: 'relationship-changed',
-      triggerKey: `${tag}:edge`,
-      triggerSummary: `${tag} card`,
-      evidence: {
-        eventIds: [],
-        pageRefs: [],
-        relationIds: [],
-        correctionIds: [],
-        relationshipIds: [],
-        skillIds: [],
-        skillVersionIds: [],
-      },
-      affected: {
-        charterClauses: [],
-        agreements: [],
-        relationships: [],
-        skills: [],
-        surfaces: [],
-        workItems: [],
-      },
-      proposed: { kind: 'pending' },
-      risk: 'low',
-      blockingWork: [],
-      status: 'open',
-      day: '2026-10-12',
-      createdAt: 1,
-    });
-    const sourceId = await ctx.db.insert('docSources', {
-      userId: owner,
-      label: `${tag} handbook`,
-      kind: 'folder',
-      locator: `/srv/${tag}/handbook`,
-      status: 'synced',
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await ctx.db.insert('docPages', {
-      sourceId,
-      ref: 'refunds.md',
-      title: `${tag} refunds page`,
-      markdown: pageText,
-      contentHash: `${tag}-hash`,
-      updatedAt: 1,
-      status: 'superseded',
-      statusSource: 'manager',
-      decidedBy: bossEmail,
-      decidedAt: 3,
-      marker: { status: 'superseded', quote: `${tag} marker words`, judgedAt: 2 },
-    });
-    await ctx.db.insert('docPages', {
-      sourceId,
-      ref: 'refunds-2.md',
-      title: `${tag} refunds page 2`,
-      markdown: pageText,
-      updatedAt: 2,
-    });
-    await ctx.db.insert('docRelations', {
-      userId: owner,
-      from: { sourceId, ref: 'refunds.md' },
-      to: { sourceId, ref: 'refunds-2.md' },
-      kind: 'possible_duplicate',
-      evidence: [{ measure: 'text-overlap', value: 0.9 }],
-      decidedBy: bossEmail,
-      decidedAt: 4,
-      status: 'proposed',
-      createdAt: 1,
-    });
-    const personId = await ctx.db.insert('people', {
-      userId: owner,
-      displayName: `${tag} Person`,
-      nameKey: personNameKey(`${tag} Person`),
-      status: 'active',
-      source: 'manager',
-      evidence: [],
-      confirmedAt: 1,
-      createdAt: 1,
-      updatedAt: 1,
-    });
-    await ctx.db.insert('personIdentities', {
-      userId: owner,
-      personId,
-      provider: 'slack',
-      externalId: `${tag}-U1`,
-      source: 'provider-lookup',
-      verifiedAt: 1,
-      createdAt: 1,
-    });
-    await ctx.db.insert('relationships', {
-      userId: owner,
-      toPersonId: personId,
-      type: 'approval-authority',
-      effectiveFrom: 1,
-      status: 'active',
-      source: 'manager',
-      confirmedAt: 1,
-      createdAt: 1,
-    });
-    await ctx.db.insert('skillVersions', {
-      userId: owner,
-      name: `${tag}-skill`,
-      description: 'Comment on a ticket, then close it.',
-      surfaceClass: 'kanban',
-      operation: 'comment-and-close',
-      version: 1,
-      body: '# Comment and close',
-      smokeTest: 'def run(inputs): return {"actions": []}',
-      bodyHash: 'sha256:00',
-      requiredScopes: ['linear:write'],
-      harnessTools: ['save_comment'],
-      harnessToolsBySurface: [{ slug: 'linear', surfaceClass: 'kanban', tools: ['save_comment'] }],
-      targetSurface: 'linear',
-      authorAgentId: agentId,
-      authorName: `${tag} Employee`,
-      readRefs: [],
-      verifiedAt: 2,
-      createdAt: 2,
-    });
-    await ctx.db.insert('workingAgreements', {
-      userId: owner,
-      kind: 'preference',
-      statement: `${tag} agreement`,
-      scope: 'person',
-      personId,
-      sourceType: 'plan-approval',
-      workItemId,
-      status: 'proposed',
-      createdAt: 6,
-      appliedTo: [],
-    });
-    await ctx.db.insert('retirements', {
-      userId: owner,
-      agentId: evaluationId,
-      agentName: `${tag} Retired`,
-      retiredAt: 7,
-      rowCounts: { events: 3 },
-      revokedCredentials: 0,
-      keptCredentials: 0,
-      claims: [],
-      rejections: [],
-    });
-    return {
-      agentId,
-      evaluationId,
-      marks: [
-        `${tag} Employee`,
-        `${tag} card`,
-        `${tag} handbook`,
-        `${tag} refunds page`,
-        `${tag} Person`,
-        `${tag}-U1`,
-        `${tag}-skill`,
-        `${tag} agreement`,
-        `${tag} Retired`,
-        `${tag} ticket`,
-      ],
-      pageText,
-    };
-  });
-}
-
-/** The owner export a signed-in owner's browser assembles, through the public actions. */
-async function ownerExportOf(harness: Harness, owner: string): Promise<OwnerExport> {
-  const caller = harness.withIdentity(managerIdentity(owner));
-  return await assembleOwnerExport({
-    head: async () => await caller.action(api.exportActions.exportForOwner, {}),
-    page: async (cursor) => await caller.action(api.exportActions.exportOwnerPage, cursor),
-    employee: {
-      head: async ({ agentId }) =>
-        await caller.action(api.exportActions.exportForAgent, {
-          agentId: agentId as Id<'agents'>,
-        }),
-      page: async ({ agentId, page }) =>
-        await caller.action(api.exportActions.exportPage, {
-          agentId: agentId as Id<'agents'>,
-          ...page,
-        }),
-    },
-  });
-}
-
 describe('the owner export (wave 16, 16-F)', (): void => {
   it('holds every employee’s trace and the owner’s rows, and no other owner’s row (two identities)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -389,98 +151,6 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     expect(readOwnerExport(JSON.parse(text))).toBeDefined();
   });
 
-  it('carries a page’s place and status, never its text, its hash, a marker’s words or who decided it', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    const a = await seedOwner(harness, 'owner-a', 'Alpha');
-
-    const file = await ownerExportOf(harness, 'owner-a');
-
-    expect(JSON.stringify(file)).not.toContain(a.pageText);
-    const [first] = file.owner.docPages;
-    // Re-pinned by W16-R18: a page's ref and address leave the file; its row id names it.
-    expect(first).toMatchObject({
-      title: 'Alpha refunds page',
-      status: 'superseded',
-      statusSource: 'manager',
-      decidedAt: 3,
-      marker: { status: 'superseded', judgedAt: 2 },
-    });
-    for (const field of ['markdown', 'contentHash', 'decidedBy'])
-      expect(first).not.toHaveProperty(field);
-    expect(first?.marker).not.toHaveProperty('quote');
-    // Who decided a relation is the manager's address, left out as a page's is (the second pass).
-    expect(file.owner.docRelations[0]).not.toHaveProperty('decidedBy');
-    expect(file.owner.docRelations[0]).toMatchObject({ decidedAt: 4 });
-    expect(file.owner.docSources[0]).not.toHaveProperty('locator');
-    expect(file.owner.docSources[0]).toMatchObject({ label: 'Alpha handbook', kind: 'folder' });
-  });
-
-  it('leaves out every page’s address and ref, naming pages and relation ends by the page’s row (W16-R18)', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    await seedOwner(harness, 'owner-a', 'Alpha');
-    // Reader 5's red.ts: for a list of URLs the ref is the address itself, query string and all.
-    const token = 'sig=AbCdEf0123456789xyz&e=Q9vG2k';
-    const address = `https://docs.example.com/guide?${token}`;
-    await harness.run(async (ctx) => {
-      const sourceId = await ctx.db.insert('docSources', {
-        userId: 'owner-a',
-        label: 'Guides',
-        kind: 'urls',
-        locator: address,
-        status: 'synced',
-        createdAt: 2,
-        updatedAt: 2,
-      });
-      await ctx.db.insert('docPages', {
-        sourceId,
-        ref: address,
-        url: address,
-        title: 'Guide',
-        markdown: 'Text.',
-        updatedAt: 1,
-        status: 'superseded',
-        supersededBy: { sourceId, ref: `${address}&v=2` },
-      });
-      await ctx.db.insert('docPages', {
-        sourceId,
-        ref: `${address}&v=2`,
-        url: `${address}&v=2`,
-        title: 'Guide, version 2',
-        markdown: 'Text.',
-        updatedAt: 2,
-      });
-      await ctx.db.insert('docRelations', {
-        userId: 'owner-a',
-        from: { sourceId, ref: `${address}&v=2` },
-        to: { sourceId, ref: address },
-        kind: 'possible_successor',
-        evidence: [{ measure: 'title-version', value: 1 }],
-        status: 'confirmed',
-        createdAt: 3,
-      });
-    });
-
-    const file = await ownerExportOf(harness, 'owner-a');
-
-    expect(JSON.stringify(file)).not.toContain('sig=AbCdEf0123456789xyz');
-    for (const page of file.owner.docPages) {
-      expect(page).not.toHaveProperty('ref');
-      expect(page).not.toHaveProperty('url');
-    }
-    const guide = file.owner.docPages.find((page) => page.title === 'Guide')!;
-    const second = file.owner.docPages.find((page) => page.title === 'Guide, version 2')!;
-    // Each page carries an opaque key of its own, which a relation's ends and the page that
-    // superseded it name: nothing is read to make it, and it says nothing of the address.
-    expect(guide.page).toMatch(/^[0-9a-f]{24}$/);
-    expect(guide.page).not.toBe(second.page);
-    expect(guide.supersededBy).toEqual({ sourceId: guide.sourceId, page: second.page });
-    const successor = file.owner.docRelations.find(
-      (relation) => relation.kind === 'possible_successor',
-    )!;
-    expect(successor.from).toEqual({ sourceId: second.sourceId, page: second.page });
-    expect(successor.to).toEqual({ sourceId: guide.sourceId, page: guide.page });
-  });
-
   it('carries the people graph once, among the owner’s rows, and fills it back into each trace', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedOwner(harness, 'owner-a', 'Alpha');
@@ -504,57 +174,49 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     expect(file.employees.map((trace) => trace.agent.id)).not.toContain(a.evaluationId);
   });
 
-  it('names an employee handed to another manager, and none of its records or either manager', async (): Promise<void> => {
+  it('names every one of the owner’s agents across the pages of its head, each once, and none of another owner’s (W16-R32)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const a = await seedOwner(harness, 'owner-a', 'Alpha');
-    await harness.run(async (ctx) => {
-      await ctx.db.patch(a.agentId, { userId: 'owner-b', bossEmail: fixtureAddressOf('owner-b') });
-      await ctx.db.insert('managerTransfers', {
-        agentId: a.agentId,
-        agentName: 'Alpha Employee',
-        fromOwnerKey: 'owner-a',
-        fromAddress: fixtureAddressOf('owner-a'),
-        toAddress: fixtureAddressOf('owner-b'),
-        toOwnerKey: 'owner-b',
-        state: 'accepted',
-        requestedAt: 100,
-        expiresAt: 1_000_000,
-        decidedAt: 200,
-      });
-    });
-
-    const file = await ownerExportOf(harness, 'owner-a');
-
-    expect(file.owner.departures).toEqual([
-      expect.objectContaining({ agentId: a.agentId, agentName: 'Alpha Employee', decidedAt: 200 }),
-    ]);
-    expect(file.employees).toEqual([]);
-    const text = JSON.stringify(file);
-    expect(text).not.toContain('owner-b');
-    expect(text).not.toContain(fixtureAddressOf('owner-b'));
-    expect(text).not.toContain('Alpha ticket');
-  });
-
-  it('pages every owner section, so a section past one page is read whole', async (): Promise<void> => {
-    const harness = convexTest(schema, allConvexModules());
-    await seedOwner(harness, 'owner-a', 'Alpha');
-    await harness.run(async (ctx) => {
-      const [source] = await ctx.db.query('docSources').collect();
-      for (let index = 0; index < 60; index += 1) {
-        await ctx.db.insert('docPages', {
-          sourceId: source!._id,
-          ref: `extra-${index}.md`,
-          title: `Extra ${index}`,
-          markdown: 'Synthetic.',
-          updatedAt: 1,
+    const b = await seedOwner(harness, 'owner-b', 'Bravo');
+    // The review's input: more agents than the head once read (five hundred, counting at most
+    // one past them as left out).
+    const more = 505;
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < more; index += 1) {
+        await ctx.db.insert('agents', {
+          bossEmail: fixtureAddressOf('owner-a'),
+          name: `Alpha hire ${index}`,
+          userId: 'owner-a',
+          state: 'active',
+          createdAt: 10 + index,
         });
       }
     });
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
 
-    const file = await ownerExportOf(harness, 'owner-a');
+    const head = await caller.action(api.exportActions.exportForOwner, {});
+    const employees = [...head.employees];
+    const setAside = [...head.setAside];
+    let cursor = head.moreAgents;
+    let pages = 1;
+    while (cursor !== null) {
+      const page = await caller.action(api.exportActions.exportOwnerAgents, { cursor });
+      employees.push(...page.employees);
+      setAside.push(...page.setAside);
+      cursor = page.moreAgents;
+      pages += 1;
+    }
 
-    expect(file.owner.docPages).toHaveLength(62);
-    expect(Object.keys(file.manifest.counts)).toEqual([...OWNER_SECTIONS, 'employees']);
+    expect(pages).toBeGreaterThan(5);
+    expect(employees).toHaveLength(more + 1);
+    expect(new Set(employees.map((employee) => employee.id)).size).toBe(more + 1);
+    // In deploy order, the seeded employee first.
+    expect(employees[0]).toEqual({ id: a.agentId, name: 'Alpha Employee' });
+    expect(employees.at(-1)?.name).toBe(`Alpha hire ${more - 1}`);
+    expect(setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    for (const id of [b.agentId, b.evaluationId]) {
+      expect([...employees, ...setAside].map((agent) => agent.id)).not.toContain(id);
+    }
   });
 
   it('refuses a caller with no identity', async (): Promise<void> => {
@@ -564,71 +226,134 @@ describe('the owner export (wave 16, 16-F)', (): void => {
       refusal,
     );
     await expect(
+      harness.action(api.exportActions.exportOwnerAgents, { cursor: 'any' }),
+    ).rejects.toMatchObject(refusal);
+    await expect(
       harness.action(api.exportActions.exportOwnerPage, { section: 'people', cursor: null }),
     ).rejects.toMatchObject(refusal);
   });
 });
 
-describe('the owner export’s walk of stored pages (the second pass’s finding 4)', (): void => {
-  it('goes on to the next source when the one it is in is unlinked between two pages', async (): Promise<void> => {
+describe('a page of an employee’s trace is bounded in bytes', (): void => {
+  it('ends a page of work items before it has read past the bound, and the trace still holds every one once', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const [first, second] = await harness.run(async (ctx) => {
-      const source = async (label: string, pages: number) => {
-        const sourceId = await ctx.db.insert('docSources', {
-          userId: 'owner-a',
-          label,
-          kind: 'folder',
-          locator: `/srv/${label}`,
-          status: 'synced',
-          createdAt: 1,
-          updatedAt: 1,
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // Forty finished items whose runs each kept a 200 KB draft: 8 MB in one page of a hundred.
+    const draft = 'y'.repeat(200_000);
+    await harness.run(async (ctx): Promise<void> => {
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('workItems', {
+          agentId: a.agentId,
+          sourceCategory: 'ticket-queue',
+          sourceSystem: 'linear',
+          externalId: `Alpha-long-${index}`,
+          title: `Alpha long ticket ${index}`,
+          contentSummary: 'Synthetic.',
+          contentRefs: [],
+          state: 'completed',
+          output: { workDone: 'done', workDoneWhy: 'Posted.', draft },
+          observedAt: 3,
+          createdAt: 3,
         });
-        for (let index = 0; index < pages; index += 1) {
-          await ctx.db.insert('docPages', {
-            sourceId,
-            ref: `${label}-${index}.md`,
-            title: `${label} ${index}`,
-            markdown: 'Synthetic.',
-            updatedAt: 1,
-          });
-        }
-        return sourceId;
-      };
-      return [await source('first', 30), await source('second', 2)];
+      }
     });
     const caller = harness.withIdentity(managerIdentity('owner-a'));
-    const page = await caller.action(api.exportActions.exportOwnerPage, {
-      section: 'docPages',
+
+    const first = await caller.action(api.exportActions.exportPage, {
+      agentId: a.agentId,
+      section: 'workItems',
       cursor: null,
     });
-    expect(page.next?.section).toBe('docPages');
-    await harness.run(async (ctx) => {
-      for (const row of await ctx.db
-        .query('docPages')
-        .withIndex('by_source', (q) => q.eq('sourceId', first))
-        .collect()) {
-        await ctx.db.delete(row._id);
-      }
-      await ctx.db.delete(first);
-    });
+    expect(first.rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(first.rows).length).toBeLessThan(5 * 1024 * 1024);
+    expect(first.next).toMatchObject({ section: 'workItems' });
 
-    const after = await caller.action(api.exportActions.exportOwnerPage, {
-      section: 'docPages',
-      cursor: page.next?.cursor ?? null,
-    });
+    const file = await ownerExportOf(harness, 'owner-a');
+    expect(file.employees[0]?.sections.workItems).toHaveLength(41);
+  });
+});
 
-    expect(after.rows.map((row) => (row as { sourceId: string }).sourceId)).toEqual([
-      second,
-      second,
-    ]);
+describe('an employee’s id in the export (W16-R32)', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
   });
 
-  it('refuses a cursor that is not one of its own, in words a client reads', async (): Promise<void> => {
+  /** One stored credential of the owner's, sealed as the store action seals it. */
+  async function storeValue(harness: Harness, owner: string, plaintext: string): Promise<void> {
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('credentials', {
+        userId: owner,
+        kind: 'value',
+        label: 'A short tile code',
+        source: 'entered',
+        createdAt: 1,
+        ...encrypt(plaintext, key),
+      });
+    });
+  }
+
+  it('is in the file unscrubbed when a stored value occurs inside it, and the value is still removed where it is data', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    await expect(
-      harness
-        .withIdentity(managerIdentity('owner-a'))
-        .action(api.exportActions.exportOwnerPage, { section: 'docPages', cursor: 'not json' }),
-    ).rejects.toThrow('not a cursor of the owner export’s stored pages');
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    // The review's input: a short stored credential that occurs inside the employees' ids.
+    const inside = a.agentId.slice(0, 4);
+    expect(a.evaluationId).toContain(inside);
+    await storeValue(harness, 'owner-a', inside);
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', {
+        agentId: a.agentId,
+        sourceCategory: 'ticket-queue',
+        sourceSystem: 'linear',
+        externalId: 'Alpha-2',
+        title: `Rotate the tile code ${inside} before Friday`,
+        contentSummary: 'Synthetic.',
+        contentRefs: [],
+        state: 'discovered',
+        observedAt: 2,
+        createdAt: 2,
+      });
+    });
+
+    const file = await ownerExportOf(harness, 'owner-a');
+
+    // Wherever the file names the employee: the list its traces follow, its own trace, its rows
+    // and the owner's rows that are about it; and the agent set aside the same.
+    expect(file.employees.map((trace) => trace.agent.id)).toEqual([a.agentId]);
+    const [trace] = file.employees;
+    expect(trace?.sections.events.map((event) => event.agentId)).toEqual([a.agentId]);
+    expect(trace?.sections.workItems.map((item) => item.agentId)).toEqual([a.agentId, a.agentId]);
+    expect(file.owner.skillVersions.map((version) => version.authorAgentId)).toEqual([a.agentId]);
+    expect(file.owner.retirements.map((row) => row.agentId)).toEqual([a.evaluationId]);
+    expect(file.setAside.map((agent) => agent.id)).toEqual([a.evaluationId]);
+    // The stored value where it is data, in a ticket's title, is removed as before.
+    const titles = trace?.sections.workItems.map((item) => item.title) ?? [];
+    expect(titles.some((title) => title.startsWith('Rotate the tile code '))).toBe(true);
+    expect(titles.join(' ')).not.toContain(inside);
+  });
+
+  it('is kept in the owner’s rows in every field the schema types as an employee’s id', (): void => {
+    // The tables the owner's rows are read from (`OWNER_SECTION_PAGES`).
+    const tables = [
+      'retirements',
+      'managerTransfers',
+      'docSources',
+      'docPages',
+      'docRelations',
+      'skillVersions',
+      'people',
+      'personIdentities',
+      'relationships',
+      'workingAgreements',
+    ] as const;
+    const typed = new Set(
+      tables.flatMap((table) =>
+        Object.entries(schema.tables[table].validator.fields).flatMap(([field, validator]) =>
+          validator.kind === 'id' && validator.tableName === 'agents' ? [field] : [],
+        ),
+      ),
+    );
+    expect([...typed].sort()).toEqual([...OWNER_ROW_EMPLOYEE_ID_FIELDS].sort());
   });
 });

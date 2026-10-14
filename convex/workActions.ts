@@ -25,11 +25,13 @@ import { accessEnded } from '../src/work/surface-access';
 import { log } from '../src/lib/logger';
 import type { ClosingAuthoring, ModelCallStage } from '../src/events/contract';
 import {
+  ActionContractRefusal,
   ClosingGateRefusal,
   DEFERRALS_KEPT,
   deferralAudit,
   dependentActionCap,
   HELD_ITEM_REPLY_COMPLETED,
+  outputKeepingRefusedReply,
   removePrewrittenClosingActions,
   repairableReadFailures,
   repairFailedReads,
@@ -37,6 +39,7 @@ import {
   repairToolArguments,
   withArgumentRepairs,
   withholdActions,
+  withRefusedReply,
   withReportsOfWithheld,
   runDependentSkill,
   runSkill,
@@ -61,7 +64,10 @@ import {
   managerDmReachable,
   managerMessageTexts,
   openManagerQuestion,
+  isWithheldForAnswer,
+  joinedOpenQuestion,
   openQuestionStopReason,
+  standingQuestionsOf,
   transitionPromised,
   withheldForAnswerReason,
   writesAwaitingAnswer,
@@ -130,6 +136,7 @@ import type {
   LandedWrite,
   MockSurfaceSnapshot,
   SkillShape,
+  StandingQuestion,
   UnsentWrite,
 } from '../src/work/types';
 import {
@@ -1460,6 +1467,15 @@ async function holdDay0Actions(
     // a provider error can echo the header it was sent, and a client library
     // appends its stack.
     const reason = safeFailureMessage(err, '', 'the execution failed');
+    // A reply the executor's contract refused after its one repair is kept on the row where the
+    // run stops, at once or once its resumes are spent (17-FW; 16-Q's write-priya-verification).
+    const kept =
+      err instanceof ActionContractRefusal
+        ? withCarriedWrites(outputKeepingRefusedReply(err), {
+            landedWrites: args.landedWrites ?? [],
+            unsentWrites: args.unsentWrites ?? [],
+          })
+        : undefined;
     // A failure that is not about the item (a rate limit, an outage, a
     // timeout) goes through the resume ladder before the run stops, as a
     // draft's does; one about the item stops it now (`draftOrFail`'s rule).
@@ -1473,6 +1489,7 @@ async function holdDay0Actions(
         workItemId: args.workItemId,
         runId: args.runId,
         reason,
+        ...(kept === undefined ? {} : { output: kept }),
       });
       if (resumed.outcome === 'resumed') {
         return result({ ok: false, reason: `execution will be tried again: ${reason}` });
@@ -1485,6 +1502,8 @@ async function holdDay0Actions(
       runId: args.runId,
       // A conflict confirmed since the approval stops the run for the manager (D-4 (b)).
       ...(err instanceof ConflictConfirmedError ? { stopped: true } : {}),
+      // Nothing of a refused reply landed: the run stopped, as it did before the reply was kept.
+      ...(kept === undefined ? {} : { stopped: true, output: kept }),
     });
     return result({ ok: false, reason });
   }
@@ -1833,18 +1852,20 @@ export async function withOpenQuestionHeld<T extends QuestionableOutput>(
     question: asked.question,
   });
   if (!open) return read;
-  return withheldForQuestion(read, open.withheld, { question: open.question, steps: open.steps });
+  return withheldForQuestion(read, open.withheld, [{ question: open.question, steps: open.steps }]);
 }
 
 /**
  * The set with some writes withheld for a question's answer, each with its reason, the messages
- * that report them with them (W12X-2), and the question recorded so the run stops with it once
- * the rest has settled. A question already recorded on the set stands, the steps joined to it.
+ * that report them with them (W12X-2), and the questions recorded so the run stops with them once
+ * the rest has settled. A question already recorded on the set stands, and each one given here is
+ * joined to it with its own steps and mark (`joinedOpenQuestion`; 17-C: the conflict's mark was
+ * dropped beside the executor's own question, and the mixed set stopped a second time).
  */
 function withheldForQuestion<T extends QuestionableOutput>(
   output: T,
   writes: ReadonlyArray<{ index: number; step: number }>,
-  question: NonNullable<ExecutionOutput['openQuestion']>,
+  questions: readonly StandingQuestion[],
 ): T {
   const refusals = withReportsOfWithheld(
     output.actions,
@@ -1854,7 +1875,10 @@ function withheldForQuestion<T extends QuestionableOutput>(
   const withheld = withholdActions(output, refusals, "for the manager's answer");
   const reindex = (index: number): number =>
     index - [...removed].filter((removedIndex) => removedIndex < index).length;
-  const standing = output.openQuestion;
+  const openQuestion = questions.reduce<ExecutionOutput['openQuestion']>(
+    (open, question) => joinedOpenQuestion(open, question),
+    output.openQuestion,
+  );
   return {
     ...withheld,
     ...(output.argumentRepairs
@@ -1864,13 +1888,7 @@ function withheldForQuestion<T extends QuestionableOutput>(
             .map((attempt) => ({ ...attempt, index: reindex(attempt.index) })),
         }
       : {}),
-    openQuestion:
-      standing === undefined
-        ? question
-        : {
-            question: standing.question,
-            steps: [...new Set([...standing.steps, ...question.steps])].sort((a, b) => a - b),
-          },
+    ...(openQuestion === undefined ? {} : { openQuestion }),
   };
 }
 
@@ -1890,30 +1908,40 @@ async function withConflictsHeld<T extends QuestionableOutput>(
   },
 ): Promise<T> {
   if (SURFACE_MODE !== 'real') return output;
+  // A question whose conflict stopped standing by a path that did not pass the relation's own
+  // decision is closed first, so the run neither waits on it nor leaves it open (17-C).
+  await ctx.runMutation(internal.managerQuestions.closeSettled, {
+    workItemId: context.workItemId,
+  });
   const holds = await ctx.runQuery(internal.managerQuestions.conflictHoldsFor, {
     workItemId: context.workItemId,
   });
   const writes = new Map<number, { index: number; step: number }>();
-  const steps = new Set<number>();
+  // The writes the executor's own question already withheld from this set: a conflict that holds
+  // one of them is still a question the run waits on, though nothing is left for it to withhold
+  // (17-C: unsaid, it was met only on the Retry that answered the other, and stopped the run a
+  // second time).
+  const withheldForAnswer = (output.withheldActions ?? [])
+    .filter((row) => isWithheldForAnswer(row.reason))
+    .map((row) => row.action);
+  // Each conflict's question with the steps its own hold withholds, so each keeps its mark.
+  const questions: StandingQuestion[] = [];
   for (const hold of holds) {
-    const held = conflictSteps(context.plan, hold);
-    for (const write of conflictHeldWrites({
-      plan: context.plan,
-      actions: output.actions,
-      surfaces: context.surfaces,
-      steps: held,
-    })) {
-      writes.set(write.index, write);
-      steps.add(write.step);
-    }
+    const steps = conflictSteps(context.plan, hold);
+    const heldOf = (actions: readonly MockAction[]) =>
+      conflictHeldWrites({ plan: context.plan, actions, surfaces: context.surfaces, steps });
+    const held = heldOf(output.actions);
+    const waiting = [...held, ...heldOf(withheldForAnswer)];
+    if (waiting.length === 0) continue;
+    for (const write of held) writes.set(write.index, write);
+    questions.push({
+      question: boundedQuestion(hold.question),
+      steps: [...new Set(waiting.map((write) => write.step))].sort((a, b) => a - b),
+      relationId: hold.relationId,
+    });
   }
-  const [first] = holds;
-  if (writes.size === 0 || first === undefined) return output;
-  return withheldForQuestion(output, [...writes.values()], {
-    question: boundedQuestion(first.question),
-    steps: [...steps].sort((a, b) => a - b),
-    relationId: first.relationId,
-  });
+  if (questions.length === 0) return output;
+  return withheldForQuestion(output, [...writes.values()], questions);
 }
 
 /**
@@ -1945,7 +1973,9 @@ async function recordConditionalWritesWithheld(
       workItemId: run.workItemId,
       runId: run.runId,
       phase: run.phase,
-      steps: after.openQuestion.steps,
+      steps: [
+        ...new Set(standingQuestionsOf(after.openQuestion).flatMap((question) => question.steps)),
+      ].sort((a, b) => a - b),
       withheld: before.actions
         .filter((action) => !kept.has(action))
         .map((action) => actionName(action)),
@@ -3172,7 +3202,12 @@ export const authorDependentActions = internalAction({
         runId: args.runId,
         reason,
         ...(initial
-          ? { output: scrubKnownValues(withRefusedClosing(initial, refused, reason), knownValues) }
+          ? {
+              output: scrubKnownValues(
+                withRefusedReply(withRefusedClosing(initial, refused, reason), error),
+                knownValues,
+              ),
+            }
           : {}),
         ...(gateRefusal || heldByCard ? { stopped: true } : {}),
       });

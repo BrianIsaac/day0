@@ -256,6 +256,41 @@ describe('isGoneCitesReason', (): void => {
     expect(isGoneCitesReason(long)).toBe(true);
   });
 
+  it('names the folders of two same-titled pages of one source, and cuts them with the names (W17-R1, D-11 (a))', (): void => {
+    expect(
+      conflictConfirmedReason('Review window', [
+        {
+          title: 'Close review window',
+          source: 'Company folder',
+          ref: 'policies/close-review-window.md',
+        },
+        {
+          title: 'Close review window',
+          source: 'Company folder',
+          ref: 'revops/runbooks/close-review-window.md',
+        },
+      ]),
+    ).toBe(
+      'Since you approved this plan, you confirmed that A, Close review window (Company folder, policies), and B, Close review window (Company folder, revops/runbooks) disagree under “Review window”. Retry drafts the plan again.',
+    );
+    const deep = 'a-deep-folder/'.repeat(8);
+    const long = conflictConfirmedReason('A heading '.repeat(12).trim(), [
+      {
+        title: 'A very long page title '.repeat(6).trim(),
+        source: 'Revops folder',
+        ref: `${deep}one/page.md`,
+      },
+      {
+        title: 'A very long page title '.repeat(6).trim(),
+        source: 'Revops folder',
+        ref: `${deep}two/page.md`,
+      },
+    ]);
+    expect(long.length).toBeLessThanOrEqual(300);
+    expect(long.endsWith('Retry drafts the plan again.')).toBe(true);
+    expect(isGoneCitesReason(long)).toBe(true);
+  });
+
   it('tells a gone cite’s failure from any other, so a Retry drafts a new plan only for it', (): void => {
     expect(isGoneCitesReason(goneCitesReason(['Handbook/a.md#A']))).toBe(true);
     expect(isGoneCitesReason('the Linear MCP timed out')).toBe(false);

@@ -4,7 +4,7 @@ import {
   type EventPayloads,
   type EventType,
   type GrantSource,
-  type WorkDecisionAcknowledgingPayload,
+  type DecisionNoticeKind,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import { MANAGER_REJECTION_PREFIX } from '@/work/needs-manager';
@@ -18,6 +18,7 @@ import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
+import { reasonInWords } from '@/work/stop';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -667,8 +668,10 @@ const DOCUMENTATION_SITE: Readonly<Record<string, string>> = {
 
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
 const ACKNOWLEDGEMENT_WORDS: Readonly<
-  Record<WorkDecisionAcknowledgingPayload['kind'], (subject: RecordSubject) => string>
+  Record<DecisionNoticeKind, (subject: RecordSubject) => string>
 > = {
+  question: (subject) =>
+    `${subject.name} asked ${addressee(subject)} which of two pages is right, in the thread of the plan’s request${forItem(subject)}`,
   received: (subject) => `${subject.name} acknowledged ${whose(subject)} reply${forItem(subject)}`,
   unknown: () => 'A reply with no open request was answered',
   replaced: (subject) =>
@@ -1190,9 +1193,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     `${subject.name} read what the plan${forItem(subject)} rests on`,
   'work.plan-drafted': (_, subject) => `${subject.name} drafted a plan${forItem(subject)}`,
   'work.plan-redrafting': (p, subject) =>
-    `The plan${forItem(subject)} is drafted again: ${
-      text(p.slug) ?? 'its system'
-    } is connected, so the ticket can be read`,
+    p.reorientationId !== undefined
+      ? `The plan${forItem(subject)} is drafted again: ${
+          text(p.summary) !== undefined ? `the card about “${text(p.summary)}”` : 'a card'
+        } changed what it was drafted under`
+      : `The plan${forItem(subject)} is drafted again: ${
+          text(p.slug) ?? 'its system'
+        } is connected, so the ticket can be read`,
   'work.plan-redraft': (p, subject) =>
     `The plan${forItem(subject)} is drafted again. ${
       text(p.reason) ?? 'Documentation the plan followed has since been changed or removed.'
@@ -1218,7 +1225,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.reason === 'every-employee-too-many'
       ? `A working agreement is not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : p.reason === 'unchecked-for-employee'
-        ? `A working agreement for every employee is not in effect for ${subject.name}: Day0 has not checked it against its charter`
+        ? p.refusedOnce !== undefined
+          ? `A working agreement for every employee is not in effect for ${subject.name}: Day0 checked it against its charter twice and the two checks disagreed`
+          : `A working agreement for every employee is not in effect for ${subject.name}: Day0 has not checked it against its charter`
         : text(p.clause)
           ? `A working agreement was refused: it contradicts “${text(p.clause)}”`
           : `A working agreement was refused: it would go beyond the charter`,
@@ -1325,7 +1334,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.failed': (p, subject) =>
     p.stopped === true
       ? `The run${forItem(subject)} stopped`
-      : `The run${forItem(subject)} failed${because(p.reason)}`,
+      : `The run${forItem(subject)} failed${because(reasonInWords(p.reason))}`,
   'work.actions-auto-applying': (p, subject) =>
     `${subject.name} is applying ${counted(p.autoIndexes?.length, 'action') ?? 'actions'}${onItem(
       subject,
@@ -1423,7 +1432,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.result) ? `, and ${text(p.result)}` : ''
     }`,
   'reorientation.dismissed': (p, subject) =>
-    `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
+    text(p.outcome) !== undefined
+      ? `The reorientation card${text(p.summary) !== undefined ? ` about “${text(p.summary)}”` : ''} closed as ${text(p.outcome)}`
+      : `${decider(subject)} dismissed the reorientation card${cardAbout(p.summary)}, and nothing changed`,
   'reorientation.deferred': (p, subject) =>
     `${decider(subject)} deferred the reorientation card${cardAbout(p.summary)}, to open again on its date`,
   'manager.question-asked': (p, subject) =>
@@ -1431,7 +1442,13 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.question) ? `: ${text(p.question)}` : ''
     }`,
   'reorientation.reopened': (p) =>
-    `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+    p.joined === true
+      ? `A deferred reorientation card opened again before its date, since a further change joined it${cardAbout(p.summary)}`
+      : `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+  'reorientation.card-not-opened': (p, subject) =>
+    `Day0 could not open a reorientation card for ${subject.name}${
+      text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''
+    }${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */

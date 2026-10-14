@@ -16,14 +16,15 @@
  * 0: written; 2: usage, or a call the deployment refused.
  */
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { closeSync, openSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEV_NO_AUTH_SUBJECT } from '../src/lib/dev-auth-issuer';
 import {
-  assembleOwnerExport,
   assembleTrace,
+  streamOwnerExport,
   type AgentTrace,
+  type OwnerAgentsPage,
   type OwnerExport,
   type OwnerExportHead,
   type OwnerPage,
@@ -83,32 +84,126 @@ export async function exportTrace(
 }
 
 /**
- * Export the caller's owner export (wave 16, 16-F): every employee's trace and the owner's own
- * rows, assembled through the paged actions into the one file `metrics:recompute` reads.
+ * Write every byte of a piece of the file: one write may take fewer than it was handed (a disk
+ * that fills part way), and what it left would be missing from the file with no error.
  *
+ * @param bytes - The piece.
+ * @param write - Writes the piece from an offset and answers how many bytes it took.
+ * @throws Error when a write takes nothing, where the loop would never end.
+ */
+export function writeWhole(
+  bytes: Uint8Array,
+  write: (bytes: Uint8Array, offset: number) => number,
+): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    const taken = write(bytes, offset);
+    if (taken <= 0) {
+      throw new Error(`the file took none of the ${bytes.length - offset} bytes left to write`);
+    }
+    offset += taken;
+  }
+}
+
+/** How an unfinished file is tidied away: closed where it is still open, then removed. */
+export interface PartialTidying {
+  /** Closes the file; absent once it is closed. */
+  readonly close?: () => void;
+  /** Removes the file. */
+  readonly remove: () => void;
+}
+
+/**
+ * Tidy away what an export that stopped left on disk, keeping the reason it stopped as the error
+ * thrown: the file is removed whether or not closing it went through, and what either step
+ * refuses is said after the reason, never in its place.
+ *
+ * @param partial - The unfinished file's path, for the message.
+ * @param error - Why the export stopped.
+ * @param tidy - The two steps.
+ * @returns The error to throw: the reason itself when the tidying went through.
+ */
+export function stoppedExport(partial: string, error: unknown, tidy: PartialTidying): Error {
+  const stopped = error instanceof Error ? error : new Error(String(error));
+  const refused: string[] = [];
+  const reasonOf = (tidying: unknown): string =>
+    tidying instanceof Error ? tidying.message : String(tidying);
+  try {
+    tidy.close?.();
+  } catch (closing) {
+    refused.push(`closing ${partial} was refused (${reasonOf(closing)})`);
+  }
+  try {
+    tidy.remove();
+  } catch (removing) {
+    refused.push(`${partial} could not be removed (${reasonOf(removing)}): delete it yourself`);
+  }
+  return refused.length === 0
+    ? stopped
+    : new Error(`${stopped.message}; and ${refused.join('; and ')}`, { cause: stopped });
+}
+
+/**
+ * Export the caller's owner export (wave 16, 16-F) to a file: every employee's trace and the
+ * owner's own rows, read through the paged actions and written as each arrives (wave 17, 17-F),
+ * so the command holds one employee's trace however many there are. The pieces go to
+ * `<out>.partial`, which takes the file's name once it is whole; a call the deployment refuses
+ * part way, or a name the whole file cannot take, leaves no partial file. A run that is
+ * interrupted (Ctrl-C) leaves `<out>.partial`, named for what it is; the next run writes over it.
+ *
+ * @param out - The file to write.
  * @param run - How a deployed function is called.
  * @param subject - The caller's subject, the no-auth one a local bed runs as by default.
- * @returns The whole file.
+ * @returns The file's manifest, with its counts.
+ * @throws Error carrying the refused call's own message; nothing is left on disk.
  */
 export async function exportOwner(
+  out: string,
   run: ConvexRun,
   subject: string = DEV_NO_AUTH_SUBJECT,
-): Promise<OwnerExport> {
-  return await assembleOwnerExport({
-    head: async () => (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
-    page: async (cursor) =>
-      (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
-    employee: {
-      head: async ({ agentId }) =>
-        (await run('exportActions:exportForAgent', { agentId }, subject)) as TraceHead,
-      page: async ({ agentId, page }) =>
-        (await run(
-          'exportActions:exportPage',
-          { agentId, section: page.section, cursor: page.cursor },
-          subject,
-        )) as TracePage,
-    },
-  });
+): Promise<OwnerExport['manifest']> {
+  const partial = `${out}.partial`;
+  const file = openSync(partial, 'w');
+  let open: number | undefined = file;
+  try {
+    const manifest = await streamOwnerExport(
+      {
+        head: async () =>
+          (await run('exportActions:exportForOwner', {}, subject)) as OwnerExportHead,
+        agents: async (cursor) =>
+          (await run('exportActions:exportOwnerAgents', { cursor }, subject)) as OwnerAgentsPage,
+        page: async (cursor) =>
+          (await run('exportActions:exportOwnerPage', { ...cursor }, subject)) as OwnerPage,
+        employee: {
+          head: async ({ agentId }) =>
+            (await run('exportActions:exportForAgent', { agentId }, subject)) as TraceHead,
+          page: async ({ agentId, page }) =>
+            (await run(
+              'exportActions:exportPage',
+              { agentId, section: page.section, cursor: page.cursor },
+              subject,
+            )) as TracePage,
+        },
+      },
+      {
+        write: async (chunk) => {
+          writeWhole(Buffer.from(chunk, 'utf8'), (bytes, offset) => writeSync(file, bytes, offset));
+          await Promise.resolve();
+        },
+      },
+    );
+    // Marked closed first: a close the disk refuses is not tried a second time by the tidying.
+    open = undefined;
+    closeSync(file);
+    renameSync(partial, out);
+    return manifest;
+  } catch (error) {
+    const stillOpen = open;
+    throw stoppedExport(partial, error, {
+      ...(stillOpen === undefined ? {} : { close: (): void => closeSync(stillOpen) }),
+      remove: (): void => rmSync(partial, { force: true }),
+    });
+  }
 }
 
 function parseArguments(
@@ -157,15 +252,13 @@ export async function runExportTrace(
     return 2;
   }
   if (options.agentId === 'owner') {
-    let file: OwnerExport;
+    let manifest: OwnerExport['manifest'];
     try {
-      file = await exportOwner(run, options.subject);
+      manifest = await exportOwner(options.out, run, options.subject);
     } catch (error) {
       io.error(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
     }
-    writeFileSync(options.out, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-    const { manifest } = file;
     io.log(
       `${options.out}: the owner export, exported ${manifest.exportedOn} (${manifest.zone}) at release ${manifest.release ?? 'unstamped'}, commit ${manifest.commit ?? 'unknown'}; ${Object.entries(
         manifest.counts,

@@ -14,7 +14,12 @@ import {
   storedPageStatus,
   type FoundBlock,
 } from './docBlocks';
-import { citeConflictOf, planSelectionOf, standingConflictsOn } from './docConflicts';
+import {
+  citeConflictOf,
+  planSelectionOf,
+  standingConflictsOn,
+  type CarriedPage,
+} from './docConflicts';
 import { MAX_BLOCKS_PER_PAGE } from '../src/docs/blocks';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import {
@@ -332,13 +337,25 @@ export async function selectedDocumentation(
       block.hash === undefined ? [] : [block.hash],
     ),
   );
+  // The pages those blocks are of, for an owner whose confirmed conflicts pass one read: there
+  // the conflicts are read by the page, so an older one is not missed (W15-R19; 17-C).
+  const carriedKeys = new Set(
+    [...scouted, ...[...pageBlocks.values()].flat()].map((block) => block.pageKey),
+  );
+  const carried = (): CarriedPage[] =>
+    docs.flatMap((doc) =>
+      doc.sourceId !== undefined &&
+      doc.sourceRef !== undefined &&
+      carriedKeys.has(pageKeyOf(doc.sourceId, doc.sourceRef))
+        ? [{ sourceId: doc.sourceId, ref: doc.sourceRef }]
+        : [],
+    );
   const standing =
-    userId === undefined ? new Map() : await standingConflictsOn(ctx, userId, hashes);
+    userId === undefined ? [] : await standingConflictsOn(ctx, userId, hashes, carried);
   const conflicts = new Map(
-    [...standing].map(([hash, conflict]): [string, CiteConflict] => [
-      hash,
-      citeConflictOf(conflict),
-    ]),
+    standing.flatMap((conflict) =>
+      conflict.blocks.map((hash): [string, CiteConflict] => [hash, citeConflictOf(conflict)]),
+    ),
   );
   return selectDocumentation({ request, pages, scouted, pageBlocks, always, conflicts });
 }
@@ -366,11 +383,54 @@ interface CitedPage {
   readonly supersededBy?: string;
 }
 
+/**
+ * The most successors one check of a plan's cites reads the whole row of, for its title: a page
+ * row holds its whole text, and the cited page's own row is read beside it.
+ */
+const SUCCESSOR_ROWS_READ = 4;
+
+/** The blocks of a successor past that bound that are read for its first heading. */
+const SUCCESSOR_BLOCKS_READ = 4;
+
+/**
+ * The title of the page that superseded a cited one. Its row gives it exactly, for the first
+ * `SUCCESSOR_ROWS_READ` of one check; past that it is the first heading of the page's first
+ * blocks, small rows (W15-R20: a whole row a superseded cite, with the cited page's own, put a
+ * plan of a dozen long pages over the read limit). A reader writes a page's title as its first
+ * heading and a Markdown file's title is its first level-one heading, so the two agree but for a
+ * file that opens with a lower heading; a page with no heading in those blocks is left unnamed.
+ *
+ * @param takeRow - Asks the check for one of its whole-row reads; false once they are spent.
+ */
+async function successorTitle(
+  ctx: QueryCtx,
+  successor: { readonly sourceId: Id<'docSources'>; readonly ref: string },
+  takeRow: () => boolean,
+): Promise<string | undefined> {
+  if (takeRow()) {
+    const row = await ctx.db
+      .query('docPages')
+      .withIndex('by_source_ref', (q) =>
+        q.eq('sourceId', successor.sourceId).eq('ref', successor.ref),
+      )
+      .unique();
+    return row?.title;
+  }
+  const blocks = await ctx.db
+    .query('docBlocks')
+    .withIndex('by_source_page', (q) =>
+      q.eq('sourceId', successor.sourceId).eq('pageRef', successor.ref),
+    )
+    .take(SUCCESSOR_BLOCKS_READ);
+  return blocks.find((block) => block.headingPath.length > 0)?.headingPath[0];
+}
+
 /** One cited block's page, read once: its row, its source and the page that superseded it. */
 async function citedPage(
   ctx: QueryCtx,
   block: Pick<Doc<'docBlocks'>, 'sourceId' | 'pageRef'>,
   agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'> | null | undefined,
+  takeRow: () => boolean,
 ): Promise<CitedPage> {
   const [page, source] = await Promise.all([
     ctx.db
@@ -379,15 +439,10 @@ async function citedPage(
       .unique(),
     ctx.db.get(block.sourceId),
   ]);
-  const successor =
+  const supersededBy =
     page?.supersededBy === undefined
-      ? null
-      : await ctx.db
-          .query('docPages')
-          .withIndex('by_source_ref', (q) =>
-            q.eq('sourceId', page.supersededBy!.sourceId).eq('ref', page.supersededBy!.ref),
-          )
-          .unique();
+      ? undefined
+      : await successorTitle(ctx, page.supersededBy, takeRow);
   return {
     name: `${source?.label || 'source'}/${block.pageRef}`,
     stored: page !== null,
@@ -399,7 +454,7 @@ async function citedPage(
         source.userId === agent.userId &&
         agentReadsSource(agent, source._id)),
     status: page === null ? 'active' : pageStatusOf(page),
-    ...(successor !== null ? { supersededBy: successor.title } : {}),
+    ...(supersededBy !== undefined ? { supersededBy } : {}),
   };
 }
 
@@ -437,9 +492,15 @@ export const changedCitedBlocks = internalQuery({
         )
         .first()) !== null;
     const pages = new Map<string, Promise<CitedPage>>();
+    let successorRows = 0;
+    const takeRow = (): boolean => {
+      if (successorRows >= SUCCESSOR_ROWS_READ) return false;
+      successorRows += 1;
+      return true;
+    };
     const pageOf = (block: Doc<'docBlocks'>): Promise<CitedPage> => {
       const key = pageKeyOf(block.sourceId, block.pageRef);
-      if (!pages.has(key)) pages.set(key, citedPage(ctx, block, agent));
+      if (!pages.has(key)) pages.set(key, citedPage(ctx, block, agent, takeRow));
       return pages.get(key)!;
     };
     const checked = await Promise.all(

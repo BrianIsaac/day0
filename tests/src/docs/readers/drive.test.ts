@@ -4,7 +4,19 @@ import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { GoogleDriveReader } from '../../../../src/docs/readers/drive';
 import { mirroredDocSlug, type DocSourceRecord } from '../../../../src/docs/types';
-import { providerFake, type FakeOverride, type FakeRequest } from '../../../fixtures/readers/fake';
+import {
+  fixtureJsonWithout,
+  providerFake,
+  type FakeOverride,
+  type FakeRequest,
+} from '../../../fixtures/readers/fake';
+import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
+import {
+  libraryFake,
+  type LibraryFake,
+  type LibraryOptions,
+} from '../../../fixtures/readers/library';
+import { readWhole, type StoredMarks } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -136,6 +148,8 @@ describe('the Google Drive documentation reader', (): void => {
       markdown:
         '# Close the quarter\n\n## Steps\n\n1. Lock the ledger.\n2. Refresh the pipeline tile.\n\n| Step | Owner |\n| :--- | :--- |\n| Lock the ledger | Finance |',
       updatedAt: Date.UTC(2026, 9, 1, 9, 30, 0),
+      // Re-pinned for wave 17 (D-8): every reader says whether the page's date is its source's own.
+      datedBySource: true,
       sourceRevision: '41',
     });
     const exported = requests.find((request) => request.url.pathname.endsWith('/export'));
@@ -344,5 +358,163 @@ describe('the Google Drive documentation reader', (): void => {
       "A Google Drive source reads as a service account, and this one has no key: use Rotate on the source's row to paste the service account's JSON key.",
     );
     expect(requests).toEqual([]);
+  });
+});
+
+describe("a Google Drive document's date (wave 17, D-8)", (): void => {
+  it('says a document is dated by its source when Drive gives its modified time', async (): Promise<void> => {
+    const { reader } = readerOnDrive();
+    const { pages } = await wholeFolder(reader);
+    expect(pages.length).toBeGreaterThan(0);
+    expect(pages.map((page) => page.datedBySource)).toEqual(pages.map(() => true));
+  });
+
+  it('says a document with no date from its source is dated by the read: datedBySource false', async (): Promise<void> => {
+    const { reader } = readerOnDrive((request) =>
+      request.url.pathname.endsWith('/drive/v3/files') &&
+      !request.url.searchParams.has('pageToken') &&
+      (request.url.searchParams.get('q') ?? '').startsWith(`'${ROOT}'`)
+        ? json(200, fixtureJsonWithout('drive', 'list-root-1.json', 'modifiedTime'))
+        : undefined,
+    );
+    const { pages } = await reader.listPageBatch(folder, SECRET, undefined, 3);
+    expect(pages.map((page) => [page.title, page.updatedAt, page.datedBySource])).toEqual([
+      ['Close the quarter', T0, false],
+      ['Escalation paths', T0, false],
+    ]);
+  });
+});
+
+/** A generated library in the fixture folder, and a reader on it with its clock still. */
+function driveLibrary(options: Omit<LibraryOptions, 'publicKey'>): {
+  library: LibraryFake;
+  reader: GoogleDriveReader;
+} {
+  const library = libraryFake('drive', { ...options, publicKey: KEYS.publicKey });
+  const reader = new GoogleDriveReader({
+    fetch: library.fetch,
+    now: (): number => T0,
+    sleep: async (): Promise<void> => undefined,
+  });
+  return { library, reader };
+}
+
+/** The ref of a library's document by its place in the library. */
+const libraryRef = (index: number): string => `1LibDoc${String(index).padStart(26, '0')}`;
+
+describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): void => {
+  it("reads a thousand unchanged documents for the listing's requests and no body request, and one changed document alone", async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 1_000 });
+    const marks: StoredMarks = new Map();
+    const first = await readWhole(reader, folder, SECRET, marks);
+    expect(first.read).toHaveLength(1_000);
+    expect(library.counts().bodies).toBe(1_000);
+    // The whole first read, as the guide prints it.
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.first);
+
+    library.reset();
+    const unchanged = await readWhole(reader, folder, SECRET, marks);
+    expect(unchanged.read).toEqual([]);
+    expect(unchanged.kept).toHaveLength(1_000);
+    // Forty listing pages of 25; each batch signs in once, and the first checks the folder.
+    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 0, bodies: 0 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.unchanged);
+
+    library.edit(500);
+    library.reset();
+    const edited = await readWhole(reader, folder, SECRET, marks);
+    expect(edited.read.map((page) => [page.ref, page.sourceRevision])).toEqual([
+      [libraryRef(500), '2'],
+    ]);
+    expect(edited.read[0].markdown).toContain('Edited 1.');
+    expect(edited.kept).toHaveLength(999);
+    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.oneChanged);
+    // The contract is asked once a listing page, by every document it lists.
+    expect(edited.asked).toHaveLength(40);
+    expect(edited.asked.every((refs) => refs.length === 25)).toBe(true);
+  });
+
+  it('reads a document the listing gives no revision for as before, at every sync', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    library.pages[3].listsRevision = false;
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    for (const sync of [2, 3]) {
+      const again = await readWhole(reader, folder, SECRET, marks);
+      expect(
+        again.read.map((page) => page.ref),
+        `sync ${sync}`,
+      ).toEqual([libraryRef(3)]);
+      expect(again.kept).toHaveLength(29);
+    }
+  });
+
+  it('keeps a document whose name the store writes otherwise: its spaces closed up, a closing # dropped (the second pass)', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 5 });
+    // As the name stands at its source before anything is read.
+    library.rename(1, 'Q3  close plan #');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    expect(marks.get(libraryRef(1))?.title).toBe('Q3 close plan');
+    library.reset();
+    const again = await readWhole(reader, folder, SECRET, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(5);
+    expect(library.counts().body).toBe(0);
+  });
+
+  it('reads a renamed document, though its revision is the stored one', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    library.rename(7, 'Close the quarter');
+    const renamed = await readWhole(reader, folder, SECRET, marks);
+    expect(renamed.read.map((page) => [page.ref, page.title, page.sourceRevision])).toEqual([
+      [libraryRef(7), 'Close the quarter', '1'],
+    ]);
+    expect(renamed.kept).toHaveLength(29);
+    expect((await readWhole(reader, folder, SECRET, marks)).read).toEqual([]);
+  });
+
+  it('keeps a document moved to the bin and unchanged, and marks it archived', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    library.archive(12);
+    library.reset();
+    const after = await readWhole(reader, folder, SECRET, marks);
+    expect(after.read).toEqual([]);
+    expect(library.counts().body).toBe(0);
+    expect(after.kept.find((page) => page.ref === libraryRef(12))).toEqual({
+      ref: libraryRef(12),
+      nativeStatus: 'archived',
+      datedBySource: true,
+    });
+    expect(after.kept.find((page) => page.ref === libraryRef(11))).toEqual({
+      ref: libraryRef(11),
+      datedBySource: true,
+    });
+  });
+
+  it('reads a document whose listing does not say whether it is in the bin, since a kept page takes its status from the listing', async (): Promise<void> => {
+    const { reader } = driveLibrary({ pages: 4, withheld: ['trashed'] });
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    const again = await readWhole(reader, folder, SECRET, marks);
+    expect(again.read).toHaveLength(4);
+    expect(again.kept).toEqual([]);
+  });
+
+  it('says a kept document with no date from its source was dated by the read, and reads as before with no contract to ask', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 3 });
+    library.pages[1].editedAt = undefined;
+    const plain = await reader.listPageBatch(folder, SECRET, undefined, 25);
+    expect(plain.pages).toHaveLength(3);
+    expect(plain).not.toHaveProperty('kept');
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, folder, SECRET, marks);
+    const kept = (await readWhole(reader, folder, SECRET, marks)).kept;
+    expect(kept.map((page) => page.datedBySource)).toEqual([true, false, true]);
   });
 });

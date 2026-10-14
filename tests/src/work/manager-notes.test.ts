@@ -72,12 +72,14 @@ describe('the notes the gate writes for the manager', (): void => {
     expect(text).toContain(
       'Priya stopped on “Close REVOPS-7” after 1 change landed: the status change was refused.',
     );
-    expect(text).toContain('Reconcile the provider in day0 before a retry.');
+    // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    expect(text).toContain('Reconcile the provider in Day0 before a retry.');
   });
 
   it('records a stop with nothing landed', (): void => {
     expect(stoppedNoteText({ agentName: 'Priya', title: '', reason: 'no owner is set' })).toBe(
-      'Priya stopped on “Untitled work”: no owner is set. Nothing landed; Retry stands in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Priya stopped on “Untitled work”: no owner is set. Nothing landed; Retry stands in Day0.',
     );
   });
 
@@ -112,9 +114,11 @@ describe('the notes the gate writes for the manager', (): void => {
     const block = text.split('\n\n').at(-1)?.split('\n') ?? [];
     expect(block[0]).toBe('Still waiting for your decision (12):');
     expect(block[1]).toBe('- “Close REVOPS-7”: reply “approve ab3xyz” or “reject ab3xyz <reason>”');
-    expect(block[2]).toBe('- “Ask 1”: decide in day0');
+    // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    expect(block[2]).toBe('- “Ask 1”: decide in Day0');
     expect(block).toHaveLength(12);
-    expect(block.at(-1)).toBe('…and 2 more in day0.');
+    // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    expect(block.at(-1)).toBe('…and 2 more in Day0.');
     expect(digestText({ agentName: 'Priya', zone: 'UTC', notes: [note], owed: [] })).not.toContain(
       'Still waiting',
     );
@@ -130,6 +134,7 @@ describe('the notes the gate writes for the manager', (): void => {
       typedCode: false,
     });
     expect(text).not.toContain('reply “approve');
-    expect(text.split('\n').at(-1)).toBe('- “Close REVOPS-7”: decide in day0');
+    // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    expect(text.split('\n').at(-1)).toBe('- “Close REVOPS-7”: decide in Day0');
   });
 });

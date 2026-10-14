@@ -5,6 +5,8 @@ import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { dayLabelAt } from '@/demo/day-label';
 import type { AgentMetrics, OwnerMetrics, PilotFigures } from '@/metrics/types';
+import { coverageLine, type CompanyCoverage } from './home/company-coverage';
+import type { CompanyFigures } from './home/use-company-figures';
 import { decidedCount, formatAuditTrail, formatMetricDuration } from './metric-format';
 
 const NUMBER_WORDS = [
@@ -437,15 +439,20 @@ export const NO_SELECTION_SENTENCE =
  *
  * @param figures - The owner's figures.
  * @param mode - The deployment's surface mode, once read.
+ * @param coverage - Which employees the figures cover (wave 17, RM33 (a)): while every employee
+ *   is being read by pages the card says how many of them its figures are of.
  */
 export function CompanySupervisionCard({
   figures,
   mode,
+  coverage = { kind: 'all' },
 }: {
   figures: OwnerMetrics;
   mode?: 'mock' | 'real';
+  coverage?: CompanyCoverage;
 }) {
   const { company } = figures;
+  const reading = coverage.kind === 'reading' ? coverageLine(coverage) : undefined;
   const unselected =
     mode === 'mock' &&
     company.pilot.retrieval.tokens === null &&
@@ -454,7 +461,9 @@ export function CompanySupervisionCard({
     figures.excludedAgents > 0
       ? `${count(figures.excludedAgents, 'evaluation employee')} left out`
       : null,
-    figures.omittedEmployees > 0
+    // While the rest are being read the card's head says so; the note is for figures that stay
+    // the most recent employees' (a read by pages that failed).
+    figures.omittedEmployees > 0 && reading === undefined
       ? `Covers the ${company.employees} most recent employees; ${count(figures.omittedEmployees, 'earlier one', 'earlier ones')} ${figures.omittedEmployees === 1 ? 'is' : 'are'} not counted`
       : null,
     company.actions.sessionRestores > 0
@@ -468,7 +477,7 @@ export function CompanySupervisionCard({
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-[var(--color-border)] px-5 py-4">
         <h2 className="text-sm font-semibold">Company supervision</h2>
         <span className="text-xs text-[var(--color-muted)]">
-          {count(company.employees, 'employee')}, one manager
+          {reading ?? `${count(company.employees, 'employee')}, one manager`}
         </span>
       </div>
       <table role="table" className={TABLE} aria-label="Company supervision">
@@ -519,12 +528,16 @@ export function CompanySupervisionCard({
   );
 }
 
-/** The company supervision card for the signed-in owner, once there is an employee. */
-export function CompanySupervision() {
-  const figures = useQuery(api.metrics.forOwner);
+/**
+ * The company supervision card for the signed-in owner, once there is an employee.
+ *
+ * @param company - The company's figures as the home read them, and which employees they cover.
+ */
+export function CompanySupervision({ company }: { company: CompanyFigures }) {
+  const { figures, coverage } = company;
   const surface = useQuery(api.config.surfaceMode);
   // Drawn once the mode is known, so the retrieval column never changes its words under the
   // reader (the second pass's finding 10): the mode decides whether it says why it is empty.
   if (!figures || figures.employees.length === 0 || surface === undefined) return null;
-  return <CompanySupervisionCard figures={figures} mode={surface.mode} />;
+  return <CompanySupervisionCard figures={figures} mode={surface.mode} coverage={coverage} />;
 }

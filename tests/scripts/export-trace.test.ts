@@ -1,8 +1,21 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runExportTrace, type ConvexRun } from '../../scripts/export-trace';
+import {
+  runExportTrace,
+  stoppedExport,
+  writeWhole,
+  type ConvexRun,
+} from '../../scripts/export-trace';
 import {
   isAgentTrace,
   OWNER_SECTIONS,
@@ -150,7 +163,7 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
           },
           employees: [{ id: 'agent-1', name: 'Priya' }],
           setAside: [],
-          omittedAgents: 0,
+          moreAgents: null,
           next: { section: OWNER_SECTIONS[0], cursor: null },
         };
       }
@@ -180,5 +193,165 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
       OWNER_SECTIONS.length,
     );
     expect(logged[0]).toContain('the owner export, exported 2026-09-27 (UTC) at release 0.20.0');
+  });
+
+  /** An owner's deployment of two employees, whose second trace can be watched or refused. */
+  function twoEmployees(onSecondEmployee: () => void): ConvexRun {
+    const employee = fakeDeployment([]);
+    return (name, args, subject) => {
+      if (name === 'exportActions:exportForOwner') {
+        return {
+          manifest: {
+            format: 'day0-owner-export',
+            version: 8,
+            exportedAt: HEAD.manifest.exportedAt,
+            exportedOn: '2026-09-27',
+            zone: 'UTC',
+            release: '0.20.0',
+            commit: 'abc12345',
+            pageRows: 100,
+            ownerKey: 'dev-no-auth|local-boss',
+          },
+          employees: [
+            { id: 'agent-1', name: 'Priya' },
+            { id: 'agent-2', name: 'Mateo' },
+          ],
+          setAside: [],
+          moreAgents: null,
+          next: { section: OWNER_SECTIONS[0], cursor: null },
+        };
+      }
+      if (name === 'exportActions:exportOwnerPage') {
+        const section = args.section as OwnerSection;
+        const following = ownerSectionAfter(section);
+        return {
+          section,
+          rows: [],
+          next: following === undefined ? null : { section: following, cursor: null },
+        };
+      }
+      if (name === 'exportActions:exportForAgent' && args.agentId === 'agent-2') {
+        onSecondEmployee();
+      }
+      return employee(name, args, subject);
+    };
+  }
+
+  it('writes each employee’s trace as it arrives: the first is on disk before the second is read (wave 17, 17-F)', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    const out = join(directory, 'owner.json');
+    const seen: Array<{ whole: boolean; partial: string }> = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: () => undefined },
+      twoEmployees((): void => {
+        seen.push({ whole: existsSync(out), partial: readFileSync(`${out}.partial`, 'utf8') });
+      }),
+    );
+    expect(code).toBe(0);
+    // When the second employee was first asked for, the first one's three events were written
+    // and the file did not yet carry its own name.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.whole).toBe(false);
+    expect(seen[0]?.partial.match(/"_id": "e\d"/g)).toHaveLength(3);
+    expect(readdirSync(directory)).toEqual(['owner.json']);
+    expect(readOwnerExport(JSON.parse(readFileSync(out, 'utf8')))?.employees).toHaveLength(2);
+  });
+
+  it('leaves no file, whole or partial, when a call is refused part way', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    const out = join(directory, 'owner.json');
+    const errors: string[] = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: (line) => errors.push(line) },
+      twoEmployees((): void => {
+        throw new Error('exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS');
+      }),
+    );
+    expect(code).toBe(2);
+    expect(errors).toEqual([
+      'Export failed: exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS',
+    ]);
+    expect(readdirSync(directory)).toEqual([]);
+  });
+
+  it('leaves no partial file when the whole file cannot take its name (the second pass, 17-F)', async (): Promise<void> => {
+    directory = mkdtempSync(join(tmpdir(), 'export-owner-'));
+    // The name asked for is a folder that holds something: the finished file cannot replace it.
+    const out = join(directory, 'owner.json');
+    mkdirSync(out);
+    writeFileSync(join(out, 'kept.txt'), 'kept', 'utf8');
+    const errors: string[] = [];
+    const code = await runExportTrace(
+      ['--owner', '--out', out],
+      { log: () => undefined, error: (line) => errors.push(line) },
+      twoEmployees((): void => undefined),
+    );
+    expect(code).toBe(2);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(/^Export failed: /);
+    expect(readdirSync(directory)).toEqual(['owner.json']);
+    expect(readdirSync(out)).toEqual(['kept.txt']);
+  });
+});
+
+describe('tidying up after an owner export that stopped (the second pass of the fixes, 17-F)', (): void => {
+  const refused = new Error('exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS');
+
+  it('answers the reason the export stopped, itself, when the tidying goes through', (): void => {
+    const done: string[] = [];
+    const error = stoppedExport('owner.json.partial', refused, {
+      close: (): void => void done.push('closed'),
+      remove: (): void => void done.push('removed'),
+    });
+    expect(error).toBe(refused);
+    expect(done).toEqual(['closed', 'removed']);
+  });
+
+  it('still removes the unfinished file when closing it is refused, and says both after the reason', (): void => {
+    const done: string[] = [];
+    const error = stoppedExport('owner.json.partial', refused, {
+      close: (): void => {
+        throw new Error('EIO: i/o error, close');
+      },
+      remove: (): void => void done.push('removed'),
+    });
+    expect(done).toEqual(['removed']);
+    expect(error.message).toBe(
+      'exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS; and closing owner.json.partial was refused (EIO: i/o error, close)',
+    );
+    expect(error.cause).toBe(refused);
+  });
+
+  it('says which file to delete when it cannot be removed, after the reason the export stopped', (): void => {
+    const error = stoppedExport('owner.json.partial', refused, {
+      remove: (): void => {
+        throw new Error('EACCES: permission denied, unlink');
+      },
+    });
+    expect(error.message).toBe(
+      'exportActions:exportForAgent failed: EMPLOYEE_NOT_YOURS; and owner.json.partial could not be removed (EACCES: permission denied, unlink): delete it yourself',
+    );
+  });
+});
+
+describe('writing a piece of the export whole (the second pass, 17-F)', (): void => {
+  it('writes on from where a short write stopped, so no byte of the piece is missing', (): void => {
+    const piece = new TextEncoder().encode('{"employees": ["Zoë", "Aiko"]}');
+    const taken: number[] = [];
+    // A file that takes three bytes of whatever it is handed.
+    writeWhole(piece, (bytes, offset): number => {
+      const count = Math.min(3, bytes.length - offset);
+      taken.push(...bytes.subarray(offset, offset + count));
+      return count;
+    });
+    expect(new TextDecoder().decode(new Uint8Array(taken))).toBe('{"employees": ["Zoë", "Aiko"]}');
+  });
+
+  it('refuses a file that takes nothing, where it would write for ever', (): void => {
+    expect((): void => writeWhole(new TextEncoder().encode('{}'), (): number => 0)).toThrow(
+      'the file took none of the 2 bytes left to write',
+    );
   });
 });

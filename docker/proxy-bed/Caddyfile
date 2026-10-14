@@ -1,0 +1,28 @@
+# The Caddy configuration docs/running/proxy.md prints, as the bed day0-w17p ran it (wave 17,
+# 17-P): two https origins, one for the app and one for the backend, each forwarded to a port on
+# this machine's loopback. On a customer's machine the two site addresses are the customer's own
+# names (https://day0.acme.com, https://convex.day0.acme.com), the `tls` lines name the
+# customer's certificate or are left out for Caddy's own, and `auto_https off` goes with them.
+# The bed's addresses and ports come from its environment.
+{
+	# The bed's certificate is its own throwaway authority's: nothing is asked of a public one.
+	auto_https off
+	admin off
+}
+
+# The app: `pnpm start`, on 127.0.0.1.
+https://{$PROXY_BED_ADDRESS}:{$PROXY_BED_APP_PORT} {
+	bind {$PROXY_BED_ADDRESS}
+	tls /tls/cert.pem /tls/key.pem
+	reverse_proxy 127.0.0.1:{$DAY0_APP_PORT} {
+		# The 1:1 and the Discuss talk stream their replies: each chunk is passed on as it arrives.
+		flush_interval -1
+	}
+}
+
+# The backend: the browser's live connection is a WebSocket here, which Caddy upgrades unasked.
+https://{$PROXY_BED_ADDRESS}:{$PROXY_BED_BACKEND_PORT} {
+	bind {$PROXY_BED_ADDRESS}
+	tls /tls/cert.pem /tls/key.pem
+	reverse_proxy 127.0.0.1:{$CONVEX_PORT}
+}

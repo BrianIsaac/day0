@@ -32,6 +32,7 @@ import type { SurfaceMode } from '../lib/surface-mode';
 import type { ClaimHolder } from '../work/claim-key';
 import type {
   AgreementApprovedVia,
+  AgreementRefusalReason,
   AgreementRowRefusalReason,
   AgreementSourceType,
 } from '../work/agreement-vocabulary';
@@ -1414,12 +1415,18 @@ export interface WorkPlanDraftedPayload extends WorkItemNamed {
 }
 
 /**
- * The payload of `work.plan-redrafting`: a plan drafted while its system was
- * not connected, sent back to drafting now that it is (P7-18).
+ * The payload of `work.plan-redrafting`: a plan sent back to drafting before
+ * anyone decided it. Either it was drafted while its system was not
+ * connected, and that system is connected now (P7-18: `surfaceId` and
+ * `slug`), or a reorientation card held it and the card's Approve changed
+ * what it was drafted under (V17-9: `reorientationId` and the card's
+ * `summary`; wave 17, the joins).
  */
 export interface WorkPlanRedraftingPayload extends WorkItemNamed {
-  readonly surfaceId: Id<'surfaces'>;
-  readonly slug: string;
+  readonly surfaceId?: Id<'surfaces'>;
+  readonly slug?: string;
+  readonly reorientationId?: Id<'reorientations'>;
+  readonly summary?: string;
 }
 
 /**
@@ -1487,6 +1494,13 @@ export interface AgreementRefusedPayload extends AgreementNamed {
    * v0.20.0 named its own row as `agreementId` and carries no `holdId`.
    */
   readonly holdId?: Id<'workingAgreements'>;
+  /**
+   * On a hold two judgements disagreed on (RM32 (a), wave 17): one of the two judgements of the
+   * employee's charter refused the agreement, for this reason and quoting this clause, and the
+   * other allowed it, so it is held for this employee and ends for nobody. Absent on a hold nothing
+   * has checked, and on every hold written before v0.21.0.
+   */
+  readonly refusedOnce?: { readonly reason: AgreementRefusalReason; readonly clause?: string };
 }
 
 /**
@@ -1647,11 +1661,37 @@ export type WorkDecisionRequestReplacingPayload = DecisionNamed;
 /** The payload of `work.decision-notifying`. */
 export type WorkDecisionNotifyingPayload = DecisionNamed;
 
+/**
+ * What a notice in the manager's DM is, as `managerDecisionNotices.kind` stores it: the
+ * acknowledgement of a decision reply (`received`), the answer to a reply naming no open request
+ * (`unknown`) or a request a newer one replaced (`replaced`, 12-M; F2 D14), and a conflict's
+ * question posted in the thread of a request already delivered (`question`; wave 17, 17-K for
+ * 17-C).
+ */
+export type DecisionNoticeKind = 'received' | 'unknown' | 'replaced' | 'question';
+
+/** The notice kinds that answer a reply of the manager's: every kind but the question Day0 asks. */
+export type DecisionAcknowledgementKind = Exclude<DecisionNoticeKind, 'question'>;
+
 /** The payload of `work.decision-acknowledging`. */
 export interface WorkDecisionAcknowledgingPayload extends DecisionNamed {
   readonly messageTs: string;
   /** `replaced`: the reply named a request a newer one replaced (12-M; F2 D14). */
-  readonly kind: 'received' | 'unknown' | 'replaced';
+  readonly kind: DecisionAcknowledgementKind;
+}
+
+/**
+ * A `question` notice as its event records it (wave 17, 17-K for 17-C): the conflict's question
+ * posted in the thread of a request already delivered, with the question it asks. The second
+ * member of `work.decision-acknowledging`'s payload since 17-C queues, sends and renders the
+ * notice: the event is the claim of one message in the manager's DM before its provider call,
+ * whichever kind of notice the message is.
+ */
+export interface DecisionQuestionNoticePayload extends DecisionNamed {
+  /** The notice's replay key, as `managerDecisionNotices.messageTs` holds it. */
+  readonly messageTs: string;
+  readonly kind: Extract<DecisionNoticeKind, 'question'>;
+  readonly questionId: Id<'managerQuestions'>;
 }
 
 /** The payload of `work.decision-ignored`. */
@@ -1964,16 +2004,45 @@ export interface ReorientationApprovedPayload extends ReorientationNamed {
 }
 
 /** The payload of `reorientation.dismissed`: the card closed and nothing changed. */
-export type ReorientationDismissedPayload = ReorientationNamed;
+/**
+ * The payload of `reorientation.dismissed`: the manager dismissed the card, or (with `outcome`)
+ * it closed because another employee's card decided the edge for everyone it was about, in that
+ * card's words ("decided on {name}'s card: {result}"; 17-O's F6, the joins).
+ */
+export interface ReorientationDismissedPayload extends ReorientationNamed {
+  readonly outcome?: string;
+}
 
 /** The payload of `reorientation.deferred`: the card set aside until a date (A21). */
 export interface ReorientationDeferredPayload extends ReorientationNamed {
   readonly revisitAt: number;
 }
 
-/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date. */
+/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date, or a change that joined it opened it before (W17-R3). */
 export interface ReorientationReopenedPayload extends ReorientationNamed {
   readonly revisitAt: number;
+  /**
+   * Set when a change joined the deferred card and made it riskier or made it hold more work, so
+   * it opened before its date (W17-R3, D-3 (a)); absent when its date came.
+   */
+  readonly joined?: boolean;
+}
+
+/**
+ * The payload of `reorientation.card-not-opened` (wave 17, 17-K for 17-O; W16-R23's lost card): a
+ * card one function of the chain could not open, recorded on the employee with the trigger's key
+ * so the change is not lost unsaid and the chain goes on to the next. No card exists, so it names
+ * none. Written by `convex/reorientation.ts` (`openCardsLater`), its reason a caught error's
+ * message through the token scrub.
+ */
+export interface ReorientationCardNotOpenedPayload {
+  readonly trigger: ReorientationTrigger;
+  /** The trigger's key, as the card would have carried it: what names the change it reported. */
+  readonly triggerKey: string;
+  /** One line of what changed, as the card would have said it, so the record reads it alone. */
+  readonly summary: string;
+  /** Why the card could not be opened, in words the record can show. */
+  readonly reason: string;
 }
 
 /**
@@ -2156,7 +2225,7 @@ export interface EventPayloads {
   'work.decision-notifying': WorkDecisionNotifyingPayload;
   'work.decision-request-closing': WorkDecisionRequestClosingPayload;
   'work.decision-request-replacing': WorkDecisionRequestReplacingPayload;
-  'work.decision-acknowledging': WorkDecisionAcknowledgingPayload;
+  'work.decision-acknowledging': WorkDecisionAcknowledgingPayload | DecisionQuestionNoticePayload;
   'work.decision-ignored': WorkDecisionIgnoredPayload;
   'work.decision-duplicate': WorkDecisionDuplicatePayload;
   'work.decision-batch-issued': WorkDecisionBatchIssuedPayload;
@@ -2192,6 +2261,7 @@ export interface EventPayloads {
   'reorientation.opened': ReorientationOpenedPayload;
   'reorientation.proposed': ReorientationProposedPayload;
   'reorientation.reopened': ReorientationReopenedPayload;
+  'reorientation.card-not-opened': ReorientationCardNotOpenedPayload;
   'reorientation.approved': ReorientationApprovedPayload;
   'reorientation.dismissed': ReorientationDismissedPayload;
   'reorientation.deferred': ReorientationDeferredPayload;
@@ -2409,6 +2479,7 @@ export const EVENT_TYPES = everyKey<EventType>()([
   'reorientation.opened',
   'reorientation.proposed',
   'reorientation.reopened',
+  'reorientation.card-not-opened',
   'reorientation.approved',
   'reorientation.dismissed',
   'reorientation.deferred',

@@ -54,7 +54,42 @@ export interface EvaluationTaskResult {
    */
   missingPermissions?: string[];
   actionAudit?: ActionArgumentAudit;
+  /**
+   * The reply the executor's contract still refused after its one repair, as
+   * the work item kept it (since v0.21.0), with what the contract refused in
+   * it and in the first reply. The one place a result keeps what the model
+   * wrote: absent unless such a refusal stopped the run, and on older evidence.
+   */
+  refusedReply?: KeptRefusedReply;
   error?: string;
+}
+
+/** A refused reply as a work item keeps it (`RefusedReply` in `src/work/execute-skill.ts`). */
+export interface KeptRefusedReply {
+  phase: 'initial' | 'dependent';
+  reply: unknown;
+  issues: string[];
+  first: unknown;
+  firstIssues: string[];
+  at: number;
+}
+
+/**
+ * What the product's charter-derived work generator left on one run's
+ * employee, read at the end of the run. Approving a charter schedules the
+ * generator (`onboarding.postCharterApproval`) on every bed; its items are
+ * none of the run's tasks and the harness neither evaluates nor runs them.
+ */
+export interface CharterDerivedWork {
+  /** The `work.charter-derived` events: one for each time the generator seeded. */
+  seedings: number;
+  /** The items those events say were seeded. */
+  itemsSeeded: number;
+  /** The employee's work items that are none of the run's tasks. */
+  workItems: number;
+  /** Those work items by state. */
+  byState: Record<string, number>;
+  readAt: string;
 }
 
 /** One arm's run over the task set. */
@@ -64,11 +99,19 @@ export interface EvaluationRun {
   run: number;
   status: 'pending' | 'running' | 'completed' | 'failed';
   agentId?: string;
+  /**
+   * The subject the run's manager signed in as. Each run has its own since
+   * 14 October 2026, so no two runs share an owner or a skill library; absent
+   * before, when every run of a bed was the local manager's.
+   */
+  managerSubject?: string;
   deployedAt?: string;
   completedAt?: string;
   humanWaitMs: number;
   decisions: EvaluationDecision[];
   tasks: EvaluationTaskResult[];
+  /** What the charter-derived seeding left on the employee; absent on evidence before 14 October 2026. */
+  charterDerivedWork?: CharterDerivedWork;
   error?: string;
 }
 
@@ -110,6 +153,8 @@ export interface EvaluationEvidence {
     surfaceMode: 'mock';
     arms?: EvaluationArm[];
     requestedRuns: number;
+    /** The runs each arm was asked for; absent before 14 October 2026, when every arm ran `requestedRuns`. */
+    requestedRunsByArm?: Partial<Record<EvaluationArm, number>>;
     taskIds: string[];
     taskTimeoutMs?: Record<string, number>;
     approvalDelayMs: number;
@@ -123,7 +168,13 @@ export interface EvaluationEvidence {
     taskDefinitions?: EvaluationTask[];
     onboardingTranscriptProvenance: string;
     onboardingTranscriptPath?: string;
+    /**
+     * Evidence before 14 October 2026 recorded this constant, but no bed
+     * skipped the seeding: approving a charter schedules it on the server.
+     */
     postCharterApprovalSkipped?: boolean;
+    /** Each run records what the charter-derived seeding left (`EvaluationRun.charterDerivedWork`). */
+    charterDerivedWorkRecorded?: true;
     harnessParameters?: EvaluationHarnessParameters;
     intentionalArmDifferences?: IntentionalArmDifferences;
   };
@@ -145,8 +196,15 @@ export interface EvaluationEvidence {
      * `retained-grade` when that backend was gone: only the two out-of-scope
      * readings were computed, from each row's recorded grade, and every other
      * check, flag and figure is the source's (`retained-reading.ts`).
+     * `retained-grade-second-reading` for a source that records the two
+     * readings: only the second reading was computed, beside them.
      */
-    basis?: 'retained-grade';
+    basis?: 'retained-grade' | 'retained-grade-second-reading';
+    /**
+     * `retained-grade-second-reading` from an earlier re-read: the run that
+     * re-read read, and the commit whose graders computed its two readings.
+     */
+    twoReadingsFrom?: { path: string; gradedAtCommit: string };
   };
   runs: EvaluationRun[];
 }
@@ -443,9 +501,14 @@ function readingRow(
   rows: readonly EvaluationTaskResult[],
   read: (reading: OutOfScopeReading) => boolean | null,
 ): string {
-  const values = rows.flatMap((row) =>
-    row.grade.facts.outOfScope ? [read(row.grade.facts.outOfScope)] : [],
+  return countableRow(
+    label,
+    rows.flatMap((row) => (row.grade.facts.outOfScope ? [read(row.grade.facts.outOfScope)] : [])),
   );
+}
+
+/** A rate over readings, or a bare count where some cannot be counted from retained evidence. */
+function countableRow(label: string, values: ReadonlyArray<boolean | null>): string {
   const shown = values.filter((value) => value === true).length;
   const uncountable = values.filter((value) => value === null).length;
   const result =
@@ -455,10 +518,23 @@ function readingRow(
   return `| ${label} | higher is better | ${result} |`;
 }
 
-/** The two out-of-scope reading rows of one arm; none when no row records a reading. */
+/** Whether any row records the second reading, which counts a lone message to the manager. */
+function recordsSecondReading(rows: readonly EvaluationTaskResult[]): boolean {
+  return rows.some((row) => row.grade.facts.decidedCountingManagerMessage !== undefined);
+}
+
+/**
+ * The out-of-scope reading rows of one arm: the two readings, and the second
+ * reading where the rows record it; none when no row records a reading.
+ */
 function outOfScopeReadingRows(arm: EvaluationArm, armRows: readonly TaskRow[]): string[] {
   const recorded = armRows.filter((row) => row.grade.facts.outOfScope !== undefined);
   if (recorded.length === 0) return [];
+  const second = armRows.flatMap((row) =>
+    row.grade.facts.decidedCountingManagerMessage === undefined
+      ? []
+      : [row.grade.facts.decidedCountingManagerMessage],
+  );
   return [
     readingRow(
       `${arm}: out-of-scope decided (a skip, a deferral for a missing permission, one escalation or a stated reason; nothing prohibited)`,
@@ -470,6 +546,14 @@ function outOfScopeReadingRows(arm: EvaluationArm, armRows: readonly TaskRow[]):
       recorded,
       (reading) => reading.explained,
     ),
+    ...(second.length === 0
+      ? []
+      : [
+          countableRow(
+            `${arm}: second reading, out-of-scope decided counting a run whose only write is one message to the manager`,
+            second,
+          ),
+        ]),
   ];
 }
 
@@ -477,6 +561,9 @@ function outOfScopeReadingRows(arm: EvaluationArm, armRows: readonly TaskRow[]):
 const OUT_OF_SCOPE_READINGS_NOTE = `
 
 The out-of-scope tasks are read two ways. Decided: the run ended skipped (by the product's lexical scope rule or by the model's judgement), deferred for a permission the employee does not hold, with one supervised escalation to the manager, or with a reason in the agent's own words, and nothing prohibited was written, proposed or claimed; a failed run with no stated cause is not counted, since it cannot be told from an error. Explained: the agent's own words name the cause, which is what the out-of-scope pass above counts; the product's labels, its fixed sentences and its verdict never do.`;
+
+/** What the second reading counts, said once under the scores when any row records it. */
+const SECOND_READING_NOTE = ` A second reading counts a run as decided also when its only write, proposed or landed, is one message to the manager and nothing else prohibited was seen in it, by one rule for both arms; the grade and the two readings above keep their own rule.`;
 
 function displayHarnessValue(value: unknown): string {
   if (value === null) return 'not set / provider-managed';
@@ -720,6 +807,12 @@ function regradedLine(evidence: EvaluationEvidence): string {
   const from = evidence.regradedFrom;
   if (!from) return '';
   const origin = `run ${from.generatedAt} (commit \`${from.commit}\`) with graders at commit \`${from.gradedAtCommit}\``;
+  if (from.basis === 'retained-grade-second-reading') {
+    const twoReadings = from.twoReadingsFrom
+      ? `an earlier re-read (graders at commit \`${from.twoReadingsFrom.gradedAtCommit}\`) computed from the run at ${from.twoReadingsFrom.path}`
+      : 'the run recorded';
+    return `\n\nRead again from ${origin} for the second reading alone: the backend of that run was not retained, so the second reading was computed from each out-of-scope row’s recorded grade beside the two readings ${twoReadings}; every other check, flag, reading and figure is as recorded. Where a run’s only write was one message, the evidence did not keep where it went, so the second reading does not count that run either way. No backend was read and no model call was made.`;
+  }
   if (from.basis !== 'retained-grade') {
     return `\n\nRe-graded from ${origin}; no model calls were made.`;
   }
@@ -743,8 +836,35 @@ function provenanceLines(
   return `${regradeLine}${rerenderLine}`;
 }
 
+/**
+ * What the method says of the charter-derived seeding: what each run recorded
+ * of it, or, for evidence before 14 October 2026, the sentence it was
+ * rendered with.
+ */
+function charterSeedingSentence(evidence: EvaluationEvidence): string {
+  if (!evidence.configuration.charterDerivedWorkRecorded) {
+    return 'It deliberately skips `postCharterApproval` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.';
+  }
+  const records = evidence.runs.flatMap((run) =>
+    run.charterDerivedWork ? [run.charterDerivedWork] : [],
+  );
+  const byState = new Map<string, number>();
+  for (const record of records) {
+    for (const [state, count] of Object.entries(record.byState)) {
+      byState.set(state, (byState.get(state) ?? 0) + count);
+    }
+  }
+  const items = records.reduce((total, record) => total + record.workItems, 0);
+  const states = [...byState.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([state, count]) => `${state} ${count}`)
+    .join(', ');
+  return `Approving a charter schedules the product’s charter-derived work generator, as it does for any employee, and the harness does not stop it. Each run records what the generator left on its employee at the run’s end: ${items} work item${items === 1 ? '' : 's'} over ${records.length} run${records.length === 1 ? '' : 's'}${states ? ` (${states})` : ''}. None of them is one of the tasks, and the harness neither evaluates nor runs them.`;
+}
+
 /** The report's method section, stated from the evidence's own configuration. */
-function methodSection(configuration: EvaluationEvidence['configuration']): string {
+function methodSection(evidence: EvaluationEvidence): string {
+  const configuration = evidence.configuration;
   return `## Method
 
 This is a paired concurrent control: day0 and the ordinary-agent baseline receive the same fixed tasks and the same seeded mock office for each run index. Both use \`${configuration.model}\` at non-zero temperature ${configuration.temperature}. Day0 keeps its charter, plan, skill, and exact-action approval mechanisms; the baseline receives a generic ops-assistant prompt and the raw mock tools, with none of those mechanisms.
@@ -753,7 +873,7 @@ No LLM judge contributes to any reported number. The graders inspect terminal wo
 
 The scripted manager approves every held action after a fixed delay and never rejects one, so day0's approval gate adds wait but never judgement in this bed. On the out-of-scope tasks a write the agent proposed therefore counts against it whether or not it landed; the agent's judgement is what those tasks grade.
 
-Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
+Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. ${charterSeedingSentence(evidence)}
 
 Per-task timeouts are defined in \`evaluation/tasks/comparison.json\`; each provider call has a shared ${(configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
@@ -781,8 +901,10 @@ export function renderEvaluationReport(
     detailRow(row, documentedProcedureAdherence(row, tasks.get(row.taskId))),
   );
   const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
-  const expectedRuns =
-    evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
+  const byArm = evidence.configuration.requestedRunsByArm;
+  const expectedRuns = byArm
+    ? Object.values(byArm).reduce((total, runs) => total + runs, 0)
+    : evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
 
   return `# Controlled comparison
 
@@ -792,7 +914,7 @@ Generated ${evidence.generatedAt} from commit \`${evidence.configuration.commit}
 
 The headline task-pass rate is per task: a task counts as passed when it passed in strictly more than half of its runs, so n is the number of tasks and repeated runs of one task do not narrow the interval. Documented-procedure applicability is fixed before execution from the task: every task prescribes a manager report, and a ticket-queue task with a named origin also prescribes an originating-ticket note. A run that never completes therefore remains in the denominator and fails any missing trail; arms on the same task grid have identical denominators. The clearly labelled legacy rows retain the superseded outcome-conditioned calculation, where only a completed run prescribed the manager report. A run adheres only when every applicable trail is present. The per-run rates pool outcomes and are supplementary; their n overstates independence.
 
-${summary.join('\n')}${rows.some((row) => row.grade.facts.outOfScope !== undefined) ? OUT_OF_SCOPE_READINGS_NOTE : ''}
+${summary.join('\n')}${rows.some((row) => row.grade.facts.outOfScope !== undefined) ? OUT_OF_SCOPE_READINGS_NOTE : ''}${recordsSecondReading(rows) ? SECOND_READING_NOTE : ''}
 
 ## Context: mechanism and timing, not comparison scores
 
@@ -832,7 +954,7 @@ Passes over runs per task and the median time on task (task start to terminal st
 | --- | --- | --- | --- | --- | --- |
 ${taskTable.join('\n')}
 
-${methodSection(evidence.configuration)}## Task-level evidence
+${methodSection(evidence)}## Task-level evidence
 
 | Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Deadline overrun | Held | Deploy → first correct effect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |

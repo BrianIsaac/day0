@@ -46,9 +46,14 @@ import {
 import { listingOverrun } from '../src/docs/listing-bounds';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
-import { RELATION_PAGES_PER_STEP, RELATION_PROPOSALS_PER_SYNC } from '../src/docs/relations';
+import {
+  RELATION_MEASURE_RETRY_MS,
+  RELATION_MEASURE_TRIES,
+  RELATION_PAGES_PER_STEP,
+  RELATION_PROPOSALS_PER_SYNC,
+} from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
-import type { MeasuringPlan } from './docRelations';
+import type { MeasuringPlan, PageMeasure } from './docRelations';
 import type { PagesOwed } from './docRelationsRemeasure';
 import type { StoredForRevision } from './docPages';
 import type { MarkerToJudge, StatusPhasePage } from './docStatus';
@@ -203,6 +208,12 @@ async function mirrorPages(
  * page stored again, and for a page kept as stored whose source now says otherwise, so a page
  * archived at its source with no edit is archived here (15-A; A-2).
  *
+ * Whether the source dated the page (`datedBySource`; D-8 (a)) is said of the page's time, so it
+ * is written with the time: by `upsertPage` for a page stored again, and for a page kept as
+ * stored, whose stored time stands, once only, by `recordRead` the first time a sync meets the
+ * row without it (K-2: one small write a page at the first sync after the upgrade, no body
+ * redacted or stored again).
+ *
  * A page that cannot be stored (larger than `MAX_STORED_PAGE_BYTES`, refused
  * by the redaction or the credential store, or refused by the page store)
  * fails that page alone: it is named in `unread` and keeps its last stored
@@ -320,6 +331,7 @@ async function persistPage(
     ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
     // A revision the reader could not read this time keeps the stored one (W15-R30).
     ...(page.revisionUnread === true ? { keepRevision: true } : {}),
+    ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
   };
   if (contentHash !== undefined) {
     const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
@@ -370,6 +382,7 @@ async function persistPage(
     ...(safePage.url !== undefined ? { url: safePage.url } : {}),
     markdown: safePage.markdown,
     updatedAt: safePage.updatedAt,
+    ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
   });
@@ -383,7 +396,8 @@ async function persistPage(
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
  * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
- * revision) is no longer the one the row holds.
+ * revision) is no longer the one the row holds, or that the row does not yet say whether its
+ * source dated it and the reader does (K-2).
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
@@ -418,7 +432,8 @@ async function keptUnchangedPage(
     credentialRefs,
     saidOtherwise:
       stored.nativeStatus !== page.nativeStatus ||
-      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision),
+      (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision) ||
+      (stored.datedBySource === undefined && page.datedBySource !== undefined),
   };
 }
 
@@ -459,12 +474,13 @@ async function keptUnreadPages(
 /**
  * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
  * for the source's readers from its stored text, as a page kept by its hash is, and, where its
- * listing now says another status than the one stored, that is recorded (`recordRead`) with its
- * revision as stored. Its refs and stored credentials are added to the batch's by the caller.
+ * listing now says another status than the one stored, or the row does not yet say whether its
+ * source dated it and the listing does (K-2), that is recorded (`recordRead`) with its revision
+ * as stored. Its refs and stored credentials are added to the batch's by the caller.
  *
  * @returns The refs of the pages kept.
  */
-async function keptByRevision(
+export async function keptByRevision(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
   agents: Doc<'agents'>[],
@@ -476,12 +492,14 @@ async function keptByRevision(
   for (const entry of kept) {
     const row = stored.get(entry.ref);
     if (row === undefined) continue;
-    if (row.nativeStatus !== entry.nativeStatus) {
+    const undated = row.datedBySource === undefined && entry.datedBySource !== undefined;
+    if (row.nativeStatus !== entry.nativeStatus || undated) {
       await ctx.runMutation(internal.docStatus.recordRead, {
         sourceId: source._id,
         syncRunId,
         ref: row.ref,
         ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
+        ...(entry.datedBySource !== undefined ? { datedBySource: entry.datedBySource } : {}),
         keepRevision: true,
       });
     }
@@ -1029,6 +1047,85 @@ async function walkStatusPhase(
   return { checkpoint };
 }
 
+/** A page whose measure threw, and how many times it has. */
+interface FailedMeasure {
+  readonly ref: string;
+  readonly tries: number;
+}
+
+const failedMeasuresValidator = v.array(v.object({ ref: v.string(), tries: v.number() }));
+
+/** What measuring one read's pages came to. */
+interface MeasuredRead {
+  /** The pages this read measured or tried, for the step to count and not to measure twice. */
+  readonly refs: readonly string[];
+  /** The proposals the sync has written, this read's with them. */
+  readonly proposed: number;
+  /** Whether the sync's cap on new proposals ended the read, some of its pages unmeasured. */
+  readonly capped: boolean;
+  /** The pages whose measure threw and that are still to be tried, each with its tries so far. */
+  readonly failed: readonly FailedMeasure[];
+}
+
+/**
+ * Measure the pages of one read of a measuring (`docRelations.measurePage`), up to the sync's cap
+ * on new proposals. A page whose room cut its candidates short ends the read as the cap does, so
+ * the read is owed from its start and the page is measured again (W16-R34: as the last page of a
+ * read it was counted measured). A page whose measure throws is kept for the next step, with how
+ * often it has been tried, and after `RELATION_MEASURE_TRIES` is logged as not measured and
+ * passed over (W16-R34: it was logged and left behind at the first throw).
+ *
+ * @param read - The read's page refs; `retry`, on the step that tries a read's failed pages
+ *   again, names the only pages of it still to measure; `seen` holds the pages this step has
+ *   measured, which a later read of it may name again and which are passed over.
+ */
+async function measureRead(
+  ctx: ActionCtx,
+  read: {
+    readonly sourceId: Id<'docSources'>;
+    readonly runId: Id<'docSyncRuns'>;
+    readonly refs: readonly string[];
+    readonly retry: readonly FailedMeasure[] | undefined;
+    readonly proposed: number;
+    readonly seen: ReadonlySet<string>;
+  },
+): Promise<MeasuredRead> {
+  const { sourceId, runId, seen } = read;
+  const tried = new Map(read.retry?.map((page) => [page.ref, page.tries]));
+  const owed = read.retry === undefined ? read.refs : read.refs.filter((ref) => tried.has(ref));
+  const failed: FailedMeasure[] = [];
+  const refs: string[] = [];
+  let { proposed } = read;
+  for (const ref of owed) {
+    if (proposed >= RELATION_PROPOSALS_PER_SYNC) return { refs, proposed, capped: true, failed };
+    if (seen.has(ref)) continue;
+    refs.push(ref);
+    let measure: PageMeasure;
+    try {
+      measure = await ctx.runMutation(internal.docRelations.measurePage, {
+        sourceId,
+        syncRunId: runId,
+        ref,
+        room: RELATION_PROPOSALS_PER_SYNC - proposed,
+      });
+    } catch (error) {
+      const tries = (tried.get(ref) ?? 0) + 1;
+      const passedOver = tries >= RELATION_MEASURE_TRIES;
+      if (!passedOver) failed.push({ ref, tries });
+      log.warn(
+        passedOver
+          ? 'documentation page not measured for relations: passed over'
+          : 'documentation page not measured for relations: tried again at the next step',
+        { sourceId, ref, tries, reason: safeSyncError(error) },
+      );
+      continue;
+    }
+    proposed += measure.proposed;
+    if (measure.cut) return { refs, proposed, capped: true, failed };
+  }
+  return { refs, proposed, capped: false, failed };
+}
+
 /**
  * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
  * (and the runs it took over from, back to the complete walk before it) is measured against the
@@ -1036,14 +1133,18 @@ async function walkStatusPhase(
  * and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
  * finish once the generation has completed, as discovery is, so the splits its pages scheduled
  * have landed and the measures cost the finish none of its time. A proposal changes no page and
- * holds nothing; the manager answers its card. A page that cannot be measured is logged and
- * passed over.
+ * holds nothing; the manager answers its card.
  *
  * A step that has measured its share schedules the next with what is left (`rest`), so a library
  * of any size is measured to its end (W15-R5: the first hundred pages were measured and nothing
  * recorded how far it got). The cap on new proposals ends the measuring where it is reached, and
  * what is left is then kept on the source for the next sync's measuring, which starts there
  * (`docRelations.measuringPlan`).
+ *
+ * A read with a page whose measure threw is not left behind (W16-R34): the step ends there and
+ * schedules the next, `RELATION_MEASURE_RETRY_MS` on, at that read's start with the pages still
+ * to try (`retry`), which measures those alone and then goes on. A page is passed over once it
+ * has been tried `RELATION_MEASURE_TRIES` times (`measureRead`).
  *
  * @returns How many pages this step measured and how many relations the sync has proposed so far.
  */
@@ -1060,6 +1161,8 @@ export const proposeRelations = internalAction({
     ),
     /** The new proposals the earlier steps wrote; absent on the first. */
     proposed: v.optional(v.number()),
+    /** The pages of `rest`'s first read whose measure threw, the only ones of it still to try. */
+    retry: v.optional(failedMeasuresValidator),
   },
   handler: async (ctx, args): Promise<{ measured: number; proposed: number }> => {
     const { sourceId, runId } = args;
@@ -1070,6 +1173,7 @@ export const proposeRelations = internalAction({
     if (plan === null) return { measured, proposed };
     const generations = [...plan.generations];
     let cursor = plan.cursor;
+    let retry: readonly FailedMeasure[] | undefined = args.retry;
     const seen = new Set<string>();
     while (generations.length > 0) {
       if (measured >= RELATION_PAGES_PER_STEP) {
@@ -1085,33 +1189,34 @@ export const proposeRelations = internalAction({
         internal.docRelations.pagesWrittenBy,
         { sourceId, generation: generations[0], cursor },
       );
-      for (const ref of written.refs) {
-        if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
-          // The cap: this read's pages are owed from its start, since some of them are unmeasured.
-          await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
-            sourceId,
-            runId,
-            owed: { generations, cursor },
-          });
-          return { measured, proposed };
-        }
-        if (seen.has(ref)) continue;
-        seen.add(ref);
-        measured += 1;
-        try {
-          proposed += await ctx.runMutation(internal.docRelations.measurePage, {
-            sourceId,
-            syncRunId: runId,
-            ref,
-            room: RELATION_PROPOSALS_PER_SYNC - proposed,
-          });
-        } catch (error) {
-          log.warn('documentation page not measured for relations', {
-            sourceId,
-            ref,
-            reason: safeSyncError(error),
-          });
-        }
+      const read = await measureRead(ctx, {
+        sourceId,
+        runId,
+        refs: written.refs,
+        retry,
+        proposed,
+        seen,
+      });
+      retry = undefined;
+      for (const ref of read.refs) seen.add(ref);
+      measured += read.refs.length;
+      proposed = read.proposed;
+      if (read.capped) {
+        // The cap: this read's pages are owed from its start, since some of them are unmeasured.
+        await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
+          sourceId,
+          runId,
+          owed: { generations, cursor },
+        });
+        return { measured, proposed };
+      }
+      if (read.failed.length > 0) {
+        await ctx.scheduler.runAfter(
+          RELATION_MEASURE_RETRY_MS,
+          internal.docSyncActions.proposeRelations,
+          { sourceId, runId, rest: { generations, cursor }, proposed, retry: [...read.failed] },
+        );
+        return { measured, proposed };
       }
       if (written.next === null) {
         generations.shift();
@@ -1125,7 +1230,7 @@ export const proposeRelations = internalAction({
       runId,
       owed: null,
     });
-    return await remeasure(ctx, { sourceId, runId, measured, proposed });
+    return await remeasure(ctx, { sourceId, runId, measured, proposed, retry: undefined });
   },
 });
 
@@ -1139,6 +1244,12 @@ export const proposeRelations = internalAction({
  * may measure up to a read's pages past its share; a page whose blocks two reads hold, or that a
  * hand-on or the cap repeats, is measured twice, and a pair is proposed once.
  *
+ * The place moves past a read only once each of its pages was measured or passed over (W16-R34:
+ * the place was written past a page whose measure threw, and a measure made once never returned
+ * to it). A read with a page still to try ends the step, which hands on to the next with those
+ * pages (`retry`), `RELATION_MEASURE_RETRY_MS` on; the mark stays where the read began, so a
+ * measuring cut off between the two starts the read again at the next sync.
+ *
  * @returns How many pages the measuring measured, its own and these, and the sync's proposals.
  */
 async function remeasure(
@@ -1148,10 +1259,12 @@ async function remeasure(
     readonly runId: Id<'docSyncRuns'>;
     readonly measured: number;
     readonly proposed: number;
+    /** The pages of the read at the mark's place that are the only ones of it still to try. */
+    readonly retry: readonly FailedMeasure[] | undefined;
   },
 ): Promise<{ measured: number; proposed: number }> {
   const { sourceId, runId } = step;
-  let { measured, proposed } = step;
+  let { measured, proposed, retry } = step;
   const seen = new Set<string>();
   for (;;) {
     if (measured >= RELATION_PAGES_PER_STEP) {
@@ -1167,32 +1280,33 @@ async function remeasure(
       runId,
     });
     if (owed === null) return { measured, proposed };
-    for (const ref of owed.refs) {
-      if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
-        await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
-          sourceId,
-          runId,
-          owed: { cursor: owed.cursor },
-        });
-        return { measured, proposed };
-      }
-      if (seen.has(ref)) continue;
-      seen.add(ref);
-      measured += 1;
-      try {
-        proposed += await ctx.runMutation(internal.docRelations.measurePage, {
-          sourceId,
-          syncRunId: runId,
-          ref,
-          room: RELATION_PROPOSALS_PER_SYNC - proposed,
-        });
-      } catch (error) {
-        log.warn('documentation page not measured for relations', {
-          sourceId,
-          ref,
-          reason: safeSyncError(error),
-        });
-      }
+    const read = await measureRead(ctx, {
+      sourceId,
+      runId,
+      refs: owed.refs,
+      retry,
+      proposed,
+      seen,
+    });
+    retry = undefined;
+    for (const ref of read.refs) seen.add(ref);
+    measured += read.refs.length;
+    proposed = read.proposed;
+    if (read.capped) {
+      await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
+        sourceId,
+        runId,
+        owed: { cursor: owed.cursor },
+      });
+      return { measured, proposed };
+    }
+    if (read.failed.length > 0) {
+      await ctx.scheduler.runAfter(
+        RELATION_MEASURE_RETRY_MS,
+        internal.docSyncActions.remeasureRelations,
+        { sourceId, runId, proposed, retry: [...read.failed] },
+      );
+      return { measured, proposed };
     }
     await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
       sourceId,
@@ -1204,17 +1318,20 @@ async function remeasure(
 }
 
 /**
- * The next step of a remeasure (`remeasure`): scheduled by a step that measured its share, with
- * the proposals the sync has written so far. Internal.
+ * The next step of a remeasure (`remeasure`): scheduled by a step that measured its share, or by
+ * one whose read held a page still to try (`retry`), with the proposals the sync has written so
+ * far. Internal.
  */
 export const remeasureRelations = internalAction({
   args: {
     sourceId: v.id('docSources'),
     runId: v.id('docSyncRuns'),
     proposed: v.number(),
+    /** The pages of the read at the mark's place whose measure threw: the only ones still to try. */
+    retry: v.optional(failedMeasuresValidator),
   },
   handler: async (ctx, args): Promise<{ measured: number; proposed: number }> =>
-    await remeasure(ctx, { ...args, measured: 0 }),
+    await remeasure(ctx, { ...args, measured: 0, retry: args.retry }),
 });
 
 /**

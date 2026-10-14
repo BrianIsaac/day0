@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -156,5 +156,25 @@ describe('the title a folder page is given', (): void => {
     expect(markdownPageTitle(['~~~', '# Example page', '~~~'].join('\n'), 'fallback.md')).toBe(
       'fallback.md',
     );
+  });
+});
+
+describe("a folder page's date (wave 17, D-8; X-3)", (): void => {
+  it("dates a page by its file's modified time, which counts as its source's own", async (): Promise<void> => {
+    const root = await createFixture();
+    const edited = new Date(Date.UTC(2026, 9, 7, 3, 15, 0));
+    await utimes(join(root, 'team', 'onboarding.md'), edited, edited);
+    const source: DocSourceRecord = {
+      _id: 'source-folder' as Id<'docSources'>,
+      label: 'Team folder',
+      kind: 'folder',
+      locator: 'team',
+    };
+    const { pages } = await new FolderReader(root).listPageBatch(source, undefined, undefined, 25);
+    expect(pages.map((page) => [page.ref, page.datedBySource])).toEqual([
+      ['onboarding.md', true],
+      ['runbooks/ticket.md', true],
+    ]);
+    expect(pages[0].updatedAt).toBe(edited.getTime());
   });
 });

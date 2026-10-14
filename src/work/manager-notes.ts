@@ -126,7 +126,7 @@ export function landedNoteText(args: {
   const head =
     args.outcome === 'completed'
       ? `${name} finished ${quoted(args.title)}: ${landedCount(rows)}.`
-      : `${name} stopped on ${quoted(args.title)} after ${changes(rows.length)} landed: ${slackEscaped(args.reason ?? 'the run did not finish')}. Reconcile the provider in day0 before a retry.`;
+      : `${name} stopped on ${quoted(args.title)} after ${changes(rows.length)} landed: ${slackEscaped(args.reason ?? 'the run did not finish')}. Reconcile the provider in Day0 before a retry.`;
   return [head, ...lines].join('\n');
 }
 
@@ -144,7 +144,7 @@ export function stoppedNoteText(args: {
   title: string;
   reason: string;
 }): string {
-  return `${slackEscaped(args.agentName)} stopped on ${quoted(args.title)}: ${slackEscaped(args.reason)}. Nothing landed; Retry stands in day0.`;
+  return `${slackEscaped(args.agentName)} stopped on ${quoted(args.title)}: ${slackEscaped(args.reason)}. Nothing landed; Retry stands in Day0.`;
 }
 
 /** A decision the manager still owes, as the digest names it. */
@@ -183,7 +183,7 @@ export function digestText(args: {
     .slice(0, DIGEST_OWED_SHOWN)
     .map((decision) =>
       decision.decisionId === undefined || args.typedCode === false
-        ? `- ${quoted(decision.title)}: decide in day0`
+        ? `- ${quoted(decision.title)}: decide in Day0`
         : `- ${quoted(decision.title)}: reply “approve ${decision.decisionId}” or “reject ${decision.decisionId} <reason>”`,
     );
   const more = owed.length - shown.length;
@@ -195,7 +195,7 @@ export function digestText(args: {
           [
             `Still waiting for your decision (${owed.length}):`,
             ...shown,
-            ...(more > 0 ? [`…and ${more} more in day0.`] : []),
+            ...(more > 0 ? [`…and ${more} more in Day0.`] : []),
           ].join('\n'),
         ]
       : []),

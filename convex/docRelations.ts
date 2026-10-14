@@ -7,13 +7,14 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { firstBlockStatus } from './docBlocks';
 import {
-  KINDS_WITHOUT_EDIT_TIME,
   alreadyHeld,
   candidatesOf,
   disagreementOf,
+  editedAtSource,
   generationsOf,
   measured,
   named,
@@ -24,14 +25,16 @@ import {
 import {
   RELATION_DECISIONS,
   authorityOf,
-  confirmedConflicts,
+  confirmedConflictsOfPages,
   conflictsUnderPlan,
   decisionsOffered,
   standingConflictOf,
-  standingWithPages,
+  standingConflictsFrom,
   type RelationDecision,
 } from './docConflicts';
-import { askConflictQuestion } from './reorientation';
+import { askConflictQuestion, standingCards } from './reorientation';
+import { closeTalkOfCard } from './reorientationTalk';
+import { closeQuestionsOnPage } from './questionCloses';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
 import {
@@ -50,7 +53,10 @@ import {
   type StatusSource,
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
-import { conflictChoiceWords } from '../src/agent/reorientation-words';
+import { approvedResultWords, conflictChoiceWords } from '../src/agent/reorientation-words';
+import { isOpenQuestion } from '../src/agent/manager-questions';
+import { storedPageReadBytes } from '../src/docs/blocks';
+import { log } from '../src/lib/logger';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -72,6 +78,21 @@ import { conflictChoiceWords } from '../src/agent/reorientation-words';
 /** The most of an owner's sources one page's candidates are looked for in. */
 const CANDIDATE_SOURCES = 32;
 
+/**
+ * The most a measure reads of its page's and its candidates' rows and blocks together, by
+ * `storedPageReadBytes` (D-12 (b)): under a transaction's 16 MiB, with room for the search and the
+ * relations it reads beside them. Four pages each under the store's bound passed that limit
+ * together on 17-FD's bed and failed the whole measure, every pair with it (17-FD's F3 with F9).
+ * A candidate whose read would pass the budget is passed over before its blocks are read, and the
+ * log names it; its pair is still met when the candidate is measured itself. Measuring each
+ * candidate in a transaction of its own, which needs no budget, is wave 18's (D-12 (a)).
+ */
+const MEASURE_READ_BYTES = 12 * 1024 * 1024;
+
+/** The log line of a candidate passed over at `MEASURE_READ_BYTES`. */
+const CANDIDATE_PASSED_OVER =
+  'documentation: a candidate page too large to measure here was passed over';
+
 /** The owner's employees that read either of two sources, each once. */
 async function readersOfEither(
   ctx: QueryCtx,
@@ -82,6 +103,17 @@ async function readersOfEither(
     for (const agent of await readersOf(ctx, source)) readers.set(agent._id, agent);
   }
   return [...readers.values()];
+}
+
+/** What one page's measure wrote. */
+export interface PageMeasure {
+  /** How many relations it proposed. */
+  readonly proposed: number;
+  /**
+   * Whether its room ended it with candidates still unmeasured (W16-R34): the page is then
+   * measured again, where it was once counted measured and its last candidates never met.
+   */
+  readonly cut: boolean;
 }
 
 /**
@@ -95,7 +127,7 @@ async function readersOfEither(
  * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
  * most a sync proposes whatever its last page holds.
  *
- * @returns How many relations it proposed.
+ * @returns How many relations it proposed, and whether its room cut its candidates short.
  */
 export const measurePage = internalMutation({
   args: {
@@ -105,19 +137,21 @@ export const measurePage = internalMutation({
     /** The new proposals this call may still write; absent, every one its candidates hold. */
     room: v.optional(v.number()),
   },
-  handler: async (ctx, args): Promise<number> => {
+  handler: async (ctx, args): Promise<PageMeasure> => {
     const source = await ctx.db.get(args.sourceId);
-    if (source === null) return 0;
+    if (source === null) return { proposed: 0, cut: false };
     if (source.activeSyncId !== args.syncRunId && source.lastCompletedSyncId !== args.syncRunId) {
-      return 0;
+      return { proposed: 0, cut: false };
     }
     const page = await pageAt(ctx, args);
-    if (page === null || pageStatusOf(page) !== 'active') return 0;
+    if (page === null || pageStatusOf(page) !== 'active') return { proposed: 0, cut: false };
     const sources = await ctx.db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
     const self = await measured(ctx, page, source);
+    const own = storedPageReadBytes(page.markdown);
+    let read = own.row + own.blocks;
     const now = Date.now();
     let proposed = 0;
     for (const candidate of await candidatesOf(
@@ -126,10 +160,23 @@ export const measurePage = internalMutation({
       page,
       self.blocks,
     )) {
-      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) break;
+      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) return { proposed, cut: true };
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
+      const cost = storedPageReadBytes(other.markdown);
+      if (read + cost.row + cost.blocks > MEASURE_READ_BYTES) {
+        read += cost.row;
+        log.warn(CANDIDATE_PASSED_OVER, {
+          sourceId: other.sourceId,
+          ref: other.ref,
+          bytes: cost.row + cost.blocks,
+          budget: MEASURE_READ_BYTES,
+          measuring: page.ref,
+        });
+        continue;
+      }
+      read += cost.row + cost.blocks;
       const relation = measureRelation(self, await measured(ctx, other, otherSource));
       if (relation === undefined) continue;
       if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
@@ -161,7 +208,7 @@ export const measurePage = internalMutation({
       }
       proposed += 1;
     }
-    return proposed;
+    return { proposed, cut: false };
   },
 });
 
@@ -483,7 +530,7 @@ export async function decideRelationInTransaction(
   // A conflict confirmed asks which page is right beside every drafted plan citing either page
   // (section 3's conflict row: a question, never a card; D-4 (c)); a conflict settled here answers
   // the questions asked about it, so nothing waits on them (the second pass's B1).
-  if (decision === 'disagree') await askAtConfirmation(ctx, relation, now);
+  if (decision === 'disagree') await scheduleConfirmationAsks(ctx, relation);
   if (relation.kind === 'possible_conflict') {
     // Each page by its letter, title and source, as the question named them (W16-R12).
     const pages = [named(from, fromSource), named(to, toSource)] as const;
@@ -496,8 +543,14 @@ export async function decideRelationInTransaction(
             ? conflictChoiceWords('both', pages)
             : undefined;
     if (settled !== undefined) {
-      await closeConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
+      await answerConflictQuestions(ctx, relation._id, { text: settled, via: by.via }, now);
     }
+  }
+  // Naming one page right takes the other out of use, so every other conflict that page is an end
+  // of stops standing with nobody having answered it: its questions are closed, not left open on
+  // the plans that asked them (17-C). After the answers above, which this relation's own keep.
+  if (decision === 'from-is-right' || decision === 'to-is-right') {
+    await closeQuestionsOnPage(ctx, decision === 'from-is-right' ? to : from, now);
   }
   if (decision !== 'supersedes') return null;
   const older = (await ctx.db.get(to._id)) ?? to;
@@ -509,9 +562,10 @@ const QUESTIONS_SETTLED_READ = 500;
 
 /**
  * Answer every open question about a conflict the manager settled, in the card's words and by the
- * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O).
+ * way the answer came, so no plan's steps wait on a question nobody can answer any more (16-O). A
+ * question closed without an answer stays closed: it was not asked of the plan that stands (17-C).
  */
-async function closeConflictQuestions(
+async function answerConflictQuestions(
   ctx: MutationCtx,
   relationId: Id<'docRelations'>,
   answer: { readonly text: string; readonly via: 'dashboard' | 'slack' },
@@ -522,63 +576,216 @@ async function closeConflictQuestions(
     .withIndex('by_relation', (q) => q.eq('relationId', relationId))
     .take(QUESTIONS_SETTLED_READ);
   for (const question of questions) {
-    if (question.answer !== undefined) continue;
+    if (!isOpenQuestion(question)) continue;
     await ctx.db.patch(question._id, {
       answer: { text: answer.text, answeredAt: now, via: answer.via },
     });
   }
 }
 
-/** The drafted plans of one reader a confirmation looks through for the conflict's question. */
-const PENDING_PLANS_READ = 100;
+/** The drafted plans one step of a confirmation's asking looks through. */
+const ASK_PLANS_PAGE = 10;
 
 /**
- * Ask a confirmed conflict's question beside each reader's drafted plan that rests on it, read as
- * the plan's own decision reads it (`conflictsUnderPlan`): by its cites, or where it cites nothing
- * by its kept selection (W16-R9). Matching the plans that cite either page missed a plan that cites
- * nothing, which was then asked nothing and stopped after its approval; and it asked a plan citing
- * another passage of either page, which its decision does not.
+ * Start asking a confirmed conflict's question beside the drafted plans that rest on it, out of
+ * the transaction that confirmed it (17-C; the pre-tag's second pass: the confirmation read a
+ * hundred drafted plans a reader, each through `conflictsUnderPlan`, inside `decide`). Schedules
+ * the first step for the employees that read either page; with none, nothing.
  */
-async function askAtConfirmation(
+async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
-  now: number,
 ): Promise<void> {
-  const standing = await standingConflictOf(ctx, await ctx.db.get(relation._id));
-  if (standing === undefined) return;
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
     ctx.db.get(relation.to.sourceId),
   ]);
   if (fromSource === null || toSource === null) return;
-  for (const agent of await readersOfEither(ctx, [fromSource, toSource])) {
-    const drafted = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id).eq('state', 'plan-pending'))
-      .take(PENDING_PLANS_READ);
-    for (const row of drafted) {
+  const readers = (await readersOfEither(ctx, [fromSource, toSource])).map((agent) => agent._id);
+  if (readers.length === 0) return;
+  await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+    relationId: relation._id,
+    readers,
+    cursor: null,
+  });
+}
+
+/**
+ * One step of asking a confirmed conflict's question beside the drafted plans that rest on it:
+ * a page of the first reader's drafted plans, each read as its own decision reads it
+ * (`conflictsUnderPlan`): by its cites, or where it cites nothing by its kept selection (W16-R9).
+ * Matching the plans that cite either page missed a plan that cites nothing, which was then asked
+ * nothing and stopped after its approval; and it asked a plan citing another passage of either
+ * page, which its decision does not. Internal; scheduled by `decide` and by itself until every
+ * reader's drafted plans are read. Writes the questions, their events and, for a plan whose
+ * request is already out, the notice for its thread; nothing once the conflict no longer stands.
+ */
+export const askConfirmed = internalMutation({
+  args: {
+    relationId: v.id('docRelations'),
+    /** The employees whose drafted plans are still to be read, the first being read now. */
+    readers: v.array(v.id('agents')),
+    /** Where in the first reader's drafted plans this step goes on from. */
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args): Promise<{ asked: number }> => {
+    const [reader, ...rest] = args.readers;
+    const relation = await ctx.db.get(args.relationId);
+    if (reader === undefined || (await standingConflictOf(ctx, relation)) === undefined) {
+      return { asked: 0 };
+    }
+    const agent = await ctx.db.get(reader);
+    const drafted =
+      agent === null
+        ? { page: [], isDone: true, continueCursor: '' }
+        : await ctx.db
+            .query('workItems')
+            .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
+            .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
+    const now = Date.now();
+    let asked = 0;
+    for (const row of drafted.page) {
+      if (agent === null) break;
       const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
-        (under) => under.relationId === relation._id,
+        (under) => under.relationId === args.relationId,
       );
       if (conflict === undefined) continue;
-      await askConflictQuestion(ctx, {
+      const questionId = await askConflictQuestion(ctx, {
         row,
-        conflict: { ...conflict, relationId: relation._id },
+        conflict: { ...conflict, relationId: args.relationId },
         now,
       });
+      if (questionId !== null) asked += 1;
+    }
+    const next = drafted.isDone
+      ? { readers: rest, cursor: null }
+      : { readers: args.readers, cursor: drafted.continueCursor };
+    if (next.readers.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
+        relationId: args.relationId,
+        ...next,
+      });
+    }
+    return { asked };
+  },
+});
+
+/** The pages one step of `turnPageQuestions` turns; the rest ride the next step. */
+const QUESTION_TURN_PAGES = 4;
+
+/**
+ * Close, as no longer needed, the standing cards a page's leaving opened on its readers once the
+ * page is current again (W17-R2, D-1 (a)): the card went on saying the page was archived, and
+ * Approve of its proposal pinned the page to the manager. A card that rests on another page still
+ * not current stays. Each closed card says why in its outcome and on the record, its talk closes
+ * with it, and the plans it held are asked for their decision again: nothing they were drafted
+ * under has moved.
+ */
+async function closeCardsOfReturnedPage(
+  ctx: MutationCtx,
+  source: Doc<'docSources'>,
+  ref: string,
+  now: number,
+): Promise<void> {
+  const page = await pageAt(ctx, { sourceId: source._id, ref });
+  if (page === null || pageStatusOf(page) !== 'active') return;
+  const isPage = (named: { sourceId: Id<'docSources'>; ref: string }): boolean =>
+    named.sourceId === source._id && named.ref === ref;
+  for (const agent of await readersOf(ctx, source)) {
+    for (const card of await standingCards(ctx, agent._id)) {
+      if (card.trigger !== 'page-status-changed' || !card.evidence.pageRefs.some(isPage)) continue;
+      let stillOut = false;
+      for (const other of card.evidence.pageRefs.filter((named) => !isPage(named))) {
+        const row = await pageAt(ctx, other);
+        if (row !== null && pageStatusOf(row) !== 'active') stillOut = true;
+      }
+      if (stillOut) continue;
+      const outcome = approvedResultWords.pageBack(page.title);
+      await ctx.db.patch(card._id, {
+        status: 'dismissed',
+        decidedAt: now,
+        revisitAt: undefined,
+        outcome: { summary: outcome },
+      });
+      await appendEvent(ctx, {
+        agentId: agent._id,
+        type: 'reorientation.dismissed',
+        payload: { reorientationId: card._id, summary: card.triggerSummary, outcome },
+        createdAt: now,
+      });
+      await closeTalkOfCard(ctx, card._id);
+      for (const workItemId of card.blockingWork) {
+        const row = await ctx.db.get(workItemId);
+        if (row?.state !== 'plan-pending') continue;
+        await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
+      }
     }
   }
 }
+
+/**
+ * Turn the conflict questions of pages whose status left `active` or came back to it, a few pages
+ * a step (17-C's two lines for `docStatus`, which schedules it). A page that left closes every
+ * open question about its confirmed conflicts as settled: none of them stands while the page is
+ * not current, so nothing holds on them, and they read closed at once rather than at the plan's
+ * next run. A page that came back starts the confirmation's asking again for each of its
+ * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
+ * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
+ * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`).
+ * Internal; schedules itself for the pages left.
+ */
+export const turnPageQuestions = internalMutation({
+  args: {
+    pages: v.array(
+      v.object({
+        sourceId: v.id('docSources'),
+        ref: v.string(),
+        /** True for a page that came back to `active`; false for one that left it. */
+        back: v.boolean(),
+      }),
+    ),
+  },
+  handler: async (ctx, args): Promise<{ closed: number; asked: number }> => {
+    const now = Date.now();
+    let closed = 0;
+    let asked = 0;
+    for (const page of args.pages.slice(0, QUESTION_TURN_PAGES)) {
+      if (!page.back) {
+        closed += await closeQuestionsOnPage(ctx, page, now);
+        continue;
+      }
+      const source = await ctx.db.get(page.sourceId);
+      if (source === null) continue;
+      await closeCardsOfReturnedPage(ctx, source, page.ref, now);
+      for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
+        if ((await standingConflictOf(ctx, relation)) === undefined) continue;
+        await scheduleConfirmationAsks(ctx, relation);
+        asked += 1;
+      }
+    }
+    const rest = args.pages.slice(QUESTION_TURN_PAGES);
+    if (rest.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.docRelations.turnPageQuestions, { pages: rest });
+    }
+    return { closed, asked };
+  },
+});
 
 /** A page as a relation's card draws it: when its source last had it, and how far it is trusted. */
 type CardPage = NamedPage & {
   readonly updatedAt: number;
   /**
-   * Whether `updatedAt` is when the source says the page was edited. False for a kind whose
-   * reader is given no edit time and stamps the page with when it read it (a list of URLs, an
-   * MCP server), so a card says "last read", not "edited" (W15-R45).
+   * Whether `updatedAt` is when the source says the page was edited (`editedAtSource`). False
+   * for a page its reader stamped with when it read it, so a card says "last read", not "edited"
+   * (W15-R45).
    */
   readonly edited: boolean;
+  /**
+   * Whether the page's row says its source dated it (`docPages.datedBySource`; D-8 (a)): the card
+   * of a successor proposed by the pages' dates says so beside each date. False for a page
+   * stored before 0.21.0, of whose time the card claims nothing more than its kind does.
+   */
+  readonly dated: boolean;
   readonly authority: SourceAuthority;
 };
 
@@ -587,7 +794,8 @@ function cardPage(page: Doc<'docPages'>, source: Doc<'docSources'>): CardPage {
   return {
     ...named(page, source),
     updatedAt: page.updatedAt,
-    edited: !KINDS_WITHOUT_EDIT_TIME.has(source.kind),
+    edited: editedAtSource(page, source),
+    dated: page.datedBySource === true,
     authority: authorityOf(page, source),
   };
 }
@@ -629,55 +837,81 @@ function rowBytes(page: Doc<'docPages'> | null): number {
   return page === null ? 0 : 3 * (page.markdown.length + page.title.length);
 }
 
+/** One read of the cards: what it drew, and where a later read of the confirmed conflicts goes on. */
+export interface RelationCardsRead {
+  readonly cards: RelationCardRow[];
+  /**
+   * Where the next read of the owner's confirmed conflicts goes on from (`conflictsBefore`), or
+   * null once they are read to the end: a read stops within a transaction's limits, so a conflict
+   * that stands behind many settled ones is drawn by a later read (W15-R19, F12).
+   */
+  readonly next: number | null;
+  /**
+   * The proposals the read did not draw (W17-R9, D-10 (a)): those it read and left once it had
+   * drawn `RELATION_CARDS_READ` or spent its bytes, and whether more may stand past what it read
+   * (`atLeast`: it read `PROPOSALS_READ` rows). None on a read going on from a cursor, which draws
+   * no proposal.
+   */
+  readonly notShown: { readonly proposals: number; readonly atLeast: boolean };
+}
+
 /**
  * The relations the manager has still to answer: every proposed relation, and every confirmed
  * conflict that stands, newest first, at most `RELATION_CARDS_READ` of each and
  * `CARD_PAGES_BYTES` of their pages a read, the confirmed conflicts read first (W15-R22).
  * Public; the caller's own. A relation one of whose pages is gone or no longer current is not
  * drawn (its source's unlink deletes it; a page that came back draws it again). The confirmed
- * conflicts are the ones the selection reads (`confirmedConflicts`), so a conflict a plan's
- * question asks about has its card. Writes nothing.
+ * conflicts are read by page (`standingConflictsFrom`), so a conflict a plan's question asks
+ * about has its card however many settled conflicts are newer: a read that stops short says where
+ * the next goes on (`next`), and that read, given `conflictsBefore`, draws the confirmed
+ * conflicts from there and no proposal. Writes nothing.
  */
 export const listOpen = query({
-  args: {},
-  handler: async (ctx): Promise<RelationCardRow[]> => {
+  args: {
+    /** Read only the confirmed conflicts, from where an earlier read's `next` said to go on. */
+    conflictsBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<RelationCardsRead> => {
     const caller = await getCallerOrThrow(ctx);
+    const readingOn = args.conflictsBefore !== undefined;
     const [proposed, confirmed] = await Promise.all([
-      ctx.db
-        .query('docRelations')
-        .withIndex('by_user_status', (q) =>
-          q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
-        )
-        .order('desc')
-        .take(PROPOSALS_READ),
-      confirmedConflicts(ctx, caller.ownerKey),
+      readingOn
+        ? []
+        : ctx.db
+            .query('docRelations')
+            .withIndex('by_user_status', (q) =>
+              q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
+            )
+            .order('desc')
+            .take(PROPOSALS_READ),
+      // The confirmed conflicts first: they hold plans, so the proposals' pages never spend the
+      // read before them (W15-R22). The tab still draws the proposals above them.
+      standingConflictsFrom(ctx, caller.ownerKey, {
+        ...(args.conflictsBefore !== undefined ? { before: args.conflictsBefore } : {}),
+        most: RELATION_CARDS_READ,
+        bytes: CARD_PAGES_BYTES,
+      }),
     ]);
     let bytes = 0;
-    // The confirmed conflicts first: they hold plans, so the proposals' pages never spend the
-    // read before them (W15-R22). The tab still draws the proposals above them.
-    const conflictCards: RelationCardRow[] = [];
-    for (const relation of confirmed) {
-      if (conflictCards.length >= RELATION_CARDS_READ) break;
-      // Its blocks first, then its two pages, each read once and counted once.
-      const standing = await standingWithPages(ctx, relation);
-      if (standing === undefined) continue;
+    const conflictCards: RelationCardRow[] = confirmed.standing.map((standing) => {
       bytes += rowBytes(standing.from) + rowBytes(standing.to);
-      if (bytes > CARD_PAGES_BYTES) return conflictCards;
-      const { conflict } = standing;
-      conflictCards.push({
+      const relation = standing.relation;
+      return {
         _id: relation._id,
         kind: relation.kind,
         status: 'confirmed',
         from: cardPage(standing.from, standing.fromSource),
         to: cardPage(standing.to, standing.toSource),
         evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-        disagreement: { heading: conflict.heading, figures: conflict.figures },
+        disagreement: { heading: standing.conflict.heading, figures: standing.conflict.figures },
         offered: [...decisionsOffered(relation)],
-      });
-    }
+      };
+    });
     const cards: RelationCardRow[] = [];
+    let looked = 0;
     for (const relation of proposed) {
       if (cards.length >= RELATION_CARDS_READ) break;
+      looked += 1;
       // By a small row first: a proposal whose page a block says is no longer current is passed
       // over for none of the read's page bytes. A page with no block is judged by its row, below.
       const statuses = await Promise.all(
@@ -696,7 +930,11 @@ export const listOpen = query({
         ctx.db.get(relation.to.sourceId),
       ]);
       bytes += rowBytes(from) + rowBytes(to);
-      if (bytes > CARD_PAGES_BYTES) break;
+      if (bytes > CARD_PAGES_BYTES) {
+        // This one is not drawn either.
+        looked -= 1;
+        break;
+      }
       if (from === null || to === null || fromSource === null || toSource === null) continue;
       if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') continue;
       cards.push({
@@ -715,6 +953,13 @@ export const listOpen = query({
         ],
       });
     }
-    return [...cards, ...conflictCards];
+    return {
+      cards: [...cards, ...conflictCards],
+      next: confirmed.next,
+      notShown: {
+        proposals: proposed.length - looked,
+        atLeast: proposed.length === PROPOSALS_READ,
+      },
+    };
   },
 });

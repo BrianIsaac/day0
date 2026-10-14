@@ -35,22 +35,6 @@
         "ancestors": "",
         "descendants": "/rest/api/content/4587530/descendant",
         "space": "/rest/api/space/OPS"
-      },
-      "body": {
-        "storage": {
-          "value": "<p>Superseded by the 2026 page. Call the duty manager.</p>",
-          "representation": "storage",
-          "_expandable": {
-            "content": "/rest/api/content/4587530"
-          }
-        },
-        "_expandable": {
-          "editor": "",
-          "view": "",
-          "export_view": "",
-          "styled_view": "",
-          "anonymous_export_view": ""
-        }
       }
     }
   ],
@@ -58,7 +42,7 @@
   "limit": 2,
   "size": 1,
   "_links": {
-    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=archived&expand=body.storage,version",
+    "self": "https://wiki.acme.corp/confluence/rest/api/content?spaceKey=OPS&type=page&status=archived&expand=version",
     "base": "https://wiki.acme.corp/confluence",
     "context": "/confluence"
   }

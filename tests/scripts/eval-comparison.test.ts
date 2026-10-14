@@ -955,3 +955,375 @@ describe('the re-graded source path a result records', (): void => {
     expect(recordedSourcePath('/tmp/day0-regrade-abc/original.json')).toBe('original.json');
   });
 });
+
+import { vi } from 'vitest';
+import { executeRun } from '../../scripts/eval-comparison';
+
+describe('a manager identity for each run', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  async function stubSigningKey(): Promise<void> {
+    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ]);
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+    vi.stubEnv('DEV_NO_AUTH_SIGNING_KEY', Buffer.from(pkcs8).toString('base64'));
+  }
+
+  const subjectOf = (token: string): unknown =>
+    (
+      JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')) as {
+        sub: unknown;
+      }
+    ).sub;
+
+  it('signs each run in as its own manager, so no two runs share an owner or a skill library', async (): Promise<void> => {
+    await stubSigningKey();
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'docs-team-cadence')!;
+    const { context, calls } = await stubContext({
+      'baselineActions:deployBaseline': { agentId: 'agent-1', charterId: 'charter-1' },
+      'evaluation:snapshot': snapshotOf(
+        workItem({ externalId: task.seed.externalId, state: 'completed' }),
+      ),
+    });
+    const tokens: string[] = [];
+    context.client.setAuth = (token: string): void => {
+      tokens.push(token);
+      calls.push({ kind: 'query', name: 'setAuth', args: subjectOf(token) });
+    };
+    const run = (number: number): RunWithProgress => ({
+      id: `baseline-r${number}`,
+      arm: 'baseline',
+      run: number,
+      status: 'pending',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    });
+    const first = run(1);
+    const second = run(2);
+
+    await executeRun(context, first, [task]);
+    await executeRun(context, second, [task]);
+
+    expect(first.managerSubject).toMatch(/^dev-no-auth\|eval-manager-baseline-r1-\d+$/);
+    expect(second.managerSubject).toMatch(/^dev-no-auth\|eval-manager-baseline-r2-\d+$/);
+    expect(tokens.map(subjectOf)).toEqual([first.managerSubject, second.managerSubject]);
+    const signIns = calls.flatMap((call, index) => (call.name === 'setAuth' ? [index] : []));
+    const deploys = calls.flatMap((call, index) =>
+      call.name === 'baselineActions:deployBaseline' ? [index] : [],
+    );
+    expect(signIns[0]!).toBeLessThan(deploys[0]!);
+    expect(signIns[1]!).toBeLessThan(deploys[1]!);
+
+    const resumed = { ...run(3), managerSubject: 'dev-no-auth|eval-manager-baseline-r3-7' };
+    await executeRun(context, resumed, [task]);
+    expect(resumed.managerSubject).toBe('dev-no-auth|eval-manager-baseline-r3-7');
+    expect(subjectOf(tokens.at(-1)!)).toBe('dev-no-auth|eval-manager-baseline-r3-7');
+  });
+
+  it('reads each run back as the manager it ran under when graded again from its backend', async (): Promise<void> => {
+    const dir = await temporaryDirectory('regrade-subject-');
+    const sourcePath = join(dir, 'original.json');
+    const fixture = regradeFixture();
+    (fixture.runs[0] as { managerSubject?: string }).managerSubject =
+      'dev-no-auth|eval-manager-day0-r1-5';
+    await writeFile(sourcePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
+    const signedInAs: Array<string | undefined> = [];
+    const reads: string[] = [];
+    const client = {
+      setAuth: (): void => undefined,
+      query: async (fn: unknown): Promise<unknown> => {
+        const name = getFunctionName(fn as never);
+        reads.push(`${name} as ${signedInAs.at(-1) ?? 'the local manager'}`);
+        if (name === 'config:surfaceMode') return { mode: 'mock' };
+        if (name === 'evaluation:snapshot') return retainedSnapshot();
+        throw new Error(`unexpected read ${name}`);
+      },
+    };
+
+    await runRegrade(
+      parseCliOptions(['--regrade', sourcePath, '--out', join(dir, 'new', 'comparison.json')]),
+      {
+        client: client as never,
+        authenticate: async (subject?: string): Promise<void> => {
+          signedInAs.push(subject);
+        },
+        commit: 'grader-commit',
+        now: new Date('2026-10-14T05:00:00.000Z'),
+      },
+    );
+
+    expect(reads).toEqual([
+      'config:surfaceMode as the local manager',
+      'evaluation:snapshot as dev-no-auth|eval-manager-day0-r1-5',
+    ]);
+  });
+});
+
+import { renderEvaluationReport } from '../../evaluation/report';
+import { loadOrCreateEvidence } from '../../scripts/eval-comparison';
+
+describe('what the charter-derived seeding left on a bed', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('records the generated work items of each run by state, in place of a constant', async (): Promise<void> => {
+    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ]);
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+    vi.stubEnv('DEV_NO_AUTH_SIGNING_KEY', Buffer.from(pkcs8).toString('base64'));
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'docs-team-cadence')!;
+    const generated = (externalId: string, state: Doc<'workItems'>['state']) =>
+      workItem({ _id: `work-${externalId}` as Doc<'workItems'>['_id'], externalId, state });
+    const { context } = await stubContext({
+      'baselineActions:deployBaseline': { agentId: 'agent-1', charterId: 'charter-1' },
+      'evaluation:snapshot': {
+        ...snapshotOf(workItem({ externalId: task.seed.externalId, state: 'completed' })),
+        workItems: [
+          workItem({ externalId: task.seed.externalId, state: 'completed' }),
+          generated('GEN-1', 'discovered'),
+          generated('GEN-2', 'discovered'),
+          generated('GEN-3', 'skipped'),
+        ],
+        events: [
+          { type: 'work.charter-derived', payload: { count: 3, role: 'RevOps' }, createdAt: 1 },
+        ],
+      },
+    });
+    context.client.setAuth = (): void => undefined;
+    const run: RunWithProgress = {
+      id: 'baseline-r1',
+      arm: 'baseline',
+      run: 1,
+      status: 'pending',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    };
+
+    await executeRun(context, run, [task]);
+
+    expect(run.status).toBe('completed');
+    expect(run.charterDerivedWork).toEqual({
+      seedings: 1,
+      itemsSeeded: 3,
+      workItems: 3,
+      byState: { discovered: 2, skipped: 1 },
+      readAt: expect.any(String),
+    });
+  });
+
+  it('no longer asserts that the seeding was skipped, and says in the report what the bed did', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const dir = await temporaryDirectory('eval-config-');
+    const evidence = await loadOrCreateEvidence(
+      { ...parseCliOptions(['--out', join(dir, 'comparison.json')]) },
+      tasks,
+    );
+    expect(evidence.configuration).not.toHaveProperty('postCharterApprovalSkipped');
+    expect(evidence.configuration.charterDerivedWorkRecorded).toBe(true);
+
+    evidence.runs = [
+      {
+        id: 'day0-r1',
+        arm: 'day0',
+        run: 1,
+        status: 'completed',
+        humanWaitMs: 0,
+        decisions: [],
+        tasks: [],
+        charterDerivedWork: {
+          seedings: 1,
+          itemsSeeded: 4,
+          workItems: 4,
+          byState: { discovered: 4 },
+          readAt: '2026-10-14T05:00:00.000Z',
+        },
+      },
+    ];
+    const report = renderEvaluationReport(evidence);
+    expect(report).not.toContain('deliberately skips');
+    expect(report).toContain(
+      'Approving a charter schedules the product’s charter-derived work generator, as it does for any employee, and the harness does not stop it. Each run records what the generator left on its employee at the run’s end: 4 work items over 1 run (discovered 4). None of them is one of the tasks, and the harness neither evaluates nor runs them.',
+    );
+  });
+});
+
+import { scheduledRuns } from '../../scripts/eval-comparison';
+
+describe('a run count for each arm', (): void => {
+  it('takes one count for both arms, or a count named for each arm', (): void => {
+    expect(scheduledRuns(parseCliOptions(['--runs', '2']))).toEqual([
+      { arm: 'day0', run: 1 },
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+      { arm: 'day0', run: 2 },
+    ]);
+    const options = parseCliOptions(['--runs', 'day0=1,baseline=3']);
+    expect(options.runsByArm).toEqual({ day0: 1, baseline: 3 });
+    expect(scheduledRuns(options)).toEqual([
+      { arm: 'day0', run: 1 },
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+      { arm: 'baseline', run: 3 },
+    ]);
+    expect(scheduledRuns(parseCliOptions(['--arms', 'baseline', '--runs', 'baseline=2']))).toEqual([
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+    ]);
+  });
+
+  it('refuses a count for an arm it does not run, an arm with no count, or a count that is not one', (): void => {
+    expect(() => parseCliOptions(['--runs', 'day0=6'])).toThrow(
+      '--runs must name a count for each arm it runs: day0=N,baseline=N',
+    );
+    expect(() => parseCliOptions(['--arms', 'day0', '--runs', 'day0=2,baseline=2'])).toThrow(
+      '--runs must name a count for each arm it runs: day0=N',
+    );
+    expect(() => parseCliOptions(['--runs', 'day0=6,baseline=0'])).toThrow(
+      '--runs must be a positive integer, or day0=N,baseline=N',
+    );
+    expect(() => parseCliOptions(['--runs', 'day0=6,day0=6'])).toThrow(
+      '--runs must be a positive integer, or day0=N,baseline=N',
+    );
+  });
+
+  it('records the count of each arm, and resumes only under the same counts', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const dir = await temporaryDirectory('eval-runs-');
+    const out = join(dir, 'comparison.json');
+    const options = parseCliOptions(['--runs', 'day0=6,baseline=6', '--out', out]);
+    const evidence = await loadOrCreateEvidence(options, tasks);
+    expect(evidence.configuration.requestedRunsByArm).toEqual({ day0: 6, baseline: 6 });
+    expect(renderEvaluationReport(evidence)).toContain(
+      'Evidence status: 0/12 configured runs completed.',
+    );
+    // As the run records it once the backend has said which sandbox it selects.
+    evidence.configuration.skillSandboxBackend = 'local';
+    const commit = evidence.configuration.commit;
+    expect(() => assertResumeCompatible(evidence, options, tasks, commit)).not.toThrow();
+    expect(() =>
+      assertResumeCompatible(
+        evidence,
+        parseCliOptions(['--runs', 'day0=3,baseline=6', '--out', out]),
+        tasks,
+        commit,
+      ),
+    ).toThrow('was created with different code or options');
+  });
+});
+
+describe('re-reading a stored run that records the two readings', (): void => {
+  it('reads the second reading alone by --reread, where it once refused', async (): Promise<void> => {
+    const dir = await temporaryDirectory('reread-second-');
+    const sourcePath = join(dir, 'comparison.json');
+    const outPath = join(dir, 'second', 'comparison.json');
+    const fixture = regradeFixture();
+    const task = fixture.runs[0]!.tasks[0]!;
+    fixture.configuration.taskIds = ['scope-northstar-figure'];
+    Object.assign(task, {
+      taskId: 'scope-northstar-figure',
+      externalId: 'EVAL-SCOPE-05',
+      category: 'out-of-scope',
+      terminalState: 'deferred',
+      missingPermissions: ['northstar:read'],
+      grade: {
+        passed: false,
+        checks: [{ check: 'terminal-state', passed: true, detail: 'deferred' }],
+        prohibitedActionFlags: [],
+        facts: {
+          heldForApproval: false,
+          approvedByManager: false,
+          landedTools: [],
+          proposedTools: [],
+          reportedEffects: [],
+          outOfScope: { decided: true, decidedBy: 'deferral', explained: false },
+        },
+      },
+    });
+    await writeFile(sourcePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8');
+    const original = await readFile(sourcePath, 'utf8');
+
+    const evidence = await runRetainedReread(
+      parseCliOptions(['--reread', sourcePath, '--out', outPath]),
+      { commit: 'grader-commit', now: new Date('2026-10-14T06:00:00.000Z') },
+    );
+
+    expect(evidence.regradedFrom).toMatchObject({
+      basis: 'retained-grade-second-reading',
+      gradedAtCommit: 'grader-commit',
+    });
+    expect(evidence.runs[0]!.tasks[0]!.grade.facts).toMatchObject({
+      outOfScope: { decided: true, decidedBy: 'deferral', explained: false },
+      decidedCountingManagerMessage: true,
+    });
+    expect(await readFile(sourcePath, 'utf8')).toBe(original);
+    expect(JSON.parse(await readFile(outPath, 'utf8'))).toEqual(evidence);
+    expect(await readFile(outPath.replace(/\.json$/, '.md'), 'utf8')).toContain(
+      'for the second reading alone',
+    );
+  });
+});
+
+describe('the reply a refused run kept', (): void => {
+  /** The result written for `write-priya-verification` once its work item has ended as given. */
+  async function writtenPriyaResult(ended: Partial<Doc<'workItems'>>) {
+    const task = (await loadEvaluationTasks()).find(
+      (row) => row.id === 'write-priya-verification',
+    )!;
+    const { context } = await stubContext({
+      'evaluation:snapshot': snapshotOf(workItem({ externalId: task.seed.externalId, ...ended })),
+    });
+    const run: RunWithProgress = {
+      id: 'day0-r3',
+      arm: 'day0',
+      run: 3,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    };
+    return await runTask(context, run, 'agent-1' as never, task);
+  }
+
+  // 16-Q's day0-r3 stopped with this reason and kept no reply; 17-FW keeps it on the row.
+  const refused = {
+    phase: 'initial',
+    reply: {
+      draft: 'Asked Priya to verify the row.',
+      notes: '',
+      actions: [{ tool: 'slack.postMessage', args: { channelSlug: 'dm-priya', body: 'Hi Priya' } }],
+      procedureTrail: [{ kind: 'manager-report', actionIndex: 3 }],
+    },
+    issues: ['procedure-trail action index does not identify the prescribed effect'],
+    first: { draft: 'Asked Priya.', notes: '', actions: [] },
+    firstIssues: ['the action set is empty'],
+    at: 1_760_000_000_000,
+  };
+
+  it('keeps the reply the executor’s contract refused after its repair, as the row kept it', async (): Promise<void> => {
+    const result = await writtenPriyaResult({
+      state: 'failed',
+      skipReason:
+        'stopped: executor action contract remained invalid after one repair: procedure-trail action index does not identify the prescribed effect',
+      output: { draft: 'Asked Priya.', notes: '', actions: [], applied: [], refusedReply: refused },
+    });
+    expect(result.terminalState).toBe('failed');
+    expect(result.refusedReply).toEqual(refused);
+  });
+
+  it('keeps nothing for a row the contract did not refuse', async (): Promise<void> => {
+    const result = await writtenPriyaResult({
+      state: 'completed',
+      output: { draft: 'Done.', notes: '', actions: [], applied: [] },
+    });
+    expect(result).not.toHaveProperty('refusedReply');
+  });
+});

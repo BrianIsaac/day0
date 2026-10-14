@@ -68,17 +68,16 @@ describe("a tone's text on an alpha fill of its own hue", () => {
   const PAIR =
     /bg-\[var\(--color-(accent|warn|ok|danger)\)\]\/(\d+)[^'"`]*?text-\[var\(--color-\1\)\]/g;
 
-  it('stays at 4.5:1 or better over a card and over the page, in both themes', () => {
+  it('stays at 4.5:1 or better over a card, the page and an inset, in both themes, with no tone excepted', () => {
     const short = sources(join(ROOT, 'app')).flatMap((path) =>
       [...readFileSync(path, 'utf8').matchAll(PAIR)].flatMap(([, tone = '', percent = '']) => {
         const alpha = Number(percent) / 100;
         return (['dark', 'light'] as const).flatMap((theme) => {
-          // The dark danger family is short of AA on its fills by the design's own pair (4.34:1 on
-          // danger-soft, 4.03:1 on its 15% mix), recorded in the wave 6 A handover for a product
-          // call and pinned so in globals.test.ts; the light set's danger passes.
-          if (tone === 'danger' && theme === 'dark') return [];
+          // No tone is excepted: the dark danger family, short of AA on its fills by the design's
+          // own pair until wave 17 (4.03:1 on its 15% mix over a card; W16-R33), is held to the
+          // same 4.5:1 since its text went one step lighter (D-7 (b)).
           const read = theme === 'dark' ? token : lightToken;
-          return ['card', 'bg'].flatMap((surface) => {
+          return ['card', 'bg', 'inset'].flatMap((surface) => {
             const ratio = contrast(read(tone), over(read(tone), alpha, read(surface)));
             return ratio < 4.5
               ? [

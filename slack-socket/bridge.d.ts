@@ -59,5 +59,14 @@ export declare function responseUrlOf(
   slackHost: string | undefined,
 ): URL | undefined;
 
+/**
+ * Which way out the process takes to Slack: `direct`, or the proxy its environment names by host
+ * and port; `ignored` says why a named proxy is not read.
+ */
+export declare function wayOutOf(
+  env: Readonly<Record<string, string | undefined>>,
+  nodeVersion: string,
+): { readonly wayOut: string; readonly ignored?: string };
+
 /** Make a bridge. */
 export declare function createBridge(options: BridgeOptions): Bridge;

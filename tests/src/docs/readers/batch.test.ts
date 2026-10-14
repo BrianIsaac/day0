@@ -7,7 +7,9 @@ import {
   offsetInListing,
   readProviderPage,
   splitPageReads,
+  storedMarks,
   unreadReason,
+  type StoredMark,
 } from '../../../../src/docs/readers/batch';
 import type { DocPage } from '../../../../src/docs/types';
 import { TransientProviderError } from '../../../../src/lib/transport-error';
@@ -72,5 +74,22 @@ describe('a cursor bound to the listing it was taken from (adversarial pass, ste
       ListingChangedError,
     );
     expect(() => offsetInListing('2', ['a.md', 'b.md', 'c.md'])).toThrow(ListingChangedError);
+  });
+});
+
+describe('the reader contract by revision, as a reader asks it', (): void => {
+  it('asks the sync once for the pages named, and nothing where there is no contract or no page', async (): Promise<void> => {
+    const asked: string[][] = [];
+    const mark: StoredMark = { revision: '7', title: 'Runbook' };
+    const stored = async (refs: readonly string[]): Promise<ReadonlyMap<string, StoredMark>> => {
+      asked.push([...refs]);
+      return new Map([['page-1', mark]]);
+    };
+    await expect(storedMarks(stored, ['page-1', 'page-2'])).resolves.toEqual(
+      new Map([['page-1', mark]]),
+    );
+    await expect(storedMarks(stored, [])).resolves.toEqual(new Map());
+    await expect(storedMarks(undefined, ['page-1'])).resolves.toEqual(new Map());
+    expect(asked).toEqual([['page-1', 'page-2']]);
   });
 });

@@ -10,6 +10,7 @@ import { finishingCursor } from '../../src/docs/finishing';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { sourceAuthorityOf } from '../../src/docs/authority';
+import { runCardChain, scheduledAs } from './fakes/reorientation';
 
 type Harness = TestConvex<typeof schema>;
 
@@ -234,6 +235,33 @@ describe('recordRead: what a page’s source says of it, beside its hash', (): v
       undefined,
       undefined,
     ]);
+  });
+
+  it('fills whether the source dated the page where the row does not say, with its text, its time and its hash as they were, and leaves what a row says standing (K-2)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const before = await pageOf(harness, pageId);
+    expect(before).not.toHaveProperty('datedBySource');
+    const record = async (datedBySource: boolean): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'runbooks/refresh.md',
+        datedBySource,
+      });
+    // Not a change of status.
+    expect(await record(true)).toBe(false);
+    const after = await pageOf(harness, pageId);
+    expect(after.datedBySource).toBe(true);
+    expect([after.markdown, after.contentHash, after.updatedAt]).toEqual([
+      before.markdown,
+      before.contentHash,
+      before.updatedAt,
+    ]);
+    // The row's time is the stored read's: a later read's word is not about it.
+    await record(false);
+    expect((await pageOf(harness, pageId)).datedBySource).toBe(true);
   });
 
   it('returns a page to its source’s default once the source stops saying anything of it', async (): Promise<void> => {
@@ -748,6 +776,87 @@ describe('restatePages: the status phase of a finishing sync', (): void => {
     }
   }, 120_000);
 
+  it('schedules one function for the cards of twenty pages flipped under fifty-one readers, and opens every card a cited plan owes (W16-R5, D-9 (a))', async (): Promise<void> => {
+    // The wave 16 review's W16-R5: at v0.20.0 each reader's card past the transaction's eighth
+    // was a scheduled function of its own, 1,012 of them here, past Convex's thousand a mutation
+    // ("Scheduled too many functions in a single function execution"), so the sync failed at
+    // the same cursor on every retry. convex-test enforces the bound with `transactionLimits`.
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const source = await syncingSource(harness);
+    const PAGES = 20;
+    const READERS = 51;
+    const refOf = (index: number): string => `handbook/p${String(index).padStart(2, '0')}.md`;
+    for (let index = 0; index < PAGES; index += 1) {
+      const pageId = await storedPage(harness, source, {
+        ref: refOf(index),
+        title: `Page ${index}`,
+      });
+      // Archived at its source since its last read, which the walk now restates.
+      await harness.run(async (ctx) => {
+        await ctx.db.patch(pageId, { nativeStatus: 'archived' });
+      });
+    }
+    // Every reader has one approved plan, which cites one of the pages.
+    const plans = new Map<Id<'agents'>, { plan: Id<'workItems'>; ref: string }>();
+    for (let reader = 0; reader < READERS; reader += 1) {
+      const agentId = await employee(harness, `Reader ${reader}`);
+      const ref = refOf(reader % PAGES);
+      const plan = await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `REVOPS-${reader}`,
+            title: `Ticket ${reader}`,
+            contentSummary: 'Synthetic.',
+            contentRefs: [],
+            state: 'plan-approved',
+            plan: {
+              summary: 'Answer the ask.',
+              steps: ['Read the page', 'Reply'],
+              cites: [
+                { step: 1, label: 'Page', sourceId: source.sourceId, pageRef: ref, blocks: [] },
+              ],
+            },
+            observedAt: 1,
+            createdAt: 1,
+          }),
+      );
+      plans.set(agentId, { plan, ref });
+    }
+    await standAt(harness, source, STATUS);
+    const page = await harness.mutation(internal.docStatus.restatePages, {
+      sourceId: source.sourceId,
+      runId: source.runId,
+      checkpoint: STATUS,
+      from: null,
+      record: true,
+    });
+    expect(page).toMatchObject({ changed: PAGES, done: true, toRestate: [] });
+    // One function carries every card the walk's own transaction left, and none rides alone.
+    expect(await scheduledAs(harness, 'reorientation:openCardsLater')).toHaveLength(1);
+    expect(await scheduledAs(harness, 'reorientation:openCardLater')).toEqual([]);
+    // The chain, one link at a time, as the scheduler runs it: never two functions waiting.
+    expect((await runCardChain(harness)).mostWaiting).toBe(1);
+    const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(cards).toHaveLength(READERS);
+    for (const card of cards) {
+      const owed = plans.get(card.agentId)!;
+      expect(card.trigger).toBe('page-status-changed');
+      expect(card.risk).toBe('high');
+      expect(card.blockingWork).toEqual([owed.plan]);
+      expect(card.evidence.pageRefs).toEqual([{ sourceId: source.sourceId, ref: owed.ref }]);
+    }
+    expect(
+      await harness.run(async (ctx) =>
+        (await ctx.db.query('events').collect()).filter(
+          (event) => event.type === 'reorientation.card-not-opened',
+        ),
+      ),
+    ).toEqual([]);
+  }, 120_000);
+
   it('runs in its own phase only, and stops for a run a newer sync moved on', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);
@@ -1170,8 +1279,9 @@ describe('the skills that read a page whose status changed', (): void => {
       status: 'superseded',
       supersededBy: successor,
     });
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, skillId)).toBe(
-      'its runbook "Refreshing the tile" was superseded on 10 October 2026',
+      'its runbook “Refreshing the tile” was superseded on 10 October 2026',
     );
     expect((await harness.run(async (ctx) => await ctx.db.get(skillId)))?.state).toBe('registered');
   });
@@ -1205,8 +1315,9 @@ describe('the skills that read a page whose status changed', (): void => {
         ...(nativeStatus !== undefined ? { nativeStatus } : {}),
       });
     }
+    // Curly quotes since wave 17 (W-10): the reason's title sits in the copy's own quotes.
     expect(await reasonOf(harness, archived)).toBe(
-      'its runbook "Refreshing the tile" was archived on 10 October 2026',
+      'its runbook “Refreshing the tile” was archived on 10 October 2026',
     );
     expect((await pageOf(harness, back)).status).toBe('active');
     expect(await reasonOf(harness, returning)).toBeUndefined();

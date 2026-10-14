@@ -37,13 +37,16 @@ vi.mock('../../../src/lib/mastra', () => ({
 }));
 
 import {
+  ActionContractRefusal,
   CHARTER_CLAUSE_RULE,
   dependentExecuteSchemaForProcedureContract,
   executeSchemaForProcedureContract,
   executorInstructions,
+  outputKeepingRefusedReply,
   parseProcedureContract,
   runDependentSkill,
   runSkill,
+  withRefusedReply,
 } from '../../../src/work/execute-skill';
 import { CLOSE_HELD_AGAINST_WORDS } from '../../../src/work/work-done';
 
@@ -317,6 +320,104 @@ describe('the executor asks the run whether the work was done', (): void => {
   });
 });
 
+describe('a reply whose action set the contract still refuses after its one repair (16-Q, write-priya-verification)', (): void => {
+  // 16-Q's row, 13 October: "stopped: executor action contract remained invalid after one repair:
+  // procedure-trail action index does not identify the prescribed effect", with no action and
+  // nothing held, and the failing reply kept nowhere. A reply whose trail row names an action
+  // that is not in its set raises that issue.
+  const astray = (words: string) => ({
+    ...mockReply('done', words, 'done'),
+    procedureTrails: [{ trailId: 'trail-1', actionIndex: 3, inapplicabilityReason: null }],
+  });
+  const ISSUE = 'procedure-trail action index does not identify the prescribed effect';
+
+  beforeEach((): void => {
+    recorded.calls.length = 0;
+    recorded.outputs.length = 0;
+  });
+
+  it('stops with the reason it always gave, and carries both replies and what each was refused for', async (): Promise<void> => {
+    recorded.outputs.push(astray('First try.'), astray('Second try.'));
+    const failure: unknown = await runSkill({
+      skill,
+      plan,
+      candidate: ticket,
+      charter,
+      mockEnv,
+      now: 1_791_000_000_000,
+    }).catch((err: unknown) => err);
+    expect(recorded.calls).toHaveLength(2);
+    expect(failure).toBeInstanceOf(ActionContractRefusal);
+    const refusal = failure as ActionContractRefusal;
+    expect(refusal.message).toBe(
+      `executor action contract remained invalid after one repair: ${ISSUE}`,
+    );
+    expect(refusal.refused).toEqual({
+      phase: 'initial',
+      reply: {
+        draft: 'Second try.',
+        notes: '',
+        needsDependentPhase: false,
+        workDone: 'done',
+        workDoneWhy: 'Second try.',
+        actions: [
+          {
+            tool: 'ticket.update',
+            args: { slug: 'REVOPS-204', status: 'done', comment: 'Second try.' },
+            reports: null,
+          },
+        ],
+        procedureTrails: [{ trailId: 'trail-1', actionIndex: 3, inapplicabilityReason: null }],
+      },
+      issues: [ISSUE],
+      first: expect.objectContaining({ draft: 'First try.' }) as unknown,
+      firstIssues: [ISSUE],
+      at: 1_791_000_000_000,
+    });
+  });
+
+  it('carries a real phase-one reply the procedure contract still refuses the same way', async (): Promise<void> => {
+    const ghost = (words: string) => ({
+      ...realReply('done', words),
+      procedureTrails: [{ trailId: 'no-such-trail', actionIndex: 0, inapplicabilityReason: null }],
+    });
+    recorded.outputs.push(ghost('First try.'), ghost('Second try.'));
+    const failure: unknown = await runSkill({
+      skill,
+      plan,
+      candidate: realTicket,
+      charter,
+      mockEnv: realEnv,
+      surfaces: [linear],
+      mode: 'real',
+    }).catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(ActionContractRefusal);
+    const refusal = failure as ActionContractRefusal;
+    expect(refusal.message).toBe(
+      'executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures',
+    );
+    expect(refusal.refused.reply.draft).toBe('Second try.');
+    expect(refusal.refused.reply.actions).toHaveLength(2);
+    expect(refusal.refused.first.draft).toBe('First try.');
+  });
+
+  it('is kept on the row as the words the employee wrote and no action, the reply beside them', async (): Promise<void> => {
+    recorded.outputs.push(astray('First try.'), astray('Second try.'));
+    const refusal = (await runSkill({ skill, plan, candidate: ticket, charter, mockEnv }).catch(
+      (err: unknown) => err,
+    )) as ActionContractRefusal;
+    const kept = outputKeepingRefusedReply(refusal);
+    // None of the reply's actions reached the gate, so the row lists none as its own.
+    expect(kept).toEqual({
+      draft: 'Second try.',
+      notes: '',
+      actions: [],
+      applied: [],
+      refusedReply: refusal.refused,
+    });
+  });
+});
+
 describe('a mock run whose message reports writes its declaration leaves out (W15-R2)', (): void => {
   beforeEach((): void => {
     recorded.calls.length = 0;
@@ -440,6 +541,56 @@ describe('a real run held to its answer', (): void => {
     expect(output.closeAgainstWords).toBe(
       'I could not reconcile the three October closed-won deals',
     );
+  });
+
+  it('carries a closing reply the procedure contract still refuses after its repair, both replies with it (17-FW)', async (): Promise<void> => {
+    const closing = (words: string) => ({
+      draft: words,
+      notes: '',
+      openQuestion: null,
+      workDone: 'done',
+      workDoneWhy: words,
+      actions: [linearCall('save_comment', { issueId: 'REVOPS-5', body: words })],
+      procedureTrails: [{ trailId: 'no-such-trail', actionIndex: 0, inapplicabilityReason: null }],
+      planStepOutcomes: [1, 2].map((step) => ({
+        step,
+        status: 'satisfied',
+        evidence: 'action 0',
+        basis: 'ledger',
+        charterClause: null,
+      })),
+    });
+    recorded.outputs.push(closing('First closing.'), closing('Second closing.'));
+    const failure: unknown = await runDependentSkill({
+      ...realArgs,
+      initialOutput: {
+        draft: 'Read the tracker.',
+        notes: '',
+        needsDependentPhase: true,
+        actions: [],
+        procedureTrails: [],
+      },
+      initialLedger: [],
+      closingGate: (): string[] => [],
+    }).catch((err: unknown) => err);
+    expect(failure).toBeInstanceOf(ActionContractRefusal);
+    const refusal = failure as ActionContractRefusal;
+    expect(refusal.message).toBe(
+      'dependent executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures',
+    );
+    expect(refusal.refused).toMatchObject({
+      phase: 'dependent',
+      reply: { draft: 'Second closing.' },
+      first: { draft: 'First closing.' },
+      issues: ['procedure-trail inventory contains a trail absent from loaded procedures'],
+      at: 1,
+    });
+    // Beside whatever a failed closing phase keeps, and only for this failure.
+    expect(withRefusedReply({ applied: [] }, refusal)).toEqual({
+      applied: [],
+      refusedReply: refusal.refused,
+    });
+    expect(withRefusedReply({ applied: [] }, new Error('401'))).toEqual({ applied: [] });
   });
 
   it('sends a closing set back once on the tripwire and keeps its close for the manager when it answers done again', async (): Promise<void> => {

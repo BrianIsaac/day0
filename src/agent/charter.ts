@@ -9,6 +9,7 @@ import {
   deriveConstraints,
   normaliseConstraints,
   withoutProvenanceSuffixes,
+  withProhibitionClauses,
   withRoutingRules,
   withWillNotDoAsActs,
   type CharterConstraint,
@@ -563,13 +564,16 @@ export function assemble(
       createdAt,
     }),
   );
-  const listed = normaliseConstraints(raw.constraints ?? [], charter);
-  const routed = withRoutingRules(
+  const struck = (args.changeRequests ?? []).flatMap((request) => request.struck);
+  // A prohibition the draft wrote no Will not do clause for is given one (the v0.20.0 walk's
+  // finding 6), before the routing rules count the clauses other rules bind.
+  const forbidden = withProhibitionClauses(
     charter,
-    args.answers,
-    listed,
-    (args.changeRequests ?? []).flatMap((request) => request.struck),
+    normaliseConstraints(raw.constraints ?? [], charter),
+    struck,
   );
+  const listed = forbidden.rules;
+  const routed = withRoutingRules(forbidden.charter, args.answers, listed, struck);
   const ruled = [...listed, ...routed.rules];
   return {
     ...routed.charter,

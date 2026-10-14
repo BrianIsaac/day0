@@ -24,6 +24,7 @@ import { PIP_DECLINED_OUTPUT } from '../../../../fixtures/work/pip-declined-2026
 import { QUILL_COMMENT, ROOK_COMMENT } from '../../../../fixtures/work/work-done-corpora';
 import { HELD_CLOSE_AGAINST_WORDS } from '../../../../../src/surfaces/policy';
 import { type StopRunAnswer } from '../../../../../src/work/stop';
+import type { RunHold } from '../../../../../src/work/item-display';
 
 const backend = vi.hoisted(() => ({
   /** What a query answers, by function name; undefined (loading) otherwise. */
@@ -444,7 +445,8 @@ describe('landed (work-landed.html)', (): void => {
     const view = card(DRAWN.landed);
     expect(chip(view.container)).toBe('Landed');
     expect(view.text()).toContain(
-      '3 actions reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      '3 actions reached the work environment · approved from the Day0 dashboard at 29 Sep 2026, 15:02',
     );
     expect(view.text()).toContain('Landed: Replied in #revops-asks');
     const send = (): HTMLButtonElement | undefined =>
@@ -1208,6 +1210,89 @@ describe('the approval line once the approved writes have applied (W19-8)', (): 
     act((): void => view.root.render(element({ ...held, state: 'deferred' })));
     expect(view.container.textContent).not.toContain('apply now');
     view.unmount();
+  });
+
+  it('says an approval given while the employee is paused applies when it is unpaused, never "now" beside the hold (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review's pair of lines: an approval while paused keeps the row in
+    // `actions-pending` with its stamp, so "they apply now" sat beside "Held while Mira is paused".
+    const element = (item: Doc<'workItems'>, hold?: RunHold) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={item}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+          hold={hold}
+        />
+      </AgentZoneContext>
+    );
+    const paused: RunHold = { by: 'employee', employeeName: EMPLOYEE };
+    const view = mount(element(DRAWN.held, paused));
+    await press(view.container, 'Approve selected (2)');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply when Mira is unpaused.']);
+    const approved = { ...DRAWN.held, approvedIndexes: [0, 1] } as Doc<'workItems'>;
+    act((): void => view.root.render(element(approved, paused)));
+    expect(view.container.textContent).toContain('Held while Mira is paused');
+    expect(view.container.textContent).not.toContain('apply now');
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply when Mira is unpaused.']);
+    // Resumed: the apply is claimed and the line says what is true now.
+    act((): void =>
+      view.root.render(element({ ...approved, state: 'executing', applyPhase: 'approved' })),
+    );
+    expect(said(view.container)).toEqual(['Approved 2 actions: they apply now.']);
+    view.unmount();
+  });
+
+  it('says one approved action applies when the employee is unpaused, and names the deployment’s own pause (W16-R31)', async (): Promise<void> => {
+    const element = (hold: RunHold) => (
+      <AgentZoneContext value={ZONE}>
+        <WorkItemCard
+          item={DRAWN.held}
+          surfaces={SURFACES}
+          autonomousActions={false}
+          employeeName={EMPLOYEE}
+          questions={[]}
+          onApprovePlan={async () => {}}
+          onCancelPlan={async () => {}}
+          onRetryFailed={async () => {}}
+          onReconcileFailed={async () => {}}
+          onApproveActions={async () => {}}
+          onRejectActions={async () => {}}
+          onResendDecision={async () => {}}
+          onDismiss={async () => {}}
+          onStop={async () => ({ ok: true })}
+          onCloseWithoutRetry={async () => {}}
+          servedByLoop
+          hold={hold}
+        />
+      </AgentZoneContext>
+    );
+    const one = mount(element({ by: 'employee', employeeName: EMPLOYEE }));
+    const boxes = one.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    act((): void => boxes[1]!.click());
+    await press(one.container, 'Approve selected (1)');
+    expect(said(one.container)).toEqual(['Approved 1 action: it applies when Mira is unpaused.']);
+    one.unmount();
+    const deployment = mount(element({ by: 'deployment' }));
+    await press(deployment.container, 'Approve selected (2)');
+    expect(said(deployment.container)).toEqual([
+      // The apostrophe the card's own "Held while this deployment's scheduled work is paused"
+      // is written with, so the two lines beside each other read alike.
+      "Approved 2 actions: they apply once this deployment's scheduled work runs again.",
+    ]);
+    deployment.unmount();
   });
 
   it('keeps a rejection said once the row has finished: it is still true (the second pass)', async (): Promise<void> => {

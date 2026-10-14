@@ -9,7 +9,9 @@ import { employeeStateTally } from '@/work/state-labels';
 import { useNow } from '../components/time';
 import { useArrival } from '../arrival';
 import { CompanySupervision } from '../CompanySupervision';
+import { useCompanyFigures } from './use-company-figures';
 import { useOwnerPerson } from './use-owner-person';
+import { useRoster } from './use-roster';
 import { AcceptTransfer } from './AcceptTransfer';
 import { AuthorisationUnfinished } from './AuthorisationUnfinished';
 import { DeployForm } from './DeployForm';
@@ -56,14 +58,15 @@ function useNeedsYou(): NeedsYouInbox | undefined | Error {
  */
 export function SignedInDashboard({ boss }: { boss: Boss }) {
   useOwnerPerson();
-  const roster = useQuery(api.agents.rosterForUser);
+  const now = useNow();
+  const roster = useRoster(now);
   const inboxRead = useNeedsYou();
   const inbox = inboxRead instanceof Error ? undefined : inboxRead;
-  const figures = useQuery(api.metrics.forOwner);
+  // The roster is subscribed for every employee, so it is what tells the figures to read again.
+  const company = useCompanyFigures(roster);
   const docSources = useQuery(api.docSources.listMine);
   const surfaceMode = useQuery(api.config.surfaceMode);
   const reportingElsewhere = useQuery(api.agents.employeesReportingElsewhere);
-  const now = useNow();
   const [deploying, setDeploying] = useState(false);
   const deployToggle = useRef<HTMLButtonElement>(null);
   // The main column's cards arrive with the page (v4 section 1.3); the aside does not move.
@@ -79,6 +82,10 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
         .map(({ agentId, name }) => ({ agentId: String(agentId), name })),
     [roster],
   );
+  // The inbox reaches the newest employees only (`work.needsYou`, twenty), where the roster lists
+  // every one: what waits for the rest is counted from their own rows, which the same reader
+  // fills, so the page's count, the roster's column and the inbox's last line agree.
+  const beyondInbox = useMemo(() => waitingBeyondInbox(roster, inbox), [roster, inbox]);
   const showDeployForm = roster !== undefined && (!staffed || deploying);
   // A manager with nobody yet can still be named in a handover (the transfer plan, section 7.3),
   // and one who handed over their only employee still reads where it went (7.4): for them the
@@ -94,7 +101,7 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           </h1>
           <p className="text-sm text-[var(--color-muted)]">
             {staffed
-              ? companyLine(roster, inbox)
+              ? companyLine(roster, inbox, beyondInbox.total)
               : 'Give your first employee a name. Everything else is learned from you.'}
           </p>
           <AuthorisationUnfinished />
@@ -130,7 +137,12 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
           className="flex min-w-0 flex-col gap-6 xl:col-start-1 xl:row-start-1"
         >
           {!staffed && showInbox ? (
-            <NeedsYouList inbox={inboxRead} now={now} paused={paused} />
+            <NeedsYouList
+              inbox={inboxRead}
+              now={now}
+              paused={paused}
+              beyond={beyondInbox.byEmployee}
+            />
           ) : null}
           {staffed ? null : <HandedOver held={held} />}
           {showDeployForm ? (
@@ -151,17 +163,33 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
               focusOnMount={staffed}
             />
           ) : null}
-          {staffed ? <NeedsYouList inbox={inboxRead} now={now} paused={paused} /> : null}
-          <EmployeeRoster employees={roster} waiting={waitingByEmployee(inbox)} />
+          {staffed ? (
+            <NeedsYouList
+              inbox={inboxRead}
+              now={now}
+              paused={paused}
+              beyond={beyondInbox.byEmployee}
+            />
+          ) : null}
+          <EmployeeRoster
+            employees={roster}
+            waiting={waitingByEmployee(inbox, beyondInbox.byEmployee)}
+          />
           {staffed ? <HandedOver held={held} /> : null}
           <OfficeWorld
             agents={roster}
             settled={roster !== undefined && (!staffed || inboxRead !== undefined)}
           />
           {staffed ? (
-            <MonthCard roster={roster} figures={figures} waiting={inbox?.total ?? 0} now={now} />
+            <MonthCard
+              roster={roster}
+              figures={company.figures}
+              coverage={company.coverage}
+              waiting={(inbox?.total ?? 0) + beyondInbox.total}
+              now={now}
+            />
           ) : null}
-          <CompanySupervision />
+          <CompanySupervision company={company} />
         </div>
         <aside className="flex flex-col gap-6 xl:col-start-2 xl:row-span-2 xl:row-start-1">
           {showDeployForm ? <AfterDeploy /> : null}
@@ -188,18 +216,58 @@ export function SignedInDashboard({ boss }: { boss: Boss }) {
  * print, and how much waits on the manager, counted by the inbox the roster's column reads, so
  * the line and the roster below it say the same thing (the production walk's 6d).
  */
-function companyLine(roster: readonly RosterRow[], inbox: NeedsYouInbox | undefined): string {
+function companyLine(
+  roster: readonly RosterRow[],
+  inbox: NeedsYouInbox | undefined,
+  beyond: number,
+): string {
   const parts = employeeStateTally(roster).map(
     ({ text, count }) => `${count} ${text.charAt(0).toLocaleLowerCase('en-GB')}${text.slice(1)}`,
   );
-  if (inbox) parts.push(`${inbox.total} ${inbox.total === 1 ? 'thing needs' : 'things need'} you`);
+  if (inbox) {
+    const waiting = inbox.total + beyond;
+    parts.push(`${waiting} ${waiting === 1 ? 'thing needs' : 'things need'} you`);
+  }
   return parts.join(' · ');
 }
 
-/** The inbox's count per employee, for the roster's column. */
-function waitingByEmployee(inbox: NeedsYouInbox | undefined): Map<string, number> | undefined {
+/** What waits on the manager for the employees the inbox does not reach, each and in all. */
+interface BeyondInbox {
+  readonly byEmployee: ReadonlyMap<string, number>;
+  readonly total: number;
+}
+
+/**
+ * What waits for the employees the roster lists and the inbox does not reach (it reads the
+ * newest twenty), counted from each one's own row: nothing until both are read.
+ */
+function waitingBeyondInbox(
+  roster: readonly RosterRow[] | undefined,
+  inbox: NeedsYouInbox | undefined,
+): BeyondInbox {
+  if (roster === undefined || inbox === undefined) return { byEmployee: new Map(), total: 0 };
+  const reached = new Set<string>(inbox.waitingByEmployee.map(({ agentId }) => agentId));
+  const byEmployee = new Map(
+    roster
+      .filter((employee) => !reached.has(employee.agentId))
+      .map((employee): [string, number] => [employee.agentId, employee.needsYou]),
+  );
+  return { byEmployee, total: [...byEmployee.values()].reduce((sum, count) => sum + count, 0) };
+}
+
+/** The count per employee for the roster's column: the inbox's, and beyond it each row's own. */
+function waitingByEmployee(
+  inbox: NeedsYouInbox | undefined,
+  beyond: ReadonlyMap<string, number>,
+): Map<string, number> | undefined {
   return inbox
-    ? new Map(inbox.waitingByEmployee.map(({ agentId, waiting }) => [agentId, waiting]))
+    ? new Map<string, number>([
+        ...beyond,
+        ...inbox.waitingByEmployee.map(({ agentId, waiting }): [string, number] => [
+          agentId,
+          waiting,
+        ]),
+      ])
     : undefined;
 }
 
@@ -229,7 +297,8 @@ function AfterDeploy() {
 
 /**
  * The owner's documentation: how much is linked, and where it is managed; in the hosted office,
- * what its employees read instead, and a link to the page that says the same (RM26 (a)).
+ * what its employees read instead (RM26 (a)), with no link: the Documentation page there says the
+ * same sentence and draws no page, so a "View" showed nothing (FD-9 (b), the joins).
  */
 function DocumentationCard({
   sources,
@@ -243,17 +312,17 @@ function DocumentationCard({
       {/* The link's 44 px target (N14) takes the header's height; the padding makes up the rest. */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)] py-1 pl-5 pr-2">
         <h2 className="text-sm font-semibold">Documentation</h2>
-        {/* Named once the mode answers, so it never reads Manage and then View (W16-R35); the
-            placeholder keeps the header's 44 px height meanwhile. */}
-        {mode === undefined ? (
-          <span aria-hidden="true" className="inline-block min-h-11" />
-        ) : (
+        {/* Drawn once the mode answers, so it never reads Manage and then goes (W16-R35); the
+            placeholder keeps the header's 44 px height meanwhile, and in the hosted office. */}
+        {mode === 'real' ? (
           <Link
             href="/documentation"
             className="inline-flex min-h-11 items-center px-3 text-sm text-[var(--color-accent)]"
           >
-            {mode === 'mock' ? 'View' : 'Manage'}
+            Manage
           </Link>
+        ) : (
+          <span aria-hidden="true" className="inline-block min-h-11" />
         )}
       </div>
       <p className="px-5 py-4 text-sm text-[var(--color-muted)]">
@@ -263,7 +332,9 @@ function DocumentationCard({
             ? 'Loading'
             : sources === 0
               ? 'No documentation linked yet. Your employees learn the team from what you link.'
-              : `${sources} ${sources === 1 ? 'source' : 'sources'} linked. Every employee reads them unless you leave one out at deploy.`}
+              : sources === 1
+                ? '1 source linked. Every employee reads it unless you leave it out at deploy.'
+                : `${sources} sources linked. Every employee reads them unless you leave one out at deploy.`}
       </p>
     </section>
   );

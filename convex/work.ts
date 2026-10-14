@@ -1,5 +1,5 @@
 import type { ExecutionPlan } from '../src/work/types';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -27,7 +27,8 @@ import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
 import { conflictsUnderPlan } from './docConflicts';
-import { conflictAnswerOwedOn } from './managerQuestions';
+import { questionNoticeOwed, questionRequestsOn } from './managerQuestions';
+import { conflictNoticeReplyLine } from '../src/agent/reorientation-words';
 import { askConflictQuestion, heldByReorientation } from './reorientation';
 import {
   APPLY_RECOVERY_MS,
@@ -38,6 +39,7 @@ import {
   PARKED_WORK_STATES,
   queueStep,
   resumeStalledStepsInTransaction,
+  ROW_BYTES_AT_MOST,
   scheduleApply,
   scheduleNextStep,
   stepMayRun,
@@ -97,7 +99,11 @@ import { socketBridgeStateOf } from './socketHeartbeats';
 
 import { handedOverSince } from './handoverFence';
 import { ownerRetirements, retiredClaimOn, retiredHolderName } from './retirements';
-import { isEventOf } from '../src/events/contract';
+import {
+  isEventOf,
+  type DecisionAcknowledgementKind,
+  type DecisionNoticeKind,
+} from '../src/events/contract';
 import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
@@ -142,8 +148,10 @@ import {
   OPEN_BATCH_SCAN,
   openRequestsOn,
   RECENT_THREADS_READ,
+  QUESTION_THREADS_READ,
   recentThreadsOn,
   rememberDecidedUnmarked,
+  rememberRequestWithQuestion,
   rememberReplacedRequest,
   requestThreadOf,
   scheduleDecisionRequest,
@@ -338,30 +346,98 @@ const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'],
 ];
 
 /**
+ * Bytes of rows one read of an employee's list holds at most (W16-R31): the list was bounded in
+ * rows and not in bytes, and a row carries its run's output, so an employee with a few hundred
+ * heavy rows read past what one query may. Half of that, which leaves the names their reads.
+ */
+export const WORK_LIST_BYTES = 8 * 1024 * 1024;
+
+/** One read of an employee's work items, newest first: those created before a time, at most a count. */
+type NewestBefore = (before: number | undefined, count: number) => Promise<Doc<'workItems'>[]>;
+
+/** The reads of one list, which hold {@link WORK_LIST_BYTES} between them. */
+interface ListReader {
+  /**
+   * Rows newest first, a few at a time and never more than fit the room left at a document's
+   * largest size, so the bound holds whatever a row weighs; the read ends at its count, at the
+   * index's end or with the room.
+   */
+  readonly take: (newestBefore: NewestBefore, limit: number) => Promise<Doc<'workItems'>[]>;
+  /** The bytes the list may still read. */
+  readonly room: () => number;
+}
+
+/**
+ * A reader of the rows of one list, counted as Convex counts them (a row two reads meet is read
+ * twice).
+ */
+function listReader(): ListReader {
+  let room = WORK_LIST_BYTES;
+  return {
+    room: () => room,
+    take: async (newestBefore, limit) => {
+      const taken: Doc<'workItems'>[] = [];
+      while (taken.length < limit && room > 0) {
+        const count = Math.min(
+          limit - taken.length,
+          Math.max(1, Math.floor(room / ROW_BYTES_AT_MOST)),
+        );
+        const rows = await newestBefore(taken.at(-1)?._creationTime, count);
+        for (const row of rows) room -= getDocumentSize(row);
+        taken.push(...rows);
+        if (rows.length < count) break;
+      }
+      return taken;
+    },
+  };
+}
+
+/**
  * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
  * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
  * order the page has always been given: by state, last first, and the newest first within one.
+ * The reads hold {@link WORK_LIST_BYTES} between them (W16-R31): the unfinished rows first, since
+ * Needs you links to them, a few at a time; then the newest of all in one read the backend bounds
+ * by the bytes left, since they are most of the rows and the query is re-run at every change.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ListedWorkItem[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const [newest, ...open] = await Promise.all([
-      ctx.db
-        .query('workItems')
-        .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-        .order('desc')
-        .take(WORK_LIST_LIMIT),
-      ...UNFINISHED_STATE_READS.map(
-        async ([state, limit]) =>
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', args.agentId).eq('state', state))
-            .order('desc')
-            .take(limit),
-      ),
-    ]);
-    const byId = new Map([...newest, ...open.flat()].map((row) => [row._id, row]));
+    const reader = listReader();
+    // One after another, not at once: each read is given what the reads before it left.
+    const open: Doc<'workItems'>[] = [];
+    for (const [state, limit] of UNFINISHED_STATE_READS) {
+      open.push(
+        ...(await reader.take(
+          async (before, count) =>
+            await ctx.db
+              .query('workItems')
+              .withIndex('by_agent_state', (q) => {
+                const ofState = q.eq('agentId', args.agentId).eq('state', state);
+                return before === undefined ? ofState : ofState.lt('_creationTime', before);
+              })
+              .order('desc')
+              .take(count),
+          limit,
+        )),
+      );
+    }
+    const newest =
+      reader.room() > 0
+        ? (
+            await ctx.db
+              .query('workItems')
+              .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+              .order('desc')
+              .paginate({
+                numItems: WORK_LIST_LIMIT,
+                cursor: null,
+                maximumBytesRead: reader.room(),
+              })
+          ).page
+        : [];
+    const byId = new Map([...newest, ...open].map((row) => [row._id, row]));
     const items = [...byId.values()].sort((left, right) =>
       left.state === right.state
         ? right._creationTime - left._creationTime
@@ -1992,15 +2068,18 @@ export const openDecisions = internalQuery({
       )
       .order('desc')
       .take(RECENT_THREADS_READ);
+    // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1), and
+    // its request's thread is read for as long, whatever the window (17-C).
+    const asking = await questionRequestsOn(ctx, surface, channel, QUESTION_THREADS_READ);
     const threads = await recentThreadsOn(ctx, surface, channel, since, {
       decided: decidedLately.flatMap((row) => (row.decision?.ts ? [row.decision.ts] : [])),
       open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
+      questions: asking.flatMap((request) => (request.ts ? [request.ts] : [])),
     });
     return {
       requests,
       batches,
-      // A conflict's question waits beside a decided plan for as long as it stands (16-O, M1).
-      noticeOwed: decidedLately.length > 0 || (await conflictAnswerOwedOn(ctx, surface, channel)),
+      noticeOwed: decidedLately.length > 0 || asking.length > 0,
       ...(threads.length > 0 ? { threads } : {}),
     };
   },
@@ -2139,7 +2218,7 @@ export const prepareRequestClose = internalMutation({
     });
     const claimedAt = Date.now();
     await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: claimedAt } });
-    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
+    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in Day0';
     return {
       prepared: true as const,
       claimedAt,
@@ -2235,7 +2314,7 @@ export const prepareReplacedEdit = internalMutation({
       text:
         replaced.outcome === undefined
           ? `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`
-          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
+          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in Day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
     };
   },
 });
@@ -2376,7 +2455,7 @@ export const prepareDecisionNotice = internalMutation({
       decision: { ...row.decision, duplicateNoticeClaimedAt: Date.now() },
     });
     const origin =
-      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the day0 dashboard';
+      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the Day0 dashboard';
     return {
       prepared: true as const,
       agentId: row.agentId,
@@ -2414,12 +2493,31 @@ export const recordDecisionNotice = internalMutation({
   },
 });
 
-/** Claim one manager-reply acknowledgement before its provider call. */
+/** A notice's kind as an acknowledgement's: every kind but the question, which has its own claim. */
+function acknowledgementKindOf(kind: DecisionNoticeKind): DecisionAcknowledgementKind {
+  if (kind === 'question') throw new Error('a question notice is claimed as a question');
+  return kind;
+}
+
+/**
+ * Claim one notice in the manager's DM before its provider call: the acknowledgement of a reply,
+ * or a conflict's question for the thread of a request already delivered (17-C). A question is
+ * claimed only while it is still owed (`managerQuestions.questionNoticeOwed`): one its request
+ * carried, or whose question closed meanwhile, is dropped, and one whose request is still on its
+ * way out is left for the next look (`wait`). Internal; writes the claim and
+ * `work.decision-acknowledging`.
+ */
 export const prepareManagerReplyNotice = internalMutation({
   args: { noticeId: v.id('managerDecisionNotices') },
   handler: async (ctx, args) => {
     const notice = await ctx.db.get(args.noticeId);
     if (!notice || notice.claimedAt) return { prepared: false as const };
+    const owed = notice.kind === 'question' ? await questionNoticeOwed(ctx, notice) : undefined;
+    if (owed?.state === 'wait') return { prepared: false as const, wait: true as const };
+    if (owed?.state === 'drop') {
+      await ctx.db.delete(notice._id);
+      return { prepared: false as const, dropped: true as const };
+    }
     const [workItem, agent, surfaceRows, grants] = await Promise.all([
       ctx.db.get(notice.workItemId),
       ctx.db.get(notice.agentId),
@@ -2440,19 +2538,35 @@ export const prepareManagerReplyNotice = internalMutation({
         !!candidate.managerDmChannelId,
     );
     if (!workItem || !agent || !surface) return { prepared: false as const };
+    const named = {
+      workItemId: notice.workItemId,
+      decisionId: notice.decisionId,
+      messageTs: notice.messageTs,
+    };
     const requestRunId = await appendEvent(ctx, {
       agentId: notice.agentId,
       type: 'work.decision-acknowledging',
-      payload: {
-        workItemId: notice.workItemId,
-        decisionId: notice.decisionId,
-        messageTs: notice.messageTs,
-        kind: notice.kind,
-      },
+      payload:
+        owed?.state === 'send'
+          ? { ...named, kind: 'question', questionId: owed.questionId }
+          : { ...named, kind: acknowledgementKindOf(notice.kind) },
       createdAt: Date.now(),
     });
     await ctx.db.patch(notice._id, { claimedAt: Date.now() });
-    const threadTs = await requestThreadOf(ctx, workItem, notice.decisionId);
+    const threadTs =
+      owed?.state === 'send'
+        ? owed.threadTs
+        : await requestThreadOf(ctx, workItem, notice.decisionId);
+    // A question is followed by how to answer it: by its number where the plan has several, on
+    // the card where the employee's app takes no typed reply (W12V-7).
+    const text =
+      owed?.state !== 'send'
+        ? notice.text
+        : `${slackEscaped(notice.text)}\n${
+            typedCodeReaches(await typedCodeReachOf(ctx, surface))
+              ? conflictNoticeReplyLine(notice.decisionId, owed.number)
+              : 'Answer it on the plan’s card in Day0.'
+          }`;
     return {
       prepared: true as const,
       ...(threadTs ? { threadTs } : {}),
@@ -2463,12 +2577,12 @@ export const prepareManagerReplyNotice = internalMutation({
       surface: toSurfaceRecord(surface),
       surfaces: surfaceRows.map(toSurfaceRecord),
       grants: grants.filter((grant) => !grant.revokedAt).map((grant) => grant.scope),
-      text: notice.text,
+      text,
     };
   },
 });
 
-/** Store provider evidence for one manager-reply acknowledgement. */
+/** Store provider evidence for one notice in the manager's DM: its timestamp, or why it failed. */
 export const recordManagerReplyNotice = internalMutation({
   args: {
     noticeId: v.id('managerDecisionNotices'),
@@ -2857,7 +2971,13 @@ async function executionResumesSinceRetry(
  * @returns `resumed`, `stopped`, or `moved-on` when the run is no longer the row's.
  */
 export const resumeExecution = internalMutation({
-  args: { workItemId: v.id('workItems'), runId: v.id('events'), reason: v.string() },
+  args: {
+    workItemId: v.id('workItems'),
+    runId: v.id('events'),
+    reason: v.string(),
+    /** What the row keeps of the run if its resumes are spent, as `setFailed`'s `output` (17-FW). */
+    output: v.optional(v.any()),
+  },
   handler: async (ctx, args): Promise<{ outcome: 'resumed' | 'stopped' | 'moved-on' }> => {
     const row = await ctx.db.get(args.workItemId);
     if (
@@ -2875,6 +2995,7 @@ export const resumeExecution = internalMutation({
       await failInTransaction(ctx, row, {
         reason: `the execution failed ${attempt} times on the model (${args.reason}); Retry runs it again`,
         stopped: true,
+        ...(args.output !== undefined ? { output: args.output } : {}),
       });
       return { outcome: 'stopped' };
     }
@@ -3228,6 +3349,9 @@ export const setAwaitingApproval = internalMutation({
       reason,
     }));
     if (afterApproval) await rememberDecidedUnmarked(ctx, row, Date.now());
+    // The plan's request goes with this park; while a conflict's question of the plan is open its
+    // code and its thread are still the way to answer (17-C, C-3).
+    await rememberRequestWithQuestion(ctx, row, Date.now());
     await ctx.db.patch(args.workItemId, {
       state: 'actions-pending',
       waitingSince: Date.now(),

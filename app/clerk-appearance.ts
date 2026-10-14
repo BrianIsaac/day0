@@ -41,7 +41,9 @@ export const clerkAppearance = {
     colorPrimary: 'var(--color-accent)',
     colorPrimaryForeground: 'var(--color-bg)',
     colorRing: 'var(--color-accent)',
-    colorDanger: 'var(--color-danger)',
+    // Clerk fills its destructive button with this and writes on it in white, and draws its error
+    // text in it: the solid step, not the chip text's lighter one (`app/globals.css`).
+    colorDanger: 'var(--color-danger-solid)',
     colorSuccess: 'var(--color-ok)',
     colorWarning: 'var(--color-warn)',
     colorModalBackdrop: 'var(--color-scrim)',

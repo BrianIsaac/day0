@@ -3,7 +3,7 @@ import {
   isEventType,
   type EventPayloads,
   type EventType,
-  type WorkDecisionAcknowledgingPayload,
+  type DecisionNoticeKind,
   type WorkPlanHeldPayload,
 } from '@/events/contract';
 import type { RecordKind } from '../../components/RecordLine';
@@ -14,6 +14,8 @@ import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
+import { decidedElsewhereOf } from '@/agent/reorientation-words';
+import { reasonInWords } from '@/work/stop';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -87,10 +89,11 @@ function decisionNoun(kind: unknown): string {
 }
 
 /** How a decision reply was answered, by its notice's kind; a row with none was an acknowledgement. */
-const ACKNOWLEDGEMENT_LABELS: Readonly<Record<WorkDecisionAcknowledgingPayload['kind'], string>> = {
+const ACKNOWLEDGEMENT_LABELS: Readonly<Record<DecisionNoticeKind, string>> = {
   received: 'a decision reply acknowledged',
   unknown: 'a reply with no open request answered',
   replaced: 'a reply to a replaced request answered with the request that replaced it',
+  question: 'a question about two pages asked in the request’s thread',
 };
 
 /** Why a row was sent back to be evaluated again, in words. */
@@ -721,7 +724,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.plan-grounding-read': 'plan read what it rests on',
   'work.plan-drafted': 'plan drafted',
   'work.plan-redrafting': (payload) =>
-    `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
+    payload.reorientationId !== undefined
+      ? 'plan drafted again: a card changed what it was drafted under'
+      : `plan drafted again: ${text(payload.slug) ?? 'its system'} is connected, so the ticket can be read`,
   'work.plan-redraft': 'plan drafted again: documentation it followed has changed',
   'work.corrections-applied': (payload) =>
     `plan applies ${counted(payload.correctionIds?.length, 'kept correction') ?? 'kept corrections'}`,
@@ -738,7 +743,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     payload.reason === 'every-employee-too-many'
       ? `working agreement not in effect for every employee: you have more than ${EMPLOYEES_CHECKED} employees`
       : payload.reason === 'unchecked-for-employee'
-        ? 'working agreement for every employee not in effect for this employee: not checked against its charter'
+        ? payload.refusedOnce !== undefined
+          ? 'working agreement for every employee not in effect for this employee: two checks against its charter disagreed'
+          : 'working agreement for every employee not in effect for this employee: not checked against its charter'
         : text(payload.clause)
           ? `working agreement refused: it contradicts “${text(payload.clause)}”`
           : 'working agreement refused: it would go beyond the charter',
@@ -801,7 +808,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.dependent-authoring-claimed': 'closing phase started',
   'work.completed': (payload) => finishedAs(payload.output),
   'work.failed': (payload) =>
-    payload.stopped === true ? 'run stopped' : `run failed${because(payload.reason)}`,
+    payload.stopped === true
+      ? 'run stopped'
+      : `run failed${because(reasonInWords(payload.reason))}`,
   'work.actions-auto-applying': (payload) =>
     `applying ${counted(payload.autoIndexes?.length, 'action') ?? 'actions'} ${
       payload.autonomousActions === true ? 'autonomously' : 'automatically'
@@ -856,12 +865,21 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
     }`,
   'reorientation.approved': (payload) =>
     `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
-  'reorientation.dismissed': 'reorientation card dismissed; nothing changed',
+  'reorientation.dismissed': (payload) =>
+    payload.outcome === undefined
+      ? 'reorientation card dismissed; nothing changed'
+      : decidedElsewhereOf(payload.outcome) !== undefined
+        ? 'reorientation card closed: decided on another employee’s card'
+        : `reorientation card closed as ${payload.outcome}`,
   'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,
   'reorientation.reopened': (payload) =>
-    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
+    `deferred reorientation card open again${
+      payload.joined === true ? ': a further change joined it' : ''
+    }${text(payload.summary) ? `: ${payload.summary}` : ''}`,
+  'reorientation.card-not-opened': (payload) =>
+    `reorientation card not opened${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };
 
 /**

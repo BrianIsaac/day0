@@ -149,11 +149,14 @@ function PageControls({
           Mark “{page.title}” superseded by
         </label>
         <span className="flex min-w-0 flex-wrap gap-2">
+          {/* One width in every row: a select as wide as its longest option was narrower on the
+              row of the longest-titled page, whose own title it does not list, so that row laid
+              its controls out unlike the rest (16-s's F5 at 1440). */}
           <select
             id={picker}
             value={successor}
             onChange={(event) => setSuccessor(event.target.value as Id<'docPages'> | '')}
-            className={`${INPUT_CLASS} w-full min-w-0 sm:w-auto`}
+            className={`${INPUT_CLASS} w-full min-w-0 sm:w-72`}
           >
             <option value="">Choose a page</option>
             {others.map((other) => (

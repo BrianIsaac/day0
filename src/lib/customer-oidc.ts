@@ -79,7 +79,7 @@ export function customerOidcIssuer(read: EnvReader): CustomerOidcIssuer | undefi
     throw new Error(
       `${CUSTOMER_OIDC_ISSUER_VAR} is set without ${CUSTOMER_OIDC_AUDIENCE_VAR}: set it to the ` +
         "client id the issuer's tokens carry in `aud`, or the deployment could not tell a token " +
-        'minted for day0 from one minted for any other application.',
+        'minted for Day0 from one minted for any other application.',
     );
   }
   return { issuer, audience };

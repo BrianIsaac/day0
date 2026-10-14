@@ -22,6 +22,11 @@ export interface OfficeAsk {
   readonly sender: string;
   readonly body: string;
   /**
+   * The team document the office answers the ask from, by its slug: the document reaches the
+   * roles the ask reaches, and the generator shows it to no other (16-FW's F7).
+   */
+  readonly answeredBy: string;
+  /**
    * Words of four letters or more (the scope rule's tokens) naming the roles whose work the ask
    * is: a charter whose role or will-do clauses carry one is shown the ask.
    */
@@ -62,6 +67,7 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
   {
     channelSlug: OFFICE_ASKS_CHANNEL,
     threadKey: 'thread-drive-access',
+    answeredBy: 'it-access',
     sender: 'Kofi',
     body: 'I changed my password this morning and the shared drive now says access denied. What are the steps to get back in?',
     // Not "access": a customer support role grants access to articles and help centres.
@@ -71,6 +77,7 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
   {
     channelSlug: OFFICE_ASKS_CHANNEL,
     threadKey: 'thread-spare-monitor',
+    answeredBy: 'office-supplies',
     sender: 'Sara',
     body: 'The monitor at desk 14 has died. Where can I get a spare, and does anyone need to know I took one?',
     roleWords: ['facilities', 'equipment', 'supplies', 'repairs', 'hardware', 'workplace'],
@@ -78,6 +85,7 @@ export const OFFICE_ASKS: readonly OfficeAsk[] = [
   {
     channelSlug: OFFICE_ASKS_CHANNEL,
     threadKey: 'thread-double-charge',
+    answeredBy: 'billing-replies',
     sender: 'Hana',
     body: 'Northwind wrote in that invoice INV-2207 charged them twice this month. Can someone post the first reply here for me to send them?',
     roleWords: ['support', 'customer', 'customers', 'billing', 'invoice', 'invoices'],
@@ -103,6 +111,7 @@ export const TEAM_ASKS: readonly OfficeAsk[] = [
   {
     channelSlug: 'revops-asks',
     threadKey: 'thread-pipeline-coverage',
+    answeredBy: 'team-overview',
     sender: 'Priya',
     body: 'New joiner ask: what does our enterprise segment pipeline coverage look like over the last four weeks? Briefing the CRO Tuesday.',
     roleWords: ['revops', 'salesforce'],
@@ -113,11 +122,24 @@ export const TEAM_ASKS: readonly OfficeAsk[] = [
 ];
 
 /**
+ * The office's pooled asks that are another role's work for a charter: those whose role words the
+ * charter's words (its role and will-do clauses, as `charterWords` reads them) carry none of, or
+ * that carry a word marking another role. The role's own sentence is read beside them for a role
+ * its words cannot name ("IT support").
+ */
+function otherRolesAsks(charterWords: Iterable<string>, role: string): OfficeAsk[] {
+  const words = new Set(charterWords);
+  const ownRole = (ask: OfficeAsk): boolean =>
+    ask.roleWords.some((word) => words.has(word)) || ask.roleNamed?.test(role) === true;
+  const anotherRole = (ask: OfficeAsk): boolean =>
+    (ask.notWith ?? []).some((word) => words.has(word)) || ask.notRoleNamed?.test(role) === true;
+  return [...OFFICE_ASKS, ...TEAM_ASKS].filter((ask) => !ownRole(ask) || anotherRole(ask));
+}
+
+/**
  * The threads of the office's pooled asks that are another role's work for a charter, as
- * `<channel>#<thread>`: those whose role words the charter's words (its role and will-do clauses,
- * as `charterWords` reads them) carry none of, or that carry a word marking another role. The
- * words are passed in so the seed, which reads this list, imports nothing of the scope rule. The
- * role's own sentence is read beside them for a role its words cannot name ("IT support").
+ * `<channel>#<thread>` ({@link otherRolesAsks}). The words are passed in so the seed, which reads
+ * this list, imports nothing of the scope rule.
  *
  * @param charterWords - The charter's words the generator drafts for.
  * @param role - The charter's role as written (`proposedFunction`); none reads by the words alone.
@@ -127,14 +149,29 @@ export function otherRolesAskThreads(
   charterWords: Iterable<string>,
   role = '',
 ): ReadonlySet<string> {
-  const words = new Set(charterWords);
-  const ownRole = (ask: OfficeAsk): boolean =>
-    ask.roleWords.some((word) => words.has(word)) || ask.roleNamed?.test(role) === true;
-  const anotherRole = (ask: OfficeAsk): boolean =>
-    (ask.notWith ?? []).some((word) => words.has(word)) || ask.notRoleNamed?.test(role) === true;
   return new Set(
-    [...OFFICE_ASKS, ...TEAM_ASKS]
-      .filter((ask) => !ownRole(ask) || anotherRole(ask))
-      .map((ask) => `${ask.channelSlug}#${ask.threadKey}`),
+    otherRolesAsks(charterWords, role).map((ask) => `${ask.channelSlug}#${ask.threadKey}`),
   );
+}
+
+/**
+ * The team documents that answer only other roles' asks for a charter, by slug (16-FW's F7;
+ * finding 3 of the v0.20.0 walk): a document reaches the roles an ask it answers reaches. The
+ * generator was shown every team document whole, so a support role drew the team overview's
+ * example of a revenue ask as its own ticket, and an IT helpdesk role the supplies page's spare
+ * monitor, which its charter places with facilities. A document that answers no pooled ask is the
+ * office's own team's and is shown to every role, as before.
+ *
+ * @param charterWords - The charter's words the generator drafts for.
+ * @param role - The charter's role as written (`proposedFunction`).
+ * @returns The slugs of the documents to leave out of what the generator is shown.
+ */
+export function otherRolesTeamDocs(charterWords: Iterable<string>, role = ''): ReadonlySet<string> {
+  const others = otherRolesAsks(charterWords, role);
+  const reaching = new Set(
+    [...OFFICE_ASKS, ...TEAM_ASKS]
+      .filter((ask) => !others.includes(ask))
+      .map((ask) => ask.answeredBy),
+  );
+  return new Set(others.map((ask) => ask.answeredBy).filter((slug) => !reaching.has(slug)));
 }

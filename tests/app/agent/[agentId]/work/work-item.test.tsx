@@ -4,6 +4,9 @@ import { getFunctionName } from 'convex/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   failedItemReason,
+  heldQuestionOf,
+  settledQuestionWords,
+  unreadQuestionWords,
   finishedAs,
   justLanded,
   landedPlaces,
@@ -21,6 +24,7 @@ import {
   type ReconciliationEntry,
 } from '../../../../../src/work/reconciliation';
 import { withAnswerHeldToLedger } from '../../../../../src/work/work-done';
+import { openQuestionStopReason } from '../../../../../src/work/obligations';
 import { PIP_DECLINED_OUTPUT, pipRow } from '../../../../fixtures/work/pip-declined-2026-10-10';
 
 const backend = vi.hoisted(() => ({
@@ -77,6 +81,94 @@ describe('a stop with a question open that is not the question stop (wave 1.5 m1
   });
 });
 
+describe('the stop beside a conflict’s question says what is true of it now (17-C; the pre-tag’s second pass)', (): void => {
+  const question =
+    'Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right?';
+  const conflict = { question, steps: [2], relationId: 'r1' };
+  const own = { question: 'Which template should the notice use?', steps: [3] };
+  const stopped = (open: Parameters<typeof openQuestionStopReason>[0]) => ({
+    state: 'failed' as const,
+    skipReason: `stopped: ${openQuestionStopReason(open)}`,
+    output: { openQuestion: open },
+  });
+  const pages = [
+    { title: 'Close comment limits', source: 'Revops folder' },
+    { title: 'Close comment limits', source: 'Policies folder' },
+  ];
+
+  it('sends the manager to the question above only while it stands with its buttons drawn', (): void => {
+    const standing = [{ relationId: 'r1', pages }];
+    expect(failedItemReason(stopped(conflict), standing)).toContain(
+      'answer the question above, then Retry:',
+    );
+    // While the card's questions are not known the stop reads as the run left it.
+    expect(failedItemReason(stopped(conflict))).toContain('answer the question above, then Retry:');
+  });
+
+  it('says the question is answered, with the answer, and that Retry runs it, drawing no dead line', (): void => {
+    const answered = [
+      {
+        relationId: 'r1',
+        pages: null,
+        settled: { answer: 'A, Close comment limits (Revops folder) is right' },
+      },
+    ];
+    expect(failedItemReason(stopped(conflict), answered)).toBe(
+      'The question this run waited on is answered (A, Close comment limits (Revops folder) is right). Retry runs it.',
+    );
+    // Beside a write that landed and is not yet confirmed, the confirmation comes first.
+    expect(settledQuestionWords({ answer: 'Both hold' }, true)).toBe(
+      'The question this run waited on is answered (Both hold). Confirm what landed below, then Retry runs it.',
+    );
+  });
+
+  it('says a question closed unanswered is closed, and one that only stopped standing likewise', (): void => {
+    expect(
+      failedItemReason(stopped(conflict), [
+        { relationId: 'r1', pages: null, settled: { closed: 'settled' } },
+      ]),
+    ).toBe(
+      'The question this run waited on is closed: the two pages no longer disagree. Retry runs it.',
+    );
+    // Open on its row, its conflict no longer standing, so no button is drawn for it.
+    expect(failedItemReason(stopped(conflict), [{ relationId: 'r1', pages: null }])).toBe(
+      'The question this run waited on is no longer open. Retry runs it.',
+    );
+  });
+
+  it('says where a question past the ones the page reads is decided, and not that it is settled (17-C’s second pass)', (): void => {
+    const stop = openQuestionStopReason(conflict);
+    // Not among the card's questions at all: whether it stands is not known here.
+    expect(failedItemReason(stopped(conflict), [])).toBe(
+      `stopped on a question about two pages that disagree, and the writes that wait on it were never sent; the question is past the ones this page reads, so if it is still open say which page is right on the Documentation tab, then Retry: ${stop}`,
+    );
+    expect(failedItemReason(stopped(conflict), [{ relationId: 'another', pages }])).not.toContain(
+      'answer the question above',
+    );
+    expect(unreadQuestionWords(stop, true)).toContain(
+      'were never sent; confirm what landed below; the question is past the ones this page reads',
+    );
+  });
+
+  it('asks for both answers once when the executor’s own question stands beside the conflict’s, and for the one left when the conflict’s is settled', (): void => {
+    const mixed = stopped({ ...own, also: [conflict] });
+    expect(failedItemReason(mixed, [{ relationId: 'r1', pages }])).toContain(
+      'stopped with two questions open for you, and the writes that wait on them were never sent; answer the question above, then answer the other below with Answer and retry:',
+    );
+    expect(
+      failedItemReason(mixed, [
+        { relationId: 'r1', pages: null, settled: { answer: 'Both hold' } },
+      ]),
+    ).toContain('answer it below with Answer and retry:');
+    // The note box takes the executor's own question, whichever was recorded first.
+    expect(heldQuestionOf(mixed)).toBe('Which template should the notice use?');
+    expect(heldQuestionOf(stopped({ ...conflict, also: [own] }))).toBe(
+      'Which template should the notice use?',
+    );
+    expect(heldQuestionOf(stopped(conflict))).toBeUndefined();
+  });
+});
+
 describe('the lead of a stop beside a read that landed (the real-Linear walk, M1-w)', (): void => {
   const read = {
     tool: 'mcp.call',
@@ -118,6 +210,29 @@ describe('the lead of a stop beside a read that landed (the real-Linear walk, M1
     ).toBe(
       'stopped, nothing landed and nothing to decide: the skill kanban-comment-and-close was withdrawn from every employee while this ran',
     );
+  });
+});
+
+describe('a stop on the model’s reply on the card (finding 1 of the v0.20.0 hosted walk)', (): void => {
+  it('says the stop in words, never "agentJson(day0-skill-...)" (row A-Pip-tB-stopped-full.txt)', (): void => {
+    const line = failedItemReason({
+      skipReason:
+        'stopped: agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-northwind-double-charge-initial): prompt reply did not satisfy the schema',
+    });
+    expect(line).toBe(
+      'stopped, nothing landed and nothing to decide: the model’s reply was not in the form Day0 reads',
+    );
+    expect(line).not.toContain('agentJson');
+    expect(line).not.toContain('day0-skill');
+  });
+
+  it('says a closing phase that failed on the model’s reply after work landed in the same words', (): void => {
+    expect(
+      failedItemReason({
+        skipReason:
+          'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-northwind-double-charge-dependent): prompt reply did not satisfy the schema',
+      }),
+    ).toBe('the model’s reply was not in the form Day0 reads');
   });
 });
 

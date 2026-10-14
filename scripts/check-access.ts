@@ -47,6 +47,7 @@ import { SLACK_API_ENDPOINT } from '../src/surfaces/slack-endpoint';
 import type { CheckStatus } from './check-sign-in';
 import { adminTarget, deploymentAdmin } from './lib/convex-admin';
 import { readEnvValues } from './lib/env-file';
+import { runUnderProxy } from './lib/under-proxy';
 import {
   containerReachArguments,
   firstLine,
@@ -838,7 +839,7 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
       'warn',
       `The Slack socket service is not running (${reading.detail}), so decision requests carry ` +
         'no buttons: each is decided by its typed code where the employee app takes messages ' +
-        '(the messages row), or in day0. Start it with pnpm convex:up --profile slack-socket for ' +
+        '(the messages row), or in Day0. Start it with pnpm convex:up --profile slack-socket for ' +
         'Approve and Reject buttons.',
     );
   }
@@ -1456,7 +1457,23 @@ async function readHeartbeats(
   return { state: 'read', apps };
 }
 
+/**
+ * The env file the command line names, for the one read made before `main`: the default where
+ * the line does not parse, which `main` then says.
+ *
+ * @param argv - The arguments after the script.
+ */
+function envFileNamed(argv: readonly string[]): string {
+  try {
+    return parseArguments(argv).envFile;
+  } catch {
+    return '.env.local';
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Handed back rather than passed to process.exit so a piped stdout drains.
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode =
+    runUnderProxy(readEnvValues(envFileNamed(process.argv.slice(2)))) ??
+    (await main(process.argv.slice(2)));
 }

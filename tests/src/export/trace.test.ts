@@ -1,3 +1,5 @@
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import {
   assembleOwnerExport,
@@ -12,6 +14,14 @@ import {
   readAgentTrace,
   sectionAfter,
   TRACE_SECTIONS,
+  OWNER_SCOPED_SECTIONS,
+  OwnerExportCancelled,
+  streamOwnerExport,
+  type OwnerExportCalls,
+  type OwnerExportProgress,
+  type OwnerPage,
+  type OwnerSection,
+  type TraceAgent,
   type TraceHead,
   type TracePage,
 } from '../../../src/export/trace';
@@ -251,9 +261,10 @@ describe('assembling the owner export (wave 16, 16-F)', (): void => {
         manifest: { format: 'day0-owner-export', version: 8 } as never,
         employees: [{ id: 'a', name: 'Priya' }],
         setAside: [],
-        omittedAgents: 0,
+        moreAgents: null,
         next: { section: OWNER_SECTIONS[0], cursor: null },
       }),
+      agents: async () => await Promise.reject(new Error('the head named every agent')),
       page: async (cursor) => {
         asked.push(cursor.section);
         const following = ownerSectionAfter(cursor.section);
@@ -289,5 +300,323 @@ describe('assembling the owner export (wave 16, 16-F)', (): void => {
       readOwnerExport({ ...file, owner: { ...file.owner, people: undefined } }),
     ).toBeUndefined();
     expect(readAgentTrace(file)).toBeUndefined();
+  });
+
+  it('follows the pages of the owner’s agents, so every employee’s trace is in the file and none is left out (W16-R32)', async (): Promise<void> => {
+    const cursors: string[] = [];
+    const ownerPage = async (cursor: { section: OwnerSection }): Promise<OwnerPage> => {
+      const following = ownerSectionAfter(cursor.section);
+      return {
+        section: cursor.section,
+        rows: [],
+        next: following === undefined ? null : { section: following, cursor: null },
+      } as OwnerPage;
+    };
+    const aside = { id: 'eval', name: 'Day0 evaluation 1', evaluation: true } as TraceAgent;
+    const file = await assembleOwnerExport({
+      head: async () => ({
+        manifest: { format: 'day0-owner-export', version: 8 } as never,
+        employees: [{ id: 'a', name: 'Priya' }],
+        setAside: [],
+        moreAgents: 'after-a',
+        next: { section: OWNER_SECTIONS[0], cursor: null },
+      }),
+      agents: async (cursor) => {
+        cursors.push(cursor);
+        if (cursor === 'after-a') {
+          return {
+            employees: [{ id: 'b', name: 'Mateo' }],
+            setAside: [aside],
+            moreAgents: 'after-b',
+          };
+        }
+        // A page that names an employee again, as a deploy between two pages can: read once.
+        return {
+          employees: [
+            { id: 'b', name: 'Mateo' },
+            { id: 'c', name: 'Aiko' },
+          ],
+          setAside: [],
+          moreAgents: null,
+        };
+      },
+      page: ownerPage,
+      employee: {
+        head: async ({ agentId }) => ({ ...HEAD, agent: { ...HEAD.agent, id: agentId } }),
+        page: emptyPage,
+      },
+    });
+    expect(cursors).toEqual(['after-a', 'after-b']);
+    expect(file.employees.map((trace) => trace.agent.id)).toEqual(['a', 'b', 'c']);
+    expect(file.setAside).toEqual([aside]);
+    expect(file.manifest.counts.employees).toBe(3);
+    expect(file.omittedAgents).toBe(0);
+  });
+});
+
+/*
+ * The owner export streamed (wave 17, 17-F; decision F-1): the review's bed 1 held 51 employees
+ * and the browser assembled every trace in memory before it saved one byte (W16-R32, V16-4). The
+ * seam is the assembler's own: the calls it makes and the pieces it hands its sink.
+ */
+describe('the owner export streamed to its file (wave 17, 17-F)', (): void => {
+  /** What happened at the seam, in order: a call for an employee, or a piece written. */
+  type Seam = { readonly kind: 'head' | 'page'; readonly id: string } | { readonly kind: 'write' };
+
+  /** The rows of one section of one employee's trace: two events and one item, named by the id. */
+  const rowsOf = (id: string, section: string): Array<{ _id: string; text: string }> =>
+    section === 'events'
+      ? [
+          { _id: `${id}-e1`, text: 'A line\nbreak and a "quote" inside a row.' },
+          { _id: `${id}-e2`, text: '{ not the file’s own brace }' },
+        ]
+      : section === 'workItems'
+        ? [{ _id: `${id}-w1`, text: `${id} ticket` }]
+        : [];
+
+  /** The paged export of a company of `count` employees and one agent set aside. */
+  function company(count: number, seam: Seam[] = []): OwnerExportCalls {
+    const ids = Array.from({ length: count }, (_, index) => `agent-${index + 1}`);
+    return {
+      head: async () => ({
+        manifest: {
+          format: 'day0-owner-export',
+          version: 8,
+          exportedAt: 1,
+          exportedOn: '2026-10-13',
+          zone: 'UTC',
+          release: '0.20.0',
+          commit: null,
+          pageRows: 100,
+          ownerKey: 'owner',
+        },
+        // The first twenty in the head, the rest on a later page, as the backend pages them.
+        employees: ids.slice(0, 20).map((id) => ({ id, name: `Employee ${id}` })),
+        setAside: [{ id: 'eval', name: 'Day0 evaluation 1', evaluation: true } as TraceAgent],
+        moreAgents: count > 20 ? 'after-20' : null,
+        next: { section: OWNER_SECTIONS[0], cursor: null },
+      }),
+      agents: async () => ({
+        employees: ids.slice(20).map((id) => ({ id, name: `Employee ${id}` })),
+        setAside: [],
+        moreAgents: null,
+      }),
+      page: async (cursor) => {
+        const following = ownerSectionAfter(cursor.section);
+        return {
+          section: cursor.section,
+          rows: cursor.section === 'people' ? [{ _id: 'p1', displayName: 'Ines Duarte' }] : [],
+          next: following === undefined ? null : { section: following, cursor: null },
+        } as unknown as OwnerPage;
+      },
+      employee: {
+        head: async ({ agentId }) => {
+          seam.push({ kind: 'head', id: agentId });
+          return { ...HEAD, agent: { ...HEAD.agent, id: agentId } };
+        },
+        page: async ({ agentId, page }) => {
+          seam.push({ kind: 'page', id: agentId });
+          const following = sectionAfter(page.section);
+          return {
+            section: page.section,
+            rows: rowsOf(agentId, page.section),
+            next: following === undefined ? null : { section: following, cursor: null },
+          } as unknown as TracePage;
+        },
+      },
+    };
+  }
+
+  it('writes each of fifty-one employees’ traces as it arrives and holds one in memory', async (): Promise<void> => {
+    const seam: Seam[] = [];
+    const pieces: string[] = [];
+    const progress: OwnerExportProgress[] = [];
+
+    const manifest = await streamOwnerExport(
+      company(51, seam),
+      {
+        write: async (chunk) => {
+          // The sink is slow, as a disk is: the assembler must wait for it before it reads on.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          pieces.push(chunk);
+          seam.push({ kind: 'write' });
+        },
+      },
+      { onProgress: (at) => progress.push(at) },
+    );
+
+    // The peak at the seam: the traces read and not yet written. A trace is held from its first
+    // call until the piece that carries it is written, and no employee is read before then.
+    let held = 0;
+    let peak = 0;
+    let writes = 0;
+    const reading = new Set<string>();
+    for (const step of seam) {
+      if (step.kind === 'write') {
+        writes += 1;
+        // The first piece is the owner's rows; each one after it carries one trace.
+        if (writes > 1 && reading.size > 0) {
+          held -= reading.size;
+          reading.clear();
+        }
+        continue;
+      }
+      if (!reading.has(step.id)) {
+        reading.add(step.id);
+        held += 1;
+        peak = Math.max(peak, held);
+      }
+    }
+    expect(peak).toBe(1);
+    expect(held).toBe(0);
+    // The owner's rows, one piece an employee, and the file's end.
+    expect(pieces).toHaveLength(1 + 51 + 1);
+    expect(
+      pieces.slice(1, 52).every((piece, index) => piece.includes(`"agent-${index + 1}"`)),
+    ).toBe(true);
+    expect(progress).toEqual(
+      Array.from({ length: 52 }, (_, written) => ({ written, employees: 51 })),
+    );
+    expect(manifest.counts).toMatchObject({ people: 1, employees: 51 });
+  });
+
+  /** The engine's collector, run on demand: a context made after the flag is set is handed it. */
+  function collector(): (() => void) | undefined {
+    try {
+      setFlagsFromString('--expose-gc');
+      const collect: unknown = runInNewContext('gc');
+      return typeof collect === 'function' ? (collect as () => void) : undefined;
+    } catch {
+      // Not this engine: one that will not expose its collector cannot run the test below.
+      return undefined;
+    }
+  }
+  const collect = collector();
+
+  // Needs the engine's collector on demand, which Node hands a new context once the flag is set.
+  it.skipIf(collect === undefined)(
+    'lets the owner’s rows go once they are written: none is still held when an employee is read (the bed’s heap, 17-F)',
+    async (): Promise<void> => {
+      const calls = company(3);
+      const rows: Array<WeakRef<object>> = [];
+      const heldWhenAnEmployeeIsRead: number[] = [];
+      await streamOwnerExport(
+        {
+          ...calls,
+          page: async (cursor) => {
+            const page = await calls.page(cursor);
+            for (const row of page.rows) rows.push(new WeakRef(row as object));
+            return page;
+          },
+          employee: {
+            ...calls.employee,
+            head: async (request) => {
+              // A turn of the loop first, so nothing of the piece just written is still on its way.
+              await new Promise<void>((resolve) => setTimeout(resolve, 0));
+              collect?.();
+              heldWhenAnEmployeeIsRead.push(rows.filter((row) => row.deref() !== undefined).length);
+              return await calls.employee.head(request);
+            },
+          },
+        },
+        {
+          write: async (): Promise<void> => {
+            await Promise.resolve();
+          },
+        },
+      );
+      expect(rows).toHaveLength(1);
+      expect(heldWhenAnEmployeeIsRead).toEqual([0, 0, 0]);
+    },
+  );
+
+  it('writes, piece by piece, the file the assembled export printed whole, byte for byte', async (): Promise<void> => {
+    for (const count of [0, 1, 3]) {
+      const pieces: string[] = [];
+      await streamOwnerExport(company(count), {
+        write: async (chunk) => {
+          pieces.push(chunk);
+          await Promise.resolve();
+        },
+      });
+      const text = pieces.join('');
+      // What v0.20.0 saved: every trace assembled first, then the whole object printed once.
+      const calls = company(count);
+      const head = await calls.head();
+      const expected = {
+        manifest: {
+          ...head.manifest,
+          counts: {
+            ...Object.fromEntries(OWNER_SECTIONS.map((section) => [section, 0])),
+            people: 1,
+            employees: count,
+          },
+        },
+        owner: {
+          ...Object.fromEntries(OWNER_SECTIONS.map((section) => [section, []])),
+          people: [{ _id: 'p1', displayName: 'Ines Duarte' }],
+        },
+        employees: await Promise.all(
+          head.employees.map(
+            async ({ id }) => await assembleTrace(id, calls.employee, OWNER_SCOPED_SECTIONS),
+          ),
+        ),
+        setAside: head.setAside,
+        omittedAgents: 0,
+      };
+      expect(text, `${count} employees`).toBe(`${JSON.stringify(expected, null, 2)}\n`);
+      expect(readOwnerExport(JSON.parse(text))).toBeDefined();
+    }
+  });
+
+  it('stops at its signal: no call and no piece after Cancel, and it says it was cancelled', async (): Promise<void> => {
+    const seam: Seam[] = [];
+    const controller = new AbortController();
+    let pieces = 0;
+
+    const stopped = streamOwnerExport(
+      company(51, seam),
+      {
+        write: async () => {
+          pieces += 1;
+          await Promise.resolve();
+        },
+      },
+      {
+        signal: controller.signal,
+        // Cancel pressed while the third employee's trace is on its way to the file.
+        onProgress: ({ written }) => {
+          if (written === 3) controller.abort();
+        },
+      },
+    );
+
+    await expect(stopped).rejects.toBeInstanceOf(OwnerExportCancelled);
+    // The owner's rows and three traces were written; the fourth employee was never asked for.
+    expect(pieces).toBe(4);
+    expect(new Set(seam.flatMap((step) => (step.kind === 'write' ? [] : [step.id])))).toEqual(
+      new Set(['agent-1', 'agent-2', 'agent-3']),
+    );
+  });
+
+  it('reads nothing at all when it is cancelled before it starts', async (): Promise<void> => {
+    const controller = new AbortController();
+    controller.abort();
+    const calls = company(2);
+    const asked: string[] = [];
+    await expect(
+      streamOwnerExport(
+        {
+          ...calls,
+          head: async () => {
+            asked.push('head');
+            return await calls.head();
+          },
+        },
+        { write: async () => await Promise.resolve() },
+        { signal: controller.signal },
+      ),
+    ).rejects.toBeInstanceOf(OwnerExportCancelled);
+    expect(asked).toEqual([]);
   });
 });

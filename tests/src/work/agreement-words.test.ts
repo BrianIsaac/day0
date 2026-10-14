@@ -91,6 +91,37 @@ describe('what the cards say of a working agreement', (): void => {
     expect(refusalOffersAmendment(held)).toBe(false);
   });
 
+  it('says a hold two judgements disagreed on: checked twice, what the one refusal found, in effect for the others, and what Check now does (RM32 (a))', (): void => {
+    const disputed = {
+      reason: 'unchecked-for-employee' as const,
+      refusedOnce: { reason: 'widens-scope' as const },
+    };
+    expect(refusalSentence({ ...disputed, checkable: true }, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines: Day0 checked it against Ines's charter twice and the two checks disagreed. One found that it widens the work the charter gives Ines; the other allowed it. It stays in effect for your other employees. Check now checks it twice again: it ends for every employee only if both checks refuse it.",
+    );
+    expect(refusalSentence(disputed, 'Ines', 'charter')).toBe(
+      "Not in effect for Ines: Day0 checked it against Ines's charter twice and the two checks disagreed. One found that it widens the work the charter gives Ines; the other allowed it. It stays in effect for your other employees. Day0 checks an agreement for every employee only while you have 50 employees or fewer.",
+    );
+    expect(
+      refusalSentence(
+        {
+          reason: 'unchecked-for-employee',
+          checkable: true,
+          refusedOnce: {
+            reason: 'contradicts-will-not-do',
+            clause: 'Post to public Slack channels.',
+          },
+        },
+        'Ines',
+        'work',
+      ),
+    ).toContain(
+      'One found that it contradicts “Post to public Slack channels.”; the other allowed it.',
+    );
+    expect(refusedKicker({ refusal: disputed })).toBe('Held');
+    expect(refusalOffersAmendment(disputed)).toBe(false);
+  });
+
   it('heads a refused row by what happened to it: never kept, ended after it was in effect, or held (14-FX\u2019s M2)', (): void => {
     expect(refusedKicker({ refusal: { reason: 'widens-scope' } })).toBe('Not kept');
     expect(refusedKicker({})).toBe('Not kept');

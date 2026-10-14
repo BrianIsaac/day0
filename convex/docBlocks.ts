@@ -194,6 +194,7 @@ export async function replacePageBlocks(ctx: MutationCtx, page: PageToSplit): Pr
     changed += 1;
   }
   for (const row of left) await ctx.db.delete(row._id);
+  await repointConflicts(ctx, page, renamedBlocks({ kept, rewritten, left }));
   // A page stored with more rows than one read takes (none since the split's bound) loses the rest.
   return (
     changed +
@@ -246,6 +247,92 @@ function matchStoredBlocks(
     return { block, row };
   });
   return { kept, rewritten, left: [...free.values()] };
+}
+
+/**
+ * What a block is apart from its page's title: the headings under the first, its kind and its
+ * text. Undefined for a block that sits under one heading or none, whose only heading is the one
+ * a conflict is read under, so a change to it is a change to the passage.
+ */
+function untitled(block: Pick<DocBlock, 'headingPath' | 'kind' | 'text'>): string | undefined {
+  return block.headingPath.length < 2
+    ? undefined
+    : JSON.stringify([block.headingPath.slice(1), block.kind, block.text]);
+}
+
+/**
+ * The blocks a page's new split holds that its stored rows held under another title, each stored
+ * hash with the hash it has now: a block's hash covers its heading path, which opens with the
+ * page's title, so renaming the H1 alone gives every block of the page a new hash (W15-R21).
+ */
+function renamedBlocks(match: StoredBlockMatch): Map<string, string> {
+  const before = new Map<string, Doc<'docBlocks'>>();
+  const replaced = match.rewritten.flatMap(({ row }) => (row === undefined ? [] : [row]));
+  for (const row of [...replaced, ...match.left]) {
+    const key = untitled(row);
+    if (key !== undefined && !before.has(key)) before.set(key, row);
+  }
+  const renamed = new Map<string, string>();
+  for (const { block } of match.rewritten) {
+    const key = untitled(block);
+    const row = key === undefined ? undefined : before.get(key);
+    if (row !== undefined && row.headingPath[0] !== block.headingPath[0]) {
+      renamed.set(row.hash, block.hash);
+    }
+  }
+  return renamed;
+}
+
+/**
+ * The most relations of one page, in each direction, a rename re-points: the bound every read of
+ * a page's relations keeps (`RELATIONS_OF_A_PAGE` in `convex/docStatus.ts`, which imports this
+ * module and so cannot be read here; the mirror test holds the two equal).
+ */
+export const RELATIONS_REPOINTED = 32;
+
+/**
+ * Re-point the conflicts of a page whose title was renamed at the blocks they name (W15-R21): a
+ * conflict's evidence names its two blocks by hash, and a rename with the figures unchanged left
+ * a confirmed conflict naming blocks no page holds, so it stood no longer, held nothing and drew
+ * no card, while the measures proposed the pair afresh, and a conflict the manager had set aside
+ * was asked again at every rename. Only the conflict's own evidence is re-pointed, and only at a
+ * block whose text and inner headings are what they were, so a figure that changed with the
+ * title is another disagreement and is asked as one.
+ *
+ * @param renamed - Each stored hash of the page with the hash its block has now.
+ */
+async function repointConflicts(
+  ctx: MutationCtx,
+  page: Pick<PageToSplit, 'sourceId' | 'pageRef'>,
+  renamed: ReadonlyMap<string, string>,
+): Promise<void> {
+  if (renamed.size === 0) return;
+  const [from, to] = await Promise.all([
+    ctx.db
+      .query('docRelations')
+      .withIndex('by_from', (q) =>
+        q.eq('from.sourceId', page.sourceId).eq('from.ref', page.pageRef),
+      )
+      .take(RELATIONS_REPOINTED),
+    ctx.db
+      .query('docRelations')
+      .withIndex('by_to', (q) => q.eq('to.sourceId', page.sourceId).eq('to.ref', page.pageRef))
+      .take(RELATIONS_REPOINTED),
+  ]);
+  for (const relation of [...from, ...to]) {
+    if (relation.kind !== 'possible_conflict') continue;
+    const names = (entry: (typeof relation.evidence)[number]): boolean =>
+      entry.measure === 'heading-figures' &&
+      (entry.blockRefs ?? []).some((hash) => renamed.has(hash));
+    if (!relation.evidence.some(names)) continue;
+    await ctx.db.patch(relation._id, {
+      evidence: relation.evidence.map((entry) =>
+        names(entry)
+          ? { ...entry, blockRefs: entry.blockRefs?.map((hash) => renamed.get(hash) ?? hash) }
+          : entry,
+      ),
+    });
+  }
 }
 
 /** The most not-current pages of one source one read takes: small rows, a few hundred bytes each. */
@@ -443,6 +530,8 @@ export interface UnchangedPage {
   readonly markdown: string;
   readonly nativeStatus?: PageStatus;
   readonly sourceRevision?: string;
+  /** Whether the row says its source dated it; absent on a page stored before it could (K-2). */
+  readonly datedBySource?: boolean;
 }
 
 /**
@@ -469,17 +558,21 @@ async function blocksAreThePages(
 
 /**
  * Whether a page's first stored block holds the page's status, as every block does once the
- * status is copied onto them in the transaction that writes it: one row read.
+ * status is copied onto them in the transaction that writes it: one row read. A page with no
+ * block passes only when its text has none to hold (W16-R34: no block at all passed, so a page
+ * whose split never landed was kept by its hash with no blocks for good); it is split to tell,
+ * which a page with blocks never is.
  */
 async function firstBlockHasPageStatus(
   ctx: QueryCtx,
-  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'status'>,
+  page: Pick<Doc<'docPages'>, 'sourceId' | 'ref' | 'status' | 'markdown'>,
 ): Promise<boolean> {
   const first = await ctx.db
     .query('docBlocks')
     .withIndex('by_source_page', (q) => q.eq('sourceId', page.sourceId).eq('pageRef', page.ref))
     .first();
-  return first === null || (first.status ?? 'active') === pageStatusOf(page);
+  if (first === null) return splitPage(page.markdown).length === 0;
+  return (first.status ?? 'active') === pageStatusOf(page);
 }
 
 /**
@@ -515,6 +608,7 @@ export const unchangedPage = internalQuery({
       markdown: page.markdown,
       ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
       ...(page.sourceRevision !== undefined ? { sourceRevision: page.sourceRevision } : {}),
+      ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     };
   },
 });

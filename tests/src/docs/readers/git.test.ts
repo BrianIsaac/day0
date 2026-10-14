@@ -190,7 +190,8 @@ describe('the clone of a listed git host', (): void => {
       await expect(
         cloneArguments(locator, '/tmp/checkout', answering(...answers)),
         answers.join(','),
-      ).rejects.toThrow('The git host docs.corp.internal answers with an address day0 never dials');
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      ).rejects.toThrow('The git host docs.corp.internal answers with an address Day0 never dials');
     }
     await expect(
       cloneArguments(locator, '/tmp/checkout', async (): Promise<string[]> => {
@@ -230,7 +231,8 @@ describe('the clone of a listed git host', (): void => {
       };
       await expect(
         new GitReader(answering('127.0.0.1')).listPageBatch(source, undefined, undefined, 25),
-      ).rejects.toThrow('answers with an address day0 never dials');
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      ).rejects.toThrow('answers with an address Day0 never dials');
     },
   );
 });
@@ -318,7 +320,8 @@ describe('a public git host listed in DAY0_GIT_HOSTS', (): void => {
     // The pinning's own refusals hold for a listed git host as for a private one.
     await expect(
       cloneArguments(locator, '/tmp/checkout', answering('169.254.169.254')),
-    ).rejects.toThrow('The git host gitee.com answers with an address day0 never dials');
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    ).rejects.toThrow('The git host gitee.com answers with an address Day0 never dials');
     expect(() => archiveUrlFor(locator)).toThrow('no archive fallback');
   });
 
@@ -419,5 +422,42 @@ describe('a private repository read with its own secret (E-74)', (): void => {
     expect(await cloneArguments(locator, '/tmp/checkout')).not.toContain(
       'http.followRedirects=false',
     );
+  });
+});
+
+describe("a git page's date (wave 17, D-8)", (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('says a page from a checkout is dated by the read: its file time is when the checkout wrote it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_GIT_HOSTS', 'gitee.com');
+    vi.stubEnv('DAY0_PRIVATE_HOSTS', '');
+    const reader = new GitReader(
+      async (): Promise<string[]> => ['93.184.216.34'],
+      async (args: readonly string[]): Promise<GitRun> => {
+        if (args[0] === '--version') {
+          return { status: 0, stdout: 'git version 2.43.0\n', stderr: '' };
+        }
+        const checkout = args[args.length - 1];
+        await mkdir(checkout, { recursive: true });
+        await writeFile(join(checkout, 'runbook.md'), '# Refresh the tile\n\nOpen the tile.\n');
+        return { status: 0, stdout: '', stderr: '' };
+      },
+    );
+    const batch = await reader.listPageBatch(
+      {
+        _id: 'source' as Id<'docSources'>,
+        kind: 'git',
+        label: 'Runbooks',
+        locator: 'https://gitee.com/acme/runbooks.git#main',
+      },
+      undefined,
+      undefined,
+      25,
+    );
+    expect(batch.pages.map((page) => [page.ref, page.datedBySource])).toEqual([
+      ['runbook.md', false],
+    ]);
   });
 });

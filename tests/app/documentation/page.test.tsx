@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName, type FunctionReference } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import Page from '../../../app/documentation/page';
+import Page, { metadata } from '../../../app/documentation/page';
 
 /** Convex's answer about the token, and every query the page asked for. */
 const convex = vi.hoisted(() => ({
@@ -34,6 +34,10 @@ afterEach((): void => {
 });
 
 describe('the owner-level documentation page behind the session gate (second review x2, x6)', (): void => {
+  it('is titled for the tab, then Day0, as every other signed-in page is (the v0.20.0 walk\'s finding 8: its title read "Day0")', (): void => {
+    expect(metadata.title).toBe('Documentation · Day0');
+  });
+
   it('says what it is waiting for, and asks for no owned row, until Convex holds the token', (): void => {
     const html = renderToStaticMarkup(<Page />);
     expect(html).toMatch(/<div role="status"[^>]*>loading documentation…<\/div>/);

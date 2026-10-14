@@ -130,6 +130,90 @@ describe('the stopped record', (): void => {
   });
 });
 
+describe('a stop on the model’s reply, as the manager reads it (finding 1 of the v0.20.0 hosted walk)', (): void => {
+  // Rows `A-Pip-tB-stopped-full.txt` and `A-Nell-tA-stopped-full.txt`: six of fifteen runs
+  // stopped with the internal call printed on the card.
+  const PIP_STOP =
+    'stopped: agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-northwind-double-charge-initial): prompt reply did not satisfy the schema';
+  const NELL_STOP =
+    'stopped: agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-monitor-replacement-initial): prompt reply did not satisfy the schema';
+  const IN_WORDS = 'the model’s reply was not in the form Day0 reads';
+
+  it('says what happened, never the call or the skill’s internal name', (): void => {
+    expect(stopDetail(PIP_STOP)).toBe(IN_WORDS);
+    expect(stopDetail(NELL_STOP)).toBe(IN_WORDS);
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-see-internal-docs-docs-docs-billing-replies-initial): prompt reply did not satisfy the schema',
+      ),
+    ).toBe(IN_WORDS);
+  });
+
+  it('keeps what the schema said the reply broke, after the words', (): void => {
+    expect(stopDetail(`${PIP_STOP} (a plan has at most 12 steps)`)).toBe(
+      `${IN_WORDS} (a plan has at most 12 steps)`,
+    );
+  });
+
+  it('says the other ways a model call ends in words too, inside a longer reason as well', (): void => {
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-work-planner): model returned no structured object in json mode',
+      ),
+    ).toBe('the model gave no reply Day0 could read');
+    expect(
+      stopDetail(
+        'stopped: the execution failed 4 times on the model (agentJson(day0-skill-x-initial): prompt generation failed: 503 Service Unavailable); Retry runs it again',
+      ),
+    ).toBe(
+      'the execution failed 4 times on the model (the model call failed: 503 Service Unavailable); Retry runs it again',
+    );
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): prompt generation finished with an error',
+      ),
+    ).toBe('the model call ended in an error');
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): prompt generation was stopped by a tripwire (token limit)',
+      ),
+    ).toBe('the model call was stopped (token limit)');
+  });
+
+  // The second pass: a call that spends its budget is the commonest failure, and its message
+  // (`budgetSpent` in `src/lib/mastra.ts`) carries the call's name with or without the mode.
+  it('says a call that spent its budget once, without the call’s name or its mode', (): void => {
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): prompt: the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
+    // The other mode a structured call names itself with (`StructuredMode` in `src/lib/mastra.ts`).
+    expect(
+      stopDetail(
+        'stopped: agentJson(day0-skill-x-initial): native: the model call reached its 300000ms budget',
+      ),
+    ).toBe('the model call reached its 300000ms budget');
+    expect(
+      stopDetail('stopped: agentText(day0-voice): the model call reached its 60000ms budget'),
+    ).toBe('the model call reached its 60000ms budget');
+    // Any other words after a call's name are kept, the name and the mode left out.
+    expect(stopDetail('stopped: agentText(day0-voice): the provider closed the stream')).toBe(
+      'the model call failed: the provider closed the stream',
+    );
+  });
+
+  it('leaves the recorded reason as it was: the record and the export keep the call', (): void => {
+    expect(isStopped(PIP_STOP)).toBe(true);
+    expect(stoppedReason(PIP_STOP)).toBe(PIP_STOP);
+  });
+});
+
 describe('a run cut short by a gate refusal (19 Sep run, finding N)', (): void => {
   const actions = REFUSED_CREATE_RUN.actions as unknown as MockAction[];
   const applied = REFUSED_CREATE_RUN.applied.map((row) => ({ ...row }));

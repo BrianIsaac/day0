@@ -10,10 +10,18 @@
  * answered `410 Gone`, and the sync then reads the library again from its start. A Markdown file
  * is read as it is, and a Word document converted where the reader runs (`word.ts`, RM9 (b1)),
  * each through the pre-authenticated address Graph redirects to, which gets no token and is held
- * to the page rules (`page-address.ts`); its `cTag` is its revision, and a file with the
- * `deleted` facet is archived. Then the site's pages (`sitePage`) are listed and each read
- * with its `canvasLayout`: the text web parts' HTML, converted; a page checked out or never
- * published is a draft.
+ * to the page rules (`page-address.ts`); a file with the `deleted` facet is archived. Then the
+ * site's pages (`sitePage`) are listed and each read with its `canvasLayout`: the text web parts'
+ * HTML, converted; a page checked out or never published is a draft.
+ *
+ * Both listings give each entry's revision, so a page stored at the revision its listing gives,
+ * under the title and the address its listing gives, is kept with no body asked for (the reader
+ * contract by revision, wave 17): an unchanged library costs its listings' requests alone. A
+ * file's revision is its `cTag`, which moves with its content only, where the delta item carries
+ * one, else its `eTag`, which moves with its metadata too; it is stored marked with which it is
+ * (`c:` or `e:`), and the two are never compared (X-1). Graph's reference says the delta leaves
+ * `cTag` out for OneDrive for Business on a create or a modify, and only a tenant shows what a
+ * SharePoint library sends (V17-2). A site page's revision is its listed `eTag`.
  *
  * Graph's reference lists `Files.Read.All` for the delta and the download and `Sites.Read.All`
  * for the site and its pages, and names `Sites.Selected` for none of them, so a site grant is to
@@ -32,8 +40,12 @@ import {
 import type { DocPage, DocSourceRecord } from '../types';
 import {
   ListingChangedError,
+  storedMarks,
   type DocumentationReader,
+  type KeptPage,
   type ReadPageBatch,
+  type StoredMark,
+  type StoredRevisions,
   type UnreadPage,
 } from './batch';
 import { markdownPageTitle } from './folder';
@@ -51,6 +63,7 @@ import {
   type ProviderHttpOptions,
   webPageInPlaceOf,
 } from './provider-http';
+import { storedPageTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** What the reader is given instead of the network, the clock and the timer, for tests. */
@@ -77,6 +90,67 @@ const READ_KINDS: Readonly<Record<string, { readonly maxBytes: number; readonly 
   md: { maxBytes: MAX_MARKDOWN_BYTES, noun: 'file' },
   docx: { maxBytes: MAX_WORD_BYTES, noun: 'Word document' },
 };
+
+/**
+ * What each listing is asked for: the fields the reader reads of an entry and no others, so a
+ * listing of an unchanged library is small.
+ */
+const FILE_SELECT =
+  'id,name,size,file,folder,deleted,lastModifiedDateTime,webUrl,eTag,cTag,parentReference';
+const PAGE_SELECT = 'id,name,title,eTag,lastModifiedDateTime,webUrl,publishingState';
+
+/** The marks a file's revision is stored under: which of Graph's two tags it is (X-1). */
+const CONTENT_TAG = 'c:';
+const ITEM_TAG = 'e:';
+
+/**
+ * A library file's revision as it is stored: its `cTag` where the delta item carries one, else
+ * its `eTag`, marked with which it is.
+ */
+function fileRevision(item: unknown): string | undefined {
+  const cTag = textField(item, 'cTag');
+  if (cTag !== undefined) return `${CONTENT_TAG}${cTag}`;
+  const eTag = textField(item, 'eTag');
+  return eTag === undefined ? undefined : `${ITEM_TAG}${eTag}`;
+}
+
+/**
+ * Whether a file was stored at the revision its delta item gives now.
+ *
+ * A stored `cTag` is compared with the item's `cTag` and a stored `eTag` with its `eTag`, never
+ * one with the other: an item that carries a `cTag` is compared by it alone. A revision with no
+ * mark is one 0.20.0 stored, which was always the `cTag`.
+ */
+function storedAtFileRevision(stored: string, item: unknown): boolean {
+  const cTag = textField(item, 'cTag');
+  if (cTag !== undefined) return stored === `${CONTENT_TAG}${cTag}` || stored === cTag;
+  const eTag = textField(item, 'eTag');
+  return eTag !== undefined && stored === `${ITEM_TAG}${eTag}`;
+}
+
+/**
+ * A delta page's items with every occurrence of an item but its last blanked, each place kept.
+ *
+ * Graph's reference says the same item may appear more than once in a delta feed and that the
+ * last occurrence is the one to use: an earlier one may show the file as it was stored and the
+ * last as it is now, and the file is then read once and not also kept.
+ */
+function lastOccurrences(items: readonly unknown[]): readonly unknown[] {
+  const last = new Map<string, number>();
+  items.forEach((item, index): void => {
+    const id = textField(item, 'id');
+    if (id !== undefined) last.set(id, index);
+  });
+  return items.map((item, index): unknown => {
+    const id = textField(item, 'id');
+    return id === undefined || last.get(id) === index ? item : undefined;
+  });
+}
+
+/** An address Graph gives, when it is one a page may carry. */
+function httpsAddress(url: string | undefined): string | undefined {
+  return url?.startsWith('https://') ? url : undefined;
+}
 
 /** The two walks of a site, in order: its library's files, then its pages. */
 type Phase = 'files' | 'pages';
@@ -209,7 +283,8 @@ export class SharePointReader implements DocumentationReader {
    * @param source - The linked SharePoint source.
    * @param secret - The app registration, joined (`sharePointReaderSecret`).
    * @param cursor - Where the previous batch left the walk.
-   * @param limit - The most entries this batch takes.
+   * @param limit - The most entries this batch reads; an entry kept by its revision is not one.
+   * @param stored - What the sync stored each listed page with; none reads every page.
    * @throws Error when the app or the site is refused, or Graph stays throttled past the waits;
    *   ListingChangedError when Graph no longer honours a kept link (410 Gone), so the sync reads
    *   the site again from its start.
@@ -219,6 +294,7 @@ export class SharePointReader implements DocumentationReader {
     secret: string | undefined,
     cursor: string | undefined,
     limit: number,
+    stored?: StoredRevisions,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -242,8 +318,8 @@ export class SharePointReader implements DocumentationReader {
       skip: 0,
     };
     return walk.phase === 'files'
-      ? await this.files(session, source, walk, limit)
-      : await this.pages(session, source, walk, limit);
+      ? await this.files(session, source, walk, limit, stored)
+      : await this.pages(session, source, walk, limit, stored);
   }
 
   /** An app-only access token for Graph in the site's cloud. */
@@ -304,8 +380,9 @@ export class SharePointReader implements DocumentationReader {
     source: DocSourceRecord,
     walk: Walk,
     limit: number,
+    stored: StoredRevisions | undefined,
   ): Promise<ReadPageBatch> {
-    const url = this.listing(session, walk, `/drive/root/delta`, limit);
+    const url = this.listing(session, walk, `/drive/root/delta`, limit, FILE_SELECT);
     const answer = await this.graph(session, url);
     if (answer.status === 410) {
       // Graph asks for a fresh enumeration; the sync starts the walk again from its first page.
@@ -316,13 +393,23 @@ export class SharePointReader implements DocumentationReader {
       throw new ListingChangedError();
     }
     const body = graphBody(answer, 'files');
-    const taken = await this.take(listField(body, 'value'), walk.skip, limit, (item) =>
-      this.file(session, source, item),
+    const items = lastOccurrences(listField(body, 'value'));
+    // Asked once a listing page, before any body: what each file left to take was stored with.
+    const marks = await storedMarks(
+      stored,
+      items.slice(walk.skip).flatMap((item): string[] => {
+        const listed = listedFile(item);
+        return listed?.kind === undefined || listed.deleted ? [] : [listed.ref];
+      }),
+    );
+    const taken = await this.take(items, walk.skip, limit, (item) =>
+      this.file(session, source, item, marks),
     );
     const next = textField(body, '@odata.nextLink');
     return {
       pages: taken.pages,
       unread: taken.unread,
+      ...(taken.kept.length > 0 ? { kept: taken.kept } : {}),
       // A delta page may be empty and still name the next: only the delta link ends the walk.
       nextCursor: cursorAfter(
         walk,
@@ -341,16 +428,26 @@ export class SharePointReader implements DocumentationReader {
     source: DocSourceRecord,
     walk: Walk,
     limit: number,
+    stored: StoredRevisions | undefined,
   ): Promise<ReadPageBatch> {
-    const url = this.listing(session, walk, '/pages/microsoft.graph.sitePage', limit);
+    const url = this.listing(session, walk, '/pages/microsoft.graph.sitePage', limit, PAGE_SELECT);
     const body = graphBody(await this.graph(session, url), 'pages');
-    const taken = await this.take(listField(body, 'value'), walk.skip, limit, (item) =>
-      this.sitePage(session, source, walk.siteId, item),
+    const items = listField(body, 'value');
+    const marks = await storedMarks(
+      stored,
+      items.slice(walk.skip).flatMap((item): string[] => {
+        const id = textField(item, 'id');
+        return id === undefined ? [] : [`page-${id}`];
+      }),
+    );
+    const taken = await this.take(items, walk.skip, limit, (item) =>
+      this.sitePage(session, source, walk.siteId, item, marks),
     );
     const next = textField(body, '@odata.nextLink');
     return {
       pages: taken.pages,
       unread: taken.unread,
+      ...(taken.kept.length > 0 ? { kept: taken.kept } : {}),
       nextCursor: cursorAfter(walk, url, taken, next, undefined),
     };
   }
@@ -358,9 +455,10 @@ export class SharePointReader implements DocumentationReader {
   /**
    * The listing page a walk stands on: the link an earlier batch kept, or the phase's first.
    *
+   * @param select - The fields the phase's first page is asked for; a link carries its own.
    * @throws Error for a kept link on another host than Graph's, which gets no token.
    */
-  private listing(session: Session, walk: Walk, path: string, limit: number): URL {
+  private listing(session: Session, walk: Walk, path: string, limit: number, select: string): URL {
     if (walk.link !== undefined) {
       const link = new URL(walk.link);
       if (link.origin !== session.graph) {
@@ -372,50 +470,54 @@ export class SharePointReader implements DocumentationReader {
     }
     const first = new URL(`${session.graph}/v1.0/sites/${walk.siteId}${path}`);
     first.searchParams.set('$top', String(limit));
+    first.searchParams.set('$select', select);
     return first;
   }
 
   /**
    * Read a listing page's entries from where earlier batches stopped, until the batch is full.
    *
-   * @param read - Reads one entry: a page, an unread record, or nothing for an entry passed over.
-   * @returns What was read, and how many of the page's entries are now taken.
+   * @param read - Reads one entry: a page, an unread record, an entry kept as stored with no
+   *   body read, or nothing for an entry passed over.
+   * @returns What was read and kept, and how many of the page's entries are now taken. An entry
+   *   kept is no part of the batch's limit, which counts the entries read.
    */
   private async take(
     items: readonly unknown[],
     skip: number,
     limit: number,
-    read: (item: unknown) => Promise<DocPage | UnreadPage | undefined>,
+    read: (item: unknown) => Promise<DocPage | UnreadPage | Kept | undefined>,
   ): Promise<Taken> {
     const pages: DocPage[] = [];
     const unread: UnreadPage[] = [];
+    const kept: KeptPage[] = [];
     let index = skip;
     for (; index < items.length && pages.length + unread.length < limit; index += 1) {
       const result = await read(items[index]);
       if (result === undefined) continue;
-      if ('markdown' in result) pages.push(result);
+      if ('kept' in result) kept.push(result.kept);
+      else if ('markdown' in result) pages.push(result);
       else unread.push(result);
     }
-    return { pages, unread, taken: index, listed: items.length };
+    return { pages, unread, kept, taken: index, listed: items.length };
   }
 
-  /** One item of the library: a Markdown file read, another document named, anything else passed over. */
+  /**
+   * One item of the library: a Markdown file or a Word document read, or kept as stored when its
+   * listing gives the revision, the title and the address it was stored with; another document
+   * named; anything else passed over.
+   */
   private async file(
     session: Session,
     source: DocSourceRecord,
     item: unknown,
-  ): Promise<DocPage | UnreadPage | undefined> {
-    const id = textField(item, 'id');
-    const name = textField(item, 'name');
-    if (id === undefined || name === undefined || field(item, 'folder') !== undefined) {
-      return undefined;
-    }
-    const ref = `file-${id}`;
-    const { stem, extension } = splitName(name);
-    // By its own property only: an extension may be any word, `constructor` among it.
-    const kind = Object.hasOwn(READ_KINDS, extension) ? READ_KINDS[extension] : undefined;
+    marks: ReadonlyMap<string, StoredMark>,
+  ): Promise<DocPage | UnreadPage | Kept | undefined> {
+    const listed = listedFile(item);
+    if (listed === undefined) return undefined;
+    const { id, name, ref, stem, extension, kind } = listed;
     const unreadKind = Object.hasOwn(UNREAD_KINDS, extension) ? UNREAD_KINDS[extension] : undefined;
-    if (field(item, 'deleted') !== undefined) {
+    if (listed.deleted) {
       // Deleted at its source: archived, and nothing of its text is kept (decision X-8).
       return kind === undefined
         ? undefined
@@ -424,7 +526,9 @@ export class SharePointReader implements DocumentationReader {
             ref,
             title: stem,
             markdown: underTitle(stem, 'This file was deleted in SharePoint.'),
+            // The delta item of a deletion carries no date.
             updatedAt: this.now(),
+            datedBySource: false,
             nativeStatus: 'archived',
           };
     }
@@ -436,6 +540,21 @@ export class SharePointReader implements DocumentationReader {
       };
     }
     if (kind === undefined) return undefined;
+    const edited = Date.parse(textField(item, 'lastModifiedDateTime') ?? '');
+    const url = httpsAddress(textField(item, 'webUrl'));
+    const mark = marks.get(ref);
+    // Unchanged since it was stored, by the delta's own revision and address: no body is asked.
+    // A Word document is titled by its name. A Markdown file is titled by its own first heading,
+    // which its content's tag covers, or by its name, which its address carries: so it is kept
+    // only where the listing gives an address to hold a rename to.
+    if (
+      mark !== undefined &&
+      storedAtFileRevision(mark.revision, item) &&
+      mark.url === url &&
+      (extension === 'md' ? url !== undefined : mark.title === storedPageTitle(stem))
+    ) {
+      return { kept: { ref, datedBySource: Number.isFinite(edited) } };
+    }
     const size = field(item, 'size');
     if (typeof size === 'number' && size > kind.maxBytes) {
       return {
@@ -448,17 +567,16 @@ export class SharePointReader implements DocumentationReader {
     const markdown =
       extension === 'md' ? new TextDecoder().decode(bytes) : await wordMarkdown(name, bytes);
     if (typeof markdown !== 'string') return { ref, reason: markdown.reason };
-    const edited = Date.parse(textField(item, 'lastModifiedDateTime') ?? '');
-    const url = textField(item, 'webUrl');
-    const revision = textField(item, 'cTag');
+    const revision = fileRevision(item);
     return {
       sourceId: source._id,
       ref,
       // A Markdown file names itself by its first heading; a Word document by its file's name.
       title: extension === 'md' ? markdownPageTitle(markdown, stem) : stem,
-      ...(url?.startsWith('https://') ? { url } : {}),
+      ...(url === undefined ? {} : { url }),
       markdown: extension === 'md' ? markdown : underTitle(stem, markdown),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };
   }
@@ -537,17 +655,46 @@ export class SharePointReader implements DocumentationReader {
     }
   }
 
-  /** One listed page of the site, read with its content. */
+  /**
+   * One listed page of the site: read with its content, or kept as stored when its listing gives
+   * the `eTag`, the title and the address it was stored with.
+   */
   private async sitePage(
     session: Session,
     source: DocSourceRecord,
     siteId: string,
     listed: unknown,
-  ): Promise<DocPage | UnreadPage | undefined> {
+    marks: ReadonlyMap<string, StoredMark>,
+  ): Promise<DocPage | UnreadPage | Kept | undefined> {
     const id = textField(listed, 'id');
     if (id === undefined) return undefined;
     const ref = `page-${id}`;
     const title = (textField(listed, 'title') ?? textField(listed, 'name') ?? 'Untitled').trim();
+    const listedTag = textField(listed, 'eTag');
+    const listedUrl = httpsAddress(textField(listed, 'webUrl'));
+    const listedState = field(listed, 'publishingState');
+    const mark = marks.get(ref);
+    // Unchanged since it was stored, by the listing's own eTag, title and address: no body is
+    // asked. A listing that leaves the publishing state out cannot say whether the page is a
+    // draft, and a kept page's status is the listing's: such a page is read.
+    if (
+      mark !== undefined &&
+      listedTag !== undefined &&
+      listedState !== undefined &&
+      mark.revision === listedTag &&
+      mark.title === storedPageTitle(title) &&
+      mark.url === listedUrl
+    ) {
+      const status = sharePointPageStatus(textField(listedState, 'level'));
+      const dated = Date.parse(textField(listed, 'lastModifiedDateTime') ?? '');
+      return {
+        kept: {
+          ref,
+          ...(status === undefined ? {} : { nativeStatus: status }),
+          datedBySource: Number.isFinite(dated),
+        },
+      };
+    }
     const url = new URL(
       `${session.graph}/v1.0/sites/${siteId}/pages/${encodeURIComponent(id)}/microsoft.graph.sitePage`,
     );
@@ -577,16 +724,19 @@ export class SharePointReader implements DocumentationReader {
     }
     const state = field(page, 'publishingState');
     const edited = Date.parse(textField(page, 'lastModifiedDateTime') ?? '');
-    const webUrl = textField(page, 'webUrl');
+    // The listing's own address and eTag where it gives them, since they are what the next
+    // listing is held against; the page's own otherwise.
+    const webUrl = listedUrl ?? httpsAddress(textField(page, 'webUrl'));
     const nativeStatus = sharePointPageStatus(textField(state, 'level'));
-    const revision = textField(state, 'versionId') ?? textField(page, 'eTag');
+    const revision = listedTag ?? textField(page, 'eTag');
     return {
       sourceId: source._id,
       ref,
       title,
-      ...(webUrl?.startsWith('https://') ? { url: webUrl } : {}),
+      ...(webUrl === undefined ? {} : { url: webUrl }),
       markdown: underTitle(title, body),
       updatedAt: Number.isFinite(edited) ? edited : this.now(),
+      datedBySource: Number.isFinite(edited),
       ...(nativeStatus === undefined ? {} : { nativeStatus }),
       ...(revision === undefined ? {} : { sourceRevision: revision }),
     };
@@ -623,10 +773,48 @@ async function wordMarkdown(
     : markdown;
 }
 
+/** A listed entry kept as stored by its revision, its body unread. */
+interface Kept {
+  readonly kept: KeptPage;
+}
+
+/** What a delta item says of a file before anything of it is read. */
+interface ListedFile {
+  readonly id: string;
+  readonly name: string;
+  readonly ref: string;
+  readonly stem: string;
+  readonly extension: string;
+  /** What the reader reads of this kind of file; undefined for a kind it does not read. */
+  readonly kind: (typeof READ_KINDS)[string] | undefined;
+  readonly deleted: boolean;
+}
+
+/** A delta item as a file, or undefined for a folder or an item with no id or name. */
+function listedFile(item: unknown): ListedFile | undefined {
+  const id = textField(item, 'id');
+  const name = textField(item, 'name');
+  if (id === undefined || name === undefined || field(item, 'folder') !== undefined) {
+    return undefined;
+  }
+  const { stem, extension } = splitName(name);
+  return {
+    id,
+    name,
+    ref: `file-${id}`,
+    stem,
+    extension,
+    // By its own property only: an extension may be any word, `constructor` among it.
+    kind: Object.hasOwn(READ_KINDS, extension) ? READ_KINDS[extension] : undefined,
+    deleted: field(item, 'deleted') !== undefined,
+  };
+}
+
 /** What one batch took of a listing page. */
 interface Taken {
   readonly pages: DocPage[];
   readonly unread: UnreadPage[];
+  readonly kept: KeptPage[];
   /** How many of the page's entries are taken, this batch's included. */
   readonly taken: number;
   readonly listed: number;

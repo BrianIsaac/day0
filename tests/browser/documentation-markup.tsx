@@ -10,6 +10,8 @@ import {
   type RelationCardRow,
 } from '../../app/agent/[agentId]/documentation/RelationCard';
 import { PageRows, type PageRow } from '../../app/agent/[agentId]/documentation/PageTable';
+import { RelationAnswered } from '../../app/agent/[agentId]/documentation/RelationAnswered';
+import { LinkSourceForm } from '../../app/documentation/LinkSourceForm';
 
 /**
  * Print the Documentation tab's main column as the review's bed 3 drew it (W15-R50): the Sources
@@ -22,6 +24,11 @@ import { PageRows, type PageRow } from '../../app/agent/[agentId]/documentation/
  * rendered from the components here, in their own process under `tsx`, as
  * `first-week-markup.ts` renders the week. The cards' controls only build their calls while they
  * render, so the Convex context they read is given a client that is never called.
+ *
+ * Asked for `answered` (the first argument), it prints the column as it stands once a card was
+ * answered (wave 17, 17-FD; `documentation-tab.spec.ts`): "Your answer" where the card was, a
+ * successor proposed by its pages' dates and a duplicate one of whose pages has only the time it
+ * was read, the pages, and the form that links a location.
  */
 
 /** A linked source as `docSources.listMine` lists it, synced. */
@@ -173,28 +180,103 @@ function Pages(): ReactNode {
 /** A client the context holds and nothing calls: the markup is printed, never pressed. */
 const UNCALLED = {} as ConvexReactClient;
 
+/**
+ * The company folder's runbook and its team copy, as 16-FD's bed dated them, three days apart.
+ *
+ * @param copyDated - Whether the copy's source dated it; false, Day0 holds only when it read it.
+ */
+function copies(id: string, copyDated: boolean): RelationCardRow {
+  const page = (title: string, source: string, updatedAt: number, dated: boolean) => ({
+    sourceId: `source-${source}`,
+    ref: `${source}/${title}`,
+    title,
+    source,
+    updatedAt,
+    edited: dated,
+    dated,
+    authority: 'team',
+  });
+  return {
+    _id: id,
+    kind: copyDated ? 'possible_successor' : 'possible_duplicate',
+    status: 'proposed',
+    from: page(
+      'Refreshing the pipeline tile (team copy)',
+      copyDated ? 'Company folder' : 'Team pages',
+      Date.UTC(2026, 9, 10, 11, 15),
+      copyDated,
+    ),
+    to: page(
+      'How to refresh the Looker pipeline tile',
+      'Company folder',
+      Date.UTC(2026, 9, 7, 11, 15),
+      true,
+    ),
+    evidence: [
+      { measure: 'shared-text', value: 60 },
+      ...(copyDated ? [{ measure: 'edit-dates', value: 3 }] : []),
+    ],
+    offered: ['supersedes', 'keep-both', 'not-the-same'],
+  } as unknown as RelationCardRow;
+}
+
+/** The column once a card was answered: the answer, two cards still to answer, the pages, the form. */
+function Answered(): ReactNode {
+  return (
+    <Columns aside={null}>
+      <Card title="Sources" meta={TRUST_HELP}>
+        <SourceTable
+          sources={SOURCES}
+          zone="UTC"
+          reader={{ name: 'Priya', excluded: new Set<string>() }}
+          pages={{ selected: 'folder' as never, onSelect: (): void => undefined }}
+        />
+      </Card>
+      <RelationAnswered
+        answered={{
+          relationId: 'relation-answered' as never,
+          text: '“运维手册” now supersedes “运维手册”.',
+          undo: true,
+        }}
+        cardGone
+        onUndone={(): void => undefined}
+      />
+      <RelationCard relation={copies('relation-dated', true)} zone="UTC" />
+      <RelationCard relation={copies('relation-undated', false)} zone="UTC" />
+      <Pages />
+      <Card title="Link a location">
+        <LinkSourceForm />
+      </Card>
+    </Columns>
+  );
+}
+
 process.stdout.write(
   renderToStaticMarkup(
     <ConvexProvider client={UNCALLED}>
-      <Columns aside={null}>
-        <Card title="Sources" meta={TRUST_HELP}>
-          <SourceTable
-            sources={SOURCES}
+      {process.argv[2] === 'answered' ? (
+        <Answered />
+      ) : (
+        <Columns aside={null}>
+          <Card title="Sources" meta={TRUST_HELP}>
+            <SourceTable
+              sources={SOURCES}
+              zone="UTC"
+              reader={{ name: 'Priya', excluded: new Set<string>() }}
+              pages={{ selected: 'folder' as never, onSelect: (): void => undefined }}
+            />
+          </Card>
+          <RelationCard
+            relation={proposal('relation-1', 'Ops wiki (Cloud)', 'RevOps runbooks')}
             zone="UTC"
-            reader={{ name: 'Priya', excluded: new Set<string>() }}
-            pages={{ selected: 'folder' as never, onSelect: (): void => undefined }}
           />
-        </Card>
-        <RelationCard
-          relation={proposal('relation-1', 'Ops wiki (Cloud)', 'RevOps runbooks')}
-          zone="UTC"
-        />
-        <RelationCard
-          relation={proposal('relation-2', 'Runbooks site', 'Runbooks folder')}
-          zone="UTC"
-        />
-        <Pages />
-      </Columns>
+          <RelationCard
+            relation={proposal('relation-2', 'Runbooks site', 'Runbooks folder')}
+            zone="UTC"
+          />
+          <Pages />
+        </Columns>
+      )}
     </ConvexProvider>,
   ),
 );

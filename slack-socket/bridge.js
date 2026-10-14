@@ -41,13 +41,13 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * stays, so a press a minute later may get through.
  */
 export const PRESS_NOT_RECEIVED =
-  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.';
+  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in Day0.';
 /**
  * What the person who pressed is told when Day0 answered the press with a refusal, which another
  * press would meet again (W12-R22).
  */
 export const PRESS_REFUSED =
-  'Day0 could not take this press, so nothing was decided. Decide in day0.';
+  'Day0 could not take this press, so nothing was decided. Decide in Day0.';
 /** How long telling the person may take. */
 export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
 /**
@@ -698,6 +698,59 @@ export function responseUrlOf(payload, slackHost) {
   }
   const slack = url.protocol === 'https:' && url.hostname === 'hooks.slack.com' && url.port === '';
   return slack || (slackHost !== undefined && url.host === slackHost) ? url : undefined;
+}
+
+/** The first Node on the 22 line that reads a proxy from its environment (`NODE_USE_ENV_PROXY`). */
+const ENV_PROXY_NODE = [22, 21];
+
+/**
+ * Which way out this process takes to Slack (wave 17, 17-P; RM31 (a)): directly, or through the
+ * HTTP proxy its environment names. Node's own `WebSocket` and `fetch` tunnel through a proxy only
+ * when `NODE_USE_ENV_PROXY=1` was set before the process started, on Node 22.21 or later (24 or
+ * later after it); the compose file sets it wherever `.env.local` names a proxy. The backend is
+ * never reached through it: the compose file's `NO_PROXY` names it.
+ *
+ * @param {Readonly<Record<string, string | undefined>>} env The process environment.
+ * @param {string} nodeVersion `process.version`.
+ * @returns {{ wayOut: string, ignored?: string }} The way out in words, by the proxy's host and
+ *   port and never its credentials; and, when a proxy is named that this process does not read,
+ *   why.
+ */
+export function wayOutOf(env, nodeVersion) {
+  const named = (env.HTTPS_PROXY ?? '').trim() || (env.HTTP_PROXY ?? '').trim();
+  if (named === '') return { wayOut: 'direct' };
+  const [major, minor] = nodeVersion.replace(/^v/, '').split('.').map(Number);
+  const nodeReads = major >= 24 || (major === ENV_PROXY_NODE[0] && minor >= ENV_PROXY_NODE[1]);
+  const why = !nodeReads
+    ? `this Node (${nodeVersion}) is older than ${ENV_PROXY_NODE.join('.')}.0`
+    : env.NODE_USE_ENV_PROXY !== '1'
+      ? 'NODE_USE_ENV_PROXY is not 1'
+      : undefined;
+  if (why === undefined && (env.HTTPS_PROXY ?? '').trim() === '') {
+    return {
+      wayOut: 'direct',
+      ignored:
+        'Only HTTP_PROXY names a proxy, and the socket to Slack is https, which HTTPS_PROXY ' +
+        'carries. It is dialled directly, which a network with no direct route out refuses.',
+    };
+  }
+  if (why !== undefined) {
+    const name = (env.HTTPS_PROXY ?? '').trim() !== '' ? 'HTTPS_PROXY' : 'HTTP_PROXY';
+    return {
+      wayOut: 'direct',
+      ignored:
+        `${name} names a proxy and this process does not read it: ${why}. The socket to Slack ` +
+        'is dialled directly, which a network with no direct route out refuses.',
+    };
+  }
+  let host;
+  try {
+    host = new URL(named).host;
+  } catch {
+    // Not a URL: said as that, so a value that may hold a password is never logged.
+    host = 'an address that is not a URL';
+  }
+  return { wayOut: `the proxy at ${host}` };
 }
 
 /** A failure's message, never a URL (a Socket Mode URL carries its ticket). */

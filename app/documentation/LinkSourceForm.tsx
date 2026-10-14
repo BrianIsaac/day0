@@ -237,6 +237,10 @@ export function SourceKindHelp(props: {
   );
 }
 
+/** What a folder's location is, said under its field, whose default is the whole folder. */
+export const FOLDER_LOCATOR_HINT =
+  'A folder inside the documents folder Day0 was given at setup. “.” is all of it; a name such as runbooks is that folder alone.';
+
 /**
  * The form that links one documentation location for all the owner's employees, in the kinds
  * the backend reads (`docSources.link`): a folder of Markdown, a git repository, a list of URLs,
@@ -315,7 +319,7 @@ export function LinkSourceForm(): React.ReactNode {
         <a href={AUTHOR_GUIDE_URL} target="_blank" rel="noreferrer">
           the documentation author guide
         </a>{' '}
-        describes, so day0 finds each system, address, credential and intake queue on them.
+        describes, so Day0 finds each system, address, credential and intake queue on them.
       </p>
       {/* The handler says its own refusal under the form; nothing is left to reject. */}
       <form onSubmit={(event) => void onSubmit(event)} className="grid gap-4">
@@ -361,6 +365,7 @@ export function LinkSourceForm(): React.ReactNode {
           <textarea
             id="source-locator"
             value={locator}
+            {...(kind === 'folder' ? { 'aria-describedby': 'source-locator-hint' } : {})}
             onChange={(event) => setLocator(event.target.value)}
             placeholder={
               kind === 'folder'
@@ -375,6 +380,13 @@ export function LinkSourceForm(): React.ReactNode {
             }
             className={`${INPUT_CLASS} min-h-20 w-full`}
           />
+          {/* A folder's field opens holding ".", which read as a stray mark with nothing beside
+              it to say what it stands for (16-T's F7). */}
+          {kind === 'folder' ? (
+            <p id="source-locator-hint" className={HELP}>
+              {FOLDER_LOCATOR_HINT}
+            </p>
+          ) : null}
         </div>
         {kind === 'mcp' ? (
           <div className="grid gap-4 sm:grid-cols-2">

@@ -2,7 +2,7 @@
   "reference": [
     {
       "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/driveitem-delta.md",
-      "read": "2026-10-10 (the source of learn.microsoft.com/graph/api/driveitem-delta: value, @odata.nextLink then @odata.deltaLink, the deleted facet, 410 Gone with resyncChangesApplyDifferences and a Location; application permission Files.Read.All)"
+      "read": "2026-10-10 (the source of learn.microsoft.com/graph/api/driveitem-delta: value, @odata.nextLink then @odata.deltaLink, the deleted facet, 410 Gone with resyncChangesApplyDifferences and a Location; application permission Files.Read.All); as the wave 17 plan read the page on 2026-10-13 (its section 4.7; this unit called no vendor host), $select and the properties the delta leaves out: \"Delta query won't return some DriveItem properties, depending on the operation and service type\", a create or a modify on OneDrive for Business among them for ctag"
     },
     {
       "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/driveitem-get-content.md",
@@ -18,7 +18,7 @@
     },
     {
       "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/sitepage-list.md",
-      "read": "2026-10-10 (GET /sites/{site-id}/pages/microsoft.graph.sitePage, $top; publishingState.level and versionId; application permission Sites.Read.All)"
+      "read": "2026-10-10 (GET /sites/{site-id}/pages/microsoft.graph.sitePage, $top; publishingState.level and versionId; application permission Sites.Read.All); as the wave 17 plan records its reader reading it (section 4.7, context): $select and $top, eTag and lastModifiedDateTime on the listed item"
     },
     {
       "url": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/sitepage-get.md",
@@ -33,7 +33,7 @@
       "read": "2026-10-10 (ms.date 2025-01-14, context: 429 with Retry-After)"
     }
   ],
-  "unverified": "The download address's host, the token route's refusal body and a text web part's @odata.type (the get example says #oneDrive.textWebPart, the resource page microsoft.graph.textWebPart) are as the reference prints them, not as a tenant sent them.",
+  "unverified": "The download address's host, the token route's refusal body and a text web part's @odata.type (the get example says #oneDrive.textWebPart, the resource page microsoft.graph.textWebPart) are as the reference prints them, not as a tenant sent them. Whether a SharePoint library's delta sends cTag (V17-2) and whether the site pages listing answers eTag and publishingState under $select (V17-3) are as the reference prints them: the fixtures send both.",
   "authorization": "Bearer fixture-graph-token",
   "unauthorised": {
     "status": 401,
@@ -77,6 +77,10 @@
         [
           "$top",
           "*"
+        ],
+        [
+          "$select",
+          "id,name,size,file,folder,deleted,lastModifiedDateTime,webUrl,eTag,cTag,parentReference"
         ]
       ],
       "status": 200,
@@ -163,6 +167,10 @@
         [
           "$top",
           "*"
+        ],
+        [
+          "$select",
+          "id,name,title,eTag,lastModifiedDateTime,webUrl,publishingState"
         ]
       ],
       "status": 200,

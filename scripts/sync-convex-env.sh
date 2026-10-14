@@ -180,12 +180,23 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# The file is read once, by the one reader every script shares
+# (scripts/lib/env-text.ts, W17-R24): IT writes it as a shell file is written,
+# with quotes, `export`, inline comments or CRLF line ends, and compose and
+# Next read it as dotenv does, so this script reads it that way too rather
+# than by grep. One `NAME=value` a line, each name once, its last value.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! LOCAL_VALUES=$("$REPO_ROOT/node_modules/.bin/tsx" "$REPO_ROOT/scripts/lib/env-text.ts" "$ENV_FILE"); then
+  echo "error: could not read $ENV_FILE." >&2
+  exit 1
+fi
+read_local() {
+  grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true
+}
+
 # The deployment cannot verify a no-auth caller's token without the public key,
 # and a push in that state would refuse every caller. Say so here rather than
 # leaving it to be discovered as a 'not authenticated' on the dashboard.
-read_local() {
-  grep -E "^${1}=" "$ENV_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true
-}
 if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DEV_NO_AUTH_JWKS)" ]; then
   echo "error: NEXT_PUBLIC_DEV_NO_AUTH=true in $ENV_FILE but DEV_NO_AUTH_JWKS is empty." >&2
   echo "       No-auth mode accepts only callers holding this machine's local key," >&2
@@ -384,6 +395,26 @@ for key in "${KEYS[@]}"; do
   fi
   set_key "$key" "$value"
 done
+
+# The way out through a proxy (wave 17, 17-P). The backend's Node executor runs
+# each function with the deployment's variables in place of the container's,
+# while Node's proxy agent, built when the executor started, keeps the proxy
+# the compose file handed it and reads NO_PROXY again at every request. So the
+# exclusions must be on the deployment, or every request a Node action makes
+# takes the proxy, its own calls back to the backend at 127.0.0.1 among them,
+# and each fails there. The list is the one the compose file begins NO_PROXY
+# with (scripts/lib/proxy-env.ts, SERVICE_NO_PROXY), then whatever .env.local
+# lists. The proxy's own address is never pushed: Node read it at its start,
+# and it may carry a password. With no proxy named there is nothing to exclude,
+# and a stale list is removed.
+SERVICE_NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis
+if [ -n "$(read_local HTTPS_PROXY)" ] || [ -n "$(read_local HTTP_PROXY)" ]; then
+  listed_no_proxy=$(read_local NO_PROXY)
+  set_key NO_PROXY "${SERVICE_NO_PROXY}${listed_no_proxy:+,${listed_no_proxy}}" \
+    "what a Node action never sends through the proxy"
+else
+  clear_key NO_PROXY "no proxy is named in $ENV_FILE"
+fi
 
 # A self-hosted deployment runs its Node actions inside a container, so a model
 # endpoint on loopback resolves to the container and not to your machine. The

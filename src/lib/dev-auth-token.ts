@@ -52,18 +52,22 @@ export function localManagerAddress(
  *   reads it from `DEV_NO_AUTH_SIGNING_KEY`, a script passes the value it read.
  * @param managerAddress - The address the token names; the configured one
  *   ({@link localManagerAddress}) by default.
+ * @param subject - The owner the token names: the local manager by default. The
+ *   evaluation harness names one of its own for each run, so that no two runs
+ *   share an owner.
  */
 export async function mintDevNoAuthToken(
   sessionId?: string,
   encodedSigningKey: string | undefined = process.env.DEV_NO_AUTH_SIGNING_KEY,
   managerAddress: string = localManagerAddress(),
+  subject: string = DEV_NO_AUTH_SUBJECT,
 ): Promise<string> {
   const key = await signingKey(encodedSigningKey);
   const issuedAt = Math.floor(Date.now() / 1000);
 
   const header = { alg: DEV_NO_AUTH_ALGORITHM, typ: 'JWT', kid: DEV_NO_AUTH_KEY_ID };
   const payload = {
-    sub: DEV_NO_AUTH_SUBJECT,
+    sub: subject,
     iss: DEV_NO_AUTH_ISSUER,
     aud: DEV_NO_AUTH_AUDIENCE,
     iat: issuedAt,

@@ -62,7 +62,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { connect } from 'node:net';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createInterface, type Interface } from 'node:readline';
 import { Writable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
@@ -149,6 +149,27 @@ import {
   type UpgradeVerdict,
 } from './releases';
 import { errorMessage } from '../src/lib/errors';
+import {
+  defaultInstallRecordDirectory,
+  installRecordInstallMarkdown,
+  installRecordLifecycleMarkdown,
+  writeInstallRecordSection,
+  type RecordedBackup,
+  type RecordedImage,
+  type RecordedInstallation,
+  type RecordedSignIn,
+  type RecordedStep,
+} from './lib/install-record';
+import {
+  probeApp,
+  probeLive,
+  proxiedAppOrigin,
+  proxiedBackendOrigin,
+  proxyChecks,
+  type SignInCheck,
+} from './check-sign-in';
+import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
+import { hostProxyEnvironment, proxyNodeGap, proxySettings } from './lib/proxy-env';
 
 /** The env file helpers, where the setup's callers and tests have always found them. */
 export { readEnvValues, writeEnvValues };
@@ -437,6 +458,13 @@ export interface SetupIo {
    * did, the last attempt's failure. Absent, `install` polls the address through `fetch`.
    */
   waitForApp?(url: string, timeoutMs: number): Promise<AppWait>;
+  /**
+   * Ask the customer's reverse proxy for the app and for the live connection (`proxyChecks`, held
+   * strict: the app is up by then). Absent, `install` asks nothing and says so.
+   */
+  checkProxy?(values: Readonly<Record<string, string>>): readonly SignInCheck[];
+  /** The Node this command and its children run on; absent means this process's. */
+  readonly nodeVersion?: string;
 }
 
 /** Whether the app answered `install`'s wait, and the last attempt's failure when it never did. */
@@ -3171,7 +3199,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     if (real) {
       io.log('');
       io.log(
-        `Real mode: day0 reads the documentation in ${docsHostDir} and, once you approve a card,`,
+        `Real mode: Day0 reads the documentation in ${docsHostDir} and, once you approve a card,`,
       );
       io.log(
         '  acts on the systems those pages record. Nothing is read until you link the folder.',
@@ -4458,9 +4486,21 @@ export interface BackupManifest {
   readonly sha256: string;
   /** The release the deployment's rows were stamped at, when the backend could say. */
   readonly release?: string;
+  /**
+   * The commit that stamped those rows: the checkout that wrote them, and so the one a restore is
+   * run from. An upgrade's backup is taken by the checkout it upgrades to, so `commit` below is
+   * the newer one (wave 17, 17-K's F5).
+   */
+  readonly rowsCommit?: string;
   /** The checkout that took it: its release and commit. */
   readonly checkoutRelease: string;
   readonly commit?: string;
+}
+
+/** What a backup came to: its exit status, and the backup when one was written. */
+interface BackupOutcome {
+  readonly status: number;
+  readonly taken?: RecordedBackup;
 }
 
 /** The env values that point Slack at the test double, which a restore refuses. */
@@ -4475,9 +4515,9 @@ export const TEST_PROFILE_KEYS: readonly string[] = [
  *
  * @param stdout - What the stamp read printed.
  */
-function labelRelease(stdout: string): string | undefined {
+function labelRelease(stdout: string): { release: string; commit?: string } | undefined {
   try {
-    return parseReleaseStamp(stdout)?.release;
+    return parseReleaseStamp(stdout);
   } catch {
     // Not a stamp: the backup is taken all the same, unlabelled.
     return undefined;
@@ -4497,6 +4537,156 @@ function readManifest(path: string): Partial<BackupManifest> | undefined {
     // An unreadable description: the restore goes on from the checksum alone.
     return undefined;
   }
+}
+
+/** A backup as the install record and the way back name it, from its path and description. */
+function recordedBackup(file: string, manifest: Partial<BackupManifest>): RecordedBackup {
+  return {
+    file,
+    sha256: manifest.sha256 ?? '',
+    ...(manifest.release !== undefined ? { rowsRelease: manifest.release } : {}),
+    ...(manifest.rowsCommit !== undefined ? { rowsCommit: manifest.rowsCommit } : {}),
+    ...(manifest.commit !== undefined ? { takenByCommit: manifest.commit } : {}),
+  };
+}
+
+/** The project `.env.local` names, as the lifecycle verbs read it. */
+function projectOf(io: SetupIo): string {
+  return readEnvValues(join(io.cwd, ENV_FILE)).COMPOSE_PROJECT_NAME?.trim() || 'day0';
+}
+
+/**
+ * The backend image a project runs: its id read from the backend's own container, and the base
+ * digest that image is labelled with. The tag `day0-convex-backend:git` is one name for the whole
+ * machine, re-tagged by any checkout's build, so it is never what is read (W14-R20; 17-K's F8).
+ * Undefined when the backend has no container or Docker did not answer.
+ *
+ * @param io - The setup environment.
+ * @param project - Compose project name.
+ */
+function backendImageOf(io: SetupIo, project: string): RecordedImage | undefined {
+  const container = io
+    .run(
+      'docker',
+      [
+        'ps',
+        '-aq',
+        '--filter',
+        `label=com.docker.compose.project=${project}`,
+        '--filter',
+        'label=com.docker.compose.service=backend',
+      ],
+      { timeoutMs: 30_000 },
+    )
+    .stdout.split('\n')
+    .map((line) => line.trim())
+    .find((line) => line !== '');
+  if (container === undefined) return undefined;
+  const id = io
+    .run('docker', ['inspect', '--format', '{{.Image}}', container], { timeoutMs: 30_000 })
+    .stdout.trim();
+  if (!/^sha256:[0-9a-f]{64}$/.test(id)) return undefined;
+  const base = referenceDigest(
+    `@${io.run('docker', baseLabelInspect(id), { timeoutMs: 30_000 }).stdout.trim()}`,
+  );
+  return { id, ...(base === undefined ? {} : { base }) };
+}
+
+/**
+ * What is installed, for the record: this checkout's release and commit, the two public
+ * addresses, the image the backend runs and where the backups go.
+ *
+ * @param io - The setup environment.
+ * @param project - Compose project name.
+ * @param options - The command line, for `--to`.
+ */
+function installationOf(io: SetupIo, project: string, options: SetupOptions): RecordedInstallation {
+  const values = readEnvValues(join(io.cwd, ENV_FILE));
+  const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);
+  const head = io.run('git', ['rev-parse', '--short=12', 'HEAD'], { timeoutMs: 30_000 });
+  const commit = head.status === 0 ? head.stdout.trim() : '';
+  const origin = publicOrigin(values.DAY0_PUBLIC_URL);
+  const backendUrl = proxiedBackendOrigin(values);
+  const image = backendImageOf(io, project);
+  const backups = backupDirectory(options.backupTo, io.environment.HOME, project, io.cwd);
+  return {
+    ...('reason' in checkout ? {} : { release: checkout.release }),
+    ...(commit === '' ? {} : { commit }),
+    ...('gap' in origin ? {} : { publicUrl: origin.origin }),
+    ...(backendUrl === undefined ? {} : { backendUrl }),
+    ...(image === undefined ? {} : { image }),
+    ...(backups === undefined ? {} : { backupDirectory: backups }),
+  };
+}
+
+/**
+ * Add one section to the day's install record, and say where it is; a record that cannot be
+ * written is said and never fails the verb, which has already done its work.
+ *
+ * @param io - The setup environment.
+ * @param options - The command line, for `--record` and the dry run.
+ * @param project - Compose project name.
+ * @param section - The section's Markdown, given the time it is dated by.
+ */
+function recordSection(
+  io: SetupIo,
+  options: SetupOptions,
+  project: string,
+  section: (at: Date) => string,
+): void {
+  if (options.dryRun) return;
+  const home = (io.environment.HOME ?? '').trim();
+  const named = options.access?.record;
+  if (named === undefined && !isAbsolute(home)) {
+    io.log(
+      'HOME is unset, so the install record has no default place and was not written: name one ' +
+        'with --record <dir>.',
+    );
+    return;
+  }
+  const directory =
+    named !== undefined ? resolve(io.cwd, named) : defaultInstallRecordDirectory(home, project);
+  const at = new Date(io.now?.() ?? Date.now());
+  try {
+    const path = writeInstallRecordSection({ directory, at, project, section: section(at) });
+    io.log(`The install record: ${path}`);
+  } catch (error) {
+    io.log(`The install record could not be written to ${directory}: ${errorMessage(error)}`);
+  }
+}
+
+/** Add an `upgrade`, `backup` or `restore` section to the day's install record. */
+function recordLifecycle(
+  io: SetupIo,
+  options: SetupOptions,
+  project: string,
+  run: Omit<Parameters<typeof installRecordLifecycleMarkdown>[0], 'project' | 'recordedAt'>,
+): void {
+  recordSection(io, options, project, (recordedAt) =>
+    installRecordLifecycleMarkdown({ ...run, project, recordedAt }),
+  );
+}
+
+/**
+ * The line an upgrade prints for the way back (wave 17, 17-P): the backup it took, and the
+ * checkout it is restored from, which is the release the deployment's rows were at and, where the
+ * stamp names one, the commit that wrote them. The old image is never started over the upgraded
+ * volume: the older functions are refused over rows the newer release wrote
+ * (docs/running/upgrade-and-rollback.md).
+ *
+ * @param backup - The backup the upgrade took before anything changed.
+ * @param mode - The setup's mode, for the verb's entry point.
+ */
+export function wayBackLine(backup: RecordedBackup, mode: SetupMode): string {
+  const from =
+    backup.rowsRelease === undefined
+      ? 'the checkout this installation ran before the upgrade'
+      : `a checkout of v${backup.rowsRelease}` +
+        (backup.rowsCommit === undefined ? '' : ` (commit ${backup.rowsCommit})`);
+  return (
+    `The way back: ${verbCommand('restore', mode)} ${backup.file} from ${from}. ` +
+    'Never start the old image over this volume.'
+  );
 }
 
 /** What the upgrade learns before it backs up anything: a refusal, or its target. */
@@ -4918,18 +5108,41 @@ function backupPlace(
  * @returns 0 when the backup is written, 1 otherwise.
  */
 export async function runBackup(options: SetupOptions, io: SetupIo): Promise<number> {
+  const outcome = await backUp(options, io);
+  if (outcome.taken !== undefined) {
+    const project = projectOf(io);
+    recordLifecycle(io, options, project, {
+      verb: 'backup',
+      outcome: 'completed',
+      installation: installationOf(io, project, options),
+      backup: outcome.taken,
+    });
+  }
+  return outcome.status;
+}
+
+/**
+ * Take the backup `runBackup` describes, and hand back what was written, so the verb that asked
+ * (the backup itself, an upgrade, a restore's safety copy) can name it in what it prints and
+ * records.
+ *
+ * @param options - The command line.
+ * @param io - The setup environment.
+ */
+async function backUp(options: SetupOptions, io: SetupIo): Promise<BackupOutcome> {
+  const failed: BackupOutcome = { status: 1 };
   try {
     const target = lifecycleTarget(io, options, 'backup');
     if (typeof target === 'string') {
       io.log(`error: ${target}`);
-      return 1;
+      return failed;
     }
     const { project, environment, checkoutRoot } = target;
     const volume = projectVolumes(project)[0]!;
     const place = backupPlace(options, io, target);
     if ('refusal' in place) {
       io.log(`error: ${place.refusal}`);
-      return 1;
+      return failed;
     }
     const { directory } = place;
     const name = unusedBackupName(
@@ -4946,12 +5159,12 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
       io.log(`  docker ${tar.join(' ')}`);
       io.log('');
       io.log('Nothing was written.');
-      return 0;
+      return { status: 0 };
     }
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     if (insideCheckout(realpathSync(directory), checkoutRoot)) {
       io.log(`error: ${directory} resolves into this checkout; name another with --to <dir>.`);
-      return 1;
+      return failed;
     }
     const services = runningServices(io, project);
     if (services === undefined) {
@@ -4959,10 +5172,10 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
         'error: Docker did not say whether the backend is running, and a tar of a live database ' +
           'is not a backup; nothing was written. `docker ps` says why.',
       );
-      return 1;
+      return failed;
     }
     const running = services.includes('backend');
-    let release: string | undefined;
+    let stamp: { release: string; commit?: string } | undefined;
     if (running) {
       const tables = io.run('npx', [...TABLE_LISTING_ARGUMENTS], {
         env: environment,
@@ -4973,7 +5186,7 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
           env: environment,
           timeoutMs: 120_000,
         });
-        release = read.status === 0 ? labelRelease(read.stdout) : undefined;
+        stamp = read.status === 0 ? labelRelease(read.stdout) : undefined;
       }
       const stopped = io.run('docker', composeArguments(['stop', 'backend']), {
         env: environment,
@@ -4983,7 +5196,7 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
         io.log(
           `error: the backend could not be stopped for the copy: ${firstLine(stopped.stderr)}`,
         );
-        return 1;
+        return failed;
       }
     }
     let copied: RunResult;
@@ -5006,7 +5219,7 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
     const file = join(directory, name);
     if (copied.status !== 0 || !existsSync(file)) {
       io.log(`error: the copy failed (status ${copied.status}); nothing usable was written.`);
-      return 1;
+      return failed;
     }
     const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
     const checkout = checkoutReleases(io.cwd, io.newestMigrationRelease);
@@ -5017,7 +5230,8 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
       createdAt: new Date(io.now?.() ?? Date.now()).toISOString(),
       sha256: digest,
       checkoutRelease: 'reason' in checkout ? 'unknown' : checkout.release,
-      ...(release !== undefined ? { release } : {}),
+      ...(stamp !== undefined ? { release: stamp.release } : {}),
+      ...(stamp?.commit !== undefined ? { rowsCommit: stamp.commit } : {}),
       ...(head.status === 0 && head.stdout.trim() !== '' ? { commit: head.stdout.trim() } : {}),
     };
     writeFileSync(`${file}.sha256`, `${digest}  ${name}\n`, { encoding: 'utf8', mode: 0o600 });
@@ -5031,10 +5245,10 @@ export async function runBackup(options: SetupOptions, io: SetupIo): Promise<num
         'you keep secrets. It is readable only by you.',
     );
     io.log(`  Put it back with \`${verbCommand('restore', options.mode)} ${file}\`.`);
-    return 0;
+    return { status: 0, taken: recordedBackup(file, manifest) };
   } catch (error) {
     io.log(`error: ${error instanceof Error ? error.message : String(error)}`);
-    return 1;
+    return failed;
   }
 }
 
@@ -5092,12 +5306,19 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
     }
     const manifest = existsSync(`${file}.json`) ? readManifest(`${file}.json`) : undefined;
     if (manifest !== undefined) {
+      // The commit that wrote the rows when the backup names it, else the checkout that took it,
+      // which for a backup an upgrade took is the newer one (17-K's F5).
+      const from = manifest.rowsCommit
+        ? `, stamped by commit ${manifest.rowsCommit}`
+        : manifest.commit
+          ? `, from commit ${manifest.commit}`
+          : '';
       io.log(
         `Backup of ${manifest.project ?? 'an unnamed project'} taken ${manifest.createdAt ?? 'at an unrecorded time'}` +
-          `${manifest.release ? `, rows at ${manifest.release}` : ''}` +
-          `${manifest.commit ? `, from commit ${manifest.commit}` : ''}.`,
+          `${manifest.release ? `, rows at ${manifest.release}` : ''}${from}.`,
       );
     }
+    const restored = recordedBackup(file, { ...(manifest ?? {}), sha256: actual });
     const volume = projectVolumes(project)[0]!;
     const image = pinnedNodeImage(readFileSync(join(io.cwd, 'docker-compose.yml'), 'utf8'));
     const untar = volumeRestoreArguments(dirname(file), basename(file), volume, image);
@@ -5123,15 +5344,26 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
         throw new SetupCancelled('restore was declined');
       }
     }
+    let replaced: RecordedBackup | undefined;
     if (labelledVolumes(io, project).includes(volume)) {
       io.log(`First, a backup of the ${volume} this replaces.`);
-      const kept = await runBackup({ ...options, command: 'backup' }, io);
-      if (kept !== 0) {
+      const kept = await backUp({ ...options, command: 'backup' }, io);
+      if (kept.status !== 0) {
         io.log('The restore stops here: nothing is replaced without a copy of it.');
-        return kept;
+        return kept.status;
       }
+      replaced = kept.taken;
       io.log('');
     }
+    /** The restore's section of the install record, however it ended from here on. */
+    const record = (outcome: string): void =>
+      recordLifecycle(io, options, project, {
+        verb: 'restore',
+        outcome,
+        installation: installationOf(io, project, options),
+        restored,
+        ...(replaced === undefined ? {} : { backup: replaced }),
+      });
     const steps: [string, string[]][] = [
       ['taking the project down', stopArguments()],
       ...(labelledVolumes(io, project).includes(volume)
@@ -5159,6 +5391,7 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
       });
       if (result.status !== 0) {
         io.log(`error: ${what} failed (status ${result.status}); its output is above.`);
+        record(`stopped: ${what} failed (status ${result.status})`);
         return 1;
       }
     }
@@ -5170,6 +5403,7 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
     );
     if (resumed !== 0) {
       unfinishedPauseNote(io, target, options);
+      record(`stopped: the backup was put back, and the resume on it exited ${resumed}`);
       return resumed;
     }
     // A backup an upgrade took carries that upgrade's pause, and the state
@@ -5180,6 +5414,7 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
         "error: the backup carried an upgrade's pause on the scheduled jobs, and it was not " +
           `lifted: ${released.failure}. \`${verbCommand('unpause', options.mode)}\` lifts it.`,
       );
+      record("stopped: the backup was put back, and its upgrade's pause was not lifted");
       return 1;
     }
     if (released.released === 'lifted') {
@@ -5193,6 +5428,7 @@ export async function runRestore(options: SetupOptions, io: SetupIo): Promise<nu
           `\`${verbCommand('unpause', options.mode)}\` lifts it.`,
       );
     }
+    record('completed');
     return 0;
   } catch (error) {
     if (error instanceof SetupCancelled) {
@@ -5252,32 +5488,68 @@ export async function runUpgrade(options: SetupOptions, io: SetupIo): Promise<nu
       }
       io.log(holdLine(hold, options));
     }
-    const backedUp = await runBackup({ ...options, command: 'backup' }, io);
-    if (backedUp !== 0) {
+    const backedUp = await backUp({ ...options, command: 'backup' }, io);
+    if (backedUp.status !== 0) {
       io.log('The upgrade stops here: nothing is installed or pushed without a backup.');
       unfinishedPauseNote(io, target, options);
-      return backedUp;
+      return backedUp.status;
     }
     const resume: SetupOptions = { ...options, command: 'resume', upgradePause: pauseReason };
     if (options.dryRun) {
       io.log('  pnpm install --frozen-lockfile');
-      return await runResume(resume, io);
+      const planned = await runResume(resume, io);
+      io.log(
+        'Then it prints the way back: the restore of this backup, from a checkout of the release ' +
+          'the deployment was at.',
+      );
+      return planned;
     }
-    io.log('');
-    io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
-    const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
-      inherit: true,
-      timeoutMs: 1_800_000,
-    });
-    if (installed.status !== 0) {
-      io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
-      unfinishedPauseNote(io, target, options);
-      return 1;
+    const { project } = target;
+    const backup = backedUp.taken;
+    /** The upgrade's last lines and its section of the install record, however it ended. */
+    const finish = (outcome: string): void => {
+      const wayBack = backup === undefined ? undefined : wayBackLine(backup, options.mode);
+      if (wayBack !== undefined) {
+        io.log('');
+        io.log(wayBack);
+        io.log(
+          '  The steps, and why the old image is never the way: docs/running/upgrade-and-rollback.md',
+        );
+      }
+      recordLifecycle(io, options, project, {
+        verb: 'upgrade',
+        outcome,
+        installation: installationOf(io, project, options),
+        ...(backup?.rowsRelease === undefined ? {} : { fromRelease: backup.rowsRelease }),
+        ...(backup === undefined ? {} : { backup }),
+        ...(wayBack === undefined ? {} : { wayBack }),
+      });
+    };
+    try {
+      io.log('');
+      io.log('Installing the dependencies this checkout names (pnpm install --frozen-lockfile).');
+      const installed = io.run('pnpm', ['install', '--frozen-lockfile'], {
+        inherit: true,
+        timeoutMs: 1_800_000,
+      });
+      if (installed.status !== 0) {
+        io.log(`error: pnpm install failed (status ${installed.status}); nothing was pushed.`);
+        unfinishedPauseNote(io, target, options);
+        finish(`stopped: pnpm install failed (status ${installed.status}); nothing was pushed`);
+        return 1;
+      }
+      io.log('');
+      const resumed = await runResume(resume, io);
+      if (resumed !== 0) unfinishedPauseNote(io, target, options);
+      finish(
+        resumed === 0 ? 'completed' : `stopped: the resume on this checkout exited ${resumed}`,
+      );
+      return resumed;
+    } catch (error) {
+      // The backup is taken: whatever stopped the upgrade after it, the way back is owed.
+      finish(`stopped: ${errorMessage(error)}`);
+      throw error;
     }
-    io.log('');
-    const resumed = await runResume(resume, io);
-    if (resumed !== 0) unfinishedPauseNote(io, target, options);
-    return resumed;
   } catch (error) {
     io.log(`error: ${errorMessage(error)}`);
     if (target !== undefined) unfinishedPauseNote(io, target, options);
@@ -5444,11 +5716,36 @@ function backendUrlOf(raw: string): { url: string } | { refusal: string } {
   return { url: url.origin };
 }
 
+/** How a proxy check's row opens in the install's output and in the record, as `check:setup` marks one. */
+const PROXY_ROW_LABEL: Readonly<Record<SignInCheck['status'], string>> = {
+  ok: 'pass',
+  warn: 'note',
+  gap: 'gap ',
+};
+
+/** The company sign-in as `.env.local` holds it, for the record; undefined before it is configured. */
+function installedSignIn(values: Readonly<Record<string, string>>): RecordedSignIn | undefined {
+  const issuer = (values.DAY0_OIDC_ISSUER ?? '').trim();
+  const origin = publicOrigin(values.DAY0_PUBLIC_URL);
+  if (issuer === '' || 'gap' in origin) return undefined;
+  return {
+    issuer,
+    clientId: (values.DAY0_OIDC_AUDIENCE ?? '').trim(),
+    allowedDomains: (values.DAY0_OIDC_ALLOWED_DOMAINS ?? '').trim(),
+    redirectUri: redirectUriOf(origin.origin),
+    signedOutUri: signedOutUriOf(origin.origin),
+  };
+}
+
 /**
  * Install Day0 with the customer's IT, in one command (B13): the lifecycle verbs' target checks,
- * the backend's public address when one is given, then `sign-in`, `access`, `check:setup` and
- * `check:sign-in`, stopping at the first that fails and naming it. Each verb stays runnable
- * alone, and a run after a stop keeps everything the steps before it wrote.
+ * the backend's public address when one is given, then `sign-in`, `access`, `check:setup`, the
+ * build, the proxy check and `check:sign-in`, stopping at the first that fails and naming it. Each
+ * verb stays runnable alone, and a run after a stop keeps everything the steps before it wrote.
+ *
+ * However it ends, it adds a section to the install record saying what is installed (the release
+ * and commit, the backend image, the two public addresses, where backups go), how each step
+ * ended and what the proxy check found (wave 17, 17-P).
  *
  * Args:
  *   options: The command line.
@@ -5478,14 +5775,36 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
       return 1;
     }
   }
+  const steps: RecordedStep[] = [];
+  let proxyRows: string[] | undefined;
+  /** The install's section of the record, written once, however the run ends. */
+  const record = (): void => {
+    const project = projectOf(io);
+    const signIn = installedSignIn(readEnvValues(join(io.cwd, ENV_FILE)));
+    recordSection(io, options, project, (recordedAt) =>
+      installRecordInstallMarkdown({
+        project,
+        recordedAt,
+        installation: installationOf(io, project, options),
+        ...(signIn === undefined ? {} : { signIn }),
+        steps,
+        ...(proxyRows === undefined ? {} : { proxy: proxyRows }),
+      }),
+    );
+  };
   const stopped = (step: string, status: number): number => {
+    steps.push({ step, outcome: `stopped: it exited ${status}, and nothing after it ran` });
     io.log('');
     io.log(
       `The install stopped at ${step}: it exited ${status}, and nothing after it ran. Fix what it ` +
         `said, then run \`${verbCommand('install', options.mode)}\` again; every step before it ` +
         'keeps what it wrote.',
     );
+    record();
     return status === 0 ? 1 : status;
+  };
+  const passed = (step: string): void => {
+    steps.push({ step, outcome: 'passed' });
   };
 
   io.log('\n== 1. The company sign-in ==');
@@ -5506,6 +5825,7 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     signInIo,
   );
   if (signedIn !== 0) return stopped('the sign-in', signedIn);
+  passed('the sign-in');
   // Written once the sign-in has made this a customer-local install, which is what keeps the
   // address through every later push and setup run (`customerBackendUrl`).
   if (backend !== undefined && !options.dryRun) {
@@ -5526,11 +5846,12 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     io,
   );
   if (connected !== 0) return stopped('access', connected);
+  passed('access');
 
   if (options.dryRun) {
     io.log(
       '\nThen: pnpm run check:setup, pnpm build, the app started behind the proxy, ' +
-        'and pnpm run check:sign-in.',
+        'the proxy check and pnpm run check:sign-in.',
     );
     return 0;
   }
@@ -5538,16 +5859,21 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
   io.log('pnpm run check:setup');
   const setupChecked = io.run('pnpm', ['run', 'check:setup'], { inherit: true });
   if (setupChecked.status !== 0) return stopped('check:setup', setupChecked.status ?? 1);
+  passed('check:setup');
 
   io.log('\n== 4. The app, built with the company sign-in ==');
   io.log('pnpm build    (the browser reads the profile at build)');
   const built = io.run('pnpm', ['build'], { inherit: true });
   if (built.status !== 0) return stopped('the build', built.status ?? 1);
-  const publicUrl = (readEnvValues(join(io.cwd, ENV_FILE)).DAY0_PUBLIC_URL ?? '').trim();
+  passed('the build');
+  const values = readEnvValues(join(io.cwd, ENV_FILE));
+  const publicUrl = (values.DAY0_PUBLIC_URL ?? '').trim();
+  const appPort = (values.DAY0_APP_PORT ?? '').trim() || String(APP_PORT);
+  const appHost = (values.DAY0_APP_HOST ?? '').trim() || '127.0.0.1';
   io.log(
     `Start the app behind the proxy now, in another terminal or under the customer's service ` +
-      `manager: \`pnpm start\` serves on port 3000, which the proxy forwards ${publicUrl} to. ` +
-      `Waiting for it at ${publicUrl} for up to ${APP_WAIT_MS / 60_000} minutes...`,
+      `manager: \`pnpm start\` serves on ${appHost}:${appPort}, which the proxy forwards ` +
+      `${publicUrl} to. Waiting for it at ${publicUrl} for up to ${APP_WAIT_MS / 60_000} minutes...`,
   );
   const answering =
     io.waitForApp ?? ((url: string, timeoutMs: number) => appAnswers(url, timeoutMs));
@@ -5563,17 +5889,62 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
     }
     return stopped('the app', 1);
   }
+  passed('the app');
 
-  io.log('\n== 5. One test sign-in, with the customer’s IT ==');
+  io.log('\n== 5. The reverse proxy ==');
+  if (proxiedAppOrigin(values) === undefined) {
+    proxyRows = [];
+    io.log(
+      `${publicUrl} is this machine itself, so there is no proxy to check ` +
+        '(docs/running/proxy.md).',
+    );
+    passed('the proxy check');
+  } else {
+    const rows = io.checkProxy?.(values) ?? proxyChecks(values, {}, { strict: true });
+    proxyRows = rows.map((row) => `${PROXY_ROW_LABEL[row.status]} ${row.line}`);
+    for (const row of proxyRows) io.log(row);
+    if (rows.some((row) => row.status === 'gap')) return stopped('the proxy check', 1);
+    passed('the proxy check');
+  }
+
+  io.log('\n== 6. One test sign-in, with the customer’s IT ==');
   io.log('pnpm run check:sign-in');
   const signInChecked = io.run('pnpm', ['run', 'check:sign-in'], { inherit: true });
   if (signInChecked.status !== 0) return stopped('check:sign-in', signInChecked.status ?? 1);
+  passed('check:sign-in');
   const seconds = Math.round(((io.now?.() ?? Date.now()) - started) / 1000);
   io.log(
     `\nThe install passed every check in ${Math.floor(seconds / 60)} min ${seconds % 60} s. ` +
       'Keep the app running behind the proxy (`pnpm start`) under the customer’s service manager.',
   );
+  record();
   return 0;
+}
+
+/** The way out as the shell names it, else as the checkout's `.env.local` does, one name at a time. */
+function wayOutSettings(
+  cwd: string,
+  shell: Readonly<Record<string, string | undefined>>,
+): ReturnType<typeof proxySettings> {
+  const file = readEnvValues(join(cwd, ENV_FILE));
+  return proxySettings((name) => (shell[name] ?? '').trim() || file[name]);
+}
+
+/**
+ * What every child the setup starts is given when `.env.local` (or the shell) names a proxy on
+ * the way out: the proxy, this machine's own names kept out of it, and Node's switch for reading
+ * it (wave 17, 17-P; RM31 (a)). So the checks an install runs, the Convex CLI and pnpm take the
+ * customer's proxy from the one place it is written, and the pushes to the backend's own port on
+ * this machine never go through it. Nothing when no proxy is named.
+ *
+ * @param cwd - The checkout, whose `.env.local` is read.
+ * @param shell - The environment the command was run from.
+ */
+export function childProxyEnvironment(
+  cwd: string,
+  shell: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  return hostProxyEnvironment(wayOutSettings(cwd, shell));
 }
 
 /**
@@ -5587,6 +5958,13 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
  *   The exit status.
  */
 export async function runCommand(options: SetupOptions, io: SetupIo): Promise<number> {
+  // A proxy on the way out that this Node would ignore: said before anything runs, since what
+  // follows would otherwise dial out directly and meet a proxy-only network as bare timeouts.
+  const nodeGap = proxyNodeGap(
+    io.nodeVersion ?? process.version,
+    wayOutSettings(io.cwd, io.environment),
+  );
+  if (nodeGap !== undefined) io.log(`note: ${nodeGap} (docs/running/egress.md)`);
   switch (options.command) {
     case 'stop':
       return runStop(options, io);
@@ -5846,7 +6224,7 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
       const result = spawnSync(command, [...args], {
         cwd,
         encoding: 'utf8',
-        env: { ...process.env, ...(options.env ?? {}) },
+        env: { ...process.env, ...childProxyEnvironment(cwd, process.env), ...(options.env ?? {}) },
         timeout: options.timeoutMs,
         input: options.input,
         stdio: [
@@ -5913,6 +6291,21 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
         socket.once('connect', (): void => finish(true));
         socket.once('error', (): void => finish(false));
       }),
+    checkProxy: (values: Readonly<Record<string, string>>): readonly SignInCheck[] => {
+      const app = proxiedAppOrigin(values);
+      const backend = proxiedBackendOrigin(values);
+      // Asked as every child of the setup is started, so this step and `pnpm check:setup` cannot
+      // disagree about one address: through the proxy unless NO_PROXY keeps the host out of it.
+      const env = { ...process.env, ...childProxyEnvironment(cwd, process.env) };
+      return proxyChecks(
+        values,
+        {
+          ...(app === undefined ? {} : { app: probeApp(app, env) }),
+          ...(backend === undefined ? {} : { live: probeLive(backend, env) }),
+        },
+        { strict: true },
+      );
+    },
     waitForBackend: async (
       port: number,
       timeoutMs: number = 180_000,

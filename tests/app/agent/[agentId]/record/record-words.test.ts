@@ -479,6 +479,10 @@ describe('recordWords', (): void => {
     expect(answered('replaced')).toBe(
       'Mira answered your reply to a replaced request for “Refresh pipeline coverage view” with the request that replaced it.',
     );
+    // A conflict's question posted under a request already delivered rides the same event (17-C).
+    expect(answered('question')).toBe(
+      'Mira asked you which of two pages is right, in the thread of the plan’s request for “Refresh pipeline coverage view”.',
+    );
   });
 
   it('says which credential left the documentation, and a page swap that bound the new value (N23; 12-S3)', (): void => {
@@ -580,6 +584,91 @@ describe('recordWords', (): void => {
     ).toBe(
       'The plan for \u201cDraft response for new tier-two RevOps ask\u201d is drafted again. Documentation the plan followed has since been changed or removed ("Handbook/runbook.md#Runbook"), so Day0 did not run the plan on instructions that may be out of date. The item needs a new plan.',
     );
+  });
+
+  it('says a plan is drafted again because a card changed what it was drafted under (V17-9, the joins)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-redrafting',
+          payload: {
+            workItemId: 'w1',
+            reorientationId: 'card-1',
+            summary: 'Dana Whitfield, its approver, changed',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for \u201cDraft response for new tier-two RevOps ask\u201d is drafted again: the card about \u201cDana Whitfield, its approver, changed\u201d changed what it was drafted under.',
+    );
+  });
+
+  it('says a card closed from another employee’s card as decided there, not as dismissed (17-O’s F6)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: 'card-1',
+            summary: 'Dana Whitfield, its approver, changed',
+            outcome: 'decided on Priya’s card: the relationship was retired',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The reorientation card about \u201cDana Whitfield, its approver, changed\u201d closed as decided on Priya\u2019s card: the relationship was retired.',
+    );
+  });
+
+  it('says a deferred card a further change opened before its date as that, and a page’s return closing its card (W17-R3, W17-R2)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.reopened',
+          payload: {
+            reorientationId: 'card-1',
+            summary: 'Access linear:read was revoked',
+            revisitAt: 1,
+            joined: true,
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A deferred reorientation card opened again before its date, since a further change joined it: Access linear:read was revoked.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: 'card-1',
+            summary: '\u201cClose review window\u201d was archived',
+            outcome: 'no longer needed: \u201cClose review window\u201d is current again',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The reorientation card about \u201c\u201cClose review window\u201d was archived\u201d closed as no longer needed: \u201cClose review window\u201d is current again.',
+    );
+  });
+
+  it('says a failed run’s model call in the manager’s words, as the Work card does, never by its internal name (W17-R22)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.failed',
+          payload: {
+            reason:
+              'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-1-initial): prompt reply did not satisfy the schema',
+          },
+        },
+        subject,
+      ),
+    ).not.toContain('agentJson');
   });
 
   it('says a type only an older release wrote under the name it was stored as', (): void => {
@@ -1097,6 +1186,27 @@ describe('a charter amended from a reorientation card, in the record (the joins)
   });
 });
 
+describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23)', (): void => {
+  it('says which card could not be opened and why, so the change is not lost unsaid', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.card-not-opened',
+          payload: {
+            trigger: 'page-status-changed',
+            triggerKey: 'event-1',
+            summary: '“Escalation paths” was archived',
+            reason: 'the card could not be written',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'Day0 could not open a reorientation card for Mira (the card could not be written): “Escalation paths” was archived.',
+    );
+  });
+});
+
 describe('the record after a handover (decisions 4 and 5, the wave 10 review, M8)', (): void => {
   /** An event older than the reader's tenure: the manager then was sam@company.com. */
   const earlier = {
@@ -1523,6 +1633,24 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
     ).toBe(
       // Re-taken (15-FX): a hold is also written when the charter's check could not be had.
       'A working agreement for every employee is not in effect for Mira: Day0 has not checked it against its charter.',
+    );
+    // RM32 (a), wave 17: a hold two judgements disagreed on says so, where it said "not checked".
+    expect(
+      recordWords(
+        {
+          type: 'agreement.refused',
+          payload: {
+            agreementId: 'a2',
+            everyEmployee: true,
+            reason: 'unchecked-for-employee',
+            holdId: 'h1',
+            refusedOnce: { reason: 'widens-scope' },
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A working agreement for every employee is not in effect for Mira: Day0 checked it against its charter twice and the two checks disagreed.',
     );
     expect(
       recordWords(

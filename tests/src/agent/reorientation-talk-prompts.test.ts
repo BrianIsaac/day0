@@ -100,8 +100,10 @@ describe('the talk’s system prompt', (): void => {
     expect(system).not.toContain('—');
   });
 
-  it('is cached under its own key, moved with the prompt (v2: the scope phrase, W16-R3)', (): void => {
-    expect(REORIENTATION_TALK_PROMPT_CACHE_KEY).toBe('day0-reorientation-talk-v2');
+  it('is cached under its own key, moved with the prompt (v2: the scope phrase, W16-R3; v3: whose words the summary is, 17-O)', (): void => {
+    // Re-taken (17-O): the talk's head gained the line that says the summary's "you" is the
+    // manager, so the key moved with it.
+    expect(REORIENTATION_TALK_PROMPT_CACHE_KEY).toBe('day0-reorientation-talk-v3');
   });
 
   it('asks for a relationship’s new scope as a phrase, never a sentence (W16-R3, D-3 (a))', (): void => {

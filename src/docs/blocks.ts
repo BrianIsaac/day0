@@ -489,3 +489,32 @@ export function blockSearchQuery(text: string, limit: number = SEARCH_TERM_LIMIT
   const distinct = [...new Set(searchTerms(text))];
   return distinct.slice(0, Math.min(limit, SEARCH_TERM_LIMIT)).join(' ');
 }
+
+/**
+ * The most bytes one block row carries beside its text: its heading path twice (`headingPath`
+ * and the head of `searchText`, each at most `HEADING_PATH_TOTAL_CHARS` characters of up to three
+ * bytes) and its ids, hash and fields.
+ */
+const BLOCK_ROW_OVERHEAD_BYTES = 2 * HEADING_PATH_TOTAL_CHARS * 3 + 200;
+
+/** Every CJK character, whose search text carries it again in two bigrams. */
+const CJK_CHARACTER = new RegExp(CJK_RUN.source.replace(/\]\+$/, ']'), 'gu');
+
+/**
+ * What reading a stored page's row and its blocks takes, from its text alone and never less than
+ * it does (D-12 (b)): the row holds the text; each block its window of it, again in its search
+ * text with the bigrams of every CJK character, and its heading path twice. A measure reads a
+ * candidate's row first and decides from this whether to read its blocks.
+ *
+ * @param markdown - The page's stored text.
+ * @returns The row's bytes, and at most what its blocks take.
+ */
+export function storedPageReadBytes(markdown: string): { row: number; blocks: number } {
+  const row = new TextEncoder().encode(markdown).length;
+  const cjk = markdown.match(CJK_CHARACTER)?.length ?? 0;
+  const blocks = Math.min(
+    MAX_BLOCKS_PER_PAGE,
+    Math.max(1, Math.ceil(charCount(markdown) / BLOCK_WINDOW_CHARS)),
+  );
+  return { row, blocks: 2 * row + 6 * cjk + blocks * BLOCK_ROW_OVERHEAD_BYTES };
+}

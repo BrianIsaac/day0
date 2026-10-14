@@ -12,8 +12,11 @@ import { clockTime } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
 import type { AnsweredRelation } from './RelationAnswered';
 
+/** One read of the relations' cards, as `docRelations.listOpen` answers it. */
+export type RelationCardsRead = FunctionReturnType<typeof api.docRelations.listOpen>;
+
 /** One relation the manager has still to answer, as `docRelations.listOpen` draws it. */
-export type RelationCardRow = FunctionReturnType<typeof api.docRelations.listOpen>[number];
+export type RelationCardRow = RelationCardsRead['cards'][number];
 
 /** The answers a relation's card may offer. */
 export type RelationAnswer = RelationCardRow['offered'][number];
@@ -46,11 +49,42 @@ export function supersedeWords(outcome: DecideOutcome, older: string): string | 
   return `Recorded, but “${older}” stays ${STAYS[outcome.older]}: ${why}`;
 }
 
-/** A page as a card names it: its title, its source and when its source last had it. */
-export function pageWords(page: RelationCardRow['from'], zone: string | undefined): string {
+/**
+ * A page as a card names it: its title, its source and when its source last had it.
+ *
+ * @param byDates - Whether the card's relation was proposed by its pages' dates: such a card says
+ *   which date it has, "dated by its source", of a page whose row says so (D-8 (a), X-3: a
+ *   folder's file time counts as its source's).
+ */
+export function pageWords(
+  page: RelationCardRow['from'],
+  zone: string | undefined,
+  byDates = false,
+): string {
   // A reader that gives no edit time stamps a page with when it read it (W15-R45).
   const when = page.edited === false ? 'last read' : 'edited';
-  return `“${page.title}” (${page.source}, ${when} ${clockTime(page.updatedAt, zone)})`;
+  const dated = byDates && page.dated === true ? ', dated by its source' : '';
+  return `“${page.title}” (${page.source}, ${when} ${clockTime(page.updatedAt, zone)}${dated})`;
+}
+
+/**
+ * Why two copies are proposed as versions of one page and not as one's successor by date (D-8
+ * (a)): the page Day0 holds no edit date for, of which it has only the time it read it. Said on a
+ * duplicate's card alone; undefined where both pages are dated by their sources.
+ *
+ * @param relation - The card's relation.
+ */
+export function undatedWords(
+  relation: Pick<RelationCardRow, 'kind' | 'from' | 'to'>,
+): string | undefined {
+  if (relation.kind !== 'possible_duplicate') return undefined;
+  const undated = [relation.to, relation.from].filter((page) => page.edited === false);
+  if (undated.length === 0) return undefined;
+  if (undated.length === 1) {
+    return `Day0 has no edit date from ${undated[0].source} for “${undated[0].title}”.`;
+  }
+  const sources = [...new Set(undated.map((page) => page.source))];
+  return `Day0 has no edit date from ${sources.join(' or ')} for either page.`;
 }
 
 /**
@@ -77,6 +111,8 @@ export function RelationCard({
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
   const { from, to } = relation;
+  const byDates = relation.evidence.some((entry) => entry.measure === 'edit-dates');
+  const undated = undatedWords(relation);
   // `older` is the page the answer supersedes: the proposed older one, or, answered the other
   // way round (W15-R45's reverse button), the one the measures took for the later version.
   const answer = (decision: RelationAnswer, done: string, reversed = false): void => {
@@ -112,7 +148,8 @@ export function RelationCard({
     >
       <div className="grid gap-3">
         <p className="text-sm text-[var(--color-fg-2)]">
-          {pageWords(to, zone)} and {pageWords(from, zone)} {relationWords(relation.evidence)}.{' '}
+          {pageWords(to, zone, byDates)} and {pageWords(from, zone, byDates)}{' '}
+          {relationWords(relation.evidence)}. {undated !== undefined ? `${undated} ` : null}
           {/* The cards are the owner's, whoever's tab draws them (W15-R45). */}
           Every employee that reads both sources reads both pages until you say otherwise.
         </p>

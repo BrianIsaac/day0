@@ -21,7 +21,10 @@
  * out-of-scope skips citing one `willNotDo` clause, or three plan rejections, in 30 days; a page
  * under an open plan was superseded, archived or made a draft
  * (`documentation.page-status-changed`); and the manager opened one by hand for a role or goal
- * change. A confirmed conflict asks a question instead and opens no card (5.2).
+ * change. A confirmed conflict asks a question instead and opens no card (5.2). From wave 17
+ * (17-K for 17-O; RM34 (a)): the agreements could not be checked against an amended charter
+ * (`agreement.check-owed`), a low card that proposes the re-check and holds nothing. A new kind is
+ * added at the end: the schema's union is this list, and a stored card keeps its kind.
  */
 export const REORIENTATION_TRIGGERS = [
   'manager-changed',
@@ -40,6 +43,7 @@ export const REORIENTATION_TRIGGERS = [
   'repeated-rejection',
   'page-status-changed',
   'role-changed',
+  'agreement-check-owed',
 ] as const;
 
 /** One of {@link REORIENTATION_TRIGGERS}. */
@@ -148,6 +152,12 @@ export const REORIENTATION_TALK_STATES = ['active', 'finished', 'closed'] as con
 
 /** One of {@link REORIENTATION_TALK_STATES}. */
 export type ReorientationTalkState = (typeof REORIENTATION_TALK_STATES)[number];
+
+/**
+ * What the function log says when one of the cards' bounds cuts (W16-R24: each cut with nothing
+ * said anywhere). The line carries `bound`, the constant's name, and `limit`, its value.
+ */
+export const BOUND_MET = 'reorientation: a bound was met, and what lay past it was left out';
 
 /** The most work items one card holds (C6, decision O1): a card names at most ten. */
 export const REORIENTATION_BLOCKING_LIMIT = 10;

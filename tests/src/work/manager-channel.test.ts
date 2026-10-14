@@ -178,7 +178,7 @@ describe('manager channel decision requests', (): void => {
       surfaces: [slack],
     });
     expect(text).toContain(
-      '“approve ab3xyz” applies both actions listed; to approve only some, decide in day0.',
+      '“approve ab3xyz” applies both actions listed; to approve only some, decide in Day0.',
     );
   });
 
@@ -202,7 +202,7 @@ describe('manager channel decision requests', (): void => {
       surfaces: [slack],
     });
     expect(text.length).toBeLessThanOrEqual(MANAGER_MESSAGE_MAX_CHARS);
-    expect(text).toMatch(/…and \d+ more held actions; the full list is in day0\./);
+    expect(text).toMatch(/…and \d+ more held actions; the full list is in Day0\./);
     expect(text).toContain('Reply “approve ab3xyz” or “reject ab3xyz <reason>”.');
   });
 
@@ -398,13 +398,13 @@ describe('manager channel decision requests', (): void => {
     const withButtons = request(true, [0, 1, 2]);
     expect(withButtons).not.toMatch(/reply “|“approve|“reject/i);
     expect(withButtons.split('\n').slice(-2)).toEqual([
-      'Press Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
-      'Approve applies all 3 actions listed; to approve only some, decide in day0.',
+      'Press Approve or Reject below, or decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Approve applies all 3 actions listed; to approve only some, decide in Day0.',
     ]);
     const without = request(false, [0]);
     expect(without).not.toMatch(/reply “|“approve|“reject/i);
     expect(without.split('\n').at(-1)).toBe(
-      'Decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+      'Decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
     );
   });
 
@@ -706,7 +706,7 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         closesHeld: 1,
       }),
     ).toBe(
-      'Approval ab12cd received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in day0.',
+      'Approval ab12cd received. I’m applying the approved actions now. I won’t send the ticket close with them: Day0 held it because my own words say the work was not done, so it waits for you on its card in Day0.',
     );
     expect(
       decisionNoticeText({
@@ -717,7 +717,7 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         closesHeld: 2,
       }),
     ).toBe(
-      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. I won’t send the 2 ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0.',
+      'Approval ab12cd received. I’m paused: I’ll apply the approved actions when you resume me. I won’t send the 2 ticket closes with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in Day0.',
     );
     // A rejection takes the whole set, the close with it: nothing is left for the card.
     expect(
@@ -744,13 +744,13 @@ describe('the acknowledgement of an approval that left a ticket close for its ca
         leftForCard: ['ab12cd', 'ef34gh'],
       }),
     ).toBe(
-      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. I won’t send the ticket closes of ab12cd and ef34gh with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in day0. Left as they were: jk56mn: nothing to send: its only write is a ticket close, which waits on its card.',
+      'Approval b1 received for 2 of 3 decisions (ab12cd, ef34gh). I’m applying the approved actions now. I won’t send the ticket closes of ab12cd and ef34gh with them: Day0 held them because my own words say the work was not done, so each waits for you on its card in Day0. Left as they were: jk56mn: nothing to send: its only write is a ticket close, which waits on its card.',
     );
   });
 
   it('answers an approval of a request whose only waiting write is the close with where it is decided', (): void => {
     expect(closeOnCardNoticeText('ab12cd')).toBe(
-      'Approval ab12cd received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in day0.',
+      'Approval ab12cd received, but there is nothing here for me to send: the only write waiting is the ticket close, which Day0 held because my own words say the work was not done. Decide it on its card in Day0.',
     );
   });
 });
@@ -799,7 +799,7 @@ describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', ():
     });
     const lines = text.split('\n');
     expect(lines.filter((line) => /^\d+\. /.test(line))).toHaveLength(2);
-    expect(text).toContain('Not sent by approving here, as it waits on its card in day0:');
+    expect(text).toContain('Not sent by approving here, as it waits on its card in Day0:');
     expect(text).toContain(
       'Priya answered that the work is done, but wrote “I could not find the close summary”. Day0 held this close for that reason, so approving here does not send it, and rejecting here rejects everything, the close included. Decide it on its card, where you can read the run first.',
     );
@@ -817,7 +817,7 @@ describe('a decision request with a ticket close Day0 held (12-H, R-12D-1)', ():
       buttons: false,
     });
     expect(text.split('\n')[0]).toBe(
-      'Priya’s ticket close on “Post the close-summary audit note” waits for you on its card in day0.',
+      'Priya’s ticket close on “Post the close-summary audit note” waits for you on its card in Day0.',
     );
     expect(text).toContain(
       'Priya answered that the work is done, but wrote “Did the deals sync?” Day0 held the close for that reason, so it is decided on its card, not here: approve it there only if the work was done, or finish without it.',
@@ -856,8 +856,73 @@ describe('the batch lines when a member leaves a ticket close for its card (12-H
       '2 held action sets are waiting, each shown in its own request:',
       '1. Post the audit note (gh6npq; its ticket close waits on its card)',
       '2. Post the second note (hk7rst)',
-      'Reply “approve bq2wxy” to approve every held action in all 2 but any ticket close Day0 held, which is decided on its card in day0, or “reject bq2wxy <reason>” to reject them all, any such close included. A request decided since is left as decided.',
+      'Reply “approve bq2wxy” to approve every held action in all 2 but any ticket close Day0 held, which is decided on its card in Day0, or “reject bq2wxy <reason>” to reject them all, any such close included. A request decided since is left as decided.',
     ]);
+  });
+});
+
+describe('the product’s name in what the manager reads (W16-R35’s rest; 17-C)', (): void => {
+  const comment: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_comment',
+      toolArgsJson: '{"issueId":"REVOPS-12","body":"Reconciled."}',
+    },
+  };
+  const close: MockAction = {
+    tool: 'mcp.call',
+    args: {
+      surface: 'linear',
+      tool: 'save_issue',
+      toolArgsJson: '{"id":"REVOPS-12","state":"Done"}',
+    },
+  };
+  const question =
+    'Two pages disagree under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right?';
+
+  it('says Day0 where a request sends the manager to the dashboard', (): void => {
+    const plan = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: {},
+      questions: [question, question],
+      typedCode: false,
+    });
+    expect(plan).toContain('Plan: The drafted plan is available in Day0.');
+    expect(plan).toContain('Answer them on the plan’s card in Day0.');
+    expect(plan.split('\n').at(-1)).toBe(
+      'Decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+    );
+
+    const set = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Post the close-summary audit note',
+      id: 'gh6npq',
+      kind: 'actions',
+      actions: [comment, close, close, ...Array.from({ length: 6 }, () => comment)],
+      heldIndexes: [0],
+      leftForCard: { indexes: [1, 2] },
+      refused: [3, 4, 5, 6, 7, 8].map((index) => ({ index, reason: 'not in the allowlist' })),
+      surfaces: [slack],
+    });
+    expect(set).toContain('Not sent by approving here, as each waits on its card in Day0:');
+    expect(set).toContain('…and 1 more refused; the full list is in Day0.');
+
+    const unlisted = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Post the close-summary audit note',
+      id: 'gh6npq',
+      kind: 'actions',
+      actions: [],
+      heldIndexes: [],
+      surfaces: [slack],
+    });
+    expect(unlisted).toContain('1. Review the held actions in Day0.');
+
+    for (const text of [plan, set, unlisted]) expect(text).not.toMatch(/\bday0\b/);
   });
 });
 
@@ -876,7 +941,7 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
     });
     expect(text).toContain(`${question} (3)`);
     expect(text).not.toContain(`${question} (4)`);
-    expect(text).toContain('And 2 more on the plan’s card in day0.');
+    expect(text).toContain('And 2 more on the plan’s card in Day0.');
   });
 
   it('carries the question and its answer line before the reply line, and only on a plan', (): void => {
@@ -911,7 +976,7 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
         questions: [question],
         typedCode: false,
       }),
-    ).toContain(`${question}\nAnswer it on the plan’s card in day0.`);
+    ).toContain(`${question}\nAnswer it on the plan’s card in Day0.`);
   });
 
   it('reads an answer by its code and letter, however it is written, and nothing else as one', (): void => {
@@ -933,5 +998,81 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
     expect(parseDecisionReply('answer ab3xyz C')).toBeUndefined();
     expect(parseDecisionReply('I think the answer ab3xyz A is right')).toBeUndefined();
     expect(parseDecisionReply('approve ab3xyz')).toEqual({ verb: 'approve', id: 'ab3xyz' });
+  });
+
+  it('numbers each question when more than one is asked, and shows how to answer one by its number (17-C; W16-R27)', (): void => {
+    const second =
+      'Two pages disagree under “Owners”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds every write of the plan until you answer and Retry.';
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [
+        { text: question, number: 1 },
+        { text: second, number: 2 },
+      ],
+    });
+    expect(text.split('\n').slice(4, 7)).toEqual([
+      `1. ${question}`,
+      `2. ${second}`,
+      'Answer each by its number: “answer ab3xyz 1 A”, “answer ab3xyz 1 B” or “answer ab3xyz 1 both”.',
+    ]);
+    // The numbers are the questions' own, not their place in the message: the plan's third and
+    // fourth questions are asked as 3 and 4 once the first two are closed.
+    const later = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [
+        { text: question, number: 3 },
+        { text: second, number: 4 },
+      ],
+    });
+    expect(later).toContain(
+      `3. ${question}\n4. ${second}\nAnswer each by its number: “answer ab3xyz 3 A”`,
+    );
+  });
+
+  it('leaves the number out of a request that asks one question, whatever its number (section 7)', (): void => {
+    const text = decisionRequestText({
+      agentName: 'Priya',
+      title: 'Escalate the variance',
+      id: 'ab3xyz',
+      kind: 'plan',
+      plan: { summary: 'Message the finance lead.' },
+      questions: [{ text: question, number: 3 }],
+    });
+    expect(text).toContain(
+      `${question}\nAnswer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.`,
+    );
+    expect(text).not.toContain('3. ');
+  });
+
+  it('reads the question’s number between the code and the letter, and a bare answer as naming none (17-C)', (): void => {
+    expect(parseDecisionReply('answer ab3xyz 2 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 2,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('“Answer: AB3XYZ 12 both”.')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 12,
+      choice: 'both',
+    });
+    expect(parseDecisionReply('answer ab3xyz A')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      choice: 'from',
+    });
+    // No question is numbered nought, and a number is not a letter.
+    expect(parseDecisionReply('answer ab3xyz 0 A')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 2')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 2 3')).toBeUndefined();
   });
 });

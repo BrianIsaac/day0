@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { stampRecheckDue } from '../../convex/skillVersions';
+import { stampRecheckDue, stampRecheckDueOnSurfaces } from '../../convex/skillVersions';
 import { reevaluatePendingInTransaction } from '../../convex/workReevaluation';
 import { transferExpiresAt } from '../../src/agent/manager-transfer';
 import { CORPUS_SLOTS } from '../fixtures/redaction-corpus';
@@ -14,7 +14,15 @@ import {
   fixtureAddressOf,
   managerIdentity,
 } from './fakes/manager-identity';
-import { cardsOf, openTestCard, seedEmployee, seedWork, type Harness } from './fakes/reorientation';
+import {
+  cardsOf,
+  openTestCard,
+  runCardChain,
+  scheduledAs,
+  seedEmployee,
+  seedWork,
+  type Harness,
+} from './fakes/reorientation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
 /*
@@ -349,6 +357,156 @@ describe('a page under an open plan superseded, archived or made a draft (docume
   });
 });
 
+// W17-R2 with D-1 (a) (17-J's W2, the joins' walk row: archive, return, Approve): a card opened
+// by a page's archive kept saying the page was archived once it was current again, and Approve of
+// its `archived` proposal pinned the page to the manager, after which its source's word was lost.
+describe('a page whose status opened a card is current again (W17-R2, D-1 (a))', (): void => {
+  const REF = 'policies/close-review-window.md';
+
+  /** A folder source mid-sync with one page, and a held plan of the employee's citing it. */
+  async function archivedUnderPlan(harness: Harness) {
+    const agentId = await seedEmployee(harness);
+    const { sourceId, runId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: OWNER_SUBJECT,
+        kind: 'folder',
+        label: 'Company folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 0,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 1,
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: REF,
+        title: 'Close review window',
+        markdown: '# Close review window',
+        updatedAt: 1,
+      });
+      return { sourceId, runId };
+    });
+    const held = await seedWork(harness, agentId, 'plan-pending', {
+      plan: {
+        summary: 'Review the close.',
+        steps: ['Read the review window', 'Reply'],
+        cites: [{ step: 1, label: 'Close review window', sourceId, pageRef: REF, blocks: [] }],
+      },
+    });
+    const read = async (nativeStatus?: 'archived'): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId,
+        syncRunId: runId,
+        ref: REF,
+        ...(nativeStatus === undefined ? {} : { nativeStatus }),
+      });
+    expect(await read('archived')).toBe(true);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card).toMatchObject({
+      trigger: 'page-status-changed',
+      triggerSummary: '“Close review window” was archived',
+      status: 'open',
+      blockingWork: [held],
+    });
+    // The judgement on the hosted model proposed the status the page had at its source.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(card._id, {
+        proposed: {
+          kind: 'page-status',
+          page: { sourceId, ref: REF },
+          status: 'archived',
+          rationale: 'The source archived it.',
+        },
+      });
+    });
+    return { agentId, sourceId, held, card, read };
+  }
+
+  /** Run the question turns a status change handed over, as the scheduler would. */
+  async function turnQuestions(harness: Harness): Promise<void> {
+    for (const job of await scheduledAs(harness, 'docRelations:turnPageQuestions')) {
+      await harness.mutation(
+        internal.docRelations.turnPageQuestions,
+        job.args[0] as { pages: Array<{ sourceId: Id<'docSources'>; ref: string; back: boolean }> },
+      );
+    }
+  }
+
+  it('closes the card as no longer needed once the page is current again, says so in the record, and lets its plan go on', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, held, card, read } = await archivedUnderPlan(harness);
+    await turnQuestions(harness);
+    expect(await read()).toBe(true);
+    await turnQuestions(harness);
+    const [closed] = await cardsOf(harness, agentId);
+    expect(closed).toMatchObject({
+      _id: card._id,
+      status: 'dismissed',
+      outcome: { summary: 'no longer needed: “Close review window” is current again' },
+    });
+    expect(closed.decidedAt).toEqual(expect.any(Number));
+    const dismissed = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'reorientation.dismissed',
+      ),
+    );
+    expect(dismissed.map((event) => event.payload)).toEqual([
+      {
+        reorientationId: card._id,
+        summary: '“Close review window” was archived',
+        outcome: 'no longer needed: “Close review window” is current again',
+      },
+    ]);
+    // The plan it held is asked for its decision again; nothing it was drafted under moved.
+    const decided = await scheduledAs(harness, 'work:decidePlan');
+    expect(decided.map((job) => job.args[0])).toContainEqual({
+      workItemId: held,
+      recovery: true,
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card._id,
+      }),
+    ).rejects.toThrow('That card has already been decided.');
+  });
+
+  it('keeps a card open while another page it rests on is still not current', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, card, read } = await archivedUnderPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'policies/close-checklist.md',
+        title: 'Close checklist',
+        markdown: '# Close checklist',
+        updatedAt: 1,
+        status: 'archived',
+        statusSource: 'source-native',
+      });
+      const row = await ctx.db.get(card._id);
+      await ctx.db.patch(card._id, {
+        evidence: {
+          ...row!.evidence,
+          pageRefs: [...row!.evidence.pageRefs, { sourceId, ref: 'policies/close-checklist.md' }],
+        },
+      });
+    });
+    await turnQuestions(harness);
+    expect(await read()).toBe(true);
+    await turnQuestions(harness);
+    expect((await cardsOf(harness, agentId))[0]).toMatchObject({ status: 'open' });
+  });
+});
+
 describe('manager changed: a handover is accepted (manager.transferred)', (): void => {
   it('opens one card under the new manager about the carried reporting-line rules, and moves the cards before it (16-K’s F2)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -667,7 +825,10 @@ describe('approver or escalation contact changed (relationship.changed)', (): vo
     expect(await cardsSaid(harness, agentId)).toEqual([
       {
         trigger: 'relationship-changed',
-        triggerSummary: 'Priya, its approver, changed',
+        // Re-taken (17-O; the pre-tag's re-walk): the card said "Priya, its approver, changed"
+        // whatever changed, and the judgement read a changed scope as Priya having left.
+        triggerSummary:
+          'Priya, its approver: now for “renewals only”, where it was “committee-deck numbers”',
         risk: 'high',
         userId: OWNER_SUBJECT,
       },
@@ -883,6 +1044,12 @@ describe('the revocation rows (credential.revoked-at-source failed; organisation
       organisationConnectionId: connectionId,
       reason: 'the app was replaced',
     });
+    const ledger = await harness.run(async (ctx) =>
+      (await ctx.db.query('connectionEvents').collect()).filter(
+        (line) => line.type === 'organisation.connection-revoked',
+      ),
+    );
+    expect(ledger).toHaveLength(1);
     for (const agentId of [mira, pip]) {
       expect(await cardsSaid(harness, agentId)).toEqual([
         {
@@ -892,8 +1059,50 @@ describe('the revocation rows (credential.revoked-at-source failed; organisation
           userId: OWNER_SUBJECT,
         },
       ]);
+      // The revocation's line on the connection's ledger is the card's evidence (17-O), and the
+      // page is given the line to say in the record's words.
+      const [card] = await cardsOf(harness, agentId);
+      expect(card.evidence.connectionEventIds).toEqual([ledger[0]._id]);
+      const [view] = await harness
+        .withIdentity(OWNER)
+        .query(api.reorientationDecisions.listForAgent, { agentId });
+      expect(view.ledger.map((line) => [line._id, line.type])).toEqual([
+        [ledger[0]._id, 'organisation.connection-revoked'],
+      ]);
     }
     expect(await cardsOf(harness, nell)).toEqual([]);
+    // The same line reported again opens nothing more: a card carries it by its ledger id.
+    const { openCardsOnSurfaces } = await import('../../convex/reorientation');
+    const surfaces = await harness.run(async (ctx) => await ctx.db.query('surfaces').collect());
+    await harness.run(async (ctx) => {
+      await openCardsOnSurfaces(
+        ctx,
+        surfaces.map((surface) => surface._id),
+        {
+          trigger: 'connection-revoked',
+          triggerKey: 'a-second-report',
+          summary: 'A second report of the same line',
+          evidence: { connectionEventIds: [ledger[0]._id] },
+        },
+      );
+    });
+    const [joined] = await cardsOf(harness, mira);
+    // A different key joins the day's card, and its ledger line is kept once.
+    expect(joined.evidence.connectionEventIds).toEqual([ledger[0]._id]);
+    await harness.run(async (ctx) => {
+      await openCardsOnSurfaces(
+        ctx,
+        surfaces.map((surface) => surface._id),
+        {
+          trigger: 'connection-revoked',
+          triggerKey: ledger[0]._id,
+          summary: 'The line itself, reported again',
+        },
+      );
+    });
+    expect(
+      (await eventTypesOfAgent(harness, mira)).filter((type) => type === 'reorientation.opened'),
+    ).toHaveLength(2);
   });
 
   it('opens one card on every employee of the connection when its shared token could not be revoked', async (): Promise<void> => {
@@ -1336,5 +1545,200 @@ describe('the counted cards show their events to the judgement (W16-R4, D-4 (a))
     expect(await judgementEvidence(refused, refusedAgent)).toContainEqual(
       "Held in a run of “Read REVOPS-1”: dropped: Day0's gate refused this read before sending it: no grant (linear:read)",
     );
+  });
+});
+
+describe('a writer that reaches many employees hands its cards over once (wave 17, 17-O; D-9 (a), O-2)', (): void => {
+  /** Employees of the owner, each with one drafted plan. */
+  async function employees(harness: Harness, count: number): Promise<Id<'agents'>[]> {
+    const agents: Id<'agents'>[] = [];
+    for (let at = 0; at < count; at += 1) {
+      const agentId = await seedEmployee(harness, { name: `Employee ${at}` });
+      await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${at}` });
+      agents.push(agentId);
+    }
+    return agents;
+  }
+
+  /** How many functions for cards the writer's transaction left, and how many employees have a card. */
+  async function handedOver(
+    harness: Harness,
+    agents: readonly Id<'agents'>[],
+  ): Promise<{ functions: number; single: number; withCard: number }> {
+    const functions = (await scheduledAs(harness, 'reorientation:openCardsLater')).length;
+    const single = (await scheduledAs(harness, 'reorientation:openCardLater')).length;
+    await runCardChain(harness);
+    let withCard = 0;
+    for (const agentId of agents) {
+      if ((await cardsOf(harness, agentId)).length === 1) withCard += 1;
+    }
+    return { functions, single, withCard };
+  }
+
+  it('an approver’s edge for everyone, edited over fifty-one employees: one function, a card on each', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const agents = await employees(harness, 51);
+    const ines = await seedPerson(harness, 'Ines Duarte');
+    const edge = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('relationships', {
+          userId: OWNER_SUBJECT,
+          toPersonId: ines,
+          type: 'approval-authority',
+          scope: 'NetLedger journal changes',
+          effectiveFrom: 1,
+          status: 'active',
+          source: 'manager',
+          confirmedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    await harness.withIdentity(OWNER).mutation(api.people.editRelationship, {
+      relationshipId: edge,
+      agentId: agents[0],
+      type: 'approval-authority',
+      scope: 'NetLedger journal changes and the Q3 close sign-off',
+    });
+    expect(await handedOver(harness, agents)).toEqual({ functions: 1, single: 0, withCard: 51 });
+    // Each card holds its own employee's plan, read where the card opened.
+    const cards = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
+    expect(cards.every((card) => card.risk === 'high' && card.blockingWork.length === 1)).toBe(
+      true,
+    );
+  });
+
+  it('a library version withdrawn from twelve holders: one function, a card on each', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agents = await employees(harness, 12);
+    const versionId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('skillVersions', {
+          userId: OWNER_SUBJECT,
+          name: 'kanban-comment-and-close',
+          description: 'Ticket comment-and-close.',
+          surfaceClass: 'kanban',
+          operation: 'comment-and-close',
+          version: 1,
+          body: '# Ticket comment-and-close',
+          smokeTest: 'print("ok")',
+          bodyHash: 'hash',
+          requiredScopes: [],
+          harnessTools: [],
+          authorAgentId: agents[0],
+          authorName: 'Employee 0',
+          readRefs: [],
+          verifiedAt: 1,
+          createdAt: 1,
+        }),
+    );
+    const skills: Id<'skills'>[] = [];
+    for (const agentId of agents)
+      skills.push(await registeredSkill(harness, agentId, { versionId }));
+    await harness.withIdentity(OWNER).mutation(api.skillControls.withdraw, {
+      skillId: skills[0],
+      reason: 'it closes the wrong tickets',
+    });
+    expect(await handedOver(harness, agents)).toEqual({ functions: 1, single: 0, withCard: 12 });
+  });
+
+  it('an organisation’s connection revoked over twelve employees: one function, a card on each', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agents = await employees(harness, 12);
+    const connectionId = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('organisationConnections', {
+          system: 'linear',
+          displayName: 'Linear',
+          kind: 'oauth-app',
+          mode: 'shared',
+          scopes: ['read', 'write'],
+          registeredBy: { via: 'setup-cli', at: 1 },
+          status: 'active',
+          createdAt: 1,
+        }),
+    );
+    for (const agentId of agents) {
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('surfaces', {
+            agentId,
+            slug: 'linear',
+            displayName: 'Linear',
+            class: 'kanban',
+            verdict: 'connected',
+            whereFound: [],
+            credentialLanded: true,
+            organisationConnectionId: connectionId,
+            createdAt: 1,
+          }),
+      );
+    }
+    await harness.mutation(internal.organisationConnections.revokeFromSetup, {
+      organisationConnectionId: connectionId,
+      reason: 'the app was replaced',
+    });
+    expect(await handedOver(harness, agents)).toEqual({ functions: 1, single: 0, withCard: 12 });
+  });
+
+  it('a person dismissed whose edges ten employees proposed: one function, a card on each', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agents = await employees(harness, 10);
+    const nell = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('people', {
+          userId: OWNER_SUBJECT,
+          displayName: 'Nell',
+          nameKey: 'nell',
+          status: 'unverified',
+          source: 'documentation',
+          evidence: [],
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+    );
+    for (const agentId of agents) {
+      await harness.run(
+        async (ctx) =>
+          await ctx.db.insert('relationships', {
+            userId: OWNER_SUBJECT,
+            fromAgentId: agentId,
+            toPersonId: nell,
+            type: 'escalation-contact',
+            effectiveFrom: 1,
+            status: 'proposed',
+            source: 'documentation',
+            createdAt: 1,
+          }),
+      );
+    }
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.people.dismiss, { personId: nell, agentId: agents[0] });
+    expect(await handedOver(harness, agents)).toEqual({ functions: 1, single: 0, withCard: 10 });
+  });
+
+  it('ten skills of one employee stamped on a system whose connection changed: one card, joined, and nothing scheduled for cards', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const [agentId] = await employees(harness, 1);
+    for (let at = 0; at < 10; at += 1) {
+      await registeredSkill(harness, agentId, {
+        name: `skill-${at}`,
+        operation: `operation-${at}`,
+      });
+    }
+    const stamped = await harness.run(
+      async (ctx) =>
+        await stampRecheckDueOnSurfaces(ctx, {
+          agentId,
+          slugs: ['linear'],
+          reasonFor: () => 'its Linear connection changed',
+          now: Date.UTC(2026, 9, 13, 9),
+        }),
+    );
+    expect(stamped).toBe(10);
+    // The first eight opened and joined in the writer's transaction; the last two ride one function.
+    expect(await handedOver(harness, [agentId])).toEqual({ functions: 1, single: 0, withCard: 1 });
+    const [card] = await cardsOf(harness, agentId);
+    expect(card.evidence.skillIds).toHaveLength(10);
   });
 });

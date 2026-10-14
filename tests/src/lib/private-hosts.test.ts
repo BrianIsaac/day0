@@ -53,7 +53,8 @@ describe('the private-host allowlist', (): void => {
       '.localhost',
     ]) {
       expect(() => privateHostAllowlist(`git.corp.internal, ${entry}`), entry).toThrow(
-        'an address day0 never dials',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        'an address Day0 never dials',
       );
     }
     expect(privateHostAllowlist('10.0.0.5 fd12::5').names).toEqual(['10.0.0.5', 'fd12::5']);
@@ -82,7 +83,8 @@ describe('the git hosts list (DAY0_GIT_HOSTS)', (): void => {
     expect(gitHostAllowlist(undefined)).toEqual({ names: [], suffixes: [] });
     expect(() => gitHostAllowlist('https://gitee.com')).toThrow('DAY0_GIT_HOSTS');
     expect(() => gitHostAllowlist('gitee.com 127.0.0.1')).toThrow(
-      'DAY0_GIT_HOSTS lists "127.0.0.1", which is this machine or an address day0 never dials',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'DAY0_GIT_HOSTS lists "127.0.0.1", which is this machine or an address Day0 never dials',
     );
   });
 

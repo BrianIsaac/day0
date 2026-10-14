@@ -11,6 +11,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsAgreement, employeeOwnerScope } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
+import { openCards, type CardTrigger } from './reorientation';
+import { CHECK_OWED_SUMMARY } from '../src/agent/reorientation-words';
 import { confirmedPersonOf, itemPersonIds } from './itemPeople';
 import { cronsPauseReason } from '../src/lib/crons-pause';
 import { SURFACE_MODE } from '../src/lib/surface-mode';
@@ -28,6 +30,7 @@ import {
   HOLD_PAST_THE_CHECK,
   type AgreementView,
   type RecheckOutcome,
+  type RefusedOnce,
 } from '../src/work/agreement-words';
 import { stepHoldReason } from '../src/work/pause';
 import type { ExecutionPlan } from '../src/work/types';
@@ -665,7 +668,8 @@ async function scheduleCheckOfHolds(
  * (the pause of a whole deployment resumes none by name: 14-FX's recorded gap). A hold no check
  * has tried (written past the bound or under a pause, `judgedAt` 0) is due at once, so the sweep
  * lifts it within one turn of the owner coming back to the bound. One check a stale window,
- * however often the sweep runs or plans are stored. Real mode only.
+ * however often the sweep runs or plans are stored. A hold two judgements disagreed on is not
+ * checked here (RM32 (a), {@link disputedHolds}). Real mode only.
  *
  * @param ctx - The sweep's mutation context.
  * @param agentId - The employee.
@@ -681,9 +685,26 @@ export async function scheduleDueHoldChecks(
   const agent = await ctx.db.get(agentId);
   const userId = agent ? employeeOwnerScope(agent) : undefined;
   if (userId === undefined) return 0;
-  const due = (await holdsOf(ctx, userId, agentId)).filter(
+  const stale = (await holdsOf(ctx, userId, agentId)).filter(
     (hold) => (hold.refusal?.judgedAt ?? 0) <= now - CHECK_STALE_MS,
   );
+  // A hold two judgements disagreed on waits for an act of the manager's (RM32 (a)): Check now, a
+  // newly approved charter, or the employee's resume. Judged again here every stale window, chance
+  // would settle it either way within the hour. One whose agreement is in effect for nobody any
+  // more is still set aside.
+  const disputed = await disputedHolds(ctx, agentId, stale);
+  const waiting = stale.filter((hold) => disputed.has(hold._id));
+  const moot = await mootHolds(ctx, waiting);
+  for (const hold of waiting) {
+    if (moot.has(hold._id)) {
+      await ctx.db.patch(hold._id, { status: 'dismissed' });
+    } else if (hold.refusal) {
+      // Stamped as read now, so the marker is read once a stale window and not at every pass
+      // of the sweep and every stored plan (the second pass).
+      await ctx.db.patch(hold._id, { refusal: { ...hold.refusal, judgedAt: now } });
+    }
+  }
+  const due = stale.filter((hold) => !disputed.has(hold._id));
   return (await scheduleCheckOfHolds(ctx, agentId, due, now)) ? 1 : 0;
 }
 
@@ -1090,47 +1111,31 @@ async function holdOf(
 }
 
 /**
- * Internal: hold an active agreement for every employee for one employee alone, whose newly
- * approved charter it was never checked against: the charter came past the employees the check
- * reads (W14-R15), or the check could not be had after its last retry (15-FX: it fails closed,
- * where it left the agreement binding unchecked). The agreement stays in effect for every other
- * employee, and this employee's own refused row, which names it, takes it out of what this
- * employee's planner and runs read, until a check that can be had lifts it (`liftHold`). Nothing
- * for a row no longer active or no longer for every employee, one already held for the employee,
- * or an employee the owner no longer has. Writes `agreement.refused` on the employee, naming the
- * agreement and the hold.
- */
-export const holdForEmployee = internalMutation({
-  args: {
-    agreementId: v.id('workingAgreements'),
-    agentId: v.id('agents'),
-    /** Whether a check was tried: false past the bound or under a pause, where no model was asked. */
-    tried: v.boolean(),
-  },
-  handler: async (ctx, args): Promise<null> => {
-    const row = await ctx.db.get(args.agreementId);
-    if (!row || !(await stillTheOwners(ctx, row, args.agentId))) return null;
-    await holdInTransaction(ctx, row, args.agentId, {
-      tried: args.tried,
-      held: await heldForEmployee(ctx, row.userId, args.agentId),
-    });
-    return null;
-  },
-});
-
-/**
- * The body of {@link holdForEmployee}, in the caller's transaction, for an employee the caller has
- * found is still the agreement's owner's. `held` is the employee's holds, read once by the caller
- * and kept current here, so a settle of many agreements reads them once (the second pass: once an
- * agreement, a first charter with two hundred agreements read past the transaction's limit).
+ * Hold an active agreement for every employee for one employee alone, whose newly approved
+ * charter it was never checked against: the charter came past the employees the check reads
+ * (W14-R15), or the check could not be had after its last retry (15-FX: it fails closed, where it
+ * left the agreement binding unchecked). In the caller's transaction (`settleUncheckable`), for an
+ * employee the caller has found is still the agreement's owner's. The agreement stays in effect
+ * for every other employee, and this employee's own refused row, which names it, takes it out of
+ * what this employee's planner and runs read, until a check that can be had lifts it (`liftHold`).
+ * Nothing for a row no longer active or no longer for every employee, or one already held for the
+ * employee. Writes `agreement.refused` on the employee, naming the agreement and the hold.
+ * `held` is the employee's holds, read once by the caller and kept current here, so a settle of
+ * many agreements reads them once (the second pass: once an agreement, a first charter with two
+ * hundred agreements read past the transaction's limit).
  */
 async function holdInTransaction(
   ctx: MutationCtx,
   row: Doc<'workingAgreements'>,
   agentId: Id<'agents'>,
-  hold: { readonly tried: boolean; readonly held: Set<Id<'workingAgreements'>> },
+  hold: {
+    readonly tried: boolean;
+    readonly held: Set<Id<'workingAgreements'>>;
+    /** The one refusal of two judgements that disagreed (RM32 (a), `holdDisputed`). */
+    readonly refusedOnce?: RefusedOnce;
+  },
 ): Promise<void> {
-  const { tried, held } = hold;
+  const { tried, held, refusedOnce } = hold;
   if (row.status !== 'active' || row.agentId !== undefined || held.has(row._id)) return;
   held.add(row._id);
   const now = Date.now();
@@ -1145,8 +1150,9 @@ async function holdInTransaction(
     ...(row.personId !== undefined ? { personId: row.personId } : {}),
     sourceType: row.sourceType,
     status: 'refused',
-    // When a check last tried it: 0 for one no check has tried, which the sweep and the next
-    // stored plan check at once (`scheduleDueHoldChecks`).
+    // When a check last tried it, or the sweep last passed it over as disputed (RM32 (a)): 0 for
+    // one no check has tried, which the sweep and the next stored plan check at once
+    // (`scheduleDueHoldChecks`).
     refusal: { reason, judgedAt: tried ? now : 0 },
     supersedes: row._id,
     createdAt: now,
@@ -1157,10 +1163,111 @@ async function holdInTransaction(
   await appendEvent(ctx, {
     agentId,
     type: 'agreement.refused',
-    payload: { agreementId: row._id, everyEmployee: true, reason, holdId: heldId },
+    payload: {
+      agreementId: row._id,
+      everyEmployee: true,
+      reason,
+      holdId: heldId,
+      ...(refusedOnce !== undefined ? { refusedOnce } : {}),
+    },
     createdAt: now,
   });
 }
+
+/** The newest `agreement.refused` events of an employee its disputed holds are read from. */
+const DISPUTED_EVENTS_READ = 100;
+
+/** The one refusal an `agreement.refused` payload carries for a disputed hold, if it does. */
+function refusedOnceOf(payload: unknown): RefusedOnce | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const carried: unknown = (payload as { refusedOnce?: unknown }).refusedOnce;
+  if (typeof carried !== 'object' || carried === null) return undefined;
+  const { reason, clause } = carried as { reason?: unknown; clause?: unknown };
+  const judged = AGREEMENT_REFUSAL_REASONS.find((known) => known === reason);
+  if (judged === undefined) return undefined;
+  return typeof clause === 'string' ? { reason: judged, clause } : { reason: judged };
+}
+
+/**
+ * Which of an employee's holds two judgements disagreed on (RM32 (a)), each with the one refusal:
+ * the newest `agreement.refused` that names the hold carries `refusedOnce`. A hold nothing has
+ * checked, or whose check could not be had, has none. Read from the employee's newest
+ * {@link DISPUTED_EVENTS_READ} such events, as an owed check is read from its own; a hold whose
+ * line has fallen out of that window reads as unchecked and is checked again by itself.
+ */
+async function disputedHolds(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+  holds: readonly Doc<'workingAgreements'>[],
+): Promise<Map<Id<'workingAgreements'>, RefusedOnce>> {
+  const disputed = new Map<Id<'workingAgreements'>, RefusedOnce>();
+  if (holds.length === 0) return disputed;
+  const refusals = await eventsOfType(ctx, agentId, 'agreement.refused')
+    .order('desc')
+    .take(DISPUTED_EVENTS_READ);
+  for (const hold of holds) {
+    const newest = refusals.find(
+      (event) => (event.payload as { holdId?: unknown } | null)?.holdId === hold._id,
+    );
+    const refusedOnce = refusedOnceOf(newest?.payload);
+    if (refusedOnce !== undefined) disputed.set(hold._id, refusedOnce);
+  }
+  return disputed;
+}
+
+/**
+ * Internal: hold an active agreement for every employee for one employee alone, whose charter one
+ * of two judgements refused it against while the other allowed it (RM32 (a); 16-FX's F1, where the
+ * one refusal ended the agreement for fifty-one employees). The agreement stays in effect for every
+ * other employee and ends for nobody; this employee's hold names it and takes it out of what this
+ * employee's planner and runs read, until an act of the manager's judges it again (Check now, a
+ * newly approved charter, or the employee's resume, which checks every agreement its pause held):
+ * `checkForCharter` lifts the hold when its first judgement allows the agreement, and ends the
+ * agreement for everyone only when both refuse. The sweep and a stored plan do not judge it. A
+ * hold that already stands is kept, stamped as tried now. Nothing for a row no longer active for
+ * every employee, or an employee the owner no longer has. Writes `agreement.refused` on the
+ * employee, naming the agreement, the hold and the one refusal (`refusedOnce`), which is how the
+ * card and the sweep know the hold from one nothing has checked.
+ */
+export const holdDisputed = internalMutation({
+  args: {
+    agreementId: v.id('workingAgreements'),
+    agentId: v.id('agents'),
+    /** The refusal of the one judgement that refused it. */
+    refusal: refusalValidator,
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const row = await ctx.db.get(args.agreementId);
+    if (!row || row.status !== 'active' || row.agentId !== undefined) return null;
+    if (!(await stillTheOwners(ctx, row, args.agentId))) return null;
+    const standing = await holdOf(ctx, row, args.agentId);
+    if (standing === undefined) {
+      await holdInTransaction(ctx, row, args.agentId, {
+        tried: true,
+        held: new Set<Id<'workingAgreements'>>(),
+        refusedOnce: args.refusal,
+      });
+      return null;
+    }
+    const now = Date.now();
+    await ctx.db.patch(standing._id, {
+      refusal: { reason: 'unchecked-for-employee', judgedAt: now },
+    });
+    await appendEvent(ctx, {
+      agentId: args.agentId,
+      type: 'agreement.refused',
+      payload: {
+        agreementId: row._id,
+        everyEmployee: true,
+        reason: 'unchecked-for-employee',
+        holdId: standing._id,
+        refusedOnce: args.refusal,
+      },
+      createdAt: now,
+    });
+    return null;
+  },
+});
 
 /** The newest events of each of the two types an employee's owed checks are read from. */
 const OWED_EVENTS_READ = 100;
@@ -1207,30 +1314,54 @@ async function owedChecksOf(
   return owing;
 }
 
+/** What every agreement's last check against one employee's charter is read from. */
+interface LastChecks {
+  /** When the charter the employee's newest approved one amends was approved. */
+  readonly amendedAt: number;
+  /** When each agreement an `agreement.checked` names was last checked, by the agreement's id. */
+  readonly checkedAt: ReadonlyMap<string, number>;
+}
+
+/**
+ * An established employee's last checks: its charters and its newest `agreement.checked` events,
+ * read once for every agreement a settle records (W16-R31: read once an agreement, two hundred
+ * agreements scanned about thirty thousand documents in one transaction). Undefined for an
+ * employee on its first approved charter, or none, whose agreements were never checked against an
+ * earlier one (`hasEarlierApprovedCharter`).
+ */
+async function lastChecksOf(
+  ctx: Pick<QueryCtx, 'db'>,
+  agentId: Id<'agents'>,
+): Promise<LastChecks | undefined> {
+  const versions = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .take(CHARTER_VERSIONS);
+  const amended = versions.filter((charter) => charter.approved)[1];
+  if (amended === undefined) return undefined;
+  const checked = await eventsOfType(ctx, agentId, 'agreement.checked')
+    .order('desc')
+    .take(OWED_EVENTS_READ);
+  const checkedAt = new Map<string, number>();
+  // Newest first, so the first event that names an agreement is its last check.
+  for (const event of checked) {
+    const named = agreementNamed(event);
+    if (named !== undefined && !checkedAt.has(named)) checkedAt.set(named, event.createdAt);
+  }
+  return { amendedAt: amended.approvedAt ?? amended.createdAt, checkedAt };
+}
+
 /**
  * When an agreement for every employee was last checked against an employee's charter: as it took
  * effect (its own check read every charter then), or at the approval of the charter the newest
  * amends (whose check read every agreement then), or at a check of it since, whichever is latest.
  */
-async function lastCheckedAt(
-  ctx: Pick<QueryCtx, 'db'>,
-  agreement: Doc<'workingAgreements'>,
-  agentId: Id<'agents'>,
-): Promise<number> {
-  const [versions, checked] = await Promise.all([
-    ctx.db
-      .query('charters')
-      .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-      .order('desc')
-      .take(CHARTER_VERSIONS),
-    eventsOfType(ctx, agentId, 'agreement.checked').order('desc').take(OWED_EVENTS_READ),
-  ]);
-  const amended = versions.filter((charter) => charter.approved)[1];
-  const lastCheck = checked.find((event) => agreementNamed(event) === agreement._id);
+function lastCheckedAt(agreement: Doc<'workingAgreements'>, checks: LastChecks): number {
   return Math.max(
     agreement.effectiveFrom ?? agreement.approvedAt ?? agreement.createdAt,
-    amended?.approvedAt ?? amended?.createdAt ?? 0,
-    lastCheck?.createdAt ?? 0,
+    checks.amendedAt,
+    checks.checkedAt.get(agreement._id) ?? 0,
   );
 }
 
@@ -1238,7 +1369,7 @@ async function lastCheckedAt(
  * Internal: what an employee's charter check that could not be had leaves on record, for the
  * agreements for every employee it did not check (W15-R34; RM28 (b)): after its last retry, when
  * the run died (its watch, `CHECK_OUTLIVED_MS` on), past the bound, or under a pause. On a first
- * charter each is held for the employee (`holdForEmployee`); on an amendment each stays in effect
+ * charter each is held for the employee (`holdInTransaction`); on an amendment each stays in effect
  * (D-2 (c)) and its check is owed: `agreement.check-owed` with when it was last checked, once, as
  * long as no check has since been had, which the Agreements card says with Check now. Nothing for
  * a row no longer in effect for every employee, or an employee the owner no longer has.
@@ -1254,12 +1385,16 @@ export const settleUncheckable = internalMutation({
     const agent = await ctx.db.get(args.agentId);
     const userId = agent ? employeeOwnerScope(agent) : undefined;
     if (userId === undefined) return null;
-    const established = await hasEarlierApprovedCharter(ctx, args.agentId);
+    const checks = await lastChecksOf(ctx, args.agentId);
+    const established = checks !== undefined;
     const owed = established ? await owedChecksOf(ctx, args.agentId) : new Map<string, number>();
     const held = established
       ? new Set<Id<'workingAgreements'>>()
       : await heldForEmployee(ctx, userId, args.agentId);
     const now = Date.now();
+    const cards: CardTrigger[] = [];
+    // A check the owner is past the bound of cannot be had from a card either: no card proposes it.
+    const checkable = established && !(await pastTheCheck(ctx, userId));
     for (const agreementId of args.agreementIds) {
       const row = await ctx.db.get(agreementId);
       // An employee let go, or handed to another owner, is no longer this agreement's (W15-R37).
@@ -1269,17 +1404,30 @@ export const settleUncheckable = internalMutation({
         continue;
       }
       if (row.status !== 'active' || row.agentId !== undefined || owed.has(row._id)) continue;
-      await appendEvent(ctx, {
+      const eventId = await appendEvent(ctx, {
         agentId: args.agentId,
         type: 'agreement.check-owed',
         payload: {
           agreementId: row._id,
           everyEmployee: true,
-          since: await lastCheckedAt(ctx, row, args.agentId),
+          since: lastCheckedAt(row, checks),
         },
         createdAt: now,
       });
+      // One low card on the employee for the checks it owes, proposing the re-check (RM34 (a)):
+      // an owed check is otherwise seen only by a manager who opens the Agreements tab.
+      if (!checkable) continue;
+      cards.push({
+        agentId: args.agentId,
+        trigger: 'agreement-check-owed',
+        triggerKey: eventId,
+        summary: CHECK_OWED_SUMMARY,
+        evidence: { eventIds: [eventId] },
+        affected: { agreements: [row._id] },
+        now,
+      });
     }
+    await openCards(ctx, cards);
     return null;
   },
 });
@@ -1567,14 +1715,23 @@ function cardViewOf(
   };
 }
 
+/** A hold's card view with the one refusal of two judgements that disagreed on it (RM32 (a)). */
+function disputedView(view: AgreementView, refusedOnce: RefusedOnce | undefined): AgreementView {
+  return refusedOnce === undefined || view.refusal === undefined
+    ? view
+    : { ...view, refusal: { ...view.refusal, refusedOnce } };
+}
+
 /**
  * The agreements on an employee's cards: its own and every employee's, proposed (with those kept
  * and waiting on their check, and without a proposal whose every-employee copy waits on its
  * check), active and refused, newest first. A hold of an agreement for every employee says
  * whether it can be checked now (`refusal.checkable`: the owner has no more employees than the
- * check reads), and one whose agreement is in effect for nobody any more is left out; an
- * agreement for every employee whose check against this employee's amended charter is owed says
- * since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`; writes nothing.
+ * check reads) and, when two judgements of this employee's charter disagreed on it, the one
+ * refusal (`refusal.refusedOnce`, RM32 (a)); a hold whose agreement is in effect for nobody any
+ * more is left out; an agreement for every employee whose check against this employee's amended
+ * charter is owed says since when (`checkOwed`, RM28 (b)). Public, guarded by `assertOwnsAgent`;
+ * writes nothing.
  */
 export const listForAgent = query({
   args: { agentId: v.id('agents') },
@@ -1595,12 +1752,13 @@ export const listForAgent = query({
     );
     const holds = rows.filter((row) => row.refusal?.reason === 'unchecked-for-employee');
     const everyEmployee = rows.some((row) => row.status === 'active' && row.agentId === undefined);
-    const [checkable, moot, owed] = await Promise.all([
+    const [checkable, moot, owed, disputed] = await Promise.all([
       holds.length === 0 && !everyEmployee
         ? false
         : pastTheCheck(ctx, userId).then((past) => !past),
       mootHolds(ctx, holds),
       everyEmployee ? owedChecksOf(ctx, agent._id) : new Map<string, number>(),
+      disputedHolds(ctx, agent._id, holds),
     ]);
     // An agreement for every employee whose check against this employee's amended charter is
     // owed says so, with Check now while the owner is within the bound (RM28 (b)).
@@ -1611,7 +1769,12 @@ export const listForAgent = query({
     return rows
       .filter((row) => !(awaitingManager(row) && copied.has(row._id)) && !moot.has(row._id))
       .sort((left, right) => right.createdAt - left.createdAt)
-      .map((row) => cardViewOf(row, checkable && holds.includes(row), owedOf(row)));
+      .map((row) =>
+        disputedView(
+          cardViewOf(row, checkable && holds.includes(row), owedOf(row)),
+          disputed.get(row._id),
+        ),
+      );
   },
 });
 
@@ -1911,6 +2074,37 @@ export async function recheckAgreementInTransaction(
 ): Promise<void> {
   if (!awaitingCheck(agreement)) throw new ConvexError(AGREEMENT_MOVED_ON);
   await scheduleCheck(ctx, agreement._id, agentId);
+}
+
+/**
+ * Check again, against an employee's amended charter, the agreements for every employee whose
+ * check is owed among those named, in the caller's transaction (the Approve of an owed check's
+ * reorientation card, RM34 (a)), as {@link recheck} does for one from the Agreements card.
+ * Schedules one check for them all.
+ *
+ * @returns Whether a check was scheduled: false when none of them is owed one any more.
+ * @throws ConvexError when the owner has more employees than the check reads.
+ */
+export async function recheckOwedInTransaction(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  agreementIds: readonly Id<'workingAgreements'>[],
+): Promise<boolean> {
+  const owed = await owedChecksOf(ctx, agentId);
+  const rows = await Promise.all(agreementIds.map(async (id) => await ctx.db.get(id)));
+  const owing = rows.filter(
+    (row): row is Doc<'workingAgreements'> =>
+      row !== null && row.status === 'active' && row.agentId === undefined && owed.has(row._id),
+  );
+  const [first] = owing;
+  if (first === undefined) return false;
+  if (await pastTheCheck(ctx, first.userId)) throw new ConvexError(HOLD_PAST_THE_CHECK);
+  await ctx.scheduler.runAfter(0, internal.workingAgreementActions.checkForCharter, {
+    agentId,
+    attempt: 0,
+    agreementIds: owing.map((row) => row._id),
+  });
+  return true;
 }
 
 /**

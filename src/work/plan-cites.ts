@@ -1,4 +1,4 @@
-import { pageWords } from '../agent/reorientation-words';
+import { pagePlaces, pageWords } from '../agent/reorientation-words';
 import type { PageStatus } from '../docs/authority';
 import type { CiteConflict, CitedBlock, DocumentationSelectionRecord, PlanCite } from './types';
 
@@ -105,7 +105,7 @@ function cutTo(name: string, chars: number): string {
 /**
  * Why a run stopped on a conflict the manager confirmed after approving its plan (D-4 (b); the
  * wave file's section 7, after "Stopped: "): Retry drafts the plan again, as for a gone cite.
- * Each page is named by its letter, title and source as the question names it (W16-R12, W4a), and
+ * Each page is named by its letter, title and source as the question names it (W16-R12, W4a), and its place where the pages share a title and a source (W17-R1), and
  * the names are cut, never the sentence, so the reason fits the failure's 300 characters with
  * "Retry drafts the plan again." whole.
  */
@@ -113,18 +113,31 @@ export function conflictConfirmedReason(
   heading: string,
   pages: readonly [CiteConflict['pages'][0], CiteConflict['pages'][1]],
 ): string {
-  const said = (under: string, a: CiteConflict['pages'][0], b: CiteConflict['pages'][1]): string =>
-    `${CONFLICT_CONFIRMED_OPENING}${pageWords('A', a)}, and ${pageWords('B', b)} disagree under “${under}”. Retry drafts the plan again.`;
-  const whole = said(heading, pages[0], pages[1]);
+  type Named = { readonly title: string; readonly source: string; readonly place?: string };
+  const said = (under: string, a: Named, b: Named): string =>
+    `${CONFLICT_CONFIRMED_OPENING}${pageWords('A', a, a.place)}, and ${pageWords('B', b, b.place)} disagree under “${under}”. Retry drafts the plan again.`;
+  // Two pages of one title in one source are named by their places too (W17-R1).
+  const places = pagePlaces(pages);
+  const named = pages.map(
+    (page, index): Named => ({
+      title: page.title,
+      source: page.source,
+      ...(places[index] === undefined ? {} : { place: places[index] }),
+    }),
+  );
+  const whole = said(heading, named[0]!, named[1]!);
   if (whole.length <= CONFLICT_REASON_CHARS) return whole;
-  const empty = { title: '', source: '' };
-  // Five names share what the sentence leaves of the cut: two titles, two sources, the heading.
-  const each = Math.floor((CONFLICT_REASON_CHARS - said('', empty, empty).length) / 5);
-  const cut = (page: CiteConflict['pages'][0]): CiteConflict['pages'][0] => ({
+  const empty: Named = { title: '', source: '', ...(places[0] === undefined ? {} : { place: '' }) };
+  // The names share what the sentence leaves of the cut: two titles, two sources, the heading,
+  // and the two places where the pages have them.
+  const shares = places[0] === undefined ? 5 : 7;
+  const each = Math.floor((CONFLICT_REASON_CHARS - said('', empty, empty).length) / shares);
+  const cut = (page: Named): Named => ({
     title: cutTo(page.title, each),
     source: cutTo(page.source, each),
+    ...(page.place === undefined ? {} : { place: cutTo(page.place, each) }),
   });
-  return said(cutTo(heading, each), cut(pages[0]), cut(pages[1]));
+  return said(cutTo(heading, each), cut(named[0]!), cut(named[1]!));
 }
 
 /** A cite that no longer stands: its words and, when its page is no longer current, why. */

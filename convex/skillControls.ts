@@ -11,7 +11,8 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, assertOwnsSkill } from './ownership';
 import { appendEvent, eventsOfType } from './eventLog';
-import { openCard } from './reorientation';
+import { openCards } from './reorientation';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { assertNotBeingHandedOver } from './handoverFence';
 import {
   holdersOf,
@@ -194,6 +195,8 @@ async function parkForSkill(
   wait: SkillWait,
 ): Promise<Id<'skills'> | undefined> {
   const behind = await liveSkillNamed(ctx, item.agentId, wait.name);
+  // The plan goes, and its conflict questions with it: the next plan is asked on what it cites.
+  await closeQuestionsAtRedraft(ctx, item._id, wait.now);
   await ctx.db.patch(item._id, {
     state: 'needs-skill',
     // A wait on a skill is stamped as every wait is (wave 12, 12-W).
@@ -640,10 +643,12 @@ async function withdrawVersion(
     },
     createdAt: now,
   });
-  for (const holder of holders) {
-    await openCard(ctx, {
+  // One list for every holder (17-O; W16-R5).
+  await openCards(
+    ctx,
+    holders.map((holder) => ({
       agentId: holder.agentId,
-      trigger: 'skill-withdrawn',
+      trigger: 'skill-withdrawn' as const,
       triggerKey: eventId,
       summary: `The skill “${row.name}” was withdrawn: ${reason}`,
       evidence: {
@@ -651,10 +656,10 @@ async function withdrawVersion(
         skillIds: [holder.skillId],
         skillVersionIds: [version._id],
       },
-      reach: { kind: 'skills', skillIds: [holder.skillId] },
+      reach: { kind: 'skills' as const, skillIds: [holder.skillId] },
       now,
-    });
-  }
+    })),
+  );
   return { holders: holders.length, returnedItems, stoppedRuns };
 }
 

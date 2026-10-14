@@ -28,15 +28,17 @@ describe('fake Slack’s people (RM2)', (): void => {
   it('fake Slack answers a lookup per address', async (): Promise<void> => {
     expect(await api('users.lookupByEmail', 'email=mateo%40acme.test', FORM)).toMatchObject({
       ok: true,
-      user: { id: 'U_DAY0_PERSON_1', deleted: false },
+      user: { id: 'U_DAY0_PERSON_1', deleted: false, profile: { email: 'mateo@acme.test' } },
     });
     expect(await api('users.lookupByEmail', 'email=NORA%40acme.test', FORM)).toMatchObject({
       user: { id: 'U_DAY0_PERSON_2' },
     });
     // Every other address is still the one manager, as before the people existed.
-    expect(await api('users.lookupByEmail', 'email=priya%40acme.test', FORM)).toMatchObject({
-      user: { id: 'U_DAY0_MANAGER' },
-    });
+    const manager = await api('users.lookupByEmail', 'email=priya%40acme.test', FORM);
+    expect(manager).toMatchObject({ user: { id: 'U_DAY0_MANAGER' } });
+    // The one manager carries no address, so the people lookup, which compares the member's
+    // address with the one asked, takes it for nobody else (17-FX; the joins' W1d).
+    expect((manager as { user: { profile?: unknown } }).user.profile).toBeUndefined();
   });
 
   it('opens a DM of each person’s own, so a handover between two managers reaches two DMs', async (): Promise<void> => {

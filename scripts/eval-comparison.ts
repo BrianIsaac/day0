@@ -24,12 +24,14 @@ import {
   COMPARISON_EXPERIMENT,
   isComparisonExperiment,
   renderEvaluationReport,
+  type CharterDerivedWork,
   type EvaluationDecision,
   type EvaluationEvidence,
   type EvaluationRun,
   type EvaluationTaskResult,
+  type KeptRefusedReply,
 } from '../evaluation/report';
-import { rereadRetainedEvidence } from '../evaluation/retained-reading';
+import { rereadRetainedEvidence, rereadSecondReading } from '../evaluation/retained-reading';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
@@ -70,6 +72,8 @@ const onboardingFixtureSchema = z.object({
 export interface CliOptions {
   arms: EvaluationArm[];
   runs: number;
+  /** A count for each arm, when `--runs` names one; `runs` is then the largest. */
+  runsByArm?: Partial<Record<EvaluationArm, number>>;
   taskSelectors: string[];
   out: string;
   regrade?: string;
@@ -107,6 +111,10 @@ interface EvidenceWithProgress extends EvaluationEvidence {
 export interface HarnessContext {
   client: Pick<ConvexHttpClient, 'query' | 'mutation' | 'action' | 'setAuth'>;
   authenticatedAt: number;
+  /** The manager the client signs in as: the current run's, or the local manager before any run. */
+  managerSubject?: string;
+  /** The manager the client's token names. */
+  authenticatedSubject?: string;
   evidence: EvidenceWithProgress;
   outPath: string;
   reportPath: string;
@@ -156,6 +164,38 @@ function positiveInteger(flag: string, value: string | undefined): number {
 }
 
 /**
+ * A count for each arm, from `day0=N,baseline=N` (either arm alone too).
+ *
+ * @throws when an entry names no arm, an arm twice, or a count that is not a positive integer.
+ */
+function runsByArm(value: string): Partial<Record<EvaluationArm, number>> {
+  const counts: Partial<Record<EvaluationArm, number>> = {};
+  for (const entry of value.split(',')) {
+    const match = /^(day0|baseline)=(\d+)$/.exec(entry);
+    const count = Number(match?.[2]);
+    const arm = match?.[1] as EvaluationArm | undefined;
+    if (!arm || counts[arm] !== undefined || !Number.isInteger(count) || count <= 0) {
+      throw new Error('--runs must be a positive integer, or day0=N,baseline=N');
+    }
+    counts[arm] = count;
+  }
+  return counts;
+}
+
+/** The runs an arm is asked for: its own count when `--runs` named one, else the one count. */
+export function runsForArm(
+  options: Pick<CliOptions, 'runs' | 'runsByArm'>,
+  arm: EvaluationArm,
+): number {
+  return options.runsByArm?.[arm] ?? options.runs;
+}
+
+/** The runs each arm of an invocation is asked for. */
+function requestedRunsByArm(options: CliOptions): Partial<Record<EvaluationArm, number>> {
+  return Object.fromEntries(options.arms.map((arm) => [arm, runsForArm(options, arm)]));
+}
+
+/**
  * Parse the command line into one invocation's settings.
  *
  * @throws on an unknown flag, a missing value or an invalid subset.
@@ -191,7 +231,13 @@ export function parseCliOptions(argv: string[]): CliOptions {
       }
       result.arms = arms as EvaluationArm[];
     } else if (flag === '--runs') {
-      result.runs = positiveInteger(flag, value);
+      if (/^\d+$/.test(value)) {
+        result.runs = positiveInteger(flag, value);
+        result.runsByArm = undefined;
+      } else {
+        result.runsByArm = runsByArm(value);
+        result.runs = Math.max(...Object.values(result.runsByArm));
+      }
     } else if (flag === '--tasks') {
       result.taskSelectors = value.split(',').filter(Boolean);
       if (result.taskSelectors.length === 0) throw new Error('--tasks cannot be empty');
@@ -208,6 +254,14 @@ export function parseCliOptions(argv: string[]): CliOptions {
     } else {
       throw new Error(`unknown option ${flag}`);
     }
+  }
+  if (
+    result.runsByArm &&
+    !sameStrings(Object.keys(result.runsByArm).sort(), [...result.arms].sort())
+  ) {
+    throw new Error(
+      `--runs must name a count for each arm it runs: ${result.arms.map((arm) => `${arm}=N`).join(',')}`,
+    );
   }
   if (result.regrade && result.reread) {
     throw new Error('--reread and --regrade are two ways to grade again; pass one');
@@ -242,13 +296,16 @@ function usage(): string {
   return `Usage: pnpm eval:comparison -- [options]
 
   --arms day0,baseline     arms to run (default both)
-  --runs N                 paired run count per arm (default 3)
+  --runs N                 paired run count per arm (default 3); or a count for each arm,
+                           day0=N,baseline=N, the arms alternating while both have runs left
   --tasks id,id            task ids or EVAL external ids (default all 15)
   --out path.json          raw evidence path (default evaluation/results/<timestamp>/comparison.json);
                            pass an earlier path to resume that run
   --regrade path.json      re-score a retained run into a new output; makes no model calls
   --reread path.json       read a stored run's out-of-scope rows again from its retained grades
-                           into a new output; needs no backend and makes no model calls
+                           into a new output: the two readings where it records neither, the
+                           second reading where it records them; needs no backend and makes no
+                           model calls
   --approval-delay-ms N    simulated human decision delay (default 750)
   --poll-ms N              state polling interval (default 500)
 `;
@@ -300,6 +357,12 @@ export function assertResumeCompatible(
     config.temperature !== MODEL_TEMPERATURE ||
     config.modelCallTimeoutMs !== MODEL_CALL_TIMEOUT_MS ||
     config.requestedRuns !== options.runs ||
+    JSON.stringify(
+      config.requestedRunsByArm ??
+        Object.fromEntries(
+          (config.arms ?? ['day0', 'baseline']).map((arm) => [arm, config.requestedRuns]),
+        ),
+    ) !== JSON.stringify(requestedRunsByArm(options)) ||
     config.approvalDelayMs !== options.approvalDelayMs ||
     config.pollIntervalMs !== options.pollIntervalMs ||
     config.skillAuthoringMaxAttempts !== MAX_SKILL_AUTHORING_ATTEMPTS ||
@@ -320,7 +383,13 @@ export function assertResumeCompatible(
   }
 }
 
-async function loadOrCreateEvidence(
+/**
+ * The evidence an invocation writes into: the file at `--out` when it was
+ * recorded under the same code and options, or a new one.
+ *
+ * @throws when the file exists and was recorded under other code or options.
+ */
+export async function loadOrCreateEvidence(
   options: CliOptions,
   tasks: EvaluationTask[],
 ): Promise<EvidenceWithProgress> {
@@ -349,6 +418,7 @@ async function loadOrCreateEvidence(
       surfaceMode: 'mock',
       arms: options.arms,
       requestedRuns: options.runs,
+      requestedRunsByArm: requestedRunsByArm(options),
       taskIds: tasks.map((task) => task.id),
       taskDefinitions: tasks,
       taskTimeoutMs,
@@ -358,7 +428,7 @@ async function loadOrCreateEvidence(
       noLlmJudge: true,
       onboardingTranscriptProvenance: fixture.provenance,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
-      postCharterApprovalSkipped: true,
+      charterDerivedWorkRecorded: true,
       harnessParameters,
       intentionalArmDifferences: INTENTIONAL_ARM_DIFFERENCES,
     },
@@ -390,9 +460,29 @@ async function persist(context: HarnessContext): Promise<void> {
 }
 
 async function authenticate(context: HarnessContext): Promise<void> {
-  if (Date.now() - context.authenticatedAt < TOKEN_REFRESH_MS) return;
-  context.client.setAuth(await mintDevNoAuthToken());
+  if (
+    Date.now() - context.authenticatedAt < TOKEN_REFRESH_MS &&
+    context.authenticatedSubject === context.managerSubject
+  ) {
+    return;
+  }
+  context.client.setAuth(await managerToken(context.managerSubject));
   context.authenticatedAt = Date.now();
+  context.authenticatedSubject = context.managerSubject;
+}
+
+/** A token for a run's manager, or for the local manager when no subject is given. */
+async function managerToken(subject: string | undefined): Promise<string> {
+  return await mintDevNoAuthToken(undefined, undefined, undefined, subject);
+}
+
+/**
+ * The subject a run's manager signs in as: one of its own, so that no two runs
+ * of a bed share an owner, and so a skill library, an adoption offer or a
+ * re-check card.
+ */
+export function evaluationManagerSubject(runId: string, at: number): string {
+  return `dev-no-auth|eval-manager-${runId}-${at}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -848,8 +938,20 @@ export async function runTask(
     actionAudit: auditActionArguments(item.output),
     grade,
     missingPermissions: verdictMissingPermissions(item.verdict),
+    ...keptRefusedReply(item.output),
     ...(active.lastError ? { error: active.lastError } : {}),
   };
+}
+
+/**
+ * The reply the executor's contract refused after its one repair, as the
+ * work item kept it, for a run such a refusal stopped; nothing otherwise.
+ */
+function keptRefusedReply(output: unknown): { refusedReply?: KeptRefusedReply } {
+  const kept = (output as { refusedReply?: unknown } | null | undefined)?.refusedReply;
+  return kept !== null && typeof kept === 'object'
+    ? { refusedReply: kept as KeptRefusedReply }
+    : {};
 }
 
 function newRun(arm: EvaluationArm, run: number): RunWithProgress {
@@ -864,16 +966,24 @@ function newRun(arm: EvaluationArm, run: number): RunWithProgress {
   };
 }
 
-function scheduledRuns(options: CliOptions): Array<{ arm: EvaluationArm; run: number }> {
+/** The runs an invocation makes, in order: the arms alternate their order run by run, and an arm whose count is spent drops out. */
+export function scheduledRuns(options: CliOptions): Array<{ arm: EvaluationArm; run: number }> {
   const rows: Array<{ arm: EvaluationArm; run: number }> = [];
   for (let run = 1; run <= options.runs; run += 1) {
     const arms = run % 2 === 0 ? [...options.arms].reverse() : options.arms;
-    for (const arm of arms) rows.push({ arm, run });
+    for (const arm of arms) {
+      if (run <= runsForArm(options, arm)) rows.push({ arm, run });
+    }
   }
   return rows;
 }
 
-async function executeRun(
+/**
+ * Run one arm's run over the tasks, or resume it, writing each result as it ends.
+ *
+ * @throws on a fatal provider failure, after marking the run failed.
+ */
+export async function executeRun(
   context: HarnessContext,
   run: RunWithProgress,
   tasks: EvaluationTask[],
@@ -882,6 +992,8 @@ async function executeRun(
     console.log(`[eval] ${run.id}: already complete`);
     return;
   }
+  run.managerSubject ??= evaluationManagerSubject(run.id, Date.now());
+  context.managerSubject = run.managerSubject;
   run.status = 'running';
   await persist(context);
   await authenticate(context);
@@ -903,6 +1015,11 @@ async function executeRun(
         `[eval] ${run.id}: ${task.id} ${result.grade.passed ? 'PASS' : 'FAIL'} (${result.terminalState}${result.timedOut ? ', timeout' : ''})`,
       );
     }
+    run.charterDerivedWork = charterDerivedWorkOf(
+      await context.client.query(api.evaluation.snapshot, { agentId }),
+      tasks,
+      new Date(),
+    );
     run.status = 'completed';
     run.completedAt = new Date().toISOString();
     run.error = undefined;
@@ -915,11 +1032,40 @@ async function executeRun(
   await persist(context);
 }
 
+/**
+ * What the product's charter-derived seeding left on a run's employee: the
+ * generator's events and the work items that are none of the run's tasks, by
+ * state. Approving the charter schedules the generator on the server, so the
+ * harness records what it did and does not assert that it was skipped.
+ */
+export function charterDerivedWorkOf(
+  raw: RawSnapshot,
+  tasks: readonly EvaluationTask[],
+  readAt: Date,
+): CharterDerivedWork {
+  const taskIds = new Set(tasks.map((task) => task.seed.externalId));
+  const seedings = raw.events.filter((event) => event.type === 'work.charter-derived');
+  const generated = raw.workItems.filter((item) => !taskIds.has(item.externalId));
+  const byState: Record<string, number> = {};
+  for (const item of generated) byState[item.state] = (byState[item.state] ?? 0) + 1;
+  return {
+    seedings: seedings.length,
+    itemsSeeded: seedings.reduce((total, event) => {
+      const count = (event.payload as { count?: unknown } | undefined)?.count;
+      return total + (typeof count === 'number' ? count : 0);
+    }, 0),
+    workItems: generated.length,
+    byState,
+    readAt: readAt.toISOString(),
+  };
+}
+
 /** The seams a regrade takes in place of the live backend, the clock and git. */
 export interface RegradeDependencies {
   /** A query-only seam for fixtures; production constructs this from CONVEX_SELF_HOSTED_URL. */
   client?: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
-  authenticate?: () => Promise<void>;
+  /** Sign in as a run's manager, or as the local manager when no subject is given. */
+  authenticate?: (subject?: string) => Promise<void>;
   commit?: string;
   now?: Date;
 }
@@ -958,6 +1104,7 @@ function regradeTask(
     actionAudit: auditActionArguments(item.output),
     grade,
     missingPermissions: verdictMissingPermissions(item.verdict),
+    ...keptRefusedReply(item.output),
   };
 }
 
@@ -1005,10 +1152,14 @@ async function readRegradeSource(
   return { sourcePath, outPath, source };
 }
 
+/** A query-only client and the way it signs in as a run's manager. */
+interface RegradeClient {
+  client: Pick<ConvexHttpClient, 'query' | 'setAuth'>;
+  signInAs: (subject?: string) => Promise<void>;
+}
+
 /** An authenticated, query-only client on a backend that reports mock mode. */
-async function regradeClient(
-  dependencies: RegradeDependencies,
-): Promise<Pick<ConvexHttpClient, 'query' | 'setAuth'>> {
+async function regradeClient(dependencies: RegradeDependencies): Promise<RegradeClient> {
   const modeUrl = process.env.CONVEX_SELF_HOSTED_URL;
   if (!dependencies.client && !modeUrl) throw new Error('CONVEX_SELF_HOSTED_URL is required');
   const convexClient =
@@ -1021,27 +1172,30 @@ async function regradeClient(
     query: convexClient.query.bind(convexClient),
     setAuth: convexClient.setAuth.bind(convexClient),
   };
-  if (dependencies.authenticate) {
-    await dependencies.authenticate();
-  } else {
-    client.setAuth(await mintDevNoAuthToken());
-  }
+  const signInAs =
+    dependencies.authenticate ??
+    (async (subject?: string): Promise<void> => client.setAuth(await managerToken(subject)));
+  await signInAs();
   const mode = await client.query(api.config.surfaceMode, {});
   if (mode.mode !== 'mock') {
     throw new Error(`evaluation re-grade requires mock mode; backend reports ${mode.mode}`);
   }
-  return client;
+  return { client, signInAs };
 }
 
-/** Each recorded run's retained backend state, refusing a run whose work items are gone. */
+/**
+ * Each recorded run's retained backend state, read as the manager the run ran
+ * under, refusing a run whose work items are gone.
+ */
 async function retainedSnapshots(
-  client: Pick<ConvexHttpClient, 'query'>,
+  { client, signInAs }: RegradeClient,
   source: EvaluationEvidence,
 ): Promise<Map<string, RawSnapshot>> {
   const snapshots = new Map<string, RawSnapshot>();
   for (const run of source.runs) {
     if (run.tasks.length === 0) continue;
     if (!run.agentId) throw new Error(`recorded run ${run.id} has tasks but no agentId`);
+    if (run.managerSubject) await signInAs(run.managerSubject);
     const raw = await client.query(api.evaluation.snapshot, {
       agentId: run.agentId as Id<'agents'>,
     });
@@ -1114,21 +1268,29 @@ export async function runRegrade(
 /**
  * Read a stored run's out-of-scope rows again from its retained grades, for a
  * run whose backend is gone, and write the result as new evidence with its
- * report. No backend is opened and the source file is never touched.
+ * report. A run that records neither reading gains the two; one that records
+ * them, live or by an earlier re-read, gains the second reading alone. No
+ * backend is opened and the source file is never touched.
  *
- * @throws when the output exists, or the source is not evidence, is itself a re-read or already
- *   records the readings.
+ * @throws when the output exists, or the source is not evidence, is itself a re-read for the
+ *   second reading or already records it.
  */
 export async function runRetainedReread(
   options: CliOptions,
   dependencies: Pick<RegradeDependencies, 'commit' | 'now'> = {},
 ): Promise<EvaluationEvidence> {
   const { sourcePath, outPath, source } = await readRegradeSource(options, 'reread');
-  const evidence = rereadRetainedEvidence(source, {
+  const provenance = {
     path: recordedSourcePath(sourcePath),
     gradedAtCommit: dependencies.commit ?? currentCommit(),
     now: dependencies.now ?? new Date(),
-  });
+  };
+  const recordsReadings = source.runs.some((run) =>
+    run.tasks.some((task) => task.grade.facts.outOfScope !== undefined),
+  );
+  const evidence = recordsReadings
+    ? rereadSecondReading(source, provenance)
+    : rereadRetainedEvidence(source, provenance);
   await atomicWrite(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
   await atomicWrite(reportPathFor(outPath), renderEvaluationReport(evidence));
   return evidence;
@@ -1199,7 +1361,11 @@ async function main(): Promise<void> {
     const reread = evidence.runs
       .flatMap((run) => run.tasks)
       .filter((task) => task.grade.facts.outOfScope !== undefined).length;
-    console.log(`[eval] re-read: ${reread} out-of-scope rows from their retained grades`);
+    const what =
+      evidence.regradedFrom?.basis === 'retained-grade-second-reading'
+        ? 'for the second reading'
+        : 'for the two readings';
+    console.log(`[eval] re-read: ${reread} out-of-scope rows ${what} from their retained grades`);
     console.log(`[eval] JSON: ${resolve(options.out)}`);
     console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
     return;
@@ -1213,7 +1379,8 @@ async function main(): Promise<void> {
   }
   const evidence = await runEvaluation(options);
   const completed = evidence.runs.filter((run) => run.status === 'completed').length;
-  console.log(`[eval] complete: ${completed}/${options.runs * options.arms.length} runs`);
+  const requested = options.arms.reduce((total, arm) => total + runsForArm(options, arm), 0);
+  console.log(`[eval] complete: ${completed}/${requested} runs`);
   console.log(`[eval] JSON: ${resolve(options.out)}`);
   console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
 }

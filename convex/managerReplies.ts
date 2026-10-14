@@ -12,10 +12,19 @@ import {
 } from '../src/work/manager-channel';
 import { appendEvent } from './eventLog';
 import { providerTsToMs } from '../src/work/provider-ts';
+import { slackEscaped } from '../src/surfaces/slack-markup';
 import { actionsOf, ledgerOf, verdictList } from './workLedger';
 import { requestThreadOf } from './decisionRequests';
-import { answerConflictInTransaction, standingConflictQuestions } from './managerQuestions';
-import { CONFLICT_CHOICES, type ConflictChoice } from '../src/agent/reorientation-words';
+import {
+  answerConflictInTransaction,
+  numberedConflictQuestions,
+  openConflictQuestions,
+} from './managerQuestions';
+import {
+  CONFLICT_CHOICES,
+  CONFLICT_QUESTION_CLOSED,
+  type ConflictChoice,
+} from '../src/agent/reorientation-words';
 import {
   approveActionsInTransaction,
   approvePlanInTransaction,
@@ -301,24 +310,41 @@ async function managerReplyNoticeAnchor(
 }
 
 /**
- * Answer a plan's open conflict question from the manager's reply in the DM (RM20 (a)): the first
- * question still open beside the plan, decided as the manager says, and acknowledged in the
- * request's thread. A plan with none open says so.
+ * What Day0 answers a bare `answer {code} B` while several of the plan's questions stand (17-C;
+ * section 7's draft, with the open questions named after it so the reply can be acted on from a
+ * message that showed no number): nothing is decided. A heading is a page's own words, so it is
+ * escaped as Slack asks and never read as a mention or a link.
+ */
+export function whichQuestionText(
+  id: string,
+  open: ReadonlyArray<{ readonly number: number; readonly heading: string }>,
+): string {
+  const example = open[1]?.number ?? open[0]?.number ?? 1;
+  // Each carries a comma of its own, so the list is set off by semicolons.
+  const named = open
+    .map((question) => `${question.number}, under “${slackEscaped(question.heading)}”`)
+    .join('; ');
+  return `Which one? This plan has ${open.length} questions open: answer with its number, for example “answer ${id} ${example} B”. They are: ${named}.`;
+}
+
+/**
+ * Answer one of a plan's conflict questions from the manager's reply in the DM or in the request's
+ * thread (RM20 (a); 17-C): the question the reply numbers, or the one that stands where the reply
+ * numbers none and exactly one does, decided as the manager says and acknowledged in the request's
+ * thread. A bare answer with several standing decides nothing and asks which; a number that names
+ * no standing question says what became of it.
  */
 async function answerFromChannel(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  request: {
-    readonly row: Doc<'workItems'>;
-    readonly decision: NonNullable<Doc<'workItems'>['decision']>;
-  },
+  request: { readonly row: Doc<'workItems'>; readonly decisionId: string },
   args: {
     userId: string;
     messageTs: string;
-    reply: { verb: 'answer'; id: string; choice: ConflictChoice };
+    reply: { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
   },
 ) {
-  const { row, decision } = request;
+  const { row, decisionId } = request;
   // A reply is answered once: its acknowledgement is keyed by the message, so a poll that delivers
   // the same message again finds it and answers no second question.
   const answered = await ctx.db
@@ -328,31 +354,95 @@ async function answerFromChannel(
     )
     .unique();
   if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
-  const [question] = await standingConflictQuestions(ctx, row._id);
+  const numbered = await numberedConflictQuestions(ctx, row._id);
+  const standing = numbered.filter((question) => question.standing);
   const notice = async (text: string) =>
     await queueManagerReplyNotice(ctx, {
       surfaceId: surface._id,
       workItemId: row._id,
-      decisionId: decision.id,
+      decisionId,
       messageTs: args.messageTs,
       kind: 'received',
       text,
     });
-  if (question === undefined) {
-    const notified = await notice(`Nothing is waiting on an answer for decision ${decision.id}.`);
-    return { status: 'ignored' as const, reason: 'no open question', notified };
+  const ignored = async (reason: string, text: string) => ({
+    status: 'ignored' as const,
+    reason,
+    notified: await notice(text),
+  });
+  const { number } = args.reply;
+  if (number === undefined && standing.length === 0) {
+    return await ignored(
+      'no open question',
+      `Nothing is waiting on an answer for decision ${decisionId}.`,
+    );
+  }
+  if (number === undefined && standing.length > 1) {
+    return await ignored(
+      'several questions open',
+      whichQuestionText(
+        decisionId,
+        standing.map((question) => ({
+          number: question.number,
+          heading: question.question.context.text,
+        })),
+      ),
+    );
+  }
+  const target =
+    number === undefined ? standing[0] : numbered.find((question) => question.number === number);
+  if (target === undefined) {
+    return await ignored(
+      'no such question',
+      numbered.length === 0
+        ? `Nothing is waiting on an answer for decision ${decisionId}.`
+        : `This plan has no question ${number}: its questions are numbered 1 to ${numbered.length}.`,
+    );
+  }
+  if (!target.standing) {
+    const { answer, closed } = target.question;
+    return await ignored(
+      'question no longer open',
+      answer !== undefined
+        ? `Question ${target.number} was already answered: ${slackEscaped(answer.text)}.`
+        : closed?.reason === 'redrafted'
+          ? // Its pages may still disagree: the plan it was asked beside is gone, and the plan that
+            // stands now asks its own.
+            `Question ${target.number} was closed when the plan was drafted again.`
+          : CONFLICT_QUESTION_CLOSED,
+    );
   }
   // The reply's sender was checked against the card's manager: the relation is decided in the
   // manager's name, as the Documentation tab's card decides it.
   const agent = await ctx.db.get(row.agentId);
-  const { text } = await answerConflictInTransaction(ctx, question, {
+  const { text } = await answerConflictInTransaction(ctx, target.question, {
     choice: args.reply.choice,
     via: 'slack',
     decidedBy: agent?.bossEmail,
   });
+  // Read again after the answer: naming one page right settles every other question about it.
+  const left = (await numberedConflictQuestions(ctx, row._id)).filter(
+    (question) => question.standing,
+  ).length;
+  // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
+  // "Both hold" gives no page away, and beside a finished item nothing waits at all (W17-R10).
+  const after =
+    row.state === 'completed' || row.state === 'cancelled'
+      ? 'Nothing of this item waits on the answer.'
+      : args.reply.choice === 'both'
+        ? 'Retry runs the steps that waited on it.'
+        : 'Retry runs the steps that waited on it, drafted again where they relied on the other page.';
   const notified = await notice(
-    // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
-    `Recorded: ${text}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
+    [
+      `Recorded${number === undefined ? '' : ` for question ${target.number}`}: ${slackEscaped(text)}. ${after}`,
+      ...(left === 0
+        ? []
+        : [
+            left === 1
+              ? '1 more question of this plan is still open.'
+              : `${left} more questions of this plan are still open.`,
+          ]),
+    ].join(' '),
   );
   return { status: 'answered' as const, notified };
 }
@@ -372,11 +462,12 @@ export const managerReplyArgs = {
       id: v.string(),
       reason: v.optional(v.string()),
     }),
-    /** The answer to a conflict's question in a plan's request (RM20 (a)). */
+    /** The answer to a conflict's question in a plan's request (RM20 (a)), by its number (17-C). */
     v.object({
       verb: v.literal('answer'),
       id: v.string(),
       choice: v.union(...CONFLICT_CHOICES.map((choice) => v.literal(choice))),
+      number: v.optional(v.number()),
     }),
   ),
 };
@@ -492,7 +583,41 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
   // An answer to a plan's conflict question names that plan's own request, decided or not: the
   // plan goes on meanwhile, so the answer can come after the approval (RM20 (a)).
   if (args.reply.verb === 'answer') {
-    if (!row?.decision) return await replacedReply();
+    if (!row?.decision) {
+      // A park cleared the plan's request from its item while its question was open, and kept it
+      // (17-C, C-3): its code still answers. A request a redraft replaced was never decided, and
+      // its questions closed with its plan, so it is answered as replaced.
+      const kept = await ctx.db
+        .query('replacedDecisionRequests')
+        .withIndex('by_agent_decision', (q) =>
+          q.eq('agentId', surface.agentId).eq('decisionId', args.reply.id),
+        )
+        .first();
+      const item =
+        kept?.kind === 'plan' &&
+        kept.decidedAt !== undefined &&
+        kept.surfaceSlug === surface.slug &&
+        kept.channel === surface.managerDmChannelId
+          ? await ctx.db.get(kept.workItemId)
+          : null;
+      // Only the questions asked beside the kept request's own plan are its to answer: one asked
+      // since it was kept belongs to a plan drafted after it, whose request has its own code.
+      const own =
+        kept === null || item === null
+          ? []
+          : (await openConflictQuestions(ctx, item._id)).filter(
+              (question) => question.askedAt <= kept.replacedAt,
+            );
+      if (kept !== null && item !== null && own.length > 0) {
+        return await answerFromChannel(
+          ctx,
+          surface,
+          { row: item, decisionId: kept.decisionId },
+          { ...args, reply: args.reply },
+        );
+      }
+      return await replacedReply();
+    }
     if (
       row.decision.kind !== 'plan' ||
       row.decision.surfaceSlug !== surface.slug ||
@@ -503,7 +628,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
     return await answerFromChannel(
       ctx,
       surface,
-      { row, decision: row.decision },
+      { row, decisionId: row.decision.id },
       {
         ...args,
         reply: args.reply,

@@ -244,7 +244,7 @@ export async function cloneArguments(
   }
   if (addresses.length === 0 || !addresses.every(isDiallablePrivateAddress)) {
     throw new Error(
-      `The git host ${host} answers with an address day0 never dials (loopback, link-local, ` +
+      `The git host ${host} answers with an address Day0 never dials (loopback, link-local, ` +
         'multicast or unspecified), listed or not.',
     );
   }
@@ -399,7 +399,7 @@ export class GitReader implements DocumentationReader {
       source,
       secret,
       async (checkout: string): Promise<ReadPageBatch> =>
-        await readMarkdownDirectoryBatch(source, checkout, cursor, limit),
+        await readMarkdownDirectoryBatch(source, checkout, cursor, limit, { datedBySource: false }),
     );
   }
 

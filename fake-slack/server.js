@@ -651,8 +651,16 @@ const server = createServer(async (request, response) => {
     const person = people.get(email.trim().toLowerCase());
     return json(response, 200, {
       ok: true,
+      // A listed person carries the address asked, as Slack's own answer does (profile.email);
+      // the one manager, answered for every other address, carries none, so the people lookup,
+      // which compares it, takes the manager for nobody else (wave 17, 17-FX; the joins' W1d).
       user: person
-        ? { id: person.id, real_name: person.name, deleted: false }
+        ? {
+            id: person.id,
+            real_name: person.name,
+            deleted: false,
+            profile: { email: email.trim().toLowerCase() },
+          }
         : { id: 'U_DAY0_MANAGER', real_name: 'Day0 operator', deleted: false },
     });
   }
@@ -704,9 +712,28 @@ const server = createServer(async (request, response) => {
     }
     const ts = given.get('ts');
     if (!ts) return json(response, 200, { ok: false, error: 'invalid_arguments' });
+    // The parent first, as Slack always gives it, then what the manager typed under it to this
+    // bot's app, oldest first, after `oldest` when given (17-C: an answer typed in a request's
+    // thread).
+    const after = Number(given.get('oldest') || 0);
+    const replies = managerMessages
+      .filter(
+        (message) =>
+          message.appId === bot.appId &&
+          message.channel === given.get('channel') &&
+          message.threadTs === ts &&
+          Number(message.ts) > after,
+      )
+      .map((message) => ({
+        type: 'message',
+        user: message.user,
+        text: message.text,
+        ts: message.ts,
+        thread_ts: ts,
+      }));
     return json(response, 200, {
       ok: true,
-      messages: [{ type: 'message', user: 'U_DAY0_MANAGER', ts, thread_ts: ts }],
+      messages: [{ type: 'message', user: 'U_DAY0_MANAGER', ts, thread_ts: ts }, ...replies],
       has_more: false,
     });
   }

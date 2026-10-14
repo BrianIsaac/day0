@@ -49,7 +49,7 @@ Who receives what. On the hosted demo, the sign-in email goes to Clerk, the page
 
 **Start here** · [Live demo](#live-demo) · [Disclosures](#disclosures) · [Quick start](#quick-start) · [What is unusual about it](#what-is-unusual-about-it) · [One full run, from the first page](#one-full-run-from-the-first-page) · [What this is, and what it is not](#what-this-is-and-what-it-is-not) · [Local dev - three ways to run it](#local-dev)
 
-**Run it** · [Hosted demo](#hosted-demo) · [Your own hosted copy](#your-own-hosted-copy) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Backup, restore and upgrade](#backup-restore-and-upgrade) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
+**Run it** · [Hosted demo](#hosted-demo) · [Your own hosted copy](#your-own-hosted-copy) · [Local, cloud model](#local-cloud-model) · [Local, local model](#local-local-model) · [Real mode, what both local ways are](#real-mode) · [Installing at a customer](#installing-at-a-customer) · [Backup, restore and upgrade](#backup-restore-and-upgrade) · [Convex cloud + Clerk](#convex-cloud--clerk) · [Your own model server](#using-a-model-server-you-already-have)
 
 **Configure it** · [Environment](#environment) · [Ports](#ports-host-side-and-container-side) · [Phones and tunnels](#testing-from-a-phone-and-tunnels) · [ElevenLabs voice](#elevenlabs-agent-setup) · [The local skill sandbox](#the-local-skill-sandbox) · [The GPU](#the-gpu-is-opt-out-not-opt-in)
 
@@ -446,9 +446,17 @@ Both local ways are real mode: link your documentation and connect the systems i
 
 It is deliberately restricted to a machine whose callers are known. `DAY0_SURFACE_MODE=real` throws unless the deployment is local no-auth development (`NEXT_PUBLIC_DEV_NO_AUTH=true` under `NODE_ENV=development`), or `DAY0_PROFILE=customer-local` with the customer's OIDC issuer configured (`DAY0_OIDC_ISSUER` and `DAY0_OIDC_AUDIENCE`); either way it throws when a Vercel marker is set, so the mode that can touch live systems cannot be reached on the hosted demo's platform at all (`src/lib/surface-mode.ts`).
 
+### Installing at a customer
+
+A customer install is real mode under the customer's own sign-in, behind the customer's own proxies. It starts at one runbook, [Installing Day0 at a customer](docs/running/install.md): what to ask the customer's IT before the day, `./setup.sh install` to its last check, and the record it leaves behind. The two halves it runs are the next two sections. Three pages go with it, each written from what a test bed ran on 13 October 2026:
+
+- [Day0 behind your reverse proxy](docs/running/proxy.md): the two https origins the proxy must carry, one for the app and one for the backend, whose live connection is a WebSocket; a configuration for Caddy and one for nginx; and the two rows of `pnpm check:setup` that prove yours, on which `./setup.sh install` ends. `pnpm start` listens on `127.0.0.1`, so the app's plain port is not on the network beside the proxy; `DAY0_APP_HOST` names another address for a proxy on another machine. Before v0.21.0 it listened on every interface.
+- [The way out](docs/running/egress.md): every host Day0 reaches, by what needs it, which `pnpm check:setup` prints for your configuration; and, for a network whose only way out is an HTTP proxy, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` in `.env.local`, which the services, the app, the setup and the checks all take from there. A git documentation source on a host you list, the Notion component, the browser component and the bundled model service are not given the proxy, and the page says what each needs instead.
+- [Upgrading Day0, and the way back](docs/running/upgrade-and-rollback.md): the upgrade's steps, the backend image built at the customer's site, and the one command that goes back.
+
 ### The company sign-in (customer-local)
 
-Installed at a customer, Day0 signs people in through the customer's own identity provider, never Clerk or the local key: `DAY0_PROFILE=customer-local`. It is an install kit we run with the customer's IT, not a self-service feature, and the first install runs `next start` behind the customer's https proxy. On an installation `./setup.sh --route ...` made:
+Installed at a customer, Day0 signs people in through the customer's own identity provider, never Clerk or the local key: `DAY0_PROFILE=customer-local`. It is an install kit we run with the customer's IT, not a self-service feature, and the first install runs `pnpm start` behind the customer's https proxy. On an installation `./setup.sh --route ...` made:
 
 ```bash
 ./setup.sh sign-in --provider entra     # or okta, or google; asks for what no flag names
@@ -574,6 +582,10 @@ Closing actions carry a different approval identity from phase one, so a delayed
 
 Run one Day0 deployment per Slack workspace and per Linear team. Two deployments on one Slack bot or one Linear team read the same mentions and the same tickets, each answers them, and nothing on either side says which copy is real. A deployment takes only the Slack mentions written after its agent was deployed, so one started later does not answer a channel's history again, but every new ask and every open ticket would still be worked twice.
 
+### Fifty employees or fewer
+
+Day0 is built for a manager of fifty employees or fewer, and its cards, figures and exports were run on a bed of fifty-one. One part stops at fifty: a company-wide working agreement is checked against each employee's charter only while you have fifty employees or fewer. Past that, a company-wide agreement a new charter would carry is held for that employee as not checked, and Check now on it says why, until you have fifty or fewer again.
+
 ### The company bed
 
 The company bed runs three digital employees in one synthetic company, Kestrel Supply Co.: revenue operations, finance close and a logistics desk. Everything about the company that can live in a repository is in `bed/company/`; nothing there is a secret, and every page says the company is synthetic.
@@ -650,6 +662,10 @@ These are the real-mode forms. A mock deployment, the seeded office `pnpm setup:
 2. **The functions, the migrations, the stamp.** `npx convex dev --once` pushes the functions before the env, so a push the new schema refuses leaves the old functions serving with the env they had. A volume nothing was ever pushed to (a first run that stopped before its push) has no tables, and takes the env first as a new one does, since the auth config is read from the deployment's env at the push. `npx convex run migrations:runPending` then runs every migration the release ships, a bounded page per transaction, resuming where an interrupted run stopped; `npx convex run migrations:status` says how far each has got. `migrations:recordRelease` stamps the release as soon as they finish, and refuses while any is unfinished, so migrated rows never carry the release before theirs whatever fails after.
 3. **The env, then the restart.** `pnpm sync:env`, then `pnpm convex:restart` once everything before it succeeded.
 
+**The way back.** An upgrade ends on the one command that undoes it, with the backup it took filled in, and the release and commit the rows were at: `The way back: ./setup.sh restore <the backup> from a checkout of v<the previous release> (commit <its commit>). Never start the old image over this volume.` Going back is that restore, run from a checkout of the previous tag. Starting the previous backend image on the upgraded volume is not a way back and nothing refuses it, and the previous release's functions are refused over rows the new release wrote. [Upgrading Day0, and the way back](docs/running/upgrade-and-rollback.md) has the steps, what a restore refuses, and how long each took on a bed.
+
+**The install record.** `./setup.sh install`, `upgrade`, `backup` and `restore` each add a dated section to `~/day0-install/<project>/install-record-<date>.md` (`--record <dir>` elsewhere): the release and commit, the backend image by its id and by the pinned backend it was built from, the public addresses, each backup's path and checksum with the release its rows were at, and the way back from each upgrade. It holds no secret; a backup it names does.
+
 **The scheduled jobs are paused across it.** From the moment its backend starts, a real-mode deployment polls your systems for work every five minutes and the manager's replies every minute, posts digests, re-probes surfaces and syncs documentation. The upgrade pauses every one of those jobs before it pushes anything, by setting `DAY0_CRONS_PAUSED` on the deployment: before its backup when the backend is already running, so the backup's restart starts it paused, and otherwise once the backend is up and the release check has passed; an upgrade the release check refuses leaves them running. Once `pnpm check:setup` passes it removes the value and restarts the backend, because a module keeps the env it was first evaluated with. A paused job logs one line and reads and writes nothing, so the first poll after the pause starts from where the last one stopped. If the upgrade stops part way, the value stays on the deployment and the upgrade says so, but a backend it did not restart keeps the env its modules started with and may still run the jobs: `./setup.sh pause` takes the pause over as your own and restarts the backend to hold them, and an upgrade after that leaves it until `./setup.sh unpause`; instead, run the upgrade again, which lifts its pause when it completes. `./setup.sh pause` and `./setup.sh unpause` do the same by hand with the stack up, each restarting the backend, and an upgrade leaves a pause set by hand as it found it. A backup the upgrade took carries its pause, so restoring it lifts that pause, the restored deployment being from before the upgrade. Two limits: a stopped stack's jobs run from the moment it starts until the push replaces its functions, since the running release's modules keep the env they started with, so pause before you stop when that matters; and a step already under way when the pause lands finishes the step it is on and holds before the next, a documentation sync once its current batch is read, each going on from where it stopped after the pause. Releases up to v0.8.0 do not read the value, so an upgrade through them runs their jobs after each push.
 
 **A protected project.** The maintainers' own stacks (`day0` and the demo bed's `day0-demo-7c65e7`) hold real runs, so the setup starts, stops, upgrades or removes one only from the primary checkout whose own `.env.local` names it: a linked worktree, a copy with a borrowed env file and a fresh clone are all refused, and the upgrade refuses before it backs anything up. Upgrade one from that checkout, one tag at a time: check out the tag there, run `./setup.sh upgrade`, then check out your branch again, and repeat for the next tag.
@@ -723,6 +739,8 @@ Copy `.env.example` to `.env.local` and fill in:
 | `CONVEX_BIND_ADDR`, `CONVEX_PORT`, `CONVEX_SITE_PROXY_PORT`, `CONVEX_DASHBOARD_PORT`, `MODEL_PORT` | Host side of the self-hosted stack. See [Ports](#ports-host-side-and-container-side) |
 | `MODEL_GPU`, `MODEL_GPU_COUNT` | Whether the bundled model service reserves a GPU. `auto` (default) uses one where there is one. See [The GPU is opt-out, not opt-in](#the-gpu-is-opt-out-not-opt-in) |
 | `NEXT_PUBLIC_DEV_NO_AUTH`, `DEV_NO_AUTH_SECRET`, `DEV_NO_AUTH_SIGNING_KEY`, `DEV_NO_AUTH_JWKS` | No-auth dev mode. The last three are written by `pnpm dev:no-auth-key`, never by hand |
+| `DAY0_APP_PORT`, `DAY0_APP_HOST` | Where the app listens, outside Docker. The port is 3000 unless set (`PORT` in the shell wins), under `pnpm dev` and `pnpm start` alike. The address is this machine only unless set: `localhost` under `pnpm dev`, `127.0.0.1` under `pnpm start`, which a reverse proxy on the machine forwards to. Name another address only for a proxy on another machine. See [Day0 behind your reverse proxy](docs/running/proxy.md) |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `NODE_USE_ENV_PROXY` | The way out through your HTTP proxy, for a local install on a network with no direct route to the internet; empty means none. `NO_PROXY` lists your own hosts the proxy does not serve, and Day0's own services and this machine are kept out of it whether listed or not. `NODE_USE_ENV_PROXY` is Node's switch for reading the three, on wherever `HTTPS_PROXY` is set. Read by `docker compose` for the backend, the Slack socket bridge, the redactor and Nango, by `pnpm start` for the app, and by the setup and the three checks, which start themselves with them. Node 22.21.0 or later. A hosted copy reads none of them. See [The way out](docs/running/egress.md) |
 | `COMPOSE_PROJECT_NAME` | The Compose project the stack runs as. Unset, Compose names it after the directory you cloned into and `pnpm check:setup` looks for one called `day0` - so set it whenever the directory is not `day0`. See [Ports](#ports-host-side-and-container-side) |
 | `DAY0_SURFACE_MODE` | `mock` (default) drives the seeded mock office; `real` lets the agent act on your own systems through the connections your documentation records. See [Real mode](#real-mode) |
 | `DAY0_DOCS_HOST_DIR`, `DAY0_DOCS_ROOT` | The documentation folder, mounted read-only into the backend. The host path is Compose's (`./docs-local` by default, created empty for you); `/docs` is what Convex actions see. Real mode only |
@@ -734,7 +752,7 @@ Copy `.env.example` to `.env.local` and fill in:
 | `DAY0_PUBLIC_URL` | The https origin a provider redirects a finished OAuth install back to. Needed only to provision a dedicated Slack app; unset, Slack is connected with a shared bot token instead |
 | `DAY0_PROFILE`, `NEXT_PUBLIC_DAY0_PROFILE`, `DAY0_OIDC_ISSUER`, `DAY0_OIDC_AUDIENCE`, `DAY0_OIDC_CLIENT_SECRET`, `DAY0_OIDC_ALLOWED_DOMAINS`, `DAY0_SESSION_SECRET`, `DAY0_OIDC_EMAIL_TRUSTED` | The company sign-in at a customer, written by `./setup.sh sign-in`. The audience is the app registration's client id; the client secret and the session secret stay on this machine. `DAY0_PUBLIC_URL` is then the https origin people reach Day0 on. See [The company sign-in](#the-company-sign-in-customer-local) |
 
-Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`. ElevenLabs and Clerk keys stay local - only Next.js reads those.
+Convex Node actions read their settings from the Convex deployment env, which is a separate store from `.env.local`: the model keys (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_JSON_MODE`), `DAYTONA_API_KEY`, `SKILL_SANDBOX_SOCKET` and every real-mode `DAY0_*` value bar `DAY0_DOCS_HOST_DIR`, which is Compose's alone. `./scripts/sync-convex-env.sh` pushes exactly that list and is the only thing that should write it; it also pushes `OPENAI_BASE_URL` under the deployment's name for it, taking the value from `CONVEX_OPENAI_BASE_URL`, and, where `.env.local` names a proxy, `NO_PROXY` (Day0's own service names, then yours), since a Node action reads that list from the deployment and never from the container ([The way out](docs/running/egress.md)). ElevenLabs and Clerk keys stay local - only Next.js reads those.
 
 **Deployment env is read once, when a function module is first evaluated.** A backend that has already run an action keeps the values it started with, so changing them afterwards leaves `npx convex env list` reporting the new value while the running action still uses the old one. Push the env *before* the first function push, and if you change it later restart the backend: `pnpm convex:restart` self-hosted, or on Convex cloud push the functions again from a clean checkout of the release the deployment is stamped at, `npx convex deploy --typecheck enable --env-file <file>`, the file naming the production deployment as in [the upgrade](#backup-restore-and-upgrade) above; `./setup.sh cloud pause` and `unpause` push this way after changing the pause.
 
@@ -1058,7 +1076,7 @@ Day0 is measured by a controlled comparison: the same model, the same non-zero t
 
 The self-hosted 8B arms exercise the OpenAI-compatible chat-completions route, while the frontier Terra and Sol arms exercise the hosted Responses API; both arms now complete tool-calling work on that fixed route. Day0 leads the ordinary arm on task pass, a-priori procedure adherence, prohibited-action freedom and out-of-scope pass in all three beds, but it does not pass every task-run (44/45 on each hosted model), and this controlled mock-office comparison does not establish universal performance. The ordinary arm is the same model with no onboarding. A fourth frozen bed, `GLM 5.3 Flash` through Featherless, is on the [evaluation page](evaluation/README.md): Day0 15/15 and 44/45 against the ordinary arm's 11/15 and 34/45.
 
-**Caveat (27 September 2026, decision N16).** These figures were graded before five task-set mechanisms were fixed and are not re-graded, so some passes may have been met by fixed text rather than the agent's own reasoning: a requester label shown only to Day0 was one of its own task's reason words; the fixed Day-1 transcript, given only to Day0, carried out-of-scope reason words and the citation titles; three product strings meet reason words on Day0's skips and deferrals; five tasks left `slack.postMessage` off their prohibited tools, so an extra post passed on them; and two documentation tasks carried their own citation or required words in text both arms see. No published number changes; the fixes land for the next bed, and the [evaluation page](evaluation/README.md#evidence-status) states each one.
+**Caveat (27 September 2026, decision N16).** These figures were graded before five task-set mechanisms were fixed and are not re-graded, so some passes may have been met by fixed text rather than the agent's own reasoning: a requester label shown only to Day0 was one of its own task's reason words; the fixed Day-1 transcript, given only to Day0, carried out-of-scope reason words and the citation titles; three product strings meet reason words on Day0's skips and deferrals; five tasks left `slack.postMessage` off their prohibited tools, so an extra post passed on them; and two documentation tasks carried their own citation or required words in text both arms see. No published number changes; the fixes land for the next bed, and the [evaluation page](evaluation/README.md#evidence-status) states each one. The comparison has been graded again since the fixes on fresh GLM 5.3 Flash beds, most recently on 13 October 2026 at v0.20.0 (Day0 three runs, the ordinary agent six, 135 rows) and on 14 October 2026 on the code of the v0.21.0 release commit (six runs each, 180 rows); the table above is not re-scored, and the [evaluation page](evaluation/README.md#evidence-status) has every bed.
 
 Every figure this README quotes comes from a file in this repository or from a run of the product, and each has a command behind it, a fresh run or a re-grade of a run's retained state that calls no model, except the four frozen comparison beds, whose backends were not retained and whose figures stand as recorded. The commands and their setup are in [Evaluation quick start](#evaluation-quick-start) below.
 
@@ -1237,7 +1255,7 @@ Day0 从更早的一步开始。它在空白状态下部署，之后形成的一
 
 **从这里开始** · [在线演示](#在线演示) · [披露](#披露) · [快速开始](#快速开始) · [它的特别之处](#它的特别之处) · [一次完整运行，从第一个页面开始](#一次完整运行从第一个页面开始) · [它是什么，以及不是什么](#它是什么以及不是什么) · [本地开发：三种运行方式](#local-dev)
 
-**运行** · [托管演示](#托管演示) · [你自己的托管副本](#你自己的托管副本) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [备份、恢复与升级](#备份恢复与升级) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
+**运行** · [托管演示](#托管演示) · [你自己的托管副本](#你自己的托管副本) · [本地运行，云端模型](#本地运行云端模型) · [本地运行，本地模型](#本地运行本地模型) · [真实模式：两种本地方式的共同基础](#真实模式) · [在客户处安装](#在客户处安装) · [备份、恢复与升级](#备份恢复与升级) · [Convex cloud + Clerk](#convex-cloud--clerk) · [使用已有的模型服务器](#using-a-model-server-you-already-have)
 
 **配置** · [环境变量](#environment) · [端口](#ports-host-side-and-container-side) · [手机与隧道](#testing-from-a-phone-and-tunnels) · [ElevenLabs 语音](#elevenlabs-agent-setup) · [本地技能沙箱](#本地技能沙箱) · [GPU](#gpu-默认启用而非默认停用)
 
@@ -1591,9 +1609,17 @@ pnpm convex:down                 # the backend; the data volume stays
 
 当环境中存在 `NEXT_PUBLIC_DEV_NO_AUTH=true` 时，`pnpm build` 会拒绝生产构建。构建前必须取消该值；如果它进入 Vercel 配置，构建失败是预期的安全保护。
 
+#### 在客户处安装
+
+在客户处的安装就是真实模式：使用客户自己的登录，位于客户自己的代理之后。它从一份操作手册开始，[在客户处安装 Day0](docs/running/install.md)：安装日之前需要向客户 IT 确认什么，`./setup.sh install` 一直运行到最后一项检查，以及它留下的安装记录。它运行的两部分就是下面两节。另有三页文档与之配套，每一页都依据 2026 年 10 月 13 日测试环境上的实际运行写成：
+
+- [反向代理之后的 Day0](docs/running/proxy.md)：代理必须承载的两个 https 源，一个给应用，一个给 backend（其实时连接是 WebSocket）；Caddy 与 nginx 的配置各一份；以及 `pnpm check:setup` 中验证你的代理的两行，`./setup.sh install` 以它们收尾。`pnpm start` 监听 `127.0.0.1`，因此应用的明文端口不会与代理一起暴露在网络上；代理在另一台机器上时，用 `DAY0_APP_HOST` 指定其他地址。v0.21.0 之前它监听所有网卡。
+- [出站通道](docs/running/egress.md)：Day0 访问的每一个主机及其用途，`pnpm check:setup` 会按你的配置打印这份清单；如果网络只能经 HTTP 代理出站，在 `.env.local` 中设置 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`，各服务、应用、setup 和各项检查都从那里读取。你自行列出主机上的 git 文档源、Notion 组件、浏览器组件以及内置的模型服务不会得到代理配置，该页说明它们各自需要什么。
+- [升级 Day0 与回退](docs/running/upgrade-and-rollback.md)：升级的步骤、在客户现场构建的 backend 镜像，以及回退所用的那一条命令。
+
 #### 公司登录（customer-local）
 
-在客户处安装时，Day0 通过客户自己的身份提供方让人员登录，绝不使用 Clerk 或本机密钥：`DAY0_PROFILE=customer-local`。这是一个由我们与客户 IT 一起执行的安装套件，而不是自助功能；首次安装在客户的 https 反向代理之后直接运行 `next start`。在由 `./setup.sh --route ...` 完成的安装上：
+在客户处安装时，Day0 通过客户自己的身份提供方让人员登录，绝不使用 Clerk 或本机密钥：`DAY0_PROFILE=customer-local`。这是一个由我们与客户 IT 一起执行的安装套件，而不是自助功能；首次安装在客户的 https 反向代理之后运行 `pnpm start`。在由 `./setup.sh --route ...` 完成的安装上：
 
 ```bash
 ./setup.sh sign-in --provider entra     # 或 okta、google；未由参数给出的内容会逐项询问
@@ -1701,6 +1727,10 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 工作章程修订仅重新准入因范围或质量匹配而跳过的事项；低价值事项和正在运行的已批准计划保持原状。收尾阶段使用不同于第一阶段的批准标识，延迟的旧批准不能批准新 payload；provider 幂等键仍沿用执行标识。参数名修复保留 payload 值及已有效的绑定，并重新执行收尾检查。受阻运行仍可在现行授权下发送仅含求助的 manager DM。Slack 的计划批准不携带问题答案；需要在工作章程或计划卡片作答，旧卡片与当前工作章程答案冲突时必须刷新。操作分类只覆盖演示流程，明确只读的请求使用独立 read 类型；它并非通用操作分类器。
 
+#### 五十名员工或更少
+
+Day0 面向管理五十名或更少员工的经理，其卡片、数字与导出已在五十一名员工的测试床上跑过。只有一处止于五十：公司范围的工作约定，只在你拥有五十名或更少员工时，才会对照每位员工的章程进行检查。超过五十名时，新章程会带上的公司范围约定对该员工保持为未检查，在其上点击 Check now 会说明原因，直到你的员工回到五十名或更少。
+
 #### 每个 workspace 一个部署
 
 每个 Slack workspace 和每个 Linear team 只运行一个 Day0 部署。两个部署共用一个 Slack bot 或一个 Linear team 时，会读取同样的提及和同样的工单，各自作答，任何一方都无法说明哪一份才是真的。一个部署只接收其 Agent 部署之后写下的 Slack 提及，所以稍后启动的部署不会再次回答频道里的历史消息；但此后每一个新请求、每一张未关闭的工单仍会被处理两次。
@@ -1781,6 +1811,10 @@ pnpm convex:down --profile docs-notion --profile browser --profile demo
 2. **functions、迁移、记录版本。** `npx convex dev --once` 先于 env 推送 functions，因此新 schema 拒绝的 push 会让旧 functions 连同原有 env 继续服务。从未推送过任何内容的数据卷（首次运行在推送前停止）没有任何表，会像新数据卷一样先推送 env，因为 auth config 在推送时读取 deployment 的 env。随后 `npx convex run migrations:runPending` 运行本版本附带的全部迁移，每个事务处理有界的一页，中断后从停下处继续；`npx convex run migrations:status` 显示各迁移的进度。迁移一完成，`migrations:recordRelease` 就记录版本；只要还有迁移未完成它就拒绝，因此无论之后哪一步失败，已迁移的数据都不会仍标着上一个版本。
 3. **env，然后重启。** `pnpm sync:env`，此前各步都成功后 `pnpm convex:restart`。
 
+**回退。** 升级结束时会打印撤销它的那一条命令，其中已填入本次升级所做的备份，以及数据行当时所处的版本与 commit：`The way back: ./setup.sh restore <备份> from a checkout of v<上一个版本> (commit <其 commit>). Never start the old image over this volume.` 回退就是在上一个 tag 的 checkout 中执行这次 restore。在升级后的数据卷上启动旧的 backend 镜像不是回退，而且不会被拒绝；旧版本的 functions 则会因新版本写入的数据行而被拒绝推送。[升级 Day0 与回退](docs/running/upgrade-and-rollback.md) 给出了步骤、restore 会拒绝什么，以及各步在测试环境上的耗时。
+
+**安装记录。** `./setup.sh install`、`upgrade`、`backup` 与 `restore` 各自向 `~/day0-install/<project>/install-record-<date>.md`（或 `--record <dir>` 指定的位置）追加一个带日期的小节：版本与 commit、backend 镜像的 id 及其所基于的固定 backend、公开地址、每个备份的路径与校验和及其数据行所处的版本，以及每次升级的回退命令。记录本身不含任何密钥；它所指向的备份则包含。
+
 **升级期间定时任务处于暂停状态。** real mode 的 deployment 从 backend 启动那一刻起，每五分钟轮询你的系统获取工作、每分钟轮询经理的回复，并发送摘要、重新探测 surface、同步文档。升级在推送任何内容之前，通过在 deployment 上设置 `DAY0_CRONS_PAUSED` 暂停所有这些任务：backend 已在运行时，在备份之前设置，备份的重启使它以暂停状态启动；否则在 backend 启动且版本检查通过之后设置；被版本检查拒绝的升级不会暂停它们。`pnpm check:setup` 通过后，升级删除该值并重启 backend，因为 module 会保留首次求值时的 env。被暂停的任务只记录一行日志，不读取也不写入任何内容，因此暂停后的第一次轮询从上一次停下的地方继续。升级中途停止时，该值保留在 deployment 上，升级会说明这一点；但升级未重启的 backend 保留其 module 启动时的 env，仍可能运行这些任务：`./setup.sh pause` 把这个暂停接管为你自己的并重启 backend 以暂停它们，此后的升级会保留它，直到 `./setup.sh unpause`；或者改为再次运行升级，完成时会解除它的暂停。`./setup.sh pause` 和 `./setup.sh unpause` 在 stack 运行时手动完成同样的操作，每次都会重启 backend，升级不会改动手动设置的暂停。升级所做的备份带着它的暂停，因此恢复该备份时会解除这个暂停，因为恢复出的 deployment 处于升级之前。两点限制：已停止的 stack 从启动那一刻起运行它的任务，直到推送替换它的 functions 为止，因为正在运行的版本的 module 保留启动时的 env，因此在意这一点时请先 pause 再 stop；暂停生效时已在进行中的步骤会完成当前这一步，并在下一步之前停住，文档同步则在读完当前这一批之后停住，暂停解除后各自从停下的地方继续。v0.8.0 及更早的版本不读取该值，因此经由这些版本的升级会在每次推送后运行它们的任务。
 
 **受保护的项目。** 维护者自己的 stack（`day0` 以及演示环境的 `day0-demo-7c65e7`）保存着真实运行的数据，因此 setup 只从主 checkout（其自身的 `.env.local` 指定该项目）启动、停止、升级或删除它们：linked worktree、借用 env 文件的副本和全新克隆都会被拒绝，升级会在备份任何内容之前拒绝。请在那个 checkout 中逐个 tag 升级：在那里 check out 该 tag，运行 `./setup.sh upgrade`，然后 check out 回你的分支，对下一个 tag 重复。
@@ -1822,7 +1856,7 @@ Day0 通过一项受控比较来衡量：同一模型、同一非零 temperature
 
 自托管 8B 的两个 arm 使用 OpenAI-compatible chat-completions 路由，前沿模型 Terra 与 Sol 的两个 arm 使用托管 Responses API；修复路由后，两边都能完成工具调用。三个环境中，Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上都领先普通 arm；但 Day0 并非每个 task-run 都通过（两个托管模型均为 44/45），这项受控 mock-office 比较也不能证明普遍性能。普通 arm 使用同一模型，只是不经过入职流程。第四个冻结评测环境（经 Featherless 的 `GLM 5.3 Flash`）见[评测页面](evaluation/README.md)：Day0 为 15/15 与 44/45，普通 arm 为 11/15 与 34/45。
 
-**注意（2026 年 9 月 27 日，决定 N16）。** 上述数字在五项任务集机制修正之前评分，且未重新评分，因此部分通过可能由固定文本而非 Agent 自身的推理满足：仅向 Day0 显示的请求方标签本身是该任务的原因词；仅提供给 Day0 的固定 Day-1 记录含超范围原因词与引用标题；三个产品字符串命中 Day0 跳过与延后时的原因词；五项任务未把 `slack.postMessage` 列为禁止工具，多发一条消息也能通过；两项文档任务在两个 arm 都能看到的文本中自带引用或必需词。已发布的数字均不改变；修正将用于下一个评测环境，[评测页面](evaluation/README.md#evidence-status)逐项说明。
+**注意（2026 年 9 月 27 日，决定 N16）。** 上述数字在五项任务集机制修正之前评分，且未重新评分，因此部分通过可能由固定文本而非 Agent 自身的推理满足：仅向 Day0 显示的请求方标签本身是该任务的原因词；仅提供给 Day0 的固定 Day-1 记录含超范围原因词与引用标题；三个产品字符串命中 Day0 跳过与延后时的原因词；五项任务未把 `slack.postMessage` 列为禁止工具，多发一条消息也能通过；两项文档任务在两个 arm 都能看到的文本中自带引用或必需词。已发布的数字均不改变；修正将用于下一个评测环境，[评测页面](evaluation/README.md#evidence-status)逐项说明。修正之后，比较已在全新的 GLM 5.3 Flash 环境上多次重新评分，最近两次为 2026 年 10 月 13 日于 v0.20.0（Day0 三次、普通 Agent 六次，共 135 行）与 2026 年 10 月 14 日于 v0.21.0 发布提交的代码（两者各六次，共 180 行）；上表数字未重新评分，各环境均见[评测页面](evaluation/README.md#evidence-status)。
 
 本文件引用的每个数字都来自本仓库中的某个文件或产品的一次运行，并且都有对应的再生成命令（重新运行，或对某次运行保留的状态重新评分、不调用模型），四个冻结的比较评测环境除外：它们的后端未保留，数字按记录保留。命令及其准备步骤见下文[评测快速开始](#评测快速开始)。
 

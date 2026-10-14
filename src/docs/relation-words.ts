@@ -88,3 +88,27 @@ export function differingFigures(figures: { readonly from: string; readonly to: 
     to: differing.map((index) => to[index]).join(' '),
   };
 }
+
+/**
+ * What the Documentation tab says under the relations it draws when its read left some out
+ * (W17-R9, D-10 (a); flagged): "Showing the newest {drawn} relations to answer, and {n} more not
+ * shown: the next are drawn as you answer these.", "{n} or more" where more may stand past the
+ * read, and nothing when it drew them all. A card answered leaves the tab, and the read draws the
+ * next.
+ *
+ * @param drawn - The proposals the tab draws.
+ * @param notShown - What the read says it left out.
+ * @returns The line, or undefined when nothing was left out.
+ */
+export function relationsNotShownWords(
+  drawn: number,
+  notShown: { readonly proposals: number; readonly atLeast: boolean },
+): string | undefined {
+  if (notShown.proposals === 0 && !notShown.atLeast) return undefined;
+  const more =
+    notShown.proposals === 0
+      ? 'more'
+      : `${notShown.proposals}${notShown.atLeast ? ' or more' : ' more'}`;
+  const relations = drawn === 1 ? 'relation' : 'relations';
+  return `Showing the newest ${drawn} ${relations} to answer, and ${more} not shown: the next are drawn as you answer these.`;
+}

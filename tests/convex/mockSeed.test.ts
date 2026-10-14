@@ -2,7 +2,7 @@ import { convexTest } from 'convex-test';
 import { describe, expect, it } from 'vitest';
 import { internal } from '../../convex/_generated/api';
 import schema from '../../convex/schema';
-import { OFFICE_ASKS } from '../../src/work/office-asks';
+import { OFFICE_ASKS, TEAM_ASKS } from '../../src/work/office-asks';
 import { allConvexModules } from './all-modules';
 
 /** Every string inside a value, with where it sits. */
@@ -107,6 +107,11 @@ describe('the seeded mock office', (): void => {
     const doc = (slug: string) => seeded.docs.find((row) => row.slug === slug);
     for (const slug of ['it-access', 'office-supplies', 'billing-replies']) {
       expect(doc(slug)?.category, slug).toBe('team-doc');
+    }
+    // Every ask names the team document that answers it, and the office seeds that document
+    // (17-FW: the generator shows a role only the documents whose asks reach it).
+    for (const ask of [...OFFICE_ASKS, ...TEAM_ASKS]) {
+      expect(doc(ask.answeredBy)?.category, ask.threadKey).toBe('team-doc');
     }
     // Each ask's answer is in a document the office holds, so a run can finish it from there.
     expect(doc('it-access')?.body).toContain('Sign out of the drive app');

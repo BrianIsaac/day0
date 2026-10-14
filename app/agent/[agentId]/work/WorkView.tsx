@@ -127,7 +127,7 @@ export function WorkView() {
         agentId={agentId}
         workItems={workItems ?? []}
         openQuestions={openQuestions ?? []}
-        conflictQuestions={conflictQuestions ?? []}
+        conflictQuestions={conflictQuestions}
         heldByCards={heldByCards}
         surfaces={surfaces}
         registeredSkillCount={(registeredSkills ?? []).length}

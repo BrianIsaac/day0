@@ -594,9 +594,55 @@ function managerSentencesAsSaid(answers: Partial<Record<DayOneTopic, string>>): 
     .filter((sentence: string): boolean => sentence.length > 0 && !sentence.endsWith('?'));
 }
 
+/**
+ * The verbs whose third person is not the first person with an "s" (W17-R19: "unless I have
+ * approved it" was written "unless the manager have approved it").
+ */
+const THIRD_PERSON_IRREGULAR: Readonly<Record<string, string>> = {
+  am: 'is',
+  are: 'is',
+  have: 'has',
+  do: 'does',
+  "haven't": "hasn't",
+  'haven\u2019t': 'hasn\u2019t',
+  "don't": "doesn't",
+  'don\u2019t': 'doesn\u2019t',
+  "aren't": "isn't",
+  'aren\u2019t': 'isn\u2019t',
+};
+
+/**
+ * The words after "I" that read alike in every person: the modals, a past tense, and a
+ * negative's contraction other than the irregular ones.
+ */
+const SAME_IN_EVERY_PERSON =
+  /^(?:can|could|will|would|shall|should|may|might|must|was|were|did|had|said|sent|told|got|made|took|gave|came|went|saw|knew|thought|found|left|kept|held|brought|bought|paid|ran|began|wrote|spoke|met|heard|\w+ed|\w+n['\u2019]t)$/i;
+
+/** A verb said after "I", as it is said after "the manager". */
+function thirdPersonVerb(verb: string): string {
+  const irregular = THIRD_PERSON_IRREGULAR[verb.toLowerCase()];
+  if (irregular !== undefined) return irregular;
+  if (SAME_IN_EVERY_PERSON.test(verb)) return verb;
+  if (/(?:s|x|z|ch|sh|o)$/i.test(verb)) return `${verb}es`;
+  if (/[^aeiou]y$/i.test(verb)) return `${verb.slice(0, -1)}ies`;
+  return `${verb}s`;
+}
+
+/**
+ * "I" and the verb it is the subject of, with an adverb between them: "I have", "I ask", "I
+ * personally approve", "I always watch".
+ */
+const I_AND_ITS_VERB =
+  /\bI(\s+(?:always|never|usually|often|also|just|really|only|still|already|sometimes|normally|typically|rarely|actually|first|\w+ly))?\s+([A-Za-z]+(?:n['\u2019]t)?)\b(?!['\u2019])/g;
+
 /** The manager's first person in the third person the clauses are written in. */
 function inTheThirdPerson(sentence: string): string {
   return sentence
+    .replace(
+      I_AND_ITS_VERB,
+      (_said: string, adverb: string | undefined, verb: string): string =>
+        `the manager${adverb ?? ''} ${thirdPersonVerb(verb)}`,
+    )
     .replace(/\bI['\u2019]m\b/g, 'the manager is')
     .replace(/\bI['\u2019]ll\b/g, 'the manager will')
     .replace(/\bI['\u2019]ve\b/g, 'the manager has')
@@ -607,13 +653,34 @@ function inTheThirdPerson(sentence: string): string {
 }
 
 /**
+ * The word or words an answer opens on before the instruction it gives, each closed by a mark:
+ * "Yes, run it by me.", "No: go through me for both.", "Yes, yes: always check with me first.",
+ * "Yes - run it by me.", "Yes- run it by me." A hyphen closes one only with a space on one side
+ * of it: the hyphen of "No-one" is the word's own. A long dash (U+2013, U+2014) is a mark
+ * wherever it stands, since no word holds one.
+ */
+const ANSWER_OPENER =
+  /^(?:(?:yes|yeah|yep|yup|no|nope|sure|ok|okay|right|correct|absolutely|exactly|definitely)(?:\s*[,.:;!\u2013\u2014]+|\s+-+|-+(?=\s))\s*)+/i;
+
+/** A sentence without the word it answers with, or as it was when nothing follows that word. */
+function withoutAnswerOpener(sentence: string): string {
+  const rest = sentence.replace(ANSWER_OPENER, '');
+  return rest === '' ? sentence : rest;
+}
+
+/**
  * The Escalates clause a routing sentence is written as when the draft carries it in no clause:
  * the manager's own sentence in the third person, "Go" put before a sentence that opens on the
  * route itself ("Through me for now." reads "Go through the manager for now."), closed by a full
- * stop.
+ * stop. The word an answer opens on is the answer's, not the clause's: "Yes, run it by me." reads
+ * "Run it by the manager." (W16-R31).
  */
 function routingClause(sentence: string): string {
-  const said = inTheThirdPerson(sentence.replace(/[.;!]+$/, '').trim());
+  const said = inTheThirdPerson(
+    withoutAnswerOpener(sentence.trim())
+      .replace(/[.;!]+$/, '')
+      .trim(),
+  );
   const clause = /^(?:through|via)\b/i.test(said)
     ? `Go ${said.replace(/^[A-Z]/, (c) => c.toLowerCase())}`
     : said;
@@ -663,18 +730,20 @@ const ROUTE_OPENERS: ReadonlySet<string> = new Set([
  * lifting a route or describing one (the second pass): the words before the route, back to the
  * clause's start, are an instruction's own ("Anything unusual, talk to me first.", "Go through me
  * for both.", "Everything via me."), never a negative ("You do not need to check with me first.",
- * "Don't ask me first.") or another subject ("Reps usually talk to me first.").
+ * "Don't ask me first.") or another subject ("Reps usually talk to me first."). The word an
+ * answer opens on is passed over first ("Yes, yes: always check with me before sending.").
  */
 function asksForARoute(sentence: string): boolean {
-  const route = THROUGH_ME.exec(sentence);
+  const instruction = withoutAnswerOpener(sentence.trim());
+  const route = THROUGH_ME.exec(instruction);
   if (route === null) return false;
-  const before = sentence.slice(0, route.index);
+  const before = instruction.slice(0, route.index);
   const lead = before.slice(Math.max(before.lastIndexOf(','), before.lastIndexOf(';')) + 1);
   const words = lead.toLowerCase().match(/[a-z\u2019']+/g) ?? [];
   return words.every((word) => ROUTE_OPENERS.has(word));
 }
 
-/** A charter and the rules a step drew on it. */
+/** A charter and the rules a step drew, or rebound, on it. */
 export interface DrawnRules {
   readonly charter: Charter;
   readonly rules: CharterConstraint[];
@@ -1688,6 +1757,207 @@ export function rulePlacement(
       (boundToFunction && inFunction.length > 0) || listed.some(([, carries]) => carries),
     notCarrying: listed.flatMap(([clause, carries]) => (carries ? [] : [clause])),
   };
+}
+
+/**
+ * An emphatic "ever" after a prohibition's opening ("Never ever ...", "Don't ever ..."), which is
+ * no word of the act.
+ */
+const EMPHATIC_EVER = /^(never|do\s+not|don['\u2019]t)\s+ever\b/i;
+
+/**
+ * A manager's prohibition as the Will not do clause it is written as: the act, closed by a full
+ * stop, or the sentence as the manager wrote it where the act-writer keeps it so (a redirect to a
+ * destination it does not know, {@link willNotDoAsAct}).
+ */
+function prohibitionClause(sentence: string): string {
+  const said = sentence
+    .trim()
+    .replace(/[.;!]+$/, '')
+    .replace(EMPHATIC_EVER, '$1');
+  return `${willNotDoAsAct(inTheThirdPerson(said))}.`;
+}
+
+/**
+ * How an instruction to the employee opens when it forbids an act, an idiom that forbids nothing
+ * left out ("Never mind the old process.", "Don't worry about the backlog.", "Don't hesitate to
+ * ask."), however many spaces stand before it. Narrower than `PROHIBITION_OPENING`, which also
+ * reads the clauses a model drafts: "I won't be in on Fridays." is the manager speaking of
+ * themself, and "Won't be in on Fridays." or "Does not apply to contractors." states a fact with
+ * its subject dropped. The idioms are the ones met and their near kin, not every one English has:
+ * one this list misses is written as an act and reads oddly on the card, where the manager can
+ * strike it.
+ */
+const INSTRUCTION_FORBIDS =
+  /^(?:never|do\s+not|don['\u2019]t|must\s+not|mustn['\u2019]t|should\s+not|shouldn['\u2019]t)\s+(?!\s)(?!(?:mind|worry|bother|hesitate|forget|fear|fret|panic|stress|sweat|be\s+(?:afraid|shy)|feel)\b)/i;
+
+/**
+ * What a written clause's later part may open on and still be part of the one act: a qualifier of
+ * it ("Share customer data, even with another team.", "Send a quote, unless the manager has
+ * approved it.").
+ */
+const QUALIFIES_THE_ACT =
+  /^(?:even|not\s+even|unless|except|including|especially|regardless|no\s+matter|whatever|or|nor)\b/i;
+
+/**
+ * A turn to a second thing said ("... but leave a note.", "... archive them instead."); "instead
+ * of" compares and is none.
+ */
+const TURNS_TO_ANOTHER = /\bbut\b|\binstead\b(?!\s+of\b)/i;
+
+/**
+ * The verbs a manager's second instruction opens on after a bare "and" ("Never delete tickets and
+ * tell me."). An "and" before any other word joins two things the act touches ("Never touch
+ * payroll and HR records."); one this list misses is written as an act and reads oddly on the
+ * card, where the manager can strike it.
+ */
+const INSTRUCTION_VERBS = [
+  ...Object.keys(REDIRECT_GERUNDS),
+  'tell',
+  'let',
+  'flag',
+  'ping',
+  'message',
+  'email',
+  'call',
+  'notify',
+  'inform',
+  'loop',
+  'raise',
+  'report',
+  'archive',
+  'reopen',
+  'note',
+  'post',
+  'forward',
+  'get',
+  'keep',
+  'put',
+  'move',
+  'mark',
+  'reply',
+  'contact',
+  'copy',
+  'cc',
+].join('|');
+
+/**
+ * Where a clause written for a prohibition goes on to a later part: a comma, a semicolon or a
+ * colon before a space, a dash with a space beside it or a long dash wherever it stands, "then",
+ * and "and" before an instruction's verb (W17-R18: "Never approve anything over 500 - ask me.",
+ * "Never refund over 500: ask me first.", "Never delete tickets and tell me.").
+ */
+const LATER_PART = new RegExp(
+  `[,;:]\\s+|\\s*[\u2013\u2014]+\\s*|\\s+-+\\s*|-+\\s+|\\s+(?:and\\s+)?then\\s+|\\s+and\\s+(?=(?:${INSTRUCTION_VERBS})\\b)`,
+  'i',
+);
+
+/**
+ * Whether a clause written for a prohibition says the forbidden act and nothing the manager asked
+ * for. Under Will not do every part of a clause reads as ruled out, so a second instruction left
+ * standing there says its opposite: "Never delete tickets, archive them instead." written as
+ * "Delete tickets, archive them instead." forbids the archiving (the second pass, continued). A
+ * clause passes when the act-writer kept the manager's sentence whole, when it has one part and
+ * no turn to another, when each later part ({@link LATER_PART}) qualifies the act, or when it is
+ * a list of acts closed by "or" or "nor" ("Change prices, run discounts, or send quotes."). A
+ * list closed by "and" is not taken for one: "Never delete tickets, archive them, and tell me."
+ * asks for the last two.
+ */
+function saysOnlyTheAct(clause: string): boolean {
+  if (PROHIBITION_OPENING.test(clause)) return true;
+  if (TURNS_TO_ANOTHER.test(clause)) return false;
+  const later = clause.split(LATER_PART).slice(1);
+  const last = later.at(-1);
+  const listOfActs = later.length >= 2 && last !== undefined && /^(?:or|nor)\b/i.test(last);
+  return listOfActs || later.every((part: string): boolean => QUALIFIES_THE_ACT.test(part));
+}
+
+/**
+ * Whether a manager's sentence forbids the employee one act, so that the clause written for it
+ * says that act and nothing else: an instruction ({@link INSTRUCTION_FORBIDS}) that is no
+ * question, with no second forbidding word after its opening and no second instruction
+ * ({@link saysOnlyTheAct}). "Never edit booked figures and never delete invoices." would read,
+ * under Will not do, "Edit booked figures and never delete invoices.", its second half the
+ * opposite of what was said (the second pass), so it is left to the card's check.
+ */
+function forbidsOneAct(sentence: string): boolean {
+  const said = sentence.trim();
+  if (said.endsWith('?') || !INSTRUCTION_FORBIDS.test(said)) return false;
+  if (FORBIDS.test(said.replace(PROHIBITION_OPENING, ''))) return false;
+  return saysOnlyTheAct(prohibitionClause(said));
+}
+
+/**
+ * Whether the draft grants the act a prohibition forbids: its function or a will-do names the act
+ * in most of the manager's words and puts no limit on it ("Edit booked figures without asking."
+ * beside "Never edit a booked figure."). Such a draft contradicts the manager, and a Will not do
+ * clause written beside the grant would hide that from the card.
+ */
+function grantsTheAct(charter: Charter, sentence: string): boolean {
+  return [charter.proposedFunction, ...charter.proposedBoundaries.willDo].some(
+    (grant: string): boolean => holdsMostOf(sentence, grant) && !limitsTheAct(sentence, grant),
+  );
+}
+
+/**
+ * The Will not do clauses the manager's prohibitions make where the draft wrote none (the v0.20.0
+ * walk's finding 6: Nell's "Never share a password in a ticket comment." was listed as a rule and
+ * bound to the will-do "Draft replies for routine tickets this week.", so the card said "This
+ * clause does not carry your words. The charter does not enforce it." and offered no Strike). A
+ * listed rule with a sentence that forbids the employee one act ({@link forbidsOneAct}) and no
+ * clause that carries it ({@link rulePlacement}) is bound to a Will not do clause holding that
+ * sentence: one the draft already wrote that holds most of its words, else one written here as
+ * the act the sentence rules out ({@link willNotDoAsAct}), after the draft's own. The binds that
+ * carried nothing are dropped with it, so a strike takes the prohibition and leaves the will-do.
+ * This is the floor under the drafter, as {@link withRoutingRules} is for a routing sentence: the
+ * prompt already asks for the clause. Left to the card's own check, which tells the manager to
+ * ask for changes: a rule that forbids in softer words ("avoid", "only the security lead
+ * approves"), a sentence that forbids twice or goes on to a second instruction, a question, an
+ * idiom or a sentence the manager says of themself, one the manager struck on an earlier draft,
+ * one drafted before rules were bound, and one whose act the draft grants ({@link grantsTheAct}:
+ * W14-R14's drafts), where the will-do is what is wrong.
+ *
+ * @param charter - The assembled charter, its will-not-do clauses already written as acts.
+ * @param listed - The rules the reply listed, verified.
+ * @param struck - The quotes the manager struck on drafts sent back.
+ * @returns The charter with any clause written, and every listed rule, the rebound ones among them.
+ */
+export function withProhibitionClauses(
+  charter: Charter,
+  listed: readonly CharterConstraint[],
+  struck: readonly string[],
+): DrawnRules {
+  let current = charter;
+  const rules = listed.map((rule: CharterConstraint): CharterConstraint => {
+    const forbidden = quoteSentences(rule.quote).filter(forbidsOneAct);
+    if (forbidden.length === 0 || quotedBy(rule.quote, struck)) return rule;
+    const placement = rulePlacement(current, rule);
+    if (placement.kind === 'by-wording') return rule;
+    if (placement.kind === 'bound' && placement.carriesWords) return rule;
+    if (forbidden.some((sentence: string): boolean => grantsTheAct(current, sentence))) return rule;
+    const binds: ClauseRef[] = [];
+    const wording: string[] = [];
+    for (const sentence of forbidden) {
+      const willNotDo = current.proposedBoundaries.willNotDo;
+      const written = willNotDo.findIndex((clause: string): boolean =>
+        holdsMostOf(sentence, clause),
+      );
+      const clause = written >= 0 ? willNotDo[written]! : prohibitionClause(sentence);
+      if (written < 0) {
+        current = {
+          ...current,
+          proposedBoundaries: {
+            ...current.proposedBoundaries,
+            willNotDo: [...willNotDo, clause],
+          },
+        };
+      }
+      binds.push({ field: 'willNotDo', index: written >= 0 ? written : willNotDo.length });
+      wording.push(clause);
+    }
+    return { ...rule, wording, binds };
+  });
+  return { charter: current, rules };
 }
 
 /**

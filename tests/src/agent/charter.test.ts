@@ -23,8 +23,10 @@ import {
 import { MOCK_OFFICE_NAMED_SYSTEMS } from '../../../src/surfaces/mock-office';
 import {
   effectiveCharter,
+  normaliseConstraints,
   rulePlacement,
   strikePreview,
+  type CharterConstraint,
 } from '../../../src/agent/charter-constraints';
 import {
   BINDS_ANSWERS,
@@ -39,6 +41,11 @@ import {
   PIP_ANSWERS_2026_10_11,
   PIP_DRAFT_2026_10_11,
 } from '../../fixtures/charter-hosted-walk-v0190-2026-10-11';
+import {
+  NELL_ANSWERS_2026_10_13,
+  NELL_DRAFT_2026_10_13,
+  NELL_PASSWORD_RULE_2026_10_13,
+} from '../../fixtures/charter-hosted-walk-v0200-2026-10-13';
 
 const base = {
   whyThisHire: 'Own triage.',
@@ -416,6 +423,26 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     );
   }
 
+  /**
+   * One rule of a reply as the reply itself bound it, verified against the assembled charter: what
+   * the card's check reads of the drafter's own bind. `assemble` now writes a Will not do clause
+   * for a prohibition no clause carries and rebinds the rule to it (17-FX, the v0.20.0 walk's
+   * finding 6), so the check of a wrong bind is held here on the bind the reply gave.
+   */
+  function asReplyBound(reply: unknown, charter: Charter, quote: string): CharterConstraint {
+    const rule = normaliseConstraints(charterSchema.parse(reply).constraints ?? [], charter).find(
+      (constraint) => constraint.quote === quote,
+    );
+    if (!rule) throw new Error(`the reply lists no rule “${quote}”`);
+    return rule;
+  }
+
+  /** Whether the card's check reads a rule as carried by a clause it binds. */
+  function carried(charter: Charter, rule: CharterConstraint): boolean {
+    const placement = rulePlacement(charter, rule);
+    return placement.kind === 'bound' && placement.carriesWords;
+  }
+
   it("reads Rook's and Wren's right binds as Confirmed and Nell's and Moss's wrong binds as Check, clause by clause (W13-R6)", (): void => {
     expect(
       carriedOf(recorded('Rook'))[
@@ -430,10 +457,29 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     expect(
       rulePlacement(wren, wren.constraints!.find((rule) => rule.quote === goThroughMe)!),
     ).toMatchObject({ notCarrying: ['Promise a refund in a reply.'] });
-    expect(carriedOf(recorded('Nell'))['Never share a password in a ticket comment.']).toBe(false);
-    expect(carriedOf(recorded('Moss'))['Never post revenue figures in a public channel.']).toBe(
-      false,
-    );
+    // Re-taken (17-FX, the v0.20.0 walk's finding 6): each of these two is a "Never ..." the draft
+    // bound to an unrelated will-do. The drafter's own bind still reads as Check; `assemble` now
+    // writes the Will not do clause the draft left out, so the assembled rule reads as carried.
+    const wrongBinds: ReadonlyArray<readonly [string, string, string]> = [
+      [
+        'Nell',
+        'Never share a password in a ticket comment.',
+        'Share a password in a ticket comment.',
+      ],
+      [
+        'Moss',
+        'Never post revenue figures in a public channel.',
+        'Post revenue figures in a public channel.',
+      ],
+    ];
+    for (const [name, quote, act] of wrongBinds) {
+      const charter = recorded(name);
+      expect(
+        carried(charter, asReplyBound(GLM_BINDS_DRAFTS_2026_10_05[name], charter, quote)),
+      ).toBe(false);
+      expect(carriedOf(charter)[quote]).toBe(true);
+      expect(charter.proposedBoundaries.willNotDo.at(-1)).toBe(act);
+    }
   });
 
   it("leaves Wren's refund clause when its first rule is struck, since the refund rule binds it too, and says so (W13-R7)", (): void => {
@@ -501,20 +547,39 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     );
     const password = 'Never share a password in a ticket comment.';
     const duty = 'Draft replies for the routine access tickets using the wiki steps.';
-    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
-    expect(nell.constraints![index]!.binds).toEqual([{ field: 'willDo', index: 1 }]);
-    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+    // Re-taken (17-FX, the v0.20.0 walk's finding 6, the same sentence three releases on): the
+    // drafter's own bind still reads as Check, clause by clause, and its strike takes nothing.
+    const asBound = asReplyBound(REDEPLOY_NELL_DRAFT_2026_10_07, nell, password);
+    expect(asBound.binds).toEqual([{ field: 'willDo', index: 1 }]);
+    expect(rulePlacement(nell, asBound)).toEqual({
       kind: 'bound',
       clauses: [duty],
       carriesWords: false,
       notCarrying: [duty],
     });
-    expect(strikePreview(nell, index)).toEqual({
+    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
+    const withReplyBind: Charter = {
+      ...nell,
+      constraints: nell.constraints!.map((rule, at) => (at === index ? asBound : rule)),
+    };
+    expect(strikePreview(withReplyBind, index)).toEqual({
       removedClauses: [],
       rewrittenClauses: [],
       keptClauses: [{ clause: duty, because: 'not-this-rule' }],
       changes: false,
     });
+    // What `assemble` makes of it now: the clause the draft left out, written and bound, so the
+    // card reads the rule as carried and a strike takes the prohibition and keeps the duty.
+    const act = 'Share a password in a ticket comment.';
+    expect(nell.proposedBoundaries.willNotDo.at(-1)).toBe(act);
+    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+      kind: 'bound',
+      clauses: [act],
+      carriesWords: true,
+      notCarrying: [],
+    });
+    expect(strikePreview(nell, index).removedClauses).toEqual([act]);
+    expect(strike(nell, password).proposedBoundaries.willNotDo).not.toContain(act);
     expect(strike(nell, password).proposedBoundaries.willDo).toContain(duty);
     // The reporting-line rule beside it is a right bind, and still reads as one.
     expect(
@@ -534,14 +599,19 @@ describe('a rule bound to the clauses it produced (13-R)', (): void => {
     );
     const password = 'Never share a password in a ticket comment.';
     const duty = 'Draft replies for the routine access tickets using the wiki steps.';
-    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
-    expect(rulePlacement(nell, nell.constraints![index]!)).toEqual({
+    // Re-taken (17-FX, the v0.20.0 walk's finding 6): with its binds dropped the rule is still
+    // checked clause by clause on the bind its wording gives it, and reads as Check there.
+    expect(rulePlacement(nell, asReplyBound(reply, nell, password))).toEqual({
       kind: 'bound',
       clauses: [duty],
       carriesWords: false,
       notCarrying: [duty],
     });
-    expect(strikePreview(nell, index).removedClauses).toEqual([]);
+    // And `assemble` writes the Will not do clause the draft left out, bound to the rule.
+    const index = nell.constraints!.findIndex((rule) => rule.quote === password);
+    expect(strikePreview(nell, index).removedClauses).toEqual([
+      'Share a password in a ticket comment.',
+    ]);
     expect(strike(nell, password).proposedBoundaries.willDo).toContain(duty);
     // The reporting-line rule's words are in no clause, so with its binds gone it reads as in no
     // clause, where the card offers to keep it, rather than as struck by words no clause holds.
@@ -810,5 +880,98 @@ describe("a manager's routing sentence and the will-not-do heading (the v0.19.0 
       const rule = charter.constraints!.find((c) => c.quote === quote)!;
       expect(rulePlacement(charter, rule)).toMatchObject({ kind: 'bound', carriesWords: true });
     }
+  });
+});
+
+describe("a prohibition the draft wrote no Will not do clause for (the v0.20.0 walk's finding 6)", (): void => {
+  const walkArgs = (answers: readonly string[]): Parameters<typeof assemble>[1] => ({
+    answers: Object.fromEntries(
+      DAY_ONE_TOPICS.map((topic, at): [string, string] => [topic, answers[at]!]),
+    ) as Parameters<typeof userPrompt>[0],
+    version: '0.0',
+    bossLabel: 'Manager',
+    office: MOCK_OFFICE_NAMED_SYSTEMS,
+  });
+  const nell = (changeRequests?: Parameters<typeof assemble>[1]['changeRequests']): Charter =>
+    assemble(
+      charterSchema.parse(NELL_DRAFT_2026_10_13),
+      { ...walkArgs(NELL_ANSWERS_2026_10_13), ...(changeRequests ? { changeRequests } : {}) },
+      '2026-10-13T05:52:00.000Z',
+    );
+  const passwordRule = (charter: Charter): NonNullable<Charter['constraints']>[number] => {
+    const rule = charter.constraints?.find((c) => c.quote === NELL_PASSWORD_RULE_2026_10_13);
+    if (!rule) throw new Error('the password rule is not on the charter');
+    return rule;
+  };
+
+  it('writes Nell\'s "Never share a password in a ticket comment." as a Will not do clause, the act it rules out, after the draft\'s own', (): void => {
+    expect(nell().proposedBoundaries.willNotDo).toEqual([
+      'Own access policy, which belongs to the security lead.',
+      'Own hardware, which belongs to the facilities team.',
+      'Close non-routine tickets without routing them onward.',
+      'Share a password in a ticket comment.',
+    ]);
+  });
+
+  it('binds the rule to that clause alone, so the card reads it as carried and offers Strike, where it said CHECK THE CLAUSE', (): void => {
+    const charter = nell();
+    const rule = passwordRule(charter);
+    expect(rule).toMatchObject({
+      kind: 'system-boundary',
+      binds: [{ field: 'willNotDo', index: 3 }],
+    });
+    expect(rulePlacement(charter, rule)).toEqual({
+      kind: 'bound',
+      clauses: ['Share a password in a ticket comment.'],
+      carriesWords: true,
+      notCarrying: [],
+    });
+    // The will-do the draft bound it to is no longer the rule's to strike.
+    expect(strikePreview(charter, charter.constraints!.indexOf(rule)).removedClauses).toEqual([
+      'Share a password in a ticket comment.',
+    ]);
+    expect(charter.proposedBoundaries.willDo).toContain(
+      'Draft replies for routine tickets this week.',
+    );
+  });
+
+  it("leaves the draft as it is where a clause already carries the prohibition (Lark's and Pip's at v0.19.0)", (): void => {
+    const lark = assemble(
+      charterSchema.parse(LARK_DRAFT_2026_10_11),
+      walkArgs(LARK_ANSWERS_2026_10_11),
+      '2026-10-11T14:38:00.000Z',
+    );
+    expect(lark.proposedBoundaries.willNotDo).toEqual([
+      'Change a deal amount in the tracker.',
+      'Contact the sales lead directly without going through the manager for deal matters.',
+      'Contact finance directly without going through the manager for forecast matters.',
+    ]);
+    const pip = assemble(
+      charterSchema.parse(PIP_DRAFT_2026_10_11),
+      walkArgs(PIP_ANSWERS_2026_10_11),
+      '2026-10-11T14:38:00.000Z',
+    );
+    expect(pip.proposedBoundaries.willNotDo).toEqual([
+      'Own tone decisions, which belong to the support lead.',
+      'Handle escalations, which belong to the support lead.',
+      'Own bug reports, which belong to product.',
+      'Promise a refund.',
+    ]);
+  });
+
+  it('writes no clause for a prohibition the manager struck on an earlier draft', (): void => {
+    const charter = nell([{ reason: '', struck: [NELL_PASSWORD_RULE_2026_10_13] }]);
+    expect(charter.proposedBoundaries.willNotDo).not.toContain(
+      'Share a password in a ticket comment.',
+    );
+  });
+
+  it('keeps the routing rule the same draft drew, bound to its Escalates clause', (): void => {
+    const charter = nell();
+    const routing = charter.constraints?.find((c) => c.quote === 'Go through me.');
+    expect(routing).toMatchObject({
+      kind: 'reporting-line',
+      binds: [{ field: 'escalationTriggers', index: 0 }],
+    });
   });
 });

@@ -12,6 +12,8 @@ import {
 } from '../src/lib/customer-oidc';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import { PRIVATE_HOSTS_VAR } from '../src/lib/private-hosts';
+import { WATCHED } from '../scripts/check-setup';
+import { PROXY_VARIABLES } from '../scripts/lib/proxy-env';
 
 const EXAMPLE = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
 const COMPOSE = readFileSync(new URL('../docker-compose.yml', import.meta.url), 'utf8');
@@ -94,6 +96,27 @@ describe('.env.example', (): void => {
       ]),
     );
     for (const name of read) expect(DECLARED, name).toContain(name);
+  });
+
+  it('declares the way out through a proxy, each name empty by default, read by the compose file and by check:setup (17-P)', (): void => {
+    for (const name of PROXY_VARIABLES) {
+      expect(EXAMPLE, name).toMatch(new RegExp(`^${name}=$`, 'm'));
+      expect(COMPOSE, name).toContain(`\${${name}:`);
+      expect(WATCHED, name).toContain(name);
+    }
+    expect(EXAMPLE.indexOf('\nHTTPS_PROXY=')).toBeGreaterThan(
+      EXAMPLE.indexOf('\nDAY0_PRIVATE_HOSTS='),
+    );
+  });
+
+  it('says which address each of pnpm dev and pnpm start binds without DAY0_APP_HOST (P-1)', (): void => {
+    const note = EXAMPLE.slice(
+      EXAMPLE.indexOf('\nDAY0_APP_PORT='),
+      EXAMPLE.indexOf('\nDAY0_APP_HOST='),
+    );
+    expect(note).toContain('`pnpm start`');
+    expect(note).toContain('127.0.0.1');
+    expect(WATCHED).toContain('DAY0_APP_HOST');
   });
 
   it('names only pnpm scripts package.json defines', (): void => {

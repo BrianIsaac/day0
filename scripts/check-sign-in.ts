@@ -56,6 +56,7 @@ import {
   type SignInCheckReport,
 } from '../src/lib/sign-in-check';
 import { readEnvValues } from './lib/env-file';
+import { runUnderProxy } from './lib/under-proxy';
 import { firstLine } from './model-reach';
 import { isLoopback } from './setup-route';
 
@@ -71,6 +72,8 @@ export const SIGN_IN_CHECKS = [
   'allowed-domains',
   'session-secret',
   'public-url',
+  'proxy-app',
+  'proxy-backend',
   'discovery-from-host',
   'discovery-from-container',
   'deployment-values',
@@ -96,11 +99,32 @@ export type DeploymentRead =
   | { readonly values: Readonly<Record<string, string>> }
   | { readonly error: string };
 
+/**
+ * What asking the public address for the app came to: an HTTP answer, with whether it carried the
+ * app's own mark (`X-Day0: app`, `next.config.mjs`), or the reason there was none.
+ */
+export type AppProbe =
+  | { readonly status: number; readonly day0: boolean }
+  | { readonly error: string };
+
+/**
+ * What asking the backend's public origin came to: its answer to a plain request for the
+ * backend's version, with whether a WebSocket then opened through it, or the reason nothing
+ * answered.
+ */
+export type LiveProbe =
+  | { readonly status: number; readonly upgraded: boolean }
+  | { readonly error: string };
+
 /** What the setup check asked outside this process; an absent one was not asked. */
 export interface SignInProbes {
   readonly host?: IssuerFetch;
   readonly container?: IssuerFetch;
   readonly deployment?: DeploymentRead;
+  /** The app through the customer's proxy, at the public address (17-P). */
+  readonly app?: AppProbe;
+  /** The live connection through the customer's proxy, at the backend's public origin (17-P). */
+  readonly live?: LiveProbe;
 }
 
 /** The names the deployment must hold as the file does. */
@@ -236,6 +260,165 @@ function valueChecks(v: Values): SignInCheck[] {
   return checks;
 }
 
+/** The port the app is served on behind the proxy: the file's, else 3000. */
+function appPort(v: Values): string {
+  return (v.DAY0_APP_PORT ?? '').trim() || '3000';
+}
+
+/** The host port the backend is published on, which the proxy forwards its origin to. */
+function backendPort(v: Values): string {
+  return (v.CONVEX_PORT ?? '').trim() || '3210';
+}
+
+/**
+ * The origin people's browsers reach the app on through the customer's proxy: `DAY0_PUBLIC_URL`
+ * when it is https and not this machine itself, else undefined (an install used from this machine
+ * only has no proxy to check).
+ *
+ * @param v - The env file's values.
+ */
+export function proxiedAppOrigin(v: Values): string | undefined {
+  const origin = publicOrigin(v[PUBLIC_URL_VAR]);
+  if ('gap' in origin) return undefined;
+  return origin.origin.startsWith('https:') && !isLoopback(origin.origin)
+    ? origin.origin
+    : undefined;
+}
+
+/**
+ * The origin people's browsers reach the backend on through the customer's proxy: an https
+ * `NEXT_PUBLIC_CONVEX_URL` that is not this machine itself, which `install --backend-url` writes.
+ *
+ * @param v - The env file's values.
+ */
+export function proxiedBackendOrigin(v: Values): string | undefined {
+  const address = (v.NEXT_PUBLIC_CONVEX_URL ?? '').trim().replace(/\/+$/, '');
+  return address.startsWith('https://') && !isLoopback(address) ? address : undefined;
+}
+
+/** Whether a probe's failure is Node refusing the proxy's certificate. */
+function untrusted(error: string): boolean {
+  return /CERT|certificate|UNABLE_TO_VERIFY|SELF_SIGNED/i.test(error);
+}
+
+/** The app's row: the public address answers as Day0 over https. */
+function proxyAppCheck(v: Values, origin: string, probe: AppProbe | undefined, strict: boolean) {
+  if (probe === undefined) {
+    return check('proxy-app', 'warn', `${origin} was not asked whether it answers as Day0.`);
+  }
+  const notYet = strict ? 'gap' : 'warn';
+  const start =
+    'Start the app behind the proxy (`pnpm start`) and run this again' +
+    (strict ? '.' : '; `./setup.sh install` checks it once the app is up.');
+  if ('error' in probe) {
+    if (untrusted(probe.error)) {
+      return check(
+        'proxy-app',
+        notYet,
+        `${origin} presents a certificate this machine's Node does not trust (${probe.error}): ` +
+          "run this with NODE_EXTRA_CA_CERTS naming the customer's CA bundle " +
+          '(docs/running/proxy.md, "The certificate").',
+      );
+    }
+    return check('proxy-app', notYet, `${origin} did not answer (${probe.error}). ${start}`);
+  }
+  if (probe.day0) return check('proxy-app', 'ok', `${origin} answers as Day0 over https.`);
+  if (probe.status >= 502 && probe.status <= 504) {
+    return check(
+      'proxy-app',
+      notYet,
+      `${origin} answered HTTP ${probe.status}: the proxy has nothing to forward to on port ` +
+        `${appPort(v)} yet. ${start}`,
+    );
+  }
+  return check(
+    'proxy-app',
+    'gap',
+    `${origin} answered, and not as Day0: check the proxy forwards to port ${appPort(v)} ` +
+      '(docs/running/proxy.md, "The app").',
+  );
+}
+
+/** The backend's row: its public origin carries the live connection. */
+function proxyBackendCheck(v: Values, origin: string, probe: LiveProbe | undefined) {
+  const forwards =
+    `check the proxy forwards it to port ${backendPort(v)} ` +
+    '(docs/running/proxy.md, "The backend").';
+  if (probe === undefined) {
+    return check(
+      'proxy-backend',
+      'warn',
+      `${origin} was not asked whether it carries the live connection (the backend is not ` +
+        'running here): run this again with it up.',
+    );
+  }
+  if ('error' in probe) {
+    if (untrusted(probe.error)) {
+      return check(
+        'proxy-backend',
+        'gap',
+        `${origin} presents a certificate this machine's Node does not trust (${probe.error}): ` +
+          "run this with NODE_EXTRA_CA_CERTS naming the customer's CA bundle " +
+          '(docs/running/proxy.md, "The certificate").',
+      );
+    }
+    return check('proxy-backend', 'gap', `${origin} did not answer (${probe.error}): ${forwards}`);
+  }
+  if (probe.status !== 200) {
+    return check(
+      'proxy-backend',
+      'gap',
+      `${origin} answered HTTP ${probe.status}, and not as the backend: ${forwards}`,
+    );
+  }
+  if (!probe.upgraded) {
+    return check(
+      'proxy-backend',
+      'gap',
+      `${origin} did not complete the WebSocket upgrade: add the upgrade headers ` +
+        '(docs/running/proxy.md, "The backend").',
+    );
+  }
+  return check('proxy-backend', 'ok', `${origin} carries the live connection.`);
+}
+
+/**
+ * The two rows that prove the customer's reverse proxy (wave 17, 17-P): the public address
+ * answers as Day0 over https, and the backend's public origin completes a WebSocket upgrade, each
+ * gap naming the part of `docs/running/proxy.md` that fixes it. None where the public address is
+ * this machine itself: there is no proxy to check.
+ *
+ * `check:setup` runs before the app is built and started, so a public address with nothing
+ * behind it yet is a note there; `strict` holds it to a gap, for the install's own check once the
+ * app has answered.
+ *
+ * @param v - The env file's values.
+ * @param probes - What was asked of the two origins; an absent one was not asked.
+ * @param options - `strict`: the app is meant to be up.
+ */
+export function proxyChecks(
+  v: Values,
+  probes: Pick<SignInProbes, 'app' | 'live'>,
+  options: { readonly strict?: boolean } = {},
+): SignInCheck[] {
+  const appOrigin = proxiedAppOrigin(v);
+  if (appOrigin === undefined) return [];
+  const backendOrigin = proxiedBackendOrigin(v);
+  return [
+    proxyAppCheck(v, appOrigin, probes.app, options.strict === true),
+    backendOrigin === undefined
+      ? check(
+          'proxy-backend',
+          'warn',
+          `NEXT_PUBLIC_CONVEX_URL is ${(v.NEXT_PUBLIC_CONVEX_URL ?? '').trim() || 'not set'}, which ` +
+            "only a browser on this machine reaches, and people's browsers call the backend as " +
+            'well as the app: `./setup.sh install --backend-url <https origin>` names the origin ' +
+            `the proxy forwards to port ${backendPort(v)} (docs/running/proxy.md, "The backend").`,
+        )
+      : proxyBackendCheck(v, backendOrigin, probes.live),
+  ];
+}
+
 /** The discovery checks: from this machine, from the container, and the issuer byte for byte. */
 function discoveryChecks(issuer: string, probes: SignInProbes): SignInCheck[] {
   const checks: SignInCheck[] = [];
@@ -292,8 +475,10 @@ function discoveryChecks(issuer: string, probes: SignInProbes): SignInCheck[] {
         'discovery-from-container',
         'gap',
         `The issuer cannot be reached from inside the backend container: ${fromContainer.problem}. ` +
-          "Convex fetches the issuer's keys from there, so every sign-in would be refused. Containers " +
-          "do not inherit the host's proxy settings: allow the container through the firewall or proxy.",
+          "Convex fetches the issuer's keys from there, so every sign-in would be refused. The " +
+          'container dials out directly unless .env.local names a proxy (HTTPS_PROXY): allow it ' +
+          'through the firewall, or name the proxy, with the issuer in NO_PROXY where it is inside ' +
+          'your network (docs/running/egress.md).',
       ),
     );
   } else {
@@ -361,6 +546,7 @@ export function signInSetupChecks(
 ): SignInCheck[] {
   return [
     ...valueChecks(v),
+    ...proxyChecks(v, probes),
     ...discoveryChecks(issuer, probes),
     ...deploymentChecks(v, probes.deployment),
   ];
@@ -397,6 +583,72 @@ export function fetchFromHost(issuer: string): IssuerFetch {
   } catch {
     return { error: firstLine(run.stderr ?? '') || 'the fetch did not run' };
   }
+}
+
+/** One JSON document a probe's child process printed, or the reason it printed none. */
+function childAnswer<Answer>(run: { stdout: string | null; stderr: string | null }):
+  | Answer
+  | {
+      error: string;
+    } {
+  try {
+    return JSON.parse(run.stdout ?? '') as Answer;
+  } catch {
+    return { error: firstLine(run.stderr ?? '') || 'the probe did not run' };
+  }
+}
+
+/** A failure's code or message, as the probes' child processes say it. */
+const FAILURE_WORDS = 'String(e&&e.cause&&e.cause.code||e&&e.message||e)';
+
+/**
+ * Ask the public address for the app, from this machine with Node's own `fetch` (so
+ * `NODE_EXTRA_CA_CERTS` and a proxy on the way out count as they do for the install's wait), and
+ * read the app's own mark off the answer. A redirect is not followed: the sign-in gate's own
+ * redirect carries the mark.
+ *
+ * @param origin - The app's public origin.
+ * @param env - The environment the asking process runs in: this one's unless the caller has a
+ *   proxy to hand it, as the setup does for every child.
+ */
+export function probeApp(origin: string, env: NodeJS.ProcessEnv = process.env): AppProbe {
+  const script =
+    `fetch(process.argv[1],{redirect:'manual',signal:AbortSignal.timeout(${PROBE_SECONDS * 1000})})` +
+    ".then(r=>process.stdout.write(JSON.stringify({status:r.status,day0:r.headers.get('x-day0')==='app'})))" +
+    `.catch(e=>process.stdout.write(JSON.stringify({error:${FAILURE_WORDS}})))`;
+  const run = spawnSync(process.execPath, ['-e', script, `${origin}/`], {
+    encoding: 'utf8',
+    env,
+    timeout: (PROBE_SECONDS + 5) * 1000,
+  });
+  return childAnswer<AppProbe>(run);
+}
+
+/**
+ * Ask the backend's public origin for its version, then open a WebSocket to its sync endpoint, as
+ * a browser's Convex client does. A proxy that forwards the origin without the upgrade headers
+ * answers the first and refuses the second.
+ *
+ * @param origin - The backend's public origin.
+ * @param env - The environment the asking process runs in, as for `probeApp`.
+ */
+export function probeLive(origin: string, env: NodeJS.ProcessEnv = process.env): LiveProbe {
+  const script =
+    `const base=process.argv[1];const limit=${PROBE_SECONDS * 1000};` +
+    'const say=o=>{process.stdout.write(JSON.stringify(o));process.exit(0)};' +
+    "fetch(base+'/version',{signal:AbortSignal.timeout(limit)}).then(r=>{" +
+    'if(r.status!==200)return say({status:r.status,upgraded:false});' +
+    "const socket=new WebSocket(base.replace(/^http/,'ws')+'/api/sync');" +
+    "socket.addEventListener('open',()=>{socket.close();say({status:200,upgraded:true})});" +
+    "socket.addEventListener('error',()=>say({status:200,upgraded:false}));" +
+    'setTimeout(()=>say({status:200,upgraded:false}),limit);' +
+    `}).catch(e=>say({error:${FAILURE_WORDS}}))`;
+  const run = spawnSync(process.execPath, ['-e', script, origin], {
+    encoding: 'utf8',
+    env,
+    timeout: (PROBE_SECONDS * 2 + 5) * 1000,
+  });
+  return childAnswer<LiveProbe>(run);
 }
 
 /**
@@ -726,7 +978,23 @@ async function main(argv: readonly string[]): Promise<number> {
   return reportExitCode(report);
 }
 
+/**
+ * The env file the command line names, for the one read made before `main`: the default where
+ * the line does not parse, which `main` then says.
+ *
+ * @param argv - The arguments after the script.
+ */
+function envFileNamed(argv: readonly string[]): string {
+  try {
+    return parseArguments(argv).envFile;
+  } catch {
+    return '.env.local';
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   // Handed back rather than passed to process.exit so a piped stdout drains.
-  process.exitCode = await main(process.argv.slice(2));
+  process.exitCode =
+    runUnderProxy(readEnvValues(envFileNamed(process.argv.slice(2)))) ??
+    (await main(process.argv.slice(2)));
 }

@@ -29,6 +29,19 @@ export const RELATION_PROPOSALS_PER_SYNC = 50;
  */
 export const RELATION_PAGES_PER_STEP = 100;
 
+/**
+ * How many times a page whose measure threw is tried before the measuring passes it over (wave 17,
+ * 17-FD; W16-R34): a measure out of retries on a busy row passes at a later step, and one over a
+ * read limit never does, so it is logged as not measured and the measuring goes on without it.
+ */
+export const RELATION_MEASURE_TRIES = 3;
+
+/**
+ * How long the measuring waits before it tries a page again: long enough for the writes a sync's
+ * end makes to its source's row (discovery, the people extraction) to have landed.
+ */
+export const RELATION_MEASURE_RETRY_MS = 5_000;
+
 /** The most other pages one page is measured against: the best of what its title and headings find. */
 export const RELATION_CANDIDATES_PER_PAGE = 3;
 
@@ -63,7 +76,9 @@ export interface MeasuredPage {
   readonly updatedAt: number;
   /**
    * Whether `updatedAt` is when the source says the page was edited, rather than when its reader
-   * read it (a list of URLs, an MCP server): only an edit time dates a successor (RM19 (a)).
+   * read it: what the page's row says, and for a row that does not say, its source's kind (a
+   * list of URLs, an MCP server, a git checkout). Only an edit time dates a successor (RM19 (a),
+   * D-8 (a)).
    */
   readonly edited: boolean;
 }
@@ -214,9 +229,55 @@ export function namedSuccessor(
 /** A figure in a line: a number with its separators, as written. */
 const FIGURE = /\d+(?:[.,:]\d+)*/g;
 
-/** A line that dates or versions its page: its figures differ between any two pages. */
-const DATING_LINE =
-  /\b(?:updated|edited|reviewed|revised|version|revision|as of|effective|copyright)\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|更新|修订|版本|生效/i;
+/** A date written out in figures alone: ISO, or with slashes. */
+const FIGURE_DATE = /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/;
+
+/** A month by its English name, but for May, which is also a verb and is read by its capital. */
+const MONTH =
+  '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
+
+/**
+ * A date that only a date word beside it makes one: a day beside a month's name, a month's name
+ * beside a figure, a year, a day and month in figures, or 年月日.
+ */
+const WORDED_DATE = new RegExp(
+  [
+    `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\b`,
+    `\\b${MONTH}\\.?\\s+\\d{1,4}\\b`,
+    '\\b(?:19|20)\\d{2}\\b',
+    // A day and a month in figures, with no year or with dots: "12/10", "12.10.2026".
+    '\\b\\d{1,2}\\/\\d{1,2}\\b',
+    '\\b\\d{1,2}\\.\\d{1,2}\\.\\d{2,4}\\b',
+    '\\d{4}\\s*年',
+    '\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日',
+  ].join('|'),
+  'i',
+);
+
+/** "3 May", "May 2026": the month, never the verb, so its capital is read. */
+const MAY_DATE = /\b\d{1,2}(?:st|nd|rd|th)?\s+May\b|\bMay\s+\d{1,4}\b/;
+
+/** A word that dates its page when a date stands beside it. */
+const DATE_WORD =
+  /\b(?:updated|edited|reviewed|revised|as of|effective|copyright)\b|更新|修订|生效/i;
+
+/** A version or revision with its number: "Version 3", "revision: 7", "版本 4", "版本：4". */
+const VERSION_NUMBER = /\b(?:version|revision)\b\s*[:：]?\s*\d|版本\s*[:：]?\s*\d/i;
+
+/**
+ * Whether a line dates or versions its page, so that its figures differ between any two pages: a
+ * date in figures, a version beside its number, or a date word beside a date. A date word in a
+ * sentence that states a figure is part of the sentence (the joins' W3c: "is reviewed within 2
+ * working days" against "5 working days" was passed over for its "reviewed", and the pair
+ * proposed as a duplicate).
+ */
+function datesItsPage(line: string): boolean {
+  return (
+    FIGURE_DATE.test(line) ||
+    VERSION_NUMBER.test(line) ||
+    (DATE_WORD.test(line) && (WORDED_DATE.test(line) || MAY_DATE.test(line)))
+  );
+}
 
 /** A heading as the conflict measure compares it. */
 function headingOf(block: MeasuredBlock): string {
@@ -247,7 +308,7 @@ export function headingFigures(
     block.text
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => /\d/.test(line) && !DATING_LINE.test(line))
+      .filter((line) => /\d/.test(line) && !datesItsPage(line))
       .map((line) => ({
         template: comparable(line.replace(FIGURE, '#')),
         figures: (line.match(FIGURE) ?? []).join(' '),

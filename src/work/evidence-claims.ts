@@ -573,11 +573,17 @@ function reportedWriteIndexes(
       sharing.push(index);
     }
   });
+  if (!kindGuess || !namesMessageKind(said)) return sharing;
   // A report that names a message's kind binds every message of that kind, unless some carry its
   // own words: then those alone, so an unrelated post beside the reported ones is not bound
-  // (W13-R2).
-  if (sharing.length > 0 || !kindGuess || !namesMessageKind(said)) return sharing;
-  return ofKind;
+  // (W13-R2). Where it counts more messages than carry its words ("both notes" beside one post
+  // that shares a word), the count is the kind's, so every message of the kind is bound with them
+  // and a declined one keeps the report back (W16-R31). A plural or "all" is no count: "all the
+  // stop-drill notes" beside one such note and an unrelated post reports the one.
+  if (sharing.length === 0) return ofKind;
+  const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
+  if (sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
+  return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
 }
 
 /**
@@ -614,21 +620,47 @@ const COUNT_WORDS: Readonly<Record<string, number>> = {
   nine: 9,
   ten: 10,
 };
+/**
+ * A word after a number that makes it something other than a count of the messages named next: a
+ * share's "of" before its whole ("12 of 40 replies", "12 of the 40 replies"), a time's half
+ * ("the 3 pm notes"), a month ("the 12 October notes") or another number.
+ */
+const NOT_COUNTING_AFTER =
+  'of\\s+(?:the\\s+)?\\d|[ap]m\\b|percent\\b|\\d|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b';
 const COUNTED_MESSAGES = new RegExp(
-  `\\b(${Object.keys(COUNT_WORDS).join('|')}|\\d{1,2})\\s+(?:[\\w-]+\\s+){0,3}?(?:${MESSAGES_PLURAL})\\b`,
-  'i',
+  `\\b(${Object.keys(COUNT_WORDS).join('|')}|\\d{1,2})\\s+(?:(?!${NOT_COUNTING_AFTER})[\\w-]+\\s+){0,3}?(?:${MESSAGES_PLURAL})\\b`,
+  'gi',
 );
+/**
+ * What stands before a number that is part of something larger: a share's whole ("of 40
+ * replies"), or the rest of a time, a decimal, a date or an issue key ("10:30", "REVOPS-6").
+ */
+const NOT_COUNTING_BEFORE = /(?:\bof\s+(?:the\s+)?|[\d:.,/%-])$/i;
 const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
 
 /**
- * How many messages a report sentence says were made: the count it gives ("both stop-drill
- * notes", "all three posts"), two or more for a plural with none, and one otherwise. So "Posted
+ * The count of messages a report sentence gives in so many words ("both stop-drill notes", "all
+ * three posts", "2 notes"), or undefined when it gives none. A number that counts something else
+ * is passed over: a share of the messages ("12 of 40 replies were positive"), a time ("the 3 pm
+ * notes", "the 10:30 notes") and a date ("the 12 October notes") say nothing of how many the run
+ * wrote.
+ */
+function messagesCounted(said: string): number | undefined {
+  for (const match of said.matchAll(COUNTED_MESSAGES)) {
+    if (NOT_COUNTING_BEFORE.test(said.slice(0, match.index))) continue;
+    const counted = match[1]!.toLowerCase();
+    return COUNT_WORDS[counted] ?? Number(counted);
+  }
+  return undefined;
+}
+
+/**
+ * How many messages a report sentence says were made: the count it gives
+ * ({@link messagesCounted}), two or more for a plural with none, and one otherwise. So "Posted
  * the second note." asks one write of its declaration and "Posted both notes." two (W15-R2).
  */
 function messagesNamed(said: string): number {
-  const counted = COUNTED_MESSAGES.exec(said)?.[1]?.toLowerCase();
-  if (counted !== undefined) return COUNT_WORDS[counted] ?? Number(counted);
-  return SEVERAL_MESSAGES.test(said) ? 2 : 1;
+  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(said) ? 2 : 1);
 }
 
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
@@ -851,14 +883,22 @@ function reportsDisagreements(
     for (const sentence of sentencesOf(text)) {
       if (negatesReport(sentence)) continue;
       const clause = sentence.replace(CONDITIONAL_CLAUSE, ' ');
-      // The words name their writes, which bind the message beside its declaration
-      // (`boundEarlierWrites`): it is held with them and sent after them.
-      if (reportedWriteIndexes(clause, earlier, false).length > 0) continue;
-      // The words name only a kind of message ("both notes"), which binds nothing beside a
-      // declaration: the declaration must then hold as many of that kind as the sentence says.
+      // The writes the words name bind the message beside its declaration
+      // (`boundEarlierWrites`): it is held with them and sent after them, unless the sentence
+      // counts more messages than its words name: one post that shares a word is not "both"
+      // (W16-R31).
+      const said = withoutIntentions(clause);
+      const byWords = reportedWriteIndexes(clause, earlier, false);
       const ofKind = reportedWriteIndexes(clause, earlier);
-      const wanted = Math.min(messagesNamed(withoutIntentions(clause)), ofKind.length);
-      if (ofKind.filter((at) => named.has(at)).length >= wanted) continue;
+      const covered = new Set([...named, ...byWords]);
+      const holds = ofKind.filter((at) => covered.has(at)).length;
+      if (byWords.length > 0 && holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)) {
+        continue;
+      }
+      // The words name only a kind of message ("both notes"), or fewer than they count, which
+      // binds nothing beside a declaration: the declaration and the words must then hold as many
+      // of that kind as the sentence says.
+      if (holds >= Math.min(messagesNamed(said), ofKind.length)) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );

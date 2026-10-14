@@ -1496,9 +1496,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await seedEmployee(harness);
     const agreementId = await everyEmployeeAgreement(harness);
     const hired = await seedEmployee(harness, { name: 'Ines' });
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: hired,
+      agreementIds: [agreementId],
       tried: false,
     });
     for (let start = 0; start < 300; start += 100) {
@@ -1987,9 +1987,9 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     const ines = await seedEmployee(harness, { name: 'Ines' });
     const agreementId = await everyEmployeeAgreement(harness);
     await letGo(harness, ines);
-    await harness.mutation(internal.workingAgreements.holdForEmployee, {
-      agreementId,
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
       agentId: ines,
+      agreementIds: [agreementId],
       tried: true,
     });
     await harness.mutation(internal.workingAgreements.settleCharterCheck, {
@@ -2207,6 +2207,66 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect((await agreementsOf(harness)).filter((row) => row.agentId === hired)).toHaveLength(30);
   }, 60_000);
 
+  it('records an established employee’s owed checks in one settle that reads its charters and checks once, not once an agreement (W16-R31)', async (): Promise<void> => {
+    // The wave 16 review: `lastCheckedAt` read up to 50 charters and 100 events for each of up to
+    // 200 agreements in one transaction. Six charter versions and ten earlier checks here: read
+    // once an agreement, thirty agreements pass this limit; read once a settle, they do not.
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { documentsRead: 200 },
+    });
+    const ids: Id<'workingAgreements'>[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      ids.push(await agreementSince(harness, `Name vessel ${index} in every comment.`, 2 + index));
+    }
+    const amended = await establishedEmployee(harness);
+    await harness.run(async (ctx) => {
+      for (let draft = 0; draft < 4; draft += 1) {
+        await ctx.db.insert('charters', {
+          agentId: amended,
+          version: `v1.1-draft-${draft}`,
+          approved: false,
+          createdAt: 6 + draft,
+          body: {},
+        });
+      }
+      // Ten checks since: nine of the first agreement, the newest at 49, and one of the second.
+      for (let check = 0; check < 9; check += 1) {
+        await ctx.db.insert('events', {
+          agentId: amended,
+          type: 'agreement.checked',
+          payload: { agreementId: ids[0]!, everyEmployee: true },
+          createdAt: 41 + check,
+        });
+      }
+      await ctx.db.insert('events', {
+        agentId: amended,
+        type: 'agreement.checked',
+        payload: { agreementId: ids[1]!, everyEmployee: true },
+        createdAt: 60,
+      });
+    });
+    await harness.mutation(internal.workingAgreements.settleUncheckable, {
+      agentId: amended,
+      agreementIds: ids,
+      tried: true,
+    });
+    const owed = new Map(
+      (await eventsOf(harness, 'agreement.check-owed')).map((event) => {
+        const payload = event.payload as { agreementId: string; since: number };
+        return [payload.agreementId, payload.since];
+      }),
+    );
+    expect(owed.size).toBe(30);
+    // Each from when it was last checked: at a check of it since, as it took effect, or at the
+    // approval of the charter the newest amends (1), whichever is latest.
+    expect(owed.get(ids[0]!)).toBe(49);
+    expect(owed.get(ids[1]!)).toBe(60);
+    expect(owed.get(ids[2]!)).toBe(4);
+    expect(owed.get(ids[29]!)).toBe(31);
+  }, 60_000);
+
   it('checks at most a batch of agreements an action and hands the rest to the next (W15-R34)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedEmployee(harness);
@@ -2257,6 +2317,87 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(
       (await eventsOf(harness, 'agreement.checked')).map((event) => [event.agentId, event.payload]),
     ).toEqual([[amended, { agreementId, everyEmployee: true }]]);
+  }, 60_000);
+
+  it('opens one low card on the employee for the checks it owes, which offers the re-check alone and checks every one on Approve (RM34 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const vessel = await agreementSince(harness, 'Name the vessel in every comment.', 2);
+    const berth = await agreementSince(harness, 'Name the berth in every comment.', 3);
+    const amended = await establishedEmployee(harness);
+    recorded.refusalDown = true;
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: amended,
+      attempt: 3,
+    });
+    expect(await eventsOf(harness, 'agreement.check-owed')).toHaveLength(2);
+    const cards = await harness.run(async (ctx) =>
+      (await ctx.db.query('reorientations').collect()).filter((card) => card.agentId === amended),
+    );
+    // Two owed checks, one card: the second joined the first, and it holds nothing.
+    expect(
+      cards.map((card) => [card.trigger, card.triggerSummary, card.risk, card.blockingWork]),
+    ).toEqual([
+      [
+        'agreement-check-owed',
+        'Its agreements could not be checked against the amended charter',
+        'low',
+        [],
+      ],
+    ]);
+    const [card] = cards;
+    expect([...card.affected.agreements].sort()).toEqual([vessel, berth].sort());
+    await drain(harness);
+    const read = await harness.query(internal.reorientation.proposalInput, {
+      reorientationId: card._id,
+    });
+    expect(
+      read?.input.candidates
+        .map((candidate) =>
+          candidate.kind === 'agreement'
+            ? `${candidate.agreementId}: ${candidate.actions.join(',')}`
+            : '?',
+        )
+        .sort(),
+    ).toEqual([`${vessel}: recheck`, `${berth}: recheck`].sort());
+    await harness.mutation(internal.reorientation.writeProposal, {
+      reorientationId: card._id,
+      proposed: {
+        kind: 'agreement',
+        agreementId: vessel,
+        action: 'recheck',
+        rationale: 'The check could not be had when the charter was amended.',
+      },
+      basis: read!.basis,
+    });
+    recorded.refusalDown = false;
+    expect(
+      await harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, { reorientationId: card._id }),
+    ).toEqual({ result: 'the working agreement is being checked again' });
+    await drain(harness);
+    // One Approve checked both agreements the card named, and neither check is owed any more.
+    expect(
+      (await eventsOf(harness, 'agreement.checked'))
+        .map((event) => (event.payload as { agreementId: string }).agreementId)
+        .sort(),
+    ).toEqual([vessel, berth].sort());
+    // A second Approve of the same proposal finds no check owed: said as moved on, not run twice.
+    const again = await harness.run(async (ctx) => {
+      const { _id, _creationTime, ...fields } = (await ctx.db.get(card._id))!;
+      void _id;
+      void _creationTime;
+      return await ctx.db.insert('reorientations', {
+        ...fields,
+        status: 'open',
+        triggerKey: 'again',
+      });
+    });
+    await expect(
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, { reorientationId: again }),
+    ).rejects.toThrow('These agreements have been checked since this card opened: dismiss it.');
   }, 60_000);
 
   it('records an owed check for an established employee amended past the bound, and refuses Check now there (RM28)', async (): Promise<void> => {

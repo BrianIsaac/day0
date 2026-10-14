@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { THEME_CSS, lightToken, token } from '../fixtures/theme-contrast';
+import { THEME_CSS, contrast, lightToken, token } from '../fixtures/theme-contrast';
 import {
   DAY0_MARK_URL,
   clerkAppearance,
@@ -84,12 +84,30 @@ describe('the Clerk appearance', () => {
       colorPrimary: 'var(--color-accent)',
       colorPrimaryForeground: 'var(--color-bg)',
       colorRing: 'var(--color-accent)',
-      colorDanger: 'var(--color-danger)',
+      colorDanger: 'var(--color-danger-solid)',
       colorSuccess: 'var(--color-ok)',
       colorWarning: 'var(--color-warn)',
       colorModalBackdrop: 'var(--color-scrim)',
       colorShadow: 'var(--color-shadow)',
     });
+  });
+
+  // The second pass on 17-FX: Clerk fills its destructive button with `colorDanger` and writes on
+  // it in white (`danger: {accent: $danger500, accentContrast: $white}` in `@clerk/ui` 1.36), and
+  // draws its error text in the same colour on the card. The dark danger token went one step
+  // lighter for the product's chips (D-7 (b)); given to Clerk, white on that fill fell from 3.76:1
+  // to 2.77:1, under the 3:1 a control is held to.
+  it("gives Clerk's destructive button and error text a red of their own, which keeps white on the fill and the text on the card as they were at v0.20.0", () => {
+    const WHITE = '#ffffff';
+    expect(clerkAppearance.variables.colorDanger).toBe('var(--color-danger-solid)');
+    for (const read of [token, lightToken]) {
+      expect(contrast(WHITE, read('danger-solid'))).toBeGreaterThanOrEqual(3.76);
+      expect(contrast(read('danger-solid'), read('card'))).toBeGreaterThanOrEqual(4.5);
+    }
+    // No one red holds white at 4.5:1 and reads at 4.5:1 on the dark card (the first needs a
+    // luminance under 0.184, the second over 0.216), so the dark value is the design's own.
+    expect(Number(contrast(WHITE, token('danger-solid')).toFixed(2))).toBe(3.76);
+    expect(contrast(WHITE, token('danger'))).toBeLessThan(3);
   });
 
   it('takes the neutral from the text and leaves the borders to it, so the social button and divider show in either theme', () => {
@@ -136,18 +154,33 @@ describe('the Clerk appearance', () => {
   // image's `prefers-color-scheme` from the colour-scheme of the page that draws it (probed on
   // Chromium 1248, 12 October 2026), so the mark takes each set's values from the scheme the page
   // is in, whichever way the viewer chose it.
-  it("serves the mark from public/ in the brand's own geometry, the head in the accent and the eyes cut in the card's colour, in each theme", () => {
+  it("serves the mark from public/ in the brand's own geometry, the head in each theme's accent", () => {
     const mark = checkoutFile('public/day0-mark.svg');
     expect(rects(mark)).toEqual(rects(checkoutFile('app/icon.svg')));
     expect(mark).toMatch(/viewBox="0 0 16 16"/);
     const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
     const [dark, light] = style.split('@media (prefers-color-scheme: light)');
     expect(dark).toContain(`.head { fill: ${token('accent')}; }`);
-    expect(dark).toContain(`.eye { fill: ${token('card')}; }`);
     expect(light).toContain(`.head { fill: ${lightToken('accent')}; }`);
-    expect(light).toContain(`.eye { fill: ${lightToken('card')}; }`);
     expect(mark.match(/class="head"/g)).toHaveLength(2);
-    expect(mark.match(/class="eye"/g)).toHaveLength(2);
+  });
+
+  // Re-pinned (17-FX, V17-10): probed on the bed in Playwright's Firefox 155 and WebKit 2359 (13
+  // October 2026). Firefox answers the image's query from the page's colour-scheme, as Chromium
+  // does; WebKit answers it from the system, so a viewer who chose Light on a dark system met the
+  // dark set's eyes, two #18181b blocks on a white card, and one who chose Dark on a light system
+  // two white ones. A cut eye shows the card behind it in every engine, whatever answers the query.
+  it('cuts the eyes out of the head, so they are the colour of whatever the mark is drawn on, and names no eye colour for a scheme to pick', () => {
+    const mark = checkoutFile('public/day0-mark.svg');
+    const style = /<style>([\s\S]*?)<\/style>/.exec(mark)?.[1] ?? '';
+    expect(style).not.toContain('.eye');
+    expect(mark).not.toContain(token('card'));
+    expect(mark).not.toContain(lightToken('card'));
+    const mask = /<mask id="eyes">([\s\S]*?)<\/mask>/.exec(mark)?.[1] ?? '';
+    // The two eyes of the icon, in its geometry, are what the mask takes out of the head.
+    expect(rects(mask)).toEqual(rects(checkoutFile('app/icon.svg')).slice(2));
+    expect(mask.match(/fill="#000"/g)).toHaveLength(2);
+    expect(mark).toMatch(/<g mask="url\(#eyes\)">\s*<rect [^>]*class="head"/);
   });
 });
 

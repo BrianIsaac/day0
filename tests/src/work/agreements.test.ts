@@ -8,6 +8,7 @@ import {
   agreementStatement,
   appliedAgreementIds,
   executorAgreementLines,
+  judgedTwice,
   plannerAgreementLines,
   redactedStatement,
   REFUSAL_JUDGEMENT_SYSTEM,
@@ -292,5 +293,19 @@ describe('two corrections that say the same thing (F10)', (): void => {
         corrections,
       ),
     ).toEqual([['c1', 'c2']]);
+  });
+});
+
+describe('two judgements of one agreement against one charter (RM32 (a))', (): void => {
+  const widens = { reason: 'widens-scope' as const };
+
+  it('refuses when both judgements refuse, with the first judgement’s reason and clause', (): void => {
+    expect(judgedTwice(widens, widens)).toEqual({ outcome: 'refused', refusal: widens });
+    const contradicts = { reason: 'contradicts-will-not-do' as const, clause: 'Post to public.' };
+    expect(judgedTwice(contradicts, widens)).toEqual({ outcome: 'refused', refusal: contradicts });
+  });
+
+  it('is disputed when the second judgement keeps what the first refused, and carries the one refusal', (): void => {
+    expect(judgedTwice(widens, undefined)).toEqual({ outcome: 'disputed', refusal: widens });
   });
 });

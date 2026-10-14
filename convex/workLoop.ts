@@ -1,4 +1,4 @@
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, getConvexSize, getDocumentSize, v } from 'convex/values';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -1042,8 +1042,72 @@ export const MANAGER_CLAIM_LEASE_MS = 15 * 60 * 1000;
 export const MANAGER_CLAIM_LAPSED_REASON =
   'the send stopped before it recorded a result, so it is not known whether Slack took it';
 
-/** Lapsed claims settled per employee and kind in one sweep; the rest wait for the next. */
+/** Lapsed claims read per employee and kind at a time; the rest are read once these are settled. */
 const LEASE_BATCH = 50;
+
+/**
+ * Lapsed claims on work items read per employee and kind at a time: fewer than
+ * {@link LEASE_BATCH}, since such a row carries its run's output and is read and rewritten whole.
+ */
+const WORK_ITEM_LEASE_BATCH = 10;
+
+/**
+ * Documents one transaction of the lapsed-claims sweep writes at most (W16-R31): a page was 50
+ * employees, five claim kinds and 50 claims a kind, up to 12,500 patches in one mutation, which
+ * past the transaction's write limit rolled back and started at the same page on every run.
+ */
+export const SETTLE_WRITES_PER_SWEEP = 500;
+
+/**
+ * Bytes of rows one transaction of the sweep rewrites at most, a quarter of what a transaction
+ * may write: a settled claim's row is written whole, and a work item's holds its run's output.
+ */
+export const SETTLE_BYTES_PER_SWEEP = 4 * 1024 * 1024;
+
+/** The most bytes one document holds (Convex's limit): what a work item not yet read may weigh. */
+export const ROW_BYTES_AT_MOST = 1024 * 1024;
+
+/** What one transaction of the sweep may still write, counted as it writes. */
+interface SweepRoom {
+  /** Whether another document may be written. */
+  readonly open: () => boolean;
+  /**
+   * The most rows a read of `batch` may take, so a read is never larger than what may be written:
+   * none once the room is spent, and for rows that may each weigh `rowBytesAtMost` no more than
+   * fit the bytes left, one at the least.
+   */
+  readonly rows: (batch: number, rowBytesAtMost?: number) => number;
+  /** Count one document written, of the size given. */
+  readonly spend: (bytes: number) => void;
+}
+
+/** A transaction's room at its start: {@link SETTLE_WRITES_PER_SWEEP} and {@link SETTLE_BYTES_PER_SWEEP}. */
+function sweepRoom(): SweepRoom {
+  let writes = SETTLE_WRITES_PER_SWEEP;
+  let bytes = SETTLE_BYTES_PER_SWEEP;
+  const open = (): boolean => writes > 0 && bytes > 0;
+  return {
+    open,
+    rows: (batch, rowBytesAtMost) => {
+      if (!open()) return 0;
+      const fitting =
+        rowBytesAtMost === undefined ? batch : Math.max(1, Math.floor(bytes / rowBytesAtMost));
+      return Math.min(batch, writes, fitting);
+    },
+    spend: (written) => {
+      writes -= 1;
+      bytes -= written;
+    },
+  };
+}
+
+/** What settling one employee's lapsed claims came to. */
+interface SettledClaims {
+  /** How many claims were settled. */
+  readonly settled: number;
+  /** Whether a read came back as full as it was allowed to be, so more may stand behind it. */
+  readonly more: boolean;
+}
 
 /**
  * Settle every manager-channel claim an action died holding (N-3), for one employee, as the
@@ -1052,22 +1116,57 @@ const LEASE_BATCH = 50;
  * acknowledgement, a duplicate-reply notice, the edit that closes a decided request (12-M writes
  * `closedAt` and `closeFailure`; the contract is in 12-W's handover) and a replaced request's one
  * edit record the failure and are not sent again, since the message may have landed. A per-run
- * note is left to its own switch (`work.recoverUnsentManagerNote`). Each read is the open claims
- * older than the lease on its index, so a claim with a result is never read.
+ * note is left to its own switch (`work.recoverUnsentManagerNote`) and is not among the notes
+ * read, so it cannot stand in a digest's note's place. Each read is the open claims
+ * older than the lease on its index, so a claim with a result is never read, and each is taken
+ * in its turn and no larger than the transaction's room, so a kind is read only while there is
+ * room to settle it (W16-R31); a work item, which carries its run's output, is read no more at a
+ * time than fit the bytes left at a document's largest size.
  *
  * @param ctx - The sweep's mutation context.
  * @param agentId - The employee.
  * @param now - The instant the lease is judged against.
- * @returns How many claims were settled.
+ * @param room - What the sweep's transaction may still write; spent here as each claim settles.
+ * @returns How many claims were settled, and whether a read came back full.
  */
 async function settleLapsedManagerClaims(
   ctx: MutationCtx,
   agentId: Id<'agents'>,
   now: number,
-): Promise<number> {
+  room: SweepRoom,
+): Promise<SettledClaims> {
   const before = now - MANAGER_CLAIM_LEASE_MS;
   const failure = MANAGER_CLAIM_LAPSED_REASON;
-  const [notes, notices, duplicates, closes, edits] = await Promise.all([
+  let settled = 0;
+  let more = false;
+  /** The lapsed claims of one kind, as many as the room allows; none, and no read, once it is spent. */
+  const lapsed = async <Row>(
+    claims: { take: (count: number) => Promise<Row[]> },
+    batch: number,
+    rowBytesAtMost?: number,
+  ): Promise<Row[]> => {
+    const count = room.rows(batch, rowBytesAtMost);
+    if (count === 0) return [];
+    const rows = await claims.take(count);
+    more ||= rows.length === count;
+    return rows;
+  };
+  /** Settle the rows of one kind while the transaction has room, each counted as it is written. */
+  const settle = async <Row extends { _id: string }>(
+    rows: readonly Row[],
+    write: (row: Row) => Promise<number>,
+  ): Promise<Row[]> => {
+    const written: Row[] = [];
+    for (const row of rows) {
+      if (!room.open()) break;
+      room.spend(await write(row));
+      written.push(row);
+    }
+    settled += written.length;
+    return written;
+  };
+
+  const notes = await lapsed(
     ctx.db
       .query('managerNotes')
       .withIndex('by_agent_claim_open', (q) =>
@@ -1079,7 +1178,27 @@ async function settleLapsedManagerClaims(
           .gt('claimedAt', 0)
           .lt('claimedAt', before),
       )
-      .take(LEASE_BATCH),
+      // A digest's notes only: a per-run note is its own switch's, and fifty of them at the head
+      // of the index, read with the rest, were the whole read and hid the digest's behind them.
+      .filter((q) => q.neq(q.field('digestId'), undefined)),
+    LEASE_BATCH,
+  );
+  const released = await settle(notes, async (note) => {
+    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
+    return getDocumentSize(note);
+  });
+  if (released.length > 0) {
+    const payload = { noteIds: released.map((note) => note._id), reason: failure };
+    await appendEvent(ctx, {
+      agentId,
+      type: 'work.manager-digest-failed',
+      payload,
+      createdAt: now,
+    });
+    room.spend(getConvexSize(payload));
+  }
+
+  const notices = await lapsed(
     ctx.db
       .query('managerDecisionNotices')
       .withIndex('by_agent_claim_open', (q) =>
@@ -1089,8 +1208,28 @@ async function settleLapsedManagerClaims(
           .eq('failure', undefined)
           .gt('claimedAt', 0)
           .lt('claimedAt', before),
-      )
-      .take(LEASE_BATCH),
+      ),
+    LEASE_BATCH,
+  );
+  await settle(notices, async (notice) => {
+    await ctx.db.patch(notice._id, { failure });
+    return getDocumentSize(notice);
+  });
+
+  // One row can hold both claims, so each patch merges into the decision as this transaction
+  // last wrote it, kept here so the row is not read a second time.
+  const decisions = new Map<Id<'workItems'>, NonNullable<Doc<'workItems'>['decision']>>();
+  const settleDecision =
+    (field: 'duplicateNoticeFailure' | 'closeFailure') =>
+    async (row: Doc<'workItems'>): Promise<number> => {
+      const decision = decisions.get(row._id) ?? row.decision;
+      if (decision === undefined) return 0;
+      const next = { ...decision, [field]: failure };
+      decisions.set(row._id, next);
+      await ctx.db.patch(row._id, { decision: next });
+      return getDocumentSize(row);
+    };
+  const duplicates = await lapsed(
     ctx.db
       .query('workItems')
       .withIndex('by_agent_duplicate_notice_open', (q) =>
@@ -1100,8 +1239,12 @@ async function settleLapsedManagerClaims(
           .eq('decision.duplicateNoticeFailure', undefined)
           .gt('decision.duplicateNoticeClaimedAt', 0)
           .lt('decision.duplicateNoticeClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
+      ),
+    WORK_ITEM_LEASE_BATCH,
+    ROW_BYTES_AT_MOST,
+  );
+  await settle(duplicates, settleDecision('duplicateNoticeFailure'));
+  const closes = await lapsed(
     ctx.db
       .query('workItems')
       .withIndex('by_agent_close_open', (q) =>
@@ -1111,8 +1254,13 @@ async function settleLapsedManagerClaims(
           .eq('decision.closeFailure', undefined)
           .gt('decision.closeClaimedAt', 0)
           .lt('decision.closeClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
+      ),
+    WORK_ITEM_LEASE_BATCH,
+    ROW_BYTES_AT_MOST,
+  );
+  await settle(closes, settleDecision('closeFailure'));
+
+  const edits = await lapsed(
     ctx.db
       .query('replacedDecisionRequests')
       .withIndex('by_agent_edit_open', (q) =>
@@ -1122,34 +1270,14 @@ async function settleLapsedManagerClaims(
           .eq('editFailure', undefined)
           .gt('editClaimedAt', 0)
           .lt('editClaimedAt', before),
-      )
-      .take(LEASE_BATCH),
-  ]);
-  const digestNotes = notes.filter((note) => note.digestId !== undefined);
-  for (const note of digestNotes) {
-    await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
-  }
-  if (digestNotes.length > 0) {
-    await appendEvent(ctx, {
-      agentId,
-      type: 'work.manager-digest-failed',
-      payload: { noteIds: digestNotes.map((note) => note._id), reason: failure },
-      createdAt: now,
-    });
-  }
-  for (const notice of notices) await ctx.db.patch(notice._id, { failure });
-  // One row can hold both claims, so each patch merges into the decision as it stands now.
-  const settleDecision = async (
-    workItemId: Id<'workItems'>,
-    field: 'duplicateNoticeFailure' | 'closeFailure',
-  ): Promise<void> => {
-    const decision = (await ctx.db.get(workItemId))?.decision;
-    if (decision) await ctx.db.patch(workItemId, { decision: { ...decision, [field]: failure } });
-  };
-  for (const row of duplicates) await settleDecision(row._id, 'duplicateNoticeFailure');
-  for (const row of closes) await settleDecision(row._id, 'closeFailure');
-  for (const edit of edits) await ctx.db.patch(edit._id, { editFailure: failure });
-  return digestNotes.length + notices.length + duplicates.length + closes.length + edits.length;
+      ),
+    LEASE_BATCH,
+  );
+  await settle(edits, async (edit) => {
+    await ctx.db.patch(edit._id, { editFailure: failure });
+    return getDocumentSize(edit);
+  });
+  return { settled, more };
 }
 
 /**
@@ -1162,11 +1290,16 @@ export const SETTLE_AGENTS_PER_SWEEP = 50;
  * Settle the manager-channel claims every employee's actions died holding (N-3); see
  * `settleLapsedManagerClaims`. Internal; its own five-minute job (`convex/crons.ts`) in either mode,
  * a transaction apart from the stalled-step sweep, so its reads never roll that sweep back. Each
- * transaction reads a page of {@link SETTLE_AGENTS_PER_SWEEP} employees and schedules the next
- * page from where it stopped.
+ * transaction reads a page of {@link SETTLE_AGENTS_PER_SWEEP} employees, writes at most
+ * {@link SETTLE_WRITES_PER_SWEEP} documents and {@link SETTLE_BYTES_PER_SWEEP} of rows, and
+ * schedules the next: the same page again when its room ran out, or when a read came back full
+ * and something was settled, since a settled claim is no longer read and the page's rest is found
+ * there; the next page from where it stopped otherwise (W16-R31). A pass of a page that settles
+ * nothing schedules no second pass of it, so a read that comes back full of claims it leaves
+ * does not keep it running.
  *
  * @param cursor - Where the previous page stopped; absent, the sweep starts at the first employee.
- * @returns How many claims this page settled.
+ * @returns How many claims this transaction settled.
  */
 export const settleLapsedClaims = internalMutation({
   args: { cursor: v.optional(v.string()) },
@@ -1175,11 +1308,22 @@ export const settleLapsedClaims = internalMutation({
     const page = await ctx.db
       .query('agents')
       .paginate({ cursor: args.cursor ?? null, numItems: SETTLE_AGENTS_PER_SWEEP });
+    const room = sweepRoom();
     let settled = 0;
+    let more = false;
     for (const agent of page.page) {
-      settled += await settleLapsedManagerClaims(ctx, agent._id, now);
+      if (!room.open()) break;
+      const one = await settleLapsedManagerClaims(ctx, agent._id, now, room);
+      settled += one.settled;
+      more ||= one.more;
     }
-    if (!page.isDone) {
+    if (!room.open() || (more && settled > 0)) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.workLoop.settleLapsedClaims,
+        args.cursor === undefined ? {} : { cursor: args.cursor },
+      );
+    } else if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.workLoop.settleLapsedClaims, {
         cursor: page.continueCursor,
       });

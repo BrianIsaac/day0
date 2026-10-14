@@ -1,0 +1,21 @@
+REVOPS-2 state=plan-pending skip=
+summary: Resolve the conflicting audit-comment limit, then hold the Linear comment and status change for the manager’s literal approval, as autonomous actions are off.
+  step 1: Send the manager a DM that flags the conflicting 60-word and 120-word audit-comment limits for REVOPS-2, and asks which limit governs before the comment is posted.
+  step 2: After the manager selects the applicable limit, post the audit comment on REVOPS-2, stating that the Q3 accrual review is finished, that no supporting evidence was supplied in the ticket, and that the supporting evidence remains unknown. Hold the exact Linear payload for the manager’s literal approval.
+  step 3: After the approved audit comment has posted, change REVOPS-2 to Done. Hold the exact Linear status-change payload for the manager’s literal approval.
+  cite step 1: Revops folder/runbooks/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 1: Policies folder/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 2: Policies folder/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Add an audit comment > Action shape
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Discipline
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Closing the loop
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Change issue status > Action shape
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Discipline
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Closing the loop
+risk: The audit-comment limit conflicts across trusted documentation, 60 words versus 120 words. The ticket supplies no supporting evidence for the completed accrual review, so the audit comment must record that evidence as unknown.
+obligations: [('write', ['slack']), ('conditional-write', ['linear']), ('conditional-write', ['linear'])] conditional-on-manager
+selectedBlocks: 43 decision: eu3zu4
+QUESTION open | k97b4z2afb4dg33ka8w3knrnh58g91g5 | Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Priya runs the other steps now and holds its writes to Slack and Linear until you answer and Retry.
+QUESTION open | None | Whether the hire will get Northstar access before close.

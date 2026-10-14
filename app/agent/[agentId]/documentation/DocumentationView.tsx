@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useQuery } from 'convex/react';
+import { useQueries, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
+import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
+import { relationsNotShownWords } from '@/docs/relation-words';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { LinkSourceForm } from '../../../documentation/LinkSourceForm';
@@ -16,7 +18,73 @@ import { useAgentZone } from '../../../components/time';
 import { ConflictCard } from './ConflictCard';
 import { PageTable } from './PageTable';
 import { RelationAnswered, type AnsweredRelation } from './RelationAnswered';
-import { RelationCard } from './RelationCard';
+import { RelationCard, type RelationCardRow, type RelationCardsRead } from './RelationCard';
+
+/** The most confirmed conflicts the tab draws: as many as one read of them gives (`RELATION_CARDS_READ`). */
+const CONFLICT_CARDS_DRAWN = 20;
+
+/**
+ * The most later reads the tab makes of the confirmed conflicts. Each passes over about three
+ * hundred settled ones within a transaction's limits, so this reaches a conflict that stands
+ * behind thousands, and an owner with more still draws every card the first reads found.
+ */
+const CONFLICT_READS_MOST = 16;
+
+/** The later reads of the confirmed conflicts the tab has asked for, from where the first read stopped. */
+interface ConflictReads {
+  /** The first read's `next` these reads go on from. */
+  readonly from: number | null;
+  /** Each later read's `conflictsBefore`, in order. */
+  readonly cursors: readonly number[];
+}
+
+/**
+ * The cards the relations' first read drew, and the confirmed conflicts' later reads, each going on
+ * from where the last stopped (W15-R19, F12): a read stops within a transaction's limits, so a
+ * conflict standing behind many settled ones is drawn by a later read, which the tab makes for as
+ * long as it draws fewer conflicts than one read gives and the reads say more is behind.
+ *
+ * @param first - The first read, or undefined while it loads or in the hosted office.
+ * @returns Every card drawn so far, the first read's first.
+ */
+function useRelationCards(first: RelationCardsRead | undefined): RelationCardRow[] {
+  const from = first?.next ?? null;
+  const [reads, setReads] = useState<ConflictReads>({ from: null, cursors: [] });
+  // Kept from the previous render in state, as React's docs set out: a first read that now stops
+  // elsewhere starts the later reads again from there.
+  const current = reads.from === from ? reads : { from, cursors: [] };
+  if (current !== reads) setReads(current);
+  const queries = useMemo(
+    () =>
+      Object.fromEntries(
+        current.cursors.map((before) => [
+          String(before),
+          { query: api.docRelations.listOpen, args: { conflictsBefore: before } },
+        ]),
+      ),
+    [current.cursors],
+  );
+  const later: Record<string, RelationCardsRead | undefined | Error> = useQueries(queries);
+  const cards = [...(first?.cards ?? [])];
+  let next = from;
+  for (const before of current.cursors) {
+    const read = later[String(before)];
+    // A read still loading, or one that failed, ends the chain here; the cards before it stand.
+    if (read === undefined || read instanceof Error) return cards;
+    cards.push(...read.cards);
+    next = read.next;
+  }
+  const conflicts = cards.filter((card) => card.status === 'confirmed').length;
+  if (
+    next !== null &&
+    conflicts < CONFLICT_CARDS_DRAWN &&
+    current.cursors.length < CONFLICT_READS_MOST &&
+    !current.cursors.includes(next)
+  ) {
+    setReads({ ...current, cursors: [...current.cursors, next] });
+  }
+  return cards;
+}
 
 /**
  * The Documentation tab (round two section 3.9, `agent-documentation.html`), as far as the
@@ -27,13 +95,24 @@ import { RelationCard } from './RelationCard';
  * status with who or what decided it, and a card for every relation the manager has still to
  * answer: two pages that read as versions of one runbook, or two that disagree. An answered
  * card leaves the tab, so the tab keeps the last answer where the cards are, with "Undo". The
- * hosted office links nothing and says where its pages are.
+ * hosted office links nothing: its Sources card says so in the one sentence the home, the
+ * Documentation page and the take-on dialog say it in (`MOCK_OFFICE_DOCUMENTATION`; W16-R35), and
+ * the aside says where this employee's pages are.
  */
 export function DocumentationView() {
   const { agent, surfaceMode, arriving } = useEmployee();
   const zone = useAgentZone();
   const sources = useQuery(api.docSources.listMine, surfaceMode === 'real' ? {} : 'skip');
-  const relations = useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip');
+  const firstRead = useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip');
+  const relations = useRelationCards(firstRead);
+  // The proposals the first read left out, said under the ones it drew (W17-R9, D-10 (a)).
+  const notShown =
+    firstRead === undefined
+      ? undefined
+      : relationsNotShownWords(
+          firstRead.cards.filter((card) => card.status === 'proposed').length,
+          firstRead.notShown,
+        );
   const [picked, setPicked] = useState<Id<'docSources'> | undefined>(undefined);
   const [answered, setAnswered] = useState<AnsweredRelation | null>(null);
   const excluded = useMemo(
@@ -51,8 +130,7 @@ export function DocumentationView() {
           {surfaceMode === 'mock' ? (
             <>
               In the hosted office {agent.name} reads the office’s wiki and how-to guides, on the{' '}
-              <Link href={surfaces}>Surfaces tab</Link> under Docs. Linking your own documentation
-              is part of running Day0 on your own systems.
+              <Link href={surfaces}>Surfaces tab</Link> under Docs.
             </>
           ) : (
             <>
@@ -76,9 +154,7 @@ export function DocumentationView() {
       <Columns arriving={arriving} aside={aside}>
         <Card title="Sources">
           <p className="text-sm text-[var(--color-muted)]">
-            {surfaceMode === undefined
-              ? 'Loading'
-              : 'The hosted office links no documentation of yours; its pages are disclosed and synthetic.'}
+            {surfaceMode === undefined ? 'Loading' : MOCK_OFFICE_DOCUMENTATION}
           </p>
         </Card>
       </Columns>
@@ -105,11 +181,11 @@ export function DocumentationView() {
           // One answer, one card: a refused Undo's line never rides under the next answer (W15-R47).
           key={answered.relationId}
           answered={answered}
-          cardGone={!(relations ?? []).some((relation) => relation._id === answered.relationId)}
+          cardGone={!relations.some((relation) => relation._id === answered.relationId)}
           onUndone={() => setAnswered({ ...answered, undo: false, undone: true })}
         />
       ) : null}
-      {(relations ?? []).map((relation) =>
+      {relations.map((relation) =>
         relation.kind === 'possible_conflict' ? (
           <ConflictCard key={relation._id} relation={relation} onAnswered={setAnswered} />
         ) : (
@@ -121,6 +197,9 @@ export function DocumentationView() {
           />
         ),
       )}
+      {notShown !== undefined ? (
+        <p className="text-sm text-[var(--color-muted)]">{notShown}</p>
+      ) : null}
       {shown ? <PageTable key={shown._id} source={shown} zone={zone} /> : null}
       <Card title="Link a location">
         <LinkSourceForm />

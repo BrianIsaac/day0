@@ -8,6 +8,7 @@ import { HELD_NOT_APPROVED, HELD_WRITE } from '../../src/surfaces/policy';
 import { OUTCOME_UNKNOWN_REASON } from '../../src/work/reconciliation';
 import type { MockAction } from '../../src/work/types';
 import { allConvexModules } from './all-modules';
+import { questionOf, seedConflictQuestion } from './fakes/conflict-question';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 
@@ -152,6 +153,31 @@ describe('surfaceAwaitingConnection and parkOnConnection', (): void => {
     });
     expect(parked?.approvedIndexes).toBeUndefined();
     expect(parked?.pendingRunId).toBeUndefined();
+  });
+
+  it('closes the conflict question asked beside the plan the park sends back to evaluation (17-C)', async (): Promise<void> => {
+    useSurfaceMode('mock');
+    const { parkOnConnection } = await applyModule();
+    const harness = convexTest(schema, allConvexModules());
+    const { row } = await seed(harness, (runId) => ({
+      pendingRunId: runId,
+      output: { actions: [COMMENT] },
+      actionVerdicts: [HELD],
+      approvedIndexes: [0],
+      applyPhase: 'approved',
+    }));
+    const asked = await seedConflictQuestion(harness, {
+      agentId: row.agentId,
+      workItemId: row._id,
+    });
+
+    await harness.run(async (ctx) => {
+      await parkOnConnection(ctx, row, 'linear');
+    });
+
+    expect((await questionOf(harness, asked.questionId)).closed).toMatchObject({
+      reason: 'redrafted',
+    });
   });
 
   it('names nothing when no approved write goes through a surface', async (): Promise<void> => {

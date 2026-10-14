@@ -1,7 +1,9 @@
 import type { MutationCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
+import type { WorkPlanRedraftingPayload } from '../src/events/contract';
 import { rememberReplacedRequest } from './decisionRequests';
 import { appendEvent } from './eventLog';
+import { closeQuestionsAtRedraft } from './questionCloses';
 import { scheduleNextStep } from './workLoop';
 
 /**
@@ -35,22 +37,31 @@ export async function redraftPlansDraftedWithout(
     const without = row.planDraftedWithout;
     if (without?.surfaceSlug !== surface.slug || without.cause !== 'not-connected') continue;
     if (row.decision?.decidedAt !== undefined) continue;
-    await sendBackToDrafting(ctx, row, surface, now);
+    await sendBackToDrafting(ctx, row, { surface }, now);
   }
 }
 
+/** Why a plan goes back to drafting: its system connected, or a card's Approve changed its ground. */
+export type RedraftCause =
+  | { readonly surface: Doc<'surfaces'> }
+  | { readonly card: Pick<Doc<'reorientations'>, '_id' | 'triggerSummary'> };
+
 /**
- * Send one row back to drafting because the system its plan could not read
- * is connected now, as a Retry's re-draft resets it: no plan, no request, no
- * answers, and the draft scheduled in the same transaction.
+ * Send one undecided row back to drafting, as a Retry's re-draft resets it: no
+ * plan, no request, no answers, its conflict questions closed (17-C: the new
+ * plan is asked on what it cites), and the draft scheduled in the same
+ * transaction. Because the system its plan could not read is connected now
+ * (P7-18), or because a card that held it was approved with a change to what
+ * the plan was drafted under (V17-9).
  */
 export async function sendBackToDrafting(
   ctx: MutationCtx,
   row: Doc<'workItems'>,
-  surface: Doc<'surfaces'>,
+  cause: RedraftCause,
   now: number,
 ): Promise<void> {
   await rememberReplacedRequest(ctx, row, now);
+  await closeQuestionsAtRedraft(ctx, row._id, now);
   await ctx.db.patch(row._id, {
     state: 'claimed',
     plan: undefined,
@@ -63,7 +74,12 @@ export async function sendBackToDrafting(
   await appendEvent(ctx, {
     agentId: row.agentId,
     type: 'work.plan-redrafting',
-    payload: { workItemId: row._id, surfaceId: surface._id, slug: surface.slug },
+    payload: {
+      workItemId: row._id,
+      ...('surface' in cause
+        ? { surfaceId: cause.surface._id, slug: cause.surface.slug }
+        : { reorientationId: cause.card._id, summary: cause.card.triggerSummary }),
+    } satisfies WorkPlanRedraftingPayload,
     createdAt: now,
   });
   await scheduleNextStep(ctx, { ...row, state: 'claimed', plan: undefined });
