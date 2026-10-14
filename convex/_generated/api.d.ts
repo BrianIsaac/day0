@@ -14,6 +14,7 @@ import type * as baselineActions from '../baselineActions.js';
 import type * as channelRejoins from '../channelRejoins.js';
 import type * as charterSeeding from '../charterSeeding.js';
 import type * as charters from '../charters.js';
+import type * as companyFigures from '../companyFigures.js';
 import type * as config from '../config.js';
 import type * as connectionEvents from '../connectionEvents.js';
 import type * as corrections from '../corrections.js';
@@ -160,6 +161,7 @@ declare const fullApi: ApiFromModules<{
   channelRejoins: typeof channelRejoins;
   charterSeeding: typeof charterSeeding;
   charters: typeof charters;
+  companyFigures: typeof companyFigures;
   config: typeof config;
   connectionEvents: typeof connectionEvents;
   corrections: typeof corrections;
