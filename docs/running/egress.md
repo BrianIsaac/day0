@@ -27,9 +27,10 @@ NODE_USE_ENV_PROXY=
   is reached over https. `HTTP_PROXY` is for a plain-http request; set it
   to the same address, so a client that asks for it finds one.
 - A proxy that asks for a user and password is named with them:
-  `http://user:password@proxy.acme.com:3128`. Every part of Day0 that takes
-  the proxy carried them on the second bed, and Day0 prints the address by
-  its host and port only. `pnpm sync:env` puts the address on the
+  `http://user:password@proxy.acme.com:3128`. On the second bed the backend
+  (its program, its Node actions and a `git` clone), the app, the setup and
+  the checks, the Slack socket bridge, the redactor and the Notion component
+  each carried them, and Day0 prints the address by its host and port only. `pnpm sync:env` puts the address on the
   deployment (below), which holds it as it holds Day0's other keys.
 - `NO_PROXY` lists **your own** hosts that the proxy does not serve,
   separated by commas: Day0's two public names and your identity provider
@@ -55,7 +56,8 @@ out of the proxy, listed or not.
 Name the proxy in `.env.local` and nowhere else: since 0.22.0 Day0 reads
 it from there alone. A proxy exported in the shell, as a corporate
 profile's `export HTTPS_PROXY=...` does, reaches no process Day0 starts, no
-container and not the deployment; `pnpm check:setup`, the setup's verbs
+container and not the deployment, nor does a `NO_PROXY` the shell exports
+(list your own hosts in the file's); `pnpm check:setup`, the setup's verbs
 and `pnpm start` each say so first: "The shell names a proxy (HTTPS_PROXY)
 that .env.local does not. Day0 reads .env.local only, so it goes out
 directly". pnpm itself still reads the shell, and with

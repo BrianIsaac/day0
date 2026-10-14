@@ -86,7 +86,9 @@ Socket Mode hosts), `redactor` (its wheels and model, on a first start),
 package and Notion's API), `playwright-mcp` (the pages the browser is sent
 to) and `model` (its model pulls, on the local-model way). Where
 `.env.local` names an HTTP proxy (`HTTPS_PROXY`), the compose file hands it
-to all seven, with Day0's own service names always kept out of it, and
+to all seven (whether the browser's own page loads and the model service's
+pulls take it was not run on a bed; Nango's token requests do not:
+[The way out](egress.md)), with Day0's own service names always kept out of it, and
 since 0.22.0 only `.env.local` names it: a proxy exported in the shell
 reaches none of them. [The way out](egress.md) lists every host, what each
 component did with a proxy on a bed whose only route out was one, and what

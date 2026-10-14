@@ -696,9 +696,9 @@ services:
         '${PLAYWRIGHT_ALLOWED_ORIGINS:-http://looker-tile:8080;http://host.docker.internal:3000}',
       ]
     environment:
-      # The way out through the customer's proxy, when .env.local names one, for the server's
-      # own requests and the pages the browser is sent to; a system inside the network the proxy
-      # does not serve goes in NO_PROXY (wave 18, 18-P; 17-P's F6).
+      # The way out through the customer's proxy, when .env.local names one, for the server's own
+      # requests; whether the browser's page loads take it was not run on a bed. A system inside
+      # the network the proxy does not serve goes in NO_PROXY (wave 18, 18-P; 17-P's F6).
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}

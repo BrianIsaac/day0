@@ -448,7 +448,7 @@ It is deliberately restricted to a machine whose callers are known. `DAY0_SURFAC
 
 ### Installing at a customer
 
-A customer install is real mode under the customer's own sign-in, behind the customer's own proxies. It starts at one runbook, [Installing Day0 at a customer](docs/running/install.md): what to ask the customer's IT before the day, `./setup.sh install` to its last check, and the record it leaves behind. The two halves it runs are the next two sections. Three pages go with it, each written from what a test bed ran on 13 October 2026:
+A customer install is real mode under the customer's own sign-in, behind the customer's own proxies. It starts at one runbook, [Installing Day0 at a customer](docs/running/install.md): what to ask the customer's IT before the day, `./setup.sh install` to its last check, and the record it leaves behind. The two halves it runs are the next two sections. Three pages go with it, each written from what test beds ran on 13 and 14 October 2026:
 
 - [Day0 behind your reverse proxy](docs/running/proxy.md): the two https origins the proxy must carry, one for the app and one for the backend, whose live connection is a WebSocket; a configuration for Caddy and one for nginx; and the two rows of `pnpm check:setup` that prove yours, on which `./setup.sh install` ends. `pnpm start` listens on `127.0.0.1`, so the app's plain port is not on the network beside the proxy; `DAY0_APP_HOST` names another address for a proxy on another machine. Before v0.21.0 it listened on every interface.
 - [The way out](docs/running/egress.md): every host Day0 reaches, by what needs it, which `pnpm check:setup` prints for your configuration; and, for a network whose only way out is an HTTP proxy, `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` in `.env.local`, which the services, the app, the setup and the checks all take from there and from there alone: a proxy exported in the shell is not read, and `pnpm check:setup` says so. A git documentation source on a host you list dials it directly, and the token store's own token requests take no proxy; the page says what each needs instead.
@@ -1611,7 +1611,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 #### 在客户处安装
 
-在客户处的安装就是真实模式：使用客户自己的登录，位于客户自己的代理之后。它从一份操作手册开始，[在客户处安装 Day0](docs/running/install.md)：安装日之前需要向客户 IT 确认什么，`./setup.sh install` 一直运行到最后一项检查，以及它留下的安装记录。它运行的两部分就是下面两节。另有三页文档与之配套，每一页都依据 2026 年 10 月 13 日测试环境上的实际运行写成：
+在客户处的安装就是真实模式：使用客户自己的登录，位于客户自己的代理之后。它从一份操作手册开始，[在客户处安装 Day0](docs/running/install.md)：安装日之前需要向客户 IT 确认什么，`./setup.sh install` 一直运行到最后一项检查，以及它留下的安装记录。它运行的两部分就是下面两节。另有三页文档与之配套，每一页都依据 2026 年 10 月 13 日和 14 日测试环境上的实际运行写成：
 
 - [反向代理之后的 Day0](docs/running/proxy.md)：代理必须承载的两个 https 源，一个给应用，一个给 backend（其实时连接是 WebSocket）；Caddy 与 nginx 的配置各一份；以及 `pnpm check:setup` 中验证你的代理的两行，`./setup.sh install` 以它们收尾。`pnpm start` 监听 `127.0.0.1`，因此应用的明文端口不会与代理一起暴露在网络上；代理在另一台机器上时，用 `DAY0_APP_HOST` 指定其他地址。v0.21.0 之前它监听所有网卡。
 - [出站通道](docs/running/egress.md)：Day0 访问的每一个主机及其用途，`pnpm check:setup` 会按你的配置打印这份清单；如果网络只能经 HTTP 代理出站，在 `.env.local` 中设置 `HTTPS_PROXY`、`HTTP_PROXY` 与 `NO_PROXY`，各服务、应用、setup 和各项检查都只从那里读取：shell 中导出的代理不会被读取，`pnpm check:setup` 会指出这一点。你自行列出主机上的 git 文档源直接连接该主机，令牌存储自己的令牌请求不走代理；该页说明它们各自需要什么。
