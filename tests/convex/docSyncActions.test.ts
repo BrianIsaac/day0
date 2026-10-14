@@ -2969,9 +2969,18 @@ describe('the SharePoint reader’s token across a sync’s batches (X-1, both h
     // The folder source's reads answered by the SharePoint reader, every argument the sync hands
     // it passed on: its marks and the token it handed back at the batch before.
     const batches: number[] = [];
+    // The run's stored cursor as each later batch begins: the token is there sealed, never as it is.
+    const between: string[] = [];
     vi.spyOn(FolderReader.prototype as DocumentationReader, 'listPageBatch').mockImplementation(
       async (source, _secret, cursor, limit, stored, handed) => {
         batches.push(limit);
+        if (batches.length > 1) {
+          between.push(
+            JSON.stringify(
+              await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect()),
+            ),
+          );
+        }
         return await reader.listPageBatch(
           { ...SITE, _id: source._id },
           sharePointReaderSecret(APP),
@@ -2997,6 +3006,9 @@ describe('the SharePoint reader’s token across a sync’s batches (X-1, both h
     expect(batches.length).toBeGreaterThanOrEqual(3);
     // One sign-in for the whole read, however many batches it took.
     expect(library.counts().token).toBe(1);
+    expect(between.length).toBeGreaterThan(0);
+    expect(between.some((runs) => runs.includes('\\u0000token:'))).toBe(true);
+    for (const runs of between) expect(runs).not.toContain('fixture-graph-token');
     expect(JSON.stringify(after)).not.toContain('fixture-graph-token');
   }, 60_000);
 });
