@@ -940,6 +940,19 @@ tracked re-grade `results/2026-08-30T12-40-05Z/` names one of them,
 
 Two deterministic measurements cover permissions and supervision:
 
+- **Recorded again on 15 October 2026** on the v0.22.0 release commit:
+  [`results/revocation-2026-10-14T23-39-46Z/`](results/revocation-2026-10-14T23-39-46Z/trials.md)
+  (commit `fddf16bd3`; real mode on an isolated backend, project `day0-w18q`, `fake-slack` and
+  `looker-tile`, GLM 5.3 Flash through Featherless for the onboarding; the stamp is UTC). It
+  reads as the v0.21.0 set below on every count: 17 trials, N attempted=19, N blocked=15,
+  N landed=4, all four by declared design, N unexpected=0, the same two, four and nine blocks at
+  evaluation, apply and transport, all 5/5 switch-off attempts blocked at transport, and the
+  metrics card reconciled (8 no-grant refusals). Time to block n=15, median 60 ms, max 184 ms
+  (median 64 ms after a permission revocation, 51 ms after a switch-off), against 56 and 197 ms
+  on v0.21.0. No blocked attempt reached the fake provider, and its log holds the same n=6
+  requests. The run took the 14 October recipe unchanged (no file of the kit or the driver
+  changed since `v0.21.0`) and passed on its first attempt: `run-notes.md` beside the trials
+  says how, and `commands.txt`'s `--out` argument was rewritten to the checkout path as before.
 - **Recorded again on 14 October 2026** on the code of the v0.21.0 release commit:
   [`results/revocation-2026-10-14T06-29-07Z/`](results/revocation-2026-10-14T06-29-07Z/trials.md)
   (commit `c6cc7e6a2`, which carries the release commit `eab825fff` with the evaluation changes
