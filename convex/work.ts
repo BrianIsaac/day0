@@ -325,6 +325,9 @@ export async function assertSameAgent(
  * first, since Needs you links to them, a few at a time; then the newest of all in one read the
  * backend bounds by the bytes left, since they are most of the rows and the query is re-run at
  * every change.
+ *
+ * @returns The rows (`items`) and whether the bounds left older rows out (`cut`), which the tab
+ *   says, pointing at the export (W17-R22, 18-W's `WorkList`).
  */
 export const listForAgent = query({
   args: listForAgentArgs,
@@ -2107,7 +2110,11 @@ export const resumeExecution = internalMutation({
     workItemId: v.id('workItems'),
     runId: v.id('events'),
     reason: v.string(),
-    /** What the row keeps of the run if its resumes are spent, as `setFailed`'s `output` (17-FW). */
+    /**
+     * What the row keeps of the run if its resumes are spent, as `setFailed`'s `output` (17-FW).
+     * No caller of 0.22.0 passes it, since a contract refusal stops before the ladder (RM39 (b));
+     * kept one release for an execution of 0.21.0 in flight across the upgrade, then removed.
+     */
     output: v.optional(v.any()),
   },
   handler: async (ctx, args): Promise<{ outcome: 'resumed' | 'stopped' | 'moved-on' }> => {
