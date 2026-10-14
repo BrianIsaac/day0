@@ -193,6 +193,19 @@ describe('a threaded message, in the manager’s words (18-T’s F2)', (): void 
     }
   });
 
+  it('draws the longest seeded subject whole, wrapping rather than cut off (the second pass)', (): void => {
+    state.threadKey = 'thread-drive-access';
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      const label = /<span class="([^"]*)"><span aria-hidden="true">↳ <\/span>/.exec(markup);
+      expect(label?.[1]).toBeDefined();
+      expect(label?.[1]).not.toContain('truncate');
+      expect(markup).toContain('about “the shared drive after a password change”');
+    } finally {
+      state.threadKey = undefined;
+    }
+  });
+
   it('says only that a message is in a thread the office did not seed', (): void => {
     state.threadKey = 'thread-unseeded-ask';
     try {

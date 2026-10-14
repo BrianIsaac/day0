@@ -29,8 +29,15 @@ export const EMPLOYEE_POSTED = 'Employee';
  * @returns The words drawn after the arrow.
  */
 export function threadWords(threadKey: string): string {
-  const subject = OFFICE_THREAD_SUBJECTS[threadKey];
+  const subject = threadSubject(threadKey);
   return subject === undefined ? 'in a thread' : `about “${subject}”`;
+}
+
+/** A seeded thread's subject, read as the map's own entry only. */
+function threadSubject(threadKey: string): string | undefined {
+  return Object.hasOwn(OFFICE_THREAD_SUBJECTS, threadKey)
+    ? OFFICE_THREAD_SUBJECTS[threadKey]
+    : undefined;
 }
 
 /**
@@ -211,9 +218,10 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
           {m.senderKind === 'agent-draft' ? <Chip tone="warn">{EMPLOYEE_DRAFT}</Chip> : null}
           {m.senderKind === 'agent-posted' ? <Chip tone="accent">{EMPLOYEE_POSTED}</Chip> : null}
           {m.threadKey ? (
-            <span className="max-w-[14rem] truncate text-xs text-[var(--color-muted)]">
+            // Wraps, never cut off: a subject runs to about fifty characters (the second pass).
+            <span className="min-w-0 text-xs text-[var(--color-muted)]">
               <span aria-hidden="true">↳ </span>
-              {OFFICE_THREAD_SUBJECTS[m.threadKey] === undefined ? null : (
+              {threadSubject(m.threadKey) === undefined ? null : (
                 <span className="sr-only">in the thread </span>
               )}
               {threadWords(m.threadKey)}
