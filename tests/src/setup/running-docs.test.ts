@@ -286,3 +286,41 @@ describe('the runbook and the components page, on the two proxies (wave 17, 17-P
     expect(notGiven).toContain('](egress.md)');
   });
 });
+
+// W17-R25 and W17-R26 (reader 5; the review's bed 3): a proxy exported in a corporate shell
+// profile and absent from `.env.local` reaches the backend while `pnpm sync:env` clears the
+// deployment's NO_PROXY, and `pnpm convex:restart` after a changed NO_PROXY keeps the containers'
+// own list, since a compose restart keeps the environment a container was created with.
+describe('the way out’s page and the runbook, on where the proxy is named (W17-R25, W17-R26)', (): void => {
+  // The pages' prose wraps at any space, so each is read with its runs of white space as one.
+  const EGRESS = readFileSync(
+    new URL('../../../docs/running/egress.md', import.meta.url),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+  const RUNBOOK = readFileSync(
+    new URL('../../../docs/running/install.md', import.meta.url),
+    'utf8',
+  ).replace(/\s+/g, ' ');
+
+  it('names ./setup.sh resume after a changed NO_PROXY, and never pnpm convex:restart', (): void => {
+    expect(EGRESS).not.toContain('convex:restart');
+    expect(EGRESS).toContain('After you change `NO_PROXY` in `.env.local`: `./setup.sh resume`');
+  });
+
+  it('says the proxy is named in .env.local and nowhere else, and to name it once the containers reach it', (): void => {
+    expect(EGRESS).toContain('Name the proxy in `.env.local` and nowhere else');
+    expect(EGRESS).toContain(
+      '`unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy`',
+    );
+    expect(EGRESS).toContain('The backend container has no route to');
+  });
+
+  it('asks IT before the day for the proxy’s address in the form the file takes', (): void => {
+    const before = RUNBOOK.slice(
+      RUNBOOK.indexOf('## Before the day'),
+      RUNBOOK.indexOf('## On the day'),
+    );
+    expect(before).toContain('`http://<host>:<port>`');
+    expect(before).toContain('reachable from the machine’s containers');
+  });
+});

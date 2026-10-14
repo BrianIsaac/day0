@@ -37,11 +37,22 @@ You never list Day0's own services or this machine: `localhost`,
 `127.0.0.1` and every service one container dials by name are always kept
 out of the proxy, listed or not.
 
+Name the proxy in `.env.local` and nowhere else. A proxy exported in the
+shell as well, as a corporate profile's `export HTTPS_PROXY=...` does,
+reaches the backend and the app, while `pnpm sync:env` reads the file
+alone: with no proxy named there it takes `NO_PROXY` off the deployment,
+and every call a Node action makes back to the backend then goes to the
+proxy. In such a shell, before any of Day0's commands:
+`unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy`.
+
 Set the four before `./setup.sh install`, which then runs every step
-through the proxy. On an install that is already running, write them and
-run `./setup.sh resume`: it starts the services again with them, puts
-`NO_PROXY` on the deployment (below), restarts the backend and ends on
-`pnpm check:setup`. Then start the app again (`pnpm start`).
+through the proxy, and name the proxy once it answers from the machine's
+containers: one named before it does fails the model check, "The backend
+container has no route to" the model's host, and the install or upgrade
+stops on that gap until it answers. On an install that is already running,
+write them and run `./setup.sh resume`: it starts the services again with
+them, puts `NO_PROXY` on the deployment (below), restarts the backend and
+ends on `pnpm check:setup`. Then start the app again (`pnpm start`).
 
 Node reads a proxy from its environment from 22.21.0 on the 22 line (24 or
 later after it). The setup, `pnpm start` and the Slack socket bridge each
@@ -75,9 +86,11 @@ the proxy and was refused there, five in twenty seconds. So `pnpm sync:env`
 puts `NO_PROXY` on the deployment whenever `.env.local` names a proxy
 (Day0's own names first, then yours), and `pnpm check:setup` is a gap,
 naming what is missing, when the deployment lacks a name. After you change
-`NO_PROXY`: `pnpm sync:env`, then `pnpm convex:restart`. Nothing in the
-backend's image was changed for any of this, and nothing has to be reached
-directly on its account.
+`NO_PROXY` in `.env.local`: `./setup.sh resume`, which creates the
+containers again with the new list and puts it on the deployment; a restart
+of the backend alone keeps the list its container was created with. Nothing
+in the backend's image was changed for any of this, and nothing has to be
+reached directly on its account.
 
 ## What does not take the proxy
 
@@ -160,7 +173,8 @@ names; they join the list as their connections land.
 
 | You see | Do |
 |---|---|
-| `GAP The way out`, "The deployment does not hold every name NO_PROXY keeps out" | `pnpm sync:env`, then `pnpm convex:restart` |
+| `GAP The way out`, "The deployment does not hold every name NO_PROXY keeps out" | `pnpm sync:env`; where you changed `NO_PROXY` in `.env.local`, `./setup.sh resume` |
+| `GAP Model`, "The backend container has no route to" the model's host, with a proxy named | the proxy does not answer from the containers yet: check its address from the machine, or take the three names out of `.env.local` until it does |
 | `GAP The way out`, "this Node ... does not read one from the environment" | run Day0's commands on Node 22.21.0 or later |
 | "The issuer cannot be reached from inside the backend container" | where your identity provider is inside the network, list it in `NO_PROXY`; where it is outside, allow it at the proxy |
 | `reach` GAP from `pnpm check:access` | allow the vendor's host at the proxy. Where the proxy re-signs https with your own authority, give the backend container that authority's bundle ([the install runbook](install.md), step 6) |
