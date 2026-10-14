@@ -1905,6 +1905,38 @@ describe('openByHand and listForAgent', (): void => {
   });
 });
 
+describe('what a card says it does not hold (W17-R8)', (): void => {
+  it('counts in “and N more not held” only the rows still open (red at the tag: ninety)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const rows: Id<'workItems'>[] = [];
+    for (let at = 0; at < 100; at += 1) {
+      rows.push(await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${at}` }));
+    }
+    await harness.run(async (ctx) => {
+      await openCards(ctx, [
+        {
+          agentId,
+          trigger: 'relationship-changed' as const,
+          triggerKey: 'edge-change-1',
+          summary: 'Priya is now its approver',
+          reach: { kind: 'open-work' as const },
+        },
+      ]);
+    });
+    const owner = harness.withIdentity(OWNER);
+    const [before] = await owner.query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(before.held).toEqual({ plans: 10, runs: 0, notHeld: 90 });
+    // Forty of the rows the card does not hold finish while it stands.
+    const unheld = rows.filter((id) => !before.card.blockingWork.includes(id));
+    await harness.run(async (ctx) => {
+      for (const id of unheld.slice(0, 40)) await ctx.db.patch(id, { state: 'completed' });
+    });
+    const [after] = await owner.query(api.reorientationDecisions.listForAgent, { agentId });
+    expect(after.held).toEqual({ plans: 10, runs: 0, notHeld: 50 });
+  });
+});
+
 describe('the narrow redraft: one Approve for everyone at fifty-one (D-2 (b), RM43 (a))', (): void => {
   /** Bed 1's Priya's card, as the hosted model proposed it (`bed1/rows/listForAgent-priya.json`). */
   const BED_ONE_SUMMARY =

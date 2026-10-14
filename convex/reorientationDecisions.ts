@@ -5,7 +5,7 @@ import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
 import { appendEvent } from './eventLog';
 import { callersCard, closeTalkOfCard } from './reorientationTalk';
-import { ownerAgents } from './reorientationReach';
+import { OPEN_WORK_STATES, ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
 import {
   dismissAgreementInTransaction,
@@ -1070,10 +1070,21 @@ export const listForAgent = query({
       const ledger = await Promise.all(
         (named ? ledgerIds : []).map(async (id) => await ctx.db.get(id)),
       );
-      const notHeld =
+      // The open work the change reached past what the card holds, its rows read again for their
+      // state within the names' budget: a row that finished since is no longer said (W17-R8), and
+      // past the budget the card says nothing of a rest.
+      const unheld =
         holding && card.blockingWork.length >= REORIENTATION_BLOCKING_LIMIT
-          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id)).length
-          : 0;
+          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id))
+          : [];
+      let notHeld = 0;
+      if (unheld.length > 0 && spent + unheld.length <= CARD_NAMES_READ) {
+        spent += unheld.length;
+        const states = await Promise.all(unheld.map(async (id) => (await ctx.db.get(id))?.state));
+        notHeld = states.filter(
+          (state) => state !== undefined && (OPEN_WORK_STATES as readonly string[]).includes(state),
+        ).length;
+      }
       const stages = holding
         ? rows.flatMap((row) =>
             row !== null && card.blockingWork.includes(row._id) ? [heldStageOf(row)] : [],
