@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 
+import { readFileSync } from 'node:fs';
 import { convexTest, type TestConvex } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
@@ -2340,6 +2341,35 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(owed.get(ids[2]!)).toBe(4);
     expect(owed.get(ids[29]!)).toBe(31);
   }, 60_000);
+
+  // 18-A's bed (day0-w18a): the backend's node executor refuses a cancel from a 'use node' action
+  // ("Invalid cancel job request with args {"id":...}": it asks for a `version` convex 1.38's
+  // action scheduler does not send), so a check that settled kept its watch, which ran the check
+  // again eleven minutes later and judged a disputed hold by itself. convex-test cancels from an
+  // action, so the module's text is the red.
+  it('ends the watch of a settled charter check through a mutation, never by a cancel from the action (found on 18-A’s bed)', async (): Promise<void> => {
+    const actions = readFileSync(
+      new URL('../../convex/workingAgreementActions.ts', import.meta.url),
+      'utf8',
+    );
+    expect(actions).not.toMatch(/scheduler\.cancel\(/);
+
+    const harness = convexTest(schema, allConvexModules());
+    await seedEmployee(harness);
+    await agreementSince(harness, 'Name the vessel in every comment.', 2);
+    const hired = await seedEmployee(harness, { name: 'Ines' });
+    await harness.action(internal.workingAgreementActions.checkForCharter, {
+      agentId: hired,
+      attempt: 0,
+    });
+    const pending = (
+      await harness.run(async (ctx) => await ctx.db.system.query('_scheduled_functions').collect())
+    ).filter(
+      (job) =>
+        job.name === 'workingAgreementActions:checkForCharter' && job.state.kind === 'pending',
+    );
+    expect(pending).toEqual([]);
+  });
 
   it('checks at most a batch of agreements an action and hands the rest to the next (W15-R34)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
