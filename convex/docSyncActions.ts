@@ -576,6 +576,17 @@ type TokenReader = {
   ): Promise<TokenReadPageBatch>;
 };
 
+/**
+ * How long before its expiry a token is no longer handed to a batch (the second pass): a batch of
+ * twenty-five pages may take a minute or two, and a token that lapsed inside it would fail it.
+ */
+const READER_TOKEN_MARGIN_MS = 2 * 60 * 1000;
+
+/** Whether a token still serves a batch begun now. */
+function tokenServes(token: ReaderToken, now: number): boolean {
+  return token.expiresAt - READER_TOKEN_MARGIN_MS > now;
+}
+
 /** Whether a reader handed back a token of the contract's shape. */
 function readerTokenOf(value: unknown): ReaderToken | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
@@ -616,7 +627,8 @@ function sealReaderToken(token: ReaderToken, key: string, binding: string): stri
 
 /**
  * A sealed reader token opened for the next batch, or nothing: sealed under another key, owner,
- * source or run, malformed, or past its expiry (the reader then asks for a new one).
+ * source or run, malformed, or within `READER_TOKEN_MARGIN_MS` of its expiry (the reader then asks
+ * for a new one).
  */
 function openReaderToken(
   sealed: string,
@@ -632,7 +644,7 @@ function openReaderToken(
   } catch {
     return undefined;
   }
-  return token !== undefined && token.expiresAt > now ? token : undefined;
+  return token !== undefined && tokenServes(token, now) ? token : undefined;
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
@@ -801,8 +813,11 @@ export const syncBatch = internalAction({
         storedRevisions,
         handed,
       );
-      const token = readerTokenOf(batch.token);
-      if (token !== undefined) tokens.push(token.token);
+      // A reader that used the token it was handed and handed none back keeps it (the second
+      // pass): one handed back replaces it.
+      const returned = readerTokenOf(batch.token);
+      if (returned !== undefined) tokens.push(returned.token);
+      const token = returned ?? handed;
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
       }
@@ -863,7 +878,7 @@ export const syncBatch = internalAction({
       const nextCursor =
         batch.nextCursor === undefined
           ? FINISHING_CURSOR
-          : token === undefined || tokenKey === undefined || token.expiresAt <= Date.now()
+          : token === undefined || tokenKey === undefined || !tokenServes(token, Date.now())
             ? batch.nextCursor
             : cursorWithToken(batch.nextCursor, sealReaderToken(token, tokenKey, binding));
       const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {

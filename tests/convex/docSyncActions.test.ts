@@ -2553,14 +2553,14 @@ describe('a reader’s token kept across a sync’s batches (X-1, the stored hal
     vi.restoreAllMocks();
   });
 
-  /** A folder of thirty pages: two batches. */
-  async function folderOfThirty(): Promise<{
+  /** A folder of thirty pages: two batches (or `pages` of them). */
+  async function folderOfThirty(pages = 30): Promise<{
     harness: TestConvex<typeof schema>;
     sourceId: Id<'docSources'>;
   }> {
     const root = temporary('day0-sync-token-');
     await mkdir(join(root, 'library'));
-    for (let index = 1; index <= 30; index += 1) {
+    for (let index = 1; index <= pages; index += 1) {
       await writeFile(
         join(root, 'library', `page-${String(index).padStart(2, '0')}.md`),
         `# Page ${index}\n\nBody ${index}.\n`,
@@ -2645,7 +2645,7 @@ describe('a reader’s token kept across a sync’s batches (X-1, the stored hal
     vi.restoreAllMocks();
     vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
     const keyless = await folderOfThirty();
-    const handedKeyless = readerHandingBack(() => Date.now() + 60_000);
+    const handedKeyless = readerHandingBack(() => Date.now() + 60 * 60 * 1000);
     await keyless.harness.action(internal.docSyncActions.syncSource, {
       sourceId: keyless.sourceId,
     });
@@ -2655,10 +2655,30 @@ describe('a reader’s token kept across a sync’s batches (X-1, the stored hal
     expect(handedKeyless).toEqual([undefined, undefined]);
   }, 60_000);
 
+  it('keeps the token a reader used and handed none back for, and hands none within two minutes of its expiry (the second pass)', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    // Three batches: the first hands a token back, the second uses it and hands nothing back.
+    const kept = await folderOfThirty(60);
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+    const handed = readerHandingBack(() => expiresAt);
+    await kept.harness.action(internal.docSyncActions.syncSource, { sourceId: kept.sourceId });
+    await kept.harness.finishAllScheduledFunctions(drainScheduled);
+    expect(handed).toEqual([undefined, { token: TOKEN, expiresAt }, { token: TOKEN, expiresAt }]);
+    vi.restoreAllMocks();
+    // A token that lapses within a batch's time is not handed to it: the reader asks again.
+    const lapsing = await folderOfThirty();
+    const handedLapsing = readerHandingBack(() => Date.now() + 60_000);
+    await lapsing.harness.action(internal.docSyncActions.syncSource, {
+      sourceId: lapsing.sourceId,
+    });
+    await lapsing.harness.finishAllScheduledFunctions(drainScheduled);
+    expect(handedLapsing).toEqual([undefined, undefined]);
+  }, 60_000);
+
   it('drops the token from the run’s cursor when the sync ends short, keeping the place it reached', async (): Promise<void> => {
     vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
     const { harness, sourceId } = await folderOfThirty();
-    readerHandingBack(() => Date.now() + 60_000, true);
+    readerHandingBack(() => Date.now() + 60 * 60 * 1000, true);
     await harness.action(internal.docSyncActions.syncSource, { sourceId });
     await harness.finishAllScheduledFunctions(drainScheduled);
     const [run] = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
