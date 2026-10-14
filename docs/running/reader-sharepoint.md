@@ -37,20 +37,26 @@ title, such as a site page of image web parts alone, is asked for at every read 
 its text, since a listing's revision is kept only for a page with text to keep.
 
 Counted on the test double of Graph that day0's own tests use, not on a tenant. The bed is a
-running day0 in real mode reading a library of 240 Markdown files and 10 site pages; the second
-column is the same double at 960 files and 40 pages, a thousand pages, read by the reader's
+running day0 0.21.0 in real mode reading a library of 240 Markdown files and 10 site pages,
+counted on 13 October 2026, before day0 kept its sign-in across a read; the second column is the
+same double at 960 files and 40 pages, a thousand pages, read by this release's reader in its
 tests:
 
-| Read                          | Requests, 250 pages (the bed) | Requests, 1,000 pages (the tests) |
-| ----------------------------- | ----------------------------- | --------------------------------- |
-| The first read                | 513                           | 2,043                             |
-| A read with nothing changed   | 23                            | 83                                |
-| A read after one file changed | 25                            | 85                                |
+| Read                          | Requests, 250 pages (the 0.21.0 bed) | Requests, 1,000 pages (the tests) |
+| ----------------------------- | ------------------------------------ | --------------------------------- |
+| The first read                | 513                                  | 2,003                             |
+| A read with nothing changed   | 23                                   | 43                                |
+| A read after one file changed | 25                                   | 45                                |
 
-The 83 are 41 sign-ins (day0 signs in again for every twenty-five entries), one lookup of the
-site, 39 requests that list the library and 2 that list the pages. A file that changed adds two
-(Graph's redirect, then the download), a page that changed one. The first read asks for every
-file and every page once.
+The 43 are one sign-in, one lookup of the site, 39 requests that list the library and 2 that list
+the pages. day0 signs in once a read and lists every later twenty-five entries with the same
+sign-in, signing in again only when it is within two minutes of the expiry Microsoft named for
+it or Graph refuses it. Between those requests day0 keeps the sign-in encrypted with
+its credential key in its own record of where the read stands, never in a log or the export, and
+drops it when the read ends. 0.21.0 signed in again for every twenty-five entries: 41 of its 83
+requests at a thousand pages, and 11 of the bed's 23. A file that changed adds two (Graph's
+redirect, then the download), a page that changed one. The first read asks for every file and
+every page once.
 
 Microsoft's page on throttling in SharePoint (updated 10 August 2026) charges a request that
 lists several items two resource units, or one where it is a library listing that carries a

@@ -41,19 +41,25 @@ every read and then kept by its text, since a listing's version is kept only for
 to keep.
 
 Counted on the test double of the Drive API that day0's own tests use, not on a project. The bed
-is a running day0 in real mode reading a folder of 250 Google Docs; the second column is the same
-double at a thousand, read by the reader's tests:
+is a running day0 0.21.0 in real mode reading a folder of 250 Google Docs, counted on 13 October
+2026, before day0 kept its token across a read; the second column is the same double at a
+thousand, read by this release's reader in its tests:
 
-| Read                              | Requests, 250 documents (the bed) | Requests, 1,000 documents (the tests) |
-| --------------------------------- | --------------------------------- | ------------------------------------- |
-| The first read                    | 271                               | 1,081                                 |
-| A read with nothing changed       | 21                                | 81                                    |
-| A read after one document changed | 22                                | 82                                    |
+| Read                              | Requests, 250 documents (the 0.21.0 bed) | Requests, 1,000 documents (the tests) |
+| --------------------------------- | ---------------------------------------- | ------------------------------------- |
+| The first read                    | 271                                      | 1,042                                 |
+| A read with nothing changed       | 21                                       | 42                                    |
+| A read after one document changed | 22                                       | 43                                    |
 
-The 81 are 40 token requests (day0 asks for a token again for every twenty-five files), one check
-of the folder and 40 listings. A folder under it is listed in requests of its own: a token
-request and a listing for every twenty-five of its files, and one of each for an empty folder.
-The first read adds an export or a download for every document.
+The 42 are one token request, one check of the folder and 40 listings. day0 asks for a token once
+a read and lists every later twenty-five files with the same token, asking again only when it is
+within two minutes of its expiry (Google gives it an hour) or Google refuses it. Between those
+requests day0 keeps the token encrypted with its credential key in its own record of where the
+read stands, never in a log or the export, and drops it when the read ends. 0.21.0 asked for a
+token again for every twenty-five files: 40 of its 81 requests at a thousand documents, and 10 of
+the bed's 21. A folder under it is listed in requests of its own: a listing for every
+twenty-five of its files, and one for an empty folder. The first read adds an export or a
+download for every document.
 
 Google's page on the Drive API's limits (last updated 11 September 2026) charges a listing 100
 quota units and allows 325,000 units a minute for each user of a project, so the 40 listings of

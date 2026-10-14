@@ -74,6 +74,36 @@ export interface KeptPage {
   readonly datedBySource?: boolean;
 }
 
+/**
+ * A reader's access token and when it lapses, handed back beside its cursor so the next batch of
+ * the same sync asks for none (X-1 (a); 17-X's F3: half an unchanged SharePoint or Drive read was
+ * signing in again at every batch of twenty-five). The sync seals it into the run's stored cursor
+ * with the deployment's credential key and drops it at the sync's end; a reader never puts it in
+ * its cursor, a log line or an unread reason.
+ */
+export interface ReaderToken {
+  readonly token: string;
+  /** When the provider said it lapses, in epoch milliseconds. */
+  readonly expiresAt: number;
+}
+
+/**
+ * How long before its expiry a token is no longer used for a batch: a batch of twenty-five pages
+ * may take a minute or two, and a token that lapsed inside it would fail it.
+ */
+export const READER_TOKEN_MARGIN_MS = 2 * 60 * 1000;
+
+/**
+ * Whether a token still serves a batch begun now: the sync hands none past this, and a reader
+ * handed one past it asks for another.
+ *
+ * @param token - The token and its expiry.
+ * @param now - The time the batch begins, in epoch milliseconds.
+ */
+export function readerTokenServes(token: ReaderToken, now: number): boolean {
+  return token.expiresAt - READER_TOKEN_MARGIN_MS > now;
+}
+
 /** One bounded batch: the pages read, the listed pages that could not be, and the continuation. */
 export interface ReadPageBatch extends DocPageBatch {
   readonly unread: readonly UnreadPage[];
@@ -89,6 +119,12 @@ export interface ReadPageBatch extends DocPageBatch {
    * as gone (W15-R30).
    */
   readonly archivedWalkRefused?: boolean;
+  /**
+   * The token this batch asked its provider for, for the next batch of the sync (X-1). None where
+   * the batch used the token it was handed, which the sync keeps, or the reader signs in by no
+   * token of its own.
+   */
+  readonly token?: ReaderToken;
 }
 
 /** A documentation reader whose batches name the pages they could not read. */
@@ -100,6 +136,8 @@ export interface DocumentationReader extends DocSourceReader {
     limit: number,
     /** The sync's stored revisions, for a reader that keeps an unchanged page by its own (X-13). */
     stored?: StoredRevisions,
+    /** The token an earlier batch of this sync handed back, to read with instead of a new one. */
+    token?: ReaderToken,
   ): Promise<ReadPageBatch>;
 }
 

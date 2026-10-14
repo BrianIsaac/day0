@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { GoogleDriveReader } from '../../../../src/docs/readers/drive';
@@ -16,7 +16,7 @@ import {
   type LibraryFake,
   type LibraryOptions,
 } from '../../../fixtures/readers/library';
-import { readWhole, type StoredMarks } from '../../../fixtures/readers/stored';
+import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -386,14 +386,17 @@ describe("a Google Drive document's date (wave 17, D-8)", (): void => {
 });
 
 /** A generated library in the fixture folder, and a reader on it with its clock still. */
-function driveLibrary(options: Omit<LibraryOptions, 'publicKey'>): {
+function driveLibrary(
+  options: Omit<LibraryOptions, 'publicKey'>,
+  now: () => number = (): number => T0,
+): {
   library: LibraryFake;
   reader: GoogleDriveReader;
 } {
   const library = libraryFake('drive', { ...options, publicKey: KEYS.publicKey });
   const reader = new GoogleDriveReader({
     fetch: library.fetch,
-    now: (): number => T0,
+    now,
     sleep: async (): Promise<void> => undefined,
   });
   return { library, reader };
@@ -406,29 +409,34 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
   it("reads a thousand unchanged documents for the listing's requests and no body request, and one changed document alone", async (): Promise<void> => {
     const { library, reader } = driveLibrary({ pages: 1_000 });
     const marks: StoredMarks = new Map();
-    const first = await readWhole(reader, folder, SECRET, marks);
+    const clock = { now: (): number => T0 };
+    const first = await readWhole(reader, folder, SECRET, marks, clock);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
     // The whole first read, as the guide prints it.
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.first);
 
     library.reset();
-    const unchanged = await readWhole(reader, folder, SECRET, marks);
+    const unchanged = await readWhole(reader, folder, SECRET, marks, clock);
     expect(unchanged.read).toEqual([]);
     expect(unchanged.kept).toHaveLength(1_000);
-    // Forty listing pages of 25; each batch signs in once, and the first checks the folder.
-    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 0, bodies: 0 });
+    // Forty listing pages of 25; the first batch signs in and checks the folder, and every later
+    // batch reads with the token it handed back (X-1; wave 18, 18-X).
+    expect(library.counts()).toEqual({ token: 1, lookup: 1, listing: 40, body: 0, bodies: 0 });
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.unchanged);
+    expect(unchanged.handedBack).toEqual([
+      { token: 'fixture-google-token', expiresAt: T0 + 3_600_000 },
+    ]);
 
     library.edit(500);
     library.reset();
-    const edited = await readWhole(reader, folder, SECRET, marks);
+    const edited = await readWhole(reader, folder, SECRET, marks, clock);
     expect(edited.read.map((page) => [page.ref, page.sourceRevision])).toEqual([
       [libraryRef(500), '2'],
     ]);
     expect(edited.read[0].markdown).toContain('Edited 1.');
     expect(edited.kept).toHaveLength(999);
-    expect(library.counts()).toEqual({ token: 40, lookup: 1, listing: 40, body: 1, bodies: 1 });
+    expect(library.counts()).toEqual({ token: 1, lookup: 1, listing: 40, body: 1, bodies: 1 });
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.drive.oneChanged);
     // The contract is asked once a listing page, by every document it lists.
     expect(edited.asked).toHaveLength(40);
@@ -516,5 +524,87 @@ describe('the Google Drive reader contract by revision (wave 17, 17-X)', (): voi
     await readWhole(reader, folder, SECRET, marks);
     const kept = (await readWhole(reader, folder, SECRET, marks)).kept;
     expect(kept.map((page) => page.datedBySource)).toEqual([true, false, true]);
+  });
+});
+
+describe("the Google Drive reader's token across a sync's batches (wave 18, 18-X; X-1)", (): void => {
+  /** A token an earlier batch handed back that Google no longer takes (revoked, or lapsed early). */
+  const REVOKED = { token: 'revoked-google-token', expiresAt: T0 + 3_000_000 };
+
+  it('asks for a token again mid-sync once the one it holds is past its expiry, and hands the new one back', async (): Promise<void> => {
+    let clock = T0;
+    const { library, reader } = driveLibrary({ pages: 100 }, (): number => clock);
+    const marks: StoredMarks = new Map();
+    const one = await reader.listPageBatch(folder, SECRET, undefined, 25, storedIn(marks));
+    expect(one.token).toEqual({ token: 'fixture-google-token', expiresAt: T0 + 3_600_000 });
+    const two = await reader.listPageBatch(
+      folder,
+      SECRET,
+      one.nextCursor,
+      25,
+      storedIn(marks),
+      one.token,
+    );
+    // Read with the token handed back: none asked for, none handed back (the sync keeps it).
+    expect(two.pages).toHaveLength(25);
+    expect(two.token).toBeUndefined();
+    expect(library.counts().token).toBe(1);
+
+    // A minute before Google's hour is up: inside the margin, so the token is not used.
+    clock = T0 + 3_600_000 - 60_000;
+    const three = await reader.listPageBatch(
+      folder,
+      SECRET,
+      two.nextCursor,
+      25,
+      storedIn(marks),
+      one.token,
+    );
+    expect(three.pages).toHaveLength(25);
+    expect(three.token).toEqual({ token: 'fixture-google-token', expiresAt: clock + 3_600_000 });
+    expect(library.counts().token).toBe(2);
+  });
+
+  it('asks for a token again when Google refuses the one handed back, and reads the batch on', async (): Promise<void> => {
+    const { library, reader } = driveLibrary({ pages: 30 });
+    const batch = await reader.listPageBatch(folder, SECRET, undefined, 25, undefined, REVOKED);
+    expect(batch.pages).toHaveLength(25);
+    expect(batch.token).toEqual({ token: 'fixture-google-token', expiresAt: T0 + 3_600_000 });
+    // The folder's check refused under the handed token, then a sign-in, then the check again.
+    expect(library.requests.slice(0, 3).map((request) => [request.kind, request.status])).toEqual([
+      ['lookup', 401],
+      ['token', 200],
+      ['lookup', 200],
+    ]);
+    expect(library.counts().token).toBe(1);
+  });
+
+  it('never puts the token it hands back, or the one it was handed, in a log line or a cursor', async (): Promise<void> => {
+    const { reader } = driveLibrary({ pages: 60 });
+    const lines: string[] = [];
+    const cursors: string[] = [];
+    const logged = vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
+      lines.push(String(line));
+    });
+    try {
+      const first = await reader.listPageBatch(folder, SECRET, undefined, 25, undefined, REVOKED);
+      let cursor = first.nextCursor;
+      let token = first.token;
+      while (cursor !== undefined) {
+        cursors.push(cursor);
+        const batch = await reader.listPageBatch(folder, SECRET, cursor, 25, undefined, token);
+        token = batch.token ?? token;
+        cursor = batch.nextCursor;
+      }
+    } finally {
+      logged.mockRestore();
+    }
+    // The refusal of the handed token is logged, by the provider and the source alone.
+    expect(lines.some((line) => line.includes('token refused'))).toBe(true);
+    expect(cursors.length).toBeGreaterThan(1);
+    for (const said of [...lines, ...cursors]) {
+      expect(said).not.toContain('fixture-google-token');
+      expect(said).not.toContain(REVOKED.token);
+    }
   });
 });

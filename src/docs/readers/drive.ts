@@ -4,7 +4,8 @@
  *
  * It reads as a service account: an assertion signed with the account's key is exchanged for a
  * read-only token (no domain-wide delegation), and the account sees what the folder's owner
- * shared with its address. Each folder is listed with `files.list`, `nextPageToken` followed to
+ * shared with its address. The token is asked for once a sync: each batch hands it back beside its
+ * cursor and the next reads with it while it serves (X-1; wave 18, 18-X). Each folder is listed with `files.list`, `nextPageToken` followed to
  * the list's end, and the folders found are read after it. A Google Doc is exported as
  * `text/markdown`, which Google bounds at 10 MB: a larger one is named unread. A Word document
  * is downloaded and converted where the reader runs (`word.ts`, RM9 (b1)). The file's `version`
@@ -30,6 +31,7 @@ import {
   type DocumentationReader,
   type KeptPage,
   type ReadPageBatch,
+  type ReaderToken,
   type StoredMark,
   type StoredRevisions,
   type UnreadPage,
@@ -47,6 +49,7 @@ import {
   type ProviderHttpOptions,
   webPageInPlaceOf,
 } from './provider-http';
+import { BatchToken, issuedToken, type IssuedToken } from './reader-token';
 import { storedPageTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
@@ -140,7 +143,7 @@ function base64url(value: string | Buffer): string {
 interface Session {
   readonly http: ProviderHttp;
   readonly account: DriveServiceAccount;
-  readonly token: string;
+  readonly token: BatchToken;
 }
 
 /** Reader for one Google Drive folder and the folders under it. */
@@ -162,6 +165,9 @@ export class GoogleDriveReader implements DocumentationReader {
    * @param cursor - Where the previous batch left the walk.
    * @param limit - The most entries this batch lists.
    * @param stored - What the sync stored each listed file with; none reads every file.
+   * @param token - The token an earlier batch of this sync handed back; while it serves, the
+   *   batch signs in with no request of its own (X-1).
+   * @returns The batch, with the token it signed in for where it asked for one.
    * @throws Error when the key or the folder is refused, or Drive stays limited past the waits;
    *   ListingChangedError for a cursor that is not this reader's, or a page token Drive no longer
    *   honours.
@@ -172,6 +178,7 @@ export class GoogleDriveReader implements DocumentationReader {
     cursor: string | undefined,
     limit: number,
     stored?: StoredRevisions,
+    token?: ReaderToken,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -182,7 +189,17 @@ export class GoogleDriveReader implements DocumentationReader {
     const account = parseDriveSecret(secret);
     const resumed = cursor === undefined ? undefined : walkFromCursor(cursor);
     const http = new ProviderHttp(PROVIDER, 0, this.options);
-    const session: Session = { http, account, token: await this.accessToken(http, account) };
+    const session: Session = {
+      http,
+      account,
+      token: await BatchToken.open({
+        handed: token,
+        now: this.now,
+        ask: async (): Promise<IssuedToken> => await this.accessToken(http, account),
+        provider: PROVIDER,
+        sourceId: source._id,
+      }),
+    };
     if (resumed === undefined) await this.checkFolder(session, locator.folderId);
     const walk: Walk = resumed ?? { queue: [locator.folderId], folders: 1 };
     const listed = await this.listing(session, walk, limit);
@@ -219,11 +236,18 @@ export class GoogleDriveReader implements DocumentationReader {
       unread,
       ...(kept.length > 0 ? { kept } : {}),
       nextCursor: cursorAfter(walk, listed.nextPageToken, found),
+      ...handedBack(session.token),
     };
   }
 
-  /** A read-only access token for the service account, from an assertion it signs. */
-  private async accessToken(http: ProviderHttp, account: DriveServiceAccount): Promise<string> {
+  /**
+   * A read-only access token for the service account, from an assertion it signs, with the
+   * lifetime Google gave it.
+   */
+  private async accessToken(
+    http: ProviderHttp,
+    account: DriveServiceAccount,
+  ): Promise<IssuedToken> {
     const issued = Math.floor(this.now() / 1_000);
     const unsigned = [
       base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })),
@@ -257,7 +281,9 @@ export class GoogleDriveReader implements DocumentationReader {
     });
     const body = providerBody('Google', answer);
     const token = textField(body, 'access_token');
-    if (answer.status === 200 && token !== undefined) return token;
+    if (answer.status === 200 && token !== undefined) {
+      return issuedToken(token, field(body, 'expires_in'), this.now());
+    }
     throw new Error(
       `Google refused the service account key this source uses (${textField(body, 'error') ?? `HTTP ${answer.status}`}): ` +
         'the key may have been deleted, or the service account disabled. Ask IT to create a new ' +
@@ -436,12 +462,22 @@ export class GoogleDriveReader implements DocumentationReader {
 
   /** One authorised GET to Drive, a rate limit under 403 waited out as one under 429 is. */
   private async drive(session: Session, url: URL, maxBytes?: number): Promise<ProviderAnswer> {
-    return await session.http.send(url, {
-      headers: { authorization: `Bearer ${session.token}` },
-      limited: isRateLimited,
-      ...(maxBytes === undefined ? {} : { maxBytes }),
-    });
+    const send = async (): Promise<ProviderAnswer> =>
+      await session.http.send(url, {
+        headers: { authorization: `Bearer ${session.token.bearer}` },
+        limited: isRateLimited,
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+      });
+    const answer = await send();
+    // A token an earlier batch handed back and Google refuses is asked for again, once (X-1).
+    return answer.status === 401 && (await session.token.renew()) ? await send() : answer;
   }
+}
+
+/** The token a batch hands back beside its cursor, as the batch's field, where it has one. */
+function handedBack(token: BatchToken): { readonly token?: ReaderToken } {
+  const handBack = token.handBack();
+  return handBack === undefined ? {} : { token: handBack };
 }
 
 /** Whether a listed file is one the reader reads: a Google Doc or a Word document. */

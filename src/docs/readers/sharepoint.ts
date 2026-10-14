@@ -3,7 +3,8 @@
  * through Microsoft Graph as Markdown.
  *
  * It reads as the app registration IT made, by client credentials (app-only), in the cloud the
- * site's host names. The library is walked by `driveItem` delta from its start: each
+ * site's host names, signing in once a sync: each batch hands its token back beside its cursor
+ * and the next reads with it while it serves (X-1; wave 18, 18-X). The library is walked by `driveItem` delta from its start: each
  * `@odata.nextLink` is followed until the `@odata.deltaLink` comes, which ends the walk. The
  * delta link is not kept: a sync lists every page each time, since a page two walks miss is
  * pruned, and the store has no place for a reader's link. A link Graph no longer honours is
@@ -44,6 +45,7 @@ import {
   type DocumentationReader,
   type KeptPage,
   type ReadPageBatch,
+  type ReaderToken,
   type StoredMark,
   type StoredRevisions,
   type UnreadPage,
@@ -63,6 +65,7 @@ import {
   type ProviderHttpOptions,
   webPageInPlaceOf,
 } from './provider-http';
+import { BatchToken, issuedToken, type IssuedToken } from './reader-token';
 import { storedPageTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
@@ -261,7 +264,7 @@ interface Session {
   readonly locator: SharePointLocator;
   /** Graph's origin in the site's cloud. */
   readonly graph: string;
-  readonly token: string;
+  readonly token: BatchToken;
 }
 
 /** Reader for one SharePoint site's document library and pages, through Microsoft Graph. */
@@ -285,6 +288,9 @@ export class SharePointReader implements DocumentationReader {
    * @param cursor - Where the previous batch left the walk.
    * @param limit - The most entries this batch reads; an entry kept by its revision is not one.
    * @param stored - What the sync stored each listed page with; none reads every page.
+   * @param token - The token an earlier batch of this sync handed back; while it serves, the
+   *   batch signs in with no request of its own (X-1).
+   * @returns The batch, with the token it signed in for where it asked for one.
    * @throws Error when the app or the site is refused, or Graph stays throttled past the waits;
    *   ListingChangedError when Graph no longer honours a kept link (410 Gone), so the sync reads
    *   the site again from its start.
@@ -295,6 +301,7 @@ export class SharePointReader implements DocumentationReader {
     cursor: string | undefined,
     limit: number,
     stored?: StoredRevisions,
+    token?: ReaderToken,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -310,24 +317,33 @@ export class SharePointReader implements DocumentationReader {
       download: new ProviderHttp(PROVIDER, 0, { ...this.options, fetch: this.download }),
       locator,
       graph: `https://${MICROSOFT_CLOUDS[locator.cloud].graph}`,
-      token: await this.accessToken(http, locator, app),
+      token: await BatchToken.open({
+        handed: token,
+        now: this.now,
+        ask: async (): Promise<IssuedToken> => await this.accessToken(http, locator, app),
+        provider: PROVIDER,
+        sourceId: source._id,
+      }),
     };
     const walk: Walk = resumed ?? {
       phase: 'files',
       siteId: await this.siteId(session),
       skip: 0,
     };
-    return walk.phase === 'files'
-      ? await this.files(session, source, walk, limit, stored)
-      : await this.pages(session, source, walk, limit, stored);
+    const batch =
+      walk.phase === 'files'
+        ? await this.files(session, source, walk, limit, stored)
+        : await this.pages(session, source, walk, limit, stored);
+    const handBack = session.token.handBack();
+    return handBack === undefined ? batch : { ...batch, token: handBack };
   }
 
-  /** An app-only access token for Graph in the site's cloud. */
+  /** An app-only access token for Graph in the site's cloud, with the lifetime it was given. */
   private async accessToken(
     http: ProviderHttp,
     locator: SharePointLocator,
     app: SharePointApp,
-  ): Promise<string> {
+  ): Promise<IssuedToken> {
     const cloud = MICROSOFT_CLOUDS[locator.cloud];
     const answer = await http.send(
       new URL(`https://${cloud.login}/${encodeURIComponent(app.tenantId)}/oauth2/v2.0/token`),
@@ -344,7 +360,9 @@ export class SharePointReader implements DocumentationReader {
     );
     const body = providerBody('Microsoft', answer);
     const token = textField(body, 'access_token');
-    if (answer.status === 200 && token !== undefined) return token;
+    if (answer.status === 200 && token !== undefined) {
+      return issuedToken(token, field(body, 'expires_in'), this.now());
+    }
     // Only the error's code and its AADSTS number are said: the description repeats the app's ID.
     const code = textField(body, 'error') ?? `HTTP ${answer.status}`;
     const number = /AADSTS\d+/.exec(textField(body, 'error_description') ?? '')?.[0];
@@ -607,15 +625,12 @@ export class SharePointReader implements DocumentationReader {
     };
     let address: URL | undefined;
     try {
-      const answered = await session.http.send(
+      const answered = await this.graph(
+        session,
         new URL(
           `${session.graph}/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(id)}/content`,
         ),
-        {
-          headers: { authorization: `Bearer ${session.token}` },
-          redirect: 'manual',
-          maxBytes: file.maxBytes,
-        },
+        file.maxBytes,
       );
       if (answered.status === 404) {
         return { reason: `"${name}" was deleted or moved in SharePoint after it was listed.` };
@@ -742,13 +757,21 @@ export class SharePointReader implements DocumentationReader {
     };
   }
 
-  /** One authorised GET to Graph; a redirect is handed back, never followed with the token. */
-  private async graph(session: Session, url: URL): Promise<ProviderAnswer> {
-    return await session.http.send(url, {
-      headers: { authorization: `Bearer ${session.token}` },
-      redirect: 'manual',
-      maxBytes: MAX_GRAPH_BYTES,
-    });
+  /** One authorised GET to Graph, read to `maxBytes`; a redirect is handed back, never followed. */
+  private async graph(
+    session: Session,
+    url: URL,
+    maxBytes: number = MAX_GRAPH_BYTES,
+  ): Promise<ProviderAnswer> {
+    const send = async (): Promise<ProviderAnswer> =>
+      await session.http.send(url, {
+        headers: { authorization: `Bearer ${session.token.bearer}` },
+        redirect: 'manual',
+        maxBytes,
+      });
+    const answer = await send();
+    // A token an earlier batch handed back and Graph refuses is asked for again, once (X-1).
+    return answer.status === 401 && (await session.token.renew()) ? await send() : answer;
   }
 }
 
