@@ -190,8 +190,13 @@ if ! LOCAL_VALUES=$("$REPO_ROOT/node_modules/.bin/tsx" "$REPO_ROOT/scripts/lib/e
   echo "error: could not read $ENV_FILE." >&2
   exit 1
 fi
+# A value is trimmed, so one of spaces reads as unset here as it does in every
+# TypeScript reader of the file (wave 18, 18-P; 17-P's handover).
 read_local() {
-  grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true
+  local value
+  value=$(grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true)
+  value="${value#"${value%%[![:space:]]*}"}"
+  printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
 
 # The way out is read from the file alone, as every process Day0 starts takes

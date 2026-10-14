@@ -392,6 +392,20 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     ]);
   });
 
+  // 17-P's handover (:222): the TypeScript readers trim a value and read one of spaces as unset;
+  // this script kept it, so a quoted HTTPS_PROXY of spaces named a proxy here and nowhere else.
+  it('reads a value of spaces as unset, as the TypeScript side does', (): void => {
+    const spaces = runSync(
+      [`NO_PROXY=${deploymentNoProxy(undefined)}`, 'OPENAI_MODEL=gpt-5.6'],
+      'DAY0_SURFACE_MODE=mock\nHTTPS_PROXY="   "\nOPENAI_MODEL="  "\n',
+    );
+    expect(spaces.status).toBe(0);
+    expect(spaces.calls).toContain('convex env remove NO_PROXY');
+    expect(spaces.calls.join('\n')).not.toContain('convex env set NO_PROXY');
+    expect(spaces.calls.join('\n')).not.toContain('convex env set OPENAI_MODEL');
+    expect(spaces.childEnvironment[0]).toContain('HTTPS_PROXY= ');
+  });
+
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {
     const configured = runSync(
       [],
