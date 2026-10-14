@@ -71,12 +71,20 @@ function useRelationCards(first: RelationCardsRead | undefined): RelationCardRow
   const later: Record<string, RelationCardsRead | undefined | Error> = useQueries(queries);
   const cards = [...(first?.cards ?? [])];
   let next = from;
-  for (const before of current.cursors) {
+  for (const [index, before] of current.cursors.entries()) {
     const read = later[String(before)];
     // A read still loading, or one that failed, ends the chain here; the cards before it stand.
     if (read === undefined || read instanceof Error) return cards;
     cards.push(...read.cards);
     next = read.next;
+    // A read whose cards changed now stops elsewhere (its `next` is its last card drawn, 18-C's
+    // C-H): the reads after it went on from where it used to stop, and would repeat or drop a
+    // card, so they go, and the chain goes on from its new `next` (18-C's F3).
+    const after = current.cursors[index + 1];
+    if (after !== undefined && after !== next) {
+      setReads({ ...current, cursors: current.cursors.slice(0, index + 1) });
+      return cards;
+    }
   }
   const conflicts = cards.filter((card) => card.status === 'confirmed').length;
   if (

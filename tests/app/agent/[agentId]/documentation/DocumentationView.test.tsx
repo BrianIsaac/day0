@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -460,6 +461,49 @@ describe('DocumentationView', () => {
         /^Show (\d+ )?more$/.test(button.textContent ?? ''),
       ),
     ).toBe(false);
+    view.unmount();
+  });
+
+  // 18-C's F3 (with its C-H: a read's `next` is the last conflict it drew): a later read whose
+  // cards change moves its `next`, and the reads chained after it went on from the old one, so the
+  // tab repeated or dropped a card.
+  it('ends the chain at a later read whose next is no longer the cursor after it, and goes on from the new next (18-C’s F3)', () => {
+    populated();
+    const conflict = (id: string, heading: string) => ({
+      ...RELATIONS[1],
+      _id: id,
+      disagreement: { heading, figures: { from: '10,000', to: '5,000' } },
+    });
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[0]], 500);
+    backend.laterReads = {
+      500: read([conflict('c-a', 'Alpha')], 200),
+      200: read([conflict('c-b', 'Bravo')], 100),
+      100: read([conflict('c-c', 'Charlie')]),
+    };
+    const node = () => asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' });
+    const view = mount(node());
+    const headings = (): string[] =>
+      ['Alpha', 'Bravo', 'Charlie', 'Delta'].filter((heading) =>
+        (view.container.textContent ?? '').includes(`under “${heading}”`),
+      );
+    expect(headings()).toEqual(['Alpha', 'Bravo', 'Charlie']);
+    // A conflict in the first later read's range stands again, so that read now stops earlier (its
+    // last card drawn, C-H): the card between its new stop and the old one is read from there,
+    // and the read from the old cursor goes.
+    backend.laterReads = {
+      ...backend.laterReads,
+      500: read([conflict('c-a', 'Alpha')], 350),
+      350: read([conflict('c-d', 'Delta')], 200),
+    };
+    act((): void => view.root.render(node()));
+    expect(headings()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+    // Each card once.
+    for (const heading of ['Alpha', 'Bravo', 'Charlie', 'Delta']) {
+      expect((view.container.textContent ?? '').split(`under “${heading}”`), heading).toHaveLength(
+        2,
+      );
+    }
+    expect(backend.readOn).toContain(350);
     view.unmount();
   });
 
