@@ -21,6 +21,17 @@ describe("a work item's plan", (): void => {
     );
   });
 
+  it('heads a plan stored without its estimate or reversibility by what it holds, never “undefined” (18-O’s F8)', (): void => {
+    // Bed 1's imported plans carry neither field, as no plan Day0 drafts does (18-W's F2).
+    const bare = { ...PLAN, estimatedMinutes: undefined, reversibility: undefined };
+    const markup = section(DRAWN.planPending, bare as unknown as ItemPlan);
+    expect(markup).toContain('>Plan</h4>');
+    expect(markup).not.toContain('undefined');
+    expect(section(DRAWN.planPending, { ...PLAN, reversibility: '' })).toContain(
+      '>Plan · about 10 minutes</h4>',
+    );
+  });
+
   it('writes in the answers given at approval once the plan runs, and says which went into the charter', (): void => {
     const markup = section(DRAWN.working);
     expect(markup).toContain('Answered at approval');

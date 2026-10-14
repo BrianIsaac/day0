@@ -349,7 +349,7 @@ export async function surfaceReach(
 
 /**
  * What a change's reach comes to for one employee: what it reaches, nothing to open a card on, or
- * more work rows than the transaction has room left to read.
+ * more bytes of work rows than the transaction has room left to read.
  */
 export type Reached =
   | { readonly kind: 'reached'; readonly affected: Partial<CardAffected> }

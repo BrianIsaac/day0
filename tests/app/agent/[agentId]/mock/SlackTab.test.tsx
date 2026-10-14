@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
   seededOffice: false,
   /** The intake channel's message is the employee's unposted draft, when set. */
   draft: false,
+  /** The thread the intake channel's message is in, when set. */
+  threadKey: undefined as string | undefined,
 }));
 
 /** The hosted office as the seed makes it: the empty team channel sorts before the intake one. */
@@ -56,6 +58,7 @@ vi.mock('convex/react', () => ({
         senderKind: state.draft ? 'agent-draft' : 'human',
         body: m.body,
         timestamp: 1_757_000_000_000 + i,
+        ...(state.threadKey === undefined ? {} : { threadKey: state.threadKey }),
       }));
     }
     return undefined;
@@ -174,6 +177,43 @@ describe("the employee's own messages, in the manager's word (N29)", (): void =>
       expect(markup).not.toMatch(/>agent</i);
     } finally {
       state.draft = false;
+    }
+  });
+});
+
+describe('a threaded message, in the manager’s words (18-T’s F2)', (): void => {
+  it('names a seeded thread by its subject and never prints its key', (): void => {
+    state.threadKey = 'thread-double-charge';
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      expect(markup).toContain('about “Northwind’s double charge”');
+      expect(markup).not.toContain('thread-double-charge');
+    } finally {
+      state.threadKey = undefined;
+    }
+  });
+
+  it('draws the longest seeded subject whole, wrapping rather than cut off (the second pass)', (): void => {
+    state.threadKey = 'thread-drive-access';
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      const label = /<span class="([^"]*)"><span aria-hidden="true">↳ <\/span>/.exec(markup);
+      expect(label?.[1]).toBeDefined();
+      expect(label?.[1]).not.toContain('truncate');
+      expect(markup).toContain('about “the shared drive after a password change”');
+    } finally {
+      state.threadKey = undefined;
+    }
+  });
+
+  it('says only that a message is in a thread the office did not seed', (): void => {
+    state.threadKey = 'thread-unseeded-ask';
+    try {
+      const markup = renderToStaticMarkup(<SlackTab agentId={agentId} />);
+      expect(markup).toContain('in a thread');
+      expect(markup).not.toContain('thread-unseeded-ask');
+    } finally {
+      state.threadKey = undefined;
     }
   });
 });

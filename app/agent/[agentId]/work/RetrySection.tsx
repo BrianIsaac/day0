@@ -368,8 +368,10 @@ export function RetrySection({
         why={
           <>
             {retryWhy(mode, employeeName, autonomous, gate)}
+            {/* What the manager does, in the office and out of it (18-T's F3): the checklist
+                above names a provider where there is one. */}
             {blocked && (mode.kind !== 'send-back' || writing)
-              ? ' Retry remains disabled until provider reconciliation is recorded.'
+              ? ' Retry remains disabled until you confirm the writes above.'
               : ''}
             {dismiss && dismiss.at === undefined
               ? ` ${dismissWhy(mode, dismiss.kind, !blocked)}`

@@ -2922,3 +2922,93 @@ describe('a page whose stored title is redacted, kept by its title’s keyed has
     expect(JSON.stringify(second)).not.toContain(secret);
   }, 60_000);
 });
+
+// X-1's two halves through the sync (the joins, 18-J; 18-X's F3): the readers' tests hand the
+// token back to themselves, and the stored half's tests hand it from a folder reader standing in
+// for one; this drives the SharePoint reader itself through `syncSource` across its batches.
+describe('the SharePoint reader’s token across a sync’s batches (X-1, both halves, at the joins)', (): void => {
+  const APP = {
+    tenantId: '9188040d-6c67-4c5b-b112-36a304b66dad',
+    clientId: '6731de76-14a6-49ae-97bc-6eba6914391e',
+    clientSecret: 'fixture-client-secret',
+  };
+  const SITE: Omit<DocSourceRecord, '_id'> = {
+    label: 'Runbooks site',
+    kind: 'sharepoint',
+    locator: 'https://acme.sharepoint.com/sites/Runbooks',
+  };
+
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 5).toString('base64'));
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('signs in once for a library of sixty pages read over several batches, and keeps no token as it is', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 60 });
+    const reader = new SharePointReader({
+      fetch: library.fetch,
+      download: library.fetch,
+      now: (): number => Date.now(),
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-sharepoint-token-');
+    await mkdir(join(root, 'site'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Runbooks site',
+      kind: 'folder',
+      locator: 'site',
+    });
+    // The folder source's reads answered by the SharePoint reader, every argument the sync hands
+    // it passed on: its marks and the token it handed back at the batch before.
+    const batches: number[] = [];
+    // The run's stored cursor as each later batch begins: the token is there sealed, never as it is.
+    const between: string[] = [];
+    vi.spyOn(FolderReader.prototype as DocumentationReader, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit, stored, handed) => {
+        batches.push(limit);
+        if (batches.length > 1) {
+          between.push(
+            JSON.stringify(
+              await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect()),
+            ),
+          );
+        }
+        return await reader.listPageBatch(
+          { ...SITE, _id: source._id },
+          sharePointReaderSecret(APP),
+          cursor,
+          limit,
+          stored,
+          handed,
+        );
+      },
+    );
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+
+    const after = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      pages: await ctx.db.query('docPages').collect(),
+      runs: await ctx.db.query('docSyncRuns').collect(),
+      events: await ctx.db.query('events').collect(),
+    }));
+    expect(after.source?.lastError).toBeUndefined();
+    expect(after.source?.status).toBe('synced');
+    expect(after.pages).toHaveLength(60);
+    expect(batches.length).toBeGreaterThanOrEqual(3);
+    // One sign-in for the whole read, however many batches it took.
+    expect(library.counts().token).toBe(1);
+    expect(between.length).toBeGreaterThan(0);
+    expect(between.some((runs) => runs.includes('\\u0000token:'))).toBe(true);
+    for (const runs of between) expect(runs).not.toContain('fixture-graph-token');
+    expect(JSON.stringify(after)).not.toContain('fixture-graph-token');
+  }, 60_000);
+});

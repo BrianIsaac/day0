@@ -7,7 +7,13 @@ import { query, type QueryCtx } from './_generated/server';
 import { getCallerOrThrow } from './ownership';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
-import { needsYouOfEmployee } from './needsYou';
+import {
+  NEEDS_YOU_STATE_READ_LIMIT,
+  NEEDS_YOU_STOPPED_READ_LIMIT,
+  needsYouOfEmployee,
+  stateRowsOnce,
+  type StateRows,
+} from './needsYou';
 import { byWriteOrder, isEvaluationAgent, type ReadRoom } from './metrics';
 import {
   holdsLiveStepClaim,
@@ -66,16 +72,18 @@ const SURFACE_READ_LIMIT = 100;
 /**
  * Bound on each open-state read. Open rows are held to the work-in-progress
  * cap (`AUTONOMOUS_WIP_LIMIT` across all five states), so the bound keeps
- * the read finite and is never the count.
+ * the read finite and is never the count. The inbox's own bound, so the counts and the inbox
+ * entries share each state's read (`stateRowsOnce`, 18-W's F1).
  */
-const OPEN_STATE_READ_LIMIT = 100;
+const OPEN_STATE_READ_LIMIT = NEEDS_YOU_STATE_READ_LIMIT;
 
 /**
  * Bound on the stopped-row read. Nothing caps how many rows an employee has
  * in `failed`, and each carries its run's output, so the bound is lower than
- * the open one and is the most the list can show, the newest first.
+ * the open one and is the most the list can show, the newest first. The inbox's own bound, so the
+ * two share the read.
  */
-const STOPPED_READ_LIMIT = 25;
+const STOPPED_READ_LIMIT = NEEDS_YOU_STOPPED_READ_LIMIT;
 
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
@@ -406,24 +414,19 @@ async function newestSession(
  * parked. Stopped rows are failed ones
  * whose card still offers the manager a move. Reads the state index once per
  * counted state, so completed, skipped and cancelled work, however much of
- * it there is, is never read.
+ * it there is, is never read; a state the employee's inbox entries read too
+ * is read once for both (`rows`, 18-W's F1).
  *
+ * @param rows - The employee's rows by state ({@link stateRowsOnce}).
  * @returns The open, parked and stopped counts, and the parked count by state.
  */
 async function workCounts(
-  ctx: QueryCtx,
-  agentId: Id<'agents'>,
+  rows: StateRows,
 ): Promise<Pick<RosterRow, 'openCount' | 'parkedCount' | 'parkedStates' | 'stoppedCount'>> {
   const rowsIn = async (
     state: Doc<'workItems'>['state'],
     limit: number = OPEN_STATE_READ_LIMIT,
-  ): Promise<Doc<'workItems'>[]> =>
-    await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      // Newest first: past a bound, what the manager has not seen yet is what is kept.
-      .order('desc')
-      .take(limit);
+  ): Promise<Doc<'workItems'>[]> => await rows(state, limit);
   const [open, parked, discovered, stoppedRows] = await Promise.all([
     Promise.all(OPEN_WORK_STATES.map((state) => rowsIn(state))),
     Promise.all(PARKED_WORK_STATES.map((state) => rowsIn(state))),
@@ -486,10 +489,12 @@ async function rosterRows(
   return await Promise.all(
     agents.map(async (agent, index): Promise<RosterRow> => {
       const landed = months[index]!;
+      // The counts and the inbox entries read the same states: one read each (18-W's F1).
+      const rows = stateRowsOnce(ctx, agent._id);
       const [charter, counts, waiting, session, surfaces] = await Promise.all([
         charterStanding(ctx, agent._id),
-        workCounts(ctx, agent._id),
-        needsYouOfEmployee(ctx, agent, now),
+        workCounts(rows),
+        needsYouOfEmployee(ctx, agent, now, rows),
         newestSession(ctx, agent._id),
         ctx.db
           .query('surfaces')

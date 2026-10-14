@@ -584,7 +584,7 @@ Run one Day0 deployment per Slack workspace and per Linear team. Two deployments
 
 ### Fifty employees or fewer
 
-Day0 is built for a manager of fifty employees or fewer, and its cards, figures and exports were run on a bed of fifty-one. One part stops at fifty: a company-wide working agreement is checked against each employee's charter only while you have fifty employees or fewer. Past that, a company-wide agreement a new charter would carry is held for that employee as not checked, and Check now on it says why, until you have fifty or fewer again.
+Day0 is built for a manager of fifty employees or fewer, and its cards, figures and exports were run on a bed of fifty-one. One part stops at sixty: a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer. Past that, a company-wide agreement a new charter would carry is held for that employee as not checked, and Check now on it says why, until you have sixty or fewer again.
 
 ### The company bed
 
@@ -1729,7 +1729,7 @@ npx convex run surfaces:setAccessDays '{"surfaceId":"<_id>","days":90}' --identi
 
 #### 五十名员工或更少
 
-Day0 面向管理五十名或更少员工的经理，其卡片、数字与导出已在五十一名员工的测试床上跑过。只有一处止于五十：公司范围的工作约定，只在你拥有五十名或更少员工时，才会对照每位员工的章程进行检查。超过五十名时，新章程会带上的公司范围约定对该员工保持为未检查，在其上点击 Check now 会说明原因，直到你的员工回到五十名或更少。
+Day0 面向管理五十名或更少员工的经理，其卡片、数字与导出已在五十一名员工的测试床上跑过。只有一处止于六十：公司范围的工作约定，只在你拥有六十名或更少员工时，才会对照每位员工的章程进行检查。超过六十名时，新章程会带上的公司范围约定对该员工保持为未检查，在其上点击 Check now 会说明原因，直到你的员工回到六十名或更少。
 
 #### 每个 workspace 一个部署
 

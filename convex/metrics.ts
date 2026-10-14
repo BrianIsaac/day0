@@ -43,7 +43,7 @@ import {
 /*
  * The company's pooling (`companyMetricsOf`) and the summaries it shares with one employee's
  * figures are a module below, `convex/companyFigures.ts` (wave 18, 18-s), which this one imports;
- * the reads, the ledger walk, each employee's figures and the four registered functions stay here.
+ * the reads, the ledger walk, each employee's figures and the registered functions stay here.
  */
 
 type UnknownRecord = Record<string, unknown>;

@@ -428,7 +428,8 @@ describe('adoptionWords', (): void => {
     expect(adoptionWords({ ...base, state: 'offered' })).toEqual({
       lead: "Priya's skill kanban-comment-and-close, verified on 18 September 2026, does this.",
       body: "Mateo can adopt it. It would be re-verified in the sandbox under Mateo's Linear connection before Mateo can use it.",
-      scopesLead: 'Scopes Mateo would gain',
+      // Re-pinned (18-T's F5): the lead precedes words since W17-R30.
+      scopesLead: 'Access Mateo would gain',
       noScopes: 'Mateo already holds every scope the skill needs.',
     });
   });

@@ -580,15 +580,16 @@ describe('sending a finished item back', (): void => {
     expect(markup).toContain('Note for the retry: say what to change');
     expect(markup).toContain('Sending it back with a note returns this finished work');
     expect(markup).not.toContain('Provider reconciliation required');
-    expect(markup).not.toContain(
-      'Retry remains disabled until provider reconciliation is recorded',
-    );
+    expect(markup).not.toContain('Retry remains disabled until you confirm the writes above');
   });
 
+  // Re-pinned (18-T's F3): the foot says what the manager does, in the office and out of it; the
+  // checklist above it names the provider where there is one.
   it('still asks a failed run with a landed write to reconcile before Retry', (): void => {
     const markup = render(item('failed'));
     expect(markup).toContain('Provider reconciliation required');
-    expect(markup).toContain('Retry remains disabled until provider reconciliation is recorded');
+    expect(markup).toContain('Retry remains disabled until you confirm the writes above.');
+    expect(markup).not.toContain('until provider reconciliation is recorded');
   });
 });
 

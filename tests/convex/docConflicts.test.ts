@@ -1500,6 +1500,72 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await eventsOf(harness, retried!.agentId, 'work.plan-redraft')).toHaveLength(1);
   });
 
+  it('drafts the plan again on the first Retry when the answered question is the item’s fifty-first (18-C’s F4)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const item = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    const [cite] = (item!.plan as { cites: Array<{ sourceId?: string; pageRef?: string }> }).cites;
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const citesFrom =
+      cite.sourceId === relation.from.sourceId && cite.pageRef === relation.from.ref;
+    // Fifty questions asked beside the item before its conflict's, so the conflict's is the
+    // fifty-first the item's index reads (W17-R13's edge, met at Retry).
+    const [asked] = await questionsOf(harness, workItemId);
+    const questionId = await harness.run(async (ctx) => {
+      const row = {
+        agentId: asked.agentId,
+        key: asked.key,
+        question: asked.question,
+        context: asked.context,
+        askedAt: asked.askedAt,
+        workItemId,
+        charterId: asked.charterId,
+        blocking: asked.blocking,
+        type: asked.type,
+        relationId,
+      };
+      for (let earlier = 0; earlier < 50; earlier += 1) {
+        await ctx.db.insert('managerQuestions', {
+          ...row,
+          key: `${asked.key}:earlier-${earlier}`,
+          question: `An earlier question ${earlier}`,
+          blocking: false,
+          relationId: undefined,
+        });
+      }
+      await ctx.db.delete(asked._id);
+      return await ctx.db.insert('managerQuestions', row);
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, {
+        state: 'failed',
+        skipReason: `stopped: ${openQuestionStopReason({ question: asked.question, steps: [1] })}`,
+        output: {
+          draft: '',
+          notes: '',
+          actions: [],
+          applied: [],
+          openQuestion: { question: asked.question, steps: [1], relationId },
+        },
+      });
+    });
+    await asManager(harness).mutation(api.managerQuestions.answerConflict, {
+      questionId,
+      choice: citesFrom ? 'to' : 'from',
+    });
+    expect(
+      (await questionsOf(harness, workItemId)).findIndex((question) => question._id === questionId),
+    ).toBe(50);
+    await expect(
+      asManager(harness).mutation(api.workRuns.retryFailed, { workItemId }),
+    ).resolves.toEqual({ ok: true, resumeState: 'discovered' });
+    const retried = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect(retried?.plan).toBeUndefined();
+    expect(await eventsOf(harness, retried!.agentId, 'work.plan-redraft')).toHaveLength(1);
+  });
+
   it('drafts a plan that cites nothing again on the first Retry too, once the answer superseded a page of its question (the second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

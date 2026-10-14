@@ -17,7 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
-import { closeQuestionsAtRedraft } from './questionCloses';
+import { closeQuestionsAtRedraft, questionsOfItem } from './questionCloses';
 import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
@@ -154,9 +154,6 @@ function redraftedOutput(row: Doc<'workItems'>): Record<string, unknown> | undef
   };
 }
 
-/** The questions of one item a retry reads for an answered conflict. */
-const ITEM_QUESTIONS_READ = 50;
-
 /**
  * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
  * cites, or for a plan that cites nothing a page of the conflict it was asked about, is no longer
@@ -169,11 +166,9 @@ async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Pr
   const cites =
     (row.plan as { cites?: ReadonlyArray<{ sourceId?: string; pageRef?: string }> } | undefined)
       ?.cites ?? [];
-  const questions = await ctx.db
-    .query('managerQuestions')
-    .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-    .take(ITEM_QUESTIONS_READ);
-  for (const question of questions) {
+  // Every question of the item by page, as the apply's hold and the redraft's close read them
+  // (18-C's F4: a first fifty left a later answered question unread at Retry).
+  for (const question of await questionsOfItem(ctx, row._id)) {
     if (question.relationId === undefined || question.answer === undefined) continue;
     const relation = await ctx.db.get(question.relationId);
     if (relation === null) continue;
