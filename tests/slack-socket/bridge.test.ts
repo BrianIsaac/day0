@@ -268,7 +268,14 @@ describe('the Socket Mode bridge (wave 12, 12-M; RM7)', (): void => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ appId: 'A_DAY0_FAKE', reason: 'refresh_requested' }),
     });
-    await until(() => backend.opened === 2, 'the second connection URL');
+    // The second greeting, not the second URL: the URL is counted before the bridge dials it,
+    // while the fake still holds the old connection alone, so the count of one below held at
+    // once and the press went down a connection the bridge then closed unacknowledged (18-G).
+    await until(
+      () => logged.filter((line) => line.message === 'connected').length === 2,
+      'the second connection greeted',
+    );
+    expect(backend.opened).toBe(2);
     await until(
       async () => (await proof()).socketConnections.A_DAY0_FAKE === 1,
       'the old connection closed',
