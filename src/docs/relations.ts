@@ -227,10 +227,11 @@ export function namedSuccessor(
 }
 
 /**
- * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
- * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
- * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
- * which its time is ({@link editedAtSource}).
+ * The kinds of source whose reader may give no edit time: a page's time is when it was read (a list
+ * of URLs, an MCP server's resource whose server names no time), or when a fresh checkout wrote its
+ * file (git), so it dates no successor and its card says "last read". An MCP page whose server names
+ * its time is dated by it and its row says so (RM42 (b)). The rule for a page stored before 0.21.0,
+ * whose row does not say which its time is ({@link editedAtSource}).
  */
 export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<string> = new Set(['urls', 'mcp', 'git']);
 
