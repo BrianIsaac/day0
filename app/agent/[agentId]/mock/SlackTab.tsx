@@ -6,6 +6,7 @@ import { api } from '@convex/_generated/api';
 import type { Id, Doc } from '@convex/_generated/dataModel';
 import { Chip } from '../../../components/Chip';
 import { clockTime, clockTimeWithSeconds, useAgentZone } from '../../../components/time';
+import { OFFICE_THREAD_SUBJECTS } from '../../../../src/surfaces/summary';
 
 /** What an empty channel list means. The tab is mock-only: real mode does not
  * render it, so it has no real-mode copy to show. */
@@ -19,6 +20,18 @@ export const EMPLOYEE_DRAFT = 'Employee draft';
 
 /** The label of a message the employee posted. */
 export const EMPLOYEE_POSTED = 'Employee';
+
+/**
+ * Where a threaded message sits, in a manager's words (18-T's F2, W17-R30): the seeded thread by
+ * its subject, any other as "in a thread"; never the thread's key.
+ *
+ * @param threadKey - The message's thread key.
+ * @returns The words drawn after the arrow.
+ */
+export function threadWords(threadKey: string): string {
+  const subject = OFFICE_THREAD_SUBJECTS[threadKey];
+  return subject === undefined ? 'in a thread' : `about “${subject}”`;
+}
 
 /**
  * The channel the office opens on: `#revops-asks`, where the asks the employee works arrive
@@ -185,7 +198,7 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
         {initial}
       </span>
       <div className="min-w-0 flex-1">
-        {/* Wraps rather than squashing: the thread key used to break over three lines when the
+        {/* Wraps rather than squashing: the thread's words used to break over three lines when the
             column was narrow. */}
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className="text-sm font-semibold text-[var(--color-fg)]">{m.sender}</span>
@@ -198,10 +211,12 @@ function MessageRow({ m }: { m: Doc<'mockSlackMessages'> }) {
           {m.senderKind === 'agent-draft' ? <Chip tone="warn">{EMPLOYEE_DRAFT}</Chip> : null}
           {m.senderKind === 'agent-posted' ? <Chip tone="accent">{EMPLOYEE_POSTED}</Chip> : null}
           {m.threadKey ? (
-            <span className="max-w-[14rem] truncate font-mono text-xs text-[var(--color-muted)]">
+            <span className="max-w-[14rem] truncate text-xs text-[var(--color-muted)]">
               <span aria-hidden="true">↳ </span>
-              <span className="sr-only">in thread </span>
-              {m.threadKey}
+              {OFFICE_THREAD_SUBJECTS[m.threadKey] === undefined ? null : (
+                <span className="sr-only">in the thread </span>
+              )}
+              {threadWords(m.threadKey)}
             </span>
           ) : null}
         </div>
