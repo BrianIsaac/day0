@@ -64,11 +64,11 @@ export function holdingCardsOf(
 }
 
 /**
- * What the Work tab says under its list when the list's bounds left the oldest rows out
- * (W17-R22; section 7's draft names how many, which the bounded read cannot count: decision W-1).
+ * What the Work tab says under its list when the list's bounds left rows out (W17-R22; section
+ * 7's draft names how many, which the bounded read cannot count: decision W-1). It says some, not
+ * the oldest: the rows left out may be newer finished ones (W18-R14, D-10 (a)).
  */
-export const WORK_LIST_CUT =
-  'Showing the newest rows that fit. Older rows are not shown here; they are in the export.';
+export const WORK_LIST_CUT = 'Some rows are not shown here; they are in the export.';
 
 /**
  * The Work tab: the employee's queue, what needs the manager first, beside the corrections the

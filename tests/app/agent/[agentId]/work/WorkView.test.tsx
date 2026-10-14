@@ -86,9 +86,8 @@ describe('WorkView', () => {
     };
     const cut = renderToStaticMarkup(asEmployee(<WorkView />));
     expect(cut).toContain(WORK_LIST_CUT);
-    expect(WORK_LIST_CUT).toBe(
-      'Showing the newest rows that fit. Older rows are not shown here; they are in the export.',
-    );
+    // W18-R14 (D-10 (a)): the rows left out may be newer finished ones, so the line says some.
+    expect(WORK_LIST_CUT).toBe('Some rows are not shown here; they are in the export.');
     backend.queries = {
       'work:listForAgent': { items: HELD_RUNS, cut: false },
       'corrections:listForAgent': [],
