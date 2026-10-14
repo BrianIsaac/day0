@@ -30,8 +30,11 @@ NODE_USE_ENV_PROXY=
   `http://user:password@proxy.acme.com:3128`. On the second bed the backend
   (its program, its Node actions and a `git` clone), the app, the setup and
   the checks, the Slack socket bridge, the redactor and the Notion component
-  each carried them, and Day0 prints the address by its host and port only. `pnpm sync:env` puts the address on the
-  deployment (below), which holds it as it holds Day0's other keys.
+  each carried them, and Day0 prints the address by its host and port only.
+  `pnpm sync:env` puts the address on the deployment (below), its password
+  included, which holds it as it holds Day0's other keys: whoever can read
+  the deployment's environment (its dashboard, `npx convex env list`) can
+  read the password, so give Day0 a proxy account of its own.
 - `NO_PROXY` lists **your own** hosts that the proxy does not serve,
   separated by commas: Day0's two public names and your identity provider
   where they are inside the network, and every host `DAY0_PRIVATE_HOSTS`
@@ -60,10 +63,12 @@ container and not the deployment, nor does a `NO_PROXY` the shell exports
 (list your own hosts in the file's); `pnpm check:setup`, the setup's verbs
 and `pnpm start` each say so first: "The shell names a proxy (HTTPS_PROXY)
 that .env.local does not. Day0 reads .env.local only, so it goes out
-directly". pnpm itself still reads the shell, and with
-`NODE_USE_ENV_PROXY=1` exported it prints Node's "EnvHttpProxyAgent is
-experimental" warning before Day0's code starts; Day0's own processes are
-started with that warning turned off. In such a shell:
+directly". Each process Day0 starts in such a shell carries
+`DAY0_SHELL_PROXY`, the names the shell set and never their values, so
+the check says so wherever in the chain it runs. pnpm itself still reads
+the shell, and with `NODE_USE_ENV_PROXY=1` exported it prints Node's
+"EnvHttpProxyAgent is experimental" warning before Day0's code starts;
+Day0's own processes are started with that warning turned off. In such a shell:
 `unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_USE_ENV_PROXY https_proxy http_proxy no_proxy`.
 
 Set the four before `./setup.sh install`, which then runs every step

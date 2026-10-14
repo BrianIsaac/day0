@@ -328,6 +328,16 @@ describe('the way out’s page and the runbook, on where the proxy is named (W17
     expect(EGRESS).toContain('The backend container has no route to');
   });
 
+  // W18-R20 (the wave 18 review, reader 5): the one new environment name was in no page, and the
+  // password the deployment holds beside the proxy's address was not said (D-9 (a)).
+  it('names the shell-proxy mark, and says the proxy’s password sits on the deployment with Day0’s other keys (W18-R20, D-9 (a))', (): void => {
+    expect(EGRESS).toContain('`DAY0_SHELL_PROXY`');
+    expect(EGRESS).toContain(
+      "the address on the deployment (below), its password included, which holds it as it holds Day0's other keys",
+    );
+    expect(EGRESS).toContain('`npx convex env list`');
+  });
+
   // W17-R27 and 17-P's F6 on the 18-P bed: NO_PROXY as Node reads it, and nothing left saying the
   // Notion component, the browser or a GitHub source dials past the proxy.
   it('reads NO_PROXY as Node does, and names what the beds found takes the proxy and what does not', (): void => {
