@@ -155,3 +155,23 @@ describe('an employee’s figures by pages when the day turns (the second pass)'
     view.unmount();
   });
 });
+
+describe('an employee’s figures by pages when a re-read fails (the second pass)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+
+  it('keeps the figures it drew when a later read fails', async (): Promise<void> => {
+    backend.subscribed = new ConvexError(FIGURES_READ_BY_PAGES);
+    const view = mount(<Probe />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(24));
+    await elapse(0);
+    expect(drawn(view)).toBe('24');
+    await elapse(EMPLOYEE_FIGURES_REREAD_MS);
+    backend.byPages[1]!.reject(new Error('the backend is restarting'));
+    await elapse(0);
+    expect(drawn(view)).toBe('24');
+    view.unmount();
+  });
+});

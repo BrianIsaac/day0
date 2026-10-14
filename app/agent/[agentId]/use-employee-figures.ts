@@ -32,7 +32,7 @@ interface PagedRead {
  * draws without its figures; and, for an employee whose records pass what that read holds (it
  * refuses in {@link FIGURES_READ_BY_PAGES}'s words), the same figures read by pages
  * (`metrics:forAgentByPages`), read again every {@link EMPLOYEE_FIGURES_REREAD_MS} while the page
- * stays open, one read at a time.
+ * stays open, one read at a time; a re-read that fails leaves the figures it had drawn.
  *
  * @param agentId - The employee, or undefined while the page has none to read.
  * @param day - The employee's own today, for the rail's day figures.
@@ -78,11 +78,18 @@ export function useEmployeeFigures(
             if (live) setPaged({ key, figures: answer });
           },
           (error: unknown): void => {
+            // Figures already drawn for this employee and day stay drawn; with none, the page says
+            // they could not be read.
             if (live) {
-              setPaged({
-                key,
-                figures: error instanceof Error ? error : new Error('the figures were not read'),
-              });
+              setPaged((kept) =>
+                kept?.key === key && !(kept.figures instanceof Error)
+                  ? kept
+                  : {
+                      key,
+                      figures:
+                        error instanceof Error ? error : new Error('the figures were not read'),
+                    },
+              );
             }
           },
         )
