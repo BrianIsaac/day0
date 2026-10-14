@@ -774,6 +774,33 @@ tracked re-grade `results/2026-08-30T12-40-05Z/` names one of them,
 
 Two deterministic measurements cover permissions and supervision:
 
+- **Recorded again on 14 October 2026** on the code of the v0.21.0 release commit:
+  [`results/revocation-2026-10-14T06-29-07Z/`](results/revocation-2026-10-14T06-29-07Z/trials.md)
+  (commit `c6cc7e6a2`, which carries the release commit `eab825fff` and evaluation changes only;
+  no file under `convex/` differs; real mode on an isolated backend, project `day0-w17q`,
+  `fake-slack` and `looker-tile`, GLM 5.3 Flash through Featherless for the onboarding). It
+  reads as the 2 September set below on every count: 17 trials, N attempted=19, N blocked=15,
+  N landed=4, all four by declared design, N unexpected=0, the same two, four and nine blocks
+  at evaluation, apply and transport, all 5/5 switch-off attempts blocked at transport, and the
+  metrics card reconciled (8 no-grant refusals). Time to block n=15, median 56 ms, max 197 ms
+  (median 63.5 ms after a permission revocation, 51 ms after a switch-off). No blocked attempt
+  reached the fake provider. Its log holds n=6 requests against the earlier n=4: the four
+  landed attempts' own requests, and two `chat.postMessage` the product sent itself, each the
+  manager note (`work.manager-note-sending`, kind `landed`) that follows one of the two
+  manager-approved landings; the 2 September product sent no such note. The real planner's
+  conflict sentence, which moved at v0.20.0 after the earlier set was recorded, plays no part in
+  the trials: they seed their rows past the planner. Three things the run needed that the
+  earlier record does not say: the driver is started with `NODE_ENV=development` in its
+  environment (`pnpm demo:bed offline-rung` does not set it, and real mode refuses to load
+  without it under the local profile); the mounted documentation is a folder holding only the
+  Slack automation page (`tests/fixtures/notion-pages/slack-day0-app.md`, its heading set to
+  `Slack`) and the Looker tile page (`bed/company/folder/systems/looker-pipeline-tile.md`),
+  because approving the trial's charter runs orientation, and a card it proposes from a page
+  that names neither the Slack methods nor the tile's probe marker is the card the driver then
+  approves; and the trial ids are spent by a run that stops after deploying, so each attempt
+  needs a fresh volume (the run recorded here was the fourth attempt, on the third volume). `commands.txt`'s `--out`
+  argument was rewritten from the scratch directory it ran in to the checkout path, and
+  `SHA256SUMS` taken again over the four files.
 - [Live revocation evidence](results/revocation-2026-09-02T12-17-54Z/trials.md), with
   [raw JSON](results/revocation-2026-09-02T12-17-54Z/trials.json), the complete
   redacted agent trace (`trace-agent.json`) and the exact commands (`commands.txt`).
