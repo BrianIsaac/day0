@@ -1475,7 +1475,9 @@ function obligationsFailedOpen(plan: unknown): string | undefined {
  * asks which page is right beside the plan and goes on. And, first and
  * whatever the switch says, a plan a high-risk reorientation card names
  * (`reason: 'reorientation-pending'`, wave 16): it waits for the card's Approve
- * or Dismiss, which ask this decision again.
+ * or Dismiss, which ask this decision again. So does a plan the card's Approve asked again rather
+ * than drafting it again, since the change does not reach it (`heldThroughChangeAt`, RM43 (a)):
+ * the manager decides whether it stands under the changed ground.
  * Internal; called by the drafting action and the stalled-step
  * sweep.
  */
@@ -1521,7 +1523,14 @@ export const decidePlan = internalMutation({
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
-    if (!agent || !autonomousActionsOn(agent) || row.planRejectedAt !== undefined) {
+    // A plan a card held through a change it does not rest on was asked again rather than drafted
+    // again, and goes to the manager whatever the switch says (RM43 (a)); the release said why.
+    if (
+      !agent ||
+      !autonomousActionsOn(agent) ||
+      row.planRejectedAt !== undefined ||
+      row.heldThroughChangeAt !== undefined
+    ) {
       await scheduleDecisionRequest(ctx, row, 'plan');
       return { approved: false };
     }
