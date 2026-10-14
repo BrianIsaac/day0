@@ -158,6 +158,35 @@ Day0 did not pass every task-run (44/45 on each hosted model), and this controll
 mock-office result is not a claim of universal performance. The N16 caveat above
 applies to every figure in this paragraph.
 
+### Stored beds read again on the v0.22.0 release commit - 15 October 2026
+
+On 15 October 2026 the nine sources read on 14 October for the second reading were read again
+from a clone at the v0.22.0 release commit `fddf16bd3`, with no model call and no backend
+(`pnpm eval:comparison -- --reread <evidence.json>`, one invocation a file), into one dated
+directory with a subdirectory a bed:
+[`results/2026-10-14T23-33-56Z-reread-v0-22-0/`](results/2026-10-14T23-33-56Z-reread-v0-22-0/readings.md)
+(the stamp is UTC). Each re-read equals 14 October's but for the time it was written and the
+grader's commit, so every cell of
+[the 14 October table](#stored-beds-read-again-for-the-second-reading---14-october-2026)
+stands: no grader file changed between `v0.21.0` and the release commit, and of the product
+modules the grader imports only `src/work/stop.ts` changed, not in the one value the grader
+reads from it.
+
+The v0.21.0 bed of 14 October cannot be read again this way: it was graded live with the two
+readings and the second reading, so `--reread` refuses it ("already records the second
+reading") and writes nothing. Read from its retained grades by the release commit's grader, its
+60 out-of-scope rows agree with every reading graded live wherever a retained grade can count
+the row: Day0 decided 30/30, explained 6/30, second reading 30/30; the ordinary arm decided
+7/30, explained 7/30, second reading 7 shown and 14 not countable (graded live, with the
+backend's record of where each lone message went, 18/30). A test reproduces each re-read from
+its source, holds each equal to 14 October's but for those two fields, and holds the 14 October
+bed's agreement.
+
+**中文：** **2026 年 10 月 15 日**，在 v0.22.0 发布提交 `fddf16bd3` 上，将 10 月 14 日按第二种读法重新读取的
+九个来源再次读取，不调用模型、不连接后端。每个结果除生成时间与评分提交外与 10 月 14 日完全相同，表中数字
+全部不变；`v0.21.0` 与发布提交之间评分代码没有变化。10 月 14 日的 v0.21.0 环境已在运行时记录全部读法，
+`--reread` 拒绝再次读取；按保留评分读取时，凡可计数的行均与运行时评分一致。
+
 ### GLM bed on v0.21.0 with both arms at six runs - 14 October 2026
 
 The comparison graded again on the code of the v0.21.0 release commit, on a fresh GLM 5.3 Flash
