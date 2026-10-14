@@ -1768,6 +1768,11 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
   ])('writes %j as the act %j, an emphatic "ever" dropped (RM38 (a))', (clause, act): void => {
     expect(willNotDoAsAct(clause)).toBe(act);
   });
+
+  // W17-R22: "NEVER SHARE A PASSWORD." was written "SHARE A PASSWORD.", a clause in capitals.
+  it('writes a clause in capitals as the act in sentence case (W17-R22)', (): void => {
+    expect(willNotDoAsAct('NEVER SHARE A PASSWORD.')).toBe('Share a password.');
+  });
 });
 
 describe('withRoutingRules (RM27)', (): void => {
@@ -1913,6 +1918,19 @@ describe('withRoutingRules (RM27)', (): void => {
   ])('writes %j as %j, its condition kept and its turn gone (W17-R22)', (said, clause): void => {
     const drawn = withRoutingRules(charter([]), { collaborators: said }, [], []);
     expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
+  });
+
+  // W17-R22: a routing sentence in capitals kept them, "RUN IT BY ME." beside "the manager".
+  it('writes a routing sentence said in capitals as a clause in sentence case (W17-R22)', (): void => {
+    const drawn = withRoutingRules(
+      charter([]),
+      { collaborators: 'RUN IT BY ME BEFORE I SIGN.' },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Run it by the manager before the manager signs.',
+    ]);
   });
 
   it('keeps a clause’s own first word where it is no answer: "Right-size it, then run it by me." (W16-R31)', (): void => {
@@ -2152,6 +2170,19 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
       'Touch payroll and HR records.',
       'Share passwords and API keys in a ticket.',
       'Post in #general after 18:00.',
+    ]);
+  });
+
+  // W17-R22: the manager's capitals were kept, "SHARE A PASSWORD." under Will not do.
+  it('writes a prohibition said in capitals as a clause in sentence case (W17-R22)', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('NEVER SHARE A PASSWORD.', []), rule("DON'T TELL ANYONE MY PIN.", [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share a password.',
+      "Tell anyone the manager's pin.",
     ]);
   });
 

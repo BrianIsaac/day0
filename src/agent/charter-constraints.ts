@@ -185,7 +185,7 @@ export function willNotDoAsAct(clause: string): string {
  * clause for such a sentence, {@link forbidsOneAct}).
  */
 function actOf(clause: string): string {
-  const trimmed = clause.trim();
+  const trimmed = inSentenceCase(clause.trim());
   const act = trimmed.replace(EMPHATIC_EVER, '$1').replace(PROHIBITION_OPENING, '');
   if (act === trimmed || act === '') return clause;
   // One separator only: "Never change prices, run discounts, or send quotes." is a list of acts,
@@ -649,6 +649,20 @@ function thirdPersonVerb(verb: string): string {
 const I_AND_ITS_VERB =
   /\bI(\s+(?:always|never|usually|often|also|just|really|only|still|already|sometimes|normally|typically|rarely|actually|first|\w+ly))?\s+([A-Za-z]+(?:n['\u2019]t)?)\b(?!['\u2019])/g;
 
+/**
+ * A sentence said in capitals in sentence case, as every clause is written (W17-R22: "NEVER SHARE
+ * A PASSWORD." was written "SHARE A PASSWORD."); one with a lower-case letter, or with no letters
+ * that have a case, is returned as it is. The manager's "I" stays a capital; an acronym in such a
+ * sentence cannot be told from its words and is written in lower case with them.
+ */
+function inSentenceCase(sentence: string): string {
+  if (/[a-z]/.test(sentence) || !/[A-Z]{2}/.test(sentence)) return sentence;
+  return sentence
+    .toLowerCase()
+    .replace(/\bi\b(?!\.\w)/g, 'I')
+    .replace(/[a-z]/, (first) => first.toUpperCase());
+}
+
 /** The manager's first person in the third person the clauses are written in. */
 function inTheThirdPerson(sentence: string): string {
   return sentence
@@ -692,12 +706,12 @@ function withoutAnswerOpener(sentence: string): string {
  * The Escalates clause a routing sentence is written as when the draft carries it in no clause:
  * the manager's own sentence in the third person, "Go" put before a sentence that opens on the
  * route itself ("Through me for now." reads "Go through the manager for now."), closed by a full
- * stop. The word an answer opens on is the answer's, not the clause's: "Yes, run it by me." reads
- * "Run it by the manager." (W16-R31).
+ * stop, in sentence case. The word an answer opens on is the answer's, not the clause's: "Yes,
+ * run it by me." reads "Run it by the manager." (W16-R31).
  */
 function routingClause(sentence: string): string {
   const said = inTheThirdPerson(
-    withoutAnswerOpener(sentence.trim())
+    withoutAnswerOpener(inSentenceCase(sentence.trim()))
       .replace(/[.;!]+$/, '')
       .trim(),
   );
@@ -1786,15 +1800,12 @@ export function rulePlacement(
 const EMPHATIC_EVER = /^(never|do\s+not|don['\u2019]t)\s+ever\b/i;
 
 /**
- * A manager's prohibition as the Will not do clause it is written as: the act, closed by a full
- * stop, or the sentence as the manager wrote it where the act-writer keeps it so (a redirect to a
- * destination it does not know, {@link willNotDoAsAct}).
+ * A manager's prohibition as the Will not do clause it is written as: the act ({@link actOf}), in
+ * sentence case and closed by a full stop, or the sentence as the manager wrote it where the
+ * act-writer keeps it so (a redirect to a destination it does not know, {@link willNotDoAsAct}).
  */
 function prohibitionClause(sentence: string): string {
-  const said = sentence
-    .trim()
-    .replace(/[.;!]+$/, '')
-    .replace(EMPHATIC_EVER, '$1');
+  const said = inSentenceCase(sentence.trim()).replace(/[.;!]+$/, '');
   return `${actOf(inTheThirdPerson(said))}.`;
 }
 
