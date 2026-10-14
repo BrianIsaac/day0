@@ -164,15 +164,29 @@ const REDIRECT_GERUNDS: Readonly<Record<string, string>> = {
 /**
  * A will-not-do clause as the act it rules out (the v0.19.0 walk's finding 8): the "Will not do"
  * heading says the negative, so "Never change a deal amount in the tracker." reads "Change a deal
- * amount in the tracker.", and a second half that sends the work elsewhere is joined as what the
- * act skips: "Do not contact the sales lead directly, go through the manager for deal matters."
- * reads "Contact the sales lead directly without going through the manager for deal matters." A
- * clause that opens on no prohibition is returned as it is, and so is one whose second half
- * redirects to a destination the rule does not recognise (W16-R29).
+ * amount in the tracker.", an emphatic "ever" is no word of the act ("Never ever share a
+ * password." reads "Share a password."), and a second half that sends the work elsewhere is joined
+ * as what the act skips: "Do not contact the sales lead directly, go through the manager for deal
+ * matters." reads "Contact the sales lead directly without going through the manager for deal
+ * matters." A clause that opens on no prohibition is returned as it is, and so is one whose second
+ * half redirects to a destination the rule does not recognise (W16-R29), or whose act would say
+ * more than the act ({@link saysOnlyTheAct}): "Never delete tickets, archive them instead." stays
+ * as drafted, its "Never" with it, since "Delete tickets, archive them instead." under Will not do
+ * forbids the archiving (W17-R20, RM38 (a)).
  */
 export function willNotDoAsAct(clause: string): string {
+  const act = actOf(clause);
+  return saysOnlyTheAct(act) ? act : clause;
+}
+
+/**
+ * A will-not-do clause as the act it rules out, whatever that act goes on to say ({@link
+ * willNotDoAsAct} keeps the drafted clause where it says more than the act; the floor writes no
+ * clause for such a sentence, {@link forbidsOneAct}).
+ */
+function actOf(clause: string): string {
   const trimmed = clause.trim();
-  const act = trimmed.replace(PROHIBITION_OPENING, '');
+  const act = trimmed.replace(EMPHATIC_EVER, '$1').replace(PROHIBITION_OPENING, '');
   if (act === trimmed || act === '') return clause;
   // One separator only: "Never change prices, run discounts, or send quotes." is a list of acts,
   // each ruled out as written, never a redirect (the second pass).
@@ -1775,7 +1789,7 @@ function prohibitionClause(sentence: string): string {
     .trim()
     .replace(/[.;!]+$/, '')
     .replace(EMPHATIC_EVER, '$1');
-  return `${willNotDoAsAct(inTheThirdPerson(said))}.`;
+  return `${actOf(inTheThirdPerson(said))}.`;
 }
 
 /**
@@ -1794,10 +1808,11 @@ const INSTRUCTION_FORBIDS =
 /**
  * What a written clause's later part may open on and still be part of the one act: a qualifier of
  * it ("Share customer data, even with another team.", "Send a quote, unless the manager has
- * approved it.").
+ * approved it."), or of what it touches ("Own the deals, which belong to the sales lead.", a
+ * drafted clause {@link willNotDoAsAct} writes as that act since v0.19.0).
  */
 const QUALIFIES_THE_ACT =
-  /^(?:even|not\s+even|unless|except|including|especially|regardless|no\s+matter|whatever|or|nor)\b/i;
+  /^(?:even|not\s+even|unless|except|including|especially|regardless|no\s+matter|whatever|or|nor|which|who|whom|whose)\b/i;
 
 /**
  * A turn to a second thing said ("... but leave a note.", "... archive them instead."); "instead

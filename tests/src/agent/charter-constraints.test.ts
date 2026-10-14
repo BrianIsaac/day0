@@ -1733,6 +1733,41 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
   ])('leaves %j as it is, its redirect naming no destination the rule knows', (clause): void => {
     expect(willNotDoAsAct(clause)).toBe(clause);
   });
+
+  // W17-R20 with RM38 (a): a drafted clause that turns to another instruction was written as an
+  // act with the instruction left standing, so "Delete tickets, archive them instead." under Will
+  // not do forbade the archiving. 17-PT's item 1 sentences (W17-R18) are drafted clauses here too.
+  it.each([
+    'Never delete tickets, archive them instead.',
+    'Never approve a refund, tell the manager.',
+    'Never delete tickets, archive them, then tell the manager.',
+    'Never delete tickets, archive them, and tell the manager.',
+    'Do not close the ticket but leave a note on it.',
+    'Never approve anything over 500 - ask the manager.',
+    'Never delete tickets and tell the manager.',
+    'Never refund over 500: ask the manager first.',
+    'Never guess - ask.',
+    'Never approve a refund \u2013 ask the manager.',
+    'Never close a ticket then tell the manager.',
+    'Never close a ticket and then reopen it.',
+  ])(
+    'keeps the drafted %j as drafted, its prohibition with it, since it turns to another instruction (RM38 (a))',
+    (clause): void => {
+      expect(willNotDoAsAct(clause)).toBe(clause);
+    },
+  );
+
+  it.each([
+    ['Never ever share a password.', 'Share a password.'],
+    ["Don't ever post in #general.", 'Post in #general.'],
+    [
+      'Never share customer data - even with another team.',
+      'Share customer data - even with another team.',
+    ],
+    ['Never touch payroll and HR records.', 'Touch payroll and HR records.'],
+  ])('writes %j as the act %j, an emphatic "ever" dropped (RM38 (a))', (clause, act): void => {
+    expect(willNotDoAsAct(clause)).toBe(act);
+  });
 });
 
 describe('withRoutingRules (RM27)', (): void => {
@@ -2107,6 +2142,19 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
       'Touch payroll and HR records.',
       'Share passwords and API keys in a ticket.',
       'Post in #general after 18:00.',
+    ]);
+  });
+
+  // RM38 (a): the act-writer keeps a drafted clause that says more than the act, so a relative
+  // clause is read as part of the act it qualifies, for the floor as for a drafted clause.
+  it('writes the one act of a sentence whose later part qualifies what the act touches (RM38 (a))', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('Never own the deals, which belong to the sales lead.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Own the deals, which belong to the sales lead.',
     ]);
   });
 
