@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { request } from 'node:http';
+import { connect } from 'node:net';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -33,6 +35,34 @@ describe('startFakeSlack (18-G)', (): void => {
     await expect(
       startFakeSlack({ NODE_OPTIONS: '--require ./no-such-preload-for-18-g.cjs' }),
     ).rejects.toThrow(/the fake Slack service ended before it listened.*no-such-preload-for-18-g/s);
+  });
+
+  it('answers nothing more once it is stopped, not even on a connection already open', async (): Promise<void> => {
+    // A fake that only closed its listener went on answering kept-alive connections for seconds,
+    // and a WebSocket's upgrade rode one: a case that stopped the fake found it connected (18-G).
+    const fake = await startFakeSlack();
+    const { hostname, port } = new URL(fake.base);
+    const open = request({ host: hostname, port, method: 'POST', path: '/api/auth.test' });
+    const answered = new Promise<string>((resolve) => {
+      open.on('response', (response) => resolve(`answered ${response.statusCode}`));
+      open.on('error', (error: NodeJS.ErrnoException) => resolve(`ended: ${error.code}`));
+    });
+    open.write('token=');
+    await once(open, 'socket');
+    fake.stop();
+    // Stopped once it refuses a new connection; the request above is still being written.
+    for (;;) {
+      const probe = connect(Number(port), hostname);
+      const refused = await new Promise<boolean>((resolve) => {
+        probe.once('connect', () => resolve(false));
+        probe.once('error', () => resolve(true));
+      });
+      probe.destroy();
+      if (refused) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    open.end(FAKE_BOT_TOKEN);
+    expect(await answered).toMatch(/^ended: /);
   });
 
   it('gives each fake started at once its own process, whose evidence no other fake shares', async (): Promise<void> => {

@@ -1044,6 +1044,12 @@ server.on('listening', () => {
 });
 server.listen(port, '0.0.0.0');
 
+// Stopped whole: closing the listener alone left every connection already open answered, a
+// kept-alive one for seconds, and a WebSocket's upgrade rode one to a fake told to stop (18-G).
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => server.close(() => process.exit(0)));
+  process.on(signal, () => {
+    server.close(() => process.exit(0));
+    server.closeAllConnections();
+    for (const connection of sockets) connection.socket.destroy();
+  });
 }
