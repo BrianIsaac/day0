@@ -272,6 +272,24 @@ describe('an employee’s open work', (): void => {
   });
 });
 
+describe('the open work a skill runs, by its state (W17-R8, K-1 (a))', (): void => {
+  it('reaches the one open row of a skill with a hundred and fifty finished rows (red at the tag: the oldest hundred)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const skillId = await registeredSkill(harness, agentId);
+    for (let at = 0; at < 150; at += 1) {
+      await seedWork(harness, agentId, 'completed', { externalId: `REVOPS-${at}`, skillId });
+    }
+    const open = await seedWork(harness, agentId, 'plan-approved', {
+      externalId: 'REVOPS-150',
+      skillId,
+    });
+    expect(
+      await harness.run(async (ctx) => await openWorkUsingSkills(ctx, agentId, [skillId])),
+    ).toEqual([open]);
+  });
+});
+
 describe('what a change to skills, a scope or a connected system reaches', (): void => {
   it('reaches the skills named and the open work running them', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

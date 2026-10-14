@@ -191,7 +191,9 @@ export async function openWorkCiting(
 }
 
 /**
- * An employee's open work that runs one of the skills.
+ * An employee's open work that runs one of the skills: each skill's rows in each open state
+ * (`by_skill_state`, K-1 (a)), so a skill's finished rows, however many, never stand before its
+ * open ones (W17-R8: the read took a skill's oldest hundred rows whatever their state).
  *
  * @param room - The most rows the read may take.
  * @returns The rows' ids, or null when the skills' work is more than `room` rows.
@@ -204,20 +206,17 @@ export async function openWorkUsingSkills(
 ): Promise<Id<'workItems'>[] | null> {
   const rows: Doc<'workItems'>[] = [];
   for (const skillId of skillIds) {
-    const read = await ctx.db
-      .query('workItems')
-      .withIndex('by_skill', (q) => q.eq('skillId', skillId))
-      .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
-    countWorkRows(ctx, read.length);
-    rows.push(...read);
-    if (rows.length > room) return null;
+    for (const state of OPEN_WORK_STATES) {
+      const read = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill_state', (q) => q.eq('skillId', skillId).eq('state', state))
+        .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
+      countWorkRows(ctx, read.length);
+      rows.push(...read);
+      if (rows.length > room) return null;
+    }
   }
-  return rows
-    .filter(
-      (row) =>
-        row.agentId === agentId && (OPEN_WORK_STATES as readonly string[]).includes(row.state),
-    )
-    .map((row) => row._id);
+  return rows.filter((row) => row.agentId === agentId).map((row) => row._id);
 }
 
 /** The registered skills one read of an employee's library takes, for the affected set. */
