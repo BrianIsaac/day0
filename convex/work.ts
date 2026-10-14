@@ -2559,7 +2559,7 @@ export const findExistingClaimInternal = internalQuery({
  * answers the first page, as a page loaded before 0.22.0 asks. A caller with no
  * identity is refused (12-G). Writes nothing.
  *
- * @returns At most `NEEDS_YOU_LIMIT` (`src/work/needs-you-pages.ts`) entries, how
+ * @returns At most `NEEDS_YOU_LIMIT` (`src/metrics/needs-you-pages.ts`) entries, how
  *   many there are in all on the page, how many wait on each of its employees,
  *   and where the next page starts.
  */
