@@ -1,4 +1,5 @@
 import { convexTest } from 'convex-test';
+import { ConvexError } from 'convex/values';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, internal } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -300,6 +301,16 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     const after = await chain();
     expect(after.first).toBe(before.first);
     expect(after.cards).toEqual([newest, relation._id]);
+    // Another owner reads none of these cards by any cursor, and a caller with no identity none.
+    const stranger = harness.withIdentity(managerIdentity('stranger'));
+    await expect(stranger.query(api.docRelations.listOpen, {})).resolves.toMatchObject({
+      cards: [],
+      next: null,
+    });
+    await expect(
+      stranger.query(api.docRelations.listOpen, { conflictsBefore: before.first! }),
+    ).resolves.toMatchObject({ cards: [], next: null });
+    await expect(harness.query(api.docRelations.listOpen, {})).rejects.toBeInstanceOf(ConvexError);
   });
 
   it('draws the proposals on the first read alone, so a read going on from a cursor repeats none', async (): Promise<void> => {
@@ -2508,11 +2519,14 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     const bounded = await drawn();
     expect(bounded.length).toBeLessThan(30);
     expect(bounded.some((view) => view._id === asked._id)).toBe(false);
-    await expect(
-      harness
-        .withIdentity(managerIdentity('stranger'))
-        .query(api.managerQuestions.conflictsForAgent, { agentId }),
-    ).rejects.toThrow();
+    const refused = await harness
+      .withIdentity(managerIdentity('stranger'))
+      .query(api.managerQuestions.conflictsForAgent, { agentId })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(refused).toBeInstanceOf(ConvexError);
   });
 
   it('numbers, holds and closes a 101st question on one item, read past the hundred (W17-R13)', async (): Promise<void> => {
