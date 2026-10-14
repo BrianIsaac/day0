@@ -23,6 +23,15 @@ pnpm sandbox:up
 pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
 
+The setup and its verbs (`upgrade`, `resume`, `pause`, `restore`) start the
+stack from `docker-compose.yml` alone, with `.env.local`; they read no
+`docker-compose.override.yml` and no `COMPOSE_FILE`, which `pnpm convex:up` by
+hand does. An override that changes Day0's networks (a subnet, an internal
+network) therefore stops those verbs at their `convex:up`, "network ... has
+active endpoints", with nothing pushed: a test bed with such an override met
+it on 14 October 2026. Choose the address range Docker gives its networks in
+the daemon's own settings (`default-address-pools`), not in an override.
+
 | You have | The profiles |
 |---|---|
 | Documentation in a folder, a git repository or on internal URLs; every system has an API or an MCP server | `real`, `sandbox`, `redactor` |
