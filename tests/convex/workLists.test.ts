@@ -8,6 +8,8 @@ import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as workListsModule from '../../convex/workLists';
+import { longestWaitFirst } from '../../convex/needsYou';
+import { byLongestWait, inboxOfPages } from '../../src/work/needs-you-pages';
 import { allConvexModules } from './all-modules';
 import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -245,7 +247,13 @@ describe('work.needsYou', (): void => {
     await item(harness, malformed, 'Keyed on nobody', 'plan-pending', { planPendingAt: 1 });
     await expect(
       harness.withIdentity(managerIdentity('')).query(api.work.needsYou, {}),
-    ).resolves.toEqual({ entries: [], total: 0, waitingByEmployee: [] });
+    ).resolves.toEqual({
+      entries: [],
+      total: 0,
+      waitingByEmployee: [],
+      isDone: true,
+      continueCursor: '',
+    });
   });
 
   it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
@@ -272,11 +280,8 @@ describe('work.needsYou', (): void => {
     });
     await item(harness, evaluation, 'Evaluation item', 'plan-pending', { planPendingAt: 1 });
 
-    await expect(harness.withIdentity(OWNER).query(api.work.needsYou, {})).resolves.toEqual({
-      entries: [],
-      total: 0,
-      waitingByEmployee: [],
-    });
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+    expect(inbox).toMatchObject({ entries: [], total: 0, waitingByEmployee: [], isDone: true });
   });
 
   it('says a wait is at least as long as the bounded read reaches when the entry lies beyond it', async (): Promise<void> => {
@@ -566,6 +571,58 @@ describe('work.needsYou', (): void => {
     expect(inbox.waitingByEmployee).toEqual([{ agentId: mira, waiting: 55 }]);
     expect(inbox.entries[0].subject).toBe('Plan 0');
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
+  });
+
+  it('lists every employee’s entries past twenty, read page by page and put together as the home puts them (wave 18, 18-F)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const employees: Id<'agents'>[] = [];
+    for (let index = 0; index < 25; index += 1) {
+      const agentId = await employee(harness, `Employee ${index}`);
+      employees.push(agentId);
+      await item(harness, agentId, `Plan ${index}`, 'plan-pending', {
+        planPendingAt: 10_000 + index,
+      });
+    }
+    const caller = harness.withIdentity(OWNER);
+
+    const pages: Array<Awaited<ReturnType<typeof readPage>>> = [];
+    async function readPage(cursor: string | null) {
+      return await caller.query(api.work.needsYou, {
+        paginationOpts: { numItems: 20, cursor },
+      });
+    }
+    let cursor: string | null = null;
+    do {
+      const page = await readPage(cursor);
+      pages.push(page);
+      cursor = page.isDone ? null : page.continueCursor;
+    } while (cursor !== null);
+    const inbox = inboxOfPages(pages);
+
+    expect(pages.length).toBeGreaterThanOrEqual(2);
+    expect(inbox.total).toBe(25);
+    expect(new Set(inbox.waitingByEmployee.map(({ agentId }) => agentId))).toEqual(
+      new Set(employees),
+    );
+    // The oldest wait is the first employee's, whom the newest twenty never reached.
+    expect(inbox.entries.map((entry) => entry.subject)).toEqual(
+      Array.from({ length: 25 }, (_, index) => `Plan ${index}`),
+    );
+    // Asked with no cursor, as a page loaded before 0.22.0 asks: the first page, as it was.
+    const first = await caller.query(api.work.needsYou, {});
+    expect(first.waitingByEmployee).toHaveLength(20);
+    expect(first.isDone).toBe(false);
+  });
+
+  it('orders the pages put together as the backend orders one page', (): void => {
+    const entries = [
+      { key: 'b', waitingSince: 2 },
+      { key: 'a', waitingSince: 2 },
+      { key: 'c', waitingSince: 1 },
+    ];
+    expect([...entries].sort(byLongestWait)).toEqual(
+      [...entries].sort((left, right) => longestWaitFirst(left as never, right as never)),
+    );
   });
 
   describe('work.needsYouForAgent', (): void => {

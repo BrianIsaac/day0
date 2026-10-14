@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server';
 import { getDocumentSize, v, type Infer, type ObjectType } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
@@ -8,6 +9,7 @@ import { isEvaluationAgent } from './metrics';
 import { incomingTransfersOf } from './managerTransfers';
 import { OPEN_WORK_STATES, PARKED_WORK_STATES, ROW_BYTES_AT_MOST } from './workLoop';
 import { slackMentionIds, type ListedWorkItem } from '../src/work/item-display';
+import { NEEDS_YOU_LIMIT } from '../src/work/needs-you-pages';
 import {
   longestWaitFirst,
   needsYouEntryValidator,
@@ -207,14 +209,11 @@ async function withRequesterNames(
  * ordered by how long it has waited.
  */
 
-/** How many of the owner's agent rows the inbox reads to find its employees, as the roster does. */
-const NEEDS_YOU_SCAN_LIMIT = 100;
-
-/** The most employees the inbox covers, the roster's twenty. */
+/** The most of the owner's agent rows one page of the inbox reads, the roster's twenty. */
 const NEEDS_YOU_EMPLOYEE_LIMIT = 20;
 
-/** The most entries the inbox returns; `total` says how many there are. */
-const NEEDS_YOU_LIMIT = 50;
+/** What `work.needsYou` takes: where a page starts. With none, the first page, as before 0.22.0. */
+export const needsYouArgs = { paginationOpts: v.optional(paginationOptsValidator) };
 
 /** What `work.needsYou` returns: its return validator. */
 export const needsYouValidator = v.object({
@@ -222,32 +221,43 @@ export const needsYouValidator = v.object({
   total: v.number(),
   /** How many entries each employee has, all of them counted, not only the ones returned. */
   waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
+  /** Whether this page reached the owner's last employee (wave 18, 18-F). */
+  isDone: v.boolean(),
+  /** Where the next page starts. */
+  continueCursor: v.string(),
 });
 
 /**
- * Everything waiting on the caller across their employees, and every handover naming their
- * address, longest wait first: the body of `work.needsYou`, which refuses a caller with no
- * identity first.
+ * Everything waiting on the caller across one page of their employees, newest first, and on the
+ * first page every handover naming their address, longest wait first: the body of
+ * `work.needsYou`, which refuses a caller with no identity first. The home reads every page and
+ * puts them together (`inboxOfPages`), so the inbox reaches every employee and not the newest
+ * twenty (wave 18, 18-F); a page loaded before 0.22.0 asks with no cursor and reads the first.
  */
 export async function needsYouInTransaction(
   ctx: QueryCtx,
   caller: Caller,
+  args: ObjectType<typeof needsYouArgs>,
 ): Promise<Infer<typeof needsYouValidator>> {
   // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
-  if (caller.ownerKey === '') return { entries: [], total: 0, waitingByEmployee: [] };
-  const employees = (
-    await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
-      .order('desc')
-      .take(NEEDS_YOU_SCAN_LIMIT)
-  )
-    .filter((agent) => !isEvaluationAgent(agent))
-    .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
+  if (caller.ownerKey === '') {
+    return { entries: [], total: 0, waitingByEmployee: [], isDone: true, continueCursor: '' };
+  }
+  const paging = args.paginationOpts ?? { cursor: null, numItems: NEEDS_YOU_EMPLOYEE_LIMIT };
+  const read = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+    .order('desc')
+    .paginate({
+      cursor: paging.cursor,
+      numItems: Math.min(paging.numItems, NEEDS_YOU_EMPLOYEE_LIMIT),
+    });
+  const employees = read.page.filter((agent) => !isEvaluationAgent(agent));
   const now = Date.now();
   const [perEmployee, incoming] = await Promise.all([
     Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
-    incomingTransfersOf(ctx, caller, now),
+    // The handovers once, on the first page: no employee's page lists one.
+    paging.cursor === null ? incomingTransfersOf(ctx, caller, now) : [],
   ]);
   const waiting = perEmployee.flat().sort(longestWaitFirst);
   // No employee's page lists a handover, so every one stays in the entries
@@ -264,6 +274,8 @@ export async function needsYouInTransaction(
       agentId: agent._id,
       waiting: perEmployee[index]?.length ?? 0,
     })),
+    isDone: read.isDone,
+    continueCursor: read.continueCursor,
   };
 }
 
