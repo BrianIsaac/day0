@@ -19,6 +19,20 @@ export const WHOLE_COMPANY_RETRY_MS = 30_000;
 /** The longest the home waits before it tries a failed read again. */
 const WHOLE_COMPANY_RETRY_MAX_MS = 8 * 60_000;
 
+/**
+ * How many times a failed read is tried again by itself before the home stops and says so
+ * (W17-R28): a change still reads, but a company where the read keeps failing is not read every
+ * few minutes for as long as the page is open.
+ */
+export const WHOLE_COMPANY_RETRIES = 3;
+
+/**
+ * The least time between the end of one read of every employee and the start of the next (W17-R28):
+ * under constant change the reads followed one another with no rest, each a walk of every
+ * employee's records.
+ */
+export const WHOLE_COMPANY_COOL_DOWN_MS = 10_000;
+
 /** The company's figures as the home draws them, and which employees they cover. */
 export interface CompanyFigures {
   /** The figures to draw, or undefined while nothing has been read. */
@@ -30,12 +44,16 @@ export interface CompanyFigures {
 interface ReadsByPages {
   /** Whether the page is still there to draw an answer. */
   mounted: boolean;
-  /** Whether the first read has been asked for. */
+  /** Whether the subscribed read leaves employees out, so they are wanted by pages. */
+  wanted: boolean;
+  /** Whether the first read since they were wanted has been asked for. */
   started: boolean;
   /** Whether a read is on its way: there is never a second beside it. */
   running: boolean;
   /** Whether something changed that the read on its way may not have seen. */
   again: boolean;
+  /** When the last read ended, which the next waits a cool-down after. */
+  endedAt: number | undefined;
   /** The wait before the next read, from the first change not yet read. */
   timer: ReturnType<typeof setTimeout> | undefined;
   /** The wait before a failed read is tried again with nothing changed. */
@@ -52,6 +70,19 @@ function dropWaits(at: ReadsByPages): void {
   at.retry = undefined;
 }
 
+/** How long is left of the cool-down after the last read, or nothing. */
+function coolDownLeft(at: ReadsByPages): number {
+  return at.endedAt === undefined
+    ? 0
+    : Math.max(0, at.endedAt + WHOLE_COMPANY_COOL_DOWN_MS - Date.now());
+}
+
+/** What the read by pages has answered since the employees were last wanted by pages. */
+type EveryRead =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'read'; readonly figures: OwnerMetrics }
+  | { readonly kind: 'failed'; readonly tries: number };
+
 /**
  * The company's figures for the home (wave 17, 17-F; RM33 (a), F-2). The subscribed read
  * (`metrics:forOwner`) is bounded and answers at once; where it says it left employees out, every
@@ -60,11 +91,15 @@ function dropWaits(at: ReadsByPages): void {
  *
  * The read by pages is no subscription: it is made again when the subscribed read or `changes`
  * moves, `WHOLE_COMPANY_REREAD_MS` after the first change it has not read, however many follow,
- * so a company at work is read again every so often and never left waiting for a quiet moment.
- * One read is on its way at a time, each answer is drawn when it comes, and the figures last
- * answered stay drawn meanwhile. A read that fails is tried again by itself, `WHOLE_COMPANY_RETRY_MS`
- * later and twice as long after each further failure, so a company where nothing changes is not
- * left on the bounded figures by one bad moment; nothing is asked for once the page is gone.
+ * and never sooner than `WHOLE_COMPANY_COOL_DOWN_MS` after the last read ended (W17-R28), so a
+ * company at work is read again every so often, never left waiting for a quiet moment, and never
+ * walked back to back. One read is on its way at a time, each answer is drawn when it comes, and
+ * the figures last answered stay drawn meanwhile. A read that fails is tried again by itself,
+ * `WHOLE_COMPANY_RETRY_MS` later and twice as long after each further failure, at most
+ * `WHOLE_COMPANY_RETRIES` times, and then the figures say the rest could not be read until a change
+ * reads them again. Once the subscribed read covers the company again nothing more is asked for,
+ * and what was read by pages is let go, so a company that grows back past twenty is not drawn
+ * from figures read before it shrank. Nothing is asked for once the page is gone.
  *
  * @param changes - Anything whose change means an employee's records may have moved: the home
  *   passes its roster, which is subscribed for every employee.
@@ -72,17 +107,26 @@ function dropWaits(at: ReadsByPages): void {
 export function useCompanyFigures(changes: unknown): CompanyFigures {
   const bounded = useQuery(api.metrics.forOwner);
   const readEvery = useAction(api.metrics.forOwnerByPages);
-  const [every, setEvery] = useState<OwnerMetrics | 'failed' | undefined>(undefined);
+  const [every, setEvery] = useState<EveryRead>({ kind: 'none' });
   const reads = useRef<ReadsByPages>({
     mounted: true,
+    wanted: false,
     started: false,
     running: false,
     again: false,
+    endedAt: undefined,
     timer: undefined,
     retry: undefined,
     failures: 0,
   });
   const past = bounded !== undefined && bounded.omittedEmployees > 0;
+  // What was read by pages is the company's while it stays past the bound: once the bounded read
+  // covers it again, the answer is let go (state derived while rendering).
+  const [wasPast, setWasPast] = useState(past);
+  if (wasPast !== past) {
+    setWasPast(past);
+    if (!past) setEvery({ kind: 'none' });
+  }
 
   useEffect(() => {
     const at = reads.current;
@@ -95,15 +139,20 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
 
   useEffect(() => {
     const at = reads.current;
+    at.wanted = past;
     if (!past) {
-      // The bounded read covers the company again: nothing waits to be read by pages.
+      // The bounded read covers the company again: nothing waits to be read by pages, and the
+      // next time the company passes the bound starts afresh.
       dropWaits(at);
+      at.started = false;
+      at.again = false;
+      at.failures = 0;
       return;
     }
     const read = (): void => {
       // A read that starts now follows every change so far: the waits set for them are dropped.
       dropWaits(at);
-      if (!at.mounted) return;
+      if (!at.mounted || !at.wanted) return;
       if (at.running) {
         // The read on its way may have passed the row that changed: one more once it is back.
         at.again = true;
@@ -118,7 +167,8 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
         .then(
           (figures): void => {
             at.failures = 0;
-            if (at.mounted) setEvery(figures);
+            // An answer that arrives once the company is back within the bound is not kept.
+            if (at.mounted && at.wanted) setEvery({ kind: 'read', figures });
           },
           (error: unknown): void => {
             at.failures += 1;
@@ -126,21 +176,31 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
               reason: error instanceof Error ? error.message : 'unknown',
             });
             // Figures already read stay drawn; with none, the bounded ones say what they cover.
-            if (at.mounted) setEvery((kept) => kept ?? 'failed');
+            const tries = at.failures;
+            if (at.mounted && at.wanted) {
+              setEvery((kept) => (kept.kind === 'read' ? kept : { kind: 'failed', tries }));
+            }
           },
         )
         .finally((): void => {
           at.running = false;
-          if (!at.mounted) return;
+          at.endedAt = Date.now();
+          if (!at.mounted || !at.wanted) return;
           if (at.again) {
             at.again = false;
-            read();
+            at.timer ??= setTimeout(read, coolDownLeft(at));
             return;
           }
-          if (at.failures > 0) {
+          if (at.failures > 0 && at.failures <= WHOLE_COMPANY_RETRIES) {
             at.retry = setTimeout(
               read,
-              Math.min(WHOLE_COMPANY_RETRY_MS * 2 ** (at.failures - 1), WHOLE_COMPANY_RETRY_MAX_MS),
+              Math.max(
+                coolDownLeft(at),
+                Math.min(
+                  WHOLE_COMPANY_RETRY_MS * 2 ** (at.failures - 1),
+                  WHOLE_COMPANY_RETRY_MAX_MS,
+                ),
+              ),
             );
           }
         });
@@ -150,14 +210,32 @@ export function useCompanyFigures(changes: unknown): CompanyFigures {
       read();
       return;
     }
-    at.timer ??= setTimeout(read, WHOLE_COMPANY_REREAD_MS);
+    at.timer ??= setTimeout(read, Math.max(WHOLE_COMPANY_REREAD_MS, coolDownLeft(at)));
   }, [past, bounded, changes, readEvery]);
 
   if (bounded === undefined) return { figures: undefined, coverage: { kind: 'all' } };
   if (!past) return { figures: bounded, coverage: { kind: 'all' } };
   const read = bounded.company.employees;
   const of = read + bounded.omittedEmployees;
-  if (every === undefined) return { figures: bounded, coverage: { kind: 'reading', read, of } };
-  if (every === 'failed') return { figures: bounded, coverage: { kind: 'recent', read, of } };
-  return { figures: every, coverage: { kind: 'every', employees: every.company.employees } };
+  switch (every.kind) {
+    case 'none':
+      return { figures: bounded, coverage: { kind: 'reading', read, of } };
+    case 'failed':
+      return {
+        figures: bounded,
+        coverage:
+          every.tries > WHOLE_COMPANY_RETRIES
+            ? { kind: 'stopped', read, of, tries: every.tries }
+            : { kind: 'recent', read, of },
+      };
+    case 'read':
+      return {
+        figures: every.figures,
+        coverage: { kind: 'every', employees: every.figures.company.employees },
+      };
+    default: {
+      const unknown: never = every;
+      throw new Error(`unhandled read ${String(unknown)}`);
+    }
+  }
 }
