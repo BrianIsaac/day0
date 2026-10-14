@@ -7,6 +7,7 @@ import {
   eventTypesOf,
   openTestCard,
   seedEmployee,
+  warnedBy,
   type Harness,
 } from './fakes/reorientation';
 import type { ScriptedCall } from './fakes/mastra';
@@ -155,17 +156,24 @@ describe('propose: the card’s scheduled judgement (O-2)', (): void => {
     expect(charters).toHaveLength(1);
   });
 
-  it('leaves the card open with nothing proposed, and says why, when the model fails', async (): Promise<void> => {
-    model.reply = new Error('the model endpoint did not answer');
-    const harness = convexTest(schema, allConvexModules());
-    const { agentId, cardId } = await judgedCard(harness);
-    const card = await cardOf(harness, cardId);
-    expect(card.status).toBe('open');
-    expect(card.proposed).toMatchObject({
-      kind: 'pending',
-      failure: 'the model endpoint did not answer',
+  it('leaves the card open with nothing proposed when the model fails, its kind on the card and the provider’s words in the log only (W17-R8)', async (): Promise<void> => {
+    model.reply = Object.assign(new Error('400 Bad Request: account acct_9f2 is over its quota'), {
+      statusCode: 400,
     });
-    expect(await eventTypesOf(harness, agentId)).toEqual(['reorientation.opened']);
+    const harness = convexTest(schema, allConvexModules());
+    const { result, warnings } = await warnedBy(async () => await judgedCard(harness));
+    const card = await cardOf(harness, result.cardId);
+    expect(card.status).toBe('open');
+    expect(card.proposed).toMatchObject({ kind: 'pending', failure: 'refused' });
+    expect(JSON.stringify(card)).not.toContain('acct_9f2');
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        msg: 'reorientation: the proposal judgement failed',
+        kind: 'refused',
+        reason: '400 Bad Request: account acct_9f2 is over its quota',
+      }),
+    );
+    expect(await eventTypesOf(harness, result.agentId)).toEqual(['reorientation.opened']);
   });
 
   it('refuses a reply that names a candidate the card does not hold', async (): Promise<void> => {
@@ -178,9 +186,10 @@ describe('propose: the card’s scheduled judgement (O-2)', (): void => {
     };
     const harness = convexTest(schema, allConvexModules());
     const { cardId } = await judgedCard(harness);
+    // The card says the answer could not be read; which candidate it named is the log's.
     expect((await cardOf(harness, cardId)).proposed).toMatchObject({
       kind: 'pending',
-      failure: 'the reply names candidate 4, which the card does not hold',
+      failure: 'unreadable',
     });
   });
 });

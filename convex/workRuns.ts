@@ -324,6 +324,7 @@ export const retryFailed = mutation({
             decision: undefined,
             planPendingAt: undefined,
             managerAnswers: undefined,
+            heldThroughChangeAt: undefined,
             // The redraft's own plan site keeps its selection; the old draft's says nothing of
             // what the new plan is drafted from (W16-R11).
             selectedBlocks: undefined,

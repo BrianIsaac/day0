@@ -15,6 +15,8 @@ const backend = vi.hoisted(() => ({
   onCard: true,
   /** Whether the join asked the judgement again. */
   asks: true,
+  /** Whether the day's three changes kept the join from asking again (D-6 (a)). */
+  limits: false,
   /**
    * What a mutation does to the queries before it answers, as the backend's own sync does: a
    * query the mutation changed is drawn again before the call's promise settles.
@@ -76,6 +78,7 @@ function answerOf(name: string): unknown {
       joined: backend.joins,
       asked: backend.asks,
       onCard: backend.onCard,
+      limited: backend.limits,
     };
   }
   return null;
@@ -184,6 +187,7 @@ beforeEach((): void => {
   backend.joins = false;
   backend.onCard = true;
   backend.asks = true;
+  backend.limits = false;
   backend.lands = undefined;
   backend.refuses = undefined;
   backend.listeners.clear();
@@ -383,6 +387,16 @@ describe('a reorientation card', (): void => {
     sibling.unmount();
   });
 
+  it('says a sibling card the edge’s close could not close was decided elsewhere, and leaves its decisions (W17-R7; section 7)', async (): Promise<void> => {
+    const view = drawn(withCard({ outcome: { summary: 'not closed: decided on Priya’s card' } }));
+    expect(view.container.textContent).toContain(
+      'Decided on Priya’s card, but this card could not be closed: dismiss it.',
+    );
+    expect(controls(view.container)).toContain('Dismiss');
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('draws the organisation’s ledger line a card rests on as evidence, in the record’s words (17-O)', (): void => {
     const revoked = drawn(
       withCard(
@@ -501,11 +515,12 @@ describe('a reorientation card', (): void => {
 
   it('says a proposal could not be had, and leaves Dismiss', async (): Promise<void> => {
     const view = drawn(
-      withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timed out' } }),
+      withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timeout' } }),
     );
     // Re-taken (17-O; W16-R23, section 7): the reason is said and Discuss is named as a way on.
+    // Re-taken again (18-O; W17-R8): the reason is the kind's fixed sentence.
     expect(view.container.textContent).toContain(
-      'Mira could not work out a proposal (timed out). Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
+      'Mira could not work out a proposal: the model did not answer in time. Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
     );
     await floor(view.container);
     view.unmount();
@@ -786,9 +801,11 @@ describe('a reorientation card', (): void => {
         proposed: { kind: 'pending', failedAt: OPENED + 30_000, failure: 'Not Found' },
       }),
     );
+    // A provider's words stored before 0.22.0 are not said (W17-R8).
     expect(failed.container.textContent).toContain(
-      'Mira could not work out a proposal (Not Found).',
+      'Mira could not work out a proposal for this change.',
     );
+    expect(failed.container.textContent).not.toContain('Not Found');
     expect(failed.container.textContent).not.toContain('Nothing changes unless you act');
     failed.unmount();
     const never = drawn(withCard({ ...decided, proposed: { kind: 'pending' } }));
@@ -965,6 +982,12 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     // Where the card's proposal stands (the manager's own talk put it there), nothing says otherwise.
     backend.asks = false;
     expect(await typed()).toBe('Added to today’s card.');
+    // A fourth change of the day joins without a judgement, and says so (D-6 (a); section 7).
+    backend.limits = true;
+    expect(await typed()).toBe(
+      'Added to the card. Mira will not work out a new proposal for it until tomorrow: you have changed this card three times today.',
+    );
+    backend.limits = false;
     // A card whose summary is full keeps the words in the record, and the page says where they are.
     backend.onCard = false;
     expect(await typed()).toBe(

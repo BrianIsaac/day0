@@ -180,6 +180,31 @@ describe('plan decisions under the autonomous-actions switch', (): void => {
     },
   );
 
+  it('holds for the manager a plan a reorientation card held through a change it does not rest on, whatever the switch says and at the recovery’s look too (RM43 (a); red at the tag: approved by Day0)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seed(harness, 'claimed', undefined, {
+      autonomousActions: true,
+    });
+    const plan = { summary: 'Check the issue, then update it.', steps: ['check', 'update'] };
+    await harness.mutation(internal.planApproval.setPlan, { workItemId, plan });
+    // The card's Approve asked the plan again rather than drafting it again (D-2 (b)).
+    await harness.run(async (ctx) => await ctx.db.patch(workItemId, { heldThroughChangeAt: 5 }));
+
+    // The release's own look is the recovery's; the stalled-step sweep looks again.
+    expect(
+      await harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
+    ).toEqual({ approved: false });
+    expect(await harness.mutation(internal.work.decidePlan, { workItemId })).toEqual({
+      approved: false,
+    });
+    expect(await readItem(harness, workItemId)).toMatchObject({
+      state: 'plan-pending',
+      heldThroughChangeAt: 5,
+    });
+    expect(await eventsOfType(harness, agentId, 'work.plan-approved')).toEqual([]);
+  });
+
   it.each([
     [
       'the planner’s fields standing unchecked',

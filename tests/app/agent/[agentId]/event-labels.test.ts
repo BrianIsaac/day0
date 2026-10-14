@@ -163,6 +163,9 @@ describe('the live feed labels', (): void => {
     expect(held({ reason: 'approved-by-predecessor' })).toBe(
       'plan held for you: approved by your predecessor; approve it again',
     );
+    expect(held({ reason: 'held-through-change', reorientationId: 'r1', summary: 'Ines' })).toBe(
+      'plan held for you: the reorientation card’s change does not affect it, so it is asked again',
+    );
     expect(held({ reason: 'a reason from a later build' })).toBe(
       'plan held for you: it waits for your decision',
     );

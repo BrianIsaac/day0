@@ -49,7 +49,7 @@ import { clockTime, clockTimeWithSeconds, useAgentZone, useNow } from '../../../
 import { EarlierPlan } from './EarlierPlan';
 import { DecisionStamp, ItemHead } from './ItemHead';
 import Link from 'next/link';
-import { heldByCardWords } from '@/agent/reorientation-words';
+import { askedAgainWords, heldByCardWords } from '@/agent/reorientation-words';
 import { employeeTabHref } from '../employee-tabs';
 import { ItemFoot, ItemSection, Lead, Note, Quote } from './ItemParts';
 import { LandedChanges, NotSentLedger } from './LandedChanges';
@@ -209,6 +209,11 @@ function approvedActionsWords(approved: number, hold: RunHold | undefined): stri
 export interface HoldingCard {
   readonly reorientationId: string;
   readonly summary: string;
+  /**
+   * Set where the card is decided: it holds nothing, and names a plan its Approve asked again
+   * rather than drafting it again (`heldThroughChangeAt`, D-2 (b)).
+   */
+  readonly decided?: true;
 }
 
 /**
@@ -646,11 +651,15 @@ export function WorkItemCard({
         .map((question) => (
           <ConflictQuestion key={question._id} question={question} change={answering} />
         ))}
-      {item.state === 'plan-pending' && heldByCard !== undefined ? (
+      {item.state === 'plan-pending' &&
+      heldByCard !== undefined &&
+      (heldByCard.decided !== true || item.heldThroughChangeAt !== undefined) ? (
         <ItemSection>
           {/* The hold stops Day0's own approval only: the plan is still the manager's to approve. */}
           <p className="text-sm text-[var(--color-fg-2)] [overflow-wrap:anywhere]">
-            {heldByCardWords(heldByCard.summary)}{' '}
+            {heldByCard.decided === true
+              ? askedAgainWords(heldByCard.summary)
+              : heldByCardWords(heldByCard.summary)}{' '}
             <Link
               href={`${employeeTabHref(item.agentId, 'needs-you')}/reorientation#card-${heldByCard.reorientationId}`}
             >

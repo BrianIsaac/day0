@@ -26,7 +26,9 @@ import { WorkQueue } from './WorkQueue';
 
 /**
  * The plans a standing high-risk reorientation card holds, each by its work item (W-9): what
- * `reorientation.heldByReorientation` stops Day0 approving on its own.
+ * `reorientation.heldByReorientation` stops Day0 approving on its own. And, marked `decided`, the
+ * plans a decided card held, newest decision first, for a plan its Approve asked again rather
+ * than drafting it again to say which change does not affect it (D-2 (b)).
  *
  * @param cards - The employee's cards, as the reorientation page lists them.
  */
@@ -34,11 +36,27 @@ export function holdingCardsOf(
   cards: FunctionReturnType<typeof api.reorientationDecisions.listForAgent>,
 ): Map<string, HoldingCard> {
   const held = new Map<string, HoldingCard>();
+  const decided = (status: string): boolean => status === 'applied' || status === 'dismissed';
   for (const { card } of cards) {
-    if (card.risk !== 'high' || card.status === 'applied' || card.status === 'dismissed') continue;
+    if (card.risk !== 'high' || decided(card.status)) continue;
     for (const workItemId of card.blockingWork) {
       if (!held.has(workItemId)) {
         held.set(workItemId, { reorientationId: card._id, summary: card.triggerSummary });
+      }
+    }
+  }
+  const byDecision = cards
+    .map((view) => view.card)
+    .filter((card) => decided(card.status))
+    .sort((left, right) => (right.decidedAt ?? 0) - (left.decidedAt ?? 0));
+  for (const card of byDecision) {
+    for (const workItemId of card.blockingWork) {
+      if (!held.has(workItemId)) {
+        held.set(workItemId, {
+          reorientationId: card._id,
+          summary: card.triggerSummary,
+          decided: true,
+        });
       }
     }
   }

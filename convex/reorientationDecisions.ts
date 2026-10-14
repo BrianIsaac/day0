@@ -3,9 +3,9 @@ import { internalMutation, mutation, query, type MutationCtx } from './_generate
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { callersCard, closeTalkOfCard } from './reorientationTalk';
-import { ownerAgents } from './reorientationReach';
+import { OPEN_WORK_STATES, ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
 import {
   dismissAgreementInTransaction,
@@ -38,12 +38,15 @@ import {
   DEFER_DAYS,
   PROPOSAL_CHANGED,
   approvedResultWords,
+  byHandChangesWords,
   byHandLimitWords,
+  decidedElsewhereOf,
   proposalFingerprint,
   type HeldCounts,
 } from '../src/agent/reorientation-words';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
+import { planRestsOnAny, type MovedGround } from '../src/agent/reorientation-moved';
 import {
   BOUND_MET,
   REORIENTATION_BLOCKING_LIMIT,
@@ -124,25 +127,91 @@ async function decidableCard(
   return { card, agent };
 }
 
+/** One thing an Approve moved, as a sibling chain's argument carries it ({@link MovedGround}). */
+const movedGroundValidator = v.union(
+  v.object({ kind: v.literal('edge'), person: v.string(), scopes: v.array(v.string()) }),
+  v.object({ kind: v.literal('clauses'), texts: v.array(v.string()) }),
+  v.object({ kind: v.literal('page'), sourceId: v.string(), ref: v.string(), title: v.string() }),
+  v.object({ kind: v.literal('access'), system: v.string() }),
+  v.object({ kind: v.literal('skill'), skillId: v.string(), name: v.string() }),
+  v.object({ kind: v.literal('everything') }),
+);
+
 /**
- * Let go the rows a decided card held. Where the decision changed what their plans were drafted
- * under (`changed`: an Approve that amended the charter, changed an edge, a page, an access or a
- * skill), an undecided plan is sent back to drafting, so neither Day0 under the autonomy switch
- * nor the manager decides a plan written for what no longer holds (V17-9, option (a); the
- * joins). Otherwise each plan's decision is asked again, so a released plan goes on.
+ * Whether a held row is a plan the manager approved while its card stood and whose apply nobody has
+ * claimed: approved and not started, or a run whose set waits at its approval before the closing
+ * steps the card holds (`heldStageOf`).
+ */
+function approvedWhileHeld(row: Doc<'workItems'>): boolean {
+  if (row.applyClaimedAt !== undefined) return false;
+  return (
+    row.state === 'plan-approved' || (row.state === 'actions-pending' && heldStageOf(row) === 'run')
+  );
+}
+
+/** What a set approved and never applied leaves on its row, cleared as a park clears it. */
+const APPROVED_SET_CLEARED = {
+  output: undefined,
+  pendingRunId: undefined,
+  approvedIndexes: undefined,
+  actionVerdicts: undefined,
+  applyPhase: undefined,
+  executionRunId: undefined,
+  applyAttemptId: undefined,
+} as const;
+
+/**
+ * Let go the rows a decided card held. Where the decision moved what a plan was drafted under (an
+ * Approve that amended the charter, changed an edge, an agreement, a page, an access or a skill),
+ * an undecided plan whose cites, named people or own words reach what moved is sent back to
+ * drafting, so neither Day0 under the autonomy switch nor the manager decides a plan written for
+ * what no longer holds (V17-9; D-2 (b), O-1). An undecided plan that does not rest on it is marked
+ * held through the change and asked again, and its decision goes to the manager whatever the
+ * switch says (RM43 (a): `decidePlan` reads the mark, the work loop's recovery with it). A plan the
+ * manager approved while the card stood and whose apply nobody claimed is sent back by the same
+ * test. Otherwise each plan's decision is asked again, so a released plan goes on.
+ *
+ * @param moved - What the decision changed; empty for a Dismiss, or an Approve that changed nothing
+ *   a plan rests on.
+ * @param now - When the decision was made.
  */
 async function releaseHeldWork(
   ctx: MutationCtx,
   card: Doc<'reorientations'>,
-  changed: boolean,
+  moved: readonly MovedGround[],
+  now: number,
 ): Promise<void> {
-  const now = Date.now();
   for (const workItemId of card.blockingWork) {
     const row = await ctx.db.get(workItemId);
-    if (row?.state !== 'plan-pending') continue;
-    if (changed && row.decision?.decidedAt === undefined) {
-      await sendBackToDrafting(ctx, row, { card }, now);
+    if (row === null) continue;
+    if (approvedWhileHeld(row)) {
+      // The manager approved it in Slack while the card stood, and nothing of it has been applied:
+      // drafted again where it rests on what moved, its approval standing otherwise (V17-9's
+      // remainder, W17-R8).
+      if (moved.length > 0 && planRestsOnAny(row, moved)) {
+        await ctx.db.patch(row._id, APPROVED_SET_CLEARED);
+        await sendBackToDrafting(ctx, { ...row, ...APPROVED_SET_CLEARED }, { card }, now);
+      }
       continue;
+    }
+    if (row.state !== 'plan-pending') continue;
+    if (moved.length > 0 && row.decision?.decidedAt === undefined) {
+      if (planRestsOnAny(row, moved)) {
+        await sendBackToDrafting(ctx, row, { card }, now);
+        continue;
+      }
+      await ctx.db.patch(row._id, { heldThroughChangeAt: now });
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.plan-held',
+        payload: {
+          workItemId,
+          reason: 'held-through-change',
+          reorientationId: card._id,
+          summary: card.triggerSummary,
+        },
+        createdAt: now,
+      });
     }
     await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
   }
@@ -161,16 +230,70 @@ const siblingDecisionValidator = v.object({
   outcome: v.string(),
   decidedBy: v.optional(v.string()),
   now: v.number(),
+  /**
+   * What the Approve moved, which a sibling's held plans are tested against (D-2 (b)). Absent from
+   * a link scheduled by 0.21.0, which sent every held plan back to drafting, as it still does.
+   */
+  moved: v.optional(v.array(movedGroundValidator)),
 });
 
 type SiblingDecision = typeof siblingDecisionValidator.type;
+
+/**
+ * Whether a sibling card is about the decided edge and nothing else, so that deciding the edge
+ * decides it: no other edge, clause, page, skill, correction or agreement in what it rests on or
+ * reaches, and a proposal that is about the edge or about nothing (W17-R7: one proposing an
+ * agreement change about the person was closed and its proposal lost).
+ */
+function aboutTheEdgeAlone(card: Doc<'reorientations'>, edges: ReadonlySet<string>): boolean {
+  return (
+    edges.size === 1 &&
+    card.affected.charterClauses.length === 0 &&
+    card.affected.agreements.length === 0 &&
+    card.evidence.pageRefs.length === 0 &&
+    card.evidence.skillIds.length === 0 &&
+    card.evidence.correctionIds.length === 0 &&
+    ['relationship', 'none', 'pending'].includes(card.proposed.kind)
+  );
+}
+
+/** Close one sibling card as decided on another, the work it held released first. */
+async function closeOneSibling(
+  ctx: MutationCtx,
+  card: Doc<'reorientations'>,
+  decision: SiblingDecision,
+): Promise<void> {
+  // Another card's Approve changed the edge this card's plans were drafted under. Released before
+  // the card closes, so a release that throws leaves the card standing for the manager.
+  await releaseHeldWork(ctx, card, decision.moved ?? [{ kind: 'everything' }], decision.now);
+  await ctx.db.patch(card._id, {
+    status: 'dismissed',
+    decidedAt: decision.now,
+    revisitAt: undefined,
+    ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
+    outcome: { summary: decision.outcome },
+  });
+  await appendEvent(ctx, {
+    agentId: card.agentId,
+    type: 'reorientation.dismissed',
+    payload: {
+      reorientationId: card._id,
+      summary: card.triggerSummary,
+      outcome: decision.outcome,
+    },
+    createdAt: decision.now,
+  });
+  await closeTalkOfCard(ctx, card._id);
+}
 
 /**
  * Close one employee's undecided cards about an edge for everyone that another employee's card
  * decided (the pre-tag's row 6: Approve on a sibling met "This relationship has already ended",
  * and the only way out was Dismiss, one card an employee). A card about that edge alone closes as
  * decided there, its talk with it, and the work it held goes on; a card that also names something
- * else stays, and a proposal on it that names the ended edge is asked for again.
+ * else stays, and a proposal on it that names the ended edge is asked for again. Each card closes
+ * in its own try, as `openWithinBudget` opens each (W17-R7): one that cannot be closed says so on
+ * itself and in the function log, and the Approve and the other siblings go on.
  */
 async function closeSiblingCards(
   ctx: MutationCtx,
@@ -183,35 +306,27 @@ async function closeSiblingCards(
       .withIndex('by_agent_status', (q) => q.eq('agentId', agentId).eq('status', status))
       .take(STANDING_CARDS_READ);
     for (const card of cards) {
-      const edges = new Set([...card.evidence.relationshipIds, ...card.affected.relationships]);
+      const edges = new Set<string>([
+        ...card.evidence.relationshipIds,
+        ...card.affected.relationships,
+      ]);
       if (!edges.has(decision.relationshipId)) continue;
-      const alone =
-        edges.size === 1 &&
-        card.affected.charterClauses.length === 0 &&
-        card.evidence.pageRefs.length === 0 &&
-        card.evidence.skillIds.length === 0 &&
-        card.evidence.correctionIds.length === 0;
-      if (alone) {
-        await ctx.db.patch(card._id, {
-          status: 'dismissed',
-          decidedAt: decision.now,
-          revisitAt: undefined,
-          ...(decision.decidedBy !== undefined ? { decidedBy: decision.decidedBy } : {}),
-          outcome: { summary: decision.outcome },
-        });
-        await appendEvent(ctx, {
-          agentId,
-          type: 'reorientation.dismissed',
-          payload: {
+      if (aboutTheEdgeAlone(card, edges)) {
+        try {
+          await closeOneSibling(ctx, card, decision);
+        } catch (error) {
+          log.warn('reorientation: a sibling card could not be closed', {
             reorientationId: card._id,
-            summary: card.triggerSummary,
-            outcome: decision.outcome,
-          },
-          createdAt: decision.now,
-        });
-        await closeTalkOfCard(ctx, card._id);
-        // Another card's Approve changed the edge this card's plans were drafted under.
-        await releaseHeldWork(ctx, card, true);
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          await ctx.db.patch(card._id, {
+            outcome: {
+              summary: approvedResultWords.notClosed(
+                decidedElsewhereOf(decision.outcome)?.name ?? 'another employee',
+              ),
+            },
+          });
+        }
       } else if (
         card.proposed.kind === 'relationship' &&
         card.proposed.relationshipId === decision.relationshipId
@@ -265,6 +380,7 @@ async function closeSiblingsAfterApprove(
     readonly result: string;
     readonly decidedBy: string | undefined;
     readonly now: number;
+    readonly moved: readonly MovedGround[];
   },
 ): Promise<void> {
   if (card.proposed.kind !== 'relationship') return;
@@ -285,6 +401,7 @@ async function closeSiblingsAfterApprove(
       ),
       ...(decided.decidedBy !== undefined ? { decidedBy: decided.decidedBy } : {}),
       now: decided.now,
+      moved: [...decided.moved],
     },
     SIBLINGS_INLINE,
   );
@@ -296,11 +413,33 @@ interface Applied {
   readonly result: string;
   readonly charterId?: Id<'charters'>;
   /**
-   * Whether it changed what a plan the card held was drafted under: the charter, an agreement in
-   * force, an edge, a page's status, an access or a skill (V17-9). A keep, a re-check and a
-   * proposal of nothing change nothing a plan rests on.
+   * What it changed that a plan the card held may have been drafted under: the charter's clauses,
+   * an agreement in force, an edge, a page's status, an access or a skill (V17-9; D-2 (b)). Empty
+   * for a keep, a re-check and a proposal of nothing, which change nothing a plan rests on.
    */
-  readonly changed: boolean;
+  readonly moved: readonly MovedGround[];
+}
+
+/**
+ * What a charter change moves: the clauses it edits, each as it stood and as it is written, read
+ * before the amendment; a change of another kind (the function, a system, a collaborator, a
+ * constraint, an answer) is one the narrow test does not read, so every plan rests on it.
+ */
+async function charterMoved(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  proposed: Extract<JudgedProposal, { kind: 'charter-change' }>,
+): Promise<MovedGround[]> {
+  if (proposed.changes.some((change) => change.kind !== 'edit-clause')) {
+    return [{ kind: 'everything' }];
+  }
+  const lists = await approvedClauseLists(ctx, agentId);
+  const texts = proposed.changes.flatMap((change) =>
+    change.kind === 'edit-clause'
+      ? [lists?.[change.field]?.[change.index] ?? '', change.text].filter((text) => text !== '')
+      : [],
+  );
+  return [{ kind: 'clauses', texts }];
 }
 
 /** Apply a card's proposal through its target's transaction helper; what it did, in words. */
@@ -311,9 +450,10 @@ async function applyProposal(
 ): Promise<Applied> {
   switch (proposed.kind) {
     case 'none':
-      return { result: approvedResultWords.none, changed: false };
+      return { result: approvedResultWords.none, moved: [] };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
+      const moved = await charterMoved(ctx, card.agentId, proposed);
       // The charter's own refusals are each the charter no longer taking the change, said in the
       // card's words (m15), and each in a sentence of its own (W16-R24): a change that changes
       // nothing and a charter not approved yet were both said as "has moved on since".
@@ -336,7 +476,7 @@ async function applyProposal(
       return {
         result: approvedResultWords.charter(amended.version),
         charterId: amended.charterId,
-        changed: true,
+        moved,
       };
     }
     case 'agreement': {
@@ -378,9 +518,18 @@ async function applyProposal(
         }
       }
       // A proposed agreement set aside was never in force, so no plan rests on it.
+      const texts =
+        action === 'edit'
+          ? [agreement.statement, proposed.statement ?? '']
+          : action === 'retire'
+            ? [agreement.statement]
+            : [];
       return {
         result: approvedResultWords.agreement[action],
-        changed: action === 'edit' || action === 'retire',
+        moved:
+          texts.length === 0
+            ? []
+            : [{ kind: 'clauses', texts: texts.filter((text) => text !== '') }],
       };
     }
     case 'relationship': {
@@ -388,6 +537,11 @@ async function applyProposal(
       if (edge === null || edge.userId !== card.userId) {
         throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
       }
+      const person = await ctx.db.get(edge.toPersonId);
+      const scopes = [
+        edge.scope ?? '',
+        ...(proposed.action === 'edit' ? [proposed.scope ?? ''] : []),
+      ].filter((scope) => scope !== '');
       if (proposed.action === 'edit') {
         await editRelationshipInTransaction(ctx, edge, {
           agentId: card.agentId,
@@ -397,17 +551,28 @@ async function applyProposal(
       } else {
         await retireRelationshipInTransaction(ctx, edge, card.agentId);
       }
-      return { result: approvedResultWords.relationship[proposed.action], changed: true };
+      return {
+        result: approvedResultWords.relationship[proposed.action],
+        moved: [{ kind: 'edge', person: person?.displayName ?? '', scopes }],
+      };
     }
-    case 'page-status':
-      return { ...(await applyPageStatus(ctx, proposed, card.userId)), changed: true };
+    case 'page-status': {
+      const { result, title } = await applyPageStatus(ctx, proposed, card.userId);
+      return {
+        result,
+        moved: [{ kind: 'page', sourceId: proposed.page.sourceId, ref: proposed.page.ref, title }],
+      };
+    }
     case 'scope':
       if (proposed.action === 'revoke') {
         await revokeScopeInTransaction(ctx, { agentId: card.agentId, scope: proposed.scope });
       } else {
         await grantScopeInTransaction(ctx, card.agentId, proposed.scope, 'manager');
       }
-      return { result: approvedResultWords.scope(proposed.action, proposed.scope), changed: true };
+      return {
+        result: approvedResultWords.scope(proposed.action, proposed.scope),
+        moved: [{ kind: 'access', system: proposed.scope.split(':')[0] ?? proposed.scope }],
+      };
     case 'skill-action': {
       const skill = await ctx.db.get(proposed.skillId);
       if (skill === null || skill.agentId !== card.agentId) {
@@ -419,7 +584,10 @@ async function applyProposal(
       } else await withdrawSkillInTransaction(ctx, skill, proposed.rationale.slice(0, 500));
       return {
         result: approvedResultWords.skill(proposed.action, skill.name),
-        changed: proposed.action !== 'recheck',
+        moved:
+          proposed.action === 'recheck'
+            ? []
+            : [{ kind: 'skill', skillId: skill._id, name: skill.name }],
       };
     }
     default: {
@@ -434,6 +602,19 @@ type ClauseLists = Readonly<
   Record<'willDo' | 'willNotDo' | 'escalationTriggers', readonly string[]>
 >;
 
+/** The newest charter's list clauses, as its body holds them. */
+async function approvedClauseLists(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<ClauseLists | undefined> {
+  const charter = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+  return (charter?.body as { proposedBoundaries?: ClauseLists } | undefined)?.proposedBoundaries;
+}
+
 /**
  * Refuse a charter change whose clause is no longer what the card showed (the second pass's M2):
  * a clause is edited by its place in its list, and another amendment since the proposal may have
@@ -446,13 +627,7 @@ async function refuseMovedClauses(
 ): Promise<void> {
   const edits = proposed.changes.filter((change) => change.kind === 'edit-clause');
   if (edits.length === 0 || proposed.before === undefined) return;
-  const charter = await ctx.db
-    .query('charters')
-    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-    .order('desc')
-    .first();
-  const lists = (charter?.body as { proposedBoundaries?: ClauseLists } | undefined)
-    ?.proposedBoundaries;
+  const lists = await approvedClauseLists(ctx, agentId);
   for (const edit of edits) {
     if (lists?.[edit.field]?.[edit.index] !== proposed.before) {
       throw new ConvexError(CARD_ACTION_REFUSALS.moved);
@@ -465,7 +640,7 @@ async function applyPageStatus(
   ctx: MutationCtx,
   proposed: Extract<JudgedProposal, { kind: 'page-status' }>,
   owner: string,
-): Promise<{ result: string }> {
+): Promise<{ result: string; title: string }> {
   const pageAt = async (ref: { sourceId: Id<'docSources'>; ref: string }) =>
     await ctx.db
       .query('docPages')
@@ -480,7 +655,7 @@ async function applyPageStatus(
     // Only a status the manager set is handed back; the source's own has nothing to clear (M2).
     if (page.statusSource !== 'manager') throw new ConvexError(CARD_ACTION_REFUSALS.moved);
     await clearPageStatusInTransaction(ctx, source, page);
-    return { result: approvedResultWords.page('clear', page.title) };
+    return { result: approvedResultWords.page('clear', page.title), title: page.title };
   }
   // A status the page already holds from its source changes nothing but pins the page to the
   // manager, after which the source's own later word is ignored (W17-R2, D-1 (a)).
@@ -510,7 +685,7 @@ async function applyPageStatus(
     decidedBy: verifiedAddressOf(caller),
     now: Date.now(),
   });
-  return { result: approvedResultWords.page(proposed.status, page.title) };
+  return { result: approvedResultWords.page(proposed.status, page.title), title: page.title };
 }
 
 /**
@@ -522,8 +697,8 @@ async function applyPageStatus(
  * retired an edge that holds for everyone, the close of every other employee's undecided card
  * about that edge as decided here (the first in this transaction, the rest by a chain).
  *
- * @throws ConvexError when the card is gone or decided, nothing is proposed yet, the proposal is
- *   no longer the one the page showed, or the target refuses (gone, moved on, a successor not
+ * @throws ConvexError when the card is gone or decided, nothing is proposed yet, no proposal was
+ *   sent as shown, the proposal is no longer the one the page showed, or the target refuses (gone, moved on, a successor not
  *   current).
  */
 export const approve = mutation({
@@ -532,16 +707,17 @@ export const approve = mutation({
     /**
      * The proposal the manager was shown (`proposalFingerprint`): the page sends it with the
      * press, and Approve is refused when the card proposes something else by then (W16-R24).
-     * Absent from a caller that draws no card, which approves what the card holds.
+     * Required from 0.22.0 (O-2 (a)): every page built since 0.21.0 sends it, and a call without
+     * it, a page left open across the upgrade among them, is refused in words that say to reload.
+     * Optional in the validator so that refusal is the card's own sentence.
      */
     shown: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ result: string }> => {
     const { card } = await decidableCard(ctx, args.reorientationId);
     if (card.proposed.kind === 'pending') throw new ConvexError(CARD_ACTION_REFUSALS.pending);
-    if (args.shown !== undefined && args.shown !== proposalFingerprint(card.proposed)) {
-      throw new ConvexError(PROPOSAL_CHANGED);
-    }
+    if (args.shown === undefined) throw new ConvexError(CARD_ACTION_REFUSALS.reload);
+    if (args.shown !== proposalFingerprint(card.proposed)) throw new ConvexError(PROPOSAL_CHANGED);
     const caller = await getCallerOrThrow(ctx);
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);
@@ -574,8 +750,13 @@ export const approve = mutation({
       },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card, applied.changed);
-    await closeSiblingsAfterApprove(ctx, card, { result: applied.result, decidedBy, now });
+    await releaseHeldWork(ctx, card, applied.moved, now);
+    await closeSiblingsAfterApprove(ctx, card, {
+      result: applied.result,
+      decidedBy,
+      now,
+      moved: applied.moved,
+    });
     return { result: applied.result };
   },
 });
@@ -604,7 +785,7 @@ export const dismiss = mutation({
       payload: { reorientationId: card._id, summary: card.triggerSummary },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card, false);
+    await releaseHeldWork(ctx, card, [], now);
     return null;
   },
 });
@@ -639,6 +820,35 @@ export const defer = mutation({
 /** The most a by-hand card's summary grows to as later changes of the day join it. */
 const JOINED_SUMMARY_CHARS = 600;
 
+/** The newest card openings and joins of an employee one count of the day's by-hand changes reads. */
+const DAY_CHANGES_READ = 200;
+
+/**
+ * How many changes the manager typed by hand for an employee today, in its zone: each opened a card
+ * or joined one, and each a judgement asked of the model but those a talk or a repeat kept from
+ * asking (D-6 (a), W17-R5). Read from the record's `reorientation.opened` events, newest first to
+ * a bound; a day past the bound counts as spent.
+ */
+async function byHandChangesToday(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<number> {
+  // A day in any zone began less than twenty-six hours ago, a change of clocks included.
+  const opened = await eventsOfType(ctx, agent._id, 'reorientation.opened', {
+    from: now - 26 * 3_600_000,
+  })
+    .order('desc')
+    .take(DAY_CHANGES_READ);
+  if (opened.length === DAY_CHANGES_READ) return BY_HAND_CARDS_A_DAY;
+  const day = dayKey(now, agentZone(agent));
+  return opened.filter(
+    (event) =>
+      (event.payload as { trigger?: unknown } | undefined)?.trigger === 'role-changed' &&
+      dayKey(event.createdAt, agentZone(agent)) === day,
+  ).length;
+}
+
 /** Whether the card's proposal is one a finished talk put there: the manager's own, never reset. */
 async function proposedByTalk(
   ctx: MutationCtx,
@@ -658,9 +868,11 @@ async function proposedByTalk(
  * judgement.
  *
  * @returns The card; whether the change joined one already standing that day; whether the
- *   proposal is asked for again; and whether the typed words are on the card, which a joined
- *   change past the summary's bound is not (the joined event keeps them).
- * @throws ConvexError for an empty summary or one past 300 characters.
+ *   proposal is asked for again; whether the typed words are on the card, which a joined change
+ *   past the summary's bound is not (the joined event keeps them); and whether a change that would
+ *   have asked again did not, since the day's three changes are spent (D-6 (a)).
+ * @throws ConvexError for an empty summary or one past 300 characters, and for a new card once
+ *   three cards, or three changes, were made by hand today.
  */
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
@@ -672,6 +884,7 @@ export const openByHand = mutation({
     joined: boolean;
     asked: boolean;
     onCard: boolean;
+    limited: boolean;
   }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
@@ -693,6 +906,10 @@ export const openByHand = mutation({
     if (!standing && today.length >= BY_HAND_CARDS_A_DAY) {
       throw new ConvexError(byHandLimitWords(agent.name));
     }
+    // A join asked again is a judgement too, and counts against the day's three (D-6 (a)): a
+    // change past them joins the standing card without one, and no new card opens.
+    const spent = (await byHandChangesToday(ctx, agent, now)) >= BY_HAND_CARDS_A_DAY;
+    if (!standing && spent) throw new ConvexError(byHandChangesWords(agent.name));
     const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,
@@ -710,6 +927,7 @@ export const openByHand = mutation({
     let asked = !joined;
     // Whether the typed words are on the card: a joined change past the summary's bound is not.
     let onCard = true;
+    let limited = false;
     if (card !== null && joined) {
       const held = card.triggerSummary.replace(/[.;\s]+$/u, '');
       const said = held.toLowerCase().includes(summary.replace(/[.;\s]+$/u, '').toLowerCase());
@@ -717,12 +935,14 @@ export const openByHand = mutation({
       onCard = said || fits;
       // The proposal is asked again over both only where it is the judgement's own and the card
       // is open: a talk under way finishes in its own, and a finished talk's is the manager's.
-      asked =
+      const askable =
         !said &&
         fits &&
         card.status === 'open' &&
         card.proposed.kind !== 'pending' &&
         !(await proposedByTalk(ctx, card._id));
+      asked = askable && !spent;
+      limited = askable && spent;
       if (!said && fits) {
         await ctx.db.patch(card._id, {
           triggerSummary: `${held}; ${summary}`,
@@ -737,7 +957,7 @@ export const openByHand = mutation({
       // A card still waiting on its first proposal is judged over both by the join itself.
       asked ||= !said && fits && card.status === 'open' && card.proposed.kind === 'pending';
     }
-    return { reorientationId, joined, asked, onCard };
+    return { reorientationId, joined, asked, onCard, limited };
   },
 });
 
@@ -850,10 +1070,21 @@ export const listForAgent = query({
       const ledger = await Promise.all(
         (named ? ledgerIds : []).map(async (id) => await ctx.db.get(id)),
       );
-      const notHeld =
+      // The open work the change reached past what the card holds, its rows read again for their
+      // state within the names' budget: a row that finished since is no longer said (W17-R8), and
+      // past the budget the card says nothing of a rest.
+      const unheld =
         holding && card.blockingWork.length >= REORIENTATION_BLOCKING_LIMIT
-          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id)).length
-          : 0;
+          ? card.affected.workItems.filter((id) => !card.blockingWork.includes(id))
+          : [];
+      let notHeld = 0;
+      if (unheld.length > 0 && spent + unheld.length <= CARD_NAMES_READ) {
+        spent += unheld.length;
+        const states = await Promise.all(unheld.map(async (id) => (await ctx.db.get(id))?.state));
+        notHeld = states.filter(
+          (state) => state !== undefined && (OPEN_WORK_STATES as readonly string[]).includes(state),
+        ).length;
+      }
       const stages = holding
         ? rows.flatMap((row) =>
             row !== null && card.blockingWork.includes(row._id) ? [heldStageOf(row)] : [],

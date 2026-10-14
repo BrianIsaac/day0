@@ -479,6 +479,19 @@ describe('Put this on the card, asked once more when the first call is refused (
     expect(finished.answers).toHaveLength(2);
   });
 
+  it('names the whole reply where the schema refused the call’s whole input, never a blank field (W17-R8; red at the tag: “taken:  was”)', async (): Promise<void> => {
+    const notes: Array<string | undefined> = [];
+    // A call whose input is not an object at all is refused at the empty path.
+    await finishOutcome(async (note) => {
+      notes.push(note);
+      return call(note === undefined ? 'put none on the card' : OUTCOME);
+    });
+    expect(notes).toEqual([
+      undefined,
+      'Your call of reorientationComplete was not taken: the whole reply was not in the shape the tool takes. Call reorientationComplete once more, every field as the tool describes it. Say nothing else.',
+    ]);
+  });
+
   it('asks once more and no further when the model called nothing, and then answers no outcome', async (): Promise<void> => {
     const notes: Array<string | undefined> = [];
     const finished = await finishOutcome(async (note) => {

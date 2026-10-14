@@ -1,4 +1,4 @@
-import { v, type Infer } from 'convex/values';
+import { getDocumentSize, v, type Infer } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import {
@@ -19,8 +19,9 @@ import { log } from '../src/lib/logger';
  * `agreementsApplying`; moved here from the card's store in wave 18, 18-s).
  *
  * A transaction that opens many cards reads these rows within a budget (wave 17, 17-O; W16-R6):
- * each read counts the work rows it took against its transaction (`workRowsReadIn`,
- * `REACH_ROW_BUDGET`), a reach given less room than it needs says so (`Reached`), and an employee
+ * each read counts the bytes of the rows it took against its transaction (`reachBytesReadIn`,
+ * `REACH_BYTE_BUDGET`; W17-R8, as an employee's work list counts them), the skills and the held
+ * work among them, a reach given less room than it needs says so (`Reached`), and an employee
  * with no open work at all is found for four index reads (`hasOpenWork`).
  *
  * This module is the floor under the cards: it reads rows and writes none, registers no function,
@@ -64,24 +65,61 @@ export const OPEN_WORK_STATES = [
 const OPEN_WORK_READ = 100;
 
 /**
- * The work rows one transaction's cards read between them before the rest of a fan-out waits for
- * a transaction of its own (W16-R6): a `workItems` row is read whole, its plan, verdict and output
- * with it, so what bounds a transaction that opens many cards is the bytes of the rows its reaches
- * read (Convex's 16 MiB), not how many cards it opens. Three hundred rows leave a row about 50 KB.
+ * The bytes of rows one transaction's cards read between them before the rest of a fan-out waits
+ * for a transaction of its own (W16-R6, W17-R8): a `workItems` row is read whole, its plan, verdict
+ * and output with it, and a skill with its body, so what bounds a transaction that opens many cards
+ * is the bytes its reaches read (Convex's 16 MiB), not how many rows or cards. Half of it, as an
+ * employee's work list holds (`WORK_LIST_BYTES`), which leaves the cards their own writes.
  */
-export const REACH_ROW_BUDGET = 300;
+export const REACH_BYTE_BUDGET = 8 * 1024 * 1024;
 
-/** The work rows each transaction's reaches have read so far, by its database handle. */
-const workRowsRead = new WeakMap<object, number>();
+/** The most bytes one document holds (Convex's limit): what a row not yet read may weigh. */
+const ROW_BYTES_AT_MOST = 1024 * 1024;
 
-/** The work rows this transaction's reaches have read so far. */
-export function workRowsReadIn(ctx: QueryCtx): number {
-  return workRowsRead.get(ctx.db) ?? 0;
+/** The bytes each transaction's reaches have read so far, by its database handle. */
+const reachBytesRead = new WeakMap<object, number>();
+
+/** The bytes of rows this transaction's reaches have read so far. */
+export function reachBytesReadIn(ctx: QueryCtx): number {
+  return reachBytesRead.get(ctx.db) ?? 0;
 }
 
-/** Count rows a reach read against its transaction. */
-function countWorkRows(ctx: QueryCtx, rows: number): void {
-  workRowsRead.set(ctx.db, workRowsReadIn(ctx) + rows);
+/** Count the rows a reach read against its transaction, by their bytes as Convex counts them. */
+function countRead(ctx: QueryCtx, rows: ReadonlyArray<Doc<'workItems'> | Doc<'skills'>>): number {
+  const bytes = rows.reduce((sum, row) => sum + getDocumentSize(row), 0);
+  reachBytesRead.set(ctx.db, reachBytesReadIn(ctx) + bytes);
+  return bytes;
+}
+
+/**
+ * Rows of one index range, oldest first, a few at a time and never more at once than the room left
+ * holds at a row's largest, so the room holds whatever a row weighs (W17-R8, as `listReader` reads
+ * an employee's work list).
+ *
+ * @param next - One read: the rows after a creation time, at most a count.
+ * @param limit - The most rows to take.
+ * @param room - The bytes the rows may hold.
+ * @returns The rows, and the bytes they hold; past the room once they hold more than it.
+ */
+async function takeWithin(
+  ctx: QueryCtx,
+  next: (after: number | undefined, count: number) => Promise<Doc<'workItems'>[]>,
+  limit: number,
+  room: number,
+): Promise<{ rows: Doc<'workItems'>[]; bytes: number }> {
+  const rows: Doc<'workItems'>[] = [];
+  let bytes = 0;
+  while (rows.length < limit) {
+    const count = Math.min(
+      limit - rows.length,
+      Math.max(1, Math.floor((room - bytes) / ROW_BYTES_AT_MOST)),
+    );
+    const read = await next(rows.at(-1)?._creationTime, count);
+    bytes += countRead(ctx, read);
+    rows.push(...read);
+    if (bytes > room || read.length < count) break;
+  }
+  return { rows, bytes };
 }
 
 /** Whether each employee has any open work, as this transaction first found it. */
@@ -104,7 +142,7 @@ export async function hasOpenWork(ctx: QueryCtx, agentId: Id<'agents'>): Promise
       .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
       .first();
     if (row === null) continue;
-    countWorkRows(ctx, 1);
+    countRead(ctx, [row]);
     found = true;
     break;
   }
@@ -127,7 +165,7 @@ export function openWorkCache(): OpenWorkCache {
 
 /** How far a reach may read. */
 export interface ReachLimits {
-  /** The most work rows the read may take; left out, each read goes to its own bound. */
+  /** The most bytes of rows the read may take; left out, each read goes to its own bound. */
   readonly room?: number;
   /** The open work already read for this list of cards, which the read adds to. */
   readonly openWork?: OpenWorkCache;
@@ -136,7 +174,7 @@ export interface ReachLimits {
 /**
  * An employee's open work, each open state read to its bound.
  *
- * @returns The rows, or null when the employee's open work is more than the room given.
+ * @returns The rows, or null when the employee's open work holds more bytes than the room given.
  */
 export async function openWorkOf(
   ctx: QueryCtx,
@@ -147,14 +185,24 @@ export async function openWorkOf(
   if (known !== undefined) return known;
   const room = within.room ?? Number.POSITIVE_INFINITY;
   const rows: Doc<'workItems'>[] = [];
+  let bytes = 0;
   for (const state of OPEN_WORK_STATES) {
-    const read = await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
-    countWorkRows(ctx, read.length);
-    rows.push(...read);
-    if (rows.length > room) return null;
+    const read = await takeWithin(
+      ctx,
+      async (after, count) =>
+        await ctx.db
+          .query('workItems')
+          .withIndex('by_agent_state', (q) => {
+            const ofState = q.eq('agentId', agentId).eq('state', state);
+            return after === undefined ? ofState : ofState.gt('_creationTime', after);
+          })
+          .take(count),
+      OPEN_WORK_READ,
+      room - bytes,
+    );
+    rows.push(...read.rows);
+    bytes += read.bytes;
+    if (bytes > room) return null;
   }
   within.openWork?.set(agentId, rows);
   return rows;
@@ -191,10 +239,12 @@ export async function openWorkCiting(
 }
 
 /**
- * An employee's open work that runs one of the skills.
+ * An employee's open work that runs one of the skills: each skill's rows in each open state
+ * (`by_skill_state`, K-1 (a)), so a skill's finished rows, however many, never stand before its
+ * open ones (W17-R8: the read took a skill's oldest hundred rows whatever their state).
  *
- * @param room - The most rows the read may take.
- * @returns The rows' ids, or null when the skills' work is more than `room` rows.
+ * @param room - The most bytes of rows the read may take.
+ * @returns The rows' ids, or null when the skills' work holds more bytes than `room`.
  */
 export async function openWorkUsingSkills(
   ctx: QueryCtx,
@@ -203,21 +253,28 @@ export async function openWorkUsingSkills(
   room = Number.POSITIVE_INFINITY,
 ): Promise<Id<'workItems'>[] | null> {
   const rows: Doc<'workItems'>[] = [];
+  let bytes = 0;
   for (const skillId of skillIds) {
-    const read = await ctx.db
-      .query('workItems')
-      .withIndex('by_skill', (q) => q.eq('skillId', skillId))
-      .take(Math.min(OPEN_WORK_READ, room - rows.length + 1));
-    countWorkRows(ctx, read.length);
-    rows.push(...read);
-    if (rows.length > room) return null;
+    for (const state of OPEN_WORK_STATES) {
+      const read = await takeWithin(
+        ctx,
+        async (after, count) =>
+          await ctx.db
+            .query('workItems')
+            .withIndex('by_skill_state', (q) => {
+              const ofState = q.eq('skillId', skillId).eq('state', state);
+              return after === undefined ? ofState : ofState.gt('_creationTime', after);
+            })
+            .take(count),
+        OPEN_WORK_READ,
+        room - bytes,
+      );
+      rows.push(...read.rows);
+      bytes += read.bytes;
+      if (bytes > room) return null;
+    }
   }
-  return rows
-    .filter(
-      (row) =>
-        row.agentId === agentId && (OPEN_WORK_STATES as readonly string[]).includes(row.state),
-    )
-    .map((row) => row._id);
+  return rows.filter((row) => row.agentId === agentId).map((row) => row._id);
 }
 
 /** The registered skills one read of an employee's library takes, for the affected set. */
@@ -235,12 +292,14 @@ export async function skillReach(
   };
 }
 
-/** An employee's registered skills. */
+/** An employee's registered skills, their bytes counted against the transaction's reaches. */
 async function registeredSkills(ctx: QueryCtx, agentId: Id<'agents'>): Promise<Doc<'skills'>[]> {
-  return await ctx.db
+  const skills = await ctx.db
     .query('skills')
     .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', 'registered'))
     .take(SKILLS_READ);
+  countRead(ctx, skills);
+  return skills;
 }
 
 /**
@@ -368,8 +427,9 @@ export async function blockingWorkOf(
   for (const id of affected.workItems) {
     if (open.length >= REORIENTATION_BLOCKING_LIMIT) break;
     const row = await ctx.db.get(id);
-    countWorkRows(ctx, 1);
-    if (row !== null && (OPEN_WORK_STATES as readonly string[]).includes(row.state)) open.push(id);
+    if (row === null) continue;
+    countRead(ctx, [row]);
+    if ((OPEN_WORK_STATES as readonly string[]).includes(row.state)) open.push(id);
   }
   return open;
 }

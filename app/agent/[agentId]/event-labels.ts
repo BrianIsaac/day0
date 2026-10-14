@@ -157,6 +157,7 @@ const PLAN_HELD_WORDS: { readonly [Reason in WorkPlanHeldPayload['reason']]: str
   'approved-by-predecessor': 'approved by your predecessor; approve it again',
   'documentation-conflict': 'two pages disagree; decide on the Documentation tab',
   'reorientation-pending': 'held until you decide the reorientation card',
+  'held-through-change': 'the reorientation card’s change does not affect it, so it is asked again',
 };
 
 /** Why a held plan waits, or a plain line for a reason this build does not know. */

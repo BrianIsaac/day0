@@ -9,14 +9,14 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent } from './eventLog';
 import {
-  REACH_ROW_BUDGET,
+  REACH_BYTE_BUDGET,
   blockingWorkOf,
   cardReachValidator,
   hasOpenWork,
   openWorkCache,
   ownerAgents,
   reachOf,
-  workRowsReadIn,
+  reachBytesReadIn,
   type CardAffected,
   type CardReach,
   type ReachLimits,
@@ -35,6 +35,7 @@ import {
 import { log } from '../src/lib/logger';
 import {
   PROPOSAL_DID_NOT_FINISH,
+  CARD_NOT_OPENED_REASON,
   approvedResultWords,
   closedByHandSummary,
   decidedByHandSummary,
@@ -197,7 +198,7 @@ function judgeAfterMs(startedBefore: number): number {
   );
 }
 
-/** The most of a thrown error's message the record keeps of a card that could not be opened. */
+/** The most of a thrown error's message the log keeps of a card that could not be opened. */
 const CARD_NOT_OPENED_REASON_CHARS = 300;
 
 /** The cards each transaction has opened one at a time so far, by its database handle. */
@@ -492,8 +493,8 @@ export type CardOpener = (
 /**
  * Open what one transaction's budget allows of a list of cards, in order, and answer the rest
  * (W16-R5, W16-R6). A `citing` card for an employee with no open work is dropped for four index
- * reads; a card is opened while fewer than `REACH_ROW_BUDGET` work rows have been read and fewer
- * than `limits.cards` cards opened; a card whose reach would pass the room left, and every card
+ * reads; a card is opened while its reaches have read fewer than `REACH_BYTE_BUDGET` bytes of rows
+ * (W17-R8) and fewer than `limits.cards` cards opened; a card whose reach would pass the room left, and every card
  * after it, waits. A card that throws is recorded (`reorientation.card-not-opened`) and the next
  * one is tried, so one bad card cannot take the rest of a fan-out with it (W16-R23).
  */
@@ -509,7 +510,7 @@ async function openWithinBudget(
   let judged = limits.judged;
   let reachRead = false;
   for (const [at, card] of cards.entries()) {
-    if (opened >= limits.cards || workRowsReadIn(ctx) >= REACH_ROW_BUDGET) {
+    if (opened >= limits.cards || reachBytesReadIn(ctx) >= REACH_BYTE_BUDGET) {
       rest.push(...cards.slice(at));
       break;
     }
@@ -518,7 +519,7 @@ async function openWithinBudget(
       const unbounded = limits.firstReachUnbounded && !reachRead;
       reachRead ||= card.reach !== undefined;
       const outcome = await open(ctx, card, {
-        ...(unbounded ? {} : { room: REACH_ROW_BUDGET - workRowsReadIn(ctx) }),
+        ...(unbounded ? {} : { room: REACH_BYTE_BUDGET - reachBytesReadIn(ctx) }),
         openWork,
         judgeAfterMs: judgeAfterMs(judged),
       });
@@ -531,7 +532,16 @@ async function openWithinBudget(
       if (outcome.judging) judged += 1;
     } catch (error) {
       // Recorded and passed over: a scheduled function that throws is not run again, and the
-      // cards behind this one in the chain would be lost with it.
+      // cards behind this one in the chain would be lost with it. The record says a fixed
+      // sentence; the error's words, scrubbed, go to the function log (W17-R8).
+      log.warn('reorientation: a card could not be opened', {
+        agentId: card.agentId,
+        triggerKey: card.triggerKey,
+        reason: redactTokenShapes(error instanceof Error ? error.message : String(error)).slice(
+          0,
+          CARD_NOT_OPENED_REASON_CHARS,
+        ),
+      });
       await appendEvent(ctx, {
         agentId: card.agentId,
         type: 'reorientation.card-not-opened',
@@ -539,10 +549,7 @@ async function openWithinBudget(
           trigger: card.trigger,
           triggerKey: card.triggerKey,
           summary: card.summary,
-          reason: redactTokenShapes(error instanceof Error ? error.message : String(error)).slice(
-            0,
-            CARD_NOT_OPENED_REASON_CHARS,
-          ),
+          reason: CARD_NOT_OPENED_REASON,
         },
         createdAt: card.now,
       });
@@ -582,8 +589,8 @@ async function scheduleRest(
 /**
  * Open a card on each employee a change reaches, handed over once by the change's writer inside
  * its own transaction (wave 17, 17-O; D-9 (a), O-1). The writer's transaction opens the first
- * cards itself, at most `INLINE_CARDS_PER_TRANSACTION` and within its budget of work rows read
- * (`REACH_ROW_BUDGET`), and schedules **one** function carrying the rest (`openCardsLater`), which
+ * cards itself, at most `INLINE_CARDS_PER_TRANSACTION` and within its budget of bytes read
+ * (`REACH_BYTE_BUDGET`), and schedules **one** function carrying the rest (`openCardsLater`), which
  * opens what its own budget allows and schedules one more: a change of any reach is a chain of
  * single scheduled functions, where one a card met Convex's thousand a mutation at 51 employees
  * and twenty pages (W16-R5). Each card opens or joins as `openCard`'s does; an employee whose card
@@ -1122,24 +1129,37 @@ export const recordProposalFailure = internalMutation({
 /** How long a card's proposal may stay pending before the sweep says it did not finish. */
 export const PROPOSAL_PENDING_MS = 10 * 60_000;
 
-/** The newest open cards the sweep reads for a proposal that never finished. */
+/** The open cards one run of the sweep reads for a proposal that never finished: one page. */
 const PENDING_SWEEP_READ = 200;
 
 /**
- * Mark failed every open card whose proposal has been pending past `PROPOSAL_PENDING_MS` with
- * nothing said (W16-R23): an action killed, or a failure that could not be recorded, left such a
- * card waiting for good. A judgement that answers after all still writes its proposal.
+ * Mark failed every open card of one page whose proposal has been pending past
+ * `PROPOSAL_PENDING_MS` with nothing said (W16-R23): an action killed, or a failure that could not
+ * be recorded, left such a card waiting for good. A judgement that answers after all still writes
+ * its proposal. The open cards are paged newest first, and a page that is not the last hands its
+ * cursor to the sweep's next run, scheduled at once (W17-R6, O-3 (a)): the newest two hundred alone
+ * left an old stuck card behind them unmet for good. A card already marked is passed over.
  *
+ * @param cursor - Where the previous run's page ended; absent for the first page.
  * @returns How many cards were marked.
  */
-async function failStalePending(ctx: MutationCtx, now: number): Promise<number> {
-  const open = await ctx.db
+async function failStalePending(
+  ctx: MutationCtx,
+  now: number,
+  cursor: string | undefined,
+): Promise<number> {
+  const page = await ctx.db
     .query('reorientations')
     .withIndex('by_status_revisit', (q) => q.eq('status', 'open'))
     .order('desc')
-    .take(PENDING_SWEEP_READ);
+    .paginate({ cursor: cursor ?? null, numItems: PENDING_SWEEP_READ });
+  if (!page.isDone) {
+    await ctx.scheduler.runAfter(0, internal.reorientation.reopenDeferred, {
+      staleCursor: page.continueCursor,
+    });
+  }
   let marked = 0;
-  for (const card of open) {
+  for (const card of page.page) {
     if (card.proposed.kind !== 'pending' || card.proposed.failedAt !== undefined) continue;
     if (card.createdAt > now - PROPOSAL_PENDING_MS) continue;
     await ctx.db.patch(card._id, {
@@ -1154,14 +1174,17 @@ async function failStalePending(ctx: MutationCtx, now: number): Promise<number> 
  * Open again every deferred card whose date has come (A21), up to a bound a run: the Defer sweep,
  * run every fifteen minutes through `crons.runScheduledJob`. A card that opens again with nothing
  * proposed, pending or failed, is asked for its proposal again; and an open card whose proposal
- * has been pending ten minutes with nothing said is marked as not finished (W16-R23). Internal.
- * Writes `reorientation.reopened`.
+ * has been pending ten minutes with nothing said is marked as not finished (W16-R23), page by page
+ * over runs this function schedules for itself, each given the cursor the last page ended at
+ * (W17-R6), which reads only the next page and opens nothing. Internal. Writes
+ * `reorientation.reopened`.
  */
 export const reopenDeferred = internalMutation({
-  args: {},
-  handler: async (ctx): Promise<{ reopened: number; stale?: number }> => {
+  args: { staleCursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ reopened: number; stale?: number }> => {
     const now = Date.now();
-    const stale = await failStalePending(ctx, now);
+    const stale = await failStalePending(ctx, now, args.staleCursor);
+    if (args.staleCursor !== undefined) return { reopened: 0, ...(stale > 0 ? { stale } : {}) };
     const due = await ctx.db
       .query('reorientations')
       .withIndex('by_status_revisit', (q) => q.eq('status', 'deferred').lte('revisitAt', now))

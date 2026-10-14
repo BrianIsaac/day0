@@ -221,6 +221,7 @@ export async function parkOnConnection(
     applyAttemptId: undefined,
     applyClaimedAt: undefined,
     decision: undefined,
+    heldThroughChangeAt: undefined,
   });
   await appendEvent(ctx, {
     agentId: row.agentId,

@@ -35,9 +35,35 @@ export const CARD_ACTION_REFUSALS = {
    * change nothing but pin the page to the manager, so a later word of its source were ignored.
    */
   held: 'The page already has this status from its source, so approving would change nothing: dismiss the card.',
+  /**
+   * An Approve with no proposal sent as shown (O-2 (a)): a page built before 0.22.0, left open
+   * across the upgrade.
+   */
+  reload: 'This page is from an earlier version of Day0. Reload it, then approve.',
   date: 'Pick a date after today and within a year.',
   summary: 'Say what changed in up to 300 characters.',
 } as const;
+
+/** How the outcome of a sibling card that could not be closed opens. */
+const NOT_CLOSED = 'not closed: decided on ';
+
+/**
+ * Whose card decided the edge a standing card could not be closed for, or undefined for any other
+ * outcome (W17-R7).
+ */
+export function notClosedOf(summary: string | undefined): string | undefined {
+  const match = /^not closed: decided on (.+?)’s card$/u.exec(summary ?? '');
+  return match === null ? undefined : match[1];
+}
+
+/**
+ * What a standing card says when another employee's Approve decided its edge and it could not be
+ * closed (section 7; W17-R7): "Decided on {other}'s card, but this card could not be closed:
+ * dismiss it."
+ */
+export function notClosedWords(name: string): string {
+  return `Decided on ${name}’s card, but this card could not be closed: dismiss it.`;
+}
 
 /** How the outcome of a card closed because it is no longer needed opens. */
 const NO_LONGER_NEEDED = 'no longer needed: ';
@@ -62,6 +88,11 @@ export const approvedResultWords = {
    */
   decidedElsewhere: (name: string, result: string): string =>
     `decided on ${name}’s card: ${result}`,
+  /**
+   * A sibling card the close of an edge for everyone could not close (W17-R7): it stays standing
+   * with this as its outcome, read back by {@link notClosedOf}.
+   */
+  notClosed: (name: string): string => `${NOT_CLOSED}${name}’s card`,
   /**
    * A page's status card closed by the page's return (W17-R2, D-1 (a)): read back by {@link
    * closedAsNoLongerNeeded}.
@@ -121,6 +152,22 @@ export function byHandLimitWords(name: string): string {
   return `You have opened three cards for ${name} today. Decide one, or come back tomorrow.`;
 }
 
+/**
+ * Why a by-hand card was refused once the day's three changes were spent on cards already decided
+ * (D-6 (a); flagged with RM24: section 7 drafts the join's line, not this refusal).
+ */
+export function byHandChangesWords(name: string): string {
+  return `You have changed ${name}’s cards three times today. Come back tomorrow.`;
+}
+
+/**
+ * What the by-hand form says of a fourth change of a day joined to the standing card without a new
+ * judgement (D-6 (a); section 7).
+ */
+export function joinedWithoutProposalWords(name: string): string {
+  return `Added to the card. ${name} will not work out a new proposal for it until tomorrow: you have changed this card three times today.`;
+}
+
 /** What an owed check's card says changed (RM34 (a); section 9.1's words). */
 export const CHECK_OWED_SUMMARY = 'Its agreements could not be checked against the amended charter';
 
@@ -173,6 +220,26 @@ export function closingHeldReason(name: string, summary: string): string {
  */
 export function heldByCardWords(summary: string): string {
   return `Day0 approves nothing here on its own until you decide the reorientation card: ${withoutStop(summary)}.`;
+}
+
+/**
+ * What a plan's card on the Work tab says once a reorientation card's Approve asked it again
+ * rather than drafting it again (D-2 (b); section 7's draft, RM24): "Your change to “{summary}”
+ * does not affect this plan, so it was not drafted again: approve it as it is, or send it back."
+ */
+export function askedAgainWords(summary: string): string {
+  return `Your change to ${quotedSummary(summary)} does not affect this plan, so it was not drafted again: approve it as it is, or send it back.`;
+}
+
+/**
+ * A card's summary quoted inside a sentence: in double marks, or in single ones where the summary
+ * quotes something itself, so its own marks nest rather than close against the sentence's (an
+ * edge's summary, "now for “{scope}”, where it was “{old}”", read "…”” does not affect" on the
+ * bed's plan).
+ */
+export function quotedSummary(summary: string): string {
+  const said = withoutStop(summary);
+  return /[“”]/u.test(said) ? `‘${said}’` : `“${said}”`;
 }
 
 /**
@@ -456,12 +523,37 @@ export function pendingWords(name: string, held: HeldCounts): string {
 export const PROPOSAL_DID_NOT_FINISH = 'did not finish';
 
 /**
+ * Why a judgement could not propose, by kind (W17-R8): the model did not answer in time, its
+ * answer could not be read, its provider refused the request, or something else failed. The card
+ * stores the kind and says its fixed sentence; the provider's own words go to the function log
+ * only, since a provider may say anything in them.
+ */
+export const PROPOSAL_FAILURE_KINDS = ['timeout', 'unreadable', 'refused', 'failed'] as const;
+
+/** One of {@link PROPOSAL_FAILURE_KINDS}. */
+export type ProposalFailureKind = (typeof PROPOSAL_FAILURE_KINDS)[number];
+
+/**
+ * Why a fan-out's card could not be opened, as the record says it (`reorientation.card-not-opened`;
+ * W17-R8): a fixed sentence, the error's own words going to the function log only.
+ */
+export const CARD_NOT_OPENED_REASON = 'an error stopped it, and the function log has the details';
+
+/** Each kind's fixed sentence, after "{name} could not work out a proposal: " (section 7). */
+const FAILURE_SAID: Readonly<Partial<Record<string, string>>> = {
+  timeout: 'the model did not answer in time',
+  unreadable: 'the model’s answer could not be read',
+  refused: 'the model’s provider refused the request',
+} satisfies Partial<Record<ProposalFailureKind, string>>;
+
+/**
  * What a card says when the judgement could not propose (section 7): the card stays, and the ways
- * on are named, Discuss first. "{name} could not work out a proposal ({reason}). Nothing changes
- * unless you act: talk it through with {name}, dismiss the card, or amend the charter yourself."
- * A judgement that never finished says so in place of a reason.
+ * on are named, Discuss first. "{name} could not work out a proposal: {the kind's sentence}.
+ * Nothing changes unless you act: talk it through with {name}, dismiss the card, or amend the
+ * charter yourself." A judgement that never finished says so; any other stored reason, a
+ * provider's words stored before 0.22.0 among them, is said as "for this change" (W17-R8).
  *
- * @param failure - The stored reason, when there is one.
+ * @param failure - The stored kind, when there is one.
  */
 export function failedProposalWords(name: string, failure?: string): string {
   return `${failureOpening(name, failure)} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
@@ -470,11 +562,11 @@ export function failedProposalWords(name: string, failure?: string): string {
 /** That the judgement could not propose, and why, as a card's first sentence about it. */
 function failureOpening(name: string, failure: string | undefined): string {
   const reason = failure?.trim().replace(/[.!?]+$/u, '');
-  return reason === PROPOSAL_DID_NOT_FINISH
-    ? `${name} did not finish working out a proposal.`
-    : reason === undefined || reason === ''
-      ? `${name} could not work out a proposal for this change.`
-      : `${name} could not work out a proposal (${reason}).`;
+  if (reason === PROPOSAL_DID_NOT_FINISH) return `${name} did not finish working out a proposal.`;
+  const said = reason === undefined ? undefined : FAILURE_SAID[reason];
+  return said === undefined
+    ? `${name} could not work out a proposal for this change.`
+    : `${name} could not work out a proposal: ${said}.`;
 }
 
 /**

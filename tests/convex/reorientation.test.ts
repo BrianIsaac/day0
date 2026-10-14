@@ -1,7 +1,7 @@
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { internal } from '../../convex/_generated/api';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import {
   CHAIN_CARDS_PER_LINK,
@@ -19,7 +19,7 @@ import {
   type CardTrigger,
 } from '../../convex/reorientation';
 import { CARD_LIST_LIMIT } from '../../convex/reorientationJudgementInput';
-import { REACH_ROW_BUDGET, workRowsReadIn } from '../../convex/reorientationReach';
+import { REACH_BYTE_BUDGET, reachBytesReadIn } from '../../convex/reorientationReach';
 import * as reorientationModule from '../../convex/reorientation';
 import { allConvexModules } from './all-modules';
 import { registeredIn } from './registered-functions';
@@ -281,17 +281,24 @@ async function seedEmployeesWithWork(
   harness: Harness,
   employees: number,
   plansEach = 1,
+  fields: Partial<Doc<'workItems'>> = {},
 ): Promise<Id<'agents'>[]> {
   const agents: Id<'agents'>[] = [];
   for (let at = 0; at < employees; at += 1) {
     const agentId = await seedEmployee(harness, { name: `Employee ${at}` });
     for (let plan = 0; plan < plansEach; plan += 1) {
-      await seedWork(harness, agentId, 'plan-pending', { externalId: `REVOPS-${at}-${plan}` });
+      await seedWork(harness, agentId, 'plan-pending', {
+        externalId: `REVOPS-${at}-${plan}`,
+        ...fields,
+      });
     }
     agents.push(agentId);
   }
   return agents;
 }
+
+/** A ticket's summary of about 30 KB, so a hundred rows weigh about three megabytes. */
+const HEAVY_SUMMARY = 'Review the Q3 close ticket within the review window. '.repeat(560);
 
 /** One change reported for each employee, as an approver's edge for everyone reaches them. */
 function edgeChangeFor(agents: readonly Id<'agents'>[]): CardTrigger[] {
@@ -350,18 +357,21 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
     ).toHaveLength(reached);
   });
 
-  it('leaves a card whose reach would pass the transaction’s budget of work rows to the chain, which opens it (W16-R6)', async (): Promise<void> => {
+  it('leaves a card whose reach would pass the transaction’s budget of bytes to the chain, which opens it (W16-R6, W17-R8)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    // A hundred open plans an employee: the third card's read would pass three hundred rows.
-    const agents = await seedEmployeesWithWork(harness, 4, 100);
-    const rowsRead = await harness.run(async (ctx) => {
+    // A hundred open plans an employee, each about 30 KB: the third card's read would pass the
+    // budget's eight megabytes.
+    const agents = await seedEmployeesWithWork(harness, 4, 100, { contentSummary: HEAVY_SUMMARY });
+    const bytesRead = await harness.run(async (ctx) => {
       await openCards(ctx, edgeChangeFor(agents));
-      return workRowsReadIn(ctx);
+      return reachBytesReadIn(ctx);
     });
     const inline = await harness.run(async (ctx) => await ctx.db.query('reorientations').collect());
     expect(inline.map((card) => card.agentId)).toEqual(agents.slice(0, 2));
-    // Each opened card read its probe's row, its hundred rows and the ten it holds; the third stopped one row past its room.
-    expect(rowsRead).toBeLessThanOrEqual(REACH_ROW_BUDGET + 2);
+    // Each opened card read its probe's row, its hundred rows and the ten it holds; the third
+    // stopped one row past its room, its probe's row beside it.
+    expect(bytesRead).toBeGreaterThan(REACH_BYTE_BUDGET);
+    expect(bytesRead).toBeLessThanOrEqual(REACH_BYTE_BUDGET + 2 * 40_000);
     const [later] = await scheduledAs(harness, 'reorientation:openCardsLater');
     expect(
       (later.args[0] as { cards: Array<{ agentId: string }> }).cards.map((card) => card.agentId),
@@ -374,16 +384,23 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
 
   it('opens a card whose employee alone has more open work than the budget, in a link of its own', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
-    const [agentId] = await seedEmployeesWithWork(harness, 1, 100);
+    const heavy = { contentSummary: HEAVY_SUMMARY };
+    const [agentId] = await seedEmployeesWithWork(harness, 1, 100, heavy);
     for (let at = 0; at < 100; at += 1) {
-      await seedWork(harness, agentId, 'executing', { externalId: `REVOPS-run-${at}` });
-      await seedWork(harness, agentId, 'plan-approved', { externalId: `REVOPS-approved-${at}` });
-      await seedWork(harness, agentId, 'actions-pending', { externalId: `REVOPS-held-${at}` });
+      await seedWork(harness, agentId, 'executing', { externalId: `REVOPS-run-${at}`, ...heavy });
+      await seedWork(harness, agentId, 'plan-approved', {
+        externalId: `REVOPS-approved-${at}`,
+        ...heavy,
+      });
+      await seedWork(harness, agentId, 'actions-pending', {
+        externalId: `REVOPS-held-${at}`,
+        ...heavy,
+      });
     }
     await harness.run(async (ctx) => {
       await openCards(ctx, edgeChangeFor([agentId]));
     });
-    // Four hundred open rows: past the writer's room, so the card waits for the chain.
+    // Four hundred open rows of about 30 KB: past the writer's room, so the card waits for the chain.
     expect(await cardsOf(harness, agentId)).toEqual([]);
     expect(await runCardChain(harness)).toEqual({ links: 1, mostWaiting: 1 });
     const [card] = await cardsOf(harness, agentId);
@@ -434,9 +451,12 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
         ? { kind: 'nothing' }
         : { kind: 'opened', reorientationId, judging: true };
     };
-    await harness.run(async (ctx) => {
-      await continueCardChain(ctx, carriedCard, opener);
-    });
+    const { warnings } = await warnedBy(
+      async () =>
+        await harness.run(async (ctx) => {
+          await continueCardChain(ctx, carriedCard, opener);
+        }),
+    );
     expect(await cardsOf(harness, first)).toHaveLength(1);
     expect(await cardsOf(harness, last)).toHaveLength(1);
     expect(await cardsOf(harness, broken)).toEqual([]);
@@ -450,12 +470,20 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
           trigger: 'relationship-changed',
           triggerKey: 'edge-change-1',
           summary: 'Priya, its approver, changed',
-          reason: expect.stringMatching(
-            /^the card could not be written with (?!xoxb-1234)/,
-          ) as string,
+          // A fixed sentence on the record; the error's own words, scrubbed, are the log's
+          // (W17-R8).
+          reason: 'an error stopped it, and the function log has the details',
         },
       ],
     ]);
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        msg: 'reorientation: a card could not be opened',
+        reason: expect.stringMatching(
+          /^the card could not be written with (?!xoxb-1234)/,
+        ) as string,
+      }),
+    );
   });
 });
 
@@ -748,6 +776,66 @@ describe('reopenDeferred: the Defer sweep', (): void => {
       kind: 'none',
       rationale: 'Nothing needs to change.',
     });
+  });
+
+  it('marks a card pending past ten minutes failed with three hundred open cards newer than it, paging over its own scheduled runs, and marks it no more (W17-R6; red at 200)', async (): Promise<void> => {
+    // The review's W17-R6: the sweep read the newest 200 open cards, so an old stuck card behind
+    // them was never met (bed 1 held 150 open cards after its three fan-outs).
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    vi.setSystemTime(MORNING_UTC);
+    const stuck = (await openTestCard(harness, {
+      agentId,
+      trigger: 'skill-recheck-due',
+      triggerKey: 'event-old',
+      summary: 'A skill is due a re-check',
+      now: MORNING_UTC,
+    }))!;
+    const template = fieldsOf(await cardOf(harness, stuck));
+    const newer = MORNING_UTC + PROPOSAL_PENDING_MS + 60_000;
+    await harness.run(async (ctx) => {
+      for (let at = 0; at < 300; at += 1) {
+        // Open, each with the proposal its judgement wrote: the cards a manager has yet to decide.
+        await ctx.db.insert('reorientations', {
+          ...template,
+          triggerKey: `event-new-${at}`,
+          proposed: { kind: 'none', rationale: 'Nothing needs to change.' },
+          createdAt: newer,
+        });
+      }
+    });
+    // The sweep's own continuations, run as the scheduler would; the cards' judgements stay
+    // unasked, so no test reaches a model.
+    const ran = new Set<string>();
+    const sweep = async (): Promise<unknown> => {
+      const first = await harness.mutation(internal.reorientation.reopenDeferred, {});
+      for (;;) {
+        const [next] = (await scheduledAs(harness, 'reorientation:reopenDeferred')).filter(
+          (job) => !ran.has(job._id),
+        );
+        if (next === undefined) return first;
+        ran.add(next._id);
+        await harness.mutation(
+          internal.reorientation.reopenDeferred,
+          next.args[0] as { staleCursor?: string },
+        );
+      }
+    };
+    vi.setSystemTime(newer);
+    await sweep();
+    expect((await cardOf(harness, stuck)).proposed).toEqual({
+      kind: 'pending',
+      failedAt: newer,
+      failure: 'did not finish',
+    });
+    // The next sweep pages the same cards and marks nothing again: the mark stands as written.
+    vi.setSystemTime(newer + 15 * 60_000);
+    await expect(sweep()).resolves.toEqual({ reopened: 0 });
+    expect((await cardOf(harness, stuck)).proposed).toMatchObject({ failedAt: newer });
+    const marked = (await cardsOf(harness, agentId)).filter(
+      (card) => card.proposed.kind === 'pending' && card.proposed.failedAt !== undefined,
+    );
+    expect(marked.map((card) => card._id)).toEqual([stuck]);
   });
 });
 
