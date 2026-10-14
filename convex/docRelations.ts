@@ -731,7 +731,8 @@ async function closeCardsOfReturnedPage(
  * next run. A page that came back starts the confirmation's asking again for each of its
  * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
  * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
- * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`).
+ * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`). A
+ * leaving's step reads the page again and closes nothing of one that is current by then (W17-R12).
  * Internal; schedules itself for the pages left.
  */
 export const turnPageQuestions = internalMutation({
@@ -751,6 +752,10 @@ export const turnPageQuestions = internalMutation({
     let asked = 0;
     for (const page of args.pages.slice(0, QUESTION_TURN_PAGES)) {
       if (!page.back) {
+        // Read again: a step that runs late, after the page came back and its conflicts were asked
+        // again, would close the questions its return asked (W17-R12). A page gone closes them.
+        const stored = await pageAt(ctx, page);
+        if (stored !== null && pageStatusOf(stored) === 'active') continue;
         closed += await closeQuestionsOnPage(ctx, page, now);
         continue;
       }

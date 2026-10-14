@@ -952,6 +952,72 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     });
   });
 
+  it('leaves open a question its page’s return asked again when a late close step of the page’s leaving runs after it (W17-R12)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId } = await disagreement(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: { proposedFunction: 'Revenue operations coordination' },
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const relation = (await relations(harness)).find((row) => row._id === relationId)!;
+    const label = 'Finance wiki/escalation.md#Finance escalation > Thresholds';
+    const { citations } = await selection(harness, agentId);
+    const cited = citations.find((citation) => citation.label === label)!;
+    const workItemId = await planned(harness, agentId, {
+      cites: [
+        {
+          step: 1,
+          label,
+          sourceId: relation.from.sourceId,
+          pageRef: relation.from.ref,
+          blocks: cited.blocks.map((block) => ({ id: block.id, hash: block.hash! })),
+        },
+      ],
+    });
+    const manager = asManager(harness);
+    await manager.mutation(api.docRelations.decide, { relationId, decision: 'disagree' });
+    await ranAsks(harness);
+    const closes = async (): Promise<Array<string | undefined>> =>
+      (await questionsOf(harness, workItemId)).map((question) => question.closed?.reason);
+    expect(await closes()).toEqual([undefined]);
+    const pageId = await harness.run(
+      async (ctx) =>
+        (await ctx.db
+          .query('docPages')
+          .withIndex('by_source_ref', (q) =>
+            q.eq('sourceId', relation.to.sourceId).eq('ref', relation.to.ref),
+          )
+          .unique())!._id,
+    );
+    // The manager archives one page: the conflict no longer stands, so its question closes at
+    // the flip, not at the plan's next run.
+    await manager.mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    await ranAsks(harness);
+    expect(await closes()).toEqual(['settled']);
+    // The page made current again: the conflict stands once more and the plan is asked again.
+    await manager.mutation(api.docStatus.clearPageStatus, { pageId });
+    await ranAsks(harness);
+    await ranAsks(harness);
+    expect(await closes()).toEqual(['settled', undefined]);
+    expect((await questionsOf(harness, workItemId))[1]).toMatchObject({
+      question: ASKED,
+      relationId,
+    });
+    // A step of the leaving's chain that runs late, after the page came back and the plan was
+    // asked again, closes nothing: the page is current, so its conflict stands (W17-R12).
+    await harness.mutation(internal.docRelations.turnPageQuestions, {
+      pages: [{ sourceId: relation.to.sourceId, ref: relation.to.ref, back: false }],
+    });
+    expect(await closes()).toEqual(['settled', undefined]);
+  });
+
   it('asks out of the confirming transaction, a page of the reader’s drafted plans a step, until every plan was read (17-C; the pre-tag’s second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
