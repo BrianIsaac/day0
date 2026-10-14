@@ -8,6 +8,8 @@ import { api, internal } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import * as workModule from '../../convex/work';
+import { registeredIn } from './registered-functions';
 import {
   DEPENDENT_AUTHORING_INTERRUPTED_REASON,
   DEPENDENT_AUTHORING_RECOVERY_MS,
@@ -8940,5 +8942,86 @@ describe('work.listForAgent', (): void => {
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
     expect(listed?.mentionNames).toEqual({ U0C78V6LAPP: 'Rowan Hale' });
+  });
+});
+
+describe('the functions convex/work.ts registers', (): void => {
+  // The moves of the manager channel's and the lists' handler bodies into
+  // `convex/workManagerChannel.ts` and `convex/workLists.ts` (wave 18, 18-s; S-1) move no
+  // registered function: each `api.work.*` and `internal.work.*` path is a string the app, the
+  // actions and the scheduler hold. The list as `v0.21.0` registered it.
+  it('are the ones it registered at v0.21.0, each of the same kind and visibility', (): void => {
+    expect(registeredIn(workModule)).toEqual([
+      'approveActions public mutation',
+      'approveActionsBatch public mutation',
+      'beginPlanGroundingRead internal mutation',
+      'cancelPlan public mutation',
+      'claimDependentAuthoring internal mutation',
+      'claimForBaseline internal mutation',
+      'claimLandedTicketWrites internal mutation',
+      'claimLoopStep internal mutation',
+      'closeDecisionThread internal mutation',
+      'countOpenForAgent public query',
+      'countOpenForAgentInternal internal query',
+      'decidePlan internal mutation',
+      'digestCandidates internal query',
+      'earlierPlan public query',
+      'executionRunIds internal query',
+      'findExistingClaim public query',
+      'findExistingClaimInternal internal query',
+      'finishPlanGroundingRead internal mutation',
+      'get public query',
+      'getInternal internal query',
+      'itemsHeldElsewhere internal query',
+      'latestListing public query',
+      'listedSnapshot internal query',
+      'listForAgent public query',
+      'needsYou public query',
+      'needsYouForAgent public query',
+      'noticeUnreadableReply internal mutation',
+      'openDecisions internal query',
+      'planGroundingReads internal query',
+      'prepareDecisionBatch internal mutation',
+      'prepareDecisionNotice internal mutation',
+      'prepareDecisionRequest internal mutation',
+      'prepareDependentPhase internal mutation',
+      'prepareManagerDigest internal mutation',
+      'prepareManagerNote internal mutation',
+      'prepareManagerReplyNotice internal mutation',
+      'prepareReplacedEdit internal mutation',
+      'prepareRequestClose internal mutation',
+      'readmitSatisfiedDeferrals internal mutation',
+      'recordDecisionNotice internal mutation',
+      'recordDecisionPoll internal mutation',
+      'recordDecisionRequest internal mutation',
+      'recordManagerDigest internal mutation',
+      'recordManagerNote internal mutation',
+      'recordManagerReplyNotice internal mutation',
+      'recordReplacedEdit internal mutation',
+      'recordRequestClose internal mutation',
+      'recordScopeAdmission internal mutation',
+      'recordScopeJudgementUnavailable internal mutation',
+      'recoverDependentAuthoring internal mutation',
+      'recoverInterruptedApply internal mutation',
+      'recoverUndeliveredDecisionRequest internal mutation',
+      'recoverUnproposedSkill internal mutation',
+      'recoverUnsentManagerNote internal mutation',
+      'reevaluatePending internal mutation',
+      'rejectActions public mutation',
+      'resendDecisionRequest public mutation',
+      'resolveChannelDecision internal mutation',
+      'resumeExecution internal mutation',
+      'resumeStalledSteps internal mutation',
+      'seedCharterDerived internal mutation',
+      'seedItem internal mutation',
+      'setAwaitingApproval internal mutation',
+      'setProposedSkill internal mutation',
+      'setVerdict internal mutation',
+      'stopUnproposedSkill internal mutation',
+      'takeWriteTargetClaims internal mutation',
+      'transportAuthority internal query',
+      'withdrawListedItem internal mutation',
+      'writeClaimHolder internal query',
+    ]);
   });
 });

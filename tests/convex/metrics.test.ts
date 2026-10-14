@@ -13,6 +13,8 @@ import type { OwnerMetrics } from '../../src/metrics/types';
 import { RETRIEVAL_RECALL } from '../../src/metrics/retrieval-recall';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import * as metricsModule from '../../convex/metrics';
+import { registeredIn } from './registered-functions';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
 import {
@@ -3081,5 +3083,19 @@ describe('today in the employee’s zone (16-F)', (): void => {
     // The day before it has a day after it, and is read as any other.
     const lastCounted = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-30' });
     expect(lastCounted.today?.day).toBe('9999-12-30');
+  });
+});
+
+describe('the functions convex/metrics.ts registers', (): void => {
+  // The move of the company's pooling into `convex/companyFigures.ts` (wave 18, 18-s; S-1) moves
+  // no registered function: each `api.metrics.*` and `internal.metrics.*` path is a string the
+  // app, the command and the paged read hold. The list as `v0.21.0` registered it.
+  it('are the ones it registered at v0.21.0, each of the same kind and visibility', (): void => {
+    expect(registeredIn(metricsModule)).toEqual([
+      'forAgent public query',
+      'forOwner public query',
+      'forOwnerByPages public action',
+      'ownerFiguresPage internal query',
+    ]);
   });
 });
