@@ -297,6 +297,13 @@ describe('the roster read by pages (wave 17, 17-F; RM33 (a))', (): void => {
   });
 });
 
+/** The quarter hour a viewer's clock, written as a date, asks the roster at. */
+function stepOf(viewer: string): number {
+  const at = rosterClock(Date.parse(viewer));
+  if (at === undefined) throw new Error(`no step for ${viewer}`);
+  return at;
+}
+
 describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void => {
   it('turns to the next day past the employee’s midnight while the backend’s clock stands still', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -306,7 +313,7 @@ describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void =
     await employee(harness, 'owner', 'Priya', 'Asia/Singapore');
     await employee(harness, 'owner', 'Mateo', 'America/Sao_Paulo');
     const todayAt = async (viewer: string): Promise<Record<string, string>> => {
-      const { rows } = await everyRosterPage(harness, 'owner', rosterClock(Date.parse(viewer)));
+      const { rows } = await everyRosterPage(harness, 'owner', stepOf(viewer));
       return Object.fromEntries(rows.map((row) => [row.name, row.today]));
     };
 
@@ -333,7 +340,7 @@ describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void =
       (
         await caller.query(api.roster.page, {
           paginationOpts: { numItems: 20, cursor: null },
-          at: rosterClock(Date.parse(viewer)),
+          at: stepOf(viewer),
         })
       ).page[0]?.landedThisMonth;
 

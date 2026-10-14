@@ -19,13 +19,15 @@ const ROSTER_PAGE = 20;
  * quarter hour turning, which the roster's day follows: W16-R32) keeps the rows it had until the
  * new ones are whole, so the page never empties under the reader.
  *
- * @param now - The page's clock.
+ * @param now - The page's clock; at one that is no finite number nothing is asked.
  * @returns Every employee, newest first, or undefined until the first whole read.
  */
 export function useRoster(now: number): readonly RosterRow[] | undefined {
+  const at = rosterClock(now);
+  // A clock that is no finite number asks nothing, and the last whole read stands (W17-R28).
   const { results, status, loadMore } = usePaginatedQuery(
     api.roster.page,
-    { at: rosterClock(now) },
+    at === undefined ? 'skip' : { at },
     { initialNumItems: ROSTER_PAGE },
   );
   // The last whole read, kept as state derived while rendering (the paginated read keeps its

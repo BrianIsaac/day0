@@ -15,4 +15,10 @@ describe('the clock the roster is asked at', (): void => {
     expect(rosterClock(0)).toBe(0);
     expect(rosterClock(ROSTER_CLOCK_STEP_MS + 1)).toBe(ROSTER_CLOCK_STEP_MS);
   });
+
+  it('is refused for a non-finite clock before the call, which the backend would refuse and the paginated read rethrow (W17-R28)', (): void => {
+    expect(rosterClock(Number.NaN)).toBeUndefined();
+    expect(rosterClock(Number.POSITIVE_INFINITY)).toBeUndefined();
+    expect(rosterClock(Number.NEGATIVE_INFINITY)).toBeUndefined();
+  });
 });
