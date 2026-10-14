@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQueries } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { api } from '@convex/_generated/api';
-import { inboxOfPages } from '@/work/needs-you-pages';
+import { inboxOfPages } from '@/metrics/needs-you-pages';
 import type { NeedsYouInbox } from './types';
 
 /** One page of the inbox as `work.needsYou` answers it. */

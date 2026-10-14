@@ -8,10 +8,11 @@
 /** The most entries the inbox lists; its `total` says how many there are in all. */
 export const NEEDS_YOU_LIMIT = 50;
 
-/** What the inbox needs of an entry to order it. */
+/** What the inbox needs of an entry to order it, and whether it is a handover (`transfer`). */
 export interface WaitingEntry {
   readonly key: string;
   readonly waitingSince: number;
+  readonly kind?: string;
 }
 
 /** How many entries wait on one employee, every one counted. */
@@ -37,10 +38,11 @@ export function byLongestWait(left: WaitingEntry, right: WaitingEntry): number {
 }
 
 /**
- * The pages of the inbox put together: the longest waits of every page, at most
- * {@link NEEDS_YOU_LIMIT}, the totals summed and every employee's count. Each page holds its own
- * employees' longest waits up to the limit, and the first holds every handover, so the longest
- * waits of all are among them. An employee two pages both answered (one deployed between the
+ * The pages of the inbox put together: every handover, then the longest waits of every page to
+ * {@link NEEDS_YOU_LIMIT} in all, in one order, the totals summed and every employee's count, as
+ * one read of the inbox answered before 0.22.0 (no employee's page lists a handover, so none is
+ * cut, however recent). Each page holds its own employees' longest waits up to the limit, and the
+ * first holds every handover, so the longest waits of all are among them. An employee two pages both answered (one deployed between the
  * reads moves the rest along) is counted once, as the later page has it.
  *
  * @param pages - Every page, in the order they were read.
@@ -51,18 +53,24 @@ export function inboxOfPages<Entry extends WaitingEntry, AgentId extends string>
 ): NeedsYouInboxOf<Entry, AgentId> {
   const waiting = new Map<AgentId, number>();
   const entries = new Map<string, Entry>();
-  let handovers = 0;
+  let handed = 0;
   for (const page of pages) {
     const counted = page.waitingByEmployee.reduce((sum, employee) => sum + employee.waiting, 0);
     // What a page counts beyond its employees' waits is the handovers, which no employee holds.
-    handovers += page.total - counted;
+    handed += page.total - counted;
     for (const employee of page.waitingByEmployee) waiting.set(employee.agentId, employee.waiting);
     for (const entry of page.entries) entries.set(entry.key, entry);
   }
   const waitingByEmployee = [...waiting].map(([agentId, count]) => ({ agentId, waiting: count }));
+  const all = [...entries.values()];
+  const handovers = all.filter((entry) => entry.kind === 'transfer');
+  const waits = all.filter((entry) => entry.kind !== 'transfer').sort(byLongestWait);
   return {
-    entries: [...entries.values()].sort(byLongestWait).slice(0, NEEDS_YOU_LIMIT),
-    total: handovers + waitingByEmployee.reduce((sum, employee) => sum + employee.waiting, 0),
+    entries: [
+      ...handovers,
+      ...waits.slice(0, Math.max(0, NEEDS_YOU_LIMIT - handovers.length)),
+    ].sort(byLongestWait),
+    total: handed + waitingByEmployee.reduce((sum, employee) => sum + employee.waiting, 0),
     waitingByEmployee,
   };
 }

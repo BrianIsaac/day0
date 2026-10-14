@@ -9,7 +9,7 @@ import { isEvaluationAgent } from './metrics';
 import { incomingTransfersOf } from './managerTransfers';
 import { OPEN_WORK_STATES, PARKED_WORK_STATES, ROW_BYTES_AT_MOST } from './workLoop';
 import { slackMentionIds, type ListedWorkItem } from '../src/work/item-display';
-import { NEEDS_YOU_LIMIT } from '../src/work/needs-you-pages';
+import { NEEDS_YOU_LIMIT } from '../src/metrics/needs-you-pages';
 import {
   longestWaitFirst,
   needsYouEntryValidator,

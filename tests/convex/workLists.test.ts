@@ -9,7 +9,7 @@ import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as workListsModule from '../../convex/workLists';
 import { longestWaitFirst } from '../../convex/needsYou';
-import { byLongestWait, inboxOfPages } from '../../src/work/needs-you-pages';
+import { byLongestWait, inboxOfPages } from '../../src/metrics/needs-you-pages';
 import { allConvexModules } from './all-modules';
 import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
