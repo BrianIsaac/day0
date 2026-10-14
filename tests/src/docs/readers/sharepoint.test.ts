@@ -1065,6 +1065,60 @@ describe("the SharePoint reader's token across a sync's batches (wave 18, 18-X; 
     expect(library.counts().token).toBe(1);
   });
 
+  it('hands back an expired token where a renewal names no lifetime, so the sync drops the refused one (the second pass)', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) =>
+      request.method === 'POST'
+        ? json(200, { token_type: 'Bearer', access_token: 'fixture-graph-token' })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED);
+    expect(batch.pages.length).toBeGreaterThan(0);
+    // Past the margin already: the sync seals none, and the next batch asks afresh.
+    expect(batch.token).toEqual({ token: 'fixture-graph-token', expiresAt: T0 });
+  });
+
+  it('asks for no new token when Graph refuses one the batch asked for itself, and says what IT grants (the second pass)', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant((request) =>
+      request.method === 'GET' &&
+      request.url.pathname === '/v1.0/sites/acme.sharepoint.com:/sites/Runbooks'
+        ? json(401, fixtureJsonWithout('sharepoint', 'unauthorised.json'))
+        : undefined,
+    );
+    await expect(reader.listPageBatch(site, SECRET, undefined, 25)).rejects.toThrow(
+      'Microsoft Graph refused the app this call (HTTP 401, InvalidAuthenticationToken)',
+    );
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
+  it('says the sign-in’s own refusal, with no token in it, when asking again for a refused one fails (the second pass)', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) =>
+      request.method === 'POST'
+        ? json(401, fixtureJsonWithout('sharepoint', 'token-refused.json'))
+        : undefined,
+    );
+    const refusal: unknown = await reader
+      .listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED)
+      .catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    const message = (refusal as Error).message;
+    expect(message).toContain('Microsoft refused the app registration this source reads as');
+    expect(message).not.toContain(REVOKED.token);
+    expect(message).not.toContain('fixture-graph-token');
+  });
+
+  it('asks for no new token when the download address Graph names refuses a file: the refusal is that file’s (the second pass)', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant((request) =>
+      request.url.host === 'acme.sharepoint.com' ? new Response('', { status: 401 }) : undefined,
+    );
+    const handed = { token: 'fixture-graph-token', expiresAt: T0 + 3_000_000 };
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, handed);
+    expect(batch.unread.map((page) => page.reason)).toContain(
+      'acme.sharepoint.com answered HTTP 401 for "close-the-quarter.md"; re-sync to try again.',
+    );
+    expect(requests.filter((request) => request.method === 'POST')).toEqual([]);
+    expect(batch.token).toBeUndefined();
+  });
+
   it('never puts the token it hands back, or the one it was handed, in a log line or a cursor', async (): Promise<void> => {
     const library = libraryFake('sharepoint', { pages: 60, sitePages: 10 });
     const reader = readerOnLibrary(library);

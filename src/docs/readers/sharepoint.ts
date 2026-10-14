@@ -3,17 +3,17 @@
  * through Microsoft Graph as Markdown.
  *
  * It reads as the app registration IT made, by client credentials (app-only), in the cloud the
- * site's host names, signing in once a sync: each batch hands its token back beside its cursor
- * and the next reads with it while it serves (X-1; wave 18, 18-X). The library is walked by `driveItem` delta from its start: each
- * `@odata.nextLink` is followed until the `@odata.deltaLink` comes, which ends the walk. The
- * delta link is not kept: a sync lists every page each time, since a page two walks miss is
- * pruned, and the store has no place for a reader's link. A link Graph no longer honours is
- * answered `410 Gone`, and the sync then reads the library again from its start. A Markdown file
- * is read as it is, and a Word document converted where the reader runs (`word.ts`, RM9 (b1)),
- * each through the pre-authenticated address Graph redirects to, which gets no token and is held
- * to the page rules (`page-address.ts`); a file with the `deleted` facet is archived. Then the
- * site's pages (`sitePage`) are listed and each read with its `canvasLayout`: the text web parts'
- * HTML, converted; a page checked out or never published is a draft.
+ * site's host names, signing in once a sync: each batch hands its token back beside its cursor and
+ * the next reads with it while it serves (X-1; wave 18, 18-X). The library is walked by `driveItem`
+ * delta from its start: each `@odata.nextLink` is followed until the `@odata.deltaLink` comes,
+ * which ends the walk. The delta link is not kept: a sync lists every page each time, since a page
+ * two walks miss is pruned, and the store has no place for a reader's link. A link Graph no longer
+ * honours is answered `410 Gone`, and the sync then reads the library again from its start. A
+ * Markdown file is read as it is, and a Word document converted where the reader runs (`word.ts`,
+ * RM9 (b1)), each through the pre-authenticated address Graph redirects to, which gets no token and
+ * is held to the page rules (`page-address.ts`); a file with the `deleted` facet is archived. Then
+ * the site's pages (`sitePage`) are listed and each read with its `canvasLayout`: the text web
+ * parts' HTML, converted; a page checked out or never published is a draft.
  *
  * Both listings give each entry's revision, so a page stored at the revision its listing gives,
  * under the title and the address its listing gives, is kept with no body asked for (the reader
@@ -345,6 +345,8 @@ export class SharePointReader implements DocumentationReader {
     app: SharePointApp,
   ): Promise<IssuedToken> {
     const cloud = MICROSOFT_CLOUDS[locator.cloud];
+    // The lifetime runs from the request, so the answer's own latency is not counted in it.
+    const asked = this.now();
     const answer = await http.send(
       new URL(`https://${cloud.login}/${encodeURIComponent(app.tenantId)}/oauth2/v2.0/token`),
       {
@@ -361,7 +363,7 @@ export class SharePointReader implements DocumentationReader {
     const body = providerBody('Microsoft', answer);
     const token = textField(body, 'access_token');
     if (answer.status === 200 && token !== undefined) {
-      return issuedToken(token, field(body, 'expires_in'), this.now());
+      return issuedToken(token, field(body, 'expires_in'), asked);
     }
     // Only the error's code and its AADSTS number are said: the description repeats the app's ID.
     const code = textField(body, 'error') ?? `HTTP ${answer.status}`;

@@ -601,6 +601,28 @@ describe("the Google Drive reader's token across a sync's batches (wave 18, 18-X
     expect(library.counts().token).toBe(1);
   });
 
+  it('hands back an expired token where a renewal names no lifetime, so the sync drops the refused one (the second pass)', async (): Promise<void> => {
+    const { reader } = readerOnDrive((request) =>
+      request.method === 'POST'
+        ? json(200, { token_type: 'Bearer', access_token: 'fixture-google-token' })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(folder, SECRET, undefined, 25, undefined, REVOKED);
+    expect(batch.pages.length).toBeGreaterThan(0);
+    // Past the margin already: the sync seals none, and the next batch asks afresh.
+    expect(batch.token).toEqual({ token: 'fixture-google-token', expiresAt: T0 });
+  });
+
+  it('asks for no new token when Google refuses one the batch asked for itself (the second pass)', async (): Promise<void> => {
+    const { reader, requests } = readerOnDrive((request) =>
+      request.method === 'GET' && request.url.pathname === `/drive/v3/files/${ROOT}`
+        ? json(401, fixtureJsonWithout('drive', 'unauthorised.json'))
+        : undefined,
+    );
+    await expect(reader.listPageBatch(folder, SECRET, undefined, 25)).rejects.toThrow();
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
   it('never puts the token it hands back, or the one it was handed, in a log line or a cursor', async (): Promise<void> => {
     const { reader } = driveLibrary({ pages: 60 });
     const lines: string[] = [];

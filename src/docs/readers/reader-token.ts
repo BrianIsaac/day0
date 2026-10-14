@@ -56,6 +56,7 @@ export class BatchToken {
   private current: string;
   private issued: IssuedToken | undefined;
   private wasHanded: boolean;
+  private renewed = false;
   private readonly options: BatchTokenOptions;
 
   private constructor(options: BatchTokenOptions, issued: IssuedToken | undefined) {
@@ -100,18 +101,21 @@ export class BatchToken {
     this.issued = issued;
     this.current = issued.token;
     this.wasHanded = false;
+    this.renewed = true;
     return true;
   }
 
   /**
    * The token to hand back beside the batch's cursor: the one this batch asked for, where its
    * provider named when it lapses. None where the batch read with the handed one, which the sync
-   * keeps, or the provider named no lifetime, so the next batch asks again.
+   * keeps, or the provider named no lifetime, so the next batch asks again. A renewal with no
+   * lifetime hands its token back as lapsing now: none would leave the sync the refused token,
+   * and each later batch would be refused it once more before asking again.
    */
   handBack(): ReaderToken | undefined {
     const issued = this.issued;
-    return issued?.expiresAt === undefined
-      ? undefined
-      : { token: issued.token, expiresAt: issued.expiresAt };
+    if (issued === undefined) return undefined;
+    if (issued.expiresAt !== undefined) return { token: issued.token, expiresAt: issued.expiresAt };
+    return this.renewed ? { token: issued.token, expiresAt: this.options.now() } : undefined;
   }
 }

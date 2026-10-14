@@ -3,13 +3,13 @@
  * Drive API as Markdown (beside the MCP path, which reads through a server the customer runs).
  *
  * It reads as a service account: an assertion signed with the account's key is exchanged for a
- * read-only token (no domain-wide delegation), and the account sees what the folder's owner
- * shared with its address. The token is asked for once a sync: each batch hands it back beside its
- * cursor and the next reads with it while it serves (X-1; wave 18, 18-X). Each folder is listed with `files.list`, `nextPageToken` followed to
- * the list's end, and the folders found are read after it. A Google Doc is exported as
- * `text/markdown`, which Google bounds at 10 MB: a larger one is named unread. A Word document
- * is downloaded and converted where the reader runs (`word.ts`, RM9 (b1)). The file's `version`
- * is its revision, and a file in the bin is read and marked archived.
+ * read-only token (no domain-wide delegation), and the account sees what the folder's owner shared
+ * with its address. The token is asked for once a sync: each batch hands it back beside its cursor
+ * and the next reads with it while it serves (X-1; wave 18, 18-X). Each folder is listed with
+ * `files.list`, `nextPageToken` followed to the list's end, and the folders found are read after
+ * it. A Google Doc is exported as `text/markdown`, which Google bounds at 10 MB: a larger one is
+ * named unread. A Word document is downloaded and converted where the reader runs (`word.ts`, RM9
+ * (b1)). The file's `version` is its revision, and a file in the bin is read and marked archived.
  *
  * The listing gives each file's `version`, so a file stored at the version, the name and the
  * address its listing gives is kept with no export or download asked for (the reader contract by
@@ -248,7 +248,9 @@ export class GoogleDriveReader implements DocumentationReader {
     http: ProviderHttp,
     account: DriveServiceAccount,
   ): Promise<IssuedToken> {
-    const issued = Math.floor(this.now() / 1_000);
+    // The lifetime runs from the request, so the answer's own latency is not counted in it.
+    const asked = this.now();
+    const issued = Math.floor(asked / 1_000);
     const unsigned = [
       base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })),
       base64url(
@@ -282,7 +284,7 @@ export class GoogleDriveReader implements DocumentationReader {
     const body = providerBody('Google', answer);
     const token = textField(body, 'access_token');
     if (answer.status === 200 && token !== undefined) {
-      return issuedToken(token, field(body, 'expires_in'), this.now());
+      return issuedToken(token, field(body, 'expires_in'), asked);
     }
     throw new Error(
       `Google refused the service account key this source uses (${textField(body, 'error') ?? `HTTP ${answer.status}`}): ` +

@@ -82,6 +82,22 @@ describe('BatchToken', (): void => {
     expect(sign.asked()).toBe(1);
   });
 
+  it('hands back an expired token where a renewal names no lifetime, so the refused one is not kept (the second pass)', async (): Promise<void> => {
+    const logged = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
+    try {
+      const token = await opened(
+        { token: 'handed', expiresAt: T0 + 3_600_000 },
+        provider({ token: 'new' }),
+      );
+      await expect(token.renew()).resolves.toBe(true);
+      const handBack = token.handBack();
+      expect(handBack).toEqual({ token: 'new', expiresAt: T0 });
+      expect(handBack !== undefined && readerTokenServes(handBack, T0)).toBe(false);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   it('renews a handed token the provider refused once, and never one it asked for itself', async (): Promise<void> => {
     const logged = vi.spyOn(console, 'log').mockImplementation((): void => undefined);
     try {
