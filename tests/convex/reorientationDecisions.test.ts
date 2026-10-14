@@ -2031,3 +2031,87 @@ describe('the narrow redraft: one Approve for everyone at fifty-one (D-2 (b), RM
     expect(approvedByDay0).toEqual([]);
   });
 });
+
+describe('the mark’s clear: a plan drafted again is decided as any other (RM43 (a))', (): void => {
+  /** A row of an employee whose switch is on, in a state, held through a change at 5. */
+  async function marked(
+    harness: Harness,
+    state: Doc<'workItems'>['state'],
+    fields: Partial<Doc<'workItems'>> = {},
+  ): Promise<{ agentId: Id<'agents'>; row: Doc<'workItems'> }> {
+    const agentId = await seedEmployee(harness, { autonomousActions: true });
+    const workItemId = await seedWork(harness, agentId, state, {
+      plan: { summary: 'Reply.', steps: ['Reply'] },
+      heldThroughChangeAt: 5,
+      ...fields,
+    });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    if (row === null) throw new Error('no row');
+    return { agentId, row };
+  }
+
+  /** The row's mark, as stored. */
+  async function markOf(harness: Harness, workItemId: Id<'workItems'>): Promise<unknown> {
+    return (await harness.run(async (ctx) => await ctx.db.get(workItemId)))?.heldThroughChangeAt;
+  }
+
+  it('clears the mark where a card’s Approve sends the plan back to drafting, and Day0 approves the new plan under the switch', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, row } = await marked(harness, 'plan-pending', {
+      plan: { summary: 'Reply in the thread.', steps: ['Reply in the thread'] },
+    });
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'charter-change',
+        changes: [
+          { kind: 'edit-clause', field: 'willDo', index: 0, text: 'Reply in the ask’s thread' },
+        ],
+        rationale: 'Every ask.',
+      },
+      { affected: { workItems: [row._id] } },
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    expect((await harness.run(async (ctx) => await ctx.db.get(row._id)))?.state).toBe('claimed');
+    expect(await markOf(harness, row._id)).toBeUndefined();
+    await harness.mutation(internal.planApproval.setPlan, {
+      workItemId: row._id,
+      plan: { summary: 'Reply to the ask.', steps: ['Reply'] },
+    });
+    await expect(
+      harness.mutation(internal.work.decidePlan, { workItemId: row._id }),
+    ).resolves.toEqual({ approved: true });
+  });
+
+  it('clears the mark where an approved set is parked on a connection, and where an approved plan is parked for a skill', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { parkOnConnection } = await import('../../convex/workApply');
+    const { row: waiting } = await marked(harness, 'actions-pending');
+    await harness.run(async (ctx) => {
+      await parkOnConnection(ctx, waiting, 'linear');
+    });
+    expect(await markOf(harness, waiting._id)).toBeUndefined();
+    const { row: unskilled } = await marked(harness, 'plan-approved');
+    await expect(
+      harness.mutation(internal.skillControls.parkForMissingSkill, {
+        workItemId: unskilled._id,
+        name: 'kanban-comment-and-close',
+        reason: 'its skill is not callable',
+        rationale: 'No callable skill.',
+        shape: { surfaceClass: 'kanban', operation: 'comment-and-close' },
+      }),
+    ).resolves.toMatchObject({ parked: true });
+    expect(await markOf(harness, unskilled._id)).toBeUndefined();
+  });
+
+  it('clears the mark where Retry drafts a turned-down plan again', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { row } = await marked(harness, 'cancelled');
+    await harness.withIdentity(OWNER).mutation(api.workRuns.retryFailed, { workItemId: row._id });
+    expect((await harness.run(async (ctx) => await ctx.db.get(row._id)))?.plan).toBeUndefined();
+    expect(await markOf(harness, row._id)).toBeUndefined();
+  });
+});

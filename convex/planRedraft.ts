@@ -70,6 +70,7 @@ export async function sendBackToDrafting(
     decision: undefined,
     managerAnswers: undefined,
     draftClaimedAt: undefined,
+    heldThroughChangeAt: undefined,
   });
   await appendEvent(ctx, {
     agentId: row.agentId,
