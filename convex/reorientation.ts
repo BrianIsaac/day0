@@ -39,6 +39,7 @@ import {
   closedByHandSummary,
   decidedByHandSummary,
   conflictNoticeText,
+  conflictReturnedNoticeText,
   conflictQuestionText,
   type NamedPageWords,
 } from '../src/agent/reorientation-words';
@@ -938,7 +939,16 @@ const SURFACES_NAMED_READ = 100;
  */
 export async function askConflictQuestion(
   ctx: MutationCtx,
-  ask: { readonly row: Doc<'workItems'>; readonly conflict: ConflictAsked; readonly now: number },
+  ask: {
+    readonly row: Doc<'workItems'>;
+    readonly conflict: ConflictAsked;
+    readonly now: number;
+    /**
+     * Which of the two pages came back, where the question is asked again because a page is
+     * current again: the thread's notice says that, not that the manager confirmed (W17-R13).
+     */
+    readonly returned?: 0 | 1;
+  },
 ): Promise<Id<'managerQuestions'> | null> {
   const { row, conflict } = ask;
   const asked = await ctx.db
@@ -986,7 +996,16 @@ export async function askConflictQuestion(
   await queueQuestionNotice(ctx, {
     row,
     questionId,
-    text: conflictNoticeText(agent.name, conflict.heading, conflict.pages, holds),
+    text:
+      ask.returned === undefined
+        ? conflictNoticeText(agent.name, conflict.heading, conflict.pages, holds)
+        : conflictReturnedNoticeText(
+            agent.name,
+            conflict.heading,
+            conflict.pages,
+            ask.returned,
+            holds,
+          ),
     now: ask.now,
   });
   return questionId;

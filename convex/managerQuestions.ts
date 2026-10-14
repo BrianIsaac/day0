@@ -20,11 +20,15 @@ import {
   conflictsLeanedOn,
   conflictsOnPlanBlocks,
   planLeansOnConflict,
+  pageRowBytes,
   standingConflictOf,
+  standingWithPages,
+  type StandingConflict,
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
 import type { RequestQuestion } from '../src/work/manager-channel';
 import { slackEscaped } from '../src/surfaces/slack-markup';
+import { redactTokenShapes } from '../src/surfaces/redact';
 import { providerTsToMs } from '../src/work/provider-ts';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
@@ -45,7 +49,7 @@ import {
   type ManagerQuestionCloseReason,
 } from '../src/agent/manager-questions';
 import { heldSurfaceNames } from './reorientation';
-import { closeQuestionsOfRelation } from './questionCloses';
+import { closeQuestionsOfRelation, questionsOfItem } from './questionCloses';
 import { appendEvent } from './eventLog';
 
 /**
@@ -217,6 +221,9 @@ export async function answerQuestionInTransaction(
   return { amendedCharterId };
 }
 
+/** The questions one read of the plan's approval screen shows: a handful in practice. */
+const ITEM_QUESTIONS_SHOWN = 100;
+
 /** The questions asked at this work item's plan, those still open first. */
 export const forWorkItem = query({
   args: { workItemId: v.id('workItems') },
@@ -225,7 +232,7 @@ export const forWorkItem = query({
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_work_item', (q) => q.eq('workItemId', args.workItemId))
-      .take(ITEM_QUESTIONS_READ);
+      .take(ITEM_QUESTIONS_SHOWN);
     return rows.sort((a, b) => Number(!isOpenQuestion(a)) - Number(!isOpenQuestion(b)));
   },
 });
@@ -357,23 +364,12 @@ export const answerConflict = mutation({
   },
 });
 
-/**
- * The questions one item's reads take (standard 10.4): an item asks one question per open charter
- * question its plan touched and one per conflict under it, a handful in practice.
- */
-const ITEM_QUESTIONS_READ = 100;
-
 /** The conflict questions one item's plans raised that are still open, oldest first. */
 export async function openConflictQuestions(
   ctx: Pick<QueryCtx, 'db'>,
   workItemId: Id<'workItems'>,
 ): Promise<Doc<'managerQuestions'>[]> {
-  return (
-    await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-      .take(ITEM_QUESTIONS_READ)
-  ).filter(
+  return (await questionsOfItem(ctx, workItemId)).filter(
     (question) =>
       question.type === 'retrieval' &&
       question.relationId !== undefined &&
@@ -393,11 +389,13 @@ export interface QuestionRequest {
 }
 
 /**
- * The items one read of the question requests looks up, each row read whole for its request: a
- * row carries its plan and its output, so the bound is on rows and not on questions (17-C's
- * second pass; the cards read as many plans whole, `HELD_PLANS_READ`).
+ * The most bytes one read of the question requests draws, counted at three bytes a character of
+ * each row's JSON: every item looked up is read whole for its request (a row carries its plan and
+ * its output), and each standing conflict's two page rows once a relation. The bound is on bytes
+ * and not on items (W17-R13: twenty items without a request on the DM once left a channel's own
+ * requests unread), so an item found with no request costs its row and nothing of `most`.
  */
-const QUESTION_ITEMS_READ = 20;
+const QUESTION_REQUEST_BYTES = 8 * 1024 * 1024;
 
 /** The remembered requests of one item a read looks through for its plan's: one a park, few. */
 const ITEM_REQUESTS_READ = 20;
@@ -409,11 +407,12 @@ const ITEM_REQUESTS_READ = 20;
  */
 async function planRequestOf(
   ctx: QueryCtx,
-  workItemId: Id<'workItems'>,
+  row: Doc<'workItems'>,
   surface: Pick<Doc<'surfaces'>, 'slug'>,
   channel: string,
 ): Promise<QuestionRequest | undefined> {
-  const decision = (await ctx.db.get(workItemId))?.decision;
+  const workItemId = row._id;
+  const decision = row.decision;
   if (
     decision?.kind === 'plan' &&
     decision.surfaceSlug === surface.slug &&
@@ -442,7 +441,8 @@ async function planRequestOf(
  * first, each item once (17-C): the question holds steps of the plan until it is answered, so the
  * manager may answer long after the request was decided, by its code at the top of the DM or in
  * its thread. A question whose conflict no longer stands waits for nothing. An item's row is read
- * once whatever it was asked, and no more than {@link QUESTION_ITEMS_READ} items are looked up.
+ * once whatever it was asked; an item found with no request on the DM is passed over and counts
+ * nothing of `most` (W17-R13), the read being bound by {@link QUESTION_REQUEST_BYTES}.
  *
  * @param ctx - The poll's query context.
  * @param surface - The manager channel's card.
@@ -462,22 +462,30 @@ export async function questionRequestsOn(
     .take(QUESTIONS_OWED_READ);
   const requests = new Map<Id<'workItems'>, QuestionRequest>();
   const looked = new Map<Id<'workItems'>, QuestionRequest | undefined>();
+  // A relation's standing is read once, whatever number of items asked about it.
+  const standing = new Map<Id<'docRelations'>, boolean>();
+  let bytes = 0;
   for (const question of questions) {
-    if (requests.size >= most) break;
-    if (question.type !== 'retrieval' || question.relationId === undefined) continue;
+    if (requests.size >= most || bytes > QUESTION_REQUEST_BYTES) break;
+    const relationId = question.relationId;
+    if (question.type !== 'retrieval' || relationId === undefined) continue;
     if (!isOpenQuestion(question) || requests.has(question.workItemId)) continue;
     if (!looked.has(question.workItemId)) {
-      if (looked.size >= QUESTION_ITEMS_READ) continue;
+      const row = await ctx.db.get(question.workItemId);
+      bytes += row === null ? 0 : 3 * JSON.stringify(row).length;
       looked.set(
         question.workItemId,
-        await planRequestOf(ctx, question.workItemId, surface, channel),
+        row === null ? undefined : await planRequestOf(ctx, row, surface, channel),
       );
     }
     const request = looked.get(question.workItemId);
     if (request === undefined) continue;
-    if ((await standingConflictOf(ctx, await ctx.db.get(question.relationId))) !== undefined) {
-      requests.set(question.workItemId, request);
+    if (!standing.has(relationId)) {
+      const found = await standingWithPages(ctx, await ctx.db.get(relationId));
+      if (found !== undefined) bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
+      standing.set(relationId, found !== undefined);
     }
+    if (standing.get(relationId) === true) requests.set(question.workItemId, request);
   }
   return [...requests.values()];
 }
@@ -493,6 +501,8 @@ export interface NumberedConflictQuestion {
   readonly question: Doc<'managerQuestions'>;
   /** Whether it still waits for its answer and its conflict still stands. */
   readonly standing: boolean;
+  /** The conflict as it stands, its two pages named, while it is standing. */
+  readonly conflict?: StandingConflict;
 }
 
 /**
@@ -504,22 +514,21 @@ export async function numberedConflictQuestions(
   ctx: QueryCtx,
   workItemId: Id<'workItems'>,
 ): Promise<NumberedConflictQuestion[]> {
-  const asked = (
-    await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-      .take(ITEM_QUESTIONS_READ)
-  ).filter((question) => question.type === 'retrieval' && question.relationId !== undefined);
+  const asked = (await questionsOfItem(ctx, workItemId)).filter(
+    (question) => question.type === 'retrieval' && question.relationId !== undefined,
+  );
   const numbered: NumberedConflictQuestion[] = [];
   for (const [index, question] of asked.entries()) {
     const relation =
       isOpenQuestion(question) && question.relationId !== undefined
         ? await ctx.db.get(question.relationId)
         : null;
+    const conflict = relation === null ? undefined : await standingConflictOf(ctx, relation);
     numbered.push({
       number: index + 1,
       question,
-      standing: relation !== null && (await standingConflictOf(ctx, relation)) !== undefined,
+      standing: conflict !== undefined,
+      ...(conflict === undefined ? {} : { conflict }),
     });
   }
   return numbered;
@@ -579,7 +588,9 @@ export async function questionNoticeOwed(
   const deliveredAt = providerTsToMs(decision.ts);
   if (
     (deliveredAt === null || question._creationTime <= deliveredAt + QUESTION_CARRIED_SKEW_MS) &&
-    decision.requestText?.includes(slackEscaped(question.question)) === true
+    // The request's text is stored scrubbed of token shapes, so the question is looked for in the
+    // same form (W17-R13: a question holding a token-shaped string was posted a second time).
+    decision.requestText?.includes(redactTokenShapes(slackEscaped(question.question))) === true
   ) {
     return { state: 'drop' };
   }
@@ -722,7 +733,7 @@ export interface ConflictQuestionView {
   readonly settled?: { readonly answer?: string; readonly closed?: ManagerQuestionCloseReason };
 }
 
-/** The conflict questions one read of an employee's takes: one a plan and conflict, few open. */
+/** The open conflict questions one read of an employee's draws: one a plan and conflict, few open. */
 const OPEN_CONFLICTS_READ = 50;
 
 /**
@@ -732,72 +743,119 @@ const OPEN_CONFLICTS_READ = 50;
 const HELD_PLANS_READ = 20;
 
 /**
- * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards: those
- * still open, each with the two pages its answers name and what Day0 holds for it now, and those
- * among the newest that were answered or closed, which no card draws and a stopped run's words
- * read. Public, guarded by the employee's owner. Reads the newest questions' small rows, the
- * relation and blocks of each open one, and at most `HELD_PLANS_READ` plans whole.
+ * The answered or closed conflict questions one read of an employee's draws before it stops: each
+ * is a small view, but the answer is a reactive query's (the second pass), and a stop that names
+ * one past them reads as past the read.
+ */
+const SETTLED_CONFLICTS_READ = 500;
+
+/** The question rows one page of the read takes, newest first. */
+const QUESTIONS_PAGE = 100;
+
+/** The most question rows one read takes, page by page (W17-R13: it read the newest 200 once). */
+const QUESTION_ROWS_READ = 1_000;
+
+/**
+ * The most bytes one read draws, counted at three bytes a character: the question rows (a charter
+ * question's row carries the plan text it touched) and, for an open conflict's question, the two
+ * page rows its standing reads whole.
+ */
+const QUESTION_READ_BYTES = 8 * 1024 * 1024;
+
+/** An upper bound on the bytes reading a question's row takes. */
+function questionRowBytes(row: Doc<'managerQuestions'>): number {
+  const words = row.context.words.reduce((total, word) => total + word.length, 0);
+  return (
+    3 * (row.question.length + row.context.text.length + words + (row.answer?.text.length ?? 0))
+  );
+}
+
+/**
+ * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards, newest
+ * first: those still open, each with the two pages its answers name and what Day0 holds for it
+ * now, and those answered or closed, which no card draws and a stopped run's words read. Public,
+ * guarded by the employee's owner. Reads the employee's questions page by page (W17-R13) until
+ * {@link OPEN_CONFLICTS_READ} open ones or {@link SETTLED_CONFLICTS_READ} settled ones are drawn, {@link QUESTION_ROWS_READ} rows are read or
+ * {@link QUESTION_READ_BYTES} are drawn, and at most `HELD_PLANS_READ` plans whole. Every
+ * conflict question the read reached is in its answer, so one a stopped run names and the answer
+ * lacks is past the read, which is when its words say so.
  */
 export const conflictsForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ConflictQuestionView[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const rows = await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-      .order('desc')
-      .take(OPEN_CONFLICTS_READ * 4);
     const views: ConflictQuestionView[] = [];
     const plans = new Map<Id<'workItems'>, Doc<'workItems'> | null>();
     let open = 0;
     let settled = 0;
-    for (const row of rows) {
-      const relationId = row.relationId;
-      if (row.type !== 'retrieval' || relationId === undefined) continue;
-      const named = { _id: row._id, workItemId: row.workItemId, relationId };
-      if (!isOpenQuestion(row)) {
-        if (settled >= OPEN_CONFLICTS_READ) continue;
-        settled += 1;
+    let rows = 0;
+    let bytes = 0;
+    let before: number | undefined;
+    for (;;) {
+      const page = await ctx.db
+        .query('managerQuestions')
+        .withIndex('by_agent', (q) => {
+          const own = q.eq('agentId', args.agentId);
+          return before === undefined ? own : own.lt('_creationTime', before);
+        })
+        .order('desc')
+        .take(QUESTIONS_PAGE);
+      for (const row of page) {
+        rows += 1;
+        bytes += questionRowBytes(row);
+        // The row that passes the bound was read, and is not drawn: the read stops before it.
+        if (bytes > QUESTION_READ_BYTES) return views;
+        const relationId = row.relationId;
+        if (row.type !== 'retrieval' || relationId === undefined) continue;
+        const named = { _id: row._id, workItemId: row.workItemId, relationId };
+        if (!isOpenQuestion(row)) {
+          if (settled >= SETTLED_CONFLICTS_READ) return views;
+          settled += 1;
+          views.push({
+            ...named,
+            question: row.question,
+            pages: null,
+            settled:
+              row.answer !== undefined
+                ? { answer: row.answer.text }
+                : { closed: row.closed?.reason ?? 'settled' },
+          });
+          continue;
+        }
+        if (open >= OPEN_CONFLICTS_READ) return views;
+        open += 1;
+        const found = await standingWithPages(ctx, await ctx.db.get(relationId));
+        if (found === undefined) {
+          views.push({ ...named, question: row.question, pages: null });
+          continue;
+        }
+        bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
+        const conflict = citeConflictOf(found.conflict);
+        if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
+          plans.set(row.workItemId, await ctx.db.get(row.workItemId));
+        }
+        const plan = plans.get(row.workItemId);
         views.push({
           ...named,
-          question: row.question,
-          pages: null,
-          settled:
-            row.answer !== undefined
-              ? { answer: row.answer.text }
-              : { closed: row.closed?.reason ?? 'settled' },
+          question:
+            plan === undefined || plan === null
+              ? row.question
+              : conflictQuestionText(
+                  agent.name,
+                  conflict.heading,
+                  conflict.pages,
+                  // An item that is done, or whose plan was turned down, holds nothing (W3k).
+                  plan.state === 'completed' || plan.state === 'cancelled'
+                    ? 'nothing'
+                    : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
+                ),
+          pages: [conflict.pages[0], conflict.pages[1]],
         });
-        continue;
+        // Its pages were read whole: past the bound the rest are past the read.
+        if (bytes > QUESTION_READ_BYTES) return views;
       }
-      if (open >= OPEN_CONFLICTS_READ) continue;
-      open += 1;
-      const standing = await standingConflictOf(ctx, await ctx.db.get(relationId));
-      if (standing === undefined) {
-        views.push({ ...named, question: row.question, pages: null });
-        continue;
-      }
-      const conflict = citeConflictOf(standing);
-      if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
-        plans.set(row.workItemId, await ctx.db.get(row.workItemId));
-      }
-      const plan = plans.get(row.workItemId);
-      views.push({
-        ...named,
-        question:
-          plan === undefined || plan === null
-            ? row.question
-            : conflictQuestionText(
-                agent.name,
-                conflict.heading,
-                conflict.pages,
-                // An item that is done, or whose plan was turned down, holds nothing (W3k).
-                plan.state === 'completed' || plan.state === 'cancelled'
-                  ? 'nothing'
-                  : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
-              ),
-        pages: [conflict.pages[0], conflict.pages[1]],
-      });
+      if (page.length < QUESTIONS_PAGE || rows >= QUESTION_ROWS_READ) return views;
+      before = page[page.length - 1]._creationTime;
     }
-    return views;
   },
 });

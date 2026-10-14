@@ -28,6 +28,8 @@ import {
   authorityOf,
   confirmedConflictsOfPages,
   conflictsUnderPlan,
+  CONFLICT_WALK_LOOKUPS,
+  planReadsWholeMirror,
   decisionsOffered,
   standingConflictOf,
   standingConflictsFrom,
@@ -628,6 +630,14 @@ async function answerConflictQuestions(
 const ASK_PLANS_PAGE = 10;
 
 /**
+ * The block lookups one step of the asking may spend on plans that read the whole mirror, each
+ * counted at the walk's own bound before it is read: one such plan a step, since ten of them were
+ * up to 24,000 lookups against a transaction's 4,096 index ranges (W17-R13). A plan that cites its
+ * blocks reads a few by them and is bound by {@link ASK_PLANS_PAGE} alone.
+ */
+const ASK_STEP_LOOKUPS = CONFLICT_WALK_LOOKUPS;
+
+/**
  * Start asking a confirmed conflict's question beside the drafted plans that rest on it, out of
  * the transaction that confirmed it (17-C; the pre-tag's second pass: the confirmation read a
  * hundred drafted plans a reader, each through `conflictsUnderPlan`, inside `decide`). Schedules
@@ -636,6 +646,7 @@ const ASK_PLANS_PAGE = 10;
 async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
+  returned?: { readonly sourceId: Id<'docSources'>; readonly ref: string },
 ): Promise<void> {
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
@@ -648,12 +659,16 @@ async function scheduleConfirmationAsks(
     relationId: relation._id,
     readers,
     cursor: null,
+    ...(returned === undefined
+      ? {}
+      : { returned: { sourceId: returned.sourceId, ref: returned.ref } }),
   });
 }
 
 /**
  * One step of asking a confirmed conflict's question beside the drafted plans that rest on it:
- * a page of the first reader's drafted plans, each read as its own decision reads it
+ * a page of the first reader's drafted plans, of which at most one read the whole mirror
+ * ({@link ASK_STEP_LOOKUPS}), each read as its own decision reads it
  * (`conflictsUnderPlan`): by its cites, or where it cites nothing by its kept selection (W16-R9).
  * Matching the plans that cite either page missed a plan that cites nothing, which was then asked
  * nothing and stopped after its approval; and it asked a plan citing another passage of either
@@ -666,8 +681,17 @@ export const askConfirmed = internalMutation({
     relationId: v.id('docRelations'),
     /** The employees whose drafted plans are still to be read, the first being read now. */
     readers: v.array(v.id('agents')),
-    /** Where in the first reader's drafted plans this step goes on from. */
-    cursor: v.union(v.string(), v.null()),
+    /**
+     * Where in the first reader's drafted plans this step goes on from: the creation time of the
+     * last plan an earlier step read, or null from the first. A string is the page cursor a step
+     * scheduled before 0.22.0 carries, read as it was written.
+     */
+    cursor: v.union(v.number(), v.string(), v.null()),
+    /**
+     * The page whose return to current asks again, where that is why (W17-R13): the thread's
+     * notice says the page is current again, not that the manager confirmed the conflict.
+     */
+    returned: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
   },
   handler: async (ctx, args): Promise<{ asked: number }> => {
     const [reader, ...rest] = args.readers;
@@ -676,17 +700,50 @@ export const askConfirmed = internalMutation({
       return { asked: 0 };
     }
     const agent = await ctx.db.get(reader);
-    const drafted =
+    const drafted = (after: number | null) =>
+      ctx.db.query('workItems').withIndex('by_agent_state', (q) => {
+        const pending = q.eq('agentId', reader).eq('state', 'plan-pending');
+        return after === null ? pending : pending.gt('_creationTime', after);
+      });
+    const page =
       agent === null
-        ? { page: [], isDone: true, continueCursor: '' }
-        : await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
-            .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
+        ? { rows: [], ended: true }
+        : typeof args.cursor === 'string'
+          ? await drafted(null)
+              .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor })
+              .then((read) => ({ rows: read.page, ended: read.isDone }))
+          : await drafted(args.cursor)
+              .take(ASK_PLANS_PAGE)
+              .then((rows) => ({ rows, ended: rows.length < ASK_PLANS_PAGE }));
     const now = Date.now();
+    const back = args.returned;
+    const isBack = (end: { sourceId: Id<'docSources'>; ref: string }): boolean =>
+      back !== undefined && end.sourceId === back.sourceId && end.ref === back.ref;
+    // Which of the question's two pages came back: they are named in the relation's order.
+    const returned =
+      relation === null
+        ? undefined
+        : isBack(relation.from)
+          ? 0
+          : isBack(relation.to)
+            ? 1
+            : undefined;
     let asked = 0;
-    for (const row of drafted.page) {
+    let lookups = 0;
+    let readTo: number | undefined;
+    let stopped = false;
+    for (const row of page.rows) {
       if (agent === null) break;
+      if (await planReadsWholeMirror(ctx, row)) {
+        // The walk's bound is spent before it is known what the walk costs: past the step's
+        // lookups, the plan is the next step's first.
+        if (lookups > 0 && lookups + CONFLICT_WALK_LOOKUPS > ASK_STEP_LOOKUPS) {
+          stopped = true;
+          break;
+        }
+        lookups += CONFLICT_WALK_LOOKUPS;
+      }
+      readTo = row._creationTime;
       const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
         (under) => under.relationId === args.relationId,
       );
@@ -695,16 +752,19 @@ export const askConfirmed = internalMutation({
         row,
         conflict: { ...conflict, relationId: args.relationId },
         now,
+        ...(returned === undefined ? {} : { returned }),
       });
       if (questionId !== null) asked += 1;
     }
-    const next = drafted.isDone
-      ? { readers: rest, cursor: null }
-      : { readers: args.readers, cursor: drafted.continueCursor };
+    const next =
+      page.ended && !stopped
+        ? { readers: rest, cursor: null }
+        : { readers: args.readers, cursor: readTo ?? null };
     if (next.readers.length > 0) {
       await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
         relationId: args.relationId,
         ...next,
+        ...(back === undefined ? {} : { returned: back }),
       });
     }
     return { asked };
@@ -772,7 +832,8 @@ async function closeCardsOfReturnedPage(
  * next run. A page that came back starts the confirmation's asking again for each of its
  * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
  * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
- * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`).
+ * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`). A
+ * leaving's step reads the page again and closes nothing of one that is current by then (W17-R12).
  * Internal; schedules itself for the pages left.
  */
 export const turnPageQuestions = internalMutation({
@@ -792,6 +853,10 @@ export const turnPageQuestions = internalMutation({
     let asked = 0;
     for (const page of args.pages.slice(0, QUESTION_TURN_PAGES)) {
       if (!page.back) {
+        // Read again: a step that runs late, after the page came back and its conflicts were asked
+        // again, would close the questions its return asked (W17-R12). A page gone closes them.
+        const stored = await pageAt(ctx, page);
+        if (stored !== null && pageStatusOf(stored) === 'active') continue;
         closed += await closeQuestionsOnPage(ctx, page, now);
         continue;
       }
@@ -800,7 +865,7 @@ export const turnPageQuestions = internalMutation({
       await closeCardsOfReturnedPage(ctx, source, page.ref, now);
       for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
         if ((await standingConflictOf(ctx, relation)) === undefined) continue;
-        await scheduleConfirmationAsks(ctx, relation);
+        await scheduleConfirmationAsks(ctx, relation, page);
         asked += 1;
       }
     }

@@ -27,6 +27,7 @@ import { readableDocs } from './mock';
 import { forgetProposalsOf } from './docRelationProposals';
 import { remeasureAfterDating } from './docRelationsRemeasure';
 import { stampRemovedPages } from './docStatus';
+import { closeQuestionsOnPage } from './questionCloses';
 import {
   endedShort,
   unreadPagesLine,
@@ -1170,6 +1171,11 @@ export const prunePages = internalMutation({
     }
     // A removed or moved runbook re-checks the skills that read it (W14-R22).
     await stampRemovedPages(ctx, finishing.source, gone, Date.now());
+    // No conflict stands on a page that is gone: its questions close here, not at the next run
+    // that reads them (W17-R13).
+    for (const removed of gone) {
+      await closeQuestionsOnPage(ctx, { sourceId: args.sourceId, ref: removed.ref }, Date.now());
+    }
     // Its unanswered relations go with it: no card draws a page that is gone.
     await forgetProposalsOf(
       ctx,
