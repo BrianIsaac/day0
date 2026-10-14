@@ -1063,3 +1063,95 @@ describe('a manager identity for each run', (): void => {
     ]);
   });
 });
+
+import { renderEvaluationReport } from '../../evaluation/report';
+import { loadOrCreateEvidence } from '../../scripts/eval-comparison';
+
+describe('what the charter-derived seeding left on a bed', (): void => {
+  afterEach((): void => {
+    vi.unstubAllEnvs();
+  });
+
+  it('records the generated work items of each run by state, in place of a constant', async (): Promise<void> => {
+    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ]);
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', pair.privateKey);
+    vi.stubEnv('DEV_NO_AUTH_SIGNING_KEY', Buffer.from(pkcs8).toString('base64'));
+    const task = (await loadEvaluationTasks()).find((row) => row.id === 'docs-team-cadence')!;
+    const generated = (externalId: string, state: Doc<'workItems'>['state']) =>
+      workItem({ _id: `work-${externalId}` as Doc<'workItems'>['_id'], externalId, state });
+    const { context } = await stubContext({
+      'baselineActions:deployBaseline': { agentId: 'agent-1', charterId: 'charter-1' },
+      'evaluation:snapshot': {
+        ...snapshotOf(workItem({ externalId: task.seed.externalId, state: 'completed' })),
+        workItems: [
+          workItem({ externalId: task.seed.externalId, state: 'completed' }),
+          generated('GEN-1', 'discovered'),
+          generated('GEN-2', 'discovered'),
+          generated('GEN-3', 'skipped'),
+        ],
+        events: [
+          { type: 'work.charter-derived', payload: { count: 3, role: 'RevOps' }, createdAt: 1 },
+        ],
+      },
+    });
+    context.client.setAuth = (): void => undefined;
+    const run: RunWithProgress = {
+      id: 'baseline-r1',
+      arm: 'baseline',
+      run: 1,
+      status: 'pending',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    };
+
+    await executeRun(context, run, [task]);
+
+    expect(run.status).toBe('completed');
+    expect(run.charterDerivedWork).toEqual({
+      seedings: 1,
+      itemsSeeded: 3,
+      workItems: 3,
+      byState: { discovered: 2, skipped: 1 },
+      readAt: expect.any(String),
+    });
+  });
+
+  it('no longer asserts that the seeding was skipped, and says in the report what the bed did', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const dir = await temporaryDirectory('eval-config-');
+    const evidence = await loadOrCreateEvidence(
+      { ...parseCliOptions(['--out', join(dir, 'comparison.json')]) },
+      tasks,
+    );
+    expect(evidence.configuration).not.toHaveProperty('postCharterApprovalSkipped');
+    expect(evidence.configuration.charterDerivedWorkRecorded).toBe(true);
+
+    evidence.runs = [
+      {
+        id: 'day0-r1',
+        arm: 'day0',
+        run: 1,
+        status: 'completed',
+        humanWaitMs: 0,
+        decisions: [],
+        tasks: [],
+        charterDerivedWork: {
+          seedings: 1,
+          itemsSeeded: 4,
+          workItems: 4,
+          byState: { discovered: 4 },
+          readAt: '2026-10-14T05:00:00.000Z',
+        },
+      },
+    ];
+    const report = renderEvaluationReport(evidence);
+    expect(report).not.toContain('deliberately skips');
+    expect(report).toContain(
+      'Approving a charter schedules the product’s charter-derived work generator, as it does for any employee, and the harness does not stop it. Each run records what the generator left on its employee at the run’s end: 4 work items over 1 run (discovered 4). None of them is one of the tasks, and the harness neither evaluates nor runs them.',
+    );
+  });
+});

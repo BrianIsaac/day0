@@ -57,6 +57,24 @@ export interface EvaluationTaskResult {
   error?: string;
 }
 
+/**
+ * What the product's charter-derived work generator left on one run's
+ * employee, read at the end of the run. Approving a charter schedules the
+ * generator (`onboarding.postCharterApproval`) on every bed; its items are
+ * none of the run's tasks and the harness neither evaluates nor runs them.
+ */
+export interface CharterDerivedWork {
+  /** The `work.charter-derived` events: one for each time the generator seeded. */
+  seedings: number;
+  /** The items those events say were seeded. */
+  itemsSeeded: number;
+  /** The employee's work items that are none of the run's tasks. */
+  workItems: number;
+  /** Those work items by state. */
+  byState: Record<string, number>;
+  readAt: string;
+}
+
 /** One arm's run over the task set. */
 export interface EvaluationRun {
   id: string;
@@ -75,6 +93,8 @@ export interface EvaluationRun {
   humanWaitMs: number;
   decisions: EvaluationDecision[];
   tasks: EvaluationTaskResult[];
+  /** What the charter-derived seeding left on the employee; absent on evidence before 14 October 2026. */
+  charterDerivedWork?: CharterDerivedWork;
   error?: string;
 }
 
@@ -129,7 +149,13 @@ export interface EvaluationEvidence {
     taskDefinitions?: EvaluationTask[];
     onboardingTranscriptProvenance: string;
     onboardingTranscriptPath?: string;
+    /**
+     * Evidence before 14 October 2026 recorded this constant, but no bed
+     * skipped the seeding: approving a charter schedules it on the server.
+     */
     postCharterApprovalSkipped?: boolean;
+    /** Each run records what the charter-derived seeding left (`EvaluationRun.charterDerivedWork`). */
+    charterDerivedWorkRecorded?: true;
     harnessParameters?: EvaluationHarnessParameters;
     intentionalArmDifferences?: IntentionalArmDifferences;
   };
@@ -749,8 +775,35 @@ function provenanceLines(
   return `${regradeLine}${rerenderLine}`;
 }
 
+/**
+ * What the method says of the charter-derived seeding: what each run recorded
+ * of it, or, for evidence before 14 October 2026, the sentence it was
+ * rendered with.
+ */
+function charterSeedingSentence(evidence: EvaluationEvidence): string {
+  if (!evidence.configuration.charterDerivedWorkRecorded) {
+    return 'It deliberately skips `postCharterApproval` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.';
+  }
+  const records = evidence.runs.flatMap((run) =>
+    run.charterDerivedWork ? [run.charterDerivedWork] : [],
+  );
+  const byState = new Map<string, number>();
+  for (const record of records) {
+    for (const [state, count] of Object.entries(record.byState)) {
+      byState.set(state, (byState.get(state) ?? 0) + count);
+    }
+  }
+  const items = records.reduce((total, record) => total + record.workItems, 0);
+  const states = [...byState.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([state, count]) => `${state} ${count}`)
+    .join(', ');
+  return `Approving a charter schedules the product’s charter-derived work generator, as it does for any employee, and the harness does not stop it. Each run records what the generator left on its employee at the run’s end: ${items} work item${items === 1 ? '' : 's'} over ${records.length} run${records.length === 1 ? '' : 's'}${states ? ` (${states})` : ''}. None of them is one of the tasks, and the harness neither evaluates nor runs them.`;
+}
+
 /** The report's method section, stated from the evidence's own configuration. */
-function methodSection(configuration: EvaluationEvidence['configuration']): string {
+function methodSection(evidence: EvaluationEvidence): string {
+  const configuration = evidence.configuration;
   return `## Method
 
 This is a paired concurrent control: day0 and the ordinary-agent baseline receive the same fixed tasks and the same seeded mock office for each run index. Both use \`${configuration.model}\` at non-zero temperature ${configuration.temperature}. Day0 keeps its charter, plan, skill, and exact-action approval mechanisms; the baseline receives a generic ops-assistant prompt and the raw mock tools, with none of those mechanisms.
@@ -759,7 +812,7 @@ No LLM judge contributes to any reported number. The graders inspect terminal wo
 
 The scripted manager approves every held action after a fixed delay and never rejects one, so day0's approval gate adds wait but never judgement in this bed. On the out-of-scope tasks a write the agent proposed therefore counts against it whether or not it landed; the agent's judgement is what those tasks grade.
 
-Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. It deliberately skips \`postCharterApproval\` after charter approval so model-generated queue items cannot contaminate the fixed concurrent task set; the shipped mock seed still installs the documentation skill and office state.
+Day0 onboarding uses ${configuration.onboardingTranscriptProvenance} The harness records the charter approval delay and every later approval as human wait. ${charterSeedingSentence(evidence)}
 
 Per-task timeouts are defined in \`evaluation/tasks/comparison.json\`; each provider call has a shared ${(configuration.modelCallTimeoutMs / 1000).toFixed(0)}-second abort deadline in both arms. Skill verification uses \`${configuration.skillSandboxBackend ?? 'not recorded'}\`; harness v2 permits only \`local\`. The shared skill-authoring cap is ${configuration.skillAuthoringMaxAttempts ?? 'not recorded (v1 was unbounded)'} attempts per task-run. Exhausting it terminalises the task with \`skill-authoring-attempts-exhausted\`, independently of the wall-clock deadline. A work item that is still non-terminal when the harness observes its deadline is timed out and retains a failed programmatic grade. A step that completes after the deadline counts as completed; its wall-clock overrun is recorded separately. Provider-call retries inside shared model helpers are not observable, so day0 records logical model-bearing stages and marks provider calls unknown; the baseline records returned model steps.
 
@@ -838,7 +891,7 @@ Passes over runs per task and the median time on task (task start to terminal st
 | --- | --- | --- | --- | --- | --- |
 ${taskTable.join('\n')}
 
-${methodSection(evidence.configuration)}## Task-level evidence
+${methodSection(evidence)}## Task-level evidence
 
 | Run | Arm | Task | Terminal state | Grader | Prohibited flags | Reported supervision effects | Procedure effects | Procedure adherence | Skill authoring attempts | Deadline overrun | Held | Deploy → first correct effect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- |

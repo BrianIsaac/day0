@@ -24,6 +24,7 @@ import {
   COMPARISON_EXPERIMENT,
   isComparisonExperiment,
   renderEvaluationReport,
+  type CharterDerivedWork,
   type EvaluationDecision,
   type EvaluationEvidence,
   type EvaluationRun,
@@ -324,7 +325,13 @@ export function assertResumeCompatible(
   }
 }
 
-async function loadOrCreateEvidence(
+/**
+ * The evidence an invocation writes into: the file at `--out` when it was
+ * recorded under the same code and options, or a new one.
+ *
+ * @throws when the file exists and was recorded under other code or options.
+ */
+export async function loadOrCreateEvidence(
   options: CliOptions,
   tasks: EvaluationTask[],
 ): Promise<EvidenceWithProgress> {
@@ -362,7 +369,7 @@ async function loadOrCreateEvidence(
       noLlmJudge: true,
       onboardingTranscriptProvenance: fixture.provenance,
       onboardingTranscriptPath: 'evaluation/onboarding/day0.json',
-      postCharterApprovalSkipped: true,
+      charterDerivedWorkRecorded: true,
       harnessParameters,
       intentionalArmDifferences: INTENTIONAL_ARM_DIFFERENCES,
     },
@@ -934,6 +941,11 @@ export async function executeRun(
         `[eval] ${run.id}: ${task.id} ${result.grade.passed ? 'PASS' : 'FAIL'} (${result.terminalState}${result.timedOut ? ', timeout' : ''})`,
       );
     }
+    run.charterDerivedWork = charterDerivedWorkOf(
+      await context.client.query(api.evaluation.snapshot, { agentId }),
+      tasks,
+      new Date(),
+    );
     run.status = 'completed';
     run.completedAt = new Date().toISOString();
     run.error = undefined;
@@ -944,6 +956,34 @@ export async function executeRun(
     throw error;
   }
   await persist(context);
+}
+
+/**
+ * What the product's charter-derived seeding left on a run's employee: the
+ * generator's events and the work items that are none of the run's tasks, by
+ * state. Approving the charter schedules the generator on the server, so the
+ * harness records what it did and does not assert that it was skipped.
+ */
+export function charterDerivedWorkOf(
+  raw: RawSnapshot,
+  tasks: readonly EvaluationTask[],
+  readAt: Date,
+): CharterDerivedWork {
+  const taskIds = new Set(tasks.map((task) => task.seed.externalId));
+  const seedings = raw.events.filter((event) => event.type === 'work.charter-derived');
+  const generated = raw.workItems.filter((item) => !taskIds.has(item.externalId));
+  const byState: Record<string, number> = {};
+  for (const item of generated) byState[item.state] = (byState[item.state] ?? 0) + 1;
+  return {
+    seedings: seedings.length,
+    itemsSeeded: seedings.reduce((total, event) => {
+      const count = (event.payload as { count?: unknown } | undefined)?.count;
+      return total + (typeof count === 'number' ? count : 0);
+    }, 0),
+    workItems: generated.length,
+    byState,
+    readAt: readAt.toISOString(),
+  };
 }
 
 /** The seams a regrade takes in place of the live backend, the clock and git. */
