@@ -3706,3 +3706,74 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
     expect(read.kinds).toHaveLength(17);
   });
 });
+
+describe('the wave 18 schema step (18-K, N10: two indexes and two optional fields, no table, no pass)', (): void => {
+  /** An employee of the owner's. */
+  const insertAgent = async (ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> =>
+    await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Mira',
+      userId: 'owner',
+      state: 'deployed',
+      createdAt: 1,
+    });
+
+  /** A work item of the employee's, as intake stores one, in the state the test gives it. */
+  const insertWork = async (
+    ctx: GenericMutationCtx<DataModel>,
+    agentId: Id<'agents'>,
+    externalId: string,
+    state: Doc<'workItems'>['state'],
+    skillId?: Id<'skills'>,
+  ): Promise<Id<'workItems'>> => {
+    const id = (await insertMinimalRow(ctx as never, 'workItems', agentId)) as Id<'workItems'>;
+    await ctx.db.patch(id, { externalId, state, ...(skillId !== undefined ? { skillId } : {}) });
+    return id;
+  };
+
+  it("reading `by_skill_state` for one skill and one state returns only that skill's rows in that state (W17-R8)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const skill = (await insertMinimalRow(ctx as never, 'skills', agentId)) as Id<'skills'>;
+      const other = (await insertMinimalRow(ctx as never, 'skills', agentId)) as Id<'skills'>;
+      // The oldest rows of the skill are finished ones, as on a skill that has run for a while.
+      for (let index = 0; index < 3; index += 1) {
+        await insertWork(ctx, agentId, `DONE-${index}`, 'completed', skill);
+      }
+      await insertWork(ctx, agentId, 'OPEN-1', 'plan-pending', skill);
+      await insertWork(ctx, agentId, 'OPEN-2', 'plan-pending', skill);
+      await insertWork(ctx, agentId, 'APPROVED-1', 'plan-approved', skill);
+      await insertWork(ctx, agentId, 'OTHER-1', 'plan-pending', other);
+      await insertWork(ctx, agentId, 'NONE-1', 'plan-pending');
+      const pending = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill_state', (q) => q.eq('skillId', skill).eq('state', 'plan-pending'))
+        .collect();
+      const everyState = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill_state', (q) => q.eq('skillId', skill))
+        .collect();
+      // The index `by_skill` reads as it did: every row of the skill, oldest first.
+      const bySkill = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill', (q) => q.eq('skillId', skill))
+        .take(2);
+      return {
+        pending: pending.map((row) => row.externalId),
+        everyState: everyState.map((row) => `${row.state}:${row.externalId}`),
+        bySkill: bySkill.map((row) => row.externalId),
+      };
+    });
+    expect(read.pending).toEqual(['OPEN-1', 'OPEN-2']);
+    expect(read.everyState).toEqual([
+      'completed:DONE-0',
+      'completed:DONE-1',
+      'completed:DONE-2',
+      'plan-approved:APPROVED-1',
+      'plan-pending:OPEN-1',
+      'plan-pending:OPEN-2',
+    ]);
+    expect(read.bySkill).toEqual(['DONE-0', 'DONE-1']);
+  });
+});

@@ -1759,6 +1759,11 @@ export default defineSchema({
       'decision.closeClaimedAt',
     ])
     .index('by_skill', ['skillId'])
+    /**
+     * One skill's rows in one state (wave 18, 18-K for 18-O; W17-R8): the reach by skill reads
+     * the rows still open, where `by_skill` reads the oldest of a skill whatever their state.
+     */
+    .index('by_skill_state', ['skillId', 'state'])
     /** One employee's row for a provider item: intake's idempotency key. */
     .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
     /** Every work item discovered from one provider item, across employees, by either of its names. */
