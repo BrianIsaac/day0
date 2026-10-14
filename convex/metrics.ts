@@ -1118,6 +1118,9 @@ export function computeCompanyMetrics(
  * largest size, so the bound holds whatever a row weighs (as the work list's `listReader` does).
  * A subscribed read past its room says so; the figures are then read by pages from an action
  * (`forAgentByPages`, and `forOwnerByPages` for an employee a page of the company could not hold).
+ * The room counts the takes and the documents as well as the bytes (W18-R1, the wave 18 review):
+ * twelve thousand light events read eight rows a take ran past the operations one function may
+ * perform on the review's bed, where no byte bound was near.
  */
 
 /** The most bytes one document holds (Convex's limit), as `ROW_BYTES_AT_MOST` in `workLoop.ts`. */
@@ -1132,6 +1135,16 @@ const RECORDS_TAKE_AT_MOST = 200;
  * may read, which leaves the rest of the read its own.
  */
 const FIGURES_READ_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Takes the subscribed reads make at most, over every employee they read: about a thousand index
+ * ranges, where the review's bed refused a read at about seventeen hundred ("timed out performing
+ * too many system operations", W18-R1) and Convex allows 4,096.
+ */
+const FIGURES_READ_TAKES = 1_000;
+
+/** Documents the subscribed reads hold at most: half of the 32,000 one function may read. */
+const FIGURES_READ_ROWS = 16_000;
 
 /**
  * Bytes of records one page of an employee's records read by pages holds at most: its answer is
@@ -1164,6 +1177,17 @@ function noRows(): RecordRows {
 /** The bytes a read may still hold, shared by the reads that draw on it. */
 export interface ReadRoom {
   left: number;
+}
+
+/** What a read of employees' records may still spend: bytes, takes and documents (W18-R1). */
+interface RecordsRoom extends ReadRoom {
+  takes: number;
+  rows: number;
+}
+
+/** The room of a subscribed read of the figures, shared by every employee it reads. */
+function figuresRoom(): RecordsRoom {
+  return { left: FIGURES_READ_BYTES, takes: FIGURES_READ_TAKES, rows: FIGURES_READ_ROWS };
 }
 
 /**
@@ -1224,28 +1248,31 @@ async function takeRecords(
 /**
  * Every row of an employee's records that fits a room, table after table: a take is never more
  * rows than fit what is left at a document's largest size, so the read ends within the room and
- * one row past it at most.
+ * one row past it at most; nor is a take made once the room's takes or documents are spent
+ * (W18-R1), so an employee of many light rows is read by pages as a heavy one is.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.
- * @param room - The bytes the read may hold, drawn on as it reads.
+ * @param room - The bytes, takes and documents the read may spend, drawn on as it reads.
  * @returns The rows, and whether the room ran out before the last table's end.
  */
 async function recordsWithin(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
-  room: ReadRoom,
+  room: RecordsRoom,
 ): Promise<{ readonly rows: RecordRows; readonly whole: boolean }> {
   const rows = noRows();
   for (const table of RECORD_TABLES) {
     let after: number | null = null;
     for (;;) {
-      if (room.left <= 0) return { rows, whole: false };
       const count = Math.min(
         RECORDS_TAKE_AT_MOST,
         Math.max(1, Math.floor(room.left / DOCUMENT_BYTES_AT_MOST)),
       );
+      if (room.left <= 0 || room.takes <= 0 || room.rows < count) return { rows, whole: false };
+      room.takes -= 1;
       const taken = await takeRecords(ctx, table, agentId, after, count);
+      room.rows -= taken.length;
       for (const row of taken) room.left -= getDocumentSize(row);
       (rows[table] as Array<RecordRows[RecordTable][number]>).push(...taken);
       if (taken.length < count) break;
@@ -1582,9 +1609,9 @@ function agentFiguresOf(
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
  * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
  * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
- * employee's zone beside them, under `today`. Its records are read within
- * {@link FIGURES_READ_BYTES}, so a page can subscribe to it: an employee whose records pass that is
- * refused in {@link FIGURES_READ_BY_PAGES}'s words, and the page reads its figures by pages
+ * employee's zone beside them, under `today`. Its records are read within one room
+ * ({@link figuresRoom}: bytes, takes and documents), so a page can subscribe to it: an employee
+ * whose records pass that is refused in {@link FIGURES_READ_BY_PAGES}'s words, and the page reads its figures by pages
  * (`forAgentByPages`; C1, wave 18). Writes nothing.
  *
  * @throws ConvexError when `day` is no day, or the employee's records pass the read's room.
@@ -1598,7 +1625,7 @@ export const forAgent = query({
     const refusal = day === undefined ? undefined : dayRefusal(day);
     if (refusal !== undefined) throw new ConvexError(refusal);
     const [read, transfers] = await Promise.all([
-      recordsWithin(ctx, agent._id, { left: FIGURES_READ_BYTES }),
+      recordsWithin(ctx, agent._id, figuresRoom()),
       acceptedTransfersOf(ctx, agent._id),
     ]);
     if (!read.whole) throw new ConvexError(FIGURES_READ_BY_PAGES);
@@ -1845,8 +1872,8 @@ async function heldEmployees(
  * the caller's company, each employee's own figures and the company row, each
  * employee counted within the spans the caller held it (D12 (a)). Bounded, so a card can
  * subscribe to it: it covers the most recent `MAX_COMPANY_EMPLOYEES` employees, their records
- * within {@link FIGURES_READ_BYTES} (an employee whose records do not fit what is left is left out
- * too: C1, wave 18), and says how many it left out (`omittedEmployees`); `forOwnerByPages` reads
+ * within one room ({@link figuresRoom}; an employee whose records do not fit what is left is left
+ * out too: C1, wave 18; W18-R1), and says how many it left out (`omittedEmployees`); `forOwnerByPages` reads
  * them all. Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwner = query({
@@ -1863,7 +1890,7 @@ export const forOwner = query({
     );
     // One room for the twenty, read one after another: an employee whose records do not fit
     // what is left is left out and counted so, and the home reads every one by pages (C1).
-    const room: ReadRoom = { left: FIGURES_READ_BYTES };
+    const room = figuresRoom();
     const records: EmployeeRecords[] = [];
     let unread = 0;
     for (const agent of selection.employees) {
@@ -1949,7 +1976,7 @@ async function employeeFiguresWithin(
   ctx: QueryCtx,
   owner: string,
   agent: Doc<'agents'>,
-  room: ReadRoom,
+  room: RecordsRoom,
 ): Promise<
   | { readonly figures: OwnerFiguresPage['employees'][number] }
   | { readonly byPages: EmployeeToReadByPages }
@@ -1971,7 +1998,7 @@ async function pageOfEmployees(
   agents: readonly Doc<'agents'>[],
 ): Promise<Pick<OwnerFiguresPage, 'employees' | 'byPages'>> {
   // One room for the page's employees, read one after another (C1, wave 18).
-  const room: ReadRoom = { left: FIGURES_READ_BYTES };
+  const room = figuresRoom();
   const employees: Array<OwnerFiguresPage['employees'][number]> = [];
   const byPages: EmployeeToReadByPages[] = [];
   for (const agent of agents) {
