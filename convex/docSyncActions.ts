@@ -10,9 +10,10 @@ import { markdownPageTitle } from '../src/docs/readers/folder';
 import { unwrapWholePageFence } from '../src/docs/readers/mcp';
 import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
-import { pageContentHash } from '../src/docs/content-hash';
+import { pageContentHash, pageTitleHash } from '../src/docs/content-hash';
 import { knownValueSpans } from '../src/redaction/redact';
-import { credentialKeyId } from '../src/lib/credential-crypto';
+import { credentialKeyId, decrypt, encrypt } from '../src/lib/credential-crypto';
+import { cursorWithToken, storedCursorParts } from '../src/docs/reader-token-cursor';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
@@ -21,6 +22,7 @@ import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 import {
   ListingChangedError,
+  type DocumentationReader,
   type KeptPage,
   type StoredMark,
   type StoredRevisions,
@@ -47,13 +49,15 @@ import { listingOverrun } from '../src/docs/listing-bounds';
 import { SYNC_HELD_REASON } from '../src/docs/sync-held';
 import { MARKER_JUDGEMENTS_PER_SYNC, MARKER_JUDGING_BUDGET_MS } from '../src/docs/status';
 import {
+  RELATION_CANDIDATES_PER_PAGE,
   RELATION_MEASURE_RETRY_MS,
   RELATION_MEASURE_TRIES,
   RELATION_PAGES_PER_STEP,
   RELATION_PROPOSALS_PER_SYNC,
 } from '../src/docs/relations';
 import { judgeMarker } from '../src/docs/marker-judge';
-import type { MeasuringPlan, PageMeasure } from './docRelations';
+import type { MeasuringPlan, PageCandidates, PageMeasure, PairMeasure } from './docRelations';
+import type { PageName } from './docRelationProposals';
 import type { PagesOwed } from './docRelationsRemeasure';
 import type { StoredForRevision } from './docPages';
 import type { MarkerToJudge, StatusPhasePage } from './docStatus';
@@ -323,6 +327,12 @@ async function persistPage(
   }
   const contentHash =
     redaction.key === undefined ? undefined : pageContentHash(page, redaction.key, source.userId);
+  // The listed title's, before redaction: what a reader compares against when the stored title
+  // is redacted (18-D).
+  const titleHash =
+    redaction.key === undefined
+      ? undefined
+      : pageTitleHash(page.title, redaction.key, source.userId);
   const said = {
     sourceId: source._id,
     syncRunId,
@@ -333,11 +343,20 @@ async function persistPage(
     ...(page.revisionUnread === true ? { keepRevision: true } : {}),
     ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
   };
-  if (contentHash !== undefined) {
-    const kept = await keptUnchangedPage(ctx, source, page, contentHash, redaction.known);
+  if (contentHash !== undefined && titleHash !== undefined) {
+    const kept = await keptUnchangedPage(ctx, source, page, {
+      contentHash,
+      titleHash,
+      known: redaction.known,
+    });
     if (kept !== undefined) {
-      if (kept.saidOtherwise) await ctx.runMutation(internal.docStatus.recordRead, said);
-      return kept;
+      if (kept.saidOtherwise || kept.titleStale) {
+        await ctx.runMutation(internal.docStatus.recordRead, {
+          ...said,
+          ...(kept.titleStale ? { titleHash } : {}),
+        });
+      }
+      return { page: kept.page, credentialRefs: kept.credentialRefs };
     }
   }
   const unwrapped = unwrapWholePageFence(page.markdown);
@@ -385,6 +404,7 @@ async function persistPage(
     ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
     syncRunId,
     ...(contentHash !== undefined ? { contentHash } : {}),
+    ...(titleHash !== undefined ? { titleHash } : {}),
   });
   await ctx.runMutation(internal.docStatus.recordRead, said);
   return { page: safePage, credentialRefs };
@@ -396,16 +416,24 @@ async function persistPage(
  * a sync has not superseded. Undefined when the page changed, was stored without this hash, or
  * its stored text holds a value the owner stored since it was redacted, which only a new
  * redaction removes. `saidOtherwise` says its source's word for it (its native status or its
- * revision) is no longer the one the row holds, or that the row does not yet say whether its
- * source dated it and the reader does (K-2).
+ * revision) is no longer the one the row holds, that the row does not yet say whether its source
+ * dated it and the reader does (K-2); `titleStale`, that the row's listed-title hash is absent or
+ * another (18-D).
  */
 async function keptUnchangedPage(
   ctx: ActionCtx,
   source: Doc<'docSources'>,
   page: DocPage,
-  contentHash: string,
-  known: readonly string[],
-): Promise<{ page: DocPage; credentialRefs: string[]; saidOtherwise: boolean } | undefined> {
+  hashes: {
+    readonly contentHash: string;
+    readonly titleHash: string;
+    readonly known: readonly string[];
+  },
+): Promise<
+  | { page: DocPage; credentialRefs: string[]; saidOtherwise: boolean; titleStale: boolean }
+  | undefined
+> {
+  const { contentHash, known } = hashes;
   const stored = await ctx.runQuery(internal.docBlocks.unchangedPage, {
     sourceId: source._id,
     ref: page.ref,
@@ -434,6 +462,7 @@ async function keptUnchangedPage(
       stored.nativeStatus !== page.nativeStatus ||
       (page.revisionUnread !== true && stored.sourceRevision !== page.sourceRevision) ||
       (stored.datedBySource === undefined && page.datedBySource !== undefined),
+    titleStale: stored.titleHash !== hashes.titleHash,
   };
 }
 
@@ -474,9 +503,11 @@ async function keptUnreadPages(
 /**
  * Keep the pages a reader kept by their revision (`ReadPageBatch.kept`, X-13): each is mirrored
  * for the source's readers from its stored text, as a page kept by its hash is, and, where its
- * listing now says another status than the one stored, or the row does not yet say whether its
- * source dated it and the listing does (K-2), that is recorded (`recordRead`) with its revision
- * as stored. Its refs and stored credentials are added to the batch's by the caller.
+ * listing now says another status than the one stored, the row does not yet say whether its
+ * source dated it and the listing does (K-2), or the row holds no listed-title hash (18-D), that
+ * is recorded (`recordRead`) with its revision as stored. A page kept by its revision was kept
+ * because its listed title is its stored one, so its title's hash is taken from the row's title.
+ * Its refs and stored credentials are added to the batch's by the caller.
  *
  * @returns The refs of the pages kept.
  */
@@ -489,17 +520,23 @@ export async function keptByRevision(
   stored: ReadonlyMap<string, StoredForRevision>,
 ): Promise<Array<{ ref: string }>> {
   const pages: DocPage[] = [];
+  const key = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
   for (const entry of kept) {
     const row = stored.get(entry.ref);
     if (row === undefined) continue;
     const undated = row.datedBySource === undefined && entry.datedBySource !== undefined;
-    if (row.nativeStatus !== entry.nativeStatus || undated) {
+    const titleHash =
+      key === undefined || row.titleHash !== undefined
+        ? undefined
+        : pageTitleHash(row.title, key, source.userId);
+    if (row.nativeStatus !== entry.nativeStatus || undated || titleHash !== undefined) {
       await ctx.runMutation(internal.docStatus.recordRead, {
         sourceId: source._id,
         syncRunId,
         ref: row.ref,
         ...(entry.nativeStatus !== undefined ? { nativeStatus: entry.nativeStatus } : {}),
         ...(entry.datedBySource !== undefined ? { datedBySource: entry.datedBySource } : {}),
+        ...(titleHash !== undefined ? { titleHash } : {}),
         keepRevision: true,
       });
     }
@@ -514,6 +551,100 @@ export async function keptByRevision(
   }
   for (const agent of agents) await mirrorPages(ctx, agent._id, source, pages, syncRunId);
   return pages.map((page) => ({ ref: page.ref }));
+}
+
+/**
+ * A reader's access token, handed back beside its cursor so the next batch asks for none (X-1;
+ * 17-X's F3). The readers' half is 18-X's: until it lands no reader hands one back, and the sync
+ * reads the field where a reader's batch carries it.
+ */
+interface ReaderToken {
+  readonly token: string;
+  /** When the provider said it expires, in epoch milliseconds. */
+  readonly expiresAt: number;
+}
+
+/** A reader's batch that may hand its token back beside its cursor (X-1). */
+type TokenReadPageBatch = Awaited<ReturnType<DocumentationReader['listPageBatch']>> & {
+  readonly token?: ReaderToken;
+};
+
+/** A reader that takes its token back for the next batch, after the sync's stored revisions. */
+type TokenReader = {
+  listPageBatch(
+    ...args: [...Parameters<DocumentationReader['listPageBatch']>, token?: ReaderToken]
+  ): Promise<TokenReadPageBatch>;
+};
+
+/**
+ * How long before its expiry a token is no longer handed to a batch (the second pass): a batch of
+ * twenty-five pages may take a minute or two, and a token that lapsed inside it would fail it.
+ */
+const READER_TOKEN_MARGIN_MS = 2 * 60 * 1000;
+
+/** Whether a token still serves a batch begun now. */
+function tokenServes(token: ReaderToken, now: number): boolean {
+  return token.expiresAt - READER_TOKEN_MARGIN_MS > now;
+}
+
+/** Whether a reader handed back a token of the contract's shape. */
+function readerTokenOf(value: unknown): ReaderToken | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { token, expiresAt } = value as Record<string, unknown>;
+  return typeof token === 'string' && token !== '' && typeof expiresAt === 'number'
+    ? { token, expiresAt }
+    : undefined;
+}
+
+/**
+ * What a sealed reader token is bound to: its owner, its source and its run, so a cursor copied
+ * to another run, source or owner opens to nothing.
+ */
+function readerTokenBinding(
+  source: Pick<Doc<'docSources'>, '_id' | 'userId'>,
+  runId: Id<'docSyncRuns'>,
+): string {
+  return `day0-reader-token-v1\u0000${source.userId}\u0000${source._id}\u0000${runId}`;
+}
+
+/** The deployment's credential key where it is one; the page hash's warning says when it is not. */
+function readerTokenKey(): string | undefined {
+  const key = process.env.DAY0_CREDENTIAL_KEY;
+  if (key === undefined || key === '') return undefined;
+  try {
+    credentialKeyId(key);
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A reader's token sealed with the deployment's key: its IV and ciphertext, base64, by a dot. */
+function sealReaderToken(token: ReaderToken, key: string, binding: string): string {
+  const sealed = encrypt(JSON.stringify(token), key, binding);
+  return `${sealed.iv}.${sealed.ciphertext}`;
+}
+
+/**
+ * A sealed reader token opened for the next batch, or nothing: sealed under another key, owner,
+ * source or run, malformed, or within `READER_TOKEN_MARGIN_MS` of its expiry (the reader then asks
+ * for a new one).
+ */
+function openReaderToken(
+  sealed: string,
+  key: string,
+  binding: string,
+  now: number,
+): ReaderToken | undefined {
+  const [iv, ciphertext] = sealed.split('.');
+  if (iv === undefined || ciphertext === undefined) return undefined;
+  let token: ReaderToken | undefined;
+  try {
+    token = readerTokenOf(JSON.parse(decrypt({ iv, ciphertext }, key, binding)));
+  } catch {
+    return undefined;
+  }
+  return token !== undefined && tokenServes(token, now) ? token : undefined;
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
@@ -609,6 +740,8 @@ export const syncBatch = internalAction({
     // Only a secret that could not be landed or opened makes the failure the credential's.
     let credentialUnavailable = false;
     let known: readonly string[] = [];
+    // The reader's tokens this batch held, redacted from every reason it stores as a secret is.
+    const tokens: string[] = [];
     try {
       const finishing = finishingStep(args.cursor);
       if (finishing !== undefined)
@@ -662,13 +795,29 @@ export const syncBatch = internalAction({
         }
         return revisions;
       };
-      const batch = await readerFor(source.kind).listPageBatch(
+      // The reader's place, and the token it handed back at the last batch (X-1): opened here for
+      // this batch alone, and past its expiry not handed at all.
+      const stored = storedCursorParts(args.cursor);
+      const tokenKey = readerTokenKey();
+      const binding = readerTokenBinding(source, args.runId);
+      const handed =
+        stored.sealed === undefined || tokenKey === undefined
+          ? undefined
+          : openReaderToken(stored.sealed, tokenKey, binding, Date.now());
+      if (handed !== undefined) tokens.push(handed.token);
+      const batch = await (readerFor(source.kind) as unknown as TokenReader).listPageBatch(
         source as DocSourceRecord,
         secret,
-        args.cursor,
+        stored.cursor,
         SYNC_BATCH_SIZE,
         storedRevisions,
+        handed,
       );
+      // A reader that used the token it was handed and handed none back keeps it (the second
+      // pass): one handed back replaces it.
+      const returned = readerTokenOf(batch.token);
+      if (returned !== undefined) tokens.push(returned.token);
+      const token = returned ?? handed;
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
       }
@@ -699,7 +848,7 @@ export const syncBatch = internalAction({
         ...batch.unread.map(
           (page): UnreadPage => ({
             ref: page.ref,
-            reason: safeSyncError(page.reason, secret, known),
+            reason: safeSyncError(page.reason, secret, [...known, ...tokens]),
             kind: page.kind ?? 'failed',
           }),
         ),
@@ -721,10 +870,17 @@ export const syncBatch = internalAction({
         storedByRevision,
       );
       const kept = await keptUnreadPages(ctx, source, [...unread, ...archived, ...byRevision]);
-      if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
+      if (batch.nextCursor !== undefined && batch.nextCursor === stored.cursor) {
         throw new Error('Documentation reader repeated its continuation cursor.');
       }
-      const nextCursor = batch.nextCursor ?? FINISHING_CURSOR;
+      // The token rides the next batch's cursor sealed, and goes with the walk's last batch: the
+      // finish's cursor holds none (X-1).
+      const nextCursor =
+        batch.nextCursor === undefined
+          ? FINISHING_CURSOR
+          : token === undefined || tokenKey === undefined || !tokenServes(token, Date.now())
+            ? batch.nextCursor
+            : cursorWithToken(batch.nextCursor, sealReaderToken(token, tokenKey, binding));
       const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {
         sourceId: source._id,
         runId: args.runId,
@@ -787,7 +943,7 @@ export const syncBatch = internalAction({
           ? error
           : (interruptedReadError(error, 'The documentation read') ?? error),
         secret,
-        known,
+        [...known, ...tokens],
       );
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,
@@ -1051,9 +1207,121 @@ async function walkStatusPhase(
 interface FailedMeasure {
   readonly ref: string;
   readonly tries: number;
+  /**
+   * The candidates whose pairs threw, the only ones of the page still to try (D-12 (a)); absent
+   * where the page's own read threw, and its every pair is still to measure.
+   */
+  readonly pairs?: PageName[];
 }
 
-const failedMeasuresValidator = v.array(v.object({ ref: v.string(), tries: v.number() }));
+const failedMeasuresValidator = v.array(
+  v.object({
+    ref: v.string(),
+    tries: v.number(),
+    pairs: v.optional(v.array(v.object({ sourceId: v.id('docSources'), ref: v.string() }))),
+  }),
+);
+
+/** A page, or one pair of it, the measuring passed over: named in the step's answer and its log. */
+interface PassedOver {
+  readonly ref: string;
+  /** The candidate whose pair was passed over; absent where the page's own measure was. */
+  readonly candidate?: PageName;
+}
+
+/**
+ * What one step of a measuring answers. A step the scheduler runs answers no one, so what it passed
+ * over reaches an operator by its log lines ("documentation pair not measured for relations: passed
+ * over", "documentation page not measured for relations: passed over"); the answer is a caller's
+ * who runs a step by hand, as a test does.
+ */
+interface MeasuringStep {
+  /** The pages it measured or tried. */
+  readonly measured: number;
+  /** The proposals the sync has written so far. */
+  readonly proposed: number;
+  /** The pages and pairs it passed over, out of tries or past the read budget (D-12 (a)). */
+  readonly passedOver: readonly PassedOver[];
+}
+
+/**
+ * Measure one page a sync stored or changed, a pair at a time (D-12 (a)): its candidates in one
+ * query (`docRelations.pageCandidates`), then each pair in a mutation of its own
+ * (`docRelations.measurePair`), up to `room` new proposals. A pair whose measure throws costs that
+ * pair only, and is answered for the measuring to try again; a page whose own read throws throws
+ * here, as before. With `only`, the candidates are those alone: a retry of the pairs that threw.
+ *
+ * @returns What the page's measure wrote (`PageMeasure`).
+ * @throws Whatever reading the page's own candidates threw.
+ */
+async function measurePageByPairs(
+  ctx: Pick<ActionCtx, 'runQuery' | 'runMutation'>,
+  args: {
+    readonly sourceId: Id<'docSources'>;
+    readonly syncRunId: Id<'docSyncRuns'>;
+    readonly ref: string;
+    readonly room?: number;
+    readonly only?: readonly PageName[];
+  },
+): Promise<PageMeasure> {
+  const { sourceId, syncRunId, ref } = args;
+  const room = args.room ?? RELATION_CANDIDATES_PER_PAGE;
+  let candidates = args.only;
+  if (candidates === undefined) {
+    const read: PageCandidates = await ctx.runQuery(internal.docRelations.pageCandidates, {
+      sourceId,
+      syncRunId,
+      ref,
+    });
+    if (!read.current)
+      return { current: false, proposed: 0, cut: false, failed: [], passedOver: [] };
+    candidates = read.candidates;
+  }
+  let proposed = 0;
+  const failed: PageName[] = [];
+  const passedOver: PageName[] = [];
+  for (const candidate of candidates) {
+    if (proposed >= room) return { current: true, proposed, cut: true, failed, passedOver };
+    let pair: PairMeasure;
+    try {
+      pair = await ctx.runMutation(internal.docRelations.measurePair, {
+        sourceId,
+        syncRunId,
+        ref,
+        candidate: { sourceId: candidate.sourceId, ref: candidate.ref },
+      });
+    } catch (error) {
+      failed.push(candidate);
+      log.warn('documentation pair not measured for relations', {
+        sourceId,
+        ref,
+        candidate: { sourceId: candidate.sourceId, ref: candidate.ref },
+        reason: safeSyncError(error),
+      });
+      continue;
+    }
+    if (!pair.current) return { current: false, proposed, cut: false, failed, passedOver };
+    if (pair.proposed) proposed += 1;
+    if (pair.passedOver) passedOver.push(candidate);
+  }
+  return { current: true, proposed, cut: false, failed, passedOver };
+}
+
+/**
+ * Measure one page of a source's run against its candidates, a pair a transaction, with room for
+ * every relation they hold (`measurePageByPairs`). Internal; what a measuring step does for each
+ * page, for a test or an operator to run for one.
+ */
+export const measurePage = internalAction({
+  args: {
+    sourceId: v.id('docSources'),
+    syncRunId: v.id('docSyncRuns'),
+    ref: v.string(),
+    /** The new proposals this call may still write; absent, every one its candidates hold. */
+    room: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<PageMeasure> => await measurePageByPairs(ctx, args),
+});
 
 /** What measuring one read's pages came to. */
 interface MeasuredRead {
@@ -1063,21 +1331,28 @@ interface MeasuredRead {
   readonly proposed: number;
   /** Whether the sync's cap on new proposals ended the read, some of its pages unmeasured. */
   readonly capped: boolean;
-  /** The pages whose measure threw and that are still to be tried, each with its tries so far. */
+  /** The pages, or their pairs, whose measure threw and that are still to be tried. */
   readonly failed: readonly FailedMeasure[];
+  /** The pages and pairs passed over. */
+  readonly passedOver: readonly PassedOver[];
+  /** Whether a newer sync overtook the run: the measuring stops, and the newer one measures. */
+  readonly overtaken: boolean;
 }
 
 /**
- * Measure the pages of one read of a measuring (`docRelations.measurePage`), up to the sync's cap
- * on new proposals. A page whose room cut its candidates short ends the read as the cap does, so
- * the read is owed from its start and the page is measured again (W16-R34: as the last page of a
- * read it was counted measured). A page whose measure throws is kept for the next step, with how
- * often it has been tried, and after `RELATION_MEASURE_TRIES` is logged as not measured and
- * passed over (W16-R34: it was logged and left behind at the first throw).
+ * Measure the pages of one read of a measuring (`measurePageByPairs`), up to the sync's cap on new
+ * proposals. A page whose room cut its candidates short ends the read as the cap does, so the read
+ * is owed from its start and the page is measured again (W16-R34: as the last page of a read it
+ * was counted measured). A page whose own measure throws, or one some of whose pairs throw (D-12
+ * (a): those pairs only), is kept for the next step with how often it has been tried, and after
+ * `RELATION_MEASURE_TRIES` is logged as not measured and passed over, named in the step's answer
+ * (W16-R34: it was logged and left behind at the first throw). A page whose run a newer sync
+ * overtook ends the read, measured by nothing.
  *
  * @param read - The read's page refs; `retry`, on the step that tries a read's failed pages
- *   again, names the only pages of it still to measure; `seen` holds the pages this step has
- *   measured, which a later read of it may name again and which are passed over.
+ *   again, names the only pages of it still to measure (and of a page whose pairs threw, those
+ *   pairs); `seen` holds the pages this step has measured, which a later read of it may name again
+ *   and which are passed over.
  */
 async function measureRead(
   ctx: ActionCtx,
@@ -1091,49 +1366,80 @@ async function measureRead(
   },
 ): Promise<MeasuredRead> {
   const { sourceId, runId, seen } = read;
-  const tried = new Map(read.retry?.map((page) => [page.ref, page.tries]));
+  const tried = new Map(read.retry?.map((page) => [page.ref, page]));
   const owed = read.retry === undefined ? read.refs : read.refs.filter((ref) => tried.has(ref));
   const failed: FailedMeasure[] = [];
+  const passedOver: PassedOver[] = [];
   const refs: string[] = [];
   let { proposed } = read;
+  const answer = (rest: { capped: boolean; overtaken: boolean }): MeasuredRead => ({
+    refs,
+    proposed,
+    failed,
+    passedOver,
+    ...rest,
+  });
   for (const ref of owed) {
-    if (proposed >= RELATION_PROPOSALS_PER_SYNC) return { refs, proposed, capped: true, failed };
+    if (proposed >= RELATION_PROPOSALS_PER_SYNC) {
+      return answer({ capped: true, overtaken: false });
+    }
     if (seen.has(ref)) continue;
-    refs.push(ref);
+    const earlier = tried.get(ref);
+    const tries = (earlier?.tries ?? 0) + 1;
+    const passed = tries >= RELATION_MEASURE_TRIES;
     let measure: PageMeasure;
     try {
-      measure = await ctx.runMutation(internal.docRelations.measurePage, {
+      measure = await measurePageByPairs(ctx, {
         sourceId,
         syncRunId: runId,
         ref,
         room: RELATION_PROPOSALS_PER_SYNC - proposed,
+        ...(earlier?.pairs !== undefined ? { only: earlier.pairs } : {}),
       });
     } catch (error) {
-      const tries = (tried.get(ref) ?? 0) + 1;
-      const passedOver = tries >= RELATION_MEASURE_TRIES;
-      if (!passedOver) failed.push({ ref, tries });
+      refs.push(ref);
+      if (passed) passedOver.push({ ref });
+      else failed.push({ ref, tries });
       log.warn(
-        passedOver
+        passed
           ? 'documentation page not measured for relations: passed over'
           : 'documentation page not measured for relations: tried again at the next step',
         { sourceId, ref, tries, reason: safeSyncError(error) },
       );
       continue;
     }
+    if (!measure.current) return answer({ capped: false, overtaken: true });
+    refs.push(ref);
     proposed += measure.proposed;
-    if (measure.cut) return { refs, proposed, capped: true, failed };
+    passedOver.push(...measure.passedOver.map((candidate) => ({ ref, candidate })));
+    if (measure.failed.length > 0) {
+      if (passed) {
+        for (const candidate of measure.failed) {
+          passedOver.push({ ref, candidate });
+          log.warn('documentation pair not measured for relations: passed over', {
+            sourceId,
+            ref,
+            candidate: { sourceId: candidate.sourceId, ref: candidate.ref },
+            tries,
+          });
+        }
+      } else {
+        failed.push({ ref, tries, pairs: [...measure.failed] });
+      }
+    }
+    if (measure.cut) return answer({ capped: true, overtaken: false });
   }
-  return { refs, proposed, capped: false, failed };
+  return answer({ capped: false, overtaken: false });
 }
 
 /**
  * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
  * (and the runs it took over from, back to the complete walk before it) is measured against the
- * owner's other active pages (`docRelations.measurePage`), `RELATION_PAGES_PER_STEP` pages a step
- * and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
- * finish once the generation has completed, as discovery is, so the splits its pages scheduled
- * have landed and the measures cost the finish none of its time. A proposal changes no page and
- * holds nothing; the manager answers its card.
+ * owner's other active pages a pair at a time (`measurePageByPairs`), `RELATION_PAGES_PER_STEP`
+ * pages a step and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled
+ * by the finish once the generation has completed, as discovery is, so the splits its pages
+ * scheduled have landed and the measures cost the finish none of its time. A proposal changes no
+ * page and holds nothing; the manager answers its card.
  *
  * A step that has measured its share schedules the next with what is left (`rest`), so a library
  * of any size is measured to its end (W15-R5: the first hundred pages were measured and nothing
@@ -1143,10 +1449,13 @@ async function measureRead(
  *
  * A read with a page whose measure threw is not left behind (W16-R34): the step ends there and
  * schedules the next, `RELATION_MEASURE_RETRY_MS` on, at that read's start with the pages still
- * to try (`retry`), which measures those alone and then goes on. A page is passed over once it
- * has been tried `RELATION_MEASURE_TRIES` times (`measureRead`).
+ * to try (`retry`), which measures those alone (of a page some of whose pairs threw, those pairs)
+ * and then goes on. A page or a pair is passed over once it has been tried
+ * `RELATION_MEASURE_TRIES` times (`measureRead`), and the step's answer names it. A step whose run
+ * a newer sync overtook stops where it finds so, and schedules nothing: the newer sync measures.
  *
- * @returns How many pages this step measured and how many relations the sync has proposed so far.
+ * @returns How many pages this step measured, how many relations the sync has proposed so far,
+ *   and the pages and pairs this step passed over.
  */
 export const proposeRelations = internalAction({
   args: {
@@ -1164,13 +1473,14 @@ export const proposeRelations = internalAction({
     /** The pages of `rest`'s first read whose measure threw, the only ones of it still to try. */
     retry: v.optional(failedMeasuresValidator),
   },
-  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> => {
+  handler: async (ctx, args): Promise<MeasuringStep> => {
     const { sourceId, runId } = args;
     const plan: MeasuringPlan | null =
       args.rest ?? (await ctx.runQuery(internal.docRelations.measuringPlan, { sourceId, runId }));
     let measured = 0;
     let proposed = args.proposed ?? 0;
-    if (plan === null) return { measured, proposed };
+    const passedOver: PassedOver[] = [];
+    if (plan === null) return { measured, proposed, passedOver };
     const generations = [...plan.generations];
     let cursor = plan.cursor;
     let retry: readonly FailedMeasure[] | undefined = args.retry;
@@ -1183,7 +1493,7 @@ export const proposeRelations = internalAction({
           rest: { generations, cursor },
           proposed,
         });
-        return { measured, proposed };
+        return { measured, proposed, passedOver };
       }
       const written: { refs: string[]; next: string | null } = await ctx.runQuery(
         internal.docRelations.pagesWrittenBy,
@@ -1201,6 +1511,8 @@ export const proposeRelations = internalAction({
       for (const ref of read.refs) seen.add(ref);
       measured += read.refs.length;
       proposed = read.proposed;
+      passedOver.push(...read.passedOver);
+      if (read.overtaken) return { measured, proposed, passedOver };
       if (read.capped) {
         // The cap: this read's pages are owed from its start, since some of them are unmeasured.
         await ctx.runMutation(internal.docRelations.settleRelationsOwed, {
@@ -1208,7 +1520,7 @@ export const proposeRelations = internalAction({
           runId,
           owed: { generations, cursor },
         });
-        return { measured, proposed };
+        return { measured, proposed, passedOver };
       }
       if (read.failed.length > 0) {
         await ctx.scheduler.runAfter(
@@ -1216,7 +1528,7 @@ export const proposeRelations = internalAction({
           internal.docSyncActions.proposeRelations,
           { sourceId, runId, rest: { generations, cursor }, proposed, retry: [...read.failed] },
         );
-        return { measured, proposed };
+        return { measured, proposed, passedOver };
       }
       if (written.next === null) {
         generations.shift();
@@ -1230,7 +1542,14 @@ export const proposeRelations = internalAction({
       runId,
       owed: null,
     });
-    return await remeasure(ctx, { sourceId, runId, measured, proposed, retry: undefined });
+    const remeasured = await remeasure(ctx, {
+      sourceId,
+      runId,
+      measured,
+      proposed,
+      retry: undefined,
+    });
+    return { ...remeasured, passedOver: [...passedOver, ...remeasured.passedOver] };
   },
 });
 
@@ -1250,7 +1569,8 @@ export const proposeRelations = internalAction({
  * pages (`retry`), `RELATION_MEASURE_RETRY_MS` on; the mark stays where the read began, so a
  * measuring cut off between the two starts the read again at the next sync.
  *
- * @returns How many pages the measuring measured, its own and these, and the sync's proposals.
+ * @returns How many pages the measuring measured, its own and these, the sync's proposals, and
+ *   the pages and pairs these reads passed over.
  */
 async function remeasure(
   ctx: ActionCtx,
@@ -1262,10 +1582,11 @@ async function remeasure(
     /** The pages of the read at the mark's place that are the only ones of it still to try. */
     readonly retry: readonly FailedMeasure[] | undefined;
   },
-): Promise<{ measured: number; proposed: number }> {
+): Promise<MeasuringStep> {
   const { sourceId, runId } = step;
   let { measured, proposed, retry } = step;
   const seen = new Set<string>();
+  const passedOver: PassedOver[] = [];
   for (;;) {
     if (measured >= RELATION_PAGES_PER_STEP) {
       await ctx.scheduler.runAfter(0, internal.docSyncActions.remeasureRelations, {
@@ -1273,13 +1594,13 @@ async function remeasure(
         runId,
         proposed,
       });
-      return { measured, proposed };
+      return { measured, proposed, passedOver };
     }
     const owed: PagesOwed | null = await ctx.runQuery(internal.docRelationsRemeasure.pagesOwed, {
       sourceId,
       runId,
     });
-    if (owed === null) return { measured, proposed };
+    if (owed === null) return { measured, proposed, passedOver };
     const read = await measureRead(ctx, {
       sourceId,
       runId,
@@ -1292,13 +1613,15 @@ async function remeasure(
     for (const ref of read.refs) seen.add(ref);
     measured += read.refs.length;
     proposed = read.proposed;
+    passedOver.push(...read.passedOver);
+    if (read.overtaken) return { measured, proposed, passedOver };
     if (read.capped) {
       await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
         sourceId,
         runId,
         owed: { cursor: owed.cursor },
       });
-      return { measured, proposed };
+      return { measured, proposed, passedOver };
     }
     if (read.failed.length > 0) {
       await ctx.scheduler.runAfter(
@@ -1306,14 +1629,14 @@ async function remeasure(
         internal.docSyncActions.remeasureRelations,
         { sourceId, runId, proposed, retry: [...read.failed] },
       );
-      return { measured, proposed };
+      return { measured, proposed, passedOver };
     }
     await ctx.runMutation(internal.docRelationsRemeasure.settleRemeasure, {
       sourceId,
       runId,
       owed: owed.next === null ? null : { cursor: owed.next },
     });
-    if (owed.next === null) return { measured, proposed };
+    if (owed.next === null) return { measured, proposed, passedOver };
   }
 }
 
@@ -1330,7 +1653,7 @@ export const remeasureRelations = internalAction({
     /** The pages of the read at the mark's place whose measure threw: the only ones still to try. */
     retry: v.optional(failedMeasuresValidator),
   },
-  handler: async (ctx, args): Promise<{ measured: number; proposed: number }> =>
+  handler: async (ctx, args): Promise<MeasuringStep> =>
     await remeasure(ctx, { ...args, measured: 0, retry: args.retry }),
 });
 
