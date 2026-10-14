@@ -3828,7 +3828,7 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
         ...page,
         ref: 'rotation.md',
         title: 'Rotation for [redacted]',
-        titleHash: 'hmac-sha256:3f1c9a',
+        titleHash: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c',
       });
       const plainId = await ctx.db.insert('docPages', {
         ...page,
@@ -3840,7 +3840,7 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
     expect(read.older).not.toHaveProperty('titleHash');
     expect(read.hashed).toMatchObject({
       title: 'Rotation for [redacted]',
-      titleHash: 'hmac-sha256:3f1c9a',
+      titleHash: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c',
     });
     expect(read.plain).toMatchObject({ title: 'Refunds' });
     expect(read.plain).not.toHaveProperty('titleHash');
@@ -3848,7 +3848,7 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
       harness.run(async (ctx) => {
         await ctx.db.patch(read.plain!._id, { titleHash: 7 as unknown as string });
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('Validator error: Expected `string`, got `7`');
   });
 
   it('a work item with and without `heldThroughChangeAt` reads back as written (RM43 (a))', async (): Promise<void> => {
@@ -3879,7 +3879,7 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
           heldThroughChangeAt: 'yesterday' as unknown as number,
         });
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow('Validator error: Expected `number`, got `yesterday`');
   });
 
   it('adds the two indexes and nothing else: 48 tables, 128 indexes and one search index (N10)', (): void => {

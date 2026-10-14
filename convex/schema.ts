@@ -776,10 +776,11 @@ export default defineSchema({
     /**
      * A keyed hash of the page's title as its source listed it, before redaction (wave 18, 18-K
      * for 18-D and 18-X; the 17-X F4 residual), under the key and owner binding `contentHash`
-     * uses, so no title text and no unkeyed digest of a secret is stored. A title holding a value
-     * the redaction removes no longer reads as changed at every sync: the reader compares this.
-     * Absent on a page stored before 0.22.0, where the reader compares the stored title, as
-     * before; written at a page's store (18-D). Never part of `contentHash`.
+     * uses, so no title text and no unkeyed digest of a secret is stored. It is there so a title
+     * holding a value the redaction removes need not read as changed at every sync: the page
+     * store writes it (18-D) and the readers compare it (18-X), each landing after this step.
+     * Absent on a page stored before it is written, where the stored title is compared, as
+     * before. Never part of `contentHash`.
      */
     titleHash: v.optional(v.string()),
     /**
@@ -1589,9 +1590,10 @@ export default defineSchema({
      * When a reorientation card held this row's plan through a change the plan does not rest on
      * (wave 18, 18-K for 18-O; RM43 (a), D-2 (b)): the plan is kept, not drafted again, and goes
      * to the manager whatever the autonomy switch says, as a plan whose skip the manager
-     * overruled does. On the row so the work loop's recovery, which asks `decidePlan` again,
-     * never approves it. Cleared wherever a plan is cleared. Absent reads as before: `decidePlan`
-     * decides as the switch says.
+     * overruled does. On the row so the work loop's recovery, which asks `decidePlan` again, can
+     * read it too. Written by `releaseHeldWork`, read by `decidePlan` and cleared wherever a plan
+     * is cleared (18-O, landing after this step). Absent reads as before: `decidePlan` decides as
+     * the switch says.
      */
     heldThroughChangeAt: v.optional(v.number()),
     /**
