@@ -880,7 +880,9 @@ describe('the owner’s rows written section by section (wave 18, 18-F; F16)', (
     expect(await streamed(owner(HELD, grown))).toBe(await printedWhole(HELD));
   });
 
-  it('ends with an error, and writes no more, when a counted row is gone before it is read', async (): Promise<void> => {
+  // W18-R3 (the wave 18 review): the refusal reached the manager as a developer's sentence, the
+  // table's name in it; it says what changed in the manager's words.
+  it('ends with an error in the manager’s words, and writes no more, when a counted row is gone before it is read (W18-R3)', async (): Promise<void> => {
     const shrunk: Held = { ...HELD, skillVersions: [row('skillVersions', 1)] };
     const pieces: string[] = [];
     await expect(
@@ -891,7 +893,7 @@ describe('the owner’s rows written section by section (wave 18, 18-F; F16)', (
         },
       }),
     ).rejects.toThrow(
-      'the owner’s skillVersions changed while the export read them: 3 were counted and 1 of them read; export again',
+      new Error('Something changed in your skills while the export was reading; export again.'),
     );
     expect(pieces.join('')).not.toContain('"people": [');
   });
