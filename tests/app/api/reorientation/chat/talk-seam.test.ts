@@ -117,8 +117,14 @@ function completing(text: string, quotes: string[]): Response {
   ]);
 }
 
-/** A bed: the employee, its card opened by hand, and the route loaded on the stubbed provider. */
-async function bed(): Promise<{
+/**
+ * A bed: the employee, its card opened by hand, and the route loaded on the stubbed provider.
+ *
+ * `signal` is the test's own: a test that timed out (the route's first import, under load) stops
+ * at its next step, where it went on in the background into the next test's provider answers and
+ * failed that test too (18-G).
+ */
+async function bed(signal: AbortSignal): Promise<{
   harness: Harness;
   agentId: Id<'agents'>;
   cardId: Id<'reorientations'>;
@@ -154,7 +160,16 @@ async function bed(): Promise<{
     }),
   );
   const { POST } = await import('../../../../../app/api/reorientation/chat/route');
-  return { harness, agentId, cardId: reorientationId, POST };
+  signal.throwIfAborted();
+  return {
+    harness,
+    agentId,
+    cardId: reorientationId,
+    POST: async (req: Request): Promise<Response> => {
+      signal.throwIfAborted();
+      return await POST(req);
+    },
+  };
 }
 
 afterEach((): void => {
@@ -201,9 +216,10 @@ async function talkOf(
 
 /** Open the talk and reply once, the employee's answer ending it in `quotes`. */
 async function talkedThrough(
+  signal: AbortSignal,
   quotes: string[] = ['send committee-deck drafts to Priya first, then to me'],
 ): Promise<Awaited<ReturnType<typeof bed>>> {
-  const opened = await bed();
+  const opened = await bed(signal);
   replies = [() => said(OPENING), () => completing('Noted.', quotes)];
   expect((await turn(opened.POST, opened.cardId, { kind: 'open' })).status).toBe(200);
   const first = (await talkOf(opened.harness, opened.cardId)).turns[0];
@@ -220,8 +236,10 @@ async function talkedThrough(
 }
 
 describe('the conversation ends in a proposal on the card and applies nothing (through the route)', (): void => {
-  it('puts the discussion’s proposal on the card, back at open, and changes no charter', async (): Promise<void> => {
-    const { harness, agentId, cardId } = await talkedThrough();
+  it('puts the discussion’s proposal on the card, back at open, and changes no charter', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, agentId, cardId } = await talkedThrough(signal);
     const card = await harness.run(async (ctx) => await ctx.db.get(cardId));
     expect(card).toMatchObject({
       status: 'open',
@@ -244,8 +262,10 @@ describe('the conversation ends in a proposal on the card and applies nothing (t
     ]);
   });
 
-  it('writes reorientation.proposed by the discussion, which both renderers say as the talk’s', async (): Promise<void> => {
-    const { harness, agentId } = await talkedThrough();
+  it('writes reorientation.proposed by the discussion, which both renderers say as the talk’s', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, agentId } = await talkedThrough(signal);
     const proposed = await harness.run(async (ctx) =>
       (await ctx.db.query('events').collect()).find(
         (event) => event.agentId === agentId && event.type === 'reorientation.proposed',
@@ -260,8 +280,10 @@ describe('the conversation ends in a proposal on the card and applies nothing (t
 });
 
 describe('an agent-quoted phrase never becomes evidence (through the route)', (): void => {
-  it('keeps only the manager’s words of the quotes the employee offered', async (): Promise<void> => {
-    const { harness, cardId } = await talkedThrough([
+  it('keeps only the manager’s words of the quotes the employee offered', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, cardId } = await talkedThrough(signal, [
       OPENING,
       'should tier-2 drafts about them go to her first',
       'send committee-deck drafts to Priya first, then to me',
@@ -273,8 +295,10 @@ describe('an agent-quoted phrase never becomes evidence (through the route)', ()
 });
 
 describe('it resumes from any point (through the route)', (): void => {
-  it('answers a reply kept before the room closed, when the reopened room asks again', async (): Promise<void> => {
-    const { harness, cardId, POST } = await bed();
+  it('answers a reply kept before the room closed, when the reopened room asks again', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, cardId, POST } = await bed(signal);
     replies = [() => said(OPENING)];
     await turn(POST, cardId, { kind: 'open' });
     const first = (await talkOf(harness, cardId)).turns[0];
@@ -308,8 +332,10 @@ describe('it resumes from any point (through the route)', (): void => {
     ]);
   });
 
-  it('puts a talk on the card at the manager’s word from wherever it stands', async (): Promise<void> => {
-    const { harness, cardId, POST } = await bed();
+  it('puts a talk on the card at the manager’s word from wherever it stands', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, cardId, POST } = await bed(signal);
     replies = [() => said(OPENING)];
     await turn(POST, cardId, { kind: 'open' });
     const first = (await talkOf(harness, cardId)).turns[0];
@@ -366,8 +392,10 @@ describe('it resumes from any point (through the route)', (): void => {
 });
 
 describe('the one-to-one’s session and its readers are untouched by a talk (through the route)', (): void => {
-  it('leaves the employee’s one-to-one where it stood, every reader of it answering as before', async (): Promise<void> => {
-    const { harness, agentId, cardId, POST } = await bed();
+  it('leaves the employee’s one-to-one where it stood, every reader of it answering as before', async ({
+    signal,
+  }): Promise<void> => {
+    const { harness, agentId, cardId, POST } = await bed(signal);
     const owner = harness.withIdentity(OWNER);
     await owner.mutation(api.voice.start, { agentId, mode: 'chat' });
     await owner.mutation(api.oneToOne.takeTurn, { agentId, request: { kind: 'open' } });
