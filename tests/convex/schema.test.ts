@@ -3776,4 +3776,44 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
     ]);
     expect(read.bySkill).toEqual(['DONE-0', 'DONE-1']);
   });
+
+  it('reading `by_agent_digest` for one digest returns only its notes (W17-R22)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const otherAgent = await insertAgent(ctx);
+      const workItemId = await insertWork(ctx, agentId, 'FIN-1', 'completed');
+      const digest = (await insertMinimalRow(ctx as never, 'events', agentId)) as Id<'events'>;
+      const later = (await insertMinimalRow(ctx as never, 'events', agentId)) as Id<'events'>;
+      const note = (
+        agent: Id<'agents'>,
+        text: string,
+        digestId?: Id<'events'>,
+      ): WithoutSystemFields<Doc<'managerNotes'>> => ({
+        agentId: agent,
+        workItemId,
+        kind: 'landed',
+        text,
+        createdAt: 2,
+        keptFor: 'digest',
+        ...(digestId !== undefined ? { digestId, claimedAt: 3 } : {}),
+      });
+      await ctx.db.insert('managerNotes', note(agentId, 'first in the digest', digest));
+      await ctx.db.insert('managerNotes', note(agentId, 'in the next digest', later));
+      await ctx.db.insert('managerNotes', note(agentId, 'not sent yet'));
+      await ctx.db.insert('managerNotes', note(otherAgent, "another employee's", digest));
+      await ctx.db.insert('managerNotes', note(agentId, 'second in the digest', digest));
+      const ofDigest = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_digest', (q) => q.eq('agentId', agentId).eq('digestId', digest))
+        .collect();
+      const unsent = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_digest', (q) => q.eq('agentId', agentId).eq('digestId', undefined))
+        .collect();
+      return { ofDigest: ofDigest.map((row) => row.text), unsent: unsent.map((row) => row.text) };
+    });
+    expect(read.ofDigest).toEqual(['first in the digest', 'second in the digest']);
+    expect(read.unsent).toEqual(['not sent yet']);
+  });
 });

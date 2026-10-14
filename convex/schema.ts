@@ -2047,7 +2047,12 @@ export default defineSchema({
      * were claimed: the five-minute sweep's read of a send that died holding its claim (12-W,
      * N-3), which never reads the sent history.
      */
-    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt']),
+    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt'])
+    /**
+     * One agent's notes a digest send claimed (wave 18, 18-K for 18-W; W17-R22): the digest's
+     * sweep reads one digest's notes here instead of filtering every stuck note on `digestId`.
+     */
+    .index('by_agent_digest', ['agentId', 'digestId']),
 
   /**
    * The manager's corrections, kept for the employee's later work: a note
