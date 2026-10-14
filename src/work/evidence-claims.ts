@@ -662,7 +662,7 @@ const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|ever
  */
 const UNCOUNTED_MESSAGES = new RegExp(
   [
-    `\\b(?:\\w+\\s+)?(?:minute|hour|day|week|fortnight|month|quarter|year)s?(?:'|'s)?\\s+(?:worth\\s+)?of\\s+(?:\\w+\\s+){0,2}?(?:${MESSAGES_PLURAL})\\b`,
+    `\\b(?:\\w+\\s+)?(?:minute|hour|day|week|fortnight|month|quarter|year)s?(?:'|'s)?\\s+(?:worth\\s+)?of\\s+(?:[\\w-]+\\s+){0,2}?(?:${MESSAGES_PLURAL})\\b`,
     `\\b(?:\\d+\\s+|(?:${Object.keys(COUNT_WORDS).join('|')})\\s+)?(?:${MESSAGES_PLURAL})\\s+(?:backlog|queue|pile|inbox|archive|history)\\b`,
   ].join('|'),
   'gi',

@@ -1690,6 +1690,8 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
       'Posted the stop-drill note, 3 weeks of notes.',
       'Posted the stop-drill note on the 40 messages backlog.',
       'Posted the stop-drill note after two days of replies.',
+      // The second pass: a hyphenated word between the span and the plural.
+      'Posted the stop-drill note, 3 weeks of stop-drill notes.',
     ]) {
       expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
       expect(
