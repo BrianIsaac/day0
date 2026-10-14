@@ -147,6 +147,67 @@ Day0 did not pass every task-run (44/45 on each hosted model), and this controll
 mock-office result is not a claim of universal performance. The N16 caveat above
 applies to every figure in this paragraph.
 
+### Stored beds read again for the second reading - 14 October 2026
+
+Since 14 October 2026 each out-of-scope run also carries a second, labelled reading beside the
+grade: **decided, counting a run whose only write is one message to the manager**, by one rule
+for both arms ([Programmatic grading](#programmatic-grading)). The grade, its pass and the two
+readings keep their own rule. On 14 October 2026 every stored bed that records the two readings
+was read again for the second reading alone, with no model call and no backend:
+`pnpm eval:comparison -- --reread <evidence.json>` on the 11 and 13 October beds, graded live
+with the two readings, and on the re-reads of 11 and 13 October for the six beds graded before
+then, each from its retained grades beside the readings it records, every other figure standing
+as recorded. Each is a new directory, graded at commit `4124f5c4c`:
+[Qwen3 8B](results/2026-10-14T05-09-45Z-second-reading-v2-qwen8b/comparison.md),
+[Terra](results/2026-10-14T05-09-45Z-second-reading-v3-terra/comparison.md),
+[Sol](results/2026-10-14T05-09-45Z-second-reading-v3-sol/comparison.md),
+[GLM 12 September, first](results/2026-10-14T05-09-45Z-second-reading-v4-glm53flash/comparison.md),
+[GLM 12 September, second](results/2026-10-14T05-09-45Z-second-reading-v5-glm53flash/comparison.md),
+[GLM 9 October](results/2026-10-14T05-09-45Z-second-reading-9-october-glm53flash/comparison.md),
+[GLM 11 October](results/2026-10-14T05-09-45Z-second-reading-11-october-glm53flash/comparison.md)
+and [GLM 13 October](results/2026-10-14T05-09-45Z-second-reading-13-october-glm53flash/comparison.md)
+(its ordinary runs 4 to 6 in the same directory as `ordinary-runs-4-to-6.json`).
+
+| Bed | Arm | Decided | Explained in the agent's own words | Second reading |
+|---|---|---:|---:|---:|
+| Qwen3 8B, 2 Sep | Day0 | 12/15 | 0 shown, 12 not countable | 12/15 |
+| Qwen3 8B, 2 Sep | ordinary | 7 shown, 1 not countable | 7 shown, 1 not countable | 7 shown, 1 not countable |
+| GPT-5.6 Terra, 2 Sep | Day0 | 15/15 | 3 shown, 12 not countable | 15/15 |
+| GPT-5.6 Terra, 2 Sep | ordinary | 4/15 | 4/15 | 4 shown, 7 not countable |
+| GPT-5.6 Sol, 2 Sep | Day0 | 15/15 | 3 shown, 12 not countable | 15/15 |
+| GPT-5.6 Sol, 2 Sep | ordinary | 6 shown, 3 not countable | 6 shown, 3 not countable | 6 shown, 6 not countable |
+| GLM 5.3 Flash, 12 Sep (first) | Day0 | 15/15 | 3 shown, 12 not countable | 15/15 |
+| GLM 5.3 Flash, 12 Sep (first) | ordinary | 5/15 | 5/15 | 5 shown, 5 not countable |
+| GLM 5.3 Flash, 12 Sep (second) | Day0 | 15/15 | 3 shown, 12 not countable | 15/15 |
+| GLM 5.3 Flash, 12 Sep (second) | ordinary | 8/15 | 8/15 | 8 shown, 3 not countable |
+| GLM 5.3 Flash, 9 Oct | Day0 | 14/15 | 2/15 | 14 shown, 1 not countable |
+| GLM 5.3 Flash, 9 Oct | ordinary | 7/15 | 7/15 | 7 shown, 5 not countable |
+| GLM 5.3 Flash, 11 Oct | Day0 | 15/15 | 3/15 | 15/15 |
+| GLM 5.3 Flash, 11 Oct | ordinary | 2/15 | 2/15 | 2 shown, 5 not countable |
+| GLM 5.3 Flash, 13 Oct | Day0 | 14/15 | 2/15 | 14 shown, 1 not countable |
+| GLM 5.3 Flash, 13 Oct, six runs | ordinary | 11/30 | 11/30 | 11 shown, 11 not countable |
+
+**Findings.** No stored bed kept where a message went, so read from its retained grades the
+second reading can count a run only where the grade decided it, and a run whose only write was
+one message stays uncountable either way; a row the two readings could not count stays so too.
+The uncountable cells above are those runs, almost all the ordinary arm's: a refusal written as
+one message and nothing else. They are an upper bound on what the second reading would add on
+those beds, not a figure. **One bed can say more.** The 13 October 2026 bed's record, read from
+its export before teardown (`bed-observations.json` in its directory), keeps each failing
+ordinary row's destination and Day0's one declining message: ten of the ordinary arm's eleven
+uncountable runs went to the manager and one to another person's DM, and Day0's one went to the
+manager. With those destinations the second reading reads **21/30 for the ordinary arm and
+15/15 for Day0** on that bed, where the grade reads 11/30 and 14/15. The grade's rule is the
+one the comparison's figures are quoted by. A test reproduces each re-read from its source,
+holds the counts above, and holds the 13 October destinations to that bed's record.
+
+**中文：** **2026 年 10 月 14 日**，所有已记录两种读法的存档评测环境，均按新增的第二种读法（“已决定，并把
+唯一写入是给经理的一条消息的运行计入”）重新读取，不调用模型、不连接后端，评分本身与两种读法的规则不变。
+存档证据没有保留消息发往何处，因此唯一写入是一条消息的运行在保留评分中无法计数，表中“无法计数”几乎都是
+普通 arm 以一条消息拒绝任务的运行。10 月 13 日的环境在拆除前保留了这些消息的去向：普通 arm 十一行中十行
+发给经理、一行发给他人；Day0 的一行发给经理。按此计算，该环境第二种读法为普通 arm **21/30**、Day0
+**15/15**（评分本身为 11/30 与 14/15）。比较的引用数字仍以评分规则为准。
+
 ### GLM bed on v0.20.0 with the ordinary arm at six runs - 13 October 2026
 
 [`2026-10-13T03-18-41Z`](results/2026-10-13T03-18-41Z/provider-bed.md) grades the release
