@@ -9,6 +9,7 @@ import { CLAUSE_WORDS } from '@/agent/reorientation-proposal';
 import {
   approvedResultWords,
   cardTitle,
+  closedAsNoLongerNeeded,
   decidedElsewhereOf,
   decidedElsewhereWords,
   decisionWords,
@@ -202,12 +203,14 @@ function closedAtHandover(card: CardView['card']): boolean {
 function decidedWords(card: CardView['card']): string {
   if (card.status === 'applied') return 'approved';
   if (decidedElsewhereOf(card.outcome?.summary) !== undefined) return 'decided on another card';
+  if (closedAsNoLongerNeeded(card.outcome?.summary)) return 'closed';
   return closedAtHandover(card) ? 'closed at the handover' : 'dismissed';
 }
 
 /** A decided card's outcome line: what its decision did, or where it was decided. */
 function outcomeWords(card: CardView['card'], zone: string | undefined): string {
   if (closedAtHandover(card)) return `Closed at the handover: ${handedOverReason}.`;
+  if (closedAsNoLongerNeeded(card.outcome?.summary)) return `Closed as ${card.outcome?.summary}.`;
   const elsewhere = decidedElsewhereOf(card.outcome?.summary);
   if (elsewhere !== undefined) {
     return decidedElsewhereWords(elsewhere, revisitDay(card.decidedAt ?? card.createdAt, zone));

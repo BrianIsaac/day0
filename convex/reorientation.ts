@@ -302,7 +302,7 @@ function higher(left: ReorientationRisk, right: ReorientationRisk): Reorientatio
 }
 
 /** An employee's cards still standing (open, discussing or deferred), newest first per standing. */
-async function standingCards(
+export async function standingCards(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'reorientations'>[]> {

@@ -28,6 +28,20 @@ describe('the live feed labels', (): void => {
     ).toBe('reorientation card proposes nothing needs to change');
   });
 
+  it('labels a card closed with an outcome by what closed it, not always by another employee’s card (W17-R2)', (): void => {
+    const closed = (outcome: string) =>
+      eventLabel({
+        type: 'reorientation.dismissed',
+        payload: { reorientationId: 'r1', summary: '“Escalation paths” was archived', outcome },
+      });
+    expect(closed('no longer needed: “Escalation paths” is current again')).toBe(
+      'reorientation card closed as no longer needed: “Escalation paths” is current again',
+    );
+    expect(closed('decided on Priya’s card: the relationship was changed')).toBe(
+      'reorientation card closed: decided on another employee’s card',
+    );
+  });
+
   it('labels a card a fan-out could not open by what it was about (17-O; W16-R23)', (): void => {
     expect(
       eventLabel({

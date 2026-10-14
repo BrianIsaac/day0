@@ -32,7 +32,8 @@ import {
   standingConflictsFrom,
   type RelationDecision,
 } from './docConflicts';
-import { askConflictQuestion } from './reorientation';
+import { askConflictQuestion, standingCards } from './reorientation';
+import { closeTalkOfCard } from './reorientationTalk';
 import { closeQuestionsOnPage } from './questionCloses';
 import { appendEvent } from './eventLog';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
@@ -52,7 +53,7 @@ import {
   type StatusSource,
 } from '../src/docs/authority';
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
-import { conflictChoiceWords } from '../src/agent/reorientation-words';
+import { approvedResultWords, conflictChoiceWords } from '../src/agent/reorientation-words';
 import { isOpenQuestion } from '../src/agent/manager-questions';
 
 /*
@@ -641,6 +642,56 @@ export const askConfirmed = internalMutation({
 const QUESTION_TURN_PAGES = 4;
 
 /**
+ * Close, as no longer needed, the standing cards a page's leaving opened on its readers once the
+ * page is current again (W17-R2, D-1 (a)): the card went on saying the page was archived, and
+ * Approve of its proposal pinned the page to the manager. A card that rests on another page still
+ * not current stays. Each closed card says why in its outcome and on the record, its talk closes
+ * with it, and the plans it held are asked for their decision again: nothing they were drafted
+ * under has moved.
+ */
+async function closeCardsOfReturnedPage(
+  ctx: MutationCtx,
+  source: Doc<'docSources'>,
+  ref: string,
+  now: number,
+): Promise<void> {
+  const page = await pageAt(ctx, { sourceId: source._id, ref });
+  if (page === null || pageStatusOf(page) !== 'active') return;
+  const isPage = (named: { sourceId: Id<'docSources'>; ref: string }): boolean =>
+    named.sourceId === source._id && named.ref === ref;
+  for (const agent of await readersOf(ctx, source)) {
+    for (const card of await standingCards(ctx, agent._id)) {
+      if (card.trigger !== 'page-status-changed' || !card.evidence.pageRefs.some(isPage)) continue;
+      let stillOut = false;
+      for (const other of card.evidence.pageRefs.filter((named) => !isPage(named))) {
+        const row = await pageAt(ctx, other);
+        if (row !== null && pageStatusOf(row) !== 'active') stillOut = true;
+      }
+      if (stillOut) continue;
+      const outcome = approvedResultWords.pageBack(page.title);
+      await ctx.db.patch(card._id, {
+        status: 'dismissed',
+        decidedAt: now,
+        revisitAt: undefined,
+        outcome: { summary: outcome },
+      });
+      await appendEvent(ctx, {
+        agentId: agent._id,
+        type: 'reorientation.dismissed',
+        payload: { reorientationId: card._id, summary: card.triggerSummary, outcome },
+        createdAt: now,
+      });
+      await closeTalkOfCard(ctx, card._id);
+      for (const workItemId of card.blockingWork) {
+        const row = await ctx.db.get(workItemId);
+        if (row?.state !== 'plan-pending') continue;
+        await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
+      }
+    }
+  }
+}
+
+/**
  * Turn the conflict questions of pages whose status left `active` or came back to it, a few pages
  * a step (17-C's two lines for `docStatus`, which schedules it). A page that left closes every
  * open question about its confirmed conflicts as settled: none of them stands while the page is
@@ -648,7 +699,8 @@ const QUESTION_TURN_PAGES = 4;
  * next run. A page that came back starts the confirmation's asking again for each of its
  * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
  * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
- * it). Internal; schedules itself for the pages left.
+ * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`).
+ * Internal; schedules itself for the pages left.
  */
 export const turnPageQuestions = internalMutation({
   args: {
@@ -672,6 +724,7 @@ export const turnPageQuestions = internalMutation({
       }
       const source = await ctx.db.get(page.sourceId);
       if (source === null) continue;
+      await closeCardsOfReturnedPage(ctx, source, page.ref, now);
       for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
         if ((await standingConflictOf(ctx, relation)) === undefined) continue;
         await scheduleConfirmationAsks(ctx, relation);

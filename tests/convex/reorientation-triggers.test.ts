@@ -357,6 +357,156 @@ describe('a page under an open plan superseded, archived or made a draft (docume
   });
 });
 
+// W17-R2 with D-1 (a) (17-J's W2, the joins' walk row: archive, return, Approve): a card opened
+// by a page's archive kept saying the page was archived once it was current again, and Approve of
+// its `archived` proposal pinned the page to the manager, after which its source's word was lost.
+describe('a page whose status opened a card is current again (W17-R2, D-1 (a))', (): void => {
+  const REF = 'policies/close-review-window.md';
+
+  /** A folder source mid-sync with one page, and a held plan of the employee's citing it. */
+  async function archivedUnderPlan(harness: Harness) {
+    const agentId = await seedEmployee(harness);
+    const { sourceId, runId } = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: OWNER_SUBJECT,
+        kind: 'folder',
+        label: 'Company folder',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      const runId = await ctx.db.insert('docSyncRuns', {
+        sourceId,
+        listing: 0,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 1,
+      });
+      await ctx.db.patch(sourceId, { activeSyncId: runId });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: REF,
+        title: 'Close review window',
+        markdown: '# Close review window',
+        updatedAt: 1,
+      });
+      return { sourceId, runId };
+    });
+    const held = await seedWork(harness, agentId, 'plan-pending', {
+      plan: {
+        summary: 'Review the close.',
+        steps: ['Read the review window', 'Reply'],
+        cites: [{ step: 1, label: 'Close review window', sourceId, pageRef: REF, blocks: [] }],
+      },
+    });
+    const read = async (nativeStatus?: 'archived'): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId,
+        syncRunId: runId,
+        ref: REF,
+        ...(nativeStatus === undefined ? {} : { nativeStatus }),
+      });
+    expect(await read('archived')).toBe(true);
+    const [card] = await cardsOf(harness, agentId);
+    expect(card).toMatchObject({
+      trigger: 'page-status-changed',
+      triggerSummary: '“Close review window” was archived',
+      status: 'open',
+      blockingWork: [held],
+    });
+    // The judgement on the hosted model proposed the status the page had at its source.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(card._id, {
+        proposed: {
+          kind: 'page-status',
+          page: { sourceId, ref: REF },
+          status: 'archived',
+          rationale: 'The source archived it.',
+        },
+      });
+    });
+    return { agentId, sourceId, held, card, read };
+  }
+
+  /** Run the question turns a status change handed over, as the scheduler would. */
+  async function turnQuestions(harness: Harness): Promise<void> {
+    for (const job of await scheduledAs(harness, 'docRelations:turnPageQuestions')) {
+      await harness.mutation(
+        internal.docRelations.turnPageQuestions,
+        job.args[0] as { pages: Array<{ sourceId: Id<'docSources'>; ref: string; back: boolean }> },
+      );
+    }
+  }
+
+  it('closes the card as no longer needed once the page is current again, says so in the record, and lets its plan go on', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, held, card, read } = await archivedUnderPlan(harness);
+    await turnQuestions(harness);
+    expect(await read()).toBe(true);
+    await turnQuestions(harness);
+    const [closed] = await cardsOf(harness, agentId);
+    expect(closed).toMatchObject({
+      _id: card._id,
+      status: 'dismissed',
+      outcome: { summary: 'no longer needed: “Close review window” is current again' },
+    });
+    expect(closed.decidedAt).toEqual(expect.any(Number));
+    const dismissed = await harness.run(async (ctx) =>
+      (await ctx.db.query('events').collect()).filter(
+        (event) => event.type === 'reorientation.dismissed',
+      ),
+    );
+    expect(dismissed.map((event) => event.payload)).toEqual([
+      {
+        reorientationId: card._id,
+        summary: '“Close review window” was archived',
+        outcome: 'no longer needed: “Close review window” is current again',
+      },
+    ]);
+    // The plan it held is asked for its decision again; nothing it was drafted under moved.
+    const decided = await scheduledAs(harness, 'work:decidePlan');
+    expect(decided.map((job) => job.args[0])).toContainEqual({
+      workItemId: held,
+      recovery: true,
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card._id,
+      }),
+    ).rejects.toThrow('That card has already been decided.');
+  });
+
+  it('keeps a card open while another page it rests on is still not current', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, sourceId, card, read } = await archivedUnderPlan(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'policies/close-checklist.md',
+        title: 'Close checklist',
+        markdown: '# Close checklist',
+        updatedAt: 1,
+        status: 'archived',
+        statusSource: 'source-native',
+      });
+      const row = await ctx.db.get(card._id);
+      await ctx.db.patch(card._id, {
+        evidence: {
+          ...row!.evidence,
+          pageRefs: [...row!.evidence.pageRefs, { sourceId, ref: 'policies/close-checklist.md' }],
+        },
+      });
+    });
+    await turnQuestions(harness);
+    expect(await read()).toBe(true);
+    await turnQuestions(harness);
+    expect((await cardsOf(harness, agentId))[0]).toMatchObject({ status: 'open' });
+  });
+});
+
 describe('manager changed: a handover is accepted (manager.transferred)', (): void => {
   it('opens one card under the new manager about the carried reporting-line rules, and moves the cards before it (16-K’s F2)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());

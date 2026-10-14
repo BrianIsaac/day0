@@ -14,6 +14,7 @@ import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
+import { decidedElsewhereOf } from '@/agent/reorientation-words';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -862,9 +863,11 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'reorientation.approved': (payload) =>
     `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
   'reorientation.dismissed': (payload) =>
-    payload.outcome !== undefined
-      ? 'reorientation card closed: decided on another employee’s card'
-      : 'reorientation card dismissed; nothing changed',
+    payload.outcome === undefined
+      ? 'reorientation card dismissed; nothing changed'
+      : decidedElsewhereOf(payload.outcome) !== undefined
+        ? 'reorientation card closed: decided on another employee’s card'
+        : `reorientation card closed as ${payload.outcome}`,
   'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,

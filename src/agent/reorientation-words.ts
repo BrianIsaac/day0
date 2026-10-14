@@ -30,9 +30,25 @@ export const CARD_ACTION_REFUSALS = {
     'The charter is not approved yet, so this card cannot amend it: approve the charter, or dismiss the card.',
   /** An owed check's card whose agreements have all been checked since (RM34 (a)). */
   checked: 'These agreements have been checked since this card opened: dismiss it.',
+  /**
+   * A page's status the page already holds from its source (W17-R2, D-1 (a)): approving it would
+   * change nothing but pin the page to the manager, so a later word of its source were ignored.
+   */
+  held: 'The page already has this status from its source, so approving would change nothing: dismiss the card.',
   date: 'Pick a date after today and within a year.',
   summary: 'Say what changed in up to 300 characters.',
 } as const;
+
+/** How the outcome of a card closed because it is no longer needed opens. */
+const NO_LONGER_NEEDED = 'no longer needed: ';
+
+/**
+ * Whether a card's outcome says it closed because it is no longer needed, as a page's return
+ * closes its status card (W17-R2), so the card says it closed and not that it was dismissed.
+ */
+export function closedAsNoLongerNeeded(summary: string | undefined): boolean {
+  return summary?.startsWith(NO_LONGER_NEEDED) === true;
+}
 
 /** What Approve did, as the end of the record's sentence and the card's outcome line. */
 export const approvedResultWords = {
@@ -46,6 +62,11 @@ export const approvedResultWords = {
    */
   decidedElsewhere: (name: string, result: string): string =>
     `decided on ${name}’s card: ${result}`,
+  /**
+   * A page's status card closed by the page's return (W17-R2, D-1 (a)): read back by {@link
+   * closedAsNoLongerNeeded}.
+   */
+  pageBack: (title: string): string => `${NO_LONGER_NEEDED}“${title}” is current again`,
   charter: (version: string): string => `the charter was amended to version ${version}`,
   agreement: {
     keep: 'the working agreement was kept as it is',
