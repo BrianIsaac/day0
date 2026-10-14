@@ -137,11 +137,12 @@ proxy.
 
 ## Not yet checked against a real project
 
-The reader is built against Google's published reference for the Drive API and for service
-accounts (read 10 October 2026), with test answers written from that reference, not recorded
-from a project: **no tenant read yet**. Until one is, these are known only from the reference:
-the word Google gives an export over 10 MB; whether a folder in a shared drive lists as one in
-My Drive does; how Google's Markdown export writes a document's own title; and how often a
-file's version moves with no change to its text. The request counts above are from day0's own
-test double. If a first install finds any of them different, tell the day0 maintainers so this
-page can say what is true.
+The reader is built against Google's published reference for the Drive API and for service accounts
+(read 10 October 2026), with test answers written from that reference, not recorded from a project:
+**no tenant read yet**. Until one is, these are known only from the reference: the word Google gives
+an export over 10 MB; whether a folder in a shared drive lists as one in My Drive does; how Google's
+Markdown export writes a document's own title; and how often a file's version moves with no change
+to its text; and whether a token lasts as long as Google's answer says (day0 keeps it for the rest
+of a read until two minutes before the expiry named, and asks again if Google refuses it sooner).
+The request counts above are from day0's own test double and its 0.21.0 bed. If a first install
+finds any of them different, tell the day0 maintainers so this page can say what is true.

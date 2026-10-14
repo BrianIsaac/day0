@@ -187,6 +187,8 @@ address is on; what a page's publishing state says (the reference documents `pub
 whether a library's first walk lists the files in its recycle bin; whether a library's listing
 sends a file's `cTag` or only its `eTag`; and whether the listing of the site's pages answers
 each page's `eTag` and publishing state when asked for only those fields (where it leaves the
-publishing state out, day0 reads the page rather than keep it). The request counts above are
-from day0's own test double. If a first install finds any of them different, tell the day0
+publishing state out, day0 reads the page rather than keep it); and whether a sign-in lasts as
+long as its answer says (day0 keeps it for the rest of a read until two minutes before the expiry
+named, and signs in again if Graph refuses it sooner). The request counts above are from day0's
+own test double and its 0.21.0 bed. If a first install finds any of them different, tell the day0
 maintainers so this page can say what is true.
