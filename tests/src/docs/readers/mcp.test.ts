@@ -572,27 +572,48 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     expect(ordinary).not.toHaveProperty('sourceRevision');
   });
 
-  it('says every page an MCP server gives is dated by the read, whatever time the server names (wave 17, D-8)', async (): Promise<void> => {
+  it('says an MCP page whose server names a time is dated by its source, and a generic server’s resource is not (RM42 (b); wave 18, 18-X)', async (): Promise<void> => {
     const edited = '2026-10-07T03:15:00.000Z';
     const pagesOf = async (reader: McpReader, source: DocSourceRecord) =>
       (await reader.listPageBatch(source, secret, undefined, 25)).pages;
-    const fromNotion = await pagesOf(
+    const notionWith = (page: Record<string, unknown>): McpReader =>
       readerWith({
         'API-post-search': () =>
-          textResult({ results: [{ id: 'page-1', last_edited_time: edited }], has_more: false }),
+          textResult({ results: [{ id: 'page-1', ...page }], has_more: false }),
         'API-retrieve-page-markdown': () => textResult({ markdown: '# Runbook' }),
-      }),
-      sourceOf('notion'),
-    );
-    const fromDrive = await pagesOf(
+      });
+    const driveWith = (file: Record<string, unknown>): McpReader =>
       readerWith({
-        search_files: () =>
-          textResult({ files: [{ id: 'file-1', title: 'Runbook', modifiedTime: edited }] }),
+        search_files: () => textResult({ files: [{ id: 'file-1', title: 'Runbook', ...file }] }),
         read_file_content: () => textResult({ fileContent: '# Runbook' }),
-      }),
-      sourceOf('drive'),
-    );
-    const fromConfluence = await pagesOf(confluence({}), sourceOf('confluence'));
+      });
+    const confluenceWith = (result: Record<string, unknown>): McpReader =>
+      readerWith({
+        getAccessibleAtlassianResources: () => textResult({ resources: [{ id: 'cloud-1' }] }),
+        searchConfluenceUsingCql: () =>
+          textResult({ results: [{ content: { id: 'page-1', title: 'Runbook' }, ...result }] }),
+        getConfluencePage: () => textResult({ markdown: '# Runbook' }),
+      });
+    const dated = [
+      await pagesOf(notionWith({ last_edited_time: edited }), sourceOf('notion')),
+      await pagesOf(driveWith({ modifiedTime: edited }), sourceOf('drive')),
+      await pagesOf(confluenceWith({ lastModified: edited }), sourceOf('confluence')),
+    ];
+    for (const pages of dated) {
+      expect(pages.map((page) => [page.updatedAt, page.datedBySource])).toEqual([
+        [Date.parse(edited), true],
+      ]);
+    }
+    // A server that names no time it can read leaves the page dated by the read.
+    const undated = [
+      await pagesOf(notionWith({}), sourceOf('notion')),
+      await pagesOf(driveWith({ modifiedTime: 'last Tuesday' }), sourceOf('drive')),
+      await pagesOf(confluenceWith({}), sourceOf('confluence')),
+    ];
+    for (const pages of undated) {
+      expect(pages.map((page) => page.datedBySource)).toEqual([false]);
+    }
+    // A generic server's resource names no time Day0 reads: dated by the read.
     const fromResources = await pagesOf(
       new McpReader(() => ({
         listTools: async () => ({}),
@@ -604,11 +625,7 @@ describe('MCP documentation continuations (P10-1)', (): void => {
       })),
       { ...sourceOf('notion'), serverKind: 'generic' },
     );
-    for (const pages of [fromNotion, fromDrive, fromConfluence, fromResources]) {
-      expect(pages.map((page) => page.datedBySource)).toEqual([false]);
-    }
-    // The time the server names still dates the page; the field says it is not held to be an edit time.
-    expect(fromNotion[0].updatedAt).toBe(Date.parse(edited));
+    expect(fromResources.map((page) => page.datedBySource)).toEqual([false]);
   });
 
   it('reads a Confluence page’s own status and version: archived, a draft, and nothing for a current page', async (): Promise<void> => {

@@ -529,6 +529,21 @@ function revisionOf(value: unknown): string | undefined {
 }
 
 /**
+ * A page's date from the time its server names for it (Notion's `last_edited_time`, a Drive
+ * server's `modifiedTime`, Atlassian's `lastModified` or its version's `createdAt`): dated by its
+ * source where that time parses, else by the read (RM42 (b); wave 18, 18-X). A generic server's
+ * resource names none, so its pages are dated by the read without this.
+ *
+ * @param named - The time the server named, as it gave it.
+ */
+function datedByServer(named: unknown): Pick<DocPage, 'updatedAt' | 'datedBySource'> {
+  const time = typeof named === 'string' ? Date.parse(named) : Number.NaN;
+  return Number.isFinite(time)
+    ? { updatedAt: time, datedBySource: true }
+    : { updatedAt: Date.now(), datedBySource: false };
+}
+
+/**
  * The reason a walk stops when the provider says there is more but gives no
  * continuation the reader can follow. Ending the walk there would complete the
  * generation and delete every page after it, so the batch fails instead.
@@ -725,12 +740,7 @@ export class McpReader implements DocumentationReader {
             title: typeof file.title === 'string' ? file.title : `Google Drive file ${fileId}`,
             url: typeof file.viewUrl === 'string' ? file.viewUrl : undefined,
             markdown: content.fileContent,
-            updatedAt:
-              typeof file.modifiedTime === 'string' &&
-              Number.isFinite(Date.parse(file.modifiedTime))
-                ? Date.parse(file.modifiedTime)
-                : Date.now(),
-            datedBySource: false,
+            ...datedByServer(file.modifiedTime),
             ...(file.trashed === true ? { nativeStatus: 'archived' as const } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -830,9 +840,7 @@ export class McpReader implements DocumentationReader {
             title,
             url: typeof result.url === 'string' ? result.url : undefined,
             markdown: unwrapWholePageFence(markdown),
-            updatedAt:
-              modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
-            datedBySource: false,
+            ...datedByServer(modified),
             ...(nativeStatus !== undefined ? { nativeStatus } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -889,12 +897,7 @@ export class McpReader implements DocumentationReader {
             title: notionPageTitle(result),
             url: typeof result.url === 'string' ? result.url : undefined,
             markdown: unwrapWholePageFence(retrieved.markdown),
-            updatedAt:
-              typeof result.last_edited_time === 'string' &&
-              Number.isFinite(Date.parse(result.last_edited_time))
-                ? Date.parse(result.last_edited_time)
-                : Date.now(),
-            datedBySource: false,
+            ...datedByServer(result.last_edited_time),
             ...(archived ? { nativeStatus: 'archived' as const } : {}),
           };
         }),
