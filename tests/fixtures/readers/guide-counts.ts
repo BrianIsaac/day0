@@ -36,3 +36,22 @@ export const BED_REQUESTS: Readonly<Record<LibraryKind, ReadCosts>> = {
   'confluence-dc': { first: 262, unchanged: 12, oneChanged: 13 },
   drive: { first: 271, unchanged: 21, oneChanged: 22 },
 };
+
+/**
+ * What 0.21.0 asked of an unchanged library where each batch signed in again, before a reader
+ * kept its token across a sync's batches (X-1; wave 18, 18-X): the whole read and its sign-ins, at
+ * a thousand pages by the readers' tests and at 250 on the bed. The guides of the two readers
+ * that sign in say what the token saved by these.
+ */
+export const SIGN_INS_BEFORE_THE_TOKEN: Readonly<
+  Record<'sharepoint' | 'drive', { readonly thousand: number; readonly bed: number }>
+> = {
+  sharepoint: { thousand: 41, bed: 11 },
+  drive: { thousand: 40, bed: 10 },
+};
+
+/** A thousand unchanged pages at 0.21.0, as its readers' tests counted them. */
+export const THOUSAND_PAGE_UNCHANGED_AT_0_21: Readonly<Record<'sharepoint' | 'drive', number>> = {
+  sharepoint: 83,
+  drive: 81,
+};
