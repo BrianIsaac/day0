@@ -1,0 +1,4 @@
+state: failed | skipReason: stopped: 2 approved plan step(s) remained blocked: step 2 (No manager decision resolving the 60-word and 120-word conflict appears in the applied ledger, so no compliant audit-comment payload can be selected.); step 3 (The audit comment required before the status change has not been posted, and no manager decision authorises the unresolved comment limit.)
+openQuestion: null
+withheld: null
+action: http.request {"body": "{\"channel\":\"D_DAY0_MANAGER\",\"text\":\"REVOPS-2 has conflicting audit-comment limits: the Policies page sets 60 words, while the Revops runbook sets 120 words. Which limit governs for fu => {"actionClass": "manager-dm", "authority": "standing", "effect": "HTTP 200 · {\"ok\":true,\"channel\":\"D_DAY0_MANAGER\",\"ts\":\"1787817600.000002\",\"message\

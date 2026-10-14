@@ -1,4 +1,4 @@
-import { retainedOutOfScopeReading } from './graders';
+import { retainedDecidedCountingManagerMessage, retainedOutOfScopeReading } from './graders';
 import type { EvaluationEvidence } from './report';
 
 /*
@@ -62,6 +62,62 @@ export function rereadRetainedEvidence(
     generatedAt: source.generatedAt,
     modelCallsMade: 0,
     basis: 'retained-grade',
+  };
+  return evidence;
+}
+
+/**
+ * Read a stored result again for the second reading alone (14 October 2026):
+ * a result that records the two out-of-scope readings, live since 11 October
+ * 2026 or by an earlier re-read, gains on each out-of-scope row the reading
+ * that also counts a run whose only write is one message to the manager, from
+ * its retained grade beside its recorded readings. Every other field of every
+ * row is the source's.
+ *
+ * @returns New evidence; the source is not changed.
+ * @throws when the source is itself a re-read for the second reading, or a row records no
+ *   reading or records the second already.
+ */
+export function rereadSecondReading(
+  source: EvaluationEvidence,
+  provenance: RereadProvenance,
+): EvaluationEvidence {
+  const earlier = source.regradedFrom;
+  if (earlier?.basis === 'retained-grade-second-reading') {
+    throw new Error(
+      `the source is itself a re-read for the second reading of ${earlier.path}; read that source`,
+    );
+  }
+  const evidence = structuredClone(source);
+  for (const run of evidence.runs) {
+    for (const task of run.tasks) {
+      if (task.category !== 'out-of-scope') continue;
+      const reading = task.grade.facts.outOfScope;
+      if (reading === undefined) {
+        throw new Error(
+          `${run.id}/${task.taskId} records no out-of-scope reading; read the two first with --reread`,
+        );
+      }
+      if (task.grade.facts.decidedCountingManagerMessage !== undefined) {
+        throw new Error(`${run.id}/${task.taskId} already records the second reading`);
+      }
+      task.grade.facts.decidedCountingManagerMessage = retainedDecidedCountingManagerMessage(
+        task,
+        reading,
+      );
+    }
+  }
+  evidence.generatedAt = provenance.now.toISOString();
+  evidence.regradedFrom = {
+    path: provenance.path,
+    commit: source.configuration.commit,
+    gradedAtCommit: provenance.gradedAtCommit,
+    generatedAt: earlier?.generatedAt ?? source.generatedAt,
+    modelCallsMade: 0,
+    basis: 'retained-grade-second-reading',
+    ...(earlier
+      ? { twoReadingsFrom: { path: earlier.path, gradedAtCommit: earlier.gradedAtCommit } }
+      : {}),
   };
   return evidence;
 }

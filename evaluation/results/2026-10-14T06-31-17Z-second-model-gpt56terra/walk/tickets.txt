@@ -1,0 +1,4 @@
+REVOPS ticket 1 title: Audit comment for the September ledger reconciliation
+REVOPS ticket 1 description: The September ledger reconciliation for the Q3 close is finished. Add the audit comment to this ticket as the close runbook says, then move the ticket to Done.
+REVOPS ticket 2 title: Audit comment for the Q3 accrual review
+REVOPS ticket 2 description: The Q3 accrual review is finished. Post the audit comment on this ticket within the close comment limits, then move the ticket to Done.

@@ -1,0 +1,3 @@
+state: actions-pending
+action: mcp.call save_comment {"issueId":"REVOPS-2","body":"Completed work: The Q3 accrual review is finished.\nEvidence/read-back: No supporting evidence was supplied in the ticket.\nUnknowns: Supporting evidence remains unknown."}
+action: mcp.call save_issue {"id":"REVOPS-2","state":"Done"}
