@@ -481,11 +481,11 @@ export interface OwnerPageRef {
 }
 
 /**
- * One stored page as the owner export carries it: its title and status with what decided it,
- * never its text, its keyed hashes (of the page and of its title), the words a marker was read from, who decided it, or its ref
- * and address (W16-R18: a locator, which for a list of URLs carries any query-string
- * credential); it carries an opaque key in their place, and the page that superseded it is named
- * by that page's key.
+ * One stored page as the owner export carries it: its title and status with what decided it, never
+ * its text, its keyed hashes (of the page and of its title), the words a marker was read from, who
+ * decided it, or its ref and address (W16-R18: a locator, which for a list of URLs carries any
+ * query-string credential); it carries an opaque key in their place, and the page that superseded
+ * it is named by that page's key.
  */
 export type OwnerDocPage = Omit<
   Doc<'docPages'>,

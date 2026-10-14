@@ -1415,11 +1415,11 @@ async function measureRead(
 /**
  * Propose the relations of the pages a completed sync stored or changed: each page the run wrote
  * (and the runs it took over from, back to the complete walk before it) is measured against the
- * owner's other active pages a pair at a time (`measurePageByPairs`), `RELATION_PAGES_PER_STEP` pages a step
- * and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled by the
- * finish once the generation has completed, as discovery is, so the splits its pages scheduled
- * have landed and the measures cost the finish none of its time. A proposal changes no page and
- * holds nothing; the manager answers its card.
+ * owner's other active pages a pair at a time (`measurePageByPairs`), `RELATION_PAGES_PER_STEP`
+ * pages a step and at most `RELATION_PROPOSALS_PER_SYNC` new proposals a sync. Internal; scheduled
+ * by the finish once the generation has completed, as discovery is, so the splits its pages
+ * scheduled have landed and the measures cost the finish none of its time. A proposal changes no
+ * page and holds nothing; the manager answers its card.
  *
  * A step that has measured its share schedules the next with what is left (`rest`), so a library
  * of any size is measured to its end (W15-R5: the first hundred pages were measured and nothing

@@ -62,11 +62,11 @@ import { log } from '../src/lib/logger';
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
  * finishing sync writes for the pages it stored or changed (`pageCandidates` and `measurePair`, a
- * pair a transaction since D-12 (a), over `src/docs/relations.ts`), and the manager's decision on each (`decide`). A relation is
- * confirmed on a card and never by code: a proposal changes no page's status, holds no plan and
- * tags no cite. A confirmed successor supersedes the older page (`docStatus.restatePage`); a
- * confirmed conflict between two active pages of equal trust stands (`standingConflictOf`) until
- * the manager says which page is right or that both hold.
+ * pair a transaction since D-12 (a), over `src/docs/relations.ts`), and the manager's decision on
+ * each (`decide`). A relation is confirmed on a card and never by code: a proposal changes no
+ * page's status, holds no plan and tags no cite. A confirmed successor supersedes the older page
+ * (`docStatus.restatePage`); a confirmed conflict between two active pages of equal trust stands
+ * (`standingConflictOf`) until the manager says which page is right or that both hold.
  *
  * Its helpers sit below it by concern (wave 16, 16-s, decision D-8): the measures, candidates and
  * proposals at a sync in `convex/docRelationProposals.ts`, the standing conflict and the answers a
