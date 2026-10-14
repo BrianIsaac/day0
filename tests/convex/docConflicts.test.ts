@@ -1722,6 +1722,46 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     );
   });
 
+  it('answers “answer {code} 2 B” with question 2 closed by why, and says which question stands (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { surfaceId, workItemId } = asked;
+    const second = await secondQuestion(harness, asked);
+    const third = await secondQuestion(harness, asked);
+    const reply = (messageTs: string, number: number) =>
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'to', number },
+      });
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(second.questionId, { closed: { reason: 'redrafted', at: Date.now() } });
+    });
+    await expect(reply('1790000000.000100', 2)).resolves.toMatchObject({
+      status: 'ignored',
+      reason: 'question no longer open',
+    });
+    // The third question closed too: one stands, and the reply names it.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(third.questionId, { closed: { reason: 'settled', at: Date.now() } });
+    });
+    await expect(reply('1790000001.000100', 3)).resolves.toMatchObject({
+      reason: 'question no longer open',
+    });
+    expect(await noticeTexts(harness)).toEqual([
+      'Question 2 was closed: the plan was drafted again. Questions 1 and 3 are open: answer one by its number, for example “answer ab3xyz 1 A”, “B” or “both”.',
+      'Question 3 was closed: its two pages no longer disagree. Question 1 is open: answer with “answer ab3xyz 1 A”, “B” or “both”.',
+    ]);
+    expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
   it('takes a numbered answer to the first question while a second stands, and says one more is open (17-C)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
@@ -2201,8 +2241,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'cd4xyz', choice: 'to', number: 1 },
       }),
     ).resolves.toMatchObject({ status: 'ignored', reason: 'question no longer open' });
+    // Re-pinned by W17-R13: section 7's "Question {n} was closed: {reason}.", then the new plan's
+    // question that stands.
     expect((await notices(harness)).map((notice) => notice.text)).toEqual([
-      'Question 1 was closed when the plan was drafted again.',
+      'Question 1 was closed: the plan was drafted again. Question 2 is open: answer with “answer cd4xyz 2 A”, “B” or “both”.',
     ]);
     expect((await relations(harness)).find((row) => row._id === relationId)?.status).toBe(
       'confirmed',
@@ -2285,8 +2327,9 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'ab3xyz', choice: 'from', number: 1 },
       }),
     ).resolves.toMatchObject({ status: 'ignored', reason: 'question no longer open' });
+    // Re-pinned by W17-R13: section 7's "Question {n} was closed: {reason}."
     expect((await noticeTexts(harness)).at(-1)).toBe(
-      'These two pages no longer disagree, so this question is closed.',
+      'Question 1 was closed: its two pages no longer disagree.',
     );
     // Neither waits: the card draws no settled question.
     expect(

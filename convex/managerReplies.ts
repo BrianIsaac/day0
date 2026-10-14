@@ -22,7 +22,6 @@ import {
 } from './managerQuestions';
 import {
   CONFLICT_CHOICES,
-  CONFLICT_QUESTION_CLOSED,
   pagePlaces,
   type ConflictChoice,
   type NamedPageWords,
@@ -351,6 +350,26 @@ export function whichQuestionText(id: string, open: readonly WhichQuestion[]): s
 }
 
 /**
+ * Which of a plan's questions still stand, and how to answer one, after a reply that named one
+ * that does not (W17-R13; section 7's draft): nothing where none stands.
+ */
+function standingLine(id: string, standing: readonly { readonly number: number }[]): string[] {
+  const [first] = standing;
+  if (first === undefined) return [];
+  if (standing.length === 1) {
+    return [
+      `Question ${first.number} is open: answer with “answer ${id} ${first.number} A”, “B” or “both”.`,
+    ];
+  }
+  const numbers = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' }).format(
+    standing.map((question) => String(question.number)),
+  );
+  return [
+    `Questions ${numbers} are open: answer one by its number, for example “answer ${id} ${first.number} A”, “B” or “both”.`,
+  ];
+}
+
+/**
  * Answer one of a plan's conflict questions from the manager's reply in the DM or in the request's
  * thread (RM20 (a); 17-C): the question the reply numbers, or the one that stands where the reply
  * numbers none and exactly one does, decided as the manager says and acknowledged in the request's
@@ -431,15 +450,17 @@ async function answerFromChannel(
   }
   if (!target.standing) {
     const { answer, closed } = target.question;
-    return await ignored(
-      'question no longer open',
+    const became =
       answer !== undefined
         ? `Question ${target.number} was already answered: ${slackEscaped(answer.text)}.`
         : closed?.reason === 'redrafted'
           ? // Its pages may still disagree: the plan it was asked beside is gone, and the plan that
             // stands now asks its own.
-            `Question ${target.number} was closed when the plan was drafted again.`
-          : CONFLICT_QUESTION_CLOSED,
+            `Question ${target.number} was closed: the plan was drafted again.`
+          : `Question ${target.number} was closed: its two pages no longer disagree.`;
+    return await ignored(
+      'question no longer open',
+      [became, ...standingLine(decisionId, standing)].join(' '),
     );
   }
   // The reply's sender was checked against the card's manager: the relation is decided in the
