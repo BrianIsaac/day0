@@ -9,14 +9,14 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent } from './eventLog';
 import {
-  REACH_ROW_BUDGET,
+  REACH_BYTE_BUDGET,
   blockingWorkOf,
   cardReachValidator,
   hasOpenWork,
   openWorkCache,
   ownerAgents,
   reachOf,
-  workRowsReadIn,
+  reachBytesReadIn,
   type CardAffected,
   type CardReach,
   type ReachLimits,
@@ -491,8 +491,8 @@ export type CardOpener = (
 /**
  * Open what one transaction's budget allows of a list of cards, in order, and answer the rest
  * (W16-R5, W16-R6). A `citing` card for an employee with no open work is dropped for four index
- * reads; a card is opened while fewer than `REACH_ROW_BUDGET` work rows have been read and fewer
- * than `limits.cards` cards opened; a card whose reach would pass the room left, and every card
+ * reads; a card is opened while its reaches have read fewer than `REACH_BYTE_BUDGET` bytes of rows
+ * (W17-R8) and fewer than `limits.cards` cards opened; a card whose reach would pass the room left, and every card
  * after it, waits. A card that throws is recorded (`reorientation.card-not-opened`) and the next
  * one is tried, so one bad card cannot take the rest of a fan-out with it (W16-R23).
  */
@@ -508,7 +508,7 @@ async function openWithinBudget(
   let judged = limits.judged;
   let reachRead = false;
   for (const [at, card] of cards.entries()) {
-    if (opened >= limits.cards || workRowsReadIn(ctx) >= REACH_ROW_BUDGET) {
+    if (opened >= limits.cards || reachBytesReadIn(ctx) >= REACH_BYTE_BUDGET) {
       rest.push(...cards.slice(at));
       break;
     }
@@ -517,7 +517,7 @@ async function openWithinBudget(
       const unbounded = limits.firstReachUnbounded && !reachRead;
       reachRead ||= card.reach !== undefined;
       const outcome = await open(ctx, card, {
-        ...(unbounded ? {} : { room: REACH_ROW_BUDGET - workRowsReadIn(ctx) }),
+        ...(unbounded ? {} : { room: REACH_BYTE_BUDGET - reachBytesReadIn(ctx) }),
         openWork,
         judgeAfterMs: judgeAfterMs(judged),
       });
@@ -581,8 +581,8 @@ async function scheduleRest(
 /**
  * Open a card on each employee a change reaches, handed over once by the change's writer inside
  * its own transaction (wave 17, 17-O; D-9 (a), O-1). The writer's transaction opens the first
- * cards itself, at most `INLINE_CARDS_PER_TRANSACTION` and within its budget of work rows read
- * (`REACH_ROW_BUDGET`), and schedules **one** function carrying the rest (`openCardsLater`), which
+ * cards itself, at most `INLINE_CARDS_PER_TRANSACTION` and within its budget of bytes read
+ * (`REACH_BYTE_BUDGET`), and schedules **one** function carrying the rest (`openCardsLater`), which
  * opens what its own budget allows and schedules one more: a change of any reach is a chain of
  * single scheduled functions, where one a card met Convex's thousand a mutation at 51 employees
  * and twenty pages (W16-R5). Each card opens or joins as `openCard`'s does; an employee whose card

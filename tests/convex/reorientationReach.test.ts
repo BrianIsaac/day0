@@ -1,12 +1,13 @@
 import { convexTest } from 'convex-test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getDocumentSize } from 'convex/values';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { heldByReorientation } from '../../convex/reorientation';
 import * as reorientationReachModule from '../../convex/reorientationReach';
 import {
   OPEN_WORK_STATES,
-  REACH_ROW_BUDGET,
+  REACH_BYTE_BUDGET,
   agreementsApplying,
   blockingWorkOf,
   hasOpenWork,
@@ -20,7 +21,7 @@ import {
   scopeReach,
   skillReach,
   surfaceReach,
-  workRowsReadIn,
+  reachBytesReadIn,
   type CardAffected,
 } from '../../convex/reorientationReach';
 import { allConvexModules } from './all-modules';
@@ -121,6 +122,18 @@ function planCiting(sourceId: Id<'docSources'>, pageRef: string): Doc<'workItems
     steps: ['Read the page', 'Reply'],
     cites: [{ step: 1, label: 'Escalation paths > Tier 2', sourceId, pageRef, blocks: [] }],
   };
+}
+
+/** The bytes of stored rows, as Convex counts a read of them. */
+async function bytesOf(harness: Harness, ids: ReadonlyArray<Id<'workItems'>>): Promise<number> {
+  return await harness.run(async (ctx) => {
+    let bytes = 0;
+    for (const id of ids) {
+      const row = await ctx.db.get(id);
+      if (row !== null) bytes += getDocumentSize(row);
+    }
+    return bytes;
+  });
 }
 
 const NOTHING: CardAffected = {
@@ -391,7 +404,7 @@ describe('a card’s reach, as its writer names it', (): void => {
   });
 });
 
-describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): void => {
+describe('the budget of bytes a transaction’s reaches read (W16-R6, W17-R8)', (): void => {
   /** A database handle that counts the index reads of `workItems` and the rows they returned. */
   function counting<Ctx extends { readonly db: { query: (table: never) => unknown } }>(
     ctx: Ctx,
@@ -425,9 +438,9 @@ describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): 
       });
       // Asked again in the same transaction, the answer is remembered.
       const again = await hasOpenWork(ctx, agentId);
-      return { reached, again, indexReads: reads(), rows: workRowsReadIn(ctx) };
+      return { reached, again, indexReads: reads(), bytes: reachBytesReadIn(ctx) };
     });
-    expect(read).toEqual({ reached: { kind: 'nothing' }, again: false, indexReads: 4, rows: 0 });
+    expect(read).toEqual({ reached: { kind: 'nothing' }, again: false, indexReads: 4, bytes: 0 });
   });
 
   it('reads an empty reach for an open-work change under an employee with no open row, with no row read', async (): Promise<void> => {
@@ -435,33 +448,72 @@ describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): 
     const agentId = await seedEmployee(harness);
     const read = await harness.run(async (ctx) => ({
       reached: await reachOf(ctx, agentId, { kind: 'open-work' }),
-      rows: workRowsReadIn(ctx),
+      bytes: reachBytesReadIn(ctx),
     }));
-    expect(read).toEqual({ reached: { kind: 'reached', affected: { workItems: [] } }, rows: 0 });
+    expect(read).toEqual({ reached: { kind: 'reached', affected: { workItems: [] } }, bytes: 0 });
   });
 
-  it('counts the rows a reach reads, and answers over-budget where the employee’s open work is more than the room left', async (): Promise<void> => {
+  it('counts the bytes a reach reads, and answers over-budget where the employee’s open work holds more than the room left (W17-R8)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
+    const rows: Id<'workItems'>[] = [];
     for (let at = 0; at < 6; at += 1) {
-      await seedWork(harness, agentId, at < 3 ? 'plan-pending' : 'executing', {
-        externalId: `REVOPS-${at}`,
-      });
+      rows.push(
+        await seedWork(harness, agentId, at < 3 ? 'plan-pending' : 'executing', {
+          externalId: `REVOPS-${at}`,
+        }),
+      );
     }
+    const weight = await bytesOf(harness, rows);
+    const probe = await bytesOf(harness, rows.slice(0, 1));
     const read = await harness.run(async (ctx) => {
-      const within = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: 6 });
-      const afterFirst = workRowsReadIn(ctx);
-      const over = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: 5 });
-      return { within: within.kind, afterFirst, over, rows: workRowsReadIn(ctx) };
+      const within = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: weight });
+      const afterFirst = reachBytesReadIn(ctx);
+      const over = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: weight - 1 });
+      return { within: within.kind, afterFirst, over, bytes: reachBytesReadIn(ctx) };
     });
-    // The probe's one row and the six of the reach; the second reach stops one row past its room.
+    // The probe's row and the six of the reach; the second reach reads them again (a list of
+    // cards shares one read through its cache, below) and is one byte short.
     expect(read).toEqual({
       within: 'reached',
-      afterFirst: 7,
+      afterFirst: probe + weight,
       over: { kind: 'over-budget' },
-      rows: 13,
+      bytes: probe + 2 * weight,
     });
-    expect(REACH_ROW_BUDGET).toBe(300);
+    expect(REACH_BYTE_BUDGET).toBe(8 * 1024 * 1024);
+  });
+
+  it('stops at its room in bytes whatever a row weighs, and counts the skills and the held work it reads (W17-R8)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    // Ten open rows of about 300 KB each: three megabytes, which a room of one cannot take.
+    const heavy = 'Renewal closed with a note for the account team. '.repeat(6_000);
+    const rows: Id<'workItems'>[] = [];
+    for (let at = 0; at < 10; at += 1) {
+      rows.push(
+        await seedWork(harness, agentId, 'plan-pending', {
+          externalId: `REVOPS-${at}`,
+          contentSummary: heavy,
+        }),
+      );
+    }
+    const row = await bytesOf(harness, rows.slice(0, 1));
+    await registeredSkill(harness, agentId, { body: heavy });
+    const read = await harness.run(async (ctx) => {
+      const over = await reachOf(ctx, agentId, { kind: 'open-work' }, { room: 1024 * 1024 });
+      const afterReach = reachBytesReadIn(ctx);
+      await scopeReach(ctx, agentId, 'linear:write');
+      const afterSkills = reachBytesReadIn(ctx);
+      await blockingWorkOf(ctx, { ...NOTHING, workItems: rows.slice(0, 2) }, 'high');
+      return { over, afterReach, afterSkills, afterHold: reachBytesReadIn(ctx) };
+    });
+    expect(read.over).toEqual({ kind: 'over-budget' });
+    // The probe's row and the rows that passed the room: never the whole three megabytes.
+    expect(read.afterReach).toBeGreaterThan(1024 * 1024);
+    expect(read.afterReach).toBeLessThanOrEqual(1024 * 1024 + 2 * row);
+    // The skill's body and the two held rows count as the work rows do.
+    expect(read.afterSkills - read.afterReach).toBeGreaterThan(heavy.length);
+    expect(read.afterHold - read.afterSkills).toBe(2 * row);
   });
 
   it('reads an employee’s open work once for a list of cards, whatever each asks of it', async (): Promise<void> => {
@@ -485,7 +537,7 @@ describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): 
           ),
         );
       }
-      return { reaches, rows: workRowsReadIn(ctx) };
+      return { reaches, bytes: reachBytesReadIn(ctx) };
     });
     expect(read.reaches).toEqual([
       { kind: 'reached', affected: { workItems: [cited] } },
@@ -493,7 +545,10 @@ describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): 
       { kind: 'nothing' },
     ]);
     // The probe's one row and the employee's two, read once for the three pages.
-    expect(read.rows).toBe(3);
+    const [first, second] = await harness.run(async (ctx) =>
+      (await ctx.db.query('workItems').collect()).map((row) => getDocumentSize(row)),
+    );
+    expect(read.bytes).toBe(first + first + second);
   });
 
   it('starts each transaction’s count at nothing', async (): Promise<void> => {
@@ -502,10 +557,11 @@ describe('the budget of work rows a transaction’s reaches read (W16-R6)', (): 
     await seedWork(harness, agentId, 'plan-pending');
     const first = await harness.run(async (ctx) => {
       await reachOf(ctx, agentId, { kind: 'open-work' });
-      return workRowsReadIn(ctx);
+      return reachBytesReadIn(ctx);
     });
-    const second = await harness.run(async (ctx) => workRowsReadIn(ctx));
-    expect([first, second]).toEqual([2, 0]);
+    const second = await harness.run(async (ctx) => reachBytesReadIn(ctx));
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBe(0);
   });
 });
 
