@@ -232,6 +232,44 @@ traces show no change that would move it; nothing was tuned and no run was repea
 动作索引被拒而停止，这次保留了被拒的回复：模型把经理汇报流程映射到了发给 Priya 的消息上。与 10 月 13 日相比，
 各项变化都在同一环境各次运行之间的差异范围内。
 
+### A second model for the conflict rule and the reorientation judgement - 14 October 2026
+
+Every bed since 12 September ran GLM 5.3 Flash, so the real planner's conflict rule and the
+reorientation card's judgement had been read on one model. On 14 October 2026 both were read on
+OpenAI `gpt-5.6-terra` (`api.openai.com`, the key route, native structured output) on a real-mode
+bed at the release commit's code, with the fake Linear and the fake Slack, and set beside GLM's:
+[`results/2026-10-14T06-31-17Z-second-model-gpt56terra/`](results/2026-10-14T06-31-17Z-second-model-gpt56terra/readings.md),
+which says every step taken and every construction step. Nothing was tuned to either model.
+
+| Conflict walk draft | gpt-5.6-terra, 14 Oct | GLM 5.3 Flash, 13 Oct (the v0.20.0 pre-tag walk) |
+|---|---|---|
+| A ticket whose comment the disputed passage governs, first draft | Both disputed passages cited, on the asking step and on the step that writes the comment; no side chosen; the question asked, every write held | The disputed passage cited on an asking step only; the question asked; the comment's write not held by it |
+| A second such ticket, first draft | No disputed passage cited, no dispute named; the neighbouring passage on the comment step; nothing asked | The neighbouring passage cited, the dispute named in the summary; nothing asked |
+| The second ticket, drafted again after the manager's "keep the comment short" | Kept "below 60 words, so it complies with both documented comment limits", after the pair was answered "Both hold", so no question was due | Kept "within 60 words ... so it satisfies either page" under a re-confirmed conflict; the question asked |
+
+| Reorientation card | GLM 5.3 Flash | gpt-5.6-terra |
+|---|---|---|
+| Access revoked (the revocation trial's employee) | `none` | `none` |
+| Access revoked (`linear:read`) | `skill-action`, a re-check | `skill-action`, a re-check |
+| Role changed by hand | `charter-change`, one will-do clause edited | `charter-change`, the same edit |
+
+**Findings.** On the second model the conflict rule held where it was tested: when the plan
+leaned on the disputed passage it cited it on the step that writes, chose no side and was asked,
+and on the run the product withheld the comment and the status change while the question stood,
+though the manager's note said to go ahead. Like GLM, it once planned round the dispute by citing
+the neighbouring passage, and once kept the comment under the shorter limit so that both pages
+are met: the rule's letter allows both, and on that redraft the pair had been answered. The
+re-confirmed conflict of 13 October could not be repeated: once a pair is answered "Both hold" it
+is dismissed and a second `disagree` is refused. On the three cards the two models proposed the
+same kind each time. These are single draws on one bed: a reading of the rule on a second model,
+not a rate.
+
+**中文：** **2026 年 10 月 14 日**，在发布提交的代码上用第二个托管模型 OpenAI `gpt-5.6-terra` 读取冲突规则与
+重新定向卡片的判断，并与 GLM 5.3 Flash 并列。规划依赖有争议的段落时，第二个模型在写入步骤上同时引用两页、
+不选边并提出问题，运行时产品在问题未答前扣住了评论与状态变更；另有一次像 GLM 一样引用相邻段落绕开争议，
+一次在冲突已答“两者都成立”后把评论控制在 60 字以内以同时满足两页。三张卡片上两个模型提出的类型完全一致。
+以上为同一环境上的单次抽样，不是比率。
+
 ### Stored beds read again for the second reading - 14 October 2026
 
 Since 14 October 2026 each out-of-scope run also carries a second, labelled reading beside the
