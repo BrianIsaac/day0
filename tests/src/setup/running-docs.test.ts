@@ -374,12 +374,15 @@ describe('the readers’ guides on a page with no text, and the README on fifty 
     },
   );
 
-  it('says in the README that a company-wide agreement is checked only while the owner has fifty employees or fewer', (): void => {
+  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`.
+  it('says in the README that a company-wide agreement is checked only while the owner has sixty employees or fewer', (): void => {
     const readme = flat('README.md');
     expect(readme).toContain('### Fifty employees or fewer');
     expect(readme).toContain(
-      "a company-wide working agreement is checked against each employee's charter only while you have fifty employees or fewer",
+      "a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer",
     );
-    expect(readme).toContain('五十名或更少');
+    expect(readme).toContain('until you have sixty or fewer again');
+    expect(readme).toContain('只在你拥有六十名或更少员工时');
+    expect(readme).toContain('直到你的员工回到六十名或更少');
   });
 });
