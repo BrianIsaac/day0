@@ -44,6 +44,59 @@ const RETIRED_VARIABLES = [
   'colorAlphaShade',
 ];
 
+/** A six-digit hex colour as HSL, hue in degrees, saturation and lightness in percent. */
+function hsl(hex: string): readonly [number, number, number] {
+  const [r, g, b] = [1, 3, 5].map(
+    (start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255,
+  );
+  const max = Math.max(r!, g!, b!);
+  const min = Math.min(r!, g!, b!);
+  const l = (max + min) / 2;
+  const d = max - min;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  const h =
+    d === 0
+      ? 0
+      : max === r
+        ? 60 * (((g! - b!) / d) % 6)
+        : max === g
+          ? 60 * ((b! - r!) / d + 2)
+          : 60 * ((r! - g!) / d + 4);
+  return [(h + 360) % 360, s * 100, l * 100];
+}
+
+/** HSL back to a six-digit hex colour. */
+function hex([h, s, l]: readonly [number, number, number]): string {
+  const c = (1 - Math.abs((2 * l) / 100 - 1)) * (s / 100);
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l / 100 - c / 2;
+  const [r, g, b] =
+    h < 60
+      ? [c, x, 0]
+      : h < 120
+        ? [x, c, 0]
+        : h < 180
+          ? [0, c, x]
+          : h < 240
+            ? [0, x, c]
+            : h < 300
+              ? [x, 0, c]
+              : [c, 0, x];
+  return `#${[r, g, b]
+    .map((v) =>
+      Math.round((v + m) * 255)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`;
+}
+
+/** The step darker Clerk fills a danger button with under the pointer (`$danger600`). */
+function clerkDarkerStep(colour: string): string {
+  const [h, s, l] = hsl(colour);
+  return hex([h, s, l - (l - 12) / 7]);
+}
+
 describe('the Clerk appearance', () => {
   // Re-pinned (16-T, T-1): the appearance built on Clerk's dark theme while the product had one
   // scheme. Clerk's default theme follows the page's `color-scheme`, which each token set declares,
@@ -110,6 +163,31 @@ describe('the Clerk appearance', () => {
     expect(contrast(WHITE, token('danger'))).toBeLessThan(3);
   });
 
+  // D-7 (a), W17-R31: on the review's bed 2 Clerk's "Delete account" was white on
+  // rgb(239, 68, 68) in the dark scheme, 3.76:1, under the 4.5:1 a label is held to. Clerk writes
+  // its danger button's label in white (`accentContrast: $white`, `@clerk/ui` 1.36
+  // `primitives/Button.js`) unless the button's element style says otherwise, and under the pointer
+  // fills it one step darker (`$danger600`: `hsl(from c h s calc(l - ((l - 12) / 7)))`,
+  // `utils/colors/utils.js`).
+  it("writes Clerk's destructive button's label at 4.5:1 or over on its fill in both schemes, at rest and under the pointer", (): void => {
+    const style = (clerkAppearance as { elements?: Record<string, { color?: string }> }).elements
+      ?.formButtonPrimary;
+    const label =
+      style?.color === undefined ? undefined : /^var\(--color-([a-z-]+)\)$/.exec(style.color)?.[1];
+    for (const read of [token, lightToken]) {
+      const ink = label === undefined ? '#ffffff' : read(label);
+      const fill = read('danger-solid');
+      expect(contrast(ink, fill), `${ink} on ${fill}`).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(ink, clerkDarkerStep(fill)),
+        `${ink} on ${clerkDarkerStep(fill)}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    // The primary button's label is the page's colour already, so the one style moves only the
+    // danger button's.
+    expect(style?.color).toBe(clerkAppearance.variables.colorPrimaryForeground);
+  });
+
   it('takes the neutral from the text and leaves the borders to it, so the social button and divider show in either theme', () => {
     expect(clerkAppearance.variables.colorNeutral).toBe('var(--color-fg)');
     expect(clerkAppearance.variables).not.toHaveProperty('colorBorder');
@@ -135,7 +213,12 @@ describe('the Clerk appearance', () => {
       logoLinkUrl: '/',
     });
     // Clerk spaces an outside mark from the card on small screens only; this keeps it at every width.
-    expect(clerkSignInAppearance.elements).toEqual({ logoBox: { marginBottom: '1.75rem' } });
+    // Re-pinned (18-T): the flows keep the shared element styles (the destructive label, the mark's
+    // mask) beside the outside mark's margin, where they carried the margin alone.
+    expect(clerkSignInAppearance.elements).toEqual({
+      ...clerkAppearance.elements,
+      logoBox: { marginBottom: '1.75rem' },
+    });
     expect(selectorKeys(clerkSignInAppearance.elements)).toEqual([]);
   });
 
@@ -190,7 +273,9 @@ describe('the appearance of a Clerk widget under a page heading', () => {
   it("leaves the first step's header out through Clerk's own element styles, keeping the mark above the card", () => {
     const first = headedClerkAppearance(true);
     expect(first).toMatchObject({ options: clerkSignInAppearance.options });
+    // Re-pinned (18-T): with the shared element styles beside them.
     expect(first.elements).toEqual({
+      ...clerkAppearance.elements,
       logoBox: { marginBottom: '1.75rem' },
       header: { display: 'none' },
     });
