@@ -13,6 +13,7 @@ import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 import { registeredIn } from './registered-functions';
 import * as rosterModule from '../../convex/roster';
 import { rosterRows } from './fakes/roster';
+import { HEAVY_ITEMS, HEAVY_NOTES, seedWorkedEmployee } from './fakes/heavy-employee';
 
 /*
  * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). A row's reading
@@ -431,5 +432,24 @@ describe('the quarter hour the roster is asked at', (): void => {
     expect(rosterClock(Date.parse('2026-10-13T18:15:00Z'))).toBe(
       Date.parse('2026-10-13T18:15:00Z'),
     );
+  });
+});
+
+describe('the roster of an employee whose month of completions passes one read (C1’s roster; wave 18, 18-F)', (): void => {
+  it('answers the page, the heavy employee’s month a floor of what fit, the others’ whole', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T06:00:00Z'));
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    await seedWorkedEmployee(harness, 'Aiko', HEAVY_NOTES);
+    await seedWorkedEmployee(harness, 'Mateo', '');
+
+    const rows = await rosterRows(harness.withIdentity(managerIdentity('owner')));
+
+    const aiko = rows.find((row) => row.name === 'Aiko');
+    const mateo = rows.find((row) => row.name === 'Mateo');
+    expect(mateo?.landedThisMonth).toMatchObject({ month: '2026-10', atLeast: false });
+    expect(mateo?.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0)).toBe(HEAVY_ITEMS);
+    expect(aiko?.landedThisMonth.atLeast).toBe(true);
+    expect(aiko?.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0)).toBeGreaterThan(0);
   });
 });
