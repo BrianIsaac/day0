@@ -150,7 +150,7 @@ export function EmployeeRail() {
   const day = dayKey(now, agentZone(agent));
   const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: RECENT_EVENTS });
-  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const workItems = useQuery(api.work.listForAgent, { agentId })?.items;
   const titles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],

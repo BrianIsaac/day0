@@ -194,7 +194,7 @@ export function NeedsYouView() {
   const { agent, arriving } = useEmployee();
   const agentId = agent._id;
   const inbox = useQuery(api.work.needsYouForAgent, { agentId });
-  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const workItems = useQuery(api.work.listForAgent, { agentId })?.items;
   const now = useNow();
   const skipped = (workItems ?? []).filter((item) => item.state === 'skipped');
   const waiting = inbox?.entries ?? [];

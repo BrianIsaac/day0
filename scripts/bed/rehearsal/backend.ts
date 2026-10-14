@@ -126,7 +126,7 @@ export async function connectBackend(
         agentId: agentId(id),
       })) as SkillRow[],
     workItems: async (id) =>
-      (await client.query(api.work.listForAgent, { agentId: agentId(id) })) as WorkItemRow[],
+      (await client.query(api.work.listForAgent, { agentId: agentId(id) })).items as WorkItemRow[],
     workItem: async (id) =>
       (await client.query(api.work.get, {
         workItemId: id as Id<'workItems'>,

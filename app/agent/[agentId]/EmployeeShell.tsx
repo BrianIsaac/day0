@@ -191,7 +191,7 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
     surfaceMode === 'real' ? present : 'skip',
   );
   const inbox = useQuery(api.work.needsYouForAgent, present);
-  const workItems = useQuery(api.work.listForAgent, present);
+  const workItems = useQuery(api.work.listForAgent, present)?.items;
   const proposedSkills = useQuery(api.skills.proposed, present);
   const unverifiedSkills = useQuery(api.skills.awaitingVerification, present);
   const failedSkills = useQuery(api.skills.verificationFailed, present);

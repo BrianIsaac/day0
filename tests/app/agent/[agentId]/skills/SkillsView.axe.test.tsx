@@ -42,7 +42,10 @@ const skill = (id: string, fields: Record<string, unknown>): Record<string, unkn
 /** Every state the tab draws. */
 function populated(): Record<string, unknown> {
   return {
-    'work:listForAgent': [{ _id: 'w1', title: 'Draft response for new tier-two RevOps ask' }],
+    'work:listForAgent': {
+      items: [{ _id: 'w1', title: 'Draft response for new tier-two RevOps ask' }],
+      cut: false,
+    },
     'skills:proposed': [
       skill('chat-thread-reply', {
         state: 'proposed',

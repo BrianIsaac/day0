@@ -338,7 +338,10 @@ describe('the cards arriving on first render (v4 section 1.3)', (): void => {
   it('marks both columns, then the queue’s rows as the second tier, for the arrival only', async (): Promise<void> => {
     backend.queries = {
       'agents:get': agentRow,
-      'work:listForAgent': [workItem('w-1', 'discovered'), workItem('w-2', 'completed')],
+      'work:listForAgent': {
+        items: [workItem('w-1', 'discovered'), workItem('w-2', 'completed')],
+        cut: false,
+      },
     };
     route.segment = 'work';
     const view = mount(page(<WorkView />));
@@ -478,13 +481,16 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
       'agents:get': row('active'),
       'charters:latest': approved,
       'work:needsYouForAgent': { entries: [], total: 4 },
-      'work:listForAgent': [
-        { _id: 'w1', state: 'plan-pending' },
-        { _id: 'w2', state: 'executing' },
-        { _id: 'w3', state: 'completed' },
-        { _id: 'w4', state: 'skipped' },
-        { _id: 'w5', state: 'failed' },
-      ],
+      'work:listForAgent': {
+        items: [
+          { _id: 'w1', state: 'plan-pending' },
+          { _id: 'w2', state: 'executing' },
+          { _id: 'w3', state: 'completed' },
+          { _id: 'w4', state: 'skipped' },
+          { _id: 'w5', state: 'failed' },
+        ],
+        cut: false,
+      },
     };
     const view = mount(page());
     await settle();
@@ -551,12 +557,15 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
         entries: [{ kind: 'stopped', agentId: 'agent-1', workItemId: 'w5' }],
         total: 1,
       },
-      'work:listForAgent': [
-        { _id: 'w2', state: 'executing' },
-        { _id: 'w3', state: 'completed' },
-        { _id: 'w5', state: 'failed' },
-        { _id: 'w6', state: 'failed' },
-      ],
+      'work:listForAgent': {
+        items: [
+          { _id: 'w2', state: 'executing' },
+          { _id: 'w3', state: 'completed' },
+          { _id: 'w5', state: 'failed' },
+          { _id: 'w6', state: 'failed' },
+        ],
+        cut: false,
+      },
     };
     const view = mount(page());
     await settle();
@@ -843,7 +852,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': dashboardMetrics(),
     };
     act((): void => view.root.render(page()));
@@ -862,7 +871,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': dashboardMetrics(),
     };
     /** The Skills tab's part: file what the authoring run came to. */
@@ -906,7 +915,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('charter-pending'),
       'charters:latest': { ...approved, approved: false },
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': dashboardMetrics(),
       'voice:latest': {
         _id: 'session-1',
@@ -932,7 +941,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': { ...dashboardMetrics(), workingSince: Date.UTC(2026, 8, 30, 6, 22) },
     };
     const view = mount(page());
@@ -956,7 +965,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': dashboardMetrics(),
     };
     const view = mount(page());
@@ -999,7 +1008,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': noWrite,
     };
     const view = mount(page());
@@ -1078,7 +1087,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('charter-pending'),
       'charters:latest': { ...approved, approved: false },
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': noWrite,
     };
     const view = mount(page());
@@ -1092,7 +1101,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'metrics:forAgent': noWrite,
     };
     act((): void => view.root.render(page()));
@@ -1116,7 +1125,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     backend.queries = {
       'agents:get': row('active'),
       'charters:latest': approved,
-      'work:listForAgent': work('executing'),
+      'work:listForAgent': { items: work('executing'), cut: false },
       'metrics:forAgent': noWrite,
     };
     const view = mount(page());
@@ -1134,14 +1143,20 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     // A decision that let nothing through is not an approval (second pass minor 9).
     backend.queries = {
       ...backend.queries,
-      'work:listForAgent': [{ ...work('executing')[0], approvedIndexes: [] }],
+      'work:listForAgent': {
+        items: [{ ...work('executing')[0], approvedIndexes: [] }],
+        cut: false,
+      },
     };
     act((): void => view.root.render(page()));
     await settle();
     expect(current()).toContain('after the first plan');
 
     // The approved write's apply failed: nothing landed, and nothing is on its way.
-    backend.queries = { ...backend.queries, 'work:listForAgent': work('failed') };
+    backend.queries = {
+      ...backend.queries,
+      'work:listForAgent': { items: work('failed'), cut: false },
+    };
     act((): void => view.root.render(page()));
     await settle();
     expect(current()).toContain('after the first plan');
@@ -1152,7 +1167,7 @@ describe('the employee page shell (round two section 3.3 and 3.9)', (): void => 
     try {
       backend.queries = {
         ...backend.queries,
-        'work:listForAgent': work('completed'),
+        'work:listForAgent': { items: work('completed'), cut: false },
         'metrics:forAgent': { ...dashboardMetrics(), workingSince: Date.UTC(2026, 8, 30, 6, 22) },
       };
       act((): void => view.root.render(page()));
