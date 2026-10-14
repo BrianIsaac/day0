@@ -130,3 +130,28 @@ describe('an employee’s figures on its page (C1, wave 18, 18-F)', (): void => 
     view.unmount();
   });
 });
+
+describe('an employee’s figures by pages when the day turns (the second pass)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+
+  it('reads the new day at once, though the old day’s read is still on its way', async (): Promise<void> => {
+    backend.subscribed = new ConvexError(FIGURES_READ_BY_PAGES);
+    const view = mount(<Probe day="2026-10-13" />);
+    await elapse(0);
+    expect(backend.byPages).toHaveLength(1);
+
+    expect(drawn(view, '2026-10-14')).toBe('loading');
+    await elapse(0);
+    expect(backend.byPages.map((read) => read.args)).toEqual([
+      { agentId: 'agent-1', day: '2026-10-13' },
+      { agentId: 'agent-1', day: '2026-10-14' },
+    ]);
+    backend.byPages[0]!.resolve(figuresOf(1));
+    backend.byPages[1]!.resolve(figuresOf(2));
+    await elapse(0);
+    expect(drawn(view, '2026-10-14')).toBe('2');
+    view.unmount();
+  });
+});

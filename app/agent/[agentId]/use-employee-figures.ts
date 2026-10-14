@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAction, useQueries, type RequestForQueries } from 'convex/react';
 import { ConvexError } from 'convex/values';
 import { api } from '@convex/_generated/api';
@@ -59,14 +59,16 @@ export function useEmployeeFigures(
   const past = readByPages(figures);
   const key = `${agentId ?? ''}\0${day ?? ''}`;
   const [paged, setPaged] = useState<PagedRead | undefined>(undefined);
-  const running = useRef(false);
 
   useEffect(() => {
     if (!past || agentId === undefined) return;
+    // This employee's and day's own: a read still on its way for an earlier day neither holds
+    // this one back nor is drawn for it.
     let live = true;
+    let running = false;
     const read = (): void => {
-      if (running.current) return;
-      running.current = true;
+      if (running) return;
+      running = true;
       // Not awaited: an effect and a timer return nothing. Both outcomes are drawn: the figures,
       // or the refusal as the page's figures that could not be read.
       void Promise.resolve()
@@ -85,7 +87,7 @@ export function useEmployeeFigures(
           },
         )
         .finally((): void => {
-          running.current = false;
+          running = false;
         });
     };
     read();
