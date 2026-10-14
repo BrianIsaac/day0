@@ -35,6 +35,7 @@ import {
   type UnreadRecord,
 } from '../src/docs/sync-record';
 import { runToResume } from '../src/docs/sync-resume';
+import { withoutReaderToken } from '../src/docs/reader-token-cursor';
 import { credentialPageRef } from '../src/docs/credential-ref';
 import { sameButForRedaction } from '../src/docs/redaction-difference';
 import {
@@ -144,14 +145,20 @@ export const RUNS_READ_BY_MIGRATION = 'credentials-sync-revoke';
 const SUPERSEDED_RUN_REASON = 'a newer sync of the source started before this one finished';
 
 /**
- * The patch that says why a run ended short: the reason on one line, and the
- * run's record of its unread pages on its own field.
+ * The patch that says why a run ended short: the reason on one line, the
+ * run's record of its unread pages on its own field, and its cursor with any
+ * reader token the sync sealed into it dropped (X-1: a token is the running
+ * sync's alone, and the place the reader reached is what a resume reads on from).
  */
 function endedShortPatch(
   ending: string,
   run: Doc<'docSyncRuns'>,
-): { reason: string; unread: UnreadRecord | undefined } {
-  return { reason: endedShort(ending), unread: unreadRecordIn(run) };
+): { reason: string; unread: UnreadRecord | undefined; cursor: string | undefined } {
+  return {
+    reason: endedShort(ending),
+    unread: unreadRecordIn(run),
+    cursor: withoutReaderToken(run.cursor),
+  };
 }
 
 /** Why a run that a newer one took over from its cursor ended. */
@@ -802,7 +809,12 @@ export const beginSync = internalMutation({
       .withIndex('by_source', (index) => index.eq('sourceId', source._id))
       .order('desc')
       .take(2);
-    const resumed = args.fresh === true ? undefined : runToResume(latest, previous, now);
+    // A run's place is the reader's own cursor: a token sealed into a running run's is not
+    // carried, and does not hide the place from the resume's check (X-1).
+    const placeOf = (run: Doc<'docSyncRuns'> | undefined): Doc<'docSyncRuns'> | undefined =>
+      run === undefined ? undefined : { ...run, cursor: withoutReaderToken(run.cursor) };
+    const resumed =
+      args.fresh === true ? undefined : runToResume(placeOf(latest), placeOf(previous), now);
     // The restarts an unfinished sync spent carry into the next, less one, so each scheduled sync
     // after the cap has one fresh start of its own, not three more (W14-R33). A walk that
     // completes owes nothing, and a re-read by hand starts over.

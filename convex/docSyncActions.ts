@@ -12,7 +12,8 @@ import { credentialSourceRef } from '../src/docs/credential-ref';
 import { redactCredentials } from '../src/docs/redaction';
 import { pageContentHash, pageTitleHash } from '../src/docs/content-hash';
 import { knownValueSpans } from '../src/redaction/redact';
-import { credentialKeyId } from '../src/lib/credential-crypto';
+import { credentialKeyId, decrypt, encrypt } from '../src/lib/credential-crypto';
+import { cursorWithToken, storedCursorParts } from '../src/docs/reader-token-cursor';
 import { RedactorUnavailableError, type SpanModel } from '../src/redaction/client';
 import { spanModelFromEnv } from '../src/redaction/span-model-env';
 import { ownerKnownValues } from '../src/redaction/known-values';
@@ -21,6 +22,7 @@ import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 import {
   ListingChangedError,
+  type DocumentationReader,
   type KeptPage,
   type StoredMark,
   type StoredRevisions,
@@ -551,6 +553,88 @@ export async function keptByRevision(
   return pages.map((page) => ({ ref: page.ref }));
 }
 
+/**
+ * A reader's access token, handed back beside its cursor so the next batch asks for none (X-1;
+ * 17-X's F3). The readers' half is 18-X's: until it lands no reader hands one back, and the sync
+ * reads the field where a reader's batch carries it.
+ */
+interface ReaderToken {
+  readonly token: string;
+  /** When the provider said it expires, in epoch milliseconds. */
+  readonly expiresAt: number;
+}
+
+/** A reader's batch that may hand its token back beside its cursor (X-1). */
+type TokenReadPageBatch = Awaited<ReturnType<DocumentationReader['listPageBatch']>> & {
+  readonly token?: ReaderToken;
+};
+
+/** A reader that takes its token back for the next batch, after the sync's stored revisions. */
+type TokenReader = {
+  listPageBatch(
+    ...args: [...Parameters<DocumentationReader['listPageBatch']>, token?: ReaderToken]
+  ): Promise<TokenReadPageBatch>;
+};
+
+/** Whether a reader handed back a token of the contract's shape. */
+function readerTokenOf(value: unknown): ReaderToken | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const { token, expiresAt } = value as Record<string, unknown>;
+  return typeof token === 'string' && token !== '' && typeof expiresAt === 'number'
+    ? { token, expiresAt }
+    : undefined;
+}
+
+/**
+ * What a sealed reader token is bound to: its owner, its source and its run, so a cursor copied
+ * to another run, source or owner opens to nothing.
+ */
+function readerTokenBinding(
+  source: Pick<Doc<'docSources'>, '_id' | 'userId'>,
+  runId: Id<'docSyncRuns'>,
+): string {
+  return `day0-reader-token-v1\u0000${source.userId}\u0000${source._id}\u0000${runId}`;
+}
+
+/** The deployment's credential key where it is one; the page hash's warning says when it is not. */
+function readerTokenKey(): string | undefined {
+  const key = process.env.DAY0_CREDENTIAL_KEY;
+  if (key === undefined || key === '') return undefined;
+  try {
+    credentialKeyId(key);
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A reader's token sealed with the deployment's key: its IV and ciphertext, base64, by a dot. */
+function sealReaderToken(token: ReaderToken, key: string, binding: string): string {
+  const sealed = encrypt(JSON.stringify(token), key, binding);
+  return `${sealed.iv}.${sealed.ciphertext}`;
+}
+
+/**
+ * A sealed reader token opened for the next batch, or nothing: sealed under another key, owner,
+ * source or run, malformed, or past its expiry (the reader then asks for a new one).
+ */
+function openReaderToken(
+  sealed: string,
+  key: string,
+  binding: string,
+  now: number,
+): ReaderToken | undefined {
+  const [iv, ciphertext] = sealed.split('.');
+  if (iv === undefined || ciphertext === undefined) return undefined;
+  let token: ReaderToken | undefined;
+  try {
+    token = readerTokenOf(JSON.parse(decrypt({ iv, ciphertext }, key, binding)));
+  } catch {
+    return undefined;
+  }
+  return token !== undefined && token.expiresAt > now ? token : undefined;
+}
+
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
 function readsWithSecret(source: Doc<'docSources'>): boolean {
   return source.kind === 'mcp' || source.credentialId !== undefined;
@@ -644,6 +728,8 @@ export const syncBatch = internalAction({
     // Only a secret that could not be landed or opened makes the failure the credential's.
     let credentialUnavailable = false;
     let known: readonly string[] = [];
+    // The reader's tokens this batch held, redacted from every reason it stores as a secret is.
+    const tokens: string[] = [];
     try {
       const finishing = finishingStep(args.cursor);
       if (finishing !== undefined)
@@ -697,13 +783,26 @@ export const syncBatch = internalAction({
         }
         return revisions;
       };
-      const batch = await readerFor(source.kind).listPageBatch(
+      // The reader's place, and the token it handed back at the last batch (X-1): opened here for
+      // this batch alone, and past its expiry not handed at all.
+      const stored = storedCursorParts(args.cursor);
+      const tokenKey = readerTokenKey();
+      const binding = readerTokenBinding(source, args.runId);
+      const handed =
+        stored.sealed === undefined || tokenKey === undefined
+          ? undefined
+          : openReaderToken(stored.sealed, tokenKey, binding, Date.now());
+      if (handed !== undefined) tokens.push(handed.token);
+      const batch = await (readerFor(source.kind) as unknown as TokenReader).listPageBatch(
         source as DocSourceRecord,
         secret,
-        args.cursor,
+        stored.cursor,
         SYNC_BATCH_SIZE,
         storedRevisions,
+        handed,
       );
+      const token = readerTokenOf(batch.token);
+      if (token !== undefined) tokens.push(token.token);
       if (batch.pages.length + batch.unread.length > SYNC_BATCH_SIZE) {
         throw new Error('Documentation reader exceeded the 25-page action limit.');
       }
@@ -734,7 +833,7 @@ export const syncBatch = internalAction({
         ...batch.unread.map(
           (page): UnreadPage => ({
             ref: page.ref,
-            reason: safeSyncError(page.reason, secret, known),
+            reason: safeSyncError(page.reason, secret, [...known, ...tokens]),
             kind: page.kind ?? 'failed',
           }),
         ),
@@ -756,10 +855,17 @@ export const syncBatch = internalAction({
         storedByRevision,
       );
       const kept = await keptUnreadPages(ctx, source, [...unread, ...archived, ...byRevision]);
-      if (batch.nextCursor !== undefined && batch.nextCursor === args.cursor) {
+      if (batch.nextCursor !== undefined && batch.nextCursor === stored.cursor) {
         throw new Error('Documentation reader repeated its continuation cursor.');
       }
-      const nextCursor = batch.nextCursor ?? FINISHING_CURSOR;
+      // The token rides the next batch's cursor sealed, and goes with the walk's last batch: the
+      // finish's cursor holds none (X-1).
+      const nextCursor =
+        batch.nextCursor === undefined
+          ? FINISHING_CURSOR
+          : token === undefined || tokenKey === undefined || token.expiresAt <= Date.now()
+            ? batch.nextCursor
+            : cursorWithToken(batch.nextCursor, sealReaderToken(token, tokenKey, binding));
       const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {
         sourceId: source._id,
         runId: args.runId,
@@ -822,7 +928,7 @@ export const syncBatch = internalAction({
           ? error
           : (interruptedReadError(error, 'The documentation read') ?? error),
         secret,
-        known,
+        [...known, ...tokens],
       );
       await ctx.runMutation(internal.docSources.failSync, {
         sourceId: source._id,

@@ -2536,6 +2536,139 @@ describe('documentation sync batching', (): void => {
   }, 120_000);
 });
 
+// X-1's stored half (18-D; 17-X's F3): each batch of twenty-five asked for a token again, half an
+// unchanged SharePoint or Drive read. The reader hands its token back beside its cursor; the sync
+// keeps it, sealed with the deployment's key, in the run's stored cursor for the next batch. 18-X
+// builds the readers' half; the reader here is the folder's, handing a token as theirs will.
+describe('a reader’s token kept across a sync’s batches (X-1, the stored half)', (): void => {
+  const KEY = Buffer.alloc(32, 7).toString('base64');
+
+  beforeEach((): void => {
+    vi.useFakeTimers();
+  });
+
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  /** A folder of thirty pages: two batches. */
+  async function folderOfThirty(): Promise<{
+    harness: TestConvex<typeof schema>;
+    sourceId: Id<'docSources'>;
+  }> {
+    const root = temporary('day0-sync-token-');
+    await mkdir(join(root, 'library'));
+    for (let index = 1; index <= 30; index += 1) {
+      await writeFile(
+        join(root, 'library', `page-${String(index).padStart(2, '0')}.md`),
+        `# Page ${index}\n\nBody ${index}.\n`,
+        'utf8',
+      );
+    }
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Library',
+      kind: 'folder',
+      locator: 'library',
+    });
+    return { harness, sourceId };
+  }
+
+  /** A token-shaped value built at runtime, so no fixture holds one verbatim. */
+  const TOKEN = token(['eyJ0eXAi', 'readerToken'], '.', 'Zx9qW3rT5yU7iO1pA2sD4fG6');
+
+  /**
+   * The folder's reader handing a token back beside its cursor, as 18-X's readers will: each call
+   * records the token it was handed (the sixth argument), and the first hands one back.
+   */
+  function readerHandingBack(expiresAt: () => number, failSecond = false): Array<unknown> {
+    const handed: unknown[] = [];
+    const read = FolderReader.prototype.listPageBatch;
+    vi.spyOn(FolderReader.prototype, 'listPageBatch').mockImplementation(async function (
+      this: FolderReader,
+      ...args: unknown[]
+    ) {
+      handed.push(args[5]);
+      if (handed.length === 2 && failSecond) throw new Error('the listing timed out');
+      const batch = await read.apply(this, args.slice(0, 5) as never);
+      return handed.length === 1
+        ? { ...batch, token: { token: TOKEN, expiresAt: expiresAt() } }
+        : batch;
+    });
+    return handed;
+  }
+
+  it('holds the reader’s token in the stored cursor only encrypted, hands it back for the next batch, and no log line or event carries it', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { harness, sourceId } = await folderOfThirty();
+    const expiresAt = Date.now() + 60 * 60 * 1000;
+    const handed = readerHandingBack(() => expiresAt);
+    const lines = vi.spyOn(console, 'log');
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    // Between the two batches: the run's stored cursor and the next batch's argument hold it
+    // sealed, never as it is.
+    const between = await harness.run(async (ctx) => ({
+      runs: await ctx.db.query('docSyncRuns').collect(),
+      jobs: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(JSON.stringify(between)).not.toContain(TOKEN);
+    const stored = between.runs[0].cursor ?? '';
+    expect(stored.startsWith('\u0000token:')).toBe(true);
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    expect(handed).toEqual([undefined, { token: TOKEN, expiresAt }]);
+    const after = await harness.run(async (ctx) => ({
+      source: await ctx.db.get(sourceId),
+      runs: await ctx.db.query('docSyncRuns').collect(),
+      events: await ctx.db.query('events').collect(),
+      jobs: await ctx.db.system.query('_scheduled_functions').collect(),
+    }));
+    expect(after.source?.status).toBe('synced');
+    // Dropped at the sync's end: no row, event or job holds it, sealed or not.
+    expect(JSON.stringify(after)).not.toContain(TOKEN);
+    expect(JSON.stringify(after.runs)).not.toContain('\u0000token:');
+    expect(lines.mock.calls.flat().join('\n')).not.toContain(TOKEN);
+  }, 60_000);
+
+  it('hands back no token past its expiry, nor where the deployment has no key to seal it with', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const expired = await folderOfThirty();
+    const handedExpired = readerHandingBack(() => Date.now() - 1);
+    await expired.harness.action(internal.docSyncActions.syncSource, {
+      sourceId: expired.sourceId,
+    });
+    await expired.harness.finishAllScheduledFunctions(drainScheduled);
+    expect(handedExpired).toEqual([undefined, undefined]);
+    vi.restoreAllMocks();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', '');
+    const keyless = await folderOfThirty();
+    const handedKeyless = readerHandingBack(() => Date.now() + 60_000);
+    await keyless.harness.action(internal.docSyncActions.syncSource, {
+      sourceId: keyless.sourceId,
+    });
+    const run = await keyless.harness.run(async (ctx) => await ctx.db.query('docSyncRuns').first());
+    expect(run?.cursor?.startsWith('\u0000token:')).toBe(false);
+    await keyless.harness.finishAllScheduledFunctions(drainScheduled);
+    expect(handedKeyless).toEqual([undefined, undefined]);
+  }, 60_000);
+
+  it('drops the token from the run’s cursor when the sync ends short, keeping the place it reached', async (): Promise<void> => {
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', KEY);
+    const { harness, sourceId } = await folderOfThirty();
+    readerHandingBack(() => Date.now() + 60_000, true);
+    await harness.action(internal.docSyncActions.syncSource, { sourceId });
+    await harness.finishAllScheduledFunctions(drainScheduled);
+    const [run] = await harness.run(async (ctx) => await ctx.db.query('docSyncRuns').collect());
+    expect(run.state).toBe('error');
+    expect(run.cursor).toBeDefined();
+    expect(run.cursor?.startsWith('\u0000')).toBe(false);
+    expect(JSON.stringify(run)).not.toContain(TOKEN);
+  }, 60_000);
+});
+
 describe('a source that refuses the walk of its archived pages (W15-R30)', (): void => {
   beforeEach((): void => {
     vi.useFakeTimers();
