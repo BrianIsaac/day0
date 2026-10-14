@@ -54,6 +54,7 @@ import {
 } from '../src/agent/reorientation-vocabulary';
 import { log } from '../src/lib/logger';
 import { RELATIONSHIP_NOUNS } from '../src/people/words';
+import { redraftedOutput } from '../src/work/landed-writes';
 
 /*
  * A reorientation card's decisions (wave 16, 16-O; the wave file's section 5.2, A11): Approve
@@ -149,9 +150,11 @@ function approvedWhileHeld(row: Doc<'workItems'>): boolean {
   );
 }
 
-/** What a set approved and never applied leaves on its row, cleared as a park clears it. */
+/**
+ * What a set approved and never applied leaves on its row, cleared as a park clears it; its output
+ * goes with it but for the writes it already landed or answered not sent ({@link redraftedOutput}).
+ */
 const APPROVED_SET_CLEARED = {
-  output: undefined,
   pendingRunId: undefined,
   approvedIndexes: undefined,
   actionVerdicts: undefined,
@@ -189,8 +192,13 @@ async function releaseHeldWork(
       // drafted again where it rests on what moved, its approval standing otherwise (V17-9's
       // remainder, W17-R8).
       if (moved.length > 0 && planRestsOnAny(row, moved)) {
-        await ctx.db.patch(row._id, APPROVED_SET_CLEARED);
-        await sendBackToDrafting(ctx, { ...row, ...APPROVED_SET_CLEARED }, { card }, now);
+        // What already landed stays, so the redrafted plan never sends it again (W18-R8).
+        const cleared = {
+          ...APPROVED_SET_CLEARED,
+          output: redraftedOutput(row.output, row.providerReconciliation?.entries),
+        };
+        await ctx.db.patch(row._id, cleared);
+        await sendBackToDrafting(ctx, { ...row, ...cleared }, { card }, now);
       }
       continue;
     }

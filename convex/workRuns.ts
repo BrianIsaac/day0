@@ -78,7 +78,7 @@ import {
   retryAnswersOf,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWritesOf, notSentWritesOf } from '../src/work/landed-writes';
+import { landedWritesOf, notSentWritesOf, redraftedOutput } from '../src/work/landed-writes';
 import {
   isStoppableItem,
   landedNoteRows,
@@ -132,24 +132,6 @@ function carriedIntoRetry(
   return {
     ...Object.fromEntries(Object.entries(output).filter(([key]) => key !== 'unsentWrites')),
     ...(answered.length > 0 ? { landedWrites: landedWritesOf(row.output, answered) } : {}),
-    ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
-  };
-}
-
-/**
- * What a redrafted item keeps of its last run's output: the writes that landed and those not
- * sent, as a retry carries them (P4-1), and nothing of the plan they ran under.
- *
- * @param row - The item Retry sends back to drafting.
- * @returns The carried writes, or undefined when the run left none.
- */
-function redraftedOutput(row: Doc<'workItems'>): Record<string, unknown> | undefined {
-  const answered = retryAnswersOf(row.providerReconciliation?.entries ?? []);
-  const landedWrites = landedWritesOf(row.output, answered);
-  const unsentWrites = notSentWritesOf(row.output, answered);
-  if (landedWrites.length === 0 && unsentWrites.length === 0) return undefined;
-  return {
-    ...(landedWrites.length > 0 ? { landedWrites } : {}),
     ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
   };
 }
@@ -307,7 +289,7 @@ export const retryFailed = mutation({
       // A redraft keeps only what landed and what was answered not sent: the old plan's phases
       // would send the new plan's run into a closing resume of the old one (second pass).
       ...(redraft
-        ? { output: redraftedOutput(row) }
+        ? { output: redraftedOutput(row.output, row.providerReconciliation?.entries) }
         : carried
           ? { output: carried }
           : resume
