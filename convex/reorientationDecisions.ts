@@ -44,6 +44,7 @@ import {
 } from '../src/agent/reorientation-words';
 import { agentZone, dayKey } from '../src/lib/zone';
 import type { JudgedProposal } from '../src/agent/reorientation-proposal';
+import { planRestsOnAny, type MovedGround } from '../src/agent/reorientation-moved';
 import {
   BOUND_MET,
   REORIENTATION_BLOCKING_LIMIT,
@@ -124,25 +125,56 @@ async function decidableCard(
   return { card, agent };
 }
 
+/** One thing an Approve moved, as a sibling chain's argument carries it ({@link MovedGround}). */
+const movedGroundValidator = v.union(
+  v.object({ kind: v.literal('edge'), person: v.string(), scopes: v.array(v.string()) }),
+  v.object({ kind: v.literal('clauses'), texts: v.array(v.string()) }),
+  v.object({ kind: v.literal('page'), sourceId: v.string(), ref: v.string(), title: v.string() }),
+  v.object({ kind: v.literal('access'), system: v.string() }),
+  v.object({ kind: v.literal('skill'), skillId: v.string(), name: v.string() }),
+  v.object({ kind: v.literal('everything') }),
+);
+
 /**
- * Let go the rows a decided card held. Where the decision changed what their plans were drafted
- * under (`changed`: an Approve that amended the charter, changed an edge, a page, an access or a
- * skill), an undecided plan is sent back to drafting, so neither Day0 under the autonomy switch
- * nor the manager decides a plan written for what no longer holds (V17-9, option (a); the
- * joins). Otherwise each plan's decision is asked again, so a released plan goes on.
+ * Let go the rows a decided card held. Where the decision moved what a plan was drafted under (an
+ * Approve that amended the charter, changed an edge, an agreement, a page, an access or a skill),
+ * an undecided plan whose cites, named people or own words reach what moved is sent back to
+ * drafting, so neither Day0 under the autonomy switch nor the manager decides a plan written for
+ * what no longer holds (V17-9; D-2 (b), O-1). An undecided plan that does not rest on it is marked
+ * held through the change and asked again, and its decision goes to the manager whatever the
+ * switch says (RM43 (a): `decidePlan` reads the mark, the work loop's recovery with it). Otherwise
+ * each plan's decision is asked again, so a released plan goes on.
+ *
+ * @param moved - What the decision changed; empty for a Dismiss, or an Approve that changed nothing
+ *   a plan rests on.
+ * @param now - When the decision was made.
  */
 async function releaseHeldWork(
   ctx: MutationCtx,
   card: Doc<'reorientations'>,
-  changed: boolean,
+  moved: readonly MovedGround[],
+  now: number,
 ): Promise<void> {
-  const now = Date.now();
   for (const workItemId of card.blockingWork) {
     const row = await ctx.db.get(workItemId);
     if (row?.state !== 'plan-pending') continue;
-    if (changed && row.decision?.decidedAt === undefined) {
-      await sendBackToDrafting(ctx, row, { card }, now);
-      continue;
+    if (moved.length > 0 && row.decision?.decidedAt === undefined) {
+      if (planRestsOnAny(row, moved)) {
+        await sendBackToDrafting(ctx, row, { card }, now);
+        continue;
+      }
+      await ctx.db.patch(row._id, { heldThroughChangeAt: now });
+      await appendEvent(ctx, {
+        agentId: row.agentId,
+        type: 'work.plan-held',
+        payload: {
+          workItemId,
+          reason: 'held-through-change',
+          reorientationId: card._id,
+          summary: card.triggerSummary,
+        },
+        createdAt: now,
+      });
     }
     await ctx.scheduler.runAfter(0, internal.work.decidePlan, { workItemId, recovery: true });
   }
@@ -161,6 +193,11 @@ const siblingDecisionValidator = v.object({
   outcome: v.string(),
   decidedBy: v.optional(v.string()),
   now: v.number(),
+  /**
+   * What the Approve moved, which a sibling's held plans are tested against (D-2 (b)). Absent from
+   * a link scheduled by 0.21.0, which sent every held plan back to drafting, as it still does.
+   */
+  moved: v.optional(v.array(movedGroundValidator)),
 });
 
 type SiblingDecision = typeof siblingDecisionValidator.type;
@@ -211,7 +248,7 @@ async function closeSiblingCards(
         });
         await closeTalkOfCard(ctx, card._id);
         // Another card's Approve changed the edge this card's plans were drafted under.
-        await releaseHeldWork(ctx, card, true);
+        await releaseHeldWork(ctx, card, decision.moved ?? [{ kind: 'everything' }], decision.now);
       } else if (
         card.proposed.kind === 'relationship' &&
         card.proposed.relationshipId === decision.relationshipId
@@ -265,6 +302,7 @@ async function closeSiblingsAfterApprove(
     readonly result: string;
     readonly decidedBy: string | undefined;
     readonly now: number;
+    readonly moved: readonly MovedGround[];
   },
 ): Promise<void> {
   if (card.proposed.kind !== 'relationship') return;
@@ -285,6 +323,7 @@ async function closeSiblingsAfterApprove(
       ),
       ...(decided.decidedBy !== undefined ? { decidedBy: decided.decidedBy } : {}),
       now: decided.now,
+      moved: [...decided.moved],
     },
     SIBLINGS_INLINE,
   );
@@ -296,11 +335,33 @@ interface Applied {
   readonly result: string;
   readonly charterId?: Id<'charters'>;
   /**
-   * Whether it changed what a plan the card held was drafted under: the charter, an agreement in
-   * force, an edge, a page's status, an access or a skill (V17-9). A keep, a re-check and a
-   * proposal of nothing change nothing a plan rests on.
+   * What it changed that a plan the card held may have been drafted under: the charter's clauses,
+   * an agreement in force, an edge, a page's status, an access or a skill (V17-9; D-2 (b)). Empty
+   * for a keep, a re-check and a proposal of nothing, which change nothing a plan rests on.
    */
-  readonly changed: boolean;
+  readonly moved: readonly MovedGround[];
+}
+
+/**
+ * What a charter change moves: the clauses it edits, each as it stood and as it is written, read
+ * before the amendment; a change of another kind (the function, a system, a collaborator, a
+ * constraint, an answer) is one the narrow test does not read, so every plan rests on it.
+ */
+async function charterMoved(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  proposed: Extract<JudgedProposal, { kind: 'charter-change' }>,
+): Promise<MovedGround[]> {
+  if (proposed.changes.some((change) => change.kind !== 'edit-clause')) {
+    return [{ kind: 'everything' }];
+  }
+  const lists = await approvedClauseLists(ctx, agentId);
+  const texts = proposed.changes.flatMap((change) =>
+    change.kind === 'edit-clause'
+      ? [lists?.[change.field]?.[change.index] ?? '', change.text].filter((text) => text !== '')
+      : [],
+  );
+  return [{ kind: 'clauses', texts }];
 }
 
 /** Apply a card's proposal through its target's transaction helper; what it did, in words. */
@@ -311,9 +372,10 @@ async function applyProposal(
 ): Promise<Applied> {
   switch (proposed.kind) {
     case 'none':
-      return { result: approvedResultWords.none, changed: false };
+      return { result: approvedResultWords.none, moved: [] };
     case 'charter-change': {
       await refuseMovedClauses(ctx, card.agentId, proposed);
+      const moved = await charterMoved(ctx, card.agentId, proposed);
       // The charter's own refusals are each the charter no longer taking the change, said in the
       // card's words (m15), and each in a sentence of its own (W16-R24): a change that changes
       // nothing and a charter not approved yet were both said as "has moved on since".
@@ -336,7 +398,7 @@ async function applyProposal(
       return {
         result: approvedResultWords.charter(amended.version),
         charterId: amended.charterId,
-        changed: true,
+        moved,
       };
     }
     case 'agreement': {
@@ -378,9 +440,18 @@ async function applyProposal(
         }
       }
       // A proposed agreement set aside was never in force, so no plan rests on it.
+      const texts =
+        action === 'edit'
+          ? [agreement.statement, proposed.statement ?? '']
+          : action === 'retire'
+            ? [agreement.statement]
+            : [];
       return {
         result: approvedResultWords.agreement[action],
-        changed: action === 'edit' || action === 'retire',
+        moved:
+          texts.length === 0
+            ? []
+            : [{ kind: 'clauses', texts: texts.filter((text) => text !== '') }],
       };
     }
     case 'relationship': {
@@ -388,6 +459,11 @@ async function applyProposal(
       if (edge === null || edge.userId !== card.userId) {
         throw new ConvexError(CARD_ACTION_REFUSALS.targetGone);
       }
+      const person = await ctx.db.get(edge.toPersonId);
+      const scopes = [
+        edge.scope ?? '',
+        ...(proposed.action === 'edit' ? [proposed.scope ?? ''] : []),
+      ].filter((scope) => scope !== '');
       if (proposed.action === 'edit') {
         await editRelationshipInTransaction(ctx, edge, {
           agentId: card.agentId,
@@ -397,17 +473,28 @@ async function applyProposal(
       } else {
         await retireRelationshipInTransaction(ctx, edge, card.agentId);
       }
-      return { result: approvedResultWords.relationship[proposed.action], changed: true };
+      return {
+        result: approvedResultWords.relationship[proposed.action],
+        moved: [{ kind: 'edge', person: person?.displayName ?? '', scopes }],
+      };
     }
-    case 'page-status':
-      return { ...(await applyPageStatus(ctx, proposed, card.userId)), changed: true };
+    case 'page-status': {
+      const { result, title } = await applyPageStatus(ctx, proposed, card.userId);
+      return {
+        result,
+        moved: [{ kind: 'page', sourceId: proposed.page.sourceId, ref: proposed.page.ref, title }],
+      };
+    }
     case 'scope':
       if (proposed.action === 'revoke') {
         await revokeScopeInTransaction(ctx, { agentId: card.agentId, scope: proposed.scope });
       } else {
         await grantScopeInTransaction(ctx, card.agentId, proposed.scope, 'manager');
       }
-      return { result: approvedResultWords.scope(proposed.action, proposed.scope), changed: true };
+      return {
+        result: approvedResultWords.scope(proposed.action, proposed.scope),
+        moved: [{ kind: 'access', system: proposed.scope.split(':')[0] ?? proposed.scope }],
+      };
     case 'skill-action': {
       const skill = await ctx.db.get(proposed.skillId);
       if (skill === null || skill.agentId !== card.agentId) {
@@ -419,7 +506,10 @@ async function applyProposal(
       } else await withdrawSkillInTransaction(ctx, skill, proposed.rationale.slice(0, 500));
       return {
         result: approvedResultWords.skill(proposed.action, skill.name),
-        changed: proposed.action !== 'recheck',
+        moved:
+          proposed.action === 'recheck'
+            ? []
+            : [{ kind: 'skill', skillId: skill._id, name: skill.name }],
       };
     }
     default: {
@@ -434,6 +524,19 @@ type ClauseLists = Readonly<
   Record<'willDo' | 'willNotDo' | 'escalationTriggers', readonly string[]>
 >;
 
+/** The newest charter's list clauses, as its body holds them. */
+async function approvedClauseLists(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+): Promise<ClauseLists | undefined> {
+  const charter = await ctx.db
+    .query('charters')
+    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+    .order('desc')
+    .first();
+  return (charter?.body as { proposedBoundaries?: ClauseLists } | undefined)?.proposedBoundaries;
+}
+
 /**
  * Refuse a charter change whose clause is no longer what the card showed (the second pass's M2):
  * a clause is edited by its place in its list, and another amendment since the proposal may have
@@ -446,13 +549,7 @@ async function refuseMovedClauses(
 ): Promise<void> {
   const edits = proposed.changes.filter((change) => change.kind === 'edit-clause');
   if (edits.length === 0 || proposed.before === undefined) return;
-  const charter = await ctx.db
-    .query('charters')
-    .withIndex('by_agent', (q) => q.eq('agentId', agentId))
-    .order('desc')
-    .first();
-  const lists = (charter?.body as { proposedBoundaries?: ClauseLists } | undefined)
-    ?.proposedBoundaries;
+  const lists = await approvedClauseLists(ctx, agentId);
   for (const edit of edits) {
     if (lists?.[edit.field]?.[edit.index] !== proposed.before) {
       throw new ConvexError(CARD_ACTION_REFUSALS.moved);
@@ -465,7 +562,7 @@ async function applyPageStatus(
   ctx: MutationCtx,
   proposed: Extract<JudgedProposal, { kind: 'page-status' }>,
   owner: string,
-): Promise<{ result: string }> {
+): Promise<{ result: string; title: string }> {
   const pageAt = async (ref: { sourceId: Id<'docSources'>; ref: string }) =>
     await ctx.db
       .query('docPages')
@@ -480,7 +577,7 @@ async function applyPageStatus(
     // Only a status the manager set is handed back; the source's own has nothing to clear (M2).
     if (page.statusSource !== 'manager') throw new ConvexError(CARD_ACTION_REFUSALS.moved);
     await clearPageStatusInTransaction(ctx, source, page);
-    return { result: approvedResultWords.page('clear', page.title) };
+    return { result: approvedResultWords.page('clear', page.title), title: page.title };
   }
   // A status the page already holds from its source changes nothing but pins the page to the
   // manager, after which the source's own later word is ignored (W17-R2, D-1 (a)).
@@ -510,7 +607,7 @@ async function applyPageStatus(
     decidedBy: verifiedAddressOf(caller),
     now: Date.now(),
   });
-  return { result: approvedResultWords.page(proposed.status, page.title) };
+  return { result: approvedResultWords.page(proposed.status, page.title), title: page.title };
 }
 
 /**
@@ -574,8 +671,13 @@ export const approve = mutation({
       },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card, applied.changed);
-    await closeSiblingsAfterApprove(ctx, card, { result: applied.result, decidedBy, now });
+    await releaseHeldWork(ctx, card, applied.moved, now);
+    await closeSiblingsAfterApprove(ctx, card, {
+      result: applied.result,
+      decidedBy,
+      now,
+      moved: applied.moved,
+    });
     return { result: applied.result };
   },
 });
@@ -604,7 +706,7 @@ export const dismiss = mutation({
       payload: { reorientationId: card._id, summary: card.triggerSummary },
       createdAt: now,
     });
-    await releaseHeldWork(ctx, card, false);
+    await releaseHeldWork(ctx, card, [], now);
     return null;
   },
 });

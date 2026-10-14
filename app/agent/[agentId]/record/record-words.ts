@@ -616,6 +616,7 @@ const PLAN_HELD_BECAUSE: {
     'two pages disagree on a point it follows, to be decided on the Documentation tab',
   'reorientation-pending': (subject) =>
     `a reorientation card holds it until ${they(subject)} decide the card`,
+  'held-through-change': () => 'a reorientation card held it through a change it does not rest on',
 };
 
 /**
@@ -1248,15 +1249,18 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    p.reason === 'reorientation-pending' && text(p.summary)
-      ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
-      : p.reason === 'documentation-conflict' && text(p.heading)
-        ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
-        : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-            typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-              ? PLAN_HELD_BECAUSE[p.reason](subject)
-              : `it waits for ${their(subject)} decision`
-          }`,
+    // A plan asked again, not drafted again (D-2 (b); section 7's draft, RM24).
+    p.reason === 'held-through-change' && text(p.summary)
+      ? `The plan${forItem(subject)} is asked for ${their(subject)} decision again: the change to “${text(p.summary)?.replace(/[.!?]+$/u, '')}” does not affect it`
+      : p.reason === 'reorientation-pending' && text(p.summary)
+        ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
+        : p.reason === 'documentation-conflict' && text(p.heading)
+          ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+          : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+              typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+                ? PLAN_HELD_BECAUSE[p.reason](subject)
+                : `it waits for ${their(subject)} decision`
+            }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;

@@ -1607,6 +1607,21 @@ export interface PlanHeldForReorientation extends WorkItemNamed {
   readonly summary: string;
 }
 
+/**
+ * `work.plan-held` for a plan a reorientation card held through a change it does not rest on (wave
+ * 18, 18-O; D-2 (b), RM43 (a)): the card's Approve changed something the plan's cites, people and
+ * words do not reach, so the plan was not drafted again and its decision is asked of the manager
+ * again, whatever the autonomy switch says (`workItems.heldThroughChangeAt`). Written once, by the
+ * Approve's release (`convex/reorientationDecisions.ts`).
+ */
+export interface PlanHeldThroughChange extends WorkItemNamed {
+  readonly reason: 'held-through-change';
+  /** The card whose Approve made the change, or whose sibling's Approve closed it. */
+  readonly reorientationId: Id<'reorientations'>;
+  /** The card's trigger summary: the change the plan does not rest on, as the record names it. */
+  readonly summary: string;
+}
+
 /** The payload of `work.plan-held`, by why the plan waits for the manager. */
 export type WorkPlanHeldPayload =
   | PlanHeldSkipOverruled
@@ -1615,7 +1630,8 @@ export type WorkPlanHeldPayload =
   | PlanHeldDraftedWithout
   | PlanHeldApprovedByPredecessor
   | PlanHeldForConflict
-  | PlanHeldForReorientation;
+  | PlanHeldForReorientation
+  | PlanHeldThroughChange;
 
 /** The payload of `work.plan-approved`. */
 export interface WorkPlanApprovedPayload extends WorkItemNamed {

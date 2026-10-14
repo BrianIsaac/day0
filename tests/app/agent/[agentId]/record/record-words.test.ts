@@ -538,6 +538,26 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan a card’s Approve asked again, not drafted again, in section 7’s words (D-2 (b), RM24)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-held',
+          payload: {
+            workItemId: 'w1',
+            reason: 'held-through-change',
+            reorientationId: 'r1',
+            summary:
+              'Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”.',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for “Draft response for new tier-two RevOps ask” is asked for your decision again: the change to “Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”” does not affect it.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),

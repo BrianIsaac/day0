@@ -1359,9 +1359,16 @@ describe('the hold: the seventh reason at the plan’s decision', (): void => {
 
   it('sends a plan it held back to drafting when Approve changed what the plan was drafted under, so Day0 never approves it on its own (V17-9, (a))', async (): Promise<void> => {
     // 17-O's trace (F5): under the autonomy switch, the plan a card held was approved by Day0
-    // itself once Approve had amended the charter it was drafted under.
+    // itself once Approve had amended the charter it was drafted under. Its words reach the clause
+    // the Approve edits (D-2 (b), wave 18: a plan that does not is asked again, below).
     const harness = convexTest(schema, allConvexModules());
     const { agentId, workItemId } = await autonomous(harness);
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(workItemId, {
+          plan: { summary: 'Reply to the tier-2 ask.', steps: ['Reply in the ask’s thread'] },
+        }),
+    );
     const cardId = await proposedCard(
       harness,
       agentId,
@@ -1392,6 +1399,48 @@ describe('the hold: the seventh reason at the plan’s decision', (): void => {
     expect(await payloadsOf(harness, agentId, 'work.plan-redrafting')).toEqual([
       expect.objectContaining({ workItemId, reorientationId: cardId }),
     ]);
+  });
+
+  it('asks a plan it held again when Approve changed a clause the plan’s words do not reach, and the switch does not approve it (D-2 (b), RM43 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await autonomous(harness);
+    vi.setSystemTime(Date.UTC(2026, 9, 14, 4, 0));
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'charter-change',
+        changes: [
+          {
+            kind: 'edit-clause',
+            field: 'willNotDo',
+            index: 0,
+            text: 'Change committee-deck numbers or the board pack',
+          },
+        ],
+        rationale: 'The board pack is the committee deck’s twin.',
+      },
+      { affected: { workItems: [workItemId] } },
+    );
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    await expect(
+      harness.mutation(internal.work.decidePlan, { workItemId, recovery: true }),
+    ).resolves.toEqual({ approved: false });
+    const row = await harness.run(async (ctx) => await ctx.db.get(workItemId));
+    expect([row?.state, row?.plan, row?.heldThroughChangeAt]).toEqual([
+      'plan-pending',
+      { summary: 'Reply.', steps: ['Reply'] },
+      Date.UTC(2026, 9, 14, 4, 0),
+    ]);
+    expect(await payloadsOf(harness, agentId, 'work.plan-redrafting')).toEqual([]);
+    expect(await payloadsOf(harness, agentId, 'work.plan-held')).toContainEqual({
+      workItemId,
+      reason: 'held-through-change',
+      reorientationId: cardId,
+      summary: 'Priya, its approver, changed',
+    });
   });
 
   it('releases a plan it held to its decision when Approve changed nothing', async (): Promise<void> => {
@@ -1785,5 +1834,200 @@ describe('openByHand and listForAgent', (): void => {
     // A card that holds everything it reached says nothing of a rest.
     const [quiet] = await owner.query(api.reorientationDecisions.listForAgent, { agentId: few });
     expect(quiet.held).toEqual({ plans: 1, runs: 0 });
+  });
+});
+
+describe('the narrow redraft: one Approve for everyone at fifty-one (D-2 (b), RM43 (a))', (): void => {
+  /** Bed 1's Priya's card, as the hosted model proposed it (`bed1/rows/listForAgent-priya.json`). */
+  const BED_ONE_SUMMARY =
+    'Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”, where it was “NetLedger journal changes”';
+
+  /** The bed's plan (`kit1/seed.py`): one drafted plan an employee, none naming Ines. */
+  const BED_ONE_PLAN = {
+    summary: 'Review the close ticket within the window the policy sets.',
+    steps: ['Read the review window.', 'Review the ticket.', 'Post the review note.'],
+    riskNotes: '',
+  };
+
+  /** The three plans of the fifty-one whose own words reach what the Approve moved. */
+  const NAMING: Readonly<Record<number, Partial<typeof BED_ONE_PLAN>>> = {
+    2: { steps: ['Read the review window.', 'Ask Ines Duarte to approve the journal entry.'] },
+    3: { summary: 'Review the REVOPS close plans within the window the policy sets.' },
+    4: { riskNotes: 'Ines Duarte signs off the close before the note is posted.' },
+  };
+
+  /**
+   * Bed 1's fifty-one employees (Priya, Mateo, Aiko and forty-eight in Priya's shape), each with
+   * one drafted plan held by its own high-risk card about the approver for everyone, every card
+   * proposing the widened scope the hosted model proposed on the bed.
+   */
+  async function bedOne(
+    harness: Harness,
+    autonomousActions: boolean,
+  ): Promise<{
+    edge: Id<'relationships'>;
+    rows: Array<{
+      agentId: Id<'agents'>;
+      workItemId: Id<'workItems'>;
+      cardId: Id<'reorientations'>;
+    }>;
+  }> {
+    const edge = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Ines Duarte',
+        nameKey: 'ines duarte',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return await ctx.db.insert('relationships', {
+        userId: OWNER_SUBJECT,
+        toPersonId: person,
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const widen = {
+      kind: 'relationship' as const,
+      relationshipId: edge,
+      action: 'edit' as const,
+      type: 'approval-authority' as const,
+      scope: 'NetLedger journal changes and REVOPS close plans',
+      rationale:
+        "Ines Duarte's approver scope now covers REVOPS close plans as well as NetLedger journal changes.",
+    };
+    const rows = [];
+    for (let index = 1; index <= 51; index += 1) {
+      const name =
+        { 1: 'Priya', 2: 'Mateo', 3: 'Aiko' }[index] ??
+        `Employee ${String(index).padStart(2, '0')}`;
+      const agentId = await seedEmployee(harness, { name, autonomousActions });
+      const workItemId = await seedWork(harness, agentId, 'plan-pending', {
+        externalId: `W17RV-${String(index).padStart(2, '0')}`,
+        title: `${name}: review the Q3 close ticket`,
+        contentSummary:
+          'Review the Q3 close ticket within the review window once its audit comment is posted.',
+        planPendingAt: 1,
+        plan: { ...BED_ONE_PLAN, ...NAMING[index] },
+      });
+      const cardId = await proposedCard(harness, agentId, widen, {
+        summary: BED_ONE_SUMMARY,
+        evidence: { relationshipIds: [edge] },
+        affected: { relationships: [edge], workItems: [workItemId] },
+      });
+      rows.push({ agentId, workItemId, cardId });
+    }
+    return { edge, rows };
+  }
+
+  /** Run the sibling chain an Approve for everyone schedules to its end, as the scheduler would. */
+  async function runSiblingChain(harness: Harness): Promise<void> {
+    const ran = new Set<string>();
+    for (;;) {
+      const [next] = (
+        await scheduledAs(harness, 'reorientationDecisions:closeSiblingCardsLater')
+      ).filter((job) => !ran.has(job._id));
+      if (next === undefined) return;
+      ran.add(next._id);
+      await harness.mutation(
+        internal.reorientationDecisions.closeSiblingCardsLater,
+        next.args[0] as { agentIds: Id<'agents'>[]; decision: never },
+      );
+    }
+  }
+
+  /** Every work item of the fifty-one, by its state. */
+  async function statesOf(
+    harness: Harness,
+    rows: ReadonlyArray<{ workItemId: Id<'workItems'> }>,
+  ): Promise<Array<Doc<'workItems'> | null>> {
+    return await harness.run(
+      async (ctx) => await Promise.all(rows.map(async (row) => await ctx.db.get(row.workItemId))),
+    );
+  }
+
+  it('redrafts only the held plans that name the edge’s person or scope, and asks the rest again (bed 1’s rows; red at the tag: 51 redrafted)', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { rows } = await bedOne(harness, false);
+    const approvedAt = Date.UTC(2026, 9, 14, 3, 0);
+    vi.setSystemTime(approvedAt);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: rows[0].cardId });
+    await runSiblingChain(harness);
+    const after = await statesOf(harness, rows);
+    // Mateo's, Aiko's and Employee 04's plans name Ines Duarte or the REVOPS close plans.
+    expect(after.flatMap((row, at) => (row?.state === 'claimed' ? [at + 1] : []))).toEqual([
+      2, 3, 4,
+    ]);
+    const asked = after.filter((row) => row?.state === 'plan-pending');
+    expect(asked).toHaveLength(48);
+    for (const row of asked) {
+      expect([row?.heldThroughChangeAt, row?.plan]).toEqual([approvedAt, BED_ONE_PLAN]);
+    }
+    const redrafting = (
+      await Promise.all(
+        rows.map(async (row) => await payloadsOf(harness, row.agentId, 'work.plan-redrafting')),
+      )
+    ).flat();
+    expect(redrafting).toHaveLength(3);
+    // Each plan asked again says so on its own record, naming the card that held it.
+    for (const row of rows.filter((_row, at) => after[at]?.state === 'plan-pending')) {
+      expect(await payloadsOf(harness, row.agentId, 'work.plan-held')).toEqual([
+        {
+          workItemId: row.workItemId,
+          reason: 'held-through-change',
+          reorientationId: row.cardId,
+          summary: BED_ONE_SUMMARY,
+        },
+      ]);
+    }
+    expect((await scheduledAs(harness, 'work:decidePlan')).map((job) => job.args[0])).toHaveLength(
+      48,
+    );
+  });
+
+  it('asks the forty-eight of the manager under the autonomy switch, and Day0 approves none of them, the recovery neither (red at the tag: 51 redrafted)', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { rows } = await bedOne(harness, true);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: rows[0].cardId });
+    await runSiblingChain(harness);
+    // The work loop's look at each released plan, as the scheduler runs it, then the stalled-step
+    // sweep's own look.
+    for (const job of await scheduledAs(harness, 'work:decidePlan')) {
+      expect(
+        await harness.mutation(
+          internal.work.decidePlan,
+          job.args[0] as { workItemId: Id<'workItems'>; recovery?: boolean },
+        ),
+      ).toEqual({ approved: false });
+    }
+    const after = await statesOf(harness, rows);
+    for (const row of after.filter((row) => row?.state === 'plan-pending')) {
+      expect(
+        await harness.mutation(internal.work.decidePlan, {
+          workItemId: row!._id,
+          recovery: true,
+        }),
+      ).toEqual({ approved: false });
+    }
+    expect(after.filter((row) => row?.state === 'plan-pending')).toHaveLength(48);
+    const approvedByDay0 = (
+      await Promise.all(
+        rows.map(async (row) => await payloadsOf(harness, row.agentId, 'work.plan-approved')),
+      )
+    ).flat();
+    expect(approvedByDay0).toEqual([]);
   });
 });
