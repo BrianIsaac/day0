@@ -383,7 +383,13 @@ async function answerFromChannel(
   args: {
     userId: string;
     messageTs: string;
-    reply: { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
+    reply: {
+      verb: 'answer';
+      id: string;
+      choice: ConflictChoice;
+      number?: number;
+      runTogether?: true;
+    };
   },
 ) {
   const { row, decisionId } = request;
@@ -413,6 +419,13 @@ async function answerFromChannel(
     notified: await notice(text),
   });
   const { number } = args.reply;
+  if (args.reply.runTogether === true && numbered.length > 0) {
+    const letter = args.reply.choice === 'from' ? 'A' : args.reply.choice === 'to' ? 'B' : 'both';
+    return await ignored(
+      'number run into its letter',
+      `Write the question’s number and the letter apart, for example “answer ${decisionId} ${number ?? 1} ${letter}”: this plan’s questions are numbered 1 to ${numbered.length}.`,
+    );
+  }
   if (number === undefined && standing.length === 0) {
     return await ignored(
       'no open question',
@@ -519,6 +532,8 @@ export const managerReplyArgs = {
       id: v.string(),
       choice: v.union(...CONFLICT_CHOICES.map((choice) => v.literal(choice))),
       number: v.optional(v.number()),
+      /** The number was typed run into its letter ("2B"): answered with how to write it (W17-R13). */
+      runTogether: v.optional(v.literal(true)),
     }),
   ),
 };

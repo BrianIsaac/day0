@@ -178,7 +178,17 @@ export type DecisionReply =
    * or both, and the question's number where the manager gave one (17-C). A bare answer names none
    * and is taken when exactly one question stands.
    */
-  | { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
+  | {
+      verb: 'answer';
+      id: string;
+      choice: ConflictChoice;
+      number?: number;
+      /**
+       * The number was typed run into its letter ("2B"): read, and answered with how to write it
+       * and the numbers that exist, never taken as the answer (W17-R13).
+       */
+      runTogether?: true;
+    };
 
 /**
  * The longest manager reason kept in full, from the card or from chat alike.
@@ -192,6 +202,21 @@ export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
  * which on a phone hides the reply line.
  */
 export const MANAGER_MESSAGE_MAX_CHARS = 3_000;
+
+/** A decision code as a reply's pattern reads it: four to six of the code alphabet's symbols. */
+const DECISION_CODE = `[${DECISION_ID_ALPHABET}]{4,6}`;
+
+/** An answer to a conflict's question: the code, the question's number if any, and the letter. */
+const ANSWER_SPACED = new RegExp(
+  `^answer\\s*:?\\s+(${DECISION_CODE})(?:\\s+(\\d{1,6}))?\\s+(a|b|both)$`,
+  'i',
+);
+
+/** The same with the number run into its letter ("2B"), read so the channel can say how to write it. */
+const ANSWER_RUN_TOGETHER = new RegExp(
+  `^answer\\s*:?\\s+(${DECISION_CODE})\\s+(\\d{1,6})(a|b|both)$`,
+  'i',
+);
 
 /** What may follow an approve and still leave it an approval: a courtesy, nothing more. */
 const APPROVE_COURTESY = /^(?:thanks|thank you|thx|ty|cheers|please|pls|go ahead|ok|okay|sure)$/i;
@@ -213,10 +238,11 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
     .replace(/^[\s"'“”‘’`*_]+/, '')
     .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
-  const answer =
-    /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+([1-9]\d{0,2}))?\s+(a|b|both)$/i.exec(
-      flat,
-    );
+  // A number no question has (0, 1000) and one run into its letter (2B) are read too, so the
+  // channel can say which numbers exist rather than nothing at all (W17-R13).
+  const spaced = ANSWER_SPACED.exec(flat);
+  const runTogether = spaced === null ? ANSWER_RUN_TOGETHER.exec(flat) : null;
+  const answer = spaced ?? runTogether;
   if (answer) {
     const letter = answer[3].toLowerCase();
     return {
@@ -224,6 +250,7 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
       id: answer[1].toLowerCase(),
       ...(answer[2] === undefined ? {} : { number: Number(answer[2]) }),
       choice: letter === 'a' ? 'from' : letter === 'b' ? 'to' : 'both',
+      ...(spaced === null ? { runTogether: true as const } : {}),
     };
   }
   const match =

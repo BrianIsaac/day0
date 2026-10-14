@@ -14,6 +14,7 @@ import { rememberRequestWithQuestion } from '../../convex/decisionRequests';
 import { askConflictQuestion } from '../../convex/reorientation';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
+import { parseDecisionReply } from '../../src/work/manager-channel';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS } from './fakes/manager-identity';
@@ -1757,6 +1758,42 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ]);
     expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
       undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('answers “answer {code} 0 B”, “1000 B” and “2B” with the numbers that exist, deciding nothing (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { surfaceId, workItemId } = asked;
+    await secondQuestion(harness, asked);
+    // Each typed as the manager would, read by the channel's own parser.
+    const typed = async (messageTs: string, text: string) =>
+      await harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs,
+        reply: parseDecisionReply(text)!,
+      });
+    for (const [n, text] of [
+      'answer ab3xyz 0 B',
+      'answer ab3xyz 1000 B',
+      'answer ab3xyz 2B',
+    ].entries()) {
+      await expect(typed(`179000000${n}.000100`, text)).resolves.toMatchObject({
+        status: 'ignored',
+        notified: true,
+      });
+    }
+    expect(await noticeTexts(harness)).toEqual([
+      'This plan has no question 0: its questions are numbered 1 to 2.',
+      'This plan has no question 1000: its questions are numbered 1 to 2.',
+      'Write the question’s number and the letter apart, for example “answer ab3xyz 2 B”: this plan’s questions are numbered 1 to 2.',
+    ]);
+    expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
       undefined,
       undefined,
     ]);

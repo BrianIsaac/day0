@@ -1070,9 +1070,36 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
       id: 'ab3xyz',
       choice: 'from',
     });
-    // No question is numbered nought, and a number is not a letter.
-    expect(parseDecisionReply('answer ab3xyz 0 A')).toBeUndefined();
+    // A number is not a letter.
     expect(parseDecisionReply('answer ab3xyz 2')).toBeUndefined();
     expect(parseDecisionReply('answer ab3xyz 2 3')).toBeUndefined();
+  });
+
+  it('reads a number no question has, and a number run into its letter, as answers the channel says the numbers to (W17-R13)', (): void => {
+    expect(parseDecisionReply('answer ab3xyz 0 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 0,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('answer ab3xyz 1000 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 1000,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('answer ab3xyz 2B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 2,
+      choice: 'to',
+      runTogether: true,
+    });
+    expect(parseDecisionReply('answer ab3xyz 3both')).toMatchObject({
+      number: 3,
+      runTogether: true,
+    });
+    // A number past any a plan could ask is not read as one.
+    expect(parseDecisionReply('answer ab3xyz 10000000 B')).toBeUndefined();
   });
 });
