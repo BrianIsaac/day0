@@ -1103,8 +1103,10 @@ function sweepRoom(): SweepRoom {
 
 /**
  * The digest sends one sweep looks behind, newest first. A digest's claim lapses fifteen minutes
- * after it is taken and the sweep runs every five, while a digest goes out at most every fifteen,
- * so a send that died is met by the sweep long before ten newer ones stand in front of it.
+ * after it is taken and the sweep runs every five, while a digest goes out at most every fifteen
+ * in digest mode (`DIGEST_MIN_GAP_MS`) and at the digest job's own turn otherwise, so a send that
+ * died is met by the sweep long before ten newer ones stand in front of it. A pause holds both
+ * jobs; only a sweep that failed at every turn while ten more digests went out would miss one.
  */
 const LAPSED_DIGESTS_READ = 10;
 
