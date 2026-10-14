@@ -1207,6 +1207,8 @@ describe('a charter amended from a reorientation card, in the record (the joins)
 });
 
 describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23)', (): void => {
+  // The reason is the fixed sentence whatever the event stored: one written by 0.21.0 held the
+  // error's first line through the token scrub only (W17-R8).
   it('says which card could not be opened and why, so the change is not lost unsaid', (): void => {
     expect(
       recordWords(
@@ -1222,7 +1224,7 @@ describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23
         subject,
       ),
     ).toBe(
-      'Day0 could not open a reorientation card for Mira (the card could not be written): “Escalation paths” was archived.',
+      'Day0 could not open a reorientation card for Mira (an error stopped it, and the function log has the details): “Escalation paths” was archived.',
     );
   });
 });

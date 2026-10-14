@@ -506,11 +506,12 @@ describe('a reorientation card', (): void => {
 
   it('says a proposal could not be had, and leaves Dismiss', async (): Promise<void> => {
     const view = drawn(
-      withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timed out' } }),
+      withCard({ proposed: { kind: 'pending', failedAt: OPENED, failure: 'timeout' } }),
     );
     // Re-taken (17-O; W16-R23, section 7): the reason is said and Discuss is named as a way on.
+    // Re-taken again (18-O; W17-R8): the reason is the kind's fixed sentence.
     expect(view.container.textContent).toContain(
-      'Mira could not work out a proposal (timed out). Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
+      'Mira could not work out a proposal: the model did not answer in time. Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.',
     );
     await floor(view.container);
     view.unmount();
@@ -791,9 +792,11 @@ describe('a reorientation card', (): void => {
         proposed: { kind: 'pending', failedAt: OPENED + 30_000, failure: 'Not Found' },
       }),
     );
+    // A provider's words stored before 0.22.0 are not said (W17-R8).
     expect(failed.container.textContent).toContain(
-      'Mira could not work out a proposal (Not Found).',
+      'Mira could not work out a proposal for this change.',
     );
+    expect(failed.container.textContent).not.toContain('Not Found');
     expect(failed.container.textContent).not.toContain('Nothing changes unless you act');
     failed.unmount();
     const never = drawn(withCard({ ...decided, proposed: { kind: 'pending' } }));

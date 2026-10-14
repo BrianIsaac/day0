@@ -138,8 +138,12 @@ describe('a judgement that failed, and an Approve of what the manager was shown 
     expect(unproposedWords('Mira', {})).toBe(
       'Mira had proposed nothing when the card was decided.',
     );
+    // A provider's words stored before 0.22.0 are not said (W17-R8): the kind's sentence is.
     expect(unproposedWords('Mira', { failedAt: 1, failure: 'Not Found' })).toBe(
-      'Mira could not work out a proposal (Not Found).',
+      'Mira could not work out a proposal for this change.',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'timeout' })).toBe(
+      'Mira could not work out a proposal: the model did not answer in time.',
     );
     expect(unproposedWords('Mira', { failedAt: 1, failure: PROPOSAL_DID_NOT_FINISH })).toBe(
       'Mira did not finish working out a proposal.',
@@ -149,8 +153,8 @@ describe('a judgement that failed, and an Approve of what the manager was shown 
   it('names the ways on from a failed judgement, Discuss first, with its reason or that it did not finish', (): void => {
     const ways =
       'Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
-    expect(failedProposalWords('Mira', 'timed out.')).toBe(
-      `Mira could not work out a proposal (timed out). ${ways}`,
+    expect(failedProposalWords('Mira', 'timeout')).toBe(
+      `Mira could not work out a proposal: the model did not answer in time. ${ways}`,
     );
     expect(failedProposalWords('Mira', PROPOSAL_DID_NOT_FINISH)).toBe(
       `Mira did not finish working out a proposal. ${ways}`,
@@ -366,6 +370,29 @@ describe('the day’s three by-hand changes (D-6 (a))', (): void => {
     );
     expect(byHandChangesWords('Mateo')).toBe(
       'You have changed Mateo’s cards three times today. Come back tomorrow.',
+    );
+  });
+});
+
+describe('a judgement that failed, by its kind (W17-R8; section 7)', (): void => {
+  it('says the kind’s fixed sentence, and never a provider’s words stored before 0.22.0 (red at the tag: the provider’s first line on the card)', (): void => {
+    const rest =
+      ' Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
+    expect(failedProposalWords('Mira', 'timeout')).toBe(
+      `Mira could not work out a proposal: the model did not answer in time.${rest}`,
+    );
+    expect(failedProposalWords('Mira', 'unreadable')).toBe(
+      `Mira could not work out a proposal: the model’s answer could not be read.${rest}`,
+    );
+    expect(failedProposalWords('Mira', 'refused')).toBe(
+      `Mira could not work out a proposal: the model’s provider refused the request.${rest}`,
+    );
+    // A provider's first line stored by 0.21.0, scrubbed of tokens only, is not said.
+    expect(failedProposalWords('Mira', '400 Bad Request: account acct_9f2 is over its quota')).toBe(
+      `Mira could not work out a proposal for this change.${rest}`,
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'refused' })).toBe(
+      'Mira could not work out a proposal: the model’s provider refused the request.',
     );
   });
 });

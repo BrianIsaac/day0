@@ -451,9 +451,12 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
         ? { kind: 'nothing' }
         : { kind: 'opened', reorientationId, judging: true };
     };
-    await harness.run(async (ctx) => {
-      await continueCardChain(ctx, carriedCard, opener);
-    });
+    const { warnings } = await warnedBy(
+      async () =>
+        await harness.run(async (ctx) => {
+          await continueCardChain(ctx, carriedCard, opener);
+        }),
+    );
     expect(await cardsOf(harness, first)).toHaveLength(1);
     expect(await cardsOf(harness, last)).toHaveLength(1);
     expect(await cardsOf(harness, broken)).toEqual([]);
@@ -467,12 +470,20 @@ describe('a change reaching many employees: one list handed over once (wave 17, 
           trigger: 'relationship-changed',
           triggerKey: 'edge-change-1',
           summary: 'Priya, its approver, changed',
-          reason: expect.stringMatching(
-            /^the card could not be written with (?!xoxb-1234)/,
-          ) as string,
+          // A fixed sentence on the record; the error's own words, scrubbed, are the log's
+          // (W17-R8).
+          reason: 'an error stopped it, and the function log has the details',
         },
       ],
     ]);
+    expect(warnings).toContainEqual(
+      expect.objectContaining({
+        msg: 'reorientation: a card could not be opened',
+        reason: expect.stringMatching(
+          /^the card could not be written with (?!xoxb-1234)/,
+        ) as string,
+      }),
+    );
   });
 });
 

@@ -35,6 +35,7 @@ import {
 import { log } from '../src/lib/logger';
 import {
   PROPOSAL_DID_NOT_FINISH,
+  CARD_NOT_OPENED_REASON,
   approvedResultWords,
   closedByHandSummary,
   decidedByHandSummary,
@@ -196,7 +197,7 @@ function judgeAfterMs(startedBefore: number): number {
   );
 }
 
-/** The most of a thrown error's message the record keeps of a card that could not be opened. */
+/** The most of a thrown error's message the log keeps of a card that could not be opened. */
 const CARD_NOT_OPENED_REASON_CHARS = 300;
 
 /** The cards each transaction has opened one at a time so far, by its database handle. */
@@ -530,7 +531,16 @@ async function openWithinBudget(
       if (outcome.judging) judged += 1;
     } catch (error) {
       // Recorded and passed over: a scheduled function that throws is not run again, and the
-      // cards behind this one in the chain would be lost with it.
+      // cards behind this one in the chain would be lost with it. The record says a fixed
+      // sentence; the error's words, scrubbed, go to the function log (W17-R8).
+      log.warn('reorientation: a card could not be opened', {
+        agentId: card.agentId,
+        triggerKey: card.triggerKey,
+        reason: redactTokenShapes(error instanceof Error ? error.message : String(error)).slice(
+          0,
+          CARD_NOT_OPENED_REASON_CHARS,
+        ),
+      });
       await appendEvent(ctx, {
         agentId: card.agentId,
         type: 'reorientation.card-not-opened',
@@ -538,10 +548,7 @@ async function openWithinBudget(
           trigger: card.trigger,
           triggerKey: card.triggerKey,
           summary: card.summary,
-          reason: redactTokenShapes(error instanceof Error ? error.message : String(error)).slice(
-            0,
-            CARD_NOT_OPENED_REASON_CHARS,
-          ),
+          reason: CARD_NOT_OPENED_REASON,
         },
         createdAt: card.now,
       });

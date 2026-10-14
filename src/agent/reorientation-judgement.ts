@@ -6,9 +6,17 @@
  */
 
 import { agentJson, makeAgent } from '../lib/mastra';
+import {
+  ModelRefusalError,
+  ModelReplyCutError,
+  StructuredContractError,
+} from '../lib/structured-fallback';
+import { transportFailureKind } from '../lib/transport-error';
 import { safeFailureMessage } from '../surfaces/redact';
+import type { ProposalFailureKind } from './reorientation-words';
 import {
   REORIENTATION_PROPOSAL_SYSTEM,
+  ProposalRefused,
   proposalOf,
   proposalPrompt,
   proposalReplySchema,
@@ -33,10 +41,17 @@ const proposalModelCall: ProposalJudgementCall = async (user) => {
   });
 };
 
-/** The judgement's answer, or why none could be had. */
+/**
+ * The judgement's answer, or why none could be had: the kind the card says, and the failure's
+ * first line through the token scrub for the function log only (W17-R8).
+ */
 export type ProposalOutcome =
   | { readonly outcome: 'proposed'; readonly proposed: JudgedProposal }
-  | { readonly outcome: 'unavailable'; readonly reason: string };
+  | {
+      readonly outcome: 'unavailable';
+      readonly kind: ProposalFailureKind;
+      readonly detail: string;
+    };
 
 /** The most of a failure's reason a card keeps. */
 const FAILURE_CHARS = 300;
@@ -47,8 +62,11 @@ export interface ProposalStore {
   read(): Promise<{ readonly input: ProposalInput; readonly basis: string } | null>;
   /** Write the proposal onto the card the judgement read. */
   write(proposed: JudgedProposal, basis: string): Promise<void>;
-  /** Record that no proposal could be had, with why. */
-  fail(reason: string, basis: string | undefined): Promise<void>;
+  /**
+   * Record that no proposal could be had: its kind for the card, and its first line, scrubbed, for
+   * the function log.
+   */
+  fail(kind: ProposalFailureKind, basis: string | undefined, detail: string): Promise<void>;
 }
 
 /**
@@ -74,10 +92,38 @@ export async function proposeOnCard(
       await store.write(judged.proposed, read.basis);
       return 'proposed';
     }
-    await store.fail(judged.reason, basis);
+    await store.fail(judged.kind, basis, judged.detail);
   } catch (err: unknown) {
-    await store.fail(safeFailureMessage(err, '', 'the judgement failed', FAILURE_CHARS), basis);
+    await store.fail('failed', basis, failureDetail(err));
   }
+  return 'failed';
+}
+
+/** A failure's first line, with any credential shape a provider echoed removed, as a run's is. */
+function failureDetail(err: unknown): string {
+  return safeFailureMessage(err, '', 'the judgement failed', FAILURE_CHARS);
+}
+
+/**
+ * What kind of failure a judgement met (W17-R8): a reply the card's candidates or the schema
+ * refuse, or one cut off, could not be read; a provider's refusal on content, or an HTTP answer
+ * or a refused connection from it, was its provider refusing the request; a spent budget or a cut
+ * connection was the model not answering in time; anything else failed.
+ */
+export function proposalFailureKind(err: unknown): ProposalFailureKind {
+  if (
+    err instanceof ProposalRefused ||
+    err instanceof StructuredContractError ||
+    err instanceof ModelReplyCutError
+  ) {
+    return 'unreadable';
+  }
+  if (err instanceof ModelRefusalError) return 'refused';
+  if (err instanceof Error && err.name === 'TimeoutError') return 'timeout';
+  const transport = transportFailureKind(err);
+  if (transport === 'interrupted') return 'timeout';
+  const status = (err as { statusCode?: unknown; status?: unknown } | null)?.statusCode;
+  if (transport === 'refused' || typeof status === 'number') return 'refused';
   return 'failed';
 }
 
@@ -95,10 +141,6 @@ export async function judgeProposal(
     const reply = await call(proposalPrompt(input));
     return { outcome: 'proposed', proposed: proposalOf(reply, input.candidates) };
   } catch (err: unknown) {
-    // Its first line, with any credential shape a provider echoed removed, as a run's failure is.
-    return {
-      outcome: 'unavailable',
-      reason: safeFailureMessage(err, '', 'the judgement failed', FAILURE_CHARS),
-    };
+    return { outcome: 'unavailable', kind: proposalFailureKind(err), detail: failureDetail(err) };
   }
 }

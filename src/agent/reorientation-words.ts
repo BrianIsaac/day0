@@ -479,12 +479,37 @@ export function pendingWords(name: string, held: HeldCounts): string {
 export const PROPOSAL_DID_NOT_FINISH = 'did not finish';
 
 /**
+ * Why a judgement could not propose, by kind (W17-R8): the model did not answer in time, its
+ * answer could not be read, its provider refused the request, or something else failed. The card
+ * stores the kind and says its fixed sentence; the provider's own words go to the function log
+ * only, since a provider may say anything in them.
+ */
+export const PROPOSAL_FAILURE_KINDS = ['timeout', 'unreadable', 'refused', 'failed'] as const;
+
+/** One of {@link PROPOSAL_FAILURE_KINDS}. */
+export type ProposalFailureKind = (typeof PROPOSAL_FAILURE_KINDS)[number];
+
+/**
+ * Why a fan-out's card could not be opened, as the record says it (`reorientation.card-not-opened`;
+ * W17-R8): a fixed sentence, the error's own words going to the function log only.
+ */
+export const CARD_NOT_OPENED_REASON = 'an error stopped it, and the function log has the details';
+
+/** Each kind's fixed sentence, after "{name} could not work out a proposal: " (section 7). */
+const FAILURE_SAID: Readonly<Partial<Record<string, string>>> = {
+  timeout: 'the model did not answer in time',
+  unreadable: 'the model’s answer could not be read',
+  refused: 'the model’s provider refused the request',
+} satisfies Partial<Record<ProposalFailureKind, string>>;
+
+/**
  * What a card says when the judgement could not propose (section 7): the card stays, and the ways
- * on are named, Discuss first. "{name} could not work out a proposal ({reason}). Nothing changes
- * unless you act: talk it through with {name}, dismiss the card, or amend the charter yourself."
- * A judgement that never finished says so in place of a reason.
+ * on are named, Discuss first. "{name} could not work out a proposal: {the kind's sentence}.
+ * Nothing changes unless you act: talk it through with {name}, dismiss the card, or amend the
+ * charter yourself." A judgement that never finished says so; any other stored reason, a
+ * provider's words stored before 0.22.0 among them, is said as "for this change" (W17-R8).
  *
- * @param failure - The stored reason, when there is one.
+ * @param failure - The stored kind, when there is one.
  */
 export function failedProposalWords(name: string, failure?: string): string {
   return `${failureOpening(name, failure)} Nothing changes unless you act: talk it through with ${name}, dismiss the card, or amend the charter yourself.`;
@@ -493,11 +518,11 @@ export function failedProposalWords(name: string, failure?: string): string {
 /** That the judgement could not propose, and why, as a card's first sentence about it. */
 function failureOpening(name: string, failure: string | undefined): string {
   const reason = failure?.trim().replace(/[.!?]+$/u, '');
-  return reason === PROPOSAL_DID_NOT_FINISH
-    ? `${name} did not finish working out a proposal.`
-    : reason === undefined || reason === ''
-      ? `${name} could not work out a proposal for this change.`
-      : `${name} could not work out a proposal (${reason}).`;
+  if (reason === PROPOSAL_DID_NOT_FINISH) return `${name} did not finish working out a proposal.`;
+  const said = reason === undefined ? undefined : FAILURE_SAID[reason];
+  return said === undefined
+    ? `${name} could not work out a proposal for this change.`
+    : `${name} could not work out a proposal: ${said}.`;
 }
 
 /**

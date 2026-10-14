@@ -13,6 +13,7 @@ import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { relationshipNoun } from '@/people/words';
+import { CARD_NOT_OPENED_REASON } from '@/agent/reorientation-words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
@@ -1449,10 +1450,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.joined === true
       ? `A deferred reorientation card opened again before its date, since a further change joined it${cardAbout(p.summary)}`
       : `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+  // The reason is the fixed sentence whatever the event holds: one written by 0.21.0 held the
+  // error's first line through the token scrub only (W17-R8).
   'reorientation.card-not-opened': (p, subject) =>
-    `Day0 could not open a reorientation card for ${subject.name}${
-      text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''
-    }${cardAbout(p.summary)}`,
+    `Day0 could not open a reorientation card for ${subject.name} (${CARD_NOT_OPENED_REASON})${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */
