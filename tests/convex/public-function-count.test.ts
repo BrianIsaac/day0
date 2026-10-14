@@ -31,7 +31,8 @@ interface RegisteredFunction {
  * `:recordAnswer`, `:finish`, `:keepReplyDraft` and `:forCard`; 232 with wave 17's
  * `exportActions:exportOwnerAgents`, `roster:page` and `metrics:forOwnerByPages`, 17-F; 231
  * without `agents:rosterForUser`, which no page read since 17-F, removed in wave 18, F-1 (a); 232
- * with 18-F's `metrics:forAgentByPages`, C1).
+ * with 18-F's `metrics:forAgentByPages`, C1; 232 on wave 18's merged tree, read function by
+ * function at the joins, 18-J: no other unit of the wave added or removed a public function).
  */
 const PINNED_COUNT = 232;
 
