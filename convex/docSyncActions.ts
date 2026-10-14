@@ -1229,7 +1229,12 @@ interface PassedOver {
   readonly candidate?: PageName;
 }
 
-/** What one step of a measuring answers. */
+/**
+ * What one step of a measuring answers. A step the scheduler runs answers no one, so what it passed
+ * over reaches an operator by its log lines ("documentation pair not measured for relations: passed
+ * over", "documentation page not measured for relations: passed over"); the answer is a caller's
+ * who runs a step by hand, as a test does.
+ */
 interface MeasuringStep {
   /** The pages it measured or tried. */
   readonly measured: number;
