@@ -138,6 +138,7 @@ export const SLACK_RECIPE: AccessRecipe = {
           'the access token only. Nothing ends a refresh token but its lapse, so keep the ' +
           "service account's sign-in closed: whoever copies a refresh token while its row is " +
           'listed can mint a token with it until then.',
+        hours: 12,
       },
       landsAtInstall: true,
     },

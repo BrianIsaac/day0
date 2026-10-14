@@ -123,8 +123,13 @@ describe('the registered functions of convex/work.ts, convex/reorientation.ts an
   });
 
   it('are each a validator, a guard and one call, in metrics.ts but for the handlers named here', (): void => {
+    // 18-F (C1) adds three, each a read of its own like the four before them: the paged figures'
+    // head, one page of an employee's records and the action that walks them.
     expect(thickHandlers('convex/metrics.ts')).toEqual([
+      'agentFiguresHead',
+      'employeeRecordsPage',
       'forAgent',
+      'forAgentByPages',
       'forOwner',
       'forOwnerByPages',
       'ownerFiguresPage',

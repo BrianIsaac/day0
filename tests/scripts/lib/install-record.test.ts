@@ -256,6 +256,36 @@ describe('what the record says was installed (wave 17, 17-P)', (): void => {
     });
     expect(run).toContain('- Secret expires: 2026-12-31');
   });
+
+  // W17-R17 (the review's bed 3): Slack's configuration pair lasts twelve hours, and the record
+  // gave the recipe's sentence and no time at all. Written from the landing, which is after IT
+  // generated the pair, so it is the latest it can expire.
+  it('writes an hours-long secret’s expiry as a date and a time, the latest it can be', (): void => {
+    const connection = {
+      displayName: 'Slack',
+      system: 'slack',
+      mode: 'per employee',
+      kind: 'configuration-token',
+      scopes: [],
+      secretLifetime: 'The configuration token expires 12 hours after it is generated.',
+      secretExpires: new Date('2026-10-14T21:04:30.000Z'),
+      secretLifetimeHours: 12,
+      outcome: 'landed' as const,
+      guide: 'docs/running/access-slack.md',
+    };
+    const run = (hours: number): string =>
+      installRecordRunMarkdown({
+        project: 'day0-acme',
+        recordedAt: AT,
+        administrators: [],
+        connections: [{ ...connection, secretLifetimeHours: hours }],
+        skipped: [],
+      });
+    expect(run(12)).toContain(
+      '- Secret expires: 2026-10-14 at 21:04 UTC at the latest (12 hours after it was generated)',
+    );
+    expect(run(1)).toContain('(1 hour after it was generated)');
+  });
 });
 
 describe('the day’s record on disk', (): void => {

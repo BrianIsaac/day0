@@ -25,7 +25,7 @@ import {
   writeEnvValues,
   type SetupCommand,
   wayBackLine,
-  childProxyEnvironment,
+  childProcessEnvironment,
 } from '../../scripts/setup';
 import { parseCloudArguments } from '../../scripts/setup-cloud';
 import {
@@ -993,8 +993,25 @@ describe('backup, restore and upgrade (step 15)', (): void => {
       DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
     });
     expect(await runCommand(verb('restore', { restoreFrom: file }), test.io)).toBe(1);
-    expect(test.output.join('\n')).toContain('point Slack at the test double');
+    // The review's bed 3 (W17-R17's neighbour, `:233`): one name set read "which point Slack".
+    expect(test.output.join('\n')).toContain(
+      'error: .env.local sets DAY0_TEST_SLACK_API_URL, which points Slack at the test double. ' +
+        'A restore brings a real deployment back and never runs on the test profile: empty it ' +
+        'first, or restore a demo snapshot with `pnpm demo:bed restore`.',
+    );
     expect(ran(test)).not.toContain('volume rm');
+
+    const both = configured({ services: ['backend'] });
+    writeEnvValues(join(both.directory, '.env.local'), {
+      DAY0_TEST_SLACK_API_URL: 'http://fake-slack:8090/api/',
+      DAY0_TEST_SLACK_AUTHORIZE_URL: 'http://127.0.0.1:8090/oauth/v2/authorize',
+    });
+    expect(await runCommand(verb('restore', { restoreFrom: file }), both.io)).toBe(1);
+    expect(both.output.join('\n')).toContain(
+      'error: .env.local sets DAY0_TEST_SLACK_API_URL and DAY0_TEST_SLACK_AUTHORIZE_URL, which point ' +
+        'Slack at the test double. A restore brings a real deployment back and never runs on the ' +
+        'test profile: empty them first,',
+    );
 
     writeFileSync(file, 'something else', 'utf8');
     const tampered = configured({ services: ['backend'] });
@@ -1029,19 +1046,58 @@ describe('backup, restore and upgrade (step 15)', (): void => {
 
     it('hands its children the proxy .env.local names, with this machine kept out of it', (): void => {
       const directory = mkdtempSync(join(tmpdir(), 'day0-setup-proxy-'));
-      expect(childProxyEnvironment(directory, {})).toEqual({});
+      const shell = { PATH: '/usr/bin' };
+      expect(childProcessEnvironment(directory, shell, 'pnpm')).toEqual(shell);
       writeFileSync(join(directory, '.env.local'), PROXY, 'utf8');
-      expect(childProxyEnvironment(directory, {})).toEqual({
+      expect(childProcessEnvironment(directory, shell, 'pnpm')).toEqual({
+        PATH: '/usr/bin',
         HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
         NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
         NODE_USE_ENV_PROXY: '1',
+        NODE_OPTIONS: '--disable-warning=UNDICI-EHPA',
       });
-      // The shell that ran the command names its own proxy over the file's.
-      expect(
-        childProxyEnvironment(directory, { HTTPS_PROXY: 'http://other.acme.test:8080' })
-          .HTTPS_PROXY,
-      ).toBe('http://other.acme.test:8080');
+      // Compose is handed the file's names as written, which it fills the services' lines from.
+      expect(childProcessEnvironment(directory, shell, 'docker')).toEqual({
+        PATH: '/usr/bin',
+        HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
+        NO_PROXY: 'day0.acme.test',
+      });
       rmSync(directory, { recursive: true, force: true });
+    });
+
+    // D-9 (a), W17-R25: until 0.22.0 the shell's proxy won over the file's here, reached compose
+    // and every child, while `pnpm sync:env` read the file alone.
+    it('hands no child and not compose a proxy the shell names and .env.local does not, and says so first (D-9 (a))', async (): Promise<void> => {
+      const directory = mkdtempSync(join(tmpdir(), 'day0-setup-proxy-'));
+      const shell = {
+        PATH: '/usr/bin',
+        HTTPS_PROXY: 'http://corp-proxy.acme.test:8080',
+        NODE_USE_ENV_PROXY: '1',
+      };
+      for (const command of ['pnpm', 'docker']) {
+        expect(childProcessEnvironment(directory, shell, command)).toEqual({
+          PATH: '/usr/bin',
+          DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+        });
+      }
+      writeFileSync(join(directory, '.env.local'), PROXY, 'utf8');
+      expect(childProcessEnvironment(directory, shell, 'pnpm').HTTPS_PROXY).toBe(
+        'http://day0:hunter2@proxy.acme.test:3128',
+      );
+      rmSync(directory, { recursive: true, force: true });
+
+      const homeDirectory = home();
+      const h = configured({
+        services: ['backend'],
+        environment: { HOME: homeDirectory, HTTPS_PROXY: 'http://corp-proxy.acme.test:8080' },
+      });
+      expect(await runCommand(verb('backup', { dryRun: true }), h.io)).toBe(0);
+      expect(h.output[0]).toBe(
+        'note: The shell names a proxy (HTTPS_PROXY) that .env.local does not. Day0 reads ' +
+          '.env.local only, so it goes out directly: name the proxy in .env.local, or unset it ' +
+          'in the shell. (docs/running/egress.md)',
+      );
+      rmSync(homeDirectory, { recursive: true, force: true });
     });
 
     it('says what a Node that would ignore the proxy needs, before the verb runs, and never the proxy’s password', async (): Promise<void> => {

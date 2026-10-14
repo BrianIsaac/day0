@@ -51,6 +51,15 @@ vi.mock('convex/react', async () => {
       );
       return args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)];
     },
+    // The rail's figures (wave 18, 18-F): read as `useQuery` reads, and never read by pages here.
+    useQueries: (queries: Record<string, { query: unknown }>): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(queries).map(([key, { query }]) => [
+          key,
+          backend.queries[getFunctionName(query as never)],
+        ]),
+      ),
+    useAction: () => async (): Promise<void> => undefined,
   };
 });
 

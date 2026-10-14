@@ -264,6 +264,34 @@ describe('recordRead: what a page’s source says of it, beside its hash', (): v
     expect((await pageOf(harness, pageId)).datedBySource).toBe(true);
   });
 
+  it('writes the listed title’s keyed hash of a page kept as stored where the row has none or another, with its text and time as they were (18-D)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const source = await syncingSource(harness);
+    const pageId = await storedPage(harness, source, { ref: 'runbooks/refresh.md' });
+    const before = await pageOf(harness, pageId);
+    expect(before).not.toHaveProperty('titleHash');
+    const record = async (titleHash?: string): Promise<boolean> =>
+      await harness.mutation(internal.docStatus.recordRead, {
+        sourceId: source.sourceId,
+        syncRunId: source.runId,
+        ref: 'runbooks/refresh.md',
+        ...(titleHash !== undefined ? { titleHash } : {}),
+      });
+    expect(await record('a'.repeat(32))).toBe(false);
+    const after = await pageOf(harness, pageId);
+    expect(after.titleHash).toBe('a'.repeat(32));
+    expect([after.markdown, after.contentHash, after.updatedAt]).toEqual([
+      before.markdown,
+      before.contentHash,
+      before.updatedAt,
+    ]);
+    // A read that hands none leaves it; another (a rotated key) replaces it.
+    await record();
+    expect((await pageOf(harness, pageId)).titleHash).toBe('a'.repeat(32));
+    await record('b'.repeat(32));
+    expect((await pageOf(harness, pageId)).titleHash).toBe('b'.repeat(32));
+  });
+
   it('returns a page to its source’s default once the source stops saying anything of it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const source = await syncingSource(harness);

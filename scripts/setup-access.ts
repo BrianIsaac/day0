@@ -38,6 +38,7 @@ import {
   type RecipeAsk,
   type RecipeField,
   type RecipeMode,
+  type SecretLifetime,
 } from '../src/surfaces/access-kit';
 import {
   linearCreateFormUrl,
@@ -827,18 +828,36 @@ function recordedConnection(
     ...(text('redirectUrl') === undefined ? {} : { redirectUrl: text('redirectUrl') }),
     ...(text('issuer') === undefined ? {} : { issuer: text('issuer') }),
     secretLifetime: planned.mode.secretLifetime.words,
-    // A date only for a secret this run landed, where the recipe gives its lifetime in days: a
-    // connection found already landed has an age this run cannot know.
-    ...(landedAt === undefined || planned.mode.secretLifetime.days === undefined
-      ? {}
-      : {
-          secretExpires: new Date(
-            landedAt.getTime() + planned.mode.secretLifetime.days * 24 * 60 * 60 * 1000,
-          ),
-        }),
+    ...secretExpiry(planned.mode.secretLifetime, landedAt),
     outcome,
     guide: planned.recipe.guide,
   };
+}
+
+/**
+ * When a secret this run landed expires, where the recipe gives its lifetime as a number of days
+ * or of hours: a connection found already landed has an age this run cannot know. Counted from
+ * the landing, which comes after IT generated the secret, so it is the latest it can expire; an
+ * hours-long one is written with its time (W17-R17).
+ *
+ * @param lifetime - The recipe's lifetime.
+ * @param landedAt - When this run landed the secret, if it did.
+ */
+function secretExpiry(
+  lifetime: SecretLifetime,
+  landedAt: Date | undefined,
+): Pick<RecordedConnection, 'secretExpires' | 'secretLifetimeHours'> {
+  if (landedAt === undefined) return {};
+  if (lifetime.hours !== undefined) {
+    return {
+      secretExpires: new Date(landedAt.getTime() + lifetime.hours * 60 * 60 * 1000),
+      secretLifetimeHours: lifetime.hours,
+    };
+  }
+  if (lifetime.days !== undefined) {
+    return { secretExpires: new Date(landedAt.getTime() + lifetime.days * 24 * 60 * 60 * 1000) };
+  }
+  return {};
 }
 
 /** The secret values a landing carries, which no refusal may repeat. */

@@ -1,9 +1,14 @@
 import { NextRequest } from 'next/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cookieAttributes, fromOwnPages } from '../../../src/lib/customer-oidc-routes';
+import {
+  checkPageResponse,
+  cookieAttributes,
+  fromOwnPages,
+} from '../../../src/lib/customer-oidc-routes';
 import type { CustomerSignInSettings } from '../../../src/lib/customer-oidc-server';
 import { CUSTOMER_OIDC_PRESETS } from '../../../src/lib/customer-oidc-presets';
 import { PUBLIC_URL, customerIssuer, signedIn } from '../../app/api/auth/oidc/customer-issuer';
+import { token } from '../../fixtures/theme-contrast';
 
 const SETTINGS: CustomerSignInSettings = {
   issuer: 'https://issuer.acme.test',
@@ -122,5 +127,22 @@ describe("a redirect's caller under the company sign-in (the pre-tag second pass
     vi.stubEnv('DAY0_SESSION_SECRET', '');
 
     expect(await caller(cookie)).toEqual({ idToken: null, setCookies: 0 });
+  });
+});
+
+// 17-FX's F8: the check page kept a literal copy of the design's old red (#ef4444) for a gap after
+// D-7 (b) moved the dark set's danger text one step lighter. Its gap is drawn in the token.
+describe('the sign-in check page’s gap', (): void => {
+  it('is drawn in the design’s danger token, the dark set’s value, and no literal red', async (): Promise<void> => {
+    const page = await checkPageResponse({
+      version: 1,
+      checkId: 'check-1',
+      checkedAt: 0,
+      verdicts: [{ claim: 'aud', status: 'gap', value: 'other', note: 'not this client' }],
+      whoAmI: { status: 'gap', detail: 'refused' },
+    }).text();
+    expect(page).toContain('.gap{color:var(--color-danger)}');
+    expect(page).toContain(`--color-danger:${token('danger')}`);
+    expect(page).not.toContain('#ef4444');
   });
 });

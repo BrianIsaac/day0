@@ -6,6 +6,7 @@ import { MAX_BLOCKS_PER_PAGE, blockSearchQuery } from '../src/docs/blocks';
 import { frontMatterStatus } from '../src/docs/status';
 import {
   RELATION_CANDIDATES_PER_PAGE,
+  editedAtSource,
   headingFigures,
   type MeasuredBlock,
   type MeasuredPage,
@@ -19,8 +20,8 @@ import {
  * conflict's two pages say under the blocks its evidence names, the runs whose pages a completed
  * sync measures, and the proposals a page its source dropped leaves behind (`forgetProposalsOf`,
  * called by `docSources.prunePages`). The registered functions that call the rest
- * (`measurePage`, `generationsToMeasure`, `measuringPlan`) stay in `convex/docRelations.ts` under
- * their paths.
+ * (`pageCandidates`, `measurePair`, `generationsToMeasure`, `measuringPlan`) stay in
+ * `convex/docRelations.ts`.
  *
  * This module sits below `convex/docRelations.ts` and `convex/docConflicts.ts`, and imports
  * nothing of `docSources` or of anything that reaches `work`.
@@ -84,31 +85,9 @@ async function holdsBlocks(ctx: QueryCtx, name: PageName): Promise<boolean> {
   return first !== null;
 }
 
-/**
- * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
- * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
- * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
- * which its time is ({@link editedAtSource}).
- */
-export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<Doc<'docSources'>['kind']> = new Set([
-  'urls',
-  'mcp',
-  'git',
-]);
-
-/**
- * Whether a stored page's time is when its source says it was edited (wave 17, 17-FD; D-8 (a)):
- * what its row says (`datedBySource`, the reader's own word, false where it fell back to the time
- * it read the page; a folder's file time counts as its source's, X-3), and for a row that does
- * not say, the rule by its source's kind. Only an edit time dates a successor, and a card says
- * "edited" of nothing else.
- */
-export function editedAtSource(
-  page: Pick<Doc<'docPages'>, 'datedBySource'>,
-  source: Pick<Doc<'docSources'>, 'kind'>,
-): boolean {
-  return page.datedBySource ?? !KINDS_WITHOUT_EDIT_TIME.has(source.kind);
-}
+// Whether a page's time is its source's edit time sits in `src/docs/relations.ts`, beside the
+// measures that read it, so the fills below `docStatus` can ask it too (W17-R16).
+export { KINDS_WITHOUT_EDIT_TIME, editedAtSource } from '../src/docs/relations';
 
 /**
  * A stored page as the measures read it, with its blocks in document order.
@@ -259,8 +238,9 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
  * left unanswered, it is a proposal nobody can answer, and is deleted here. A duplicate of the
  * pair nobody answered goes when its conflict has, or is about to have, a card (the joins' W3d:
- * the tab drew two cards for one pair); where the conflict was set aside it stays, the pair's
- * one card.
+ * the tab drew two cards for one pair), and so does a successor nobody answered that rested on
+ * the pages' dates alone (W17-R17); where the conflict was set aside it stays, the pair's one
+ * card.
  */
 export async function alreadyHeld(
   ctx: MutationCtx,
@@ -320,7 +300,9 @@ export async function alreadyHeld(
   }
   if (!held || drawn) {
     for (const row of existing) {
-      if (row.kind === 'possible_duplicate' && row.status === 'proposed') {
+      // A successor proposed by the pages' dates alone goes as a duplicate does: two pages that
+      // disagree are not one document in two editions (W17-R17).
+      if (row.status === 'proposed' && (row.kind === 'possible_duplicate' || datedSuccessor(row))) {
         await ctx.db.delete(row._id);
       }
     }

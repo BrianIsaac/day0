@@ -222,11 +222,15 @@ describe('the pages the checks send a reader to', (): void => {
     expect(hosts.size).toBeGreaterThan(30);
     expect([...hosts].filter((host) => !page.includes(`\`${host}\``))).toEqual([]);
     // What is not given the proxy is said beside its host, so a reader of the table alone knows.
+    // Re-taken (wave 18, 17-P's F6): the Notion component and the model service take it now; a
+    // listed git host still dials directly.
     const row = (host: string): string =>
-      page.split('\n').find((line) => line.startsWith('|') && line.includes(`\`${host}\``)) ?? '';
+      page.split('\n').find((line) => line.startsWith(`| \`${host}\``)) ?? '';
     for (const host of ['api.notion.com', 'registry.npmjs.org', 'registry.ollama.ai']) {
-      expect(row(host), host).toContain('(directly: see above)');
+      expect(row(host), host).not.toBe('');
+      expect(row(host), host).not.toContain('directly');
     }
+    expect(row('github.com')).toContain('a listed host directly');
   });
 
   it('give on the upgrade page the way back as the upgrade prints it', (): void => {
@@ -271,19 +275,24 @@ describe('the runbook and the components page, on the two proxies (wave 17, 17-P
         (service.environment ?? []).some((entry) => entry.startsWith('HTTPS_PROXY=')),
       )
       .map(([name]) => name);
-    expect(handed.sort()).toEqual(['backend', 'nango-server', 'redactor', 'slack-socket']);
+    // Re-taken (wave 18, 17-P's F6): the Notion component, the browser and the bundled model
+    // service's pulls, which reached out without it until 0.22.0, are handed it too.
+    expect(handed.sort()).toEqual([
+      'backend',
+      'docs-notion-mcp',
+      'model',
+      'nango-server',
+      'playwright-mcp',
+      'redactor',
+      'slack-socket',
+    ]);
     const from = COMPONENTS.indexOf('## Which components reach out');
     expect(from).toBeGreaterThan(0);
     const section = COMPONENTS.slice(from, COMPONENTS.indexOf('\n---', from));
-    const [given, notGiven] = section.split('reach out too and are not handed it');
-    for (const name of handed) expect(given).toContain(`\`${name}\``);
-    // Every other service that fetches something from outside the machine, by the page's own
-    // list of hosts: the Notion component, the browser, and the bundled model service's pulls.
-    for (const name of ['docs-notion-mcp', 'playwright-mcp', 'model']) {
-      expect(given).toContain(`\`${name}\``);
-      expect(handed).not.toContain(name);
-    }
-    expect(notGiven).toContain('](egress.md)');
+    for (const name of handed) expect(section).toContain(`\`${name}\``);
+    expect(section).toContain('hands it\nto all seven');
+    expect(section).not.toContain('not handed it');
+    expect(section).toContain('](egress.md)');
   });
 });
 
@@ -307,12 +316,27 @@ describe('the way out’s page and the runbook, on where the proxy is named (W17
     expect(EGRESS).toContain('After you change `NO_PROXY` in `.env.local`: `./setup.sh resume`');
   });
 
-  it('says the proxy is named in .env.local and nowhere else, and to name it once the containers reach it', (): void => {
+  // Re-taken (wave 18, D-9 (a)): the shell's proxy is no longer read by Day0, so the page says what
+  // Day0 does with one and keeps the unset for pnpm itself, Node's switch among the names.
+  it('says the proxy is named in .env.local and nowhere else, that the shell’s is not read, and to name it once the containers reach it', (): void => {
     expect(EGRESS).toContain('Name the proxy in `.env.local` and nowhere else');
+    expect(EGRESS).toContain('since 0.22.0 Day0 reads it from there alone');
+    expect(EGRESS).toContain('reaches no process Day0 starts, no container and not the deployment');
     expect(EGRESS).toContain(
-      '`unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy`',
+      '`unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_USE_ENV_PROXY https_proxy http_proxy no_proxy`',
     );
     expect(EGRESS).toContain('The backend container has no route to');
+  });
+
+  // W17-R27 and 17-P's F6 on the 18-P bed: NO_PROXY as Node reads it, and nothing left saying the
+  // Notion component, the browser or a GitHub source dials past the proxy.
+  it('reads NO_PROXY as Node does, and names what the beds found takes the proxy and what does not', (): void => {
+    expect(EGRESS).toContain('list both (`acme.com,.acme.com`)');
+    expect(EGRESS).toContain('an address range (`10.0.0.0/8`) is not read at all');
+    expect(EGRESS).not.toContain('not established');
+    expect(EGRESS).not.toContain('Neither is handed the proxy');
+    expect(EGRESS).toContain('**Nango’s token requests.**'.replace('’', "'"));
+    expect(EGRESS).toContain('`http://user:password@proxy.acme.com:3128`');
   });
 
   it('asks IT before the day for the proxy’s address in the form the file takes', (): void => {

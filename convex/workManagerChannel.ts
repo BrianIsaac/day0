@@ -19,11 +19,15 @@ import {
   type OpenDecisionBatch,
   type OpenDecisionRequest,
   type OpenDecisions,
+  QUESTION_NOTICE_UNDELIVERED,
+  readsManagerDm,
+  threadReadsOf,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import { digestDue, digestText, managerNotificationMode } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { appendEvent, eventsOfType } from './eventLog';
+import { log } from '../src/lib/logger';
 import { typedCodeReachOf } from './slackMessagesTab';
 import { socketBridgeStateOf } from './socketHeartbeats';
 import type { DecisionAcknowledgementKind, DecisionNoticeKind } from '../src/events/contract';
@@ -360,12 +364,23 @@ export async function openDecisionsInTransaction(
     open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
     questions: asking.flatMap((request) => (request.ts ? [request.ts] : [])),
   });
-  return {
+  const open: OpenDecisions = {
     requests,
     batches,
     noticeOwed: decidedLately.length > 0 || asking.length > 0,
     ...(threads.length > 0 ? { threads } : {}),
   };
+  // The poll reads each of these threads with one call, so its run says how many (W17-R13; the
+  // reading RM18's row 14 takes against Slack's tier for `conversations.replies`, V18-6).
+  if (readsManagerDm(open)) {
+    log.info('decision poll reads threads', {
+      surfaceId: surface._id,
+      agentId: surface.agentId,
+      threads: threadReadsOf(open),
+      questionThreads: asking.filter((request) => request.ts !== undefined).length,
+    });
+  }
+  return open;
 }
 
 /** What `work.recordDecisionPoll` takes. */
@@ -790,13 +805,32 @@ function acknowledgementKindOf(kind: DecisionNoticeKind): DecisionAcknowledgemen
   return kind;
 }
 
+/** How long a question's notice waits between looks for the request it follows to be delivered. */
+export const QUESTION_NOTICE_WAIT_MS = 5_000;
+
+/**
+ * How many looks it makes: past the request's own recovery bound (`DECISION_REQUEST_RECOVERY_MS`),
+ * after which a silent request is taken as lost and resent with the question in it.
+ */
+export const QUESTION_NOTICE_LOOKS = 40;
+
 /** What `work.prepareManagerReplyNotice` takes. */
-export const prepareManagerReplyNoticeArgs = { noticeId: v.id('managerDecisionNotices') };
+export const prepareManagerReplyNoticeArgs = {
+  noticeId: v.id('managerDecisionNotices'),
+  /** How many times a question's notice has waited for its request already. */
+  waited: v.optional(v.number()),
+};
 
 /**
  * Claim one notice in the manager's DM before its provider call: the acknowledgement of a
  * reply, or a conflict's question for the thread of a request already delivered.
  * The body of `work.prepareManagerReplyNotice`.
+ *
+ * A question's notice whose request is still on its way out is looked at again from this
+ * transaction (W17-R11, decision C-1 (a)): the next look is scheduled with the answer that says
+ * wait, so a send that dies after this look, a backend restart between two steps of the action
+ * among them, still has its notice looked at again. Past {@link QUESTION_NOTICE_LOOKS} looks
+ * the notice is recorded failed here, by the look that found it so.
  */
 export async function prepareManagerReplyNoticeInTransaction(
   ctx: MutationCtx,
@@ -805,7 +839,19 @@ export async function prepareManagerReplyNoticeInTransaction(
   const notice = await ctx.db.get(args.noticeId);
   if (!notice || notice.claimedAt) return { prepared: false as const };
   const owed = notice.kind === 'question' ? await questionNoticeOwed(ctx, notice) : undefined;
-  if (owed?.state === 'wait') return { prepared: false as const, wait: true as const };
+  if (owed?.state === 'wait') {
+    const waited = args.waited ?? 0;
+    if (waited >= QUESTION_NOTICE_LOOKS) {
+      await ctx.db.patch(notice._id, { failure: QUESTION_NOTICE_UNDELIVERED });
+      return { prepared: false as const, gaveUp: true as const };
+    }
+    await ctx.scheduler.runAfter(
+      QUESTION_NOTICE_WAIT_MS,
+      internal.managerChannelActions.sendManagerReplyNotice,
+      { noticeId: notice._id, waited: waited + 1 },
+    );
+    return { prepared: false as const, wait: true as const };
+  }
   if (owed?.state === 'drop') {
     await ctx.db.delete(notice._id);
     return { prepared: false as const, dropped: true as const };

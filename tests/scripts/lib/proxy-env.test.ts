@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   deploymentNoProxy,
+  composeEnvironment,
   hostProxyEnvironment,
+  keptOutOfProxy,
   mergedNoProxy,
   missingFromDeployment,
   proxyAddressGap,
@@ -11,9 +14,13 @@ import {
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
+  processEnvironment,
   PROXY_VARIABLES,
+  QUIET_PROXY_WARNING,
   restartEnvironment,
   SERVICE_NO_PROXY,
+  SHELL_PROXY_MARK,
+  shellProxyNote,
 } from '../../../scripts/lib/proxy-env';
 
 const reader =
@@ -157,10 +164,11 @@ describe('a command run by hand on an install that names a proxy', (): void => {
     HTTP_PROXY: 'http://10.117.246.30:3128',
     NO_PROXY: 'localhost,127.0.0.1,10.117.246.10,10.117.246.1',
     NODE_USE_ENV_PROXY: '1',
+    NODE_OPTIONS: QUIET_PROXY_WARNING,
   };
 
   it('is started again with the proxy the file names, this machine kept out of it', (): void => {
-    expect(restartEnvironment({ PATH: '/usr/bin' }, BED)).toEqual(WANTED);
+    expect(restartEnvironment({ PATH: '/usr/bin' }, BED)).toEqual({ PATH: '/usr/bin', ...WANTED });
   });
 
   it('runs as it is once it holds that, so the restart happens once and the setup’s children never restart', (): void => {
@@ -171,12 +179,128 @@ describe('a command run by hand on an install that names a proxy', (): void => {
     expect(restartEnvironment({ PATH: '/usr/bin' }, {})).toBeUndefined();
     expect(restartEnvironment({}, { NO_PROXY: 'day0.acme.test' })).toBeUndefined();
   });
+});
 
-  it('takes the shell’s own proxy over the file’s, and still keeps this machine out of it', (): void => {
-    expect(restartEnvironment({ HTTPS_PROXY: 'http://other.acme.test:8080' }, BED)).toEqual({
-      ...WANTED,
-      HTTPS_PROXY: 'http://other.acme.test:8080',
+// D-9 (a), W17-R25 (reader 5): a proxy exported in a corporate shell profile and not in
+// `.env.local` reached the setup's children, compose and the restarted checks, while
+// `pnpm sync:env` read the file alone and cleared the deployment's NO_PROXY, so every Node
+// action's call back to 127.0.0.1 went to the proxy. The file is the one place; the shell's names
+// reach nothing, and the mark says which were left unread so `check:setup` can note them.
+describe("the shell's proxy, against .env.local (D-9 (a))", (): void => {
+  const FILE = { HTTPS_PROXY: 'http://proxy.acme.test:3128', NO_PROXY: 'day0.acme.test' };
+  const SHELL = {
+    PATH: '/usr/bin',
+    HTTPS_PROXY: 'http://corp-proxy.acme.test:8080',
+    https_proxy: 'http://corp-proxy.acme.test:8080',
+    no_proxy: 'intranet.acme.test',
+    ALL_PROXY: 'socks5://corp-proxy.acme.test:1080',
+    NODE_USE_ENV_PROXY: '1',
+  };
+
+  it('reaches no child where the file names no proxy, and is marked by name for the check', (): void => {
+    expect(processEnvironment(SHELL, {})).toEqual({
+      PATH: '/usr/bin',
+      [SHELL_PROXY_MARK]: 'HTTPS_PROXY,https_proxy,ALL_PROXY',
     });
+    expect(composeEnvironment(SHELL, {})).toEqual({
+      PATH: '/usr/bin',
+      [SHELL_PROXY_MARK]: 'HTTPS_PROXY,https_proxy,ALL_PROXY',
+    });
+  });
+
+  it('starts a command run by hand again without it, once', (): void => {
+    const restarted = restartEnvironment(SHELL, {});
+    expect(restarted).toEqual({
+      PATH: '/usr/bin',
+      [SHELL_PROXY_MARK]: 'HTTPS_PROXY,https_proxy,ALL_PROXY',
+    });
+    expect(restartEnvironment(restarted ?? {}, {})).toBeUndefined();
+  });
+
+  it('gives way to the file where both name one', (): void => {
+    expect(processEnvironment(SHELL, FILE)).toEqual({
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
+      NODE_USE_ENV_PROXY: '1',
+      NODE_OPTIONS: QUIET_PROXY_WARNING,
+      [SHELL_PROXY_MARK]: 'HTTPS_PROXY,https_proxy,ALL_PROXY',
+    });
+  });
+
+  it('is not marked where the shell names the proxy the file does', (): void => {
+    expect(
+      processEnvironment({ PATH: '/usr/bin', HTTPS_PROXY: FILE.HTTPS_PROXY }, FILE)[
+        SHELL_PROXY_MARK
+      ],
+    ).toBeUndefined();
+  });
+
+  it("hands compose the file's names as written, an explicit map and never the shell's (P-1)", (): void => {
+    expect(composeEnvironment(SHELL, { ...FILE, NODE_USE_ENV_PROXY: '1' })).toEqual({
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'day0.acme.test',
+      NODE_USE_ENV_PROXY: '1',
+      [SHELL_PROXY_MARK]: 'HTTPS_PROXY,https_proxy,ALL_PROXY',
+    });
+  });
+
+  it('keeps the mark a parent left, so a check the setup starts can still say it', (): void => {
+    expect(processEnvironment({ PATH: '/usr/bin', [SHELL_PROXY_MARK]: 'HTTPS_PROXY' }, {})).toEqual(
+      {
+        PATH: '/usr/bin',
+        [SHELL_PROXY_MARK]: 'HTTPS_PROXY',
+      },
+    );
+  });
+});
+
+describe("what check:setup and the setup say of the shell's proxy (D-9 (a); section 7)", (): void => {
+  it('names what the shell named, and that the way out is direct, with both fixes', (): void => {
+    expect(shellProxyNote({ HTTPS_PROXY: 'http://corp-proxy.acme.test:8080' }, {})).toBe(
+      'The shell names a proxy (HTTPS_PROXY) that .env.local does not. Day0 reads .env.local ' +
+        'only, so it goes out directly: name the proxy in .env.local, or unset it in the shell.',
+    );
+  });
+
+  it('says it goes out through the file’s proxy where the file names another, never its password', (): void => {
+    const note = shellProxyNote(
+      { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080', https_proxy: 'http://corp:8080' },
+      { HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128' },
+    );
+    expect(note).toBe(
+      'The shell names a proxy (HTTPS_PROXY and https_proxy) that .env.local does not. Day0 ' +
+        'reads .env.local only, so it goes out through the proxy at proxy.acme.test:3128: name ' +
+        'the proxy in .env.local, or unset it in the shell.',
+    );
+  });
+
+  it('is read from the mark a parent left, and is nothing where the shell names none', (): void => {
+    expect(shellProxyNote({ [SHELL_PROXY_MARK]: 'HTTPS_PROXY,ALL_PROXY' }, {})).toContain(
+      '(HTTPS_PROXY and ALL_PROXY)',
+    );
+    expect(shellProxyNote({ PATH: '/usr/bin' }, {})).toBeUndefined();
+    expect(
+      shellProxyNote({ HTTPS_PROXY: 'http://p:1' }, { HTTPS_PROXY: 'http://p:1' }),
+    ).toBeUndefined();
+  });
+});
+
+// W17-R28: Node prints "[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental" from every
+// process started with its proxy switch on (bed 3: twice a check). The switch and the flag that
+// quiets it travel together, after whatever NODE_OPTIONS the shell already gives.
+describe("Node's proxy warning (W17-R28)", (): void => {
+  it('is turned off wherever the switch is turned on, keeping the shell’s own options, once', (): void => {
+    expect(QUIET_PROXY_WARNING).toBe('--disable-warning=UNDICI-EHPA');
+    const file = { HTTPS_PROXY: 'http://proxy.acme.test:3128' };
+    expect(
+      processEnvironment({ NODE_OPTIONS: '--max-old-space-size=4096' }, file).NODE_OPTIONS,
+    ).toBe('--max-old-space-size=4096 --disable-warning=UNDICI-EHPA');
+    expect(
+      processEnvironment({ NODE_OPTIONS: '--disable-warning=UNDICI-EHPA' }, file).NODE_OPTIONS,
+    ).toBe('--disable-warning=UNDICI-EHPA');
+    expect(processEnvironment({ NODE_OPTIONS: '--inspect' }, {}).NODE_OPTIONS).toBe('--inspect');
   });
 });
 
@@ -199,5 +323,57 @@ describe('a proxy address a client cannot use', (): void => {
 
   it('is shown as that, never as an empty host', (): void => {
     expect(proxyForDisplay('proxy.acme.test:3128')).toBe('an address that is not a URL');
+  });
+});
+
+// W17-R27 (reader 5's probe): `check:setup` read `acme.com` in NO_PROXY as keeping out
+// `day0.acme.com`, which Node sends to the proxy. The input is what Node 22.23.2 itself did with
+// each list, both of its clients, recorded by `tests/fixtures/proxy/probe-no-proxy.mjs`.
+describe('a host kept out of the proxy, as Node reads NO_PROXY (W17-R27)', (): void => {
+  const probe = JSON.parse(
+    readFileSync(
+      new URL('../../fixtures/proxy/node-22.23.2-no-proxy.json', import.meta.url),
+      'utf8',
+    ),
+  ) as {
+    node: string;
+    rows: ReadonlyArray<{
+      client: string;
+      scheme: string;
+      noProxy: string;
+      host: string;
+      proxied: boolean;
+    }>;
+  };
+
+  it('is kept out only where every client Node has keeps it out, case by case as Node 22.23.2 answered', (): void => {
+    expect(probe.node).toBe('v22.23.2');
+    const cases = new Map<string, { address: string; noProxy: string; keptOut: boolean }>();
+    for (const row of probe.rows) {
+      const address = `${row.scheme}://${row.host}/`;
+      const key = `${row.noProxy}|${address}`;
+      const keptOut = (cases.get(key)?.keptOut ?? true) && !row.proxied;
+      cases.set(key, { address, noProxy: row.noProxy, keptOut });
+    }
+    expect(cases.size).toBe(42);
+    for (const { address, noProxy, keptOut } of cases.values()) {
+      expect(keptOutOfProxy(address, noProxy), `${address} under NO_PROXY=${noProxy}`).toBe(
+        keptOut,
+      );
+    }
+  });
+
+  it('reads a bare name as itself only, a leading dot or *. as the names under it, a port as narrowing it, and no CIDR', (): void => {
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid')).toBe(true);
+    expect(keptOutOfProxy('https://sub.corp.invalid/', 'corp.invalid')).toBe(false);
+    for (const list of ['.corp.invalid', '*.corp.invalid']) {
+      expect(keptOutOfProxy('https://sub.corp.invalid/', list)).toBe(true);
+    }
+    expect(keptOutOfProxy('https://corp.invalid:8080/', 'corp.invalid:8080')).toBe(true);
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid:8080')).toBe(false);
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid:443')).toBe(true);
+    expect(keptOutOfProxy('https://10.1.2.3/', '10.0.0.0/8')).toBe(false);
+    expect(keptOutOfProxy('https://corp.invalid/', undefined)).toBe(false);
+    expect(keptOutOfProxy('not an address', 'corp.invalid')).toBe(false);
   });
 });

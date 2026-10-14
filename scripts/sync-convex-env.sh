@@ -190,9 +190,36 @@ if ! LOCAL_VALUES=$("$REPO_ROOT/node_modules/.bin/tsx" "$REPO_ROOT/scripts/lib/e
   echo "error: could not read $ENV_FILE." >&2
   exit 1
 fi
+# A value is trimmed, so one of spaces reads as unset here as it does in every
+# TypeScript reader of the file (wave 18, 18-P; 17-P's handover).
 read_local() {
-  grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true
+  local value
+  value=$(grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true)
+  value="${value#"${value%%[![:space:]]*}"}"
+  printf '%s' "${value%"${value##*[![:space:]]}"}"
 }
+
+# The way out is read from the file alone, as every process Day0 starts takes
+# it (wave 18, D-9 (a); scripts/lib/proxy-env.ts, processEnvironment): the
+# shell's proxy names reach none of this script's Convex CLI children, and the
+# file's reach them with this machine's own names kept out, so a call to the
+# backend at 127.0.0.1 never goes to the proxy, with Node's switch and the flag
+# that quiets its warning.
+unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_USE_ENV_PROXY ALL_PROXY \
+  https_proxy http_proxy no_proxy all_proxy
+file_https_proxy=$(read_local HTTPS_PROXY)
+file_http_proxy=$(read_local HTTP_PROXY)
+if [ -n "$file_https_proxy" ] || [ -n "$file_http_proxy" ]; then
+  [ -n "$file_https_proxy" ] && export HTTPS_PROXY="$file_https_proxy"
+  [ -n "$file_http_proxy" ] && export HTTP_PROXY="$file_http_proxy"
+  file_no_proxy=$(read_local NO_PROXY)
+  export NO_PROXY="localhost,127.0.0.1${file_no_proxy:+,${file_no_proxy}}"
+  export NODE_USE_ENV_PROXY=1
+  case " ${NODE_OPTIONS:-} " in
+    *" --disable-warning=UNDICI-EHPA "*) ;;
+    *) export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--disable-warning=UNDICI-EHPA" ;;
+  esac
+fi
 
 # The deployment cannot verify a no-auth caller's token without the public key,
 # and a push in that state would refuse every caller. Say so here rather than
@@ -404,9 +431,11 @@ done
 # takes the proxy, its own calls back to the backend at 127.0.0.1 among them,
 # and each fails there. The list is the one the compose file begins NO_PROXY
 # with (scripts/lib/proxy-env.ts, SERVICE_NO_PROXY), then whatever .env.local
-# lists. The proxy's own address is never pushed: Node read it at its start,
-# and it may carry a password. With no proxy named there is nothing to exclude,
-# and a stale list is removed.
+# lists. The proxy's own address is put there too (wave 18, P-14; 17-P's F6):
+# a `git clone` a Node action starts for a GitHub or GitLab source runs with
+# the deployment's variables, and without it the clone dials directly. It is
+# never printed, and the deployment already holds secrets of its own. With no
+# proxy named there is nothing to exclude, and a stale list is removed.
 SERVICE_NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis
 if [ -n "$(read_local HTTPS_PROXY)" ] || [ -n "$(read_local HTTP_PROXY)" ]; then
   listed_no_proxy=$(read_local NO_PROXY)
@@ -415,6 +444,14 @@ if [ -n "$(read_local HTTPS_PROXY)" ] || [ -n "$(read_local HTTP_PROXY)" ]; then
 else
   clear_key NO_PROXY "no proxy is named in $ENV_FILE"
 fi
+for key in HTTPS_PROXY HTTP_PROXY; do
+  value=$(read_local "$key")
+  if [ -n "$value" ]; then
+    set_key "$key" "$value" "the proxy a git clone in a Node action reads"
+  else
+    clear_key "$key" "not named in $ENV_FILE"
+  fi
+done
 
 # A self-hosted deployment runs its Node actions inside a container, so a model
 # endpoint on loopback resolves to the container and not to your machine. The

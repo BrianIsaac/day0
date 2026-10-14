@@ -47,6 +47,22 @@ describe('the owner export’s rows (wave 16, 16-F)', (): void => {
     expect(file.owner.docSources[0]).toMatchObject({ label: 'Alpha handbook', kind: 'folder' });
   });
 
+  it('leaves out a page’s title hash, a keyed hash of its title before redaction (18-K’s F1, written by 18-D)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const a = await seedOwner(harness, 'owner-a', 'Alpha');
+    const titleHash = '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c';
+    await harness.run(async (ctx) => {
+      for (const page of await ctx.db.query('docPages').collect()) {
+        await ctx.db.patch(page._id, { titleHash });
+      }
+    });
+    const file = await ownerExportOf(harness, 'owner-a');
+    expect(file.owner.docPages.length).toBeGreaterThan(0);
+    for (const page of file.owner.docPages) expect(page).not.toHaveProperty('titleHash');
+    expect(JSON.stringify(file)).not.toContain(titleHash);
+    expect(JSON.stringify(file)).not.toContain(a.pageText);
+  });
+
   it('leaves out every page’s address and ref, naming pages and relation ends by the page’s row (W16-R18)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     await seedOwner(harness, 'owner-a', 'Alpha');

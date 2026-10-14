@@ -28,6 +28,7 @@ import { MANAGER_CHANGED_RESEND_REASON } from '../../convex/decisionRequests';
 import { MANAGER_ADDRESS, localIssuerIdentity, managerIdentity } from './fakes/manager-identity';
 import { WALK_EMPLOYEES } from '../fixtures/work/walk-v0.19.0-work-chips-2026-10-11';
 import { guardRefusal } from './fakes/anonymous-caller';
+import { rosterRows } from './fakes/roster';
 
 afterEach((): void => {
   vi.useRealTimers();
@@ -318,7 +319,7 @@ describe("agents.deploy and the manager's verified address", (): void => {
       [agentId, 'eval-revocation-20260918t090000@day0.local'],
       [baselineId, 'eval-baseline-r1-1758150000000@day0.local'],
     ]);
-    await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([]);
+    await expect(rosterRows(owner)).resolves.toEqual([]);
   });
 });
 
@@ -348,7 +349,7 @@ describe('agents.myManagerAddress', (): void => {
     const harness = convexTest(schema, allConvexModules());
     const refusal = await guardRefusal();
     await expect(harness.query(api.agents.listForUser, {})).rejects.toMatchObject(refusal);
-    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(refusal);
+    await expect(rosterRows(harness)).rejects.toMatchObject(refusal);
     await expect(harness.query(api.agents.employeesReportingElsewhere, {})).rejects.toMatchObject(
       refusal,
     );
@@ -1177,9 +1178,7 @@ describe('the employee roster', (): void => {
       evaluationAddress: 'eval-day0-r1-1758150000000@day0.local',
     });
 
-    expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.agentId)).toEqual([
-      ordinary,
-    ]);
+    expect((await rosterRows(owner)).map((row) => row.agentId)).toEqual([ordinary]);
     const supervision = await owner.query(api.metrics.forOwner, {});
     expect(supervision?.employees.map((row) => row.agentId)).toEqual([ordinary]);
     expect(supervision?.excludedAgents).toBe(3);
@@ -1196,9 +1195,7 @@ describe('the employee roster', (): void => {
         createdAt: 1,
       });
     });
-    await expect(
-      harness.withIdentity(managerIdentity('')).query(api.agents.rosterForUser, {}),
-    ).resolves.toEqual([]);
+    await expect(rosterRows(harness.withIdentity(managerIdentity('')))).resolves.toEqual([]);
   });
 
   it("shows each of the owner's employees with its role, open work, what needs the manager and its autonomy, and nobody else", async (): Promise<void> => {
@@ -1260,7 +1257,7 @@ describe('the employee roster', (): void => {
     const owner = harness.withIdentity(managerIdentity());
     await owner.mutation(api.agents.setAutonomousActions, { agentId: mateo, on: true });
 
-    await expect(owner.query(api.agents.rosterForUser, {})).resolves.toEqual([
+    await expect(rosterRows(owner)).resolves.toEqual([
       {
         agentId: aiko,
         name: 'Aiko',
@@ -1328,9 +1325,7 @@ describe('the employee roster', (): void => {
         decisionsReach: { kind: 'dashboard' },
       },
     ]);
-    await expect(
-      harness.withIdentity(managerIdentity('stranger')).query(api.agents.rosterForUser, {}),
-    ).resolves.toEqual([
+    await expect(rosterRows(harness.withIdentity(managerIdentity('stranger')))).resolves.toEqual([
       {
         agentId: stranger,
         name: 'Somebody else',
@@ -1353,9 +1348,7 @@ describe('the employee roster', (): void => {
         decisionsReach: { kind: 'dashboard' },
       },
     ]);
-    await expect(harness.query(api.agents.rosterForUser, {})).rejects.toMatchObject(
-      await guardRefusal(),
-    );
+    await expect(rosterRows(harness)).rejects.toMatchObject(await guardRefusal());
   });
 
   it('says where each employee’s decisions reach the manager: a DM with buttons, a DM with typed codes, or here (12-M; H D6)', async (): Promise<void> => {
@@ -1436,7 +1429,7 @@ describe('the employee roster', (): void => {
       await slack(typed, false);
       await slack(closed, false, false);
     });
-    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const rows = await rosterRows(harness.withIdentity(managerIdentity()));
     const reach = new Map(rows.map((row) => [row.agentId, row.decisionsReach]));
     expect(reach.get(buttons)).toEqual({
       kind: 'dm',
@@ -1474,9 +1467,10 @@ describe('the employee roster', (): void => {
       }
     });
     const states = Object.fromEntries(
-      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
-        (row): [string, string] => [row.name, row.state],
-      ),
+      (await rosterRows(harness.withIdentity(managerIdentity()))).map((row): [string, string] => [
+        row.name,
+        row.state,
+      ]),
     );
     expect(states).toEqual({
       Nia: 'charter-pending',
@@ -1493,9 +1487,10 @@ describe('the employee roster', (): void => {
       await ctx.db.patch(paused, { pausedAt: 5, pausedBy: 'owner' });
     });
     const rows = Object.fromEntries(
-      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
-        (row): [string, boolean] => [row.name, row.paused],
-      ),
+      (await rosterRows(harness.withIdentity(managerIdentity()))).map((row): [string, boolean] => [
+        row.name,
+        row.paused,
+      ]),
     );
     expect(rows).toEqual({ Nia: true, Tomas: false });
   });
@@ -1545,9 +1540,7 @@ describe('the employee roster', (): void => {
         }
       });
     }
-    const roster = await harness
-      .withIdentity(managerIdentity())
-      .query(api.agents.rosterForUser, {});
+    const roster = await rosterRows(harness.withIdentity(managerIdentity()));
     const phases = Object.fromEntries(roster.map((row): [string, string] => [row.name, row.phase]));
     expect(phases).toEqual({
       Ana: 'talking',
@@ -1570,7 +1563,7 @@ describe('the employee roster', (): void => {
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
     const counts = async (): Promise<Record<string, [number, number, number]>> =>
       Object.fromEntries(
-        (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
+        (await rosterRows(harness.withIdentity(managerIdentity()))).map(
           (row): [string, [number, number, number]] => [
             row.name,
             [row.openCount, row.parkedCount, row.needsYou],
@@ -1615,9 +1608,10 @@ describe('the employee roster', (): void => {
     expect(await counts()).toEqual({ Priya: [0, 3, 3], Mateo: [1, 2, 2], Aiko: [0, 1, 1] });
     // The same parked rows by the state each is in, the words the roster says them in (walk m10).
     const states = Object.fromEntries(
-      (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
-        (row) => [row.name, row.parkedStates],
-      ),
+      (await rosterRows(harness.withIdentity(managerIdentity()))).map((row) => [
+        row.name,
+        row.parkedStates,
+      ]),
     );
     expect(states).toEqual({
       Priya: { deferred: 2, needsSkill: 1, discovered: 0 },
@@ -1682,7 +1676,7 @@ describe('the employee roster', (): void => {
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
     const counts = async (): Promise<Record<string, [number, number, number, number]>> =>
       Object.fromEntries(
-        (await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {})).map(
+        (await rosterRows(harness.withIdentity(managerIdentity()))).map(
           (row): [string, [number, number, number, number]] => [
             row.name,
             [row.openCount, row.parkedCount, row.stoppedCount, row.needsYou],
@@ -1803,10 +1797,7 @@ describe('the employee roster', (): void => {
     const owner = harness.withIdentity(managerIdentity());
     const roleLines = async (): Promise<Record<string, string>> =>
       Object.fromEntries(
-        (await owner.query(api.agents.rosterForUser, {})).map((row): [string, string] => [
-          row.name,
-          row.roleLine,
-        ]),
+        (await rosterRows(owner)).map((row): [string, string] => [row.name, row.roleLine]),
       );
 
     const priya = await deployEmployee(harness, 'owner', 'Priya');
@@ -1853,10 +1844,7 @@ describe('the employee roster', (): void => {
     const owner = harness.withIdentity(managerIdentity());
     const needsYou = async (): Promise<Record<string, number>> =>
       Object.fromEntries(
-        (await owner.query(api.agents.rosterForUser, {})).map((row): [string, number] => [
-          row.name,
-          row.needsYou,
-        ]),
+        (await rosterRows(owner)).map((row): [string, number] => [row.name, row.needsYou]),
       );
 
     const aiko = await deployEmployee(harness, 'owner', 'Aiko');
@@ -1884,7 +1872,7 @@ describe('the employee roster', (): void => {
     await expect(needsYou()).resolves.toEqual({ Aiko: 1 });
   });
 
-  it('lists at most 20 employees, newest first, and an evaluation agent never takes a place', async (): Promise<void> => {
+  it('lists every employee by pages of at most twenty, newest first, and never an evaluation agent', async (): Promise<void> => {
     vi.useFakeTimers();
     vi.stubEnv('DAY0_EVALUATION_BED', 'roster');
     const harness = convexTest(schema, allConvexModules());
@@ -1898,10 +1886,13 @@ describe('the employee roster', (): void => {
       });
     }
 
-    const roster = await harness
-      .withIdentity(managerIdentity())
-      .query(api.agents.rosterForUser, {});
-    expect(roster.map((row) => row.agentId)).toEqual(employees.slice(1).reverse());
+    const first = await harness.withIdentity(managerIdentity()).query(api.roster.page, {
+      paginationOpts: { numItems: 20, cursor: null },
+      at: Date.now(),
+    });
+    expect(first.page.length).toBeLessThanOrEqual(20);
+    const roster = await rosterRows(harness.withIdentity(managerIdentity()));
+    expect(roster.map((row) => row.agentId)).toEqual([...employees].reverse());
   });
 
   it('handles 20 employees and 500 items while counting only linked documentation', async (): Promise<void> => {
@@ -1950,7 +1941,7 @@ describe('the employee roster', (): void => {
     for (const agentId of employees) await seedWork(harness, agentId, states);
 
     const owner = harness.withIdentity(managerIdentity());
-    const roster = await owner.query(api.agents.rosterForUser, {});
+    const roster = await rosterRows(owner);
     expect(roster).toHaveLength(20);
     expect(roster.map((row) => [row.openCount, row.needsYou])).toEqual(
       Array.from({ length: 20 }, () => [5, 2]),
@@ -1965,7 +1956,7 @@ describe('the employee roster', (): void => {
     await harness.run(async (ctx): Promise<void> => {
       await ctx.db.delete(sources[0]);
     });
-    const afterUnlink = await owner.query(api.agents.rosterForUser, {});
+    const afterUnlink = await rosterRows(owner);
     expect(afterUnlink.every((row) => row.docSourceCount === 99)).toBe(true);
   });
 
@@ -1990,7 +1981,7 @@ describe('the employee roster', (): void => {
       }
     });
 
-    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity()));
 
     // Re-pinned for 16-F (decision F-2): the inbox's count, the new stop and the one-to-one the
     // employee still waits on, a kind the old count left out.
@@ -2019,7 +2010,7 @@ describe('the employee roster', (): void => {
     vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
     const owner = harness.withIdentity(managerIdentity());
 
-    const [busy] = await owner.query(api.agents.rosterForUser, {});
+    const [busy] = await rosterRows(owner);
 
     expect(busy?.landedThisMonth.days.at(-1)).toEqual({ day: '2026-09-26', landed: 1 });
     expect(busy?.landedThisMonth.atLeast).toBe(true);
@@ -2041,7 +2032,7 @@ describe('the employee roster', (): void => {
       }
     });
 
-    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity()));
 
     expect(row?.landedThisMonth).toMatchObject({ days: [{ landed: 100 }], atLeast: false });
   });
@@ -2089,7 +2080,7 @@ describe('the employee roster', (): void => {
     await land(second, '2026-09-17T02:00:00Z');
     vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
 
-    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity()));
 
     expect(row.landedThisMonth).toEqual({
       month: '2026-09',
@@ -2135,7 +2126,7 @@ describe('the employee roster', (): void => {
     await complete('2026-09-05T02:00:00Z', 'done');
     vi.setSystemTime(new Date('2026-09-26T06:00:00Z'));
 
-    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity()));
 
     expect(row.landedThisMonth).toEqual({
       month: '2026-09',
@@ -2174,7 +2165,7 @@ describe('the employee roster', (): void => {
       }
     });
 
-    const [row] = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity()));
 
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
@@ -2193,7 +2184,7 @@ describe('the employee roster', (): void => {
     const tomas = await deployEmployee(harness, 'owner', 'Tomas');
     await harness.run(async (ctx) => await ctx.db.patch(tomas, { zone: 'Europe/London' }));
 
-    const rows = await harness.withIdentity(managerIdentity()).query(api.agents.rosterForUser, {});
+    const rows = await rosterRows(harness.withIdentity(managerIdentity()));
 
     expect(Object.fromEntries(rows.map((row) => [row.name, row.today]))).toEqual({
       Mira: '2026-10-01',
@@ -2998,7 +2989,7 @@ describe('the roster’s needs-you count is the inbox’s (16-F, decision F-2)',
     const owner = harness.withIdentity(managerIdentity());
     const agentId = await deployEmployee(harness, 'owner', 'Mira');
 
-    const [row] = await owner.query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(owner);
     const inbox = await owner.query(api.work.needsYouForAgent, { agentId });
 
     expect(inbox.total).toBeGreaterThan(0);

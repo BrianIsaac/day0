@@ -1,7 +1,11 @@
 import { credentialValueFingerprint } from '../lib/credential-crypto';
+import { storedPageTitle } from './readers/stored-title';
 
 /** What makes a page's hash its own: never the fingerprint of a credential holding the same text. */
 const PAGE_CONTENT_LABEL = 'day0-page-content-v1';
+
+/** What makes a title's hash its own: never a page's hash or a credential's fingerprint. */
+const PAGE_TITLE_LABEL = 'day0-page-title-v1';
 
 /**
  * The revision of the redaction a page's hash vouches for (wave 14, 14-I's second pass): a page
@@ -66,4 +70,30 @@ export function pageContentHash(
 ): string {
   const content = JSON.stringify([revision, models, page.title, page.url ?? null, page.markdown]);
   return credentialValueFingerprint(`${PAGE_CONTENT_LABEL}\0${content}`, keyBase64, userId);
+}
+
+/**
+ * The keyed hash of a page's title as its source lists it (`docPages.titleHash`; wave 18, 18-D,
+ * K-2): what a reader that keeps a page by what was stored compares its listed title against
+ * when the stored title is redacted (the 17-X F4 residual: such a page was read at every sync,
+ * since the listed title never equals its stored, redacted, form). Read as the sync stores a
+ * title (`storedPageTitle`: white space closed up, a closing " #" dropped), so a listing that
+ * spaces it otherwise still matches.
+ *
+ * Keyed and bound to the owner as a page's hash is, for the same reason: the title may hold the
+ * secret the redaction takes out of the stored one. It changes with the key, so after a rotation
+ * each page's is written again by the next sync that meets it.
+ *
+ * @param title - The page's title as its reader lists it, before redaction.
+ * @param keyBase64 - The deployment's credential key (`DAY0_CREDENTIAL_KEY`).
+ * @param userId - The source's owner.
+ * @returns 32 lower-case hex characters.
+ * @throws Error when the key is not canonical 32-byte base64.
+ */
+export function pageTitleHash(title: string, keyBase64: string, userId: string): string {
+  return credentialValueFingerprint(
+    `${PAGE_TITLE_LABEL}\0${storedPageTitle(title)}`,
+    keyBase64,
+    userId,
+  );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { credentialMarker } from '../../../src/docs/redaction';
-import { sameButForRedaction } from '../../../src/docs/redaction-difference';
+import { REDACTION_WALK_STEPS, sameButForRedaction } from '../../../src/docs/redaction-difference';
 import { personalDataMarker } from '../../../src/redaction/redact';
 
 describe('sameButForRedaction', (): void => {
@@ -77,5 +77,65 @@ describe('sameButForRedaction', (): void => {
         values.map(() => credentialMarker('x')).join(' and '),
       ),
     ).toBe(false);
+  });
+
+  describe('a page of hostile lines (W17-R15)', (): void => {
+    /**
+     * The review's probe, a page of fifty: each stored line sixteen markers a letter apart, and
+     * its text fifteen hundred of that letter, which the markers can stand for. Each line lines
+     * up only once every way to place its markers has been walked, so the walk was bounded a line
+     * and not a page.
+     */
+    const marker = personalDataMarker('person');
+    const stored = Array.from({ length: 50 }, () => `${marker}${`b${marker}`.repeat(15)}Z`).join(
+      '\n',
+    );
+    const incoming = Array.from({ length: 50 }, () => `${'b'.repeat(1_500)}Z`).join('\n');
+
+    /**
+     * The places a call compares, counted: each step of the walk tests one. Counted by hand, not
+     * by a spy, which keeps every call's arguments and ran out of memory at the old walk's
+     * seventy million.
+     */
+    const comparisons = (judge: () => void): number => {
+      const { startsWith, endsWith } = String.prototype;
+      let count = 0;
+      String.prototype.startsWith = function (this: string, ...args) {
+        count += 1;
+        return startsWith.apply(this, args);
+      };
+      String.prototype.endsWith = function (this: string, ...args) {
+        count += 1;
+        return endsWith.apply(this, args);
+      };
+      try {
+        judge();
+      } finally {
+        String.prototype.startsWith = startsWith;
+        String.prototype.endsWith = endsWith;
+      }
+      return count;
+    };
+
+    it('judges the page changed within one budget of steps for the whole call', (): void => {
+      const judged: boolean[] = [];
+      const counted = comparisons(() => {
+        judged.push(sameButForRedaction(stored, incoming), sameButForRedaction(incoming, stored));
+      });
+      expect(judged).toEqual([false, false]);
+      // Each call within its budget, with a line's slack for the tests outside the walk.
+      expect(counted).toBeLessThan(2 * (REDACTION_WALK_STEPS + 1_000));
+    });
+
+    it('still reads an ordinary page whose values were taken out as the same text', (): void => {
+      const lines = Array.from(
+        { length: 400 },
+        (_, index) => `Page the on-call ${index} with code SEV${index} before you post.`,
+      );
+      const marked = lines.map((line, index) =>
+        line.replace(`SEV${index}`, credentialMarker('pager credential')),
+      );
+      expect(sameButForRedaction(lines.join('\n'), marked.join('\n'))).toBe(true);
+    });
   });
 });

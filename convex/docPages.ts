@@ -312,6 +312,8 @@ export interface StoredForRevision {
   readonly nativeStatus?: Doc<'docPages'>['nativeStatus'];
   /** Whether the row says its source dated it; absent on a page stored before it could (K-2). */
   readonly datedBySource?: boolean;
+  /** The listed title's keyed hash; absent on a page stored before 0.22.0 or with no key (18-D). */
+  readonly titleHash?: string;
 }
 
 /** The most bytes of page rows one answer of stored revisions reads: a page row holds its text. */
@@ -356,6 +358,7 @@ export const storedForRevision = internalQuery({
         sourceRevision: page.sourceRevision,
         ...(page.nativeStatus !== undefined ? { nativeStatus: page.nativeStatus } : {}),
         ...(page.datedBySource !== undefined ? { datedBySource: page.datedBySource } : {}),
+        ...(page.titleHash !== undefined ? { titleHash: page.titleHash } : {}),
       });
     }
     return kept;

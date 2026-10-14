@@ -21,10 +21,18 @@
  * `--env-file .env.local` is always passed: the compose file reads
  * CONVEX_BIND_ADDR, the host ports and DAY0_DOCS_HOST_DIR from there, and a
  * plain `docker compose` silently takes different defaults.
+ *
+ * And compose is started without the proxy the shell names (wave 18, D-9 (a);
+ * P-1 (a)): it fills `${HTTPS_PROXY}` from the process environment before the
+ * env file, so a proxy exported in the shell would reach every service while
+ * the deployment's NO_PROXY follows the file. The file's own names are handed
+ * to it instead.
  */
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { errorMessage } from '../src/lib/errors';
+import { readEnvFileValues } from './lib/env-text';
+import { composeEnvironment } from './lib/proxy-env';
 
 const ENV_FILE = '.env.local';
 
@@ -127,6 +135,24 @@ export function composeArguments(argv: readonly string[], envFile: string = ENV_
   ];
 }
 
+/**
+ * The environment compose runs with: the shell's without any proxy it names, then the env file's
+ * own proxy names as written (`composeEnvironment`).
+ *
+ * Args:
+ *   shell: The environment this command was started with.
+ *   envFile: Environment file compose reads its host-side values from.
+ *
+ * Returns:
+ *   The whole environment to start compose with.
+ */
+export function composeProcessEnvironment(
+  shell: Readonly<Record<string, string | undefined>>,
+  envFile: string = ENV_FILE,
+): Record<string, string> {
+  return composeEnvironment(shell, readEnvFileValues(envFile));
+}
+
 /** One line naming the components this invocation acts on. */
 export function componentSummary(profiles: readonly string[]): string {
   return profiles
@@ -153,7 +179,10 @@ function main(): void {
     process.exit(1);
   }
   console.log(`Components:\n  ${componentSummary(invocation.profiles)}\n`);
-  const result = spawnSync('docker', composeArguments(argv), { stdio: 'inherit' });
+  const result = spawnSync('docker', composeArguments(argv), {
+    stdio: 'inherit',
+    env: composeProcessEnvironment(process.env) as NodeJS.ProcessEnv,
+  });
   process.exit(result.status ?? 1);
 }
 

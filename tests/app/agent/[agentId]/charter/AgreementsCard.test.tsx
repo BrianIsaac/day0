@@ -367,7 +367,7 @@ describe('the Agreements card', (): void => {
       { ...owed, checkOwed: { since: Date.UTC(2026, 9, 3, 9), checkable: false } },
     ]);
     expect(past.container.textContent).toContain(
-      "Not checked since 3 Oct 2026, 09:00 against Priya's amended charter: Day0 checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect meanwhile.",
+      "Not checked since 3 Oct 2026, 09:00 against Priya's amended charter: Day0 checks an agreement for every employee only while you have 60 employees or fewer. It stays in effect meanwhile.",
     );
     expect(past.container.querySelector('[aria-label^="Check “"]')).toBeNull();
     past.unmount();

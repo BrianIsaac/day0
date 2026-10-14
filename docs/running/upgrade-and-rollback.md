@@ -106,7 +106,9 @@ the upgrade carries it again. To follow it:
    the backup's volume back, starts the services on the old checkout and
    pushes the old release's functions. The backup was taken as the upgrade
    began, so it carries that upgrade's pause on the scheduled jobs; the
-   restore lifts it and says so.
+   restore lifts it and says so once its closing `pnpm check:setup`
+   passes. Where that check stops on a gap, the pause stays until
+   `./setup.sh unpause`.
 
 3. **Build and start the app** from the old checkout: `pnpm build`, then
    `pnpm start`.

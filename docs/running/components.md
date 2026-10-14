@@ -23,6 +23,15 @@ pnpm sandbox:up
 pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
 
+The setup and its verbs (`upgrade`, `resume`, `pause`, `restore`) start the
+stack from `docker-compose.yml` alone, with `.env.local`; they read no
+`docker-compose.override.yml` and no `COMPOSE_FILE`, which `pnpm convex:up` by
+hand does. An override that changes Day0's networks (a subnet, an internal
+network) therefore stops those verbs at their `convex:up`, "network ... has
+active endpoints", with nothing pushed: a test bed with such an override met
+it on 14 October 2026. Choose the address range Docker gives its networks in
+the daemon's own settings (`default-address-pools`), not in an override.
+
 | You have | The profiles |
 |---|---|
 | Documentation in a folder, a git repository or on internal URLs; every system has an API or an MCP server | `real`, `sandbox`, `redactor` |
@@ -70,16 +79,20 @@ proxy](proxy.md)).
 
 ## Which components reach out
 
-Four of them leave the machine: `backend` (the model, the systems an
+Seven of them leave the machine: `backend` (the model, the systems an
 approved card reaches, the documentation readers), `slack-socket` (Slack's
-Socket Mode hosts), `redactor` (its wheels and model, on a first start) and
-`nango-server` (the providers' token endpoints). Where `.env.local` names an
-HTTP proxy (`HTTPS_PROXY`), the compose file hands it to those four, with
-Day0's own service names always kept out of it. `docs-notion-mcp`,
-`playwright-mcp` and `model` (its model pulls, on the local-model way)
-reach out too and are not handed it. [The way out](egress.md) lists every
-host, what each component did with a proxy on a bed whose only route out
-was one, and what needs a direct route.
+Socket Mode hosts), `redactor` (its wheels and model, on a first start),
+`nango-server` (the providers' token endpoints), `docs-notion-mcp` (its npm
+package and Notion's API), `playwright-mcp` (the pages the browser is sent
+to) and `model` (its model pulls, on the local-model way). Where
+`.env.local` names an HTTP proxy (`HTTPS_PROXY`), the compose file hands it
+to all seven (whether the browser's own page loads and the model service's
+pulls take it was not run on a bed; Nango's token requests do not:
+[The way out](egress.md)), with Day0's own service names always kept out of it, and
+since 0.22.0 only `.env.local` names it: a proxy exported in the shell
+reaches none of them. [The way out](egress.md) lists every host, what each
+component did with a proxy on a bed whose only route out was one, and what
+needs a direct route.
 
 ---
 

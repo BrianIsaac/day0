@@ -9,6 +9,7 @@ import type { AgentMetrics } from '@/metrics/types';
 import { decidedCount, formatMetricDuration } from '../../metric-format';
 import { Card } from '../../components/Card';
 import { ReadBoundary } from '../../components/ReadBoundary';
+import { useEmployeeFigures } from './use-employee-figures';
 import { RecordLine } from '../../components/RecordLine';
 import { useEmployee } from './employee-context';
 import { employeeTabHref } from './employee-tabs';
@@ -107,21 +108,22 @@ export function FiguresUnread() {
 }
 
 /**
- * The rail's figures for the employee's day: read here, under the rail's `ReadBoundary`, so a read
- * that fails leaves the rest of the page standing (C1, 17-FW; W16-R31).
+ * The rail's figures for the employee's day, drawn under the rail's `ReadBoundary`: a read that
+ * failed is thrown to it, so the rest of the page stands (C1, 17-FW; W16-R31), and the boundary
+ * draws the figures again once the read, held above it, answers again (W17-R28).
  *
+ * @param read - The day's figures as the rail read them ({@link useEmployeeFigures}).
  * @param tookOver - Whether the reader took the employee over; undefined while that is loading.
  */
 function TodayFigures({
-  agentId,
-  day,
+  read,
   tookOver,
 }: {
-  agentId: Doc<'agents'>['_id'];
-  day: string;
+  read: AgentMetrics | undefined | Error;
   tookOver: boolean | undefined;
 }) {
-  const today = useQuery(api.metrics.forAgent, { agentId, day })?.today;
+  if (read instanceof Error) throw read;
+  const today = read?.today;
   if (today === undefined || tookOver === undefined) {
     return <p className="text-sm text-[var(--color-muted)]">Loading the figures</p>;
   }
@@ -148,6 +150,9 @@ export function EmployeeRail() {
   const now = useNow();
   // The employee's own day (N12, 16-F): the rail's figures are that day's, in its zone.
   const day = dayKey(now, agentZone(agent));
+  // Read here, above the boundary, so the boundary hears the read answer again (W17-R28); an
+  // employee whose records pass one read is read by pages (C1, wave 18).
+  const today = useEmployeeFigures(agentId, day);
   const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
   const events = useQuery(api.events.recent, { agentId, limit: RECENT_EVENTS });
   const workItems = useQuery(api.work.listForAgent, { agentId })?.items;
@@ -166,12 +171,8 @@ export function EmployeeRail() {
   return (
     <>
       <Card title="Today" meta="counts, not rates">
-        <ReadBoundary what="metrics.forAgent" fallback={<FiguresUnread />}>
-          <TodayFigures
-            agentId={agentId}
-            day={day}
-            tookOver={earlier === undefined ? undefined : tookOver}
-          />
+        <ReadBoundary what="metrics.forAgent" fallback={<FiguresUnread />} resetKey={today}>
+          <TodayFigures read={today} tookOver={earlier === undefined ? undefined : tookOver} />
         </ReadBoundary>
       </Card>
       <Card
