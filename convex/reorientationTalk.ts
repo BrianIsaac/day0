@@ -48,7 +48,8 @@ import { log } from '../src/lib/logger';
  * applies anything: only Approve does (`convex/reorientationDecisions.ts`). The one-to-one's
  * session (`voiceSessions`) is never read or written here.
  *
- * Below `work.ts`: it imports the floor `reorientation.ts`, `ownership`, `eventLog` and `schema`.
+ * Below `work.ts`: it imports `reorientationJudgementInput.ts` (below the floor `reorientation.ts`,
+ * wave 18, 18-s), `ownership`, `eventLog` and `schema`.
  */
 
 /** The statuses a talk may be held on: an undecided card, or one set aside until a date. */

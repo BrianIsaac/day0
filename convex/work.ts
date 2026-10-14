@@ -318,11 +318,12 @@ export async function assertSameAgent(
 
 /**
  * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
- * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
- * order the page has always been given: by state, last first, and the newest first within one.
- * The reads hold {@link WORK_LIST_BYTES} between them (W16-R31): the unfinished rows first, since
- * Needs you links to them, a few at a time; then the newest of all in one read the backend bounds
- * by the bytes left, since they are most of the rows and the query is re-run at every change.
+ * its bound) and the newest `WORK_LIST_LIMIT` of all, each once, in the order the page has always
+ * been given: by state, last first, and the newest first within one. The reads hold
+ * `WORK_LIST_BYTES` between them (both in `convex/workLists.ts`; W16-R31): the unfinished rows
+ * first, since Needs you links to them, a few at a time; then the newest of all in one read the
+ * backend bounds by the bytes left, since they are most of the rows and the query is re-run at
+ * every change.
  */
 export const listForAgent = query({
   args: listForAgentArgs,
@@ -2555,8 +2556,8 @@ export const findExistingClaimInternal = internalQuery({
  * not the caller's yet. A caller with no identity is refused (12-G). Writes
  * nothing.
  *
- * @returns At most `NEEDS_YOU_LIMIT` entries, how many there are in all, and
- *   how many wait on each employee.
+ * @returns At most `NEEDS_YOU_LIMIT` (`convex/workLists.ts`) entries, how many
+ *   there are in all, and how many wait on each employee.
  */
 export const needsYou = query({
   args: {},
@@ -2568,13 +2569,12 @@ export const needsYou = query({
 });
 
 /**
- * Public, owner-guarded (`assertOwnsAgent`): what one employee waits on the
- * manager for, longest wait first, for the Needs you tab of the employee's
- * page (N7). The same rows, kinds and dating as `needsYou`, read by the same
- * `needsYouOfEmployee`, so for an employee the home lists, the tab lists the
- * same entries in the same order. The home leaves out evaluation agents and
- * reads at most `NEEDS_YOU_EMPLOYEE_LIMIT` employees; the tab answers for the
- * one employee its page is about, whichever it is. Writes nothing.
+ * Public, owner-guarded (`assertOwnsAgent`): what one employee waits on the manager for, longest
+ * wait first, for the Needs you tab of the employee's page (N7). The same rows, kinds and dating as
+ * `needsYou`, read by the same `needsYouOfEmployee`, so for an employee the home lists, the tab
+ * lists the same entries in the same order. The home leaves out evaluation agents and reads at most
+ * `NEEDS_YOU_EMPLOYEE_LIMIT` (`convex/workLists.ts`) employees; the tab answers for the one
+ * employee its page is about, whichever it is. Writes nothing.
  *
  * @returns At most `NEEDS_YOU_LIMIT` entries and how many there are in all.
  */
