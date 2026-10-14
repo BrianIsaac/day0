@@ -959,3 +959,62 @@ describe('the functions convex/docRelations.ts registers', (): void => {
     ]);
   });
 });
+
+// 18-D's proposals cursor beside 18-C's conflicts cursor in one owner's chain (the joins, 18-J):
+// each kind goes on from its own cursor, the conflicts' `next` the last conflict drawn (C-H) and
+// the proposals' `proposalsNext` the last proposal looked at, and no card is drawn twice.
+describe('listOpen with confirmed conflicts and proposals past twenty (the joins)', (): void => {
+  it('draws each card once: the conflict on the first read, the proposals on by their own cursor', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { handbook, finance } = await twoThatDisagree(harness);
+    await measure(harness, finance, 'escalation.md');
+    const [conflict] = await relations(harness);
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: conflict._id,
+      decision: 'disagree',
+    });
+    await storedPage(harness, handbook, {
+      ref: 'policy-0.md',
+      title: 'Policy 0',
+      markdown: '# Policy 0',
+    });
+    for (let pair = 1; pair <= 45; pair += 1) {
+      await storedPage(harness, handbook, {
+        ref: `policy-${pair}.md`,
+        title: `Policy ${pair}`,
+        markdown: `# Policy ${pair}`,
+      });
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: handbook.sourceId, ref: `policy-${pair}.md` },
+          to: { sourceId: handbook.sourceId, ref: 'policy-0.md' },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 70 }],
+          status: 'proposed',
+          createdAt: pair,
+        });
+      });
+    }
+    const manager = asManager(harness);
+    const first = await manager.query(api.docRelations.listOpen, {});
+    const confirmedIn = (read: { cards: Array<{ _id: string; status: string }> }): string[] =>
+      read.cards.filter((card) => card.status === 'confirmed').map((card) => card._id);
+    expect(confirmedIn(first)).toEqual([conflict._id]);
+    // The conflicts' chain ends with the read that drew them all; the proposals' goes on.
+    expect(first.next).toBeNull();
+    expect(first.proposalsNext).not.toBeNull();
+    const second = await manager.query(api.docRelations.listOpen, {
+      proposalsBefore: first.proposalsNext!,
+    });
+    const third = await manager.query(api.docRelations.listOpen, {
+      proposalsBefore: second.proposalsNext!,
+    });
+    expect(confirmedIn(second)).toEqual([]);
+    expect(confirmedIn(third)).toEqual([]);
+    expect(third.proposalsNext).toBeNull();
+    const drawn = [first, second, third].flatMap((read) => read.cards.map((card) => card._id));
+    expect(new Set(drawn).size).toBe(drawn.length);
+    expect(drawn).toHaveLength(46);
+  }, 60_000);
+});
