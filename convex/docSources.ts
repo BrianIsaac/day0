@@ -1956,6 +1956,11 @@ export const upsertPage = internalMutation({
     datedBySource: v.optional(v.boolean()),
     /** The page's hash before redaction (`pageContentHash`); absent where the deployment has no key. */
     contentHash: v.optional(v.string()),
+    /**
+     * The listed title's keyed hash (`docPages.titleHash`; 18-K). Taken here so a sync can hand
+     * it over; storing it is the store region's (18-D), and until then it is not written.
+     */
+    titleHash: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<Id<'docPages'>> => {
     await assertCurrentGeneration(ctx, args.sourceId, args.syncRunId);

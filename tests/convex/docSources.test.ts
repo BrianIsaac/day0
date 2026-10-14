@@ -3826,3 +3826,44 @@ describe('the import cycle through the documentation store (the helpers split, S
     expect(MIGRATION_NAMES).toContain(RUNS_READ_BY_MIGRATION);
   });
 });
+
+describe('the listed title’s keyed hash, in the page store’s argument (18-K for 18-D; the 17-X F4 residual)', (): void => {
+  it('`upsertPage` takes `titleHash` and refuses a number in its place', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId } = await seedSyncedSource(harness);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const page = {
+      sourceId,
+      syncRunId: runId,
+      title: 'Rotation for [redacted]',
+      markdown: '# Rotation',
+      updatedAt: 2,
+    };
+    const refs = async (): Promise<string[]> =>
+      await harness.run(async (ctx) =>
+        (
+          await ctx.db
+            .query('docPages')
+            .withIndex('by_source_ref', (q) => q.eq('sourceId', sourceId))
+            .collect()
+        ).map((row) => row.ref),
+      );
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, {
+        ...page,
+        ref: 'rotation.md',
+        titleHash: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c',
+      }),
+    ).resolves.toEqual(expect.any(String));
+    await expect(
+      harness.mutation(internal.docSources.upsertPage, {
+        ...page,
+        ref: 'rotation-copy.md',
+        titleHash: 7 as unknown as string,
+      }),
+    ).rejects.toThrow('Validator error: Expected `string`, got `7`');
+    expect(await refs()).toEqual(['page.md', 'rotation.md']);
+  });
+});

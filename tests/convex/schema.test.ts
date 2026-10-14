@@ -3816,4 +3816,38 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
     expect(read.ofDigest).toEqual(['first in the digest', 'second in the digest']);
     expect(read.unsent).toEqual(['not sent yet']);
   });
+
+  it('a page stored with and without `titleHash` reads back as written (the 17-X F4 residual)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const older = await ctx.db.get(olderId);
+      const page = { sourceId: older!.sourceId, markdown: '# Rotation', updatedAt: 5 };
+      const hashedId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'rotation.md',
+        title: 'Rotation for [redacted]',
+        titleHash: 'hmac-sha256:3f1c9a',
+      });
+      const plainId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds.md',
+        title: 'Refunds',
+      });
+      return { older, hashed: await ctx.db.get(hashedId), plain: await ctx.db.get(plainId) };
+    });
+    expect(read.older).not.toHaveProperty('titleHash');
+    expect(read.hashed).toMatchObject({
+      title: 'Rotation for [redacted]',
+      titleHash: 'hmac-sha256:3f1c9a',
+    });
+    expect(read.plain).toMatchObject({ title: 'Refunds' });
+    expect(read.plain).not.toHaveProperty('titleHash');
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.plain!._id, { titleHash: 7 as unknown as string });
+      }),
+    ).rejects.toThrow();
+  });
 });

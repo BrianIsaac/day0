@@ -774,6 +774,15 @@ export default defineSchema({
      */
     contentHash: v.optional(v.string()),
     /**
+     * A keyed hash of the page's title as its source listed it, before redaction (wave 18, 18-K
+     * for 18-D and 18-X; the 17-X F4 residual), under the key and owner binding `contentHash`
+     * uses, so no title text and no unkeyed digest of a secret is stored. A title holding a value
+     * the redaction removes no longer reads as changed at every sync: the reader compares this.
+     * Absent on a page stored before 0.22.0, where the reader compares the stored title, as
+     * before; written at a page's store (18-D). Never part of `contentHash`.
+     */
+    titleHash: v.optional(v.string()),
+    /**
      * The page's status, the outcome of the inputs below (wave 15, 15-K for 15-A; K-2). Absent
      * reads as `active` (`pageStatusOf`, `src/docs/authority.ts`). Never part of `contentHash`: a
      * status reaches the row beside it, so an unchanged page whose status changed is marked
