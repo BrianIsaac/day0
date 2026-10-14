@@ -9,6 +9,7 @@ import {
   closingHeldReason,
   conflictChoiceWords,
   conflictNoticeText,
+  conflictReturnedNoticeText,
   conflictQuestionText,
   conflictNoticeReplyLine,
   conflictReplyLine,
@@ -344,6 +345,19 @@ describe('the question as the thread of a delivered request asks it (17-C; secti
     );
     expect(conflictNoticeText('Priya', 'Comment length', pages)).toContain(
       'Which is right? Priya holds the steps that may rely on this until you answer.',
+    );
+  });
+
+  it('says a page is current again, not that the manager confirmed, where its return asks again (W17-R13)', (): void => {
+    const two = [
+      { title: 'Finance escalation', source: 'Finance wiki' },
+      { title: 'Pipeline runbook', source: 'Handbook' },
+    ] as const;
+    expect(conflictReturnedNoticeText('Priya', 'Thresholds', two, 0, ['Slack'])).toBe(
+      '“Finance escalation” is current again, and it disagrees with “Pipeline runbook” under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds its writes to Slack until you answer.',
+    );
+    expect(conflictReturnedNoticeText('Priya', 'Comment length', pages, 1)).toMatch(
+      /^“Close comment limits” is current again, and it disagrees with “Close comment limits” under “Comment length”: A, .*Priya holds the steps that may rely on this until you answer\.$/,
     );
   });
 

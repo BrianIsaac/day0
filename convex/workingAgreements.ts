@@ -1366,6 +1366,24 @@ function lastCheckedAt(agreement: Doc<'workingAgreements'>, checks: LastChecks):
 }
 
 /**
+ * Internal, for `workingAgreementActions.checkForCharter`: end the watch a run of a charter's check
+ * keeps on itself once the run has settled what it watched (W15-R34). A mutation's, since the
+ * node runtime refuses a cancel from an action: the backend's node executor asks the request for
+ * a `version` convex 1.38's action scheduler does not send ("Invalid cancel job request", 18-A's
+ * bed), so the watch outlived the run and checked the charter again, a disputed hold with it. A
+ * watch that already ran, or was ended, is left as it is.
+ */
+export const endCheckWatch = internalMutation({
+  args: { watch: v.id('_scheduled_functions') },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const job = await ctx.db.system.get(args.watch);
+    if (job?.state.kind === 'pending') await ctx.scheduler.cancel(args.watch);
+    return null;
+  },
+});
+
+/**
  * Internal: what an employee's charter check that could not be had leaves on record, for the
  * agreements for every employee it did not check (W15-R34; RM28 (b)): after its last retry, when
  * the run died (its watch, `CHECK_OUTLIVED_MS` on), past the bound, or under a pause. On a first

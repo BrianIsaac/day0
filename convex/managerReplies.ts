@@ -19,11 +19,13 @@ import {
   answerConflictInTransaction,
   numberedConflictQuestions,
   openConflictQuestions,
+  type NumberedConflictQuestion,
 } from './managerQuestions';
 import {
   CONFLICT_CHOICES,
-  CONFLICT_QUESTION_CLOSED,
+  pagePlaces,
   type ConflictChoice,
+  type NamedPageWords,
 } from '../src/agent/reorientation-words';
 import {
   approveActionsInTransaction,
@@ -309,22 +311,63 @@ async function managerReplyNoticeAnchor(
   );
 }
 
+/** One standing question as "Which one?" names it: its number, its heading and its two pages. */
+export interface WhichQuestion {
+  readonly number: number;
+  readonly heading: string;
+  readonly pages: readonly [NamedPageWords, NamedPageWords];
+}
+
+/**
+ * One of a question's two pages as "Which one?" names it: its title, and where the two titles are
+ * alike, what tells them apart (W17-R1's place, or the source where the sources differ).
+ */
+function whichPageName(pages: readonly [NamedPageWords, NamedPageWords], index: 0 | 1): string {
+  const page = pages[index];
+  const title = `“${slackEscaped(page.title)}”`;
+  if (pages[0].title !== pages[1].title) return title;
+  const place =
+    pagePlaces(pages)[index] ?? (pages[0].source !== pages[1].source ? page.source : undefined);
+  return place === undefined ? title : `${title} (${slackEscaped(place)})`;
+}
+
 /**
  * What Day0 answers a bare `answer {code} B` while several of the plan's questions stand (17-C;
- * section 7's draft, with the open questions named after it so the reply can be acted on from a
- * message that showed no number): nothing is decided. A heading is a page's own words, so it is
- * escaped as Slack asks and never read as a mention or a link.
+ * section 7's draft, W17-R13): each open question by its number, its heading and its two pages,
+ * so two conflicts under one heading read apart, then how to answer. Nothing is decided. A
+ * heading and a title are a page's own words, so they are escaped as Slack asks and never read as
+ * a mention or a link.
  */
-export function whichQuestionText(
-  id: string,
-  open: ReadonlyArray<{ readonly number: number; readonly heading: string }>,
-): string {
+export function whichQuestionText(id: string, open: readonly WhichQuestion[]): string {
   const example = open[1]?.number ?? open[0]?.number ?? 1;
-  // Each carries a comma of its own, so the list is set off by semicolons.
+  // Each carries commas of its own, so the list is set off by semicolons.
   const named = open
-    .map((question) => `${question.number}, under “${slackEscaped(question.heading)}”`)
+    .map(
+      (question) =>
+        `${question.number}, under “${slackEscaped(question.heading)}”, ${whichPageName(question.pages, 0)} or ${whichPageName(question.pages, 1)}`,
+    )
     .join('; ');
-  return `Which one? This plan has ${open.length} questions open: answer with its number, for example “answer ${id} ${example} B”. They are: ${named}.`;
+  return `Which one? This plan has ${open.length} questions open: ${named}. Answer with its number, for example “answer ${id} ${example} B”.`;
+}
+
+/**
+ * Which of a plan's questions still stand, and how to answer one, after a reply that named one
+ * that does not (W17-R13; section 7's draft): nothing where none stands.
+ */
+function standingLine(id: string, standing: readonly { readonly number: number }[]): string[] {
+  const [first] = standing;
+  if (first === undefined) return [];
+  if (standing.length === 1) {
+    return [
+      `Question ${first.number} is open: answer with “answer ${id} ${first.number} A”, “B” or “both”.`,
+    ];
+  }
+  const numbers = new Intl.ListFormat('en-GB', { style: 'long', type: 'conjunction' }).format(
+    standing.map((question) => String(question.number)),
+  );
+  return [
+    `Questions ${numbers} are open: answer one by its number, for example “answer ${id} ${first.number} A”, “B” or “both”.`,
+  ];
 }
 
 /**
@@ -337,11 +380,25 @@ export function whichQuestionText(
 async function answerFromChannel(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  request: { readonly row: Doc<'workItems'>; readonly decisionId: string },
+  request: {
+    readonly row: Doc<'workItems'>;
+    readonly decisionId: string;
+    /**
+     * For a request a park kept, when it was kept: only the questions asked by then are its own
+     * to answer, a later plan's having a request of its own (W17-R13).
+     */
+    readonly keptAt?: number;
+  },
   args: {
     userId: string;
     messageTs: string;
-    reply: { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
+    reply: {
+      verb: 'answer';
+      id: string;
+      choice: ConflictChoice;
+      number?: number;
+      runTogether?: true;
+    };
   },
 ) {
   const { row, decisionId } = request;
@@ -354,7 +411,11 @@ async function answerFromChannel(
     )
     .unique();
   if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
-  const numbered = await numberedConflictQuestions(ctx, row._id);
+  // The item's questions are numbered whatever plan asked them (C-4), so a kept request's own are
+  // the first of them, and the numbers it was shown still name them.
+  const askedBy = (question: NumberedConflictQuestion): boolean =>
+    request.keptAt === undefined || question.question.askedAt <= request.keptAt;
+  const numbered = (await numberedConflictQuestions(ctx, row._id)).filter(askedBy);
   const standing = numbered.filter((question) => question.standing);
   const notice = async (text: string) =>
     await queueManagerReplyNotice(ctx, {
@@ -371,6 +432,13 @@ async function answerFromChannel(
     notified: await notice(text),
   });
   const { number } = args.reply;
+  if (args.reply.runTogether === true && numbered.length > 0) {
+    const letter = args.reply.choice === 'from' ? 'A' : args.reply.choice === 'to' ? 'B' : 'both';
+    return await ignored(
+      'number run into its letter',
+      `Write the question’s number and the letter apart, for example “answer ${decisionId} ${number ?? 1} ${letter}”: this plan’s questions are numbered 1 to ${numbered.length}.`,
+    );
+  }
   if (number === undefined && standing.length === 0) {
     return await ignored(
       'no open question',
@@ -382,10 +450,17 @@ async function answerFromChannel(
       'several questions open',
       whichQuestionText(
         decisionId,
-        standing.map((question) => ({
-          number: question.number,
-          heading: question.question.context.text,
-        })),
+        standing.flatMap((question) =>
+          question.conflict === undefined
+            ? []
+            : [
+                {
+                  number: question.number,
+                  heading: question.question.context.text,
+                  pages: [question.conflict.from, question.conflict.to] as const,
+                },
+              ],
+        ),
       ),
     );
   }
@@ -401,15 +476,17 @@ async function answerFromChannel(
   }
   if (!target.standing) {
     const { answer, closed } = target.question;
-    return await ignored(
-      'question no longer open',
+    const became =
       answer !== undefined
         ? `Question ${target.number} was already answered: ${slackEscaped(answer.text)}.`
         : closed?.reason === 'redrafted'
           ? // Its pages may still disagree: the plan it was asked beside is gone, and the plan that
             // stands now asks its own.
-            `Question ${target.number} was closed when the plan was drafted again.`
-          : CONFLICT_QUESTION_CLOSED,
+            `Question ${target.number} was closed: the plan was drafted again.`
+          : `Question ${target.number} was closed: its two pages no longer disagree.`;
+    return await ignored(
+      'question no longer open',
+      [became, ...standingLine(decisionId, standing)].join(' '),
     );
   }
   // The reply's sender was checked against the card's manager: the relation is decided in the
@@ -422,7 +499,7 @@ async function answerFromChannel(
   });
   // Read again after the answer: naming one page right settles every other question about it.
   const left = (await numberedConflictQuestions(ctx, row._id)).filter(
-    (question) => question.standing,
+    (question) => askedBy(question) && question.standing,
   ).length;
   // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
   // "Both hold" gives no page away, and beside a finished item nothing waits at all (W17-R10).
@@ -468,6 +545,8 @@ export const managerReplyArgs = {
       id: v.string(),
       choice: v.union(...CONFLICT_CHOICES.map((choice) => v.literal(choice))),
       number: v.optional(v.number()),
+      /** The number was typed run into its letter ("2B"): answered with how to write it (W17-R13). */
+      runTogether: v.optional(v.literal(true)),
     }),
   ),
 };
@@ -612,7 +691,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
         return await answerFromChannel(
           ctx,
           surface,
-          { row: item, decisionId: kept.decisionId },
+          { row: item, decisionId: kept.decisionId, keptAt: kept.replacedAt },
           { ...args, reply: args.reply },
         );
       }

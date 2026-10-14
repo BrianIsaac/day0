@@ -269,6 +269,27 @@ describe('headingFigures', (): void => {
     }
   });
 
+  it('reads a year-shaped amount beside a date word as an amount: “above 2000 USD” is no date (17-FD’s second pass, item 7)', (): void => {
+    for (const [left, right] of [
+      [
+        'Effective now, escalate any variance above 2000 USD.',
+        'Effective now, escalate any variance above 3000 USD.',
+      ],
+      [
+        'Updated policy: refunds above 2000 USD need two approvers.',
+        'Updated policy: refunds above 2050 USD need two approvers.',
+      ],
+      ['As of the close, the cap is $2000.', 'As of the close, the cap is $2500.'],
+      [
+        'Reviewed monthly: at most 1999 rows a load.',
+        'Reviewed monthly: at most 2020 rows a load.',
+      ],
+      ['更新：超过 2000 元的退款需两人审批。', '更新：超过 3000 元的退款需两人审批。'],
+    ]) {
+      expect(headingFigures(...window(left, right)), left).toHaveLength(1);
+    }
+  });
+
   it('still passes over a date word beside a date, a date alone and a version beside its number (W3c)', (): void => {
     for (const [left, right] of [
       ['Last reviewed 3 October 2026.', 'Last reviewed 9 October 2026.'],

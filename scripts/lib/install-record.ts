@@ -39,11 +39,31 @@ export interface RecordedConnection {
   readonly issuer?: string;
   /** The secret's lifetime and what renews it, as the recipe words it. */
   readonly secretLifetime: string;
-  /** The day the secret expires, where the recipe gives its lifetime as a number of days. */
+  /** When the secret expires, where the recipe gives its lifetime as a number of days or hours. */
   readonly secretExpires?: Date;
+  /** The lifetime in hours, where the recipe gives it so: the expiry is then written with its time. */
+  readonly secretLifetimeHours?: number;
   /** What this run did: landed it, or found it already connected and left it. */
   readonly outcome: 'landed' | 'already connected';
   readonly guide: string;
+}
+
+/**
+ * A secret's expiry as the record writes it: the day for a lifetime in days, and the day and time
+ * for one in hours, the latest it can be, since it is counted from the landing (W17-R17).
+ *
+ * @param connection - The connection.
+ */
+function secretExpiresWords(connection: RecordedConnection): string | undefined {
+  const expires = connection.secretExpires;
+  if (expires === undefined) return undefined;
+  const day = expires.toISOString().slice(0, 10);
+  const hours = connection.secretLifetimeHours;
+  if (hours === undefined) return day;
+  return (
+    `${day} at ${expires.toISOString().slice(11, 16)} UTC at the latest ` +
+    `(${hours === 1 ? '1 hour' : `${hours} hours`} after it was generated)`
+  );
 }
 
 /** A system the documentation names that this install did not connect, and why. */
@@ -378,7 +398,7 @@ export function installRecordRunMarkdown(record: InstallRecord): string {
         ['Authorisation server', connection.issuer],
         ['Redirect URI registered', connection.redirectUrl],
         ['Secret’s lifetime', connection.secretLifetime],
-        ['Secret expires', connection.secretExpires?.toISOString().slice(0, 10)],
+        ['Secret expires', secretExpiresWords(connection)],
         ['Recipe', connection.guide],
       ]),
       '',

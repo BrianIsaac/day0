@@ -24,6 +24,23 @@ const MAX_LINE_CHARS = 4_096;
 const MAX_LINE_MARKERS = 16;
 
 /**
+ * The most places one call compares, over every line of the page (W17-R15): past it the two
+ * texts are judged changed. The walk is bounded a line by its length, but a page of fifty lines
+ * each built to line up only at the end of its walk (sixteen markers a letter apart against
+ * fifteen hundred of that letter) cost about a second inside the page store's mutation, which
+ * then failed at every sync. An ordinary redacted line compares up to about 120 places a marker,
+ * so this judges a page of up to about 1,600 redacted lines; past that a difference that is only
+ * the redaction's is judged a change and stamps the skills that read the page (the safe side), and
+ * a hostile page costs a stamp, not a sync.
+ */
+export const REDACTION_WALK_STEPS = 200_000;
+
+/** The places a call may still compare, spent by every line it walks. */
+interface WalkBudget {
+  steps: number;
+}
+
+/**
  * Whether `other` is `marked` with each of its markers standing for a short run of text: the
  * same line before and after every marker, and between one and `MAX_REDACTED_CHARS` characters
  * where each marker is.
@@ -32,9 +49,10 @@ const MAX_LINE_MARKERS = 16;
  * pattern of bounded wildcards tries every way to place them on a line that does not match, and
  * a page's author can write such a line (the second pass: sixteen markers a letter apart against
  * fifteen hundred of that letter never returned). The walk is bounded by the line's length times
- * the longest run a marker stands for, for each marker.
+ * the longest run a marker stands for, for each marker, and spends the call's budget: once that
+ * is spent the line does not match.
  */
-function matchesButForMarkers(marked: string, other: string): boolean {
+function matchesButForMarkers(marked: string, other: string, budget: WalkBudget): boolean {
   const literals = marked.split(MARKER);
   const markers = literals.length - 1;
   if (markers === 0 || markers > MAX_LINE_MARKERS) return false;
@@ -48,6 +66,8 @@ function matchesButForMarkers(marked: string, other: string): boolean {
     const next = new Set<number>();
     for (const end of ends) {
       for (let run = 1; run <= MAX_REDACTED_CHARS; run += 1) {
+        if (budget.steps <= 0) return false;
+        budget.steps -= 1;
         const at = end + run;
         if (at + literal.length > other.length) break;
         // The last stretch must close the line; the others may sit anywhere the run allows.
@@ -71,8 +91,9 @@ function matchesButForMarkers(marked: string, other: string): boolean {
  * for line equal, or differing only where one of the two holds a redaction marker and the other a
  * short run of text (or a marker of its own). Strict where it cannot tell: a line added or
  * removed, a marker where the other text holds nothing, a line too long or too full of markers
- * to compare, and a line each of the two redacts in a place the other does not all read as a
- * change, since a change that goes unsaid leaves a skill running on a runbook it never read.
+ * to compare, a line each of the two redacts in a place the other does not, and a page whose
+ * comparison passes `REDACTION_WALK_STEPS` all read as a change, since a change that goes unsaid
+ * leaves a skill running on a runbook it never read.
  *
  * @param stored - The page's text as it was stored.
  * @param incoming - Its text as the sync is about to store it.
@@ -82,10 +103,11 @@ export function sameButForRedaction(stored: string, incoming: string): boolean {
   const before = stored.split('\n');
   const after = incoming.split('\n');
   if (before.length !== after.length) return false;
+  const budget: WalkBudget = { steps: REDACTION_WALK_STEPS };
   return before.every(
     (line, index) =>
       line === after[index] ||
-      matchesButForMarkers(line, after[index]) ||
-      matchesButForMarkers(after[index], line),
+      matchesButForMarkers(line, after[index], budget) ||
+      matchesButForMarkers(after[index], line, budget),
   );
 }

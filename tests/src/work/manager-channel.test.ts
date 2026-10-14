@@ -17,6 +17,7 @@ import {
   managerMessageUpdateAction,
   parseDecisionReply,
   readsManagerDm,
+  threadReadsOf,
 } from '../../../src/work/manager-channel';
 import { decisionRequestBlocks, settledRequestBlocks } from '../../../src/work/decision-blocks';
 import type { MockAction } from '../../../src/work/types';
@@ -492,6 +493,20 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('threadReadsOf (W17-R13)', (): void => {
+  it('counts one thread read for each delivered open request and each other thread, none for a request still going out', (): void => {
+    expect(threadReadsOf({ requests: [], batches: [], noticeOwed: false })).toBe(0);
+    expect(
+      threadReadsOf({
+        requests: [{ decisionId: 'ab3xyz', ts: '1.1' }, { decisionId: 'cd4xyz' }],
+        batches: [],
+        noticeOwed: true,
+        threads: ['2.1', '3.1', '4.1'],
+      }),
+    ).toBe(4);
   });
 });
 
@@ -1070,9 +1085,39 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
       id: 'ab3xyz',
       choice: 'from',
     });
-    // No question is numbered nought, and a number is not a letter.
-    expect(parseDecisionReply('answer ab3xyz 0 A')).toBeUndefined();
+    // A number is not a letter.
     expect(parseDecisionReply('answer ab3xyz 2')).toBeUndefined();
     expect(parseDecisionReply('answer ab3xyz 2 3')).toBeUndefined();
+  });
+
+  it('reads a number no question has, and a number run into its letter, as answers the channel says the numbers to (W17-R13)', (): void => {
+    expect(parseDecisionReply('answer ab3xyz 0 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 0,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('answer ab3xyz 1000 B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 1000,
+      choice: 'to',
+    });
+    expect(parseDecisionReply('answer ab3xyz 2B')).toEqual({
+      verb: 'answer',
+      id: 'ab3xyz',
+      number: 2,
+      choice: 'to',
+      runTogether: true,
+    });
+    expect(parseDecisionReply('answer ab3xyz 3both')).toMatchObject({
+      number: 3,
+      runTogether: true,
+    });
+    // A number past any a plan could ask is not read as one, nor one with a leading nought, which
+    // the parser never took for a question's number (the second pass).
+    expect(parseDecisionReply('answer ab3xyz 10000000 B')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 01 A')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 007B')).toBeUndefined();
   });
 });

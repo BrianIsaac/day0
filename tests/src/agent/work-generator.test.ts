@@ -1048,6 +1048,58 @@ describe('a read-and-answer item names the thread its asker asks in (W19-4, the 
     expect(first?.contentRefs).toContain('channel://office-asks#thread-double-charge');
   });
 
+  // The v0.20.0 hosted walk's finding 8: Lark's docs item for Aman (row `A-Lark-docs-full.txt`)
+  // named #revops, where no message of Aman's is, and no thread; the plan said "in the thread
+  // where Aman asked", and the run posted unthreaded with a note saying so to the manager alone.
+  // The item's contentRefs are not on the row: rebuilt as the item's words name them.
+  const AMANS_SUMMARY =
+    'Aman asked in the team channel, "At quarter end, which sheet do we treat as the source of truth, and who signs off the revenue total?" The answer is in the team overview doc, which describes the close-week process and the Q-trackers. Please reply in the channel where the question was asked.';
+  const AMANS_DOCS_ASK = {
+    ...drafted(
+      'read-and-answer',
+      'Question in the team channel about where closed deals land',
+      AMANS_SUMMARY,
+    ),
+    sourceSystem: 'docs',
+    externalId: 'docs-team-overview',
+    contentRefs: ['docs-fixture/team-overview', 'channel://revops'],
+    requesterLabel: 'Aman',
+  };
+  const WITH_REVOPS = {
+    ...PIPS_OFFICE,
+    slackChannels: [
+      ...PIPS_OFFICE.slackChannels,
+      {
+        slug: 'revops',
+        displayName: '#revops',
+        kind: 'channel',
+        recentMessages: [{ sender: 'Sara', body: 'Noted, thanks.' }],
+      },
+    ],
+  };
+
+  it('a read item whose asker has no thread answers in the channel and says so', async (): Promise<void> => {
+    drafts.push([AMANS_DOCS_ASK, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+    const [first] = await generateWorkItemsFromCharter(PIP_W19, WITH_REVOPS as never);
+    expect(first?.contentRefs).toEqual(['docs-fixture/team-overview', 'channel://revops']);
+    expect(first?.contentSummary).toBe(
+      `${AMANS_SUMMARY} No thread holds Aman's ask, so the answer is posted in #revops itself, not in a thread.`,
+    );
+  });
+
+  it('says nothing of a thread for an asker who has one, or an item that names one', async (): Promise<void> => {
+    const hanas = { ...AMANS_DOCS_ASK, requesterLabel: 'Hana' };
+    const threaded = {
+      ...AMANS_DOCS_ASK,
+      contentRefs: ['docs-fixture/team-overview', 'channel://office-asks#thread-double-charge'],
+    };
+    for (const item of [hanas, threaded]) {
+      drafts.push([item, PIP_ACTION, PIP_BEYOND, PIP_OUT]);
+      const [first] = await generateWorkItemsFromCharter(PIP_W19, WITH_REVOPS as never);
+      expect(first?.contentSummary).toBe(AMANS_SUMMARY);
+    }
+  });
+
   it('asks the generator to name the thread itself', (): void => {
     expect(WORK_GEN_SYSTEM).toContain(
       'When the question was asked in a thread the snapshot shows, its contentRefs name that thread too ("channel://<slug>#<thread>"), so the answer goes back where it was asked.',

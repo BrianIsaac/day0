@@ -104,15 +104,17 @@ import {
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import {
+  keptOutOfProxy,
   missingFromDeployment,
   noProxyEntries,
   SERVICE_NO_PROXY,
-  PROXY_VARIABLES,
   proxyAddressGap,
   proxyConfigured,
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
+  SHELL_PROXY_NAMES,
+  shellProxyNote,
 } from './lib/proxy-env';
 import { runUnderProxy } from './lib/under-proxy';
 import { readEnvFileValues } from './lib/env-text';
@@ -216,7 +218,6 @@ export const WATCHED = [
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
   'DAY0_APP_PORT',
-  ...PROXY_VARIABLES,
 ] as const;
 
 /** How a section reads: complete, worth saying out loud, or half-done. */
@@ -246,13 +247,41 @@ export function readEnvFile(path: string): Values {
   return readEnvFileValues(path);
 }
 
-/** File values, then the process environment wherever it declares one at all. */
-function resolve(path: string): Values {
+/**
+ * File values, then the process environment wherever it declares a watched one at all. The way
+ * out through a proxy is not among them: it is read from the file alone, as every process Day0
+ * starts takes it (wave 18, D-9 (a)), and a proxy the shell names is a note (`wayOutSection`).
+ *
+ * @param path - The env file's path.
+ * @param environment - The process environment.
+ */
+export function resolveValues(
+  path: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Values {
   const values = readEnvFile(path);
   for (const key of WATCHED) {
-    if (key in process.env) values[key] = process.env[key] ?? '';
+    if (key in environment) values[key] = environment[key] ?? '';
   }
   return values;
+}
+
+/**
+ * What a Convex CLI child of this check is started with: the file's values for the deployment it
+ * asks, over this process's environment, whose way out is the one this check was (re)started with
+ * (`runUnderProxy`): the proxy with this machine's own names kept out of it. The file's own proxy
+ * names, as written, would send the CLI's calls to the backend on this machine to the proxy
+ * (17-P's B-1).
+ *
+ * @param values - The resolved values.
+ */
+function cliEnvironment(values: Values): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { ...process.env, ...values };
+  for (const name of SHELL_PROXY_NAMES) {
+    if (process.env[name] === undefined) delete environment[name];
+    else environment[name] = process.env[name];
+  }
+  return environment;
 }
 
 /**
@@ -298,7 +327,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
     return 1;
   }
 
-  const v = resolve(envFile);
+  const v = resolveValues(envFile);
   const selfHosted = !!v.CONVEX_SELF_HOSTED_URL;
   const projectName = v.COMPOSE_PROJECT_NAME || 'day0';
   // Asked once and shared: every section that cares about a container reads the
@@ -347,6 +376,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       process.version,
       daemonArchitecture(versions.docker) ?? process.arch,
       wayOutDeployment,
+      process.env,
     ),
   ];
 
@@ -378,7 +408,9 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
   }
 
   console.log(`Day0 local setup, read from ${envFile}`);
-  console.log('(process environment wins wherever it declares a variable, empty included)');
+  console.log(
+    '(process environment wins wherever it declares a variable, empty included; the proxy is read from the file alone)',
+  );
   console.log(`${modeAndRouteLine(v)}\n`);
   for (const section of sections) {
     console.log(`${marker(section.status)} ${section.title}`);
@@ -511,7 +543,7 @@ function storedCredentialCount(values: Values): number | undefined {
     {
       encoding: 'utf8',
       timeout: 30_000,
-      env: { ...process.env, ...values },
+      env: cliEnvironment(values),
     },
   );
   if (probe.status !== 0) return undefined;
@@ -567,7 +599,7 @@ function readMigrationStatus(values: Values): MigrationStatusRead | { error: str
   const probe = spawnSync(
     'npx',
     ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'migrations:status', '{}'],
-    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...values } },
+    { encoding: 'utf8', timeout: 60_000, env: cliEnvironment(values) },
   );
   const firstLine = (text: string | null | undefined): string =>
     (text ?? '')
@@ -771,7 +803,7 @@ function linkedDocSourceKinds(
       'docSources:linkedKinds',
       '{}',
     ],
-    { encoding: 'utf8', timeout: 30_000, env: { ...process.env, ...values } },
+    { encoding: 'utf8', timeout: 30_000, env: cliEnvironment(values) },
   );
   if (probe.status !== 0) return undefined;
   try {
@@ -1940,9 +1972,23 @@ export function egressHosts(
     }
     add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
     add('huggingface.co', "the redactor's model snapshot, on its first start");
+    // The snapshot's files come from Hugging Face's own storage, whose hosts it picks: the two the
+    // 18-P bed's forward proxy saw on 14 October 2026 (day0-w18p), as `wss-primary.slack.com` is.
+    add(
+      'cas-server.xethub.hf.co',
+      "the redactor's model files, on its first start (Hugging Face's storage picks the host; the one seen in October 2026 was this)",
+    );
+    add(
+      'us.aws.cdn.hf.co',
+      "the redactor's model files, on its first start (Hugging Face's storage picks the host; the one seen in October 2026 was this)",
+    );
     add('pypi.org', "the redactor's wheels, on its first start");
     add('files.pythonhosted.org', "the redactor's wheels, on its first start");
     add('download.pytorch.org', "the redactor's CPU build of torch, on its first start");
+    add(
+      'download-r2.pytorch.org',
+      "the redactor's CPU build of torch, on its first start (download.pytorch.org sends it there)",
+    );
     add('registry.npmjs.org', "the Notion component's pinned package, on its first start");
   }
   if (
@@ -1991,26 +2037,21 @@ export function egressHosts(
   return rows;
 }
 
-/** The host of a customer's own address this configuration names, or undefined when it names none. */
-function ownHost(url: string | undefined): string | undefined {
+/** A customer's own address this configuration names, as a URL, or undefined when it names none. */
+function ownAddress(url: string | undefined): URL | undefined {
   try {
-    return url?.trim() ? new URL(url.trim()).hostname : undefined;
+    return url?.trim() ? new URL(url.trim()) : undefined;
   } catch {
     // Not a URL: its own section says so.
     return undefined;
   }
 }
 
-/** Whether an exclusion list keeps a host out of the proxy, by its name or a suffix of it. */
-function keptOut(host: string, noProxy: readonly string[]): boolean {
-  return noProxy.some((entry) => {
-    // A leading dot or `*.` covers a domain; a port narrows the entry and still names the host.
-    const name = entry
-      .replace(/^\*?\./, '')
-      .replace(/:\d+$/, '')
-      .toLowerCase();
-    return name === '*' || host === name || host.endsWith(`.${name}`);
-  });
+/** Hosts as a sentence names them: "a", "a and b", "a, b and c". */
+function hostList(hosts: readonly string[]): string {
+  return hosts.length < 2
+    ? (hosts[0] ?? '')
+    : `${hosts.slice(0, -1).join(', ')} and ${hosts[hosts.length - 1]}`;
 }
 
 /**
@@ -2025,6 +2066,8 @@ function keptOut(host: string, noProxy: readonly string[]): boolean {
  * @param architecture - The platform the backend image is built for.
  * @param deployment - The deployment's own variables, when it was asked: a Node action reads its
  *   `NO_PROXY` from there, never from the container.
+ * @param shell - The environment this check runs in, for a proxy it names that the file does not
+ *   (or the mark the setup or the restart left once it set the shell's names aside).
  */
 export function wayOutSection(
   v: Values,
@@ -2032,6 +2075,7 @@ export function wayOutSection(
   nodeVersion: string,
   architecture: string,
   deployment?: DeploymentRead,
+  shell: Readonly<Record<string, string | undefined>> = {},
 ): Section {
   const settings = proxySettings((name) => v[name]);
   const lines: string[] = [];
@@ -2041,6 +2085,12 @@ export function wayOutSection(
   };
   let title = 'The way out: direct';
   let reportTitle: string | undefined;
+  // Read from the file alone; one the shell names is said, never read (D-9 (a)).
+  const shellProxy = shellProxyNote(shell, v);
+  if (shellProxy !== undefined) {
+    worsen('warn');
+    lines.push(shellProxy);
+  }
   if (!proxyConfigured(settings)) {
     lines.push('No proxy is named (HTTPS_PROXY), so every service dials out directly.');
   } else {
@@ -2048,7 +2098,7 @@ export function wayOutSection(
     title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
     reportTitle = 'The way out: through a proxy';
     lines.push(
-      'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
+      'docker compose hands it to the backend, the Slack socket bridge, the redactor, Nango, the Notion and browser components and the model service,',
       'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
       "Day0's own services and this machine are always kept out of it.",
     );
@@ -2056,17 +2106,36 @@ export function wayOutSection(
     const listed = noProxyEntries(settings.noProxy).filter(
       (entry) => !SERVICE_NO_PROXY.some((name) => name === entry.toLowerCase()),
     );
-    const own = [ownHost(v.DAY0_PUBLIC_URL), ownHost(v.DAY0_OIDC_ISSUER)].filter(
-      (host): host is string => host !== undefined && !isLoopback(`http://${host}`),
+    // The app's public origin, the backend's (the live-connection probe asks it) and the issuer.
+    const own = [
+      ownAddress(v.DAY0_PUBLIC_URL),
+      ownAddress(proxiedBackendOrigin(v)),
+      ownAddress(v.DAY0_OIDC_ISSUER),
+    ].filter(
+      (address, index, all): address is URL =>
+        address !== undefined &&
+        !isLoopback(address.href) &&
+        all.findIndex((other) => other?.host === address.host) === index,
     );
-    const through = own.filter((host) => !keptOut(host, listed));
+    const through = own.filter((address) => !keptOutOfProxy(address.href, settings.noProxy));
     if (listed.length > 0) lines.push(`NO_PROXY also keeps out: ${listed.join(', ')}.`);
     if (through.length > 0) {
+      // Each name once: the app's and the backend's origins may share one by two ports.
+      const hosts = [...new Set(through.map((address) => address.hostname))];
+      const verb = hosts.length === 1 ? ' is' : ' are';
       lines.push(
         `${listed.length > 0 ? 'NO_PROXY does not list' : 'NO_PROXY lists nothing more, so'} ` +
-          `${through.join(' and ')}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
+          `${hostList(hosts)}${listed.length > 0 ? ', so each is' : verb} asked for through the proxy:`,
         'list them in NO_PROXY if the proxy does not serve hosts inside your network.',
       );
+      // A bare domain above one of them: Node keeps out that name alone (W17-R27).
+      for (const entry of listed) {
+        const name = entry.replace(/:\d+$/, '').toLowerCase();
+        if (/^[.*]/.test(name) || !hosts.some((host) => host.endsWith(`.${name}`))) continue;
+        lines.push(
+          `NO_PROXY keeps out ${name} only: write .${name} to keep out every name under it.`,
+        );
+      }
     }
     const addressGap = proxyAddressGap(settings);
     if (addressGap !== undefined) {
@@ -2098,6 +2167,23 @@ export function wayOutSection(
           'fails there.',
         );
       }
+      // A git clone a Node action starts reads the address from there too (P-14); compared, never
+      // printed, since it may carry a password.
+      const unheld = (
+        [
+          ['HTTPS_PROXY', settings.httpsProxy],
+          ['HTTP_PROXY', settings.httpProxy],
+        ] as const
+      )
+        .filter(([name, address]) => (deployment.values[name] ?? '').trim() !== (address ?? ''))
+        .map(([name]) => name);
+      if (unheld.length > 0) {
+        worsen('gap');
+        lines.push(
+          "The deployment does not hold the proxy's address as .env.local names it " +
+            `(${unheld.join(' and ')}), which a git clone in a Node action reads: run \`pnpm sync:env\`.`,
+        );
+      }
     }
     if (settings.httpsProxy === undefined) {
       worsen('warn');
@@ -2105,11 +2191,16 @@ export function wayOutSection(
         'Only HTTP_PROXY is named: every vendor Day0 reaches is https, which HTTPS_PROXY carries.',
         'Name the proxy in HTTPS_PROXY as well.',
       );
-    } else if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
-      worsen('warn');
+    }
+    // Only 1 turns Node's switch on. The services take the file's value (the bridge, the
+    // backend's Node actions, Nango); this machine's processes turn it on wherever a proxy is
+    // named (P-7), so the services alone would go out directly (W17-R28).
+    if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
+      worsen('gap');
       lines.push(
-        `NODE_USE_ENV_PROXY=${settings.useEnvProxy} turns Node's reading of the proxy off: the bridge, the`,
-        "backend's Node actions and Nango then dial out directly. Empty it, or set it to 1.",
+        ".env.local turns Node's proxy switch off while it names a proxy: Day0's services (the " +
+          "Slack socket bridge, the backend's Node actions, Nango) would go out directly. Remove " +
+          `NODE_USE_ENV_PROXY=${settings.useEnvProxy} (docs/running/egress.md).`,
       );
     }
     lines.push(

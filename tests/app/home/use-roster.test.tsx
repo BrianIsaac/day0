@@ -102,4 +102,17 @@ describe('the home’s roster, read by pages to its end (wave 17, 17-F)', (): vo
     expect(drawn(view)).toBe('');
     view.unmount();
   });
+
+  it('asks nothing at a non-finite clock and keeps the rows it had (W17-R28)', (): void => {
+    read.results = [{ agentId: 'e2' }, { agentId: 'e1' }];
+    read.status = 'Exhausted';
+    const view = mount(<Probe now={NOW} />);
+    expect(drawn(view)).toBe('e2 e1');
+
+    read.results = [];
+    read.status = 'LoadingFirstPage';
+    expect(drawn(view, Number.NaN)).toBe('e2 e1');
+    expect(read.asked.at(-1)?.args).toBe('skip');
+    view.unmount();
+  });
 });

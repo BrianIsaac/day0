@@ -3,6 +3,7 @@ import { internalMutation, mutation, type MutationCtx, type QueryCtx } from './_
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
+import { remeasureAfterDating } from './docRelationsRemeasure';
 import { appendEvent } from './eventLog';
 import { openCards, type CardTrigger } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
@@ -434,6 +435,8 @@ export async function stampRemovedPages(
  * does not say: a page stored again took the reader's word with its time in `upsertPage`, and a
  * page kept as stored keeps the time it was stored with, so what a later read says of its own
  * time is written the first time a sync meets the row without the field and never over it (K-2).
+ * The listed title's keyed hash (`titleHash`; 18-D) is written where the row's is absent or
+ * another: the first sync after the upgrade writes each kept page's once, no body read.
  *
  * @returns Whether the page's status changed.
  */
@@ -451,6 +454,8 @@ export const recordRead = internalMutation({
     keepRevision: v.optional(v.boolean()),
     /** Whether the reader was given the page's time by its source; absent, it does not say. */
     datedBySource: v.optional(v.boolean()),
+    /** The listed title's keyed hash (`pageTitleHash`); absent, the stored one stands. */
+    titleHash: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<boolean> => {
     const source = await ctx.db.get(args.sourceId);
@@ -464,16 +469,23 @@ export const recordRead = internalMutation({
       nativeStatus: args.nativeStatus,
       sourceRevision: args.keepRevision === true ? page.sourceRevision : args.sourceRevision,
     };
-    const dated =
-      page.datedBySource === undefined && args.datedBySource !== undefined
+    const filled = {
+      ...(page.datedBySource === undefined && args.datedBySource !== undefined
         ? { datedBySource: args.datedBySource }
-        : {};
+        : {}),
+      ...(args.titleHash !== undefined && page.titleHash !== args.titleHash
+        ? { titleHash: args.titleHash }
+        : {}),
+    };
     if (
       page.nativeStatus !== inputs.nativeStatus ||
       page.sourceRevision !== inputs.sourceRevision ||
-      dated.datedBySource !== undefined
+      Object.keys(filled).length > 0
     ) {
-      await ctx.db.patch(page._id, { ...inputs, ...dated });
+      await ctx.db.patch(page._id, { ...inputs, ...filled });
+    }
+    if (filled.datedBySource !== undefined) {
+      await remeasureAfterDating(ctx, source, page, filled.datedBySource);
     }
     const now = Date.now();
     const change = await restatePage(ctx, { source, page: { ...page, ...inputs }, now });

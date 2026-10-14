@@ -8,6 +8,9 @@ import { api } from '../../convex/_generated/api';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import * as workListsModule from '../../convex/workLists';
+import { longestWaitFirst } from '../../convex/needsYou';
+import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
+import { byLongestWait, inboxOfPages } from '../../src/metrics/needs-you-pages';
 import { allConvexModules } from './all-modules';
 import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -245,7 +248,13 @@ describe('work.needsYou', (): void => {
     await item(harness, malformed, 'Keyed on nobody', 'plan-pending', { planPendingAt: 1 });
     await expect(
       harness.withIdentity(managerIdentity('')).query(api.work.needsYou, {}),
-    ).resolves.toEqual({ entries: [], total: 0, waitingByEmployee: [] });
+    ).resolves.toEqual({
+      entries: [],
+      total: 0,
+      waitingByEmployee: [],
+      isDone: true,
+      continueCursor: '',
+    });
   });
 
   it('shows the owner only their own employees, and refuses an anonymous caller', async (): Promise<void> => {
@@ -272,11 +281,8 @@ describe('work.needsYou', (): void => {
     });
     await item(harness, evaluation, 'Evaluation item', 'plan-pending', { planPendingAt: 1 });
 
-    await expect(harness.withIdentity(OWNER).query(api.work.needsYou, {})).resolves.toEqual({
-      entries: [],
-      total: 0,
-      waitingByEmployee: [],
-    });
+    const inbox = await harness.withIdentity(OWNER).query(api.work.needsYou, {});
+    expect(inbox).toMatchObject({ entries: [], total: 0, waitingByEmployee: [], isDone: true });
   });
 
   it('says a wait is at least as long as the bounded read reaches when the entry lies beyond it', async (): Promise<void> => {
@@ -566,6 +572,58 @@ describe('work.needsYou', (): void => {
     expect(inbox.waitingByEmployee).toEqual([{ agentId: mira, waiting: 55 }]);
     expect(inbox.entries[0].subject).toBe('Plan 0');
     expect(inbox.entries.at(-1)?.subject).toBe('Plan 49');
+  });
+
+  it('lists every employee’s entries past twenty, read page by page and put together as the home puts them (wave 18, 18-F)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const employees: Id<'agents'>[] = [];
+    for (let index = 0; index < 25; index += 1) {
+      const agentId = await employee(harness, `Employee ${index}`);
+      employees.push(agentId);
+      await item(harness, agentId, `Plan ${index}`, 'plan-pending', {
+        planPendingAt: 10_000 + index,
+      });
+    }
+    const caller = harness.withIdentity(OWNER);
+
+    const pages: Array<Awaited<ReturnType<typeof readPage>>> = [];
+    async function readPage(cursor: string | null) {
+      return await caller.query(api.work.needsYou, {
+        paginationOpts: { numItems: 20, cursor },
+      });
+    }
+    let cursor: string | null = null;
+    do {
+      const page = await readPage(cursor);
+      pages.push(page);
+      cursor = page.isDone ? null : page.continueCursor;
+    } while (cursor !== null);
+    const inbox = inboxOfPages(pages);
+
+    expect(pages.length).toBeGreaterThanOrEqual(2);
+    expect(inbox.total).toBe(25);
+    expect(new Set(inbox.waitingByEmployee.map(({ agentId }) => agentId))).toEqual(
+      new Set(employees),
+    );
+    // The oldest wait is the first employee's, whom the newest twenty never reached.
+    expect(inbox.entries.map((entry) => entry.subject)).toEqual(
+      Array.from({ length: 25 }, (_, index) => `Plan ${index}`),
+    );
+    // Asked with no cursor, as a page loaded before 0.22.0 asks: the first page, as it was.
+    const first = await caller.query(api.work.needsYou, {});
+    expect(first.waitingByEmployee).toHaveLength(20);
+    expect(first.isDone).toBe(false);
+  });
+
+  it('orders the pages put together as the backend orders one page', (): void => {
+    const entries = [
+      { key: 'b', waitingSince: 2 },
+      { key: 'a', waitingSince: 2 },
+      { key: 'c', waitingSince: 1 },
+    ];
+    expect([...entries].sort(byLongestWait)).toEqual(
+      [...entries].sort((left, right) => longestWaitFirst(left as never, right as never)),
+    );
   });
 
   describe('work.needsYouForAgent', (): void => {
@@ -926,7 +984,7 @@ describe('work.listForAgent', (): void => {
       }
     });
 
-    const listed = await harness
+    const { items: listed } = await harness
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
 
@@ -974,7 +1032,7 @@ describe('work.listForAgent', (): void => {
       }
     });
 
-    const listed = await harness
+    const { items: listed } = await harness
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
     const ids = listed.map((item) => item.externalId);
@@ -1022,7 +1080,7 @@ describe('work.listForAgent', (): void => {
       });
     }
 
-    const listed = await harness
+    const { items: listed } = await harness
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
     const ids = listed.map((item) => item.externalId);
@@ -1065,12 +1123,110 @@ describe('work.listForAgent', (): void => {
         });
       }
     });
-    const listed = await harness
+    const { items: listed } = await harness
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
     expect(listed).toHaveLength(WORK_LIST_LIMIT);
     expect(listed[0]?.externalId).toBe(`REVOPS-${WORK_LIST_LIMIT - 1}`);
   }, 60_000);
+
+  // W17-R22's rest, ruled in 5.6: the unfinished rows were read open, parked, stopped, unjudged,
+  // to 8 MiB, so an employee whose open and parked rows held the bound had its stopped rows
+  // starved while Needs you linked to them, and nothing said rows were left out (17-FW's
+  // `items.py heavy` recipe, here as rows of 300 KB).
+  it('an employee with 9 MiB of unfinished rows still lists its stopped rows and says the list was cut', async (): Promise<void> => {
+    const harness = convexTest({
+      schema,
+      modules: allConvexModules(),
+      transactionLimits: { bytesRead: 16 * 1024 * 1024 },
+    });
+    const agentId = await seedEmployee(harness);
+    const row = (externalId: string, state: Doc<'workItems'>['state'], at: number) => ({
+      agentId,
+      sourceCategory: 'ticket-queue' as const,
+      sourceSystem: 'linear',
+      externalId,
+      title: 'Add the close-summary audit note',
+      contentSummary: 'Synthetic.',
+      contentRefs: [],
+      state,
+      observedAt: at,
+      createdAt: at,
+    });
+    const heavy = { draft: '', notes: 'x'.repeat(300 * 1024), actions: [], applied: [] };
+    await harness.run(async (ctx): Promise<void> => {
+      await ctx.db.insert('workItems', {
+        ...row('REVOPS-STOPPED', 'failed', 0),
+        skipReason: 'stopped: the model call failed: 429 Too Many Requests',
+      });
+      await ctx.db.insert('workItems', row('REVOPS-DONE', 'completed', 1));
+    });
+    // Thirty parked rows of 300 KB, newer than the stop: 9 MiB of unfinished rows.
+    for (let start = 0; start < 30; start += 10) {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let item = start; item < start + 10; item += 1) {
+          await ctx.db.insert('workItems', {
+            ...row(`REVOPS-${item}`, 'deferred', 10 + item),
+            output: heavy,
+          });
+        }
+      });
+    }
+
+    const listed = await harness
+      .withIdentity(managerIdentity())
+      .query(api.work.listForAgent, { agentId });
+    const ids = listed.items.map((item) => item.externalId);
+
+    expect(ids).toContain('REVOPS-STOPPED');
+    expect(ids).toContain('REVOPS-29');
+    expect(ids).not.toContain('REVOPS-0');
+    expect(listed.cut).toBe(true);
+  }, 60_000);
+
+  it('says nothing was cut when every row fits, and the list was cut past its newest 300', async (): Promise<void> => {
+    const { WORK_LIST_LIMIT } = await import('../../convex/workLists');
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const insert = async (count: number, from: number): Promise<void> => {
+      await harness.run(async (ctx): Promise<void> => {
+        for (let item = from; item < from + count; item += 1) {
+          await ctx.db.insert('workItems', {
+            agentId,
+            sourceCategory: 'ticket-queue',
+            sourceSystem: 'linear',
+            externalId: `REVOPS-${item}`,
+            title: 'Add the close-summary audit note',
+            contentSummary: 'Synthetic.',
+            contentRefs: [],
+            state: 'completed',
+            observedAt: item,
+            createdAt: item,
+          });
+        }
+      });
+    };
+    const owner = harness.withIdentity(managerIdentity());
+    await insert(WORK_LIST_LIMIT, 0);
+    await expect(owner.query(api.work.listForAgent, { agentId })).resolves.toMatchObject({
+      cut: false,
+    });
+    await insert(1, WORK_LIST_LIMIT);
+    const past = await owner.query(api.work.listForAgent, { agentId });
+    expect(past.items).toHaveLength(WORK_LIST_LIMIT);
+    expect(past.cut).toBe(true);
+  }, 60_000);
+
+  it('refuses a caller who does not own the employee, and an anonymous one', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    await expect(
+      harness.withIdentity(managerIdentity('stranger')).query(api.work.listForAgent, { agentId }),
+    ).rejects.toMatchObject({ data: EMPLOYEE_NOT_YOURS });
+    await expect(harness.query(api.work.listForAgent, { agentId })).rejects.toMatchObject(
+      await guardRefusal(),
+    );
+  });
 
   it("names the confirmed person an ask resolved to, and nobody for a dismissed person, another owner's or another answer (W13V-7)", async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
@@ -1105,7 +1261,7 @@ describe('work.listForAgent', (): void => {
     await ask('C0ASKS:4');
     await ask('C0ASKS:5', { kind: 'person', personId: elsewhere });
 
-    const listed = await harness
+    const { items: listed } = await harness
       .withIdentity(managerIdentity())
       .query(api.work.listForAgent, { agentId });
 
@@ -1141,9 +1297,9 @@ describe('work.listForAgent', (): void => {
         createdAt: 1,
       });
     });
-    const [listed] = await harness
-      .withIdentity(managerIdentity())
-      .query(api.work.listForAgent, { agentId });
+    const {
+      items: [listed],
+    } = await harness.withIdentity(managerIdentity()).query(api.work.listForAgent, { agentId });
     expect(listed?.mentionNames).toEqual({ U0C78V6LAPP: 'Rowan Hale' });
   });
 });

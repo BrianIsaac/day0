@@ -1,5 +1,5 @@
 import { paginationOptsValidator } from 'convex/server';
-import { ConvexError, v, type Infer } from 'convex/values';
+import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
 import { typedCodeReachOf } from './slackMessagesTab';
 import { socketBridgeStateOf } from './socketHeartbeats';
 import type { Doc, Id } from './_generated/dataModel';
@@ -8,7 +8,7 @@ import { getCallerOrThrow } from './ownership';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
 import { needsYouOfEmployee } from './needsYou';
-import { byWriteOrder, isEvaluationAgent } from './metrics';
+import { byWriteOrder, isEvaluationAgent, type ReadRoom } from './metrics';
 import {
   holdsLiveStepClaim,
   isManagerChannel,
@@ -35,10 +35,10 @@ import type { WorkDoneAnswer } from '../src/work/types';
 /*
  * The landing page's roster: one row per employee of an owner. The home reads it by pages
  * through {@link page} (wave 17, 17-F; RM33 (a)), so an owner of fifty employees sees every one,
- * each row's day and month read at the viewer's own clock. `agents.rosterForUser`, which
- * validates and authorises and calls {@link rosterOf} (standard 9.3), still answers the twenty
- * newest at the backend's clock for a page loaded before wave 17. Moved out of `convex/agents.ts`
- * to keep that module under the standard's soft 1,000 lines (9.2).
+ * each row's day and month read at the viewer's own clock. `agents.rosterForUser`, which answered
+ * the twenty newest at the backend's clock for a page loaded before wave 17, is gone since 0.22.0
+ * (wave 18, F-1). Moved out of `convex/agents.ts` to keep that module under the standard's soft
+ * 1,000 lines (9.2).
  */
 
 /** The longest role line the roster shows, the ellipsis included. */
@@ -50,7 +50,7 @@ const CHARTER_PENDING_ROLE_LINE = 'charter pending';
 /** The role line of an approved charter whose body states no function. */
 const ROLE_NOT_STATED = 'role not stated';
 
-/** The most employees one read of the roster lists: `rosterForUser`'s all, and one page's. */
+/** The most employees one page of the roster lists. */
 const ROSTER_LIMIT = 20;
 
 /**
@@ -87,6 +87,88 @@ const DOC_SOURCE_READ_LIMIT = 100;
  */
 const MONTH_LANDED_READ_LIMIT = 100;
 
+/**
+ * The bytes one employee's completions of the month may read, newest first (wave 18, 18-F): each
+ * carries its run's output, and an employee whose outputs are heavy (17-FW's bed: 900 KB each)
+ * took the whole roster page past what one function may read. Past it the count is a floor.
+ */
+const MONTH_LANDED_BYTES = 1024 * 1024;
+
+/**
+ * The bytes one page of the roster's completions may read across its twenty employees, read one
+ * employee after another, so the page stays inside one function's read with its other reads.
+ */
+const PAGE_LANDED_BYTES = 6 * 1024 * 1024;
+
+/**
+ * The bytes an employee's send-backs of one month may read before the count is a floor (T5, wave
+ * 18): the month's send-backs are read to its start, where the newest hundred alone left out a
+ * completion that landed before the oldest of them and made the count a floor past a hundred. A
+ * send-back's event holds an item's id and the manager's note, so this is some thousands of them,
+ * and twenty employees' months stay well inside one read.
+ */
+const MONTH_SENT_BACK_BYTES = 256 * 1024;
+
+/**
+ * An employee's completions this month, newest first, at most {@link MONTH_LANDED_READ_LIMIT},
+ * within {@link MONTH_LANDED_BYTES} and what the page's room has left: the read stops past either,
+ * and says the month holds more.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @param monthStart - The month's first midnight in the employee's zone.
+ * @param page - The page's room, drawn on as the completions are read.
+ * @returns The completions read, and whether the month may hold more than them.
+ */
+async function monthCompleted(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  monthStart: number,
+  page: ReadRoom,
+): Promise<{ readonly completed: Doc<'events'>[]; readonly more: boolean }> {
+  const completed: Doc<'events'>[] = [];
+  let room = Math.min(MONTH_LANDED_BYTES, page.left);
+  if (room <= 0) return { completed, more: true };
+  for await (const event of eventsOfType(ctx, agentId, 'work.completed', {
+    from: monthStart,
+  }).order('desc')) {
+    // Counted before anything else: the event that ends the read was read too.
+    const size = getDocumentSize(event);
+    room -= size;
+    page.left -= size;
+    if (completed.length === MONTH_LANDED_READ_LIMIT) return { completed, more: true };
+    completed.push(event);
+    if (room <= 0) return { completed, more: true };
+  }
+  return { completed, more: false };
+}
+
+/**
+ * An employee's send-backs this month, newest first, read to the month's start within
+ * {@link MONTH_SENT_BACK_BYTES}.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @param monthStart - The month's first midnight in the employee's zone.
+ * @returns The send-backs read, and whether the bytes ran out before the month's start.
+ */
+async function monthSentBack(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  monthStart: number,
+): Promise<{ readonly sentBack: Doc<'events'>[]; readonly more: boolean }> {
+  const sentBack: Doc<'events'>[] = [];
+  let room = MONTH_SENT_BACK_BYTES;
+  for await (const event of eventsOfType(ctx, agentId, 'work.retry', { from: monthStart }).order(
+    'desc',
+  )) {
+    room -= getDocumentSize(event);
+    sentBack.push(event);
+    if (room <= 0) return { sentBack, more: true };
+  }
+  return { sentBack, more: false };
+}
+
 const landedThisMonthValidator = v.object({
   /** The month, `YYYY-MM`, in the employee's zone. */
   month: v.string(),
@@ -113,36 +195,34 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
  * none has, as the Work tab reads its latest answer (the v0.20.0 walk's
  * finding 4). Reads the month's `work.completed` and `work.retry` events by
  * the type index, from the month's first midnight on, and dates each by the
- * instant it was logged. Each read is bounded: past either bound the count is a
- * floor and says so, and past the send-backs' bound a completion older than the
- * oldest send-back read is left out, since one of the unread may have taken it
- * back.
+ * instant it was logged: the newest completions to a bound, and the send-backs
+ * to the month's start ({@link monthSentBack}, T5). Past the
+ * completions' bound, or the send-backs' bytes, the count is a floor and says so,
+ * and past the send-backs' bytes a completion older than the oldest send-back
+ * read is left out, since one of the unread may have taken it back.
  *
  * @param ctx - Query context.
  * @param agent - The employee.
  * @param now - The instant whose month is read.
+ * @param page - The bytes the page's completions may still read ({@link PAGE_LANDED_BYTES}).
  */
 async function landedThisMonth(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,
+  page: ReadRoom,
 ): Promise<LandedThisMonth> {
   const zone = agentZone(agent);
   const month = dayKey(now, zone).slice(0, 7);
   const monthStart = dayStart(`${month}-01`, zone);
   // Newest first, so a month past the bound still shows its latest days, today among them;
   // one more than the bound is read to tell a full month from a longer one.
-  const [read, sentBackRead] = await Promise.all([
-    eventsOfType(ctx, agent._id, 'work.completed', { from: monthStart })
-      .order('desc')
-      .take(MONTH_LANDED_READ_LIMIT + 1),
-    eventsOfType(ctx, agent._id, 'work.retry', { from: monthStart })
-      .order('desc')
-      .take(MONTH_LANDED_READ_LIMIT + 1),
-  ]);
-  const sentBack = sentBackRead.slice(0, MONTH_LANDED_READ_LIMIT);
-  const moreSentBack = sentBackRead.length > MONTH_LANDED_READ_LIMIT;
-  // Past the send-backs' bound the older ones are unread: only what finished since the oldest one
+  const [{ completed: read, more: moreCompleted }, { sentBack, more: moreSentBack }] =
+    await Promise.all([
+      monthCompleted(ctx, agent._id, monthStart, page),
+      monthSentBack(ctx, agent._id, monthStart),
+    ]);
+  // Past the send-backs' bytes the older ones are unread: only what finished since the oldest one
   // read is known not to have been taken back.
   const from = moreSentBack ? (sentBack.at(-1)?.createdAt ?? monthStart) : monthStart;
   const firstFinished = new Map<string, { at: number; answer: WorkDoneAnswer }>();
@@ -177,7 +257,7 @@ async function landedThisMonth(
     days: [...byDay]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([day, { landed, partly }]) => ({ day, landed, ...(partly > 0 ? { partly } : {}) })),
-    atLeast: read.length > MONTH_LANDED_READ_LIMIT || moreSentBack,
+    atLeast: moreCompleted || moreSentBack,
   };
 }
 
@@ -189,7 +269,7 @@ const oneToOnePhaseKindValidator = v.union(
   ...ONE_TO_ONE_PHASE_KINDS.map((kind: OneToOnePhase['kind']) => v.literal(kind)),
 );
 
-/** One employee as the landing page lists it, as `agents.rosterForUser` answers it. */
+/** One employee as the landing page lists it, as a page of `roster.page` answers it. */
 export const rosterRowValidator = v.object({
   agentId: v.id('agents'),
   name: v.string(),
@@ -398,13 +478,18 @@ async function rosterRows(
   // What stands now (a wait, an access ended, a bridge's heartbeat) is read at the backend's
   // clock, as the writes that change it are stamped; only the calendar follows the viewer's.
   const now = Date.now();
+  // Each employee's month of completions in turn, within one room for the page (wave 18): they
+  // carry their runs' outputs, and one employee's heavy month took the whole page past its read.
+  const room: ReadRoom = { left: PAGE_LANDED_BYTES };
+  const months: LandedThisMonth[] = [];
+  for (const agent of agents) months.push(await landedThisMonth(ctx, agent, at, room));
   return await Promise.all(
-    agents.map(async (agent): Promise<RosterRow> => {
-      const [charter, counts, waiting, landed, session, surfaces] = await Promise.all([
+    agents.map(async (agent, index): Promise<RosterRow> => {
+      const landed = months[index]!;
+      const [charter, counts, waiting, session, surfaces] = await Promise.all([
         charterStanding(ctx, agent._id),
         workCounts(ctx, agent._id),
         needsYouOfEmployee(ctx, agent, now),
-        landedThisMonth(ctx, agent, at),
         newestSession(ctx, agent._id),
         ctx.db
           .query('surfaces')
@@ -439,27 +524,6 @@ async function rosterRows(
       };
     }),
   );
-}
-
-/**
- * The owner's newest employees, one row each ({@link rosterRows}), at the backend's clock:
- * `agents.rosterForUser`'s answer. Evaluation agents and the baseline arm are left out.
- *
- * @param ctx - The query's context.
- * @param ownerKey - The owner whose employees are listed.
- * @returns At most `ROSTER_LIMIT` rows, newest first.
- */
-export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterRow[]> {
-  const agents = (
-    await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
-      .order('desc')
-      .take(ROSTER_SCAN_LIMIT)
-  )
-    .filter((agent) => !isEvaluationAgent(agent))
-    .slice(0, ROSTER_LIMIT);
-  return await rosterRows(ctx, ownerKey, agents, Date.now());
 }
 
 /** The last instant the roster's calendar is read at: the start of the last day Day0 counts. */

@@ -769,16 +769,22 @@ const VERDICT_WORD: Readonly<Record<'ok' | 'warn' | 'gap', string>> = {
   gap: 'gap',
 };
 
-/** The check page's styles: a table on wide screens, one block per claim at phone width. */
+/**
+ * The check page's styles: a table on wide screens, one block per claim at phone width. The page
+ * is served without the app's stylesheet, so the dark set's danger token is declared here with
+ * its value (`app/globals.css`, D-7 (b) of wave 17; a test holds the two equal) and a gap is drawn
+ * in it, never a literal red (17-FX's F8).
+ */
 const CHECK_PAGE_STYLE =
-  ':root{color-scheme:dark}' +
+  ':root{color-scheme:dark;--color-danger:#f87171}' +
   'body{margin:0;background:#0a0a0b;color:#f4f4f5;font:14px/1.5 ui-sans-serif,system-ui,sans-serif}' +
   'main{max-width:60rem;margin:0 auto;padding:2rem 1rem;display:grid;gap:1rem}' +
   'h1{font-size:1.125rem;margin:0}p{margin:0;color:#a1a1aa}' +
   'table{border-collapse:collapse;width:100%}' +
   'th,td{text-align:left;vertical-align:top;padding:.5rem;border-bottom:1px solid #27272a}' +
   'th,td.verdict{white-space:nowrap}td.value,td.why{overflow-wrap:anywhere}' +
-  'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}.gap{color:#ef4444}' +
+  'thead th{color:#a1a1aa;font-weight:500}.ok{color:#34d399}.warn{color:#f59e0b}' +
+  '.gap{color:var(--color-danger)}' +
   '.brand{color:#22d3ee;font-size:.75rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase}' +
   'code{font-size:.8125rem;overflow-wrap:anywhere}.sr-only{position:absolute;width:1px;height:1px;' +
   'overflow:hidden;clip-path:inset(50%);white-space:nowrap}' +

@@ -10,8 +10,11 @@ export interface Boss {
 /** One employee as a page of the roster (`roster.page`) returns it. */
 export type RosterRow = FunctionReturnType<typeof api.roster.page>['page'][number];
 
-/** The needs-you inbox as `work.needsYou` returns it. */
-export type NeedsYouInbox = FunctionReturnType<typeof api.work.needsYou>;
+/** The needs-you inbox, every page of `work.needsYou` put together (`inboxOfPages`). */
+export type NeedsYouInbox = Omit<
+  FunctionReturnType<typeof api.work.needsYou>,
+  'isDone' | 'continueCursor'
+>;
 
 /** One entry of the needs-you inbox. */
 export type NeedsYouEntry = NeedsYouInbox['entries'][number];

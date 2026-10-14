@@ -211,8 +211,10 @@ describe('a charter’s refusal of an agreement for every employee, judged twice
 
     const prompts = recorded.model.map((call) => call.user);
     expect(prompts).toHaveLength(2);
-    expect(prompts[1]).toBe(prompts[0]);
+    // D-8 (a): the second judgement reads the charter's clauses in reverse order.
+    expect(prompts[1]).not.toBe(prompts[0]);
     expect(prompts[0]).toContain(`--- Statement ---\n${STATEMENT}`);
+    expect(prompts[1]).toContain(`--- Statement ---\n${STATEMENT}`);
 
     const rows = await agreementsOf(harness);
     expect(rows.find((row) => row._id === agreementId)).toMatchObject({ status: 'active' });

@@ -746,6 +746,153 @@ describe('the outbound manager-channel action', (): void => {
     expect(after).not.toHaveProperty('providerTs');
     expect(sent).toHaveLength(0);
   });
+
+  it("looks again at a question's notice whose send died after the look that said wait, and posts it once its request lands (W17-R11)", async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: URL, init: RequestInit): Promise<Response> => {
+        sent.push({ url: input.href, authorization: '', body: String(init.body) });
+        return new Response(JSON.stringify({ ok: true, ts: `provider-${sent.length}` }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }),
+    );
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    const pages = await twoThatDisagree(harness);
+    await measure(harness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    // The request was claimed and is still on its way out when the question is asked.
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+        },
+      });
+      await askConflictQuestion(ctx, {
+        row: (await ctx.db.get(workItemId))!,
+        conflict: {
+          relationId: relation._id,
+          heading: 'Thresholds',
+          pages: [
+            { title: 'Finance escalation', source: 'Finance wiki' },
+            { title: 'Pipeline runbook', source: 'Handbook' },
+          ],
+        },
+        now: Date.now(),
+      });
+      // Nothing else is pending: the decision's own jobs are not this test's.
+      for (const job of await ctx.db.system.query('_scheduled_functions').collect()) {
+        if (job.state.kind === 'pending') await ctx.scheduler.cancel(job._id);
+      }
+    });
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    // The send's first look answers wait; the action dies before it can do anything more (a
+    // backend restart between the two steps), so the look itself is all that ran.
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, { noticeId: notice._id }),
+    ).resolves.toEqual({ prepared: false, wait: true });
+    // The request lands in the DM.
+    await harness.run(async (ctx) => {
+      const row = await ctx.db.get(workItemId);
+      await ctx.db.patch(workItemId, { decision: { ...row!.decision!, ts: '1787770800.000100' } });
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    const posted = sent.filter((call) => call.url.endsWith('/chat.postMessage'));
+    expect(posted).toHaveLength(1);
+    expect(JSON.parse(posted[0].body)).toMatchObject({ thread_ts: '1787770800.000100' });
+    expect(JSON.parse(posted[0].body).text).toContain('Which is right?');
+    expect(await harness.run(async (ctx) => await ctx.db.get(notice._id))).toMatchObject({
+      claimedAt: expect.any(Number),
+      providerTs: 'provider-1',
+    });
+  });
+
+  it("records a question's notice failed by the look past the wait bound, with no action left to record it (W17-R11)", async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, workItemId } = await seedParkedPlan(harness);
+    const pages = await twoThatDisagree(harness);
+    await measure(harness, pages.finance, 'escalation.md');
+    const relation = (await relations(harness)).find((row) => row.kind === 'possible_conflict')!;
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: relation._id,
+      decision: 'disagree',
+    });
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('charters', {
+        agentId,
+        version: '0.1',
+        body: {},
+        approved: true,
+        approvedAt: 1,
+        createdAt: 1,
+      });
+      await ctx.db.patch(workItemId, {
+        decision: {
+          id: 'ab3xyz',
+          kind: 'plan',
+          requestedAt: 1,
+          channel: 'D0MANAGER',
+          surfaceSlug: 'team-chat',
+          surfaceName: 'Team chat',
+        },
+      });
+      await askConflictQuestion(ctx, {
+        row: (await ctx.db.get(workItemId))!,
+        conflict: {
+          relationId: relation._id,
+          heading: 'Thresholds',
+          pages: [
+            { title: 'Finance escalation', source: 'Finance wiki' },
+            { title: 'Pipeline runbook', source: 'Handbook' },
+          ],
+        },
+        now: Date.now(),
+      });
+    });
+    const [notice] = await harness.run(
+      async (ctx) => await ctx.db.query('managerDecisionNotices').collect(),
+    );
+    // The last look, alone: it records the failure in its own transaction and schedules nothing.
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, {
+        noticeId: notice._id,
+        waited: 40,
+      }),
+    ).resolves.toEqual({ prepared: false, gaveUp: true });
+    expect((await harness.run(async (ctx) => await ctx.db.get(notice._id)))?.failure).toBe(
+      'The plan’s request was not delivered, so the question was not posted in its thread.',
+    );
+    const looks = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    // Only the send queued with the question: the last look scheduled none after it.
+    expect(
+      looks.filter((job) => job.name.endsWith('sendManagerReplyNotice')).map((job) => job.args),
+    ).toEqual([[{ noticeId: notice._id }]]);
+  });
 });
 
 describe('where an acknowledgement lands once its item has moved on (W13V-3)', (): void => {

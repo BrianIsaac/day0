@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { proxyChecks } from '../../scripts/check-sign-in';
@@ -18,6 +19,7 @@ import {
   modelSection,
   modeAndRouteLine,
   parseMigrationStatus,
+  resolveValues,
   settingsSection,
   setupReport,
   wayOutSection,
@@ -1077,7 +1079,10 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(section.title).toBe('The way out: through the proxy at proxy.acme.test:3128');
     const lines = section.lines.join('\n');
     expect(lines).not.toContain('hunter2');
-    expect(lines).toContain('the backend, the Slack socket bridge, the redactor and Nango');
+    // Re-taken (wave 18, 17-P's F6): the Notion and browser components and the model service too.
+    expect(lines).toContain(
+      'docker compose hands it to the backend, the Slack socket bridge, the redactor, Nango, the Notion and browser components and the model service,',
+    );
     expect(lines).toContain(
       'The setup and the three checks start themselves with it, run by hand or not.',
     );
@@ -1129,15 +1134,23 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(section.lines.join(' ')).toContain('Node 22.21.0 or later does');
   });
 
-  it("warns when the file turns Node's switch off beside a proxy, or names one for plain http alone", (): void => {
+  // Re-taken (wave 18, W17-R28; P-7 stands): the switch turned off beside a proxy was a warning
+  // the host could never reach, since every process on this machine turns it on. It is a gap
+  // with its reason: the services' Node (the bridge, the backend's Node actions, Nango) would
+  // dial out directly.
+  it("is a gap when the file turns Node's switch off beside a proxy, and warns when one is named for plain http alone", (): void => {
     const off = wayOutSection(
       { ...REAL, HTTPS_PROXY: 'http://proxy.acme.test:3128', NODE_USE_ENV_PROXY: '0' },
       [],
       'v22.23.2',
       'x64',
     );
-    expect(off.status).toBe('warn');
-    expect(off.lines.join(' ')).toContain('NODE_USE_ENV_PROXY=0');
+    expect(off.status).toBe('gap');
+    expect(off.lines).toContain(
+      ".env.local turns Node's proxy switch off while it names a proxy: Day0's services (the " +
+        "Slack socket bridge, the backend's Node actions, Nango) would go out directly. Remove " +
+        'NODE_USE_ENV_PROXY=0 (docs/running/egress.md).',
+    );
     const plain = wayOutSection(
       { ...REAL, HTTP_PROXY: 'http://proxy.acme.test:3128' },
       [],
@@ -1154,8 +1167,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
       NO_PROXY: 'day0.acme.test',
     };
+    // Re-taken (P-14): the deployment holds the proxy's address too, as `pnpm sync:env` puts it.
     const held = wayOutSection(proxied, [], 'v22.23.2', 'x64', {
-      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test'), HTTPS_PROXY: proxied.HTTPS_PROXY },
     });
     expect(held.status).toBe('ok');
     expect(held.lines.join(' ')).toContain(
@@ -1181,7 +1195,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
       [],
       'v22.23.2',
       'x64',
-      { values: { NO_PROXY: deploymentNoProxy('day0.acme.test') } },
+      {
+        values: { NO_PROXY: deploymentNoProxy('day0.acme.test'), HTTPS_PROXY: proxied.HTTPS_PROXY },
+      },
     );
     expect(asChild.status).toBe('ok');
     expect(asChild.lines).toContain('NO_PROXY also keeps out: day0.acme.test.');
@@ -1215,6 +1231,191 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(section.lines.join(' ')).toContain(
       'NO_PROXY lists nothing more, so day0.acme.test and login.acme.test are asked for through the proxy',
     );
+  });
+});
+
+// W17-R27: the way out's lines read NO_PROXY as Node does (keptOutOfProxy), and the backend's
+// public origin is among the customer's own hosts, since the live-connection probe asks it
+// through the proxy unless the list keeps it out.
+describe("check:setup: the customer's own hosts against NO_PROXY, as Node reads it (W17-R27)", (): void => {
+  const PROXIED = {
+    DAY0_SURFACE_MODE: 'real',
+    OPENAI_API_KEY: 'k',
+    HTTPS_PROXY: 'http://proxy.corp.invalid:3128',
+  };
+
+  it('says a bare domain keeps out itself only, and how to keep out the names under it', (): void => {
+    const lines = wayOutSection(
+      { ...PROXIED, DAY0_PUBLIC_URL: 'https://day0.corp.invalid', NO_PROXY: 'corp.invalid' },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY does not list day0.corp.invalid, so each is asked for through the proxy:',
+    );
+    expect(lines).toContain(
+      'NO_PROXY keeps out corp.invalid only: write .corp.invalid to keep out every name under it.',
+    );
+    const covered = wayOutSection(
+      { ...PROXIED, DAY0_PUBLIC_URL: 'https://day0.corp.invalid', NO_PROXY: '.corp.invalid' },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines.join('\n');
+    expect(covered).not.toContain('NO_PROXY does not list');
+    expect(covered).not.toContain('to keep out every name under it');
+  });
+
+  it('reads a port in an entry as narrowing it to that port', (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://day0.corp.invalid',
+        NO_PROXY: 'day0.corp.invalid:8443',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY does not list day0.corp.invalid, so each is asked for through the proxy:',
+    );
+  });
+
+  // The second pass on 18-P: the bed's layout, the app's and the backend's origins on one host by
+  // two ports, named the host twice.
+  it('names a host once where the app and the backend share it on two ports', (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://10.118.247.1:6610',
+        NEXT_PUBLIC_CONVEX_URL: 'https://10.118.247.1:6611',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY lists nothing more, so 10.118.247.1 is asked for through the proxy:',
+    );
+  });
+
+  it("names the backend's own public host among the customer's hosts the proxy is asked for", (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://day0.corp.invalid',
+        NEXT_PUBLIC_CONVEX_URL: 'https://api.day0.corp.invalid',
+        DAY0_OIDC_ISSUER: 'https://login.corp.invalid',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY lists nothing more, so day0.corp.invalid, api.day0.corp.invalid and login.corp.invalid are asked for through the proxy:',
+    );
+  });
+});
+
+// D-9 (a), W17-R25 (reader 5): `resolve` laid the shell's proxy names over the file's, so a
+// proxy exported in a corporate shell profile was read here while `pnpm sync:env` read the file
+// alone, and the gap this check named ("run `pnpm sync:env`") could not be closed.
+describe('check:setup and a proxy the shell names (D-9 (a))', (): void => {
+  const REAL = { DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' };
+  const SHELL = { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080', NO_PROXY: 'intranet.acme.test' };
+
+  it('reads the way out from .env.local alone, whatever the shell names', (): void => {
+    const directory = mkdtempSync(join(tmpdir(), 'day0-check-shell-'));
+    const file = join(directory, '.env.local');
+    writeFileSync(
+      file,
+      'DAY0_SURFACE_MODE=real\nDAY0_OIDC_ISSUER=https://login.acme.test\n',
+      'utf8',
+    );
+    const values = resolveValues(file, { ...SHELL, DAY0_OIDC_ISSUER: 'https://other.acme.test' });
+    expect(values.HTTPS_PROXY).toBeUndefined();
+    expect(values.NO_PROXY).toBeUndefined();
+    // Every other watched name still lets the process environment win, as before.
+    expect(values.DAY0_OIDC_ISSUER).toBe('https://other.acme.test');
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('notes the shell’s proxy and says the way out is direct, never reading it', (): void => {
+    const section = wayOutSection(REAL, [], 'v22.23.2', 'x64', undefined, SHELL);
+    expect(section.title).toBe('The way out: direct');
+    expect(section.status).toBe('warn');
+    expect(section.lines).toContain(
+      'The shell names a proxy (HTTPS_PROXY) that .env.local does not. Day0 reads .env.local ' +
+        'only, so it goes out directly: name the proxy in .env.local, or unset it in the shell.',
+    );
+    // Nothing of the shell's reaches the deployment's reading either: no proxy is named.
+    expect(
+      wayOutSection(REAL, [], 'v22.23.2', 'x64', { values: {} }, SHELL).lines.join(' '),
+    ).not.toContain('The deployment');
+  });
+
+  it('notes it from the mark the setup or the restart left, where the shell’s names are gone', (): void => {
+    const section = wayOutSection(REAL, [], 'v22.23.2', 'x64', undefined, {
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+    expect(section.status).toBe('warn');
+    expect(section.lines.join(' ')).toContain('The shell names a proxy (HTTPS_PROXY)');
+  });
+});
+
+// P-14 (17-P's F6): a git clone a Node action starts reads the proxy's address from the
+// deployment, which `pnpm sync:env` now puts there; read back, never printed.
+describe("check:setup: the proxy's address on the deployment (P-14)", (): void => {
+  const PROXIED = {
+    DAY0_SURFACE_MODE: 'real',
+    OPENAI_API_KEY: 'k',
+    HTTPS_PROXY: 'http://day0:hunter2@proxy.acme.test:3128',
+    NO_PROXY: 'day0.acme.test',
+  };
+
+  it('is a gap when the deployment does not hold the address the file names, said without it', (): void => {
+    const lacking = wayOutSection(PROXIED, [], 'v22.23.2', 'x64', {
+      values: { NO_PROXY: deploymentNoProxy('day0.acme.test') },
+    });
+    expect(lacking.status).toBe('gap');
+    expect(lacking.lines).toContain(
+      "The deployment does not hold the proxy's address as .env.local names it (HTTPS_PROXY), " +
+        'which a git clone in a Node action reads: run `pnpm sync:env`.',
+    );
+    expect(lacking.lines.join('\n')).not.toContain('hunter2');
+    const held = wayOutSection(PROXIED, [], 'v22.23.2', 'x64', {
+      values: {
+        NO_PROXY: deploymentNoProxy('day0.acme.test'),
+        HTTPS_PROXY: PROXIED.HTTPS_PROXY,
+      },
+    });
+    expect(held.status).toBe('ok');
+  });
+});
+
+// The 18-P bed (day0-w18p, 14 October 2026): the redactor's first start behind the forward proxy
+// asked for three hosts no list named. Its own log lines are the input.
+describe("check:setup's host list: the redactor's first start, as the bed's proxy saw it", (): void => {
+  const SEEN = [
+    '{"from":"10.118.247.5","method":"CONNECT","target":"pypi.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"files.pythonhosted.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"download.pytorch.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"download-r2.pytorch.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"huggingface.co:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"cas-server.xethub.hf.co:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"us.aws.cdn.hf.co:443"}',
+  ];
+
+  it('names every host the redactor reached on its first start', (): void => {
+    const listed = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' }, [], 'x64').map(
+      (row) => row.host,
+    );
+    for (const line of SEEN) {
+      const host = (JSON.parse(line) as { target: string }).target.replace(/:443$/, '');
+      expect(listed, host).toContain(host);
+    }
   });
 });
 

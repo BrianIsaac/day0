@@ -32,9 +32,12 @@ vi.mock('convex/react', () => ({
 
 import {
   useCompanyFigures,
+  WHOLE_COMPANY_COOL_DOWN_MS,
   WHOLE_COMPANY_REREAD_MS,
+  WHOLE_COMPANY_RETRIES,
   WHOLE_COMPANY_RETRY_MS,
 } from '../../../app/home/use-company-figures';
+import { coverageLine } from '../../../app/home/company-coverage';
 import { mount, type Mounted } from '../../fixtures/dom/press';
 
 /** Figures of so many employees, with so many more left out. */
@@ -104,20 +107,21 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     view.unmount();
   });
 
-  it('reads again a moment after a change, keeping the figures it had meanwhile', async (): Promise<void> => {
+  it('reads again a moment after a change, a cool-down after the read before it, keeping the figures it had meanwhile', async (): Promise<void> => {
     backend.bounded = figuresOf(20, 31);
     const view = mount(<Probe changes="roster-1" />);
     await elapse(0);
     backend.byPages[0]!.resolve(figuresOf(51));
     await elapse(0);
 
-    // Three changes in a second: one read, two seconds after the first of them.
+    // Three changes in a second: one read, a cool-down after the read before it ended (W17-R28;
+    // two seconds after the first change before wave 18).
     drawn(view, 'roster-2');
     await elapse(500);
     drawn(view, 'roster-3');
     await elapse(500);
     expect(drawn(view, 'roster-4')).toBe('51 {"kind":"every","employees":51}');
-    await elapse(WHOLE_COMPANY_REREAD_MS - 1_000 - 1);
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS - 1_000 - 1);
     expect(backend.byPages).toHaveLength(1);
     await elapse(1);
     expect(backend.byPages).toHaveLength(2);
@@ -140,29 +144,31 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     backend.byPages[0]!.resolve(figuresOf(51));
     await elapse(0);
     expect(drawn(view, 'roster-2')).toBe('51 {"kind":"every","employees":51}');
-    await elapse(WHOLE_COMPANY_REREAD_MS);
+    // A cool-down after it (W17-R28; at once before wave 18).
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
     expect(backend.byPages).toHaveLength(2);
     view.unmount();
   });
 
-  it('is not starved by changes that keep arriving: it reads again within the wait of the first of them', async (): Promise<void> => {
+  it('is not starved by changes that keep arriving: it reads again a cool-down after each read', async (): Promise<void> => {
     backend.bounded = figuresOf(20, 31);
     const view = mount(<Probe changes="roster-0" />);
     await elapse(0);
     backend.byPages[0]!.resolve(figuresOf(51));
     await elapse(0);
 
-    // A working company: a row changes every half second for ten seconds.
-    for (let tick = 1; tick <= 20; tick += 1) {
+    // A working company: a row changes every half second for thirty seconds.
+    for (let tick = 1; tick <= 60; tick += 1) {
       drawn(view, `roster-${tick}`);
       await elapse(500);
       // Each read answers at once, so only the waiting between reads is counted.
       backend.byPages.at(-1)?.resolve(figuresOf(51 + backend.byPages.length));
       await elapse(0);
     }
-    // One read at the start and one every two seconds after: never none, never one a change.
-    expect(backend.byPages.length).toBeGreaterThanOrEqual(5);
-    expect(backend.byPages.length).toBeLessThanOrEqual(7);
+    // One read at the start and one a cool-down after each (W17-R28; every two seconds before
+    // wave 18): never none, never one a change.
+    expect(backend.byPages.length).toBeGreaterThanOrEqual(3);
+    expect(backend.byPages.length).toBeLessThanOrEqual(4);
     view.unmount();
   });
 
@@ -178,7 +184,9 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     expect(backend.byPages).toHaveLength(1);
     backend.byPages[0]!.resolve(figuresOf(51));
     await elapse(0);
-    // The changes it missed are read once it is back.
+    expect(backend.byPages).toHaveLength(1);
+    // The changes it missed are read a cool-down after it is back (W17-R28; at once before).
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
     expect(backend.byPages).toHaveLength(2);
     view.unmount();
   });
@@ -201,9 +209,10 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     drawn(view, 'roster-2');
     await elapse(WHOLE_COMPANY_REREAD_MS);
     drawn(view, 'roster-3');
-    // The first read returns: the second starts at once, after both changes.
+    // The first read returns: the second starts a cool-down later (W17-R28; at once before wave
+    // 18), after both changes.
     backend.byPages[0]!.resolve(figuresOf(51));
-    await elapse(0);
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
     expect(backend.byPages).toHaveLength(2);
     backend.byPages[1]!.resolve(figuresOf(52));
     await elapse(0);
@@ -256,7 +265,8 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
     backend.byPages[0]!.reject(new Error('the backend is restarting'));
     await elapse(0);
     drawn(view, 'roster-2');
-    await elapse(WHOLE_COMPANY_REREAD_MS);
+    // A cool-down after the failed read ended (W17-R28; the change's own wait before wave 18).
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
     expect(backend.byPages).toHaveLength(2);
     // The one read stands for both: the retry that was waiting is not made beside it.
     backend.byPages[1]!.resolve(figuresOf(51));
@@ -294,6 +304,124 @@ describe('the company’s figures on the home (wave 17, 17-F; RM33 (a), F-2)', (
   it('answers nothing while the subscribed read is on its way', (): void => {
     const view = mount(<Probe changes="roster-1" />);
     expect(drawn(view)).toBe('none {"kind":"all"}');
+    view.unmount();
+  });
+});
+
+/*
+ * The walks' edges (W17-R28's figures half, wave 18, 18-F): a walk after every change under
+ * constant change, a failed read retried for ever (and after the company shrank to twenty), and
+ * the last whole figures drawn again when the company grows back past twenty.
+ */
+describe('the company’s figures under change and failure (W17-R28, wave 18)', (): void => {
+  it('causes one walk for two changes within the cool-down', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-0" />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+
+    // Two changes inside the cool-down after the first walk, each walk answering at once.
+    drawn(view, 'roster-1');
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS / 4);
+    backend.byPages.at(-1)?.resolve(figuresOf(52));
+    await elapse(0);
+    drawn(view, 'roster-2');
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS / 2);
+    backend.byPages.at(-1)?.resolve(figuresOf(53));
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS * 2);
+
+    expect(backend.byPages).toHaveLength(2);
+    view.unmount();
+  });
+
+  it('stops a failed read after its retries and says so', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    for (let tries = 1; tries <= WHOLE_COMPANY_RETRIES + 1; tries += 1) {
+      expect(backend.byPages).toHaveLength(tries);
+      backend.byPages.at(-1)!.reject(new Error('the backend is restarting'));
+      await elapse(WHOLE_COMPANY_RETRY_MS * 2 ** tries);
+    }
+    await elapse(WHOLE_COMPANY_RETRY_MS * 64);
+
+    expect(backend.byPages).toHaveLength(WHOLE_COMPANY_RETRIES + 1);
+    expect(drawn(view)).toBe(
+      `20 {"kind":"stopped","read":20,"of":51,"tries":${WHOLE_COMPANY_RETRIES + 1}}`,
+    );
+    expect(
+      coverageLine({ kind: 'stopped', read: 20, of: 51, tries: WHOLE_COMPANY_RETRIES + 1 }),
+    ).toBe('20 of 51 read: the rest could not be read');
+    view.unmount();
+  });
+
+  it('tries a failed read no more once the company is back within twenty', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    // The company shrinks to twenty while the read is on its way, and then the read fails.
+    backend.bounded = figuresOf(20, 0);
+    drawn(view);
+    backend.byPages[0]!.reject(new Error('the backend is restarting'));
+    await elapse(WHOLE_COMPANY_RETRY_MS * 64);
+
+    expect(backend.byPages).toHaveLength(1);
+    expect(drawn(view)).toBe('20 {"kind":"all"}');
+    view.unmount();
+  });
+
+  it('shows no stale figure of every employee while a company that grows back past twenty is read', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    expect(drawn(view)).toBe('51 {"kind":"every","employees":51}');
+
+    // Thirty-one retire: the subscribed read covers the twenty left.
+    backend.bounded = figuresOf(20, 0);
+    expect(drawn(view, 'roster-2')).toBe('20 {"kind":"all"}');
+    // Three are hired: twenty-three, read by pages again; the fifty-one are not drawn meanwhile.
+    backend.bounded = figuresOf(20, 3);
+    expect(drawn(view, 'roster-3')).toBe('20 {"kind":"reading","read":20,"of":23}');
+    view.unmount();
+  });
+});
+
+describe('the company’s figures, the second pass (wave 18)', (): void => {
+  it('keeps the cool-down when a change lands late in a read that then ends', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-0" />);
+    await elapse(0);
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    drawn(view, 'roster-1');
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
+    expect(backend.byPages).toHaveLength(2);
+    // A change while the second read is on its way, which ends at once after it.
+    drawn(view, 'roster-2');
+    await elapse(500);
+    backend.byPages[1]!.resolve(figuresOf(52));
+    await elapse(WHOLE_COMPANY_REREAD_MS * 2);
+    expect(backend.byPages).toHaveLength(2);
+    await elapse(WHOLE_COMPANY_COOL_DOWN_MS);
+    expect(backend.byPages).toHaveLength(3);
+    view.unmount();
+  });
+
+  it('draws no answer of a read that began before the company shrank to twenty and grew back', async (): Promise<void> => {
+    backend.bounded = figuresOf(20, 31);
+    const view = mount(<Probe changes="roster-1" />);
+    await elapse(0);
+    backend.bounded = figuresOf(20, 0);
+    drawn(view, 'roster-2');
+    backend.bounded = figuresOf(20, 3);
+    drawn(view, 'roster-3');
+    // The read that began before the shrink answers now, with the company it read then.
+    backend.byPages[0]!.resolve(figuresOf(51));
+    await elapse(0);
+    expect(drawn(view, 'roster-3')).toBe('20 {"kind":"reading","read":20,"of":23}');
     view.unmount();
   });
 });

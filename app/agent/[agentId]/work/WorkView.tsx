@@ -64,6 +64,13 @@ export function holdingCardsOf(
 }
 
 /**
+ * What the Work tab says under its list when the list's bounds left the oldest rows out
+ * (W17-R22; section 7's draft names how many, which the bounded read cannot count: decision W-1).
+ */
+export const WORK_LIST_CUT =
+  'Showing the newest rows that fit. Older rows are not shown here; they are in the export.';
+
+/**
  * The Work tab: the employee's queue, what needs the manager first, beside the corrections the
  * manager asked it to keep and the working agreements Day0 proposes from them (real mode), and the
  * page's rail.
@@ -78,7 +85,8 @@ export function WorkView() {
     () => runHoldOf({ real, employeeName: agent.name, employeePaused, scheduledWorkPaused }),
     [real, agent.name, employeePaused, scheduledWorkPaused],
   );
-  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const workList = useQuery(api.work.listForAgent, { agentId });
+  const workItems = workList?.items;
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   // A plan's conflict question beside it (RM20 (a)): real mode only, as documentation conflicts are.
   const conflictQuestions = useQuery(
@@ -162,6 +170,11 @@ export function WorkView() {
         refusedSkills={refusedSkills}
         hold={hold}
       />
+      {workList?.cut === true ? (
+        <p role="note" className="text-[13px] text-[var(--color-muted)]">
+          {WORK_LIST_CUT}
+        </p>
+      ) : null}
       <StateGlossary />
     </Columns>
   );

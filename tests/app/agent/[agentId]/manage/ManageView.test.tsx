@@ -33,6 +33,14 @@ vi.mock('convex/react', () => {
     };
   return {
     useQuery: (reference: unknown): unknown => backend.queries[getFunctionName(reference as never)],
+    // The figures are read through `useQueries` (wave 18, 18-F): each read answered as `useQuery` is.
+    useQueries: (queries: Record<string, { query: unknown }>): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(queries).map(([key, { query }]) => [
+          key,
+          backend.queries[getFunctionName(query as never)],
+        ]),
+      ),
     useMutation: call,
     useAction: call,
   };

@@ -7,6 +7,14 @@ const backend = vi.hoisted(() => ({ queries: {} as Record<string, unknown> }));
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
+  // The figures are read through `useQueries` (wave 18, 18-F): each read answered as `useQuery` is.
+  useQueries: (queries: Record<string, { query: unknown }>): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { query }]) => [
+        key,
+        backend.queries[getFunctionName(query as never)],
+      ]),
+    ),
   useMutation: () => async (): Promise<void> => undefined,
   useAction: () => async (): Promise<void> => undefined,
 }));
@@ -115,7 +123,7 @@ describe('NeedsYouView', () => {
           entry('held', 'held:w1', 2, { workItemId: 'w1', heldWrites: 1 }),
         ],
       },
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
     };
     const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
     expect(html).toMatch(/<ol aria-label="Needs you, longest wait first"/);
@@ -140,7 +148,7 @@ describe('NeedsYouView', () => {
           }),
         ],
       },
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
     };
     const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
     expect(html).toContain('Something its charter assumed has changed');
@@ -152,10 +160,13 @@ describe('NeedsYouView', () => {
   it('names the newest five things set aside, and how many more wait on the Work tab', () => {
     backend.queries = {
       'work:needsYouForAgent': { total: 0, entries: [] },
-      'work:listForAgent': Array.from({ length: 7 }, (_, index) => ({
-        ...skipped(`w${index}`),
-        _creationTime: index,
-      })),
+      'work:listForAgent': {
+        items: Array.from({ length: 7 }, (_, index) => ({
+          ...skipped(`w${index}`),
+          _creationTime: index,
+        })),
+        cut: false,
+      },
     };
     const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
     expect(html.indexOf('Item w6')).toBeLessThan(html.indexOf('Item w2'));
@@ -166,11 +177,14 @@ describe('NeedsYouView', () => {
   it('carries what the employee set aside under what else waits, with its reason and the way to give it back', () => {
     backend.queries = {
       'work:needsYouForAgent': { total: 0, entries: [] },
-      'work:listForAgent': [
-        skipped('w3', 'out-of-scope: this is forecasting work for Aman.'),
-        skipped('w4', 'claimed-by-colleague: Priya has it'),
-        { ...skipped('w5'), state: 'completed' },
-      ],
+      'work:listForAgent': {
+        items: [
+          skipped('w3', 'out-of-scope: this is forecasting work for Aman.'),
+          skipped('w4', 'claimed-by-colleague: Priya has it'),
+          { ...skipped('w5'), state: 'completed' },
+        ],
+        cut: false,
+      },
     };
     const html = text(renderToStaticMarkup(asEmployee(<NeedsYouView />)));
     expect(html).not.toContain('<ol');

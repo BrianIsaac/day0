@@ -1744,6 +1744,89 @@ describe('the manager-channel claims’ lease (N-3)', (): void => {
     ).toBeUndefined();
   });
 
+  // W17-R22's last edge, ruled with K-4 (a): the sweep read the open claims and filtered them on
+  // `digestId`, so every stuck per-run note was read at every sweep to find the digest's behind
+  // them. It reads each digest's notes by `by_agent_digest` now, and no per-run note at all.
+  // convex-test filters inside its own read and counts no document a filter passes over, so the
+  // bytes the old read spent are shown on the unit's bed against the real backend (the handover).
+  it('notes past sixty per-run notes still reach their digest, read by the digest’s own index', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    await harness.run(async (ctx) => {
+      for (let note = 0; note < 60; note += 1) {
+        await ctx.db.insert('managerNotes', {
+          agentId: seeded.agentId,
+          workItemId: seeded.workItemId,
+          kind: 'landed',
+          text: 'Landed.',
+          createdAt: 1,
+          claimedAt: Date.now() - LAPSED - 60_000 - note,
+        });
+      }
+    });
+
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+
+    const released = await harness.run(async (ctx) => await ctx.db.get(seeded.digestNote));
+    expect(released).toMatchObject({ failure: MANAGER_CLAIM_LAPSED_REASON });
+    expect(released?.claimedAt).toBeUndefined();
+    expect(released?.digestId).toBeUndefined();
+  });
+
+  it('leaves a digest that landed, and one still within its lease, as they are', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest(schema, allConvexModules());
+    const seeded = await claims(harness, Date.now() - LAPSED);
+    const { landed, fresh } = await harness.run(async (ctx) => {
+      const sent = await ctx.db.insert('events', {
+        agentId: seeded.agentId,
+        type: 'work.manager-digest-sending',
+        payload: {},
+        createdAt: Date.now() - LAPSED,
+      });
+      const landed = await ctx.db.insert('managerNotes', {
+        agentId: seeded.agentId,
+        workItemId: seeded.workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt: Date.now() - LAPSED,
+        digestId: sent,
+        providerTs: '3.3',
+      });
+      const sending = await ctx.db.insert('events', {
+        agentId: seeded.agentId,
+        type: 'work.manager-digest-sending',
+        payload: {},
+        createdAt: Date.now() - FRESH,
+      });
+      const fresh = await ctx.db.insert('managerNotes', {
+        agentId: seeded.agentId,
+        workItemId: seeded.workItemId,
+        kind: 'landed',
+        text: 'Landed.',
+        createdAt: 1,
+        claimedAt: Date.now() - FRESH,
+        digestId: sending,
+      });
+      return { landed, fresh };
+    });
+
+    await harness.mutation(internal.workLoop.settleLapsedClaims, {});
+
+    const read = await harness.run(async (ctx) => ({
+      stuck: await ctx.db.get(seeded.digestNote),
+      landed: await ctx.db.get(landed),
+      fresh: await ctx.db.get(fresh),
+    }));
+    expect(read.stuck?.failure).toBe(MANAGER_CLAIM_LAPSED_REASON);
+    expect(read.landed).toMatchObject({ providerTs: '3.3', claimedAt: expect.any(Number) });
+    expect(read.landed?.failure).toBeUndefined();
+    expect(read.fresh?.digestId).toBeDefined();
+    expect(read.fresh?.failure).toBeUndefined();
+  });
+
   it('runs as a job of its own, apart from the stalled-step sweep', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());

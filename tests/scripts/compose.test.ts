@@ -1,9 +1,12 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   BASE_PROFILE,
   componentSummary,
   composeArguments,
+  composeProcessEnvironment,
   parseComposeArguments,
   PROFILES,
 } from '../../scripts/compose';
@@ -173,5 +176,33 @@ describe('the backend runs several employees at once', (): void => {
     expect(commentAbove('SCHEDULED_JOB_EXECUTION_PARALLELISM')).toMatch(/employee/i);
     expect(commentAbove('SCHEDULED_JOB_EXECUTION_PARALLELISM')).toMatch(/measured/i);
     expect(commentAbove('APPLICATION_MAX_CONCURRENT_NODE_ACTIONS')).toMatch(/node action/i);
+  });
+});
+
+// D-9 (a) with P-1 (a): compose fills `${HTTPS_PROXY}` from the process environment before the
+// `--env-file`, so a proxy exported in the shell reached every service while the deployment's
+// NO_PROXY followed the file. Compose is started with the file's names alone.
+describe('what compose is started with (D-9 (a); P-1 (a))', (): void => {
+  it("is the shell without the proxy it names, then the env file's own names as written", (): void => {
+    const directory = mkdtempSync(join(tmpdir(), 'day0-compose-env-'));
+    const file = join(directory, '.env.local');
+    const shell = { PATH: '/usr/bin', HTTPS_PROXY: 'http://corp-proxy.acme.test:8080' };
+    writeFileSync(file, 'CONVEX_PORT=3210\n', 'utf8');
+    expect(composeProcessEnvironment(shell, file)).toEqual({
+      PATH: '/usr/bin',
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+    writeFileSync(
+      file,
+      'HTTPS_PROXY=http://proxy.acme.test:3128\nNO_PROXY=day0.acme.test\n',
+      'utf8',
+    );
+    expect(composeProcessEnvironment(shell, file)).toEqual({
+      PATH: '/usr/bin',
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'day0.acme.test',
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+    rmSync(directory, { recursive: true, force: true });
   });
 });

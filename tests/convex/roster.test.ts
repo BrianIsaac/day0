@@ -12,11 +12,13 @@ import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 import { registeredIn } from './registered-functions';
 import * as rosterModule from '../../convex/roster';
+import { rosterRows } from './fakes/roster';
+import { HEAVY_ITEMS, HEAVY_NOTES, seedWorkedEmployee } from './fakes/heavy-employee';
 
 /*
- * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). The roster
- * query (`agents.rosterForUser`) is tested where its path is, in `agents.test.ts`; what wave 17
- * changed of a row's reading (17-F) is tested here, through the same query.
+ * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). A row's reading
+ * is tested in `agents.test.ts` and here, through the page the home reads (`roster.page`; the one
+ * read of the twenty newest, `agents.rosterForUser`, is gone since 0.22.0, F-1).
  */
 
 type Harness = TestConvex<typeof schema>;
@@ -99,9 +101,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await log('work.retry', '2026-10-13T06:34:00Z');
     await log('work.completed', '2026-10-13T06:35:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
@@ -123,9 +123,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await partly('work.retry', '2026-10-12T08:00:00Z');
     await partly('work.completed', '2026-10-13T01:00:00Z', 'partial');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 0, partly: 1 }]);
   });
@@ -139,14 +137,12 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await log('work.completed', '2026-10-12T06:10:00Z', 'not-done');
     await log('work.completed', '2026-10-13T06:35:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 1 }]);
   });
 
-  it('leaves out an item finished before the oldest send-back it read, and says the count is a floor, in a month of more send-backs than it reads (the second pass, 17-F)', async (): Promise<void> => {
+  it('counts every completion after a hundred and fifty send-backs in a month, the month read to its start (T5, wave 18)', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
     const harness = convexTest(schema, allConvexModules());
@@ -155,24 +151,66 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     const takenBack = await finishedItem(harness, nell);
     await takenBack('work.completed', '2026-10-02T06:00:00Z', 'done');
     await takenBack('work.retry', '2026-10-03T06:00:00Z');
-    // Then a hundred send-backs of another item, a minute apart, and one landing after them all.
+    // A hundred and fifty send-backs of another item, a minute apart, with a third item landed
+    // among them (never sent back), and the busy one landed after them all.
     const busy = await finishedItem(harness, nell);
-    for (let minute = 0; minute < 100; minute += 1) {
-      await busy(
-        'work.retry',
-        new Date(Date.parse('2026-10-05T00:00:00Z') + minute * 60_000).toISOString(),
-      );
+    const among = await finishedItem(harness, nell);
+    for (let minute = 0; minute < 150; minute += 1) {
+      const at = Date.parse('2026-10-05T00:00:00Z') + minute * 60_000;
+      await busy('work.retry', new Date(at).toISOString());
+      if (minute === 25) await among('work.completed', new Date(at + 1_000).toISOString(), 'done');
     }
     await busy('work.completed', '2026-10-06T06:00:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
-    // The send-back of the 3rd is past the hundred read: the item it took back is not landed.
+    // The send-back of the 3rd is read, so the item it took back is not landed; the one landed
+    // among the send-backs is, and the count is the month's whole, not a floor.
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
-      days: [{ day: '2026-10-06', landed: 1 }],
+      days: [
+        { day: '2026-10-05', landed: 1 },
+        { day: '2026-10-06', landed: 1 },
+      ],
+      atLeast: false,
+    });
+  });
+});
+
+describe('what an employee landed this month, past the bytes its send-backs may read (T5, wave 18)', (): void => {
+  it('says the count is a floor, and leaves out what finished before the oldest send-back read', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const nell = await employee(harness, 'owner', 'Nell');
+    const early = await finishedItem(harness, nell);
+    await early('work.completed', '2026-10-02T06:00:00Z', 'done');
+    const busy = await finishedItem(harness, nell);
+    await busy('work.completed', '2026-10-12T06:00:00Z', 'done');
+    // Three hundred send-backs of 1.5 KB of note each: more than a month's send-backs may read.
+    await harness.run(async (ctx) => {
+      const [item] = await ctx.db.query('workItems').order('desc').take(1);
+      for (let minute = 0; minute < 300; minute += 1) {
+        await ctx.db.insert('events', {
+          agentId: nell,
+          type: 'work.retry',
+          payload: {
+            workItemId: item!._id,
+            resumeState: 'plan-approved',
+            fromState: 'completed',
+            feedback: `Finish it, ${minute}: ${'a long note '.repeat(128)}`,
+          },
+          createdAt: Date.parse('2026-10-05T00:00:00Z') + minute * 60_000,
+        });
+      }
+    });
+    await busy('work.completed', '2026-10-12T07:00:00Z', 'done');
+
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
+
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-12', landed: 1 }],
       atLeast: true,
     });
   });
@@ -195,9 +233,7 @@ describe('what an employee landed this month, at exactly the send-backs it reads
       );
     }
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
@@ -306,6 +342,13 @@ describe('the roster read by pages (wave 17, 17-F; RM33 (a))', (): void => {
   });
 });
 
+/** The quarter hour a viewer's clock, written as a date, asks the roster at. */
+function stepOf(viewer: string): number {
+  const at = rosterClock(Date.parse(viewer));
+  if (at === undefined) throw new Error(`no step for ${viewer}`);
+  return at;
+}
+
 describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void => {
   it('turns to the next day past the employee’s midnight while the backend’s clock stands still', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -315,7 +358,7 @@ describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void =
     await employee(harness, 'owner', 'Priya', 'Asia/Singapore');
     await employee(harness, 'owner', 'Mateo', 'America/Sao_Paulo');
     const todayAt = async (viewer: string): Promise<Record<string, string>> => {
-      const { rows } = await everyRosterPage(harness, 'owner', rosterClock(Date.parse(viewer)));
+      const { rows } = await everyRosterPage(harness, 'owner', stepOf(viewer));
       return Object.fromEntries(rows.map((row) => [row.name, row.today]));
     };
 
@@ -342,7 +385,7 @@ describe('the roster’s day follows the viewer’s clock (W16-R32)', (): void =
       (
         await caller.query(api.roster.page, {
           paginationOpts: { numItems: 20, cursor: null },
-          at: rosterClock(Date.parse(viewer)),
+          at: stepOf(viewer),
         })
       ).page[0]?.landedThisMonth;
 
@@ -389,5 +432,24 @@ describe('the quarter hour the roster is asked at', (): void => {
     expect(rosterClock(Date.parse('2026-10-13T18:15:00Z'))).toBe(
       Date.parse('2026-10-13T18:15:00Z'),
     );
+  });
+});
+
+describe('the roster of an employee whose month of completions passes one read (C1’s roster; wave 18, 18-F)', (): void => {
+  it('answers the page, the heavy employee’s month a floor of what fit, the others’ whole', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T06:00:00Z'));
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    await seedWorkedEmployee(harness, 'Aiko', HEAVY_NOTES);
+    await seedWorkedEmployee(harness, 'Mateo', '');
+
+    const rows = await rosterRows(harness.withIdentity(managerIdentity('owner')));
+
+    const aiko = rows.find((row) => row.name === 'Aiko');
+    const mateo = rows.find((row) => row.name === 'Mateo');
+    expect(mateo?.landedThisMonth).toMatchObject({ month: '2026-10', atLeast: false });
+    expect(mateo?.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0)).toBe(HEAVY_ITEMS);
+    expect(aiko?.landedThisMonth.atLeast).toBe(true);
+    expect(aiko?.landedThisMonth.days.reduce((sum, day) => sum + day.landed, 0)).toBeGreaterThan(0);
   });
 });

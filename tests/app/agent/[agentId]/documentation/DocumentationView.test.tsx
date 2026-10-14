@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import { act } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getFunctionName } from 'convex/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -21,18 +22,33 @@ const backend = vi.hoisted(() => ({
   laterReads: {} as Record<number, unknown>,
   /** Every later read asked for, by its `conflictsBefore`. */
   readOn: [] as number[],
+  /** What a later read of the proposals answers, by its `proposalsBefore` (D-10's read-more). */
+  proposalReads: {} as Record<number, unknown>,
+  /** Every later read of the proposals asked for, by its `proposalsBefore`. */
+  readOnProposals: [] as number[],
 }));
 
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
   useQueries: (
-    queries: Record<string, { args: { conflictsBefore: number } }>,
+    queries: Record<
+      string,
+      { query: unknown; args: { conflictsBefore?: number; proposalsBefore?: number } }
+    >,
   ): Record<string, unknown> =>
     Object.fromEntries(
-      Object.entries(queries).map(([key, { args }]) => {
-        backend.readOn.push(args.conflictsBefore);
-        return [key, backend.laterReads[args.conflictsBefore]];
+      Object.entries(queries).map(([key, { query, args }]) => {
+        // The rail's figures, read through `useQueries` too since wave 18 (18-F).
+        if (getFunctionName(query as never) !== 'docRelations:listOpen') {
+          return [key, backend.queries[getFunctionName(query as never)]];
+        }
+        if (args.proposalsBefore !== undefined) {
+          backend.readOnProposals.push(args.proposalsBefore);
+          return [key, backend.proposalReads[args.proposalsBefore]];
+        }
+        backend.readOn.push(args.conflictsBefore!);
+        return [key, backend.laterReads[args.conflictsBefore!]];
       }),
     ),
   usePaginatedQuery: (_reference: unknown, args: { sourceId: string }) => {
@@ -74,8 +90,9 @@ function read(
   cards: readonly unknown[],
   next: number | null = null,
   notShown = { proposals: 0, atLeast: false },
+  proposalsNext: number | null = null,
 ): unknown {
-  return { cards, next, notShown };
+  return { cards, next, notShown, proposalsNext };
 }
 
 /** Two linked sources, the second left out when the employee was deployed. */
@@ -220,6 +237,8 @@ afterEach((): void => {
   backend.results = {};
   backend.laterReads = {};
   backend.readOn = [];
+  backend.proposalReads = {};
+  backend.readOnProposals = [];
   document.body.replaceChildren();
 });
 
@@ -407,6 +426,119 @@ describe('DocumentationView', () => {
     const all = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(all.container.textContent).not.toContain('not shown');
     all.unmount();
+  });
+
+  // D-10's read-more: past twenty proposals the tab drew no more until the twenty were answered.
+  it('draws the next proposals only when Show more is pressed, and offers the rest after them', async () => {
+    populated();
+    const proposals = (from: number, count: number) =>
+      Array.from({ length: count }, (_unused, n) => ({
+        ...RELATIONS[0],
+        _id: `proposal-${from + n}`,
+      }));
+    backend.queries['docRelations:listOpen'] = read(
+      proposals(0, 20),
+      null,
+      { proposals: 25, atLeast: false },
+      900,
+    );
+    backend.proposalReads = {
+      900: read(proposals(20, 20), null, { proposals: 5, atLeast: false }, 800),
+      800: read(proposals(40, 5)),
+    };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const cards = (): number =>
+      (view.container.textContent ?? '').split('These two look like versions of the same runbook')
+        .length - 1;
+    expect(cards()).toBe(20);
+    expect(backend.readOnProposals).toEqual([]);
+    await press(view.container, 'Show 20 more');
+    expect(cards()).toBe(40);
+    expect([...new Set(backend.readOnProposals)]).toEqual([900]);
+    expect(view.container.textContent).toContain(
+      'Showing the newest 40 relations to answer, and 5 more not shown',
+    );
+    await press(view.container, 'Show 5 more');
+    expect(cards()).toBe(45);
+    expect([...new Set(backend.readOnProposals)]).toEqual([900, 800]);
+    expect(view.container.textContent).not.toContain('not shown');
+    expect(view.container.querySelector('button')?.textContent).not.toMatch(/^Show \d+ more$/);
+    expect(
+      [...view.container.querySelectorAll('button')].some((button) =>
+        /^Show (\d+ )?more$/.test(button.textContent ?? ''),
+      ),
+    ).toBe(false);
+    view.unmount();
+  });
+
+  // 18-C's F3 (with its C-H: a read's `next` is the last conflict it drew): a later read whose
+  // cards change moves its `next`, and the reads chained after it went on from the old one, so the
+  // tab repeated or dropped a card.
+  it('ends the chain at a later read whose next is no longer the cursor after it, and goes on from the new next (18-C’s F3)', () => {
+    populated();
+    const conflict = (id: string, heading: string) => ({
+      ...RELATIONS[1],
+      _id: id,
+      disagreement: { heading, figures: { from: '10,000', to: '5,000' } },
+    });
+    backend.queries['docRelations:listOpen'] = read([RELATIONS[0]], 500);
+    backend.laterReads = {
+      500: read([conflict('c-a', 'Alpha')], 200),
+      200: read([conflict('c-b', 'Bravo')], 100),
+      100: read([conflict('c-c', 'Charlie')]),
+    };
+    const node = () => asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' });
+    const view = mount(node());
+    const headings = (): string[] =>
+      ['Alpha', 'Bravo', 'Charlie', 'Delta'].filter((heading) =>
+        (view.container.textContent ?? '').includes(`under “${heading}”`),
+      );
+    expect(headings()).toEqual(['Alpha', 'Bravo', 'Charlie']);
+    // A conflict in the first later read's range stands again, so that read now stops earlier (its
+    // last card drawn, C-H): the card between its new stop and the old one is read from there,
+    // and the read from the old cursor goes.
+    backend.laterReads = {
+      ...backend.laterReads,
+      500: read([conflict('c-a', 'Alpha')], 350),
+      350: read([conflict('c-d', 'Delta')], 200),
+    };
+    act((): void => view.root.render(node()));
+    expect(headings()).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta']);
+    // Each card once.
+    for (const heading of ['Alpha', 'Bravo', 'Charlie', 'Delta']) {
+      expect((view.container.textContent ?? '').split(`under “${heading}”`), heading).toHaveLength(
+        2,
+      );
+    }
+    expect(backend.readOn).toContain(350);
+    view.unmount();
+  });
+
+  it('says when the next proposals could not be read, and reads them again on Try again (the second pass)', async () => {
+    populated();
+    const proposals = (from: number, count: number) =>
+      Array.from({ length: count }, (_unused, n) => ({
+        ...RELATIONS[0],
+        _id: `proposal-${from + n}`,
+      }));
+    backend.queries['docRelations:listOpen'] = read(
+      proposals(0, 20),
+      null,
+      { proposals: 5, atLeast: false },
+      900,
+    );
+    backend.proposalReads = { 900: new Error('the read failed') };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    await press(view.container, 'Show 5 more');
+    expect(view.container.textContent).toContain('The next relations could not be read.');
+    backend.proposalReads = { 900: read(proposals(20, 5)) };
+    await press(view.container, 'Try again');
+    expect(backend.readOnProposals.filter((before) => before === 900).length).toBeGreaterThan(1);
+    expect(
+      (view.container.textContent ?? '').split('These two look like versions of the same runbook'),
+    ).toHaveLength(26);
+    expect(view.container.textContent).not.toContain('The next relations could not be read.');
+    view.unmount();
   });
 
   it('reads no further once the cards hold as many confirmed conflicts as one read gives', () => {

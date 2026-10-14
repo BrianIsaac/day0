@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server';
 import { getDocumentSize, v, type Infer, type ObjectType } from 'convex/values';
 import type { QueryCtx } from './_generated/server';
 import type { Doc } from './_generated/dataModel';
@@ -8,6 +9,7 @@ import { isEvaluationAgent } from './metrics';
 import { incomingTransfersOf } from './managerTransfers';
 import { OPEN_WORK_STATES, PARKED_WORK_STATES, ROW_BYTES_AT_MOST } from './workLoop';
 import { slackMentionIds, type ListedWorkItem } from '../src/work/item-display';
+import { NEEDS_YOU_LIMIT } from '../src/metrics/needs-you-pages';
 import {
   longestWaitFirst,
   needsYouEntryValidator,
@@ -38,11 +40,13 @@ export const WORK_LIST_LIMIT = 300;
  * an unjudged one as many as a page of intake. A row that finished, was cancelled or was skipped is
  * listed only among the newest. Slots are held to the work-in-progress cap, so their bound is never
  * reached; the bounds keep the read near the 300 rows it was, with their outputs (the second pass).
+ * The stopped rows are read first, within {@link STOPPED_ROWS_BYTES}, so open and parked rows that
+ * hold the bound cannot starve the rows Needs you links to (W17-R22).
  */
 const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'], number]> = [
+  ['failed', 25],
   ...OPEN_WORK_STATES.map((state) => [state, 100] as const),
   ...PARKED_WORK_STATES.map((state) => [state, 100] as const),
-  ['failed', 25],
   ['discovered', 50],
 ];
 
@@ -53,6 +57,14 @@ const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'],
  */
 export const WORK_LIST_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Of {@link WORK_LIST_BYTES}, the most the stopped rows' read may take, so the open and parked
+ * rows read after it keep about the other half (a read takes one row at the least, so the share may
+ * run past its half by one row): Needs you links to both, and neither may starve the other
+ * (W17-R22). A stopped row carries its run's output and can be heavy; an open one rarely is.
+ */
+export const STOPPED_ROWS_BYTES = WORK_LIST_BYTES / 2;
+
 /** One read of an employee's work items, newest first: those created before a time, at most a count. */
 type NewestBefore = (before: number | undefined, count: number) => Promise<Doc<'workItems'>[]>;
 
@@ -61,11 +73,17 @@ interface ListReader {
   /**
    * Rows newest first, a few at a time and never more than fit the room left at a document's
    * largest size, so the bound holds whatever a row weighs; the read ends at its count, at the
-   * index's end or with the room.
+   * index's end or with the room, or with `share` bytes when it is given.
    */
-  readonly take: (newestBefore: NewestBefore, limit: number) => Promise<Doc<'workItems'>[]>;
+  readonly take: (
+    newestBefore: NewestBefore,
+    limit: number,
+    share?: number,
+  ) => Promise<Doc<'workItems'>[]>;
   /** The bytes the list may still read. */
   readonly room: () => number;
+  /** Whether a read ended with the room (or its share) while rows of its kind may be left. */
+  readonly cut: () => boolean;
 }
 
 /**
@@ -74,17 +92,29 @@ interface ListReader {
  */
 function listReader(): ListReader {
   let room = WORK_LIST_BYTES;
+  let cut = false;
   return {
     room: () => room,
-    take: async (newestBefore, limit) => {
+    cut: () => cut,
+    take: async (newestBefore, limit, share = WORK_LIST_BYTES) => {
       const taken: Doc<'workItems'>[] = [];
-      while (taken.length < limit && room > 0) {
+      let left = Math.min(room, share);
+      while (taken.length < limit) {
+        if (left <= 0) {
+          // The last read came back full, so more rows of its kind may wait past the room.
+          cut = true;
+          break;
+        }
         const count = Math.min(
           limit - taken.length,
-          Math.max(1, Math.floor(room / ROW_BYTES_AT_MOST)),
+          Math.max(1, Math.floor(left / ROW_BYTES_AT_MOST)),
         );
         const rows = await newestBefore(taken.at(-1)?._creationTime, count);
-        for (const row of rows) room -= getDocumentSize(row);
+        for (const row of rows) {
+          const size = getDocumentSize(row);
+          room -= size;
+          left -= size;
+        }
         taken.push(...rows);
         if (rows.length < count) break;
       }
@@ -93,19 +123,28 @@ function listReader(): ListReader {
   };
 }
 
+/**
+ * One employee's Work tab list: its rows, and whether the bounds left some of its rows out (the
+ * oldest of them, which the owner's export still holds; W17-R22), so the tab can say so.
+ */
+export interface WorkList {
+  readonly items: ListedWorkItem[];
+  readonly cut: boolean;
+}
+
 /** What `work.listForAgent` takes. */
 export const listForAgentArgs = { agentId: v.id('agents') };
 
 /**
  * One employee's work items for its Work tab, the unfinished first and then the newest, within
- * {@link WORK_LIST_BYTES}, each with its people's names: the body of `work.listForAgent`, which
- * guards the employee first.
+ * {@link WORK_LIST_BYTES}, each with its people's names, and whether the bounds left rows out: the
+ * body of `work.listForAgent`, which guards the employee first.
  */
 export async function listForAgentInTransaction(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   args: ObjectType<typeof listForAgentArgs>,
-): Promise<ListedWorkItem[]> {
+): Promise<WorkList> {
   const reader = listReader();
   // One after another, not at once: each read is given what the reads before it left.
   const open: Doc<'workItems'>[] = [];
@@ -122,24 +161,29 @@ export async function listForAgentInTransaction(
             .order('desc')
             .take(count),
         limit,
+        state === 'failed' ? STOPPED_ROWS_BYTES : undefined,
       )),
     );
   }
   const newest =
     reader.room() > 0
-      ? (
-          await ctx.db
-            .query('workItems')
-            .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-            .order('desc')
-            .paginate({
-              numItems: WORK_LIST_LIMIT,
-              cursor: null,
-              maximumBytesRead: reader.room(),
-            })
-        ).page
-      : [];
-  const byId = new Map([...newest, ...open].map((row) => [row._id, row]));
+      ? await ctx.db
+          .query('workItems')
+          .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
+          .order('desc')
+          .paginate({
+            // One past the limit, so a full page says whether more rows wait behind it whatever
+            // the backend answers for `isDone` at exactly the limit.
+            numItems: WORK_LIST_LIMIT + 1,
+            cursor: null,
+            maximumBytesRead: reader.room(),
+          })
+      : undefined;
+  // With no room left for the newest read, the finished rows are the ones left out.
+  const newestRows = newest?.page.slice(0, WORK_LIST_LIMIT) ?? [];
+  const cut =
+    reader.cut() || newest === undefined || newest.page.length > WORK_LIST_LIMIT || !newest.isDone;
+  const byId = new Map([...newestRows, ...open].map((row) => [row._id, row]));
   const items = [...byId.values()].sort((left, right) =>
     left.state === right.state
       ? right._creationTime - left._creationTime
@@ -147,7 +191,7 @@ export async function listForAgentInTransaction(
         ? 1
         : -1,
   );
-  return await withRequesterNames(ctx, agent, items);
+  return { items: await withRequesterNames(ctx, agent, items), cut };
 }
 
 /**
@@ -207,14 +251,11 @@ async function withRequesterNames(
  * ordered by how long it has waited.
  */
 
-/** How many of the owner's agent rows the inbox reads to find its employees, as the roster does. */
-const NEEDS_YOU_SCAN_LIMIT = 100;
-
-/** The most employees the inbox covers, the roster's twenty. */
+/** The most of the owner's agent rows one page of the inbox reads, the roster's twenty. */
 const NEEDS_YOU_EMPLOYEE_LIMIT = 20;
 
-/** The most entries the inbox returns; `total` says how many there are. */
-const NEEDS_YOU_LIMIT = 50;
+/** What `work.needsYou` takes: where a page starts. With none, the first page, as before 0.22.0. */
+export const needsYouArgs = { paginationOpts: v.optional(paginationOptsValidator) };
 
 /** What `work.needsYou` returns: its return validator. */
 export const needsYouValidator = v.object({
@@ -222,32 +263,43 @@ export const needsYouValidator = v.object({
   total: v.number(),
   /** How many entries each employee has, all of them counted, not only the ones returned. */
   waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
+  /** Whether this page reached the owner's last employee (wave 18, 18-F). */
+  isDone: v.boolean(),
+  /** Where the next page starts. */
+  continueCursor: v.string(),
 });
 
 /**
- * Everything waiting on the caller across their employees, and every handover naming their
- * address, longest wait first: the body of `work.needsYou`, which refuses a caller with no
- * identity first.
+ * Everything waiting on the caller across one page of their employees, newest first, and on the
+ * first page every handover naming their address, longest wait first: the body of
+ * `work.needsYou`, which refuses a caller with no identity first. The home reads every page and
+ * puts them together (`inboxOfPages`), so the inbox reaches every employee and not the newest
+ * twenty (wave 18, 18-F); a page loaded before 0.22.0 asks with no cursor and reads the first.
  */
 export async function needsYouInTransaction(
   ctx: QueryCtx,
   caller: Caller,
+  args: ObjectType<typeof needsYouArgs>,
 ): Promise<Infer<typeof needsYouValidator>> {
   // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
-  if (caller.ownerKey === '') return { entries: [], total: 0, waitingByEmployee: [] };
-  const employees = (
-    await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
-      .order('desc')
-      .take(NEEDS_YOU_SCAN_LIMIT)
-  )
-    .filter((agent) => !isEvaluationAgent(agent))
-    .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
+  if (caller.ownerKey === '') {
+    return { entries: [], total: 0, waitingByEmployee: [], isDone: true, continueCursor: '' };
+  }
+  const paging = args.paginationOpts ?? { cursor: null, numItems: NEEDS_YOU_EMPLOYEE_LIMIT };
+  const read = await ctx.db
+    .query('agents')
+    .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
+    .order('desc')
+    .paginate({
+      cursor: paging.cursor,
+      numItems: Math.min(paging.numItems, NEEDS_YOU_EMPLOYEE_LIMIT),
+    });
+  const employees = read.page.filter((agent) => !isEvaluationAgent(agent));
   const now = Date.now();
   const [perEmployee, incoming] = await Promise.all([
     Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
-    incomingTransfersOf(ctx, caller, now),
+    // The handovers once, on the first page: no employee's page lists one.
+    paging.cursor === null ? incomingTransfersOf(ctx, caller, now) : [],
   ]);
   const waiting = perEmployee.flat().sort(longestWaitFirst);
   // No employee's page lists a handover, so every one stays in the entries
@@ -264,6 +316,8 @@ export async function needsYouInTransaction(
       agentId: agent._id,
       waiting: perEmployee[index]?.length ?? 0,
     })),
+    isDone: read.isDone,
+    continueCursor: read.continueCursor,
   };
 }
 

@@ -145,7 +145,8 @@ export async function storedPage(
  * @returns How many relations the measure proposed.
  */
 export async function measure(harness: Harness, source: Source, ref: string): Promise<number> {
-  const { proposed } = await harness.mutation(internal.docRelations.measurePage, {
+  // A pair a transaction since D-12 (a): the measuring's action, as a step measures one page.
+  const { proposed } = await harness.action(internal.docSyncActions.measurePage, {
     sourceId: source.sourceId,
     syncRunId: source.runId,
     ref,

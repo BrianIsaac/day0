@@ -70,12 +70,13 @@ describe('pnpm start, run (wave 17, 17-P)', (): void => {
   function start(
     envText: string,
     path: string,
+    shell: Readonly<Record<string, string>> = {},
   ): { status: number | null; out: string; err: string } {
     writeFileSync(join(directory, '.env.local'), envText, 'utf8');
     const ran = spawnSync(process.execPath, [TSX, join(ROOT, 'scripts/start.ts')], {
       cwd: directory,
       encoding: 'utf8',
-      env: { PATH: path, HOME: directory, NODE_ENV: 'test' },
+      env: { PATH: path, HOME: directory, NODE_ENV: 'test', ...shell },
       timeout: 60_000,
     });
     return { status: ran.status, out: ran.stdout, err: ran.stderr };
@@ -96,6 +97,28 @@ describe('pnpm start, run (wave 17, 17-P)', (): void => {
     );
     expect(ran.out).not.toContain('hunter2');
     expect(ran.out).not.toContain('go out through the proxy');
+  });
+
+  it('starts Next with the file’s proxy and the warning quieted, never the shell’s, and says so (D-9 (a))', (): void => {
+    const shown = join(directory, 'bin-env');
+    mkdirSync(shown, { recursive: true });
+    writeFileSync(
+      join(shown, 'next'),
+      '#!/bin/sh\necho "next PROXY=$HTTPS_PROXY OPTIONS=$NODE_OPTIONS"\nexit 7\n',
+      { mode: 0o755 },
+    );
+    const proxied = start('HTTPS_PROXY=http://proxy.acme.test:3128\n', shown, {
+      HTTPS_PROXY: 'http://corp-proxy.acme.test:8080',
+    });
+    expect(proxied.out).toContain(
+      'next PROXY=http://proxy.acme.test:3128 OPTIONS=--disable-warning=UNDICI-EHPA',
+    );
+    expect(proxied.out).toContain(
+      'The shell names a proxy (HTTPS_PROXY) that .env.local does not. Day0 reads .env.local ' +
+        'only, so it goes out through the proxy at proxy.acme.test:3128',
+    );
+    const direct = start('', shown, { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080' });
+    expect(direct.out).toContain('next PROXY= OPTIONS=\n');
   });
 
   it('says so in one line when Next is not there to start, and starts nothing', (): void => {
@@ -131,6 +154,8 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
       NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
       NODE_USE_ENV_PROXY: '1',
+      // Re-taken (W17-R28): the switch's warning is quieted wherever the switch is on.
+      NODE_OPTIONS: '--disable-warning=UNDICI-EHPA',
     });
   });
 
@@ -140,7 +165,7 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
       'NO_PROXY="day0.acme.test"',
       '',
     ].join('\r\n');
-    expect(startRefusal({}, envText, 'v22.23.2')).toBeUndefined();
+    expect(startRefusal(envText, 'v22.23.2')).toBeUndefined();
     expect(startEnvironment({ PATH: '/usr/bin' }, envText, '3000')).toMatchObject({
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
       NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
@@ -148,26 +173,51 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
     });
   });
 
-  it('lets the shell name the proxy over the file', (): void => {
+  // Re-taken (wave 18, D-9 (a); W17-R25): the shell's proxy named over the file's until 0.22.0,
+  // while `pnpm sync:env` read the file alone. The file is the one place now.
+  it('never takes the shell’s proxy: the file’s, or none, and the shell’s marked by name', (): void => {
     expect(
       startEnvironment(
         { HTTPS_PROXY: 'http://other.acme.test:8080' },
         'HTTPS_PROXY=http://proxy.acme.test:3128\n',
         '3000',
       ),
-    ).toMatchObject({ HTTPS_PROXY: 'http://other.acme.test:8080', NODE_USE_ENV_PROXY: '1' });
+    ).toMatchObject({
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NODE_USE_ENV_PROXY: '1',
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+    const direct = startEnvironment(
+      { PATH: '/usr/bin', HTTPS_PROXY: 'http://other.acme.test:8080', NODE_USE_ENV_PROXY: '1' },
+      'DAY0_APP_PORT=3000\n',
+      '3000',
+    );
+    expect(direct).toEqual({
+      PATH: '/usr/bin',
+      PORT: '3000',
+      NEXT_TELEMETRY_DISABLED: '1',
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+  });
+
+  // W17-R28: Node's "[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental" from the app.
+  it('starts Next with the flag that quiets Node’s proxy warning wherever the proxy is on', (): void => {
+    expect(
+      startEnvironment({}, 'HTTPS_PROXY=http://proxy.acme.test:3128\n', '3000').NODE_OPTIONS,
+    ).toBe('--disable-warning=UNDICI-EHPA');
+    expect(startEnvironment({}, undefined, '3000').NODE_OPTIONS).toBeUndefined();
   });
 
   it('refuses to start on a Node that would ignore the proxy and dial out directly', (): void => {
     const envText = 'HTTPS_PROXY=http://proxy.acme.test:3128\n';
-    expect(startRefusal({}, envText, 'v22.23.2')).toBeUndefined();
-    expect(startRefusal({}, undefined, 'v22.12.0')).toBeUndefined();
-    expect(startRefusal({}, envText, 'v22.12.0')).toBe(
+    expect(startRefusal(envText, 'v22.23.2')).toBeUndefined();
+    expect(startRefusal(undefined, 'v22.12.0')).toBeUndefined();
+    expect(startRefusal(envText, 'v22.12.0')).toBe(
       'HTTPS_PROXY names a proxy, and this Node (v22.12.0) does not read one from the ' +
         'environment: Node 22.21.0 or later does. Its requests would go out directly.',
     );
     // An address no client can use would send the app's requests nowhere it can say.
-    expect(startRefusal({}, 'HTTPS_PROXY=proxy.acme.test:3128\n', 'v22.23.2')).toBe(
+    expect(startRefusal('HTTPS_PROXY=proxy.acme.test:3128\n', 'v22.23.2')).toBe(
       'HTTPS_PROXY is not an address a client can use: write it as http://<host>:<port>.',
     );
   });

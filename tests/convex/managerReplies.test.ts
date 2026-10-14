@@ -244,24 +244,70 @@ describe('resolveManagerReply', (): void => {
 });
 
 describe('whichQuestionText', (): void => {
-  it('names each open question by its number and heading, and shows a numbered answer (17-C)', (): void => {
+  const finance = { title: 'Finance escalation', source: 'Finance wiki' };
+  const runbook = { title: 'Pipeline runbook', source: 'Handbook' };
+  const vendors = { title: 'Vendor policy', source: 'Handbook' };
+
+  it('names each open question by its number, its heading and its two pages, and shows a numbered answer (17-C; W17-R13)', (): void => {
     expect(
       whichQuestionText('ab3xyz', [
-        { number: 1, heading: 'Thresholds' },
-        { number: 3, heading: 'Owners' },
+        { number: 1, heading: 'Thresholds', pages: [finance, runbook] },
+        { number: 3, heading: 'Owners', pages: [finance, vendors] },
       ]),
     ).toBe(
-      'Which one? This plan has 2 questions open: answer with its number, for example “answer ab3xyz 3 B”. They are: 1, under “Thresholds”; 3, under “Owners”.',
+      'Which one? This plan has 2 questions open: 1, under “Thresholds”, “Finance escalation” or “Pipeline runbook”; 3, under “Owners”, “Finance escalation” or “Vendor policy”. Answer with its number, for example “answer ab3xyz 3 B”.',
     );
   });
 
-  it('escapes a heading’s own words, so Slack reads no mention or link in them (17-C’s second pass)', (): void => {
+  it('tells apart two questions under one heading by their pages, and two pages of one title by their source or folder (W17-R13)', (): void => {
+    const text = whichQuestionText('ab3xyz', [
+      { number: 1, heading: 'Thresholds', pages: [finance, runbook] },
+      { number: 2, heading: 'Thresholds', pages: [finance, vendors] },
+      {
+        number: 3,
+        heading: 'Review window',
+        pages: [
+          {
+            title: 'Close review window',
+            source: 'Company folder',
+            ref: 'revops/runbooks/close.md',
+          },
+          { title: 'Close review window', source: 'Company folder', ref: 'policies/close.md' },
+        ],
+      },
+      {
+        number: 4,
+        heading: 'Hand-off',
+        pages: [
+          { title: 'Hand-off', source: 'Finance wiki' },
+          { title: 'Hand-off', source: 'Handbook' },
+        ],
+      },
+    ]);
+    expect(text).toContain(
+      '1, under “Thresholds”, “Finance escalation” or “Pipeline runbook”; 2, under “Thresholds”, “Finance escalation” or “Vendor policy”;',
+    );
+    expect(text).toContain(
+      '3, under “Review window”, “Close review window” (revops/runbooks) or “Close review window” (policies);',
+    );
+    expect(text).toContain(
+      '4, under “Hand-off”, “Hand-off” (Finance wiki) or “Hand-off” (Handbook).',
+    );
+  });
+
+  it('escapes a heading’s and a title’s own words, so Slack reads no mention or link in them (17-C’s second pass)', (): void => {
     expect(
       whichQuestionText('ab3xyz', [
-        { number: 1, heading: 'Fees <!channel> & caps' },
-        { number: 2, heading: 'Owners' },
+        {
+          number: 1,
+          heading: 'Fees <!channel> & caps',
+          pages: [{ title: 'Fees <@U1>', source: 'Wiki' }, runbook],
+        },
+        { number: 2, heading: 'Owners', pages: [finance, runbook] },
       ]),
-    ).toContain('1, under “Fees &lt;!channel&gt; &amp; caps”; 2, under “Owners”.');
+    ).toContain(
+      '1, under “Fees &lt;!channel&gt; &amp; caps”, “Fees &lt;@U1&gt;” or “Pipeline runbook”; 2, under “Owners”,',
+    );
   });
 });
 

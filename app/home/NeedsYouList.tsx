@@ -26,13 +26,13 @@ export const NEEDS_YOU_UNREADABLE =
  * Manage tab where Resume is: the decisions stay answerable while it is paused,
  * and the line says so once rather than adding an entry of its own.
  *
- * @param inbox - The inbox as `work.needsYou` returns it, undefined while it loads, and the
- *   `Error` the backend answered with when the read failed.
+ * @param inbox - The inbox, every page of `work.needsYou` put together, undefined while it
+ *   loads, and the `Error` the backend answered with when a read failed.
  * @param now - The page's clock, so the waits age.
  * @param paused - The manager's paused employees; none by default.
- * @param beyond - What waits for each employee the inbox does not reach (it reads the newest
- *   twenty, the roster every one): counted in the last line, since their entries are on their own
- *   pages, and named in a paused employee's line as the inbox's own count is.
+ * @param beyond - What waits for each employee the inbox's last whole read does not reach (one
+ *   deployed since, which the roster lists): counted in the last line, since their entries are on
+ *   their own pages, and named in a paused employee's line as the inbox's own count is.
  */
 export function NeedsYouList({
   inbox: read,

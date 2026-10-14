@@ -355,13 +355,37 @@ export function conflictNoticeText(
   pages: readonly [NamedPageWords, NamedPageWords],
   holds?: readonly string[] | 'every',
 ): string {
-  const held =
-    holds === 'every'
-      ? 'every write of the plan'
-      : holds !== undefined && holds.length > 0
-        ? `its writes to ${SURFACE_LIST.format(holds)}`
-        : 'the steps that may rely on this';
-  return `Since I asked you about this plan, you confirmed that two pages disagree under ${conflictFacts(heading, pages)} Which is right? ${name} holds ${held} until you answer.`;
+  return `Since I asked you about this plan, you confirmed that two pages disagree under ${conflictFacts(heading, pages)} Which is right? ${name} holds ${noticeHeld(holds)} until you answer.`;
+}
+
+/** What a thread's question says the employee holds until the answer. */
+function noticeHeld(holds?: readonly string[] | 'every'): string {
+  return holds === 'every'
+    ? 'every write of the plan'
+    : holds !== undefined && holds.length > 0
+      ? `its writes to ${SURFACE_LIST.format(holds)}`
+      : 'the steps that may rely on this';
+}
+
+/**
+ * The question as the thread of a plan's request asks it again because one of its two pages is
+ * current again (W17-R13; section 7, flagged: the manager confirmed nothing new, so the words
+ * of {@link conflictNoticeText} were wrong): "“{title}” is current again, and it disagrees with
+ * “{other}” under “{heading}”: A, ..., and B, .... Which is right? {name} holds {what is held}
+ * until you answer."
+ *
+ * @param returned - Which of the two pages came back.
+ */
+export function conflictReturnedNoticeText(
+  name: string,
+  heading: string,
+  pages: readonly [NamedPageWords, NamedPageWords],
+  returned: 0 | 1,
+  holds?: readonly string[] | 'every',
+): string {
+  const back = pages[returned];
+  const other = pages[returned === 0 ? 1 : 0];
+  return `“${back.title}” is current again, and it disagrees with “${other.title}” under ${conflictFacts(heading, pages)} Which is right? ${name} holds ${noticeHeld(holds)} until you answer.`;
 }
 
 /**

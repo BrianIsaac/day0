@@ -141,7 +141,7 @@ describe(
       const { agentId, workItemId } = await seed(harness);
       const owner = harness.withIdentity(OWNER);
       const items = async (): Promise<Doc<'workItems'>[]> =>
-        await owner.query(api.work.listForAgent, { agentId });
+        (await owner.query(api.work.listForAgent, { agentId })).items;
       const events = async (type: string): Promise<unknown[]> =>
         (
           await harness.run(

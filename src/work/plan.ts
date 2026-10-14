@@ -176,8 +176,10 @@ export function actionModeInstruction(
     // your approval" sent a run to post a holding message in its place (14-FW's bed), so the
     // plan is told the approval comes after the run has written every write (W14-R48). A step
     // worded "draft a reply ... and hold it for the manager's approval" left Hana's answer a draft
-    // in the manager's DM on the v0.19.0 walk (W19-4, W15-R15).
-    return "Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. Name the approval as the manager reads it, never by the name of a mode.";
+    // in the manager's DM on the v0.19.0 walk (W19-4, W15-R15). A charter clause that routes
+    // replies through the manager still drew "for the manager's approval before Hana sends it"
+    // (finding 8 of the v0.20.0 walk, again on 18-W's bed), so the clause is answered by name.
+    return "Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. A charter clause that has replies drafted for the manager to approve, or sent through the manager first, is met by that one approval: plan the reply as the step that posts it, and leave the approval out of the step's words. Name the approval as the manager reads it, never by the name of a mode.";
   }
   return autonomousActions
     ? 'Autonomous actions are ON: every allowed write lands as emitted; do not say an action is queued or awaiting approval.'

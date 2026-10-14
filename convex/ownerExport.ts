@@ -178,6 +178,8 @@ const RELATION_FIELDS_LEFT_OUT = new Set(['decidedBy']);
 const PAGE_FIELDS_LEFT_OUT = new Set([
   'markdown',
   'contentHash',
+  // A keyed hash of the title before redaction, as `contentHash` is of the page (18-K's F1).
+  'titleHash',
   'marker',
   'decidedBy',
   'ref',

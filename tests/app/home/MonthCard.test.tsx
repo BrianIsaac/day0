@@ -98,7 +98,9 @@ describe('MonthCard', (): void => {
       />,
     );
     expect(html).toContain('<dl');
-    expect(html).toContain('A busy month counts its latest hundred landings per employee here.');
+    // Re-pinned for wave 18 (18-F): the floor is the latest hundred, or fewer where their runs'
+    // outputs pass what one read of the month holds, so the line names no number.
+    expect(html).toContain('A busy month counts only its latest landings per employee here.');
     expect(
       renderToStaticMarkup(<MonthCard roster={[]} figures={null} waiting={0} now={NOW} />),
     ).not.toContain('<dl');
