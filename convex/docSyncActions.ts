@@ -740,6 +740,13 @@ export const syncBatch = internalAction({
       // gives is kept with no body read. A page whose stored text holds a value the owner stored
       // since it was redacted is not offered, so it is read and redacted again.
       const storedByRevision = new Map<string, StoredForRevision>();
+      // A stored title's keyed hash goes to the reader with the means to take a listed title's,
+      // never the key itself (18-X): a page whose stored title is redacted is kept by it.
+      const titleKey = pageHashKey(process.env.DAY0_CREDENTIAL_KEY);
+      const hashTitle =
+        titleKey === undefined
+          ? undefined
+          : (title: string): string => pageTitleHash(title, titleKey, source.userId);
       const storedRevisions: StoredRevisions = async (refs) => {
         const rows: StoredForRevision[] = await ctx.runQuery(internal.docPages.storedForRevision, {
           sourceId: source._id,
@@ -758,6 +765,9 @@ export const syncBatch = internalAction({
             revision: row.sourceRevision,
             title: row.title,
             ...(row.url !== undefined ? { url: row.url } : {}),
+            ...(row.titleHash !== undefined && hashTitle !== undefined
+              ? { titleHash: row.titleHash, hashTitle }
+              : {}),
           });
         }
         return revisions;

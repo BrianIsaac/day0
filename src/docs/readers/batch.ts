@@ -36,6 +36,17 @@ export interface StoredMark {
   readonly title: string;
   /** Its stored address, where it has one. */
   readonly url?: string;
+  /**
+   * The keyed hash of the title its listing gave when it was stored (`docPages.titleHash`; wave
+   * 18, 18-D), where the sync holds one and the deployment's key: a title holding a value the
+   * redaction takes out is stored redacted, and only this says the listing still gives it.
+   */
+  readonly titleHash?: string;
+  /**
+   * The same keyed hash of a title as a listing gives it now (`pageTitleHash`), given with
+   * `titleHash`: the sync's, holding the key and the owner the reader never reads.
+   */
+  readonly hashTitle?: (title: string) => string;
 }
 
 /**

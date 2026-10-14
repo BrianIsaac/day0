@@ -18,6 +18,7 @@ import {
   type StoredRevisions,
   type UnreadPage,
 } from '../../../src/docs/readers/batch';
+import { pageTitleHash } from '../../../src/docs/content-hash';
 import { markdownPageTitle } from '../../../src/docs/readers/folder';
 import type { DocPage, DocSourceRecord } from '../../../src/docs/types';
 
@@ -26,6 +27,33 @@ export const SYNC_BATCH = 25;
 
 /** What a source's pages were stored with, by ref. */
 export type StoredMarks = Map<string, StoredMark>;
+
+/** The deployment's key and the owner a test's stored title hashes are keyed with. */
+const TITLE_KEY = Buffer.alloc(32, 9).toString('base64');
+const TITLE_OWNER = 'owner-readers';
+
+/** The sync's means of taking a listed title's keyed hash, as it hands it to a reader (18-X). */
+export const hashTitle = (title: string): string => pageTitleHash(title, TITLE_KEY, TITLE_OWNER);
+
+/**
+ * Store a page's title as the sync does where the title holds a value its redaction takes out
+ * (17-X's F4 residual; wave 18, 18-D): the stored title redacted, and the keyed hash of the title
+ * its listing gave beside it, with the sync's means of taking a listed title's.
+ *
+ * @param marks - What earlier reads stored.
+ * @param ref - The page, stored already under the title its listing gave.
+ * @param redacted - The title as the store keeps it once redacted.
+ * @throws Error when no page of that ref is stored.
+ */
+export function storeRedactedTitle(
+  marks: StoredMarks,
+  ref: string,
+  redacted = 'Rotate the <credential: api key, stored> key',
+): void {
+  const mark = marks.get(ref);
+  if (mark === undefined) throw new Error(`no page ${ref} is stored`);
+  marks.set(ref, { ...mark, title: redacted, titleHash: hashTitle(mark.title), hashTitle });
+}
 
 /** What one whole read of a source gave. */
 export interface WholeRead {

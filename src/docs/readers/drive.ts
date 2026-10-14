@@ -50,7 +50,7 @@ import {
   webPageInPlaceOf,
 } from './provider-http';
 import { BatchToken, issuedToken, type IssuedToken } from './reader-token';
-import { storedPageTitle } from './stored-title';
+import { holdsListedTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** The provider's name in a sentence. */
@@ -501,8 +501,8 @@ function documentAddress(file: unknown): string | undefined {
  * A listed document kept as stored, or undefined for one to export or download.
  *
  * It is kept when the sync stored it at the `version` its listing gives, under the title its
- * listing gives (as the store writes a title, `storedPageTitle`) and the address its listing
- * gives: a move to the bin that leaves the version is kept and marked
+ * listing gives (`holdsListedTitle`: by its keyed hash, else as the store writes it) and at the
+ * address its listing gives: a move to the bin that leaves the version is kept and marked
  * archived. A listing that gives no version for a file, or does not say whether it is in the bin
  * (which a kept page's status is read from), has it read as before.
  *
@@ -515,7 +515,7 @@ function keptFile(file: unknown, id: string, mark: StoredMark | undefined): Kept
   if (typeof version !== 'string' && typeof version !== 'number') return undefined;
   if (typeof trashed !== 'boolean') return undefined;
   if (mark.revision !== String(version)) return undefined;
-  if (mark.title !== storedPageTitle(documentTitle(file))) return undefined;
+  if (!holdsListedTitle(mark, documentTitle(file))) return undefined;
   if (mark.url !== documentAddress(file)) return undefined;
   return {
     ref: id,

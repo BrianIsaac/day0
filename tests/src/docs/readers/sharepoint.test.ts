@@ -17,7 +17,12 @@ import {
 } from '../../../fixtures/readers/fake';
 import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
-import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
+import {
+  readWhole,
+  storedIn,
+  storeRedactedTitle,
+  type StoredMarks,
+} from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -765,6 +770,24 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     expect(again.read).toEqual([]);
     expect(again.kept).toHaveLength(30);
     expect(library.counts().body).toBe(0);
+  });
+
+  it('keeps a site page whose stored title is redacted by its listed title’s keyed hash, and reads it once renamed (wave 18, 18-X)', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30, sitePages: 5 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    // The title held a value the sync redacts: stored redacted, its listed form's hash beside it.
+    storeRedactedTitle(marks, pageRef(27));
+    library.reset();
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(30);
+    expect(library.counts().body).toBe(0);
+
+    library.rename(27, 'Rotate the payroll key');
+    const renamed = await readWhole(reader, site, SECRET, marks);
+    expect(renamed.read.map((page) => page.ref)).toEqual([pageRef(27)]);
   });
 
   it('keeps a Word document whose file name the store writes otherwise (the second pass)', async (): Promise<void> => {

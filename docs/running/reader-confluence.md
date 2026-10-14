@@ -34,17 +34,19 @@ other for a space, not both.
 
 ## What a read asks of Confluence
 
-day0 lists the space at every read, twenty-five pages a request, without the pages' text, and
-asks for a page's text only when its listing says it changed since day0 last read it: its
-version number moved, or its title or address did. A read that finds nothing changed therefore
-asks for no page's text. On **Cloud** the pages of one listing that changed are asked for
-together, by their ids, in one request; on **Data Center** each page that changed is asked for by
-its id, a request a page. One exception: a page whose title holds a value day0 takes out of what
-it stores (a password written into a title) is asked for at every read, because the title it was
-stored under is no longer the one its listing gives. Another: a page with no text under its
-title, such as a parent page that holds only a children or include macro, is asked for at every
-read and then kept by its text, since a listing's version is kept only for a page with text to
-keep.
+day0 lists the space at every read, twenty-five pages a request, without the pages' text, and asks
+for a page's text only when its listing says it changed since day0 last read it: its version number
+moved, or its title or address did. A read that finds nothing changed therefore asks for no page's
+text. On **Cloud** the pages of one listing that changed are asked for together, by their ids, in
+one request; on **Data Center** each page that changed is asked for by its id, a request a page. A
+page whose title holds a value day0 takes out of what it stores (a password written into a title) is
+stored under the title with that value taken out, and beside it a fingerprint of the title its
+listing gave, keyed with day0's credential key so it gives nothing of the value away; a later read
+keeps the page by that fingerprint. One exception: such a page is asked for once more after an
+upgrade from 0.21.0 and after the credential key changes, to take its fingerprint again. Another: a
+page with no text under its title, such as a parent page that holds only a children or include
+macro, is asked for at every read and then kept by its text, since a listing's version is kept only
+for a page with text to keep.
 
 Counted on the test doubles of Confluence that day0's own tests use, not on a site. The bed is a
 running day0 in real mode reading a space of 250 pages; the thousand-page figures are the same

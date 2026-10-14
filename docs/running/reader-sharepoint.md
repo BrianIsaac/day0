@@ -26,15 +26,18 @@ SharePoint.
 
 ## What a read asks of Microsoft
 
-day0 lists the library and the site's pages at every read, twenty-five entries a request, and
-asks for a file or a page only when its listing says it changed since day0 last read it: its
-revision moved, or its name or address did. A read that finds nothing changed therefore asks for
-no file and no page. Each listing asks Graph only for the fields day0 reads (`$select`), so its
-answers are small. One exception: a page whose title holds a value day0 takes out of what it
-stores (a password written into a title) is asked for at every read, because the title it was
-stored under is no longer the one its listing gives. Another: a page with no text under its
-title, such as a site page of image web parts alone, is asked for at every read and then kept by
-its text, since a listing's revision is kept only for a page with text to keep.
+day0 lists the library and the site's pages at every read, twenty-five entries a request, and asks
+for a file or a page only when its listing says it changed since day0 last read it: its revision
+moved, or its name or address did. A read that finds nothing changed therefore asks for no file and
+no page. Each listing asks Graph only for the fields day0 reads (`$select`), so its answers are
+small. A page whose title holds a value day0 takes out of what it stores (a password written into a
+title) is stored under the title with that value taken out, and beside it a fingerprint of the title
+its listing gave, keyed with day0's credential key so it gives nothing of the value away; a later
+read keeps the page by that fingerprint. One exception: such a page is asked for once more after an
+upgrade from 0.21.0 and after the credential key changes, to take its fingerprint again. Another: a
+page with no text under its title, such as a site page of image web parts alone, is asked for at
+every read and then kept by its text, since a listing's revision is kept only for a page with text
+to keep.
 
 Counted on the test double of Graph that day0's own tests use, not on a tenant. The bed is a
 running day0 0.21.0 in real mode reading a library of 240 Markdown files and 10 site pages,

@@ -29,16 +29,18 @@ server** kind). Use one or the other for a folder, not both.
 ## What a read asks of Google
 
 day0 lists the folder at every read, twenty-five files a request, and exports or downloads a
-document only when its listing says it changed since day0 last read it: its version moved, or
-its name or address did. A read that finds nothing changed therefore exports and downloads
-nothing. Google moves a file's version with every change on its servers, among them one nobody
-sees in the text (a new share, a comment), so a document is read again more often than its text
-changes and never less often. One exception: a document whose name holds a value day0 takes out
-of what it stores (a password written into a name) is read at every read of the folder, because
-the name it was stored under is no longer the one its listing gives. Another: a page with no
-text under its title, such as a document that holds a title and images alone, is asked for at
-every read and then kept by its text, since a listing's version is kept only for a page with text
-to keep.
+document only when its listing says it changed since day0 last read it: its version moved, or its
+name or address did. A read that finds nothing changed therefore exports and downloads nothing.
+Google moves a file's version with every change on its servers, among them one nobody sees in the
+text (a new share, a comment), so a document is read again more often than its text changes and
+never less often. A document whose name holds a value day0 takes out of what it stores (a password
+written into a name) is stored under the name with that value taken out, and beside it a fingerprint
+of the name its listing gave, keyed with day0's credential key so it gives nothing of the value
+away; a later read keeps the document by that fingerprint. One exception: such a document is read
+once more after an upgrade from 0.21.0 and after the credential key changes, to take its fingerprint
+again. Another: a page with no text under its title, such as a document that holds a title and
+images alone, is asked for at every read and then kept by its text, since a listing's version is
+kept only for a page with text to keep.
 
 Counted on the test double of the Drive API that day0's own tests use, not on a project. The bed
 is a running day0 0.21.0 in real mode reading a folder of 250 Google Docs, counted on 13 October

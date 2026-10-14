@@ -46,6 +46,7 @@ import { credentialSourceRef } from '../../src/docs/credential-ref';
 import { pageTitleHash } from '../../src/docs/content-hash';
 import { ownerValuesRef } from '../../src/redaction/known-values';
 import { providerFake } from '../fixtures/readers/fake';
+import { libraryFake } from '../fixtures/readers/library';
 import { temporaryDirectories } from '../setup/temporary-directories';
 
 const temporary = temporaryDirectories();
@@ -2843,5 +2844,81 @@ describe('the reader contract by revision at the sync (X-13; W15-R31)', (): void
     expect(second.source?.status).toBe('synced');
     // The run counts the pages kept by their revision among the pages the source holds.
     expect(second.run?.pageCount).toBe(first.run?.pageCount);
+  }, 60_000);
+});
+
+// The readers' half of the title hash (18-X; 17-X's F4 residual): a page whose listed title holds
+// a value the sync redacts is stored under the redacted title, so a reader that compared titles
+// read its body at every sync. The sync hands the stored hash and the means to take a listed
+// title's beside each mark; the reader keeps the page by it.
+describe('a page whose stored title is redacted, kept by its title’s keyed hash (18-X)', (): void => {
+  beforeEach((): void => {
+    vi.useFakeTimers();
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', Buffer.alloc(32, 9).toString('base64'));
+  });
+  afterEach((): void => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('asks Confluence for no body of a page whose title holds a redacted value at the second sync, and stores no secret', async (): Promise<void> => {
+    const secret = token(['lin', 'api'], '_', 'title-reader-0123456789abcdef');
+    const library = libraryFake('confluence-v2', { pages: 5 });
+    library.rename(1, `Rotate ${secret} quarterly`);
+    const reader = new ConfluenceCloudReader({
+      fetch: library.fetch,
+      sleep: async (): Promise<void> => undefined,
+    });
+    const root = temporary('day0-sync-title-hash-');
+    await mkdir(join(root, 'space'));
+    vi.stubEnv('DAY0_DOCS_ROOT', root);
+    const harness = convexTest(schema, allConvexModules());
+    const sourceId = await harness.mutation(internal.docSources.createSource, {
+      userId: 'owner',
+      label: 'Operations wiki',
+      kind: 'folder',
+      locator: 'space',
+    });
+    // The folder source's reads answered by the Confluence Cloud reader, with the sync's marks.
+    vi.spyOn(FolderReader.prototype as DocumentationReader, 'listPageBatch').mockImplementation(
+      async (source, _secret, cursor, limit, stored) =>
+        await reader.listPageBatch(
+          {
+            _id: source._id,
+            kind: 'confluence-v2',
+            label: 'Operations wiki',
+            locator:
+              'https://api.atlassian.com/ex/confluence/1a11d016-8984-4c3e-b9ab-142dd06acb1b/wiki/spaces/OPS',
+          },
+          'fixture-confluence-token',
+          cursor,
+          limit,
+          stored,
+        ),
+    );
+    const sync = async (): Promise<void> => {
+      await harness.action(internal.docSyncActions.syncSource, { sourceId });
+      await harness.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
+    };
+    const pages = async () =>
+      await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+
+    await sync();
+    const first = await pages();
+    expect(first).toHaveLength(5);
+    const titled = first.find((page) => page.title.startsWith('Rotate'));
+    expect(titled?.title).not.toContain(secret);
+    expect(titled?.titleHash).toMatch(/^[0-9a-f]{32}$/);
+
+    library.reset();
+    await sync();
+    // Nothing changed at Confluence: every page kept by its version, the titled one by its hash.
+    expect(library.counts().body).toBe(0);
+    const second = await pages();
+    expect(second.map((page) => [page.ref, page.title, page.titleHash])).toEqual(
+      first.map((page) => [page.ref, page.title, page.titleHash]),
+    );
+    expect(JSON.stringify(second)).not.toContain(secret);
   }, 60_000);
 });

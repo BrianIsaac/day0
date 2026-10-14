@@ -66,7 +66,7 @@ import {
   webPageInPlaceOf,
 } from './provider-http';
 import { BatchToken, issuedToken, type IssuedToken } from './reader-token';
-import { storedPageTitle } from './stored-title';
+import { holdsListedTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** What the reader is given instead of the network, the clock and the timer, for tests. */
@@ -569,7 +569,7 @@ export class SharePointReader implements DocumentationReader {
       mark !== undefined &&
       storedAtFileRevision(mark.revision, item) &&
       mark.url === url &&
-      (extension === 'md' ? url !== undefined : mark.title === storedPageTitle(stem))
+      (extension === 'md' ? url !== undefined : holdsListedTitle(mark, stem))
     ) {
       return { kept: { ref, datedBySource: Number.isFinite(edited) } };
     }
@@ -697,7 +697,7 @@ export class SharePointReader implements DocumentationReader {
       listedTag !== undefined &&
       listedState !== undefined &&
       mark.revision === listedTag &&
-      mark.title === storedPageTitle(title) &&
+      holdsListedTitle(mark, title) &&
       mark.url === listedUrl
     ) {
       const status = sharePointPageStatus(textField(listedState, 'level'));
