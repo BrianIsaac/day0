@@ -1540,6 +1540,70 @@ describe('openByHand and listForAgent', (): void => {
     ).resolves.toMatchObject({ joined: true });
   });
 
+  it('joins a fourth change of a day to the card and asks no judgement, and opens no card after three judgements (D-6 (a); red at the tag: a fourth judgement)', async (): Promise<void> => {
+    // The review's W17-R5 on bed 1: five by-hand changes on Mateo in a day, one card, five
+    // judgements.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness, { name: 'Mateo' });
+    const owner = harness.withIdentity(OWNER);
+    vi.setSystemTime(Date.UTC(2026, 9, 14, 2, 0));
+    const judged = async (): Promise<number> =>
+      (await scheduledAs(harness, 'reorientationActions:propose')).length;
+    const answered = async (cardId: Id<'reorientations'>): Promise<void> => {
+      await harness.mutation(internal.reorientation.writeProposal, {
+        reorientationId: cardId,
+        proposed: { kind: 'none', rationale: 'Nothing needs to change.' },
+        basis: await basisOf(harness, cardId),
+      });
+    };
+    const first = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'By-hand change 1',
+    });
+    const cardId = first.reorientationId!;
+    for (const at of [2, 3]) {
+      await answered(cardId);
+      vi.setSystemTime(Date.now() + 60_000);
+      await expect(
+        owner.mutation(api.reorientationDecisions.openByHand, {
+          agentId,
+          summary: `By-hand change ${at}`,
+        }),
+      ).resolves.toMatchObject({ joined: true, asked: true });
+    }
+    expect(await judged()).toBe(3);
+    await answered(cardId);
+    vi.setSystemTime(Date.now() + 60_000);
+    const fourth = await owner.mutation(api.reorientationDecisions.openByHand, {
+      agentId,
+      summary: 'By-hand change 4',
+    });
+    expect(await judged()).toBe(3);
+    expect(fourth).toEqual({
+      reorientationId: cardId,
+      joined: true,
+      asked: false,
+      onCard: true,
+      limited: true,
+    });
+    const card = await cardOf(harness, cardId);
+    expect(card.triggerSummary).toBe(
+      'By-hand change 1; By-hand change 2; By-hand change 3; By-hand change 4',
+    );
+    // The proposal stands: no judgement asks over the fourth change.
+    expect(card.proposed.kind).toBe('none');
+    // Dismissed, the card's three judgements still count: no fourth card the same day.
+    await owner.mutation(api.reorientationDecisions.dismiss, { reorientationId: cardId });
+    vi.setSystemTime(Date.now() + 60_000);
+    await expect(
+      owner.mutation(api.reorientationDecisions.openByHand, {
+        agentId,
+        summary: 'By-hand change 5',
+      }),
+    ).rejects.toThrow('You have changed Mateo’s cards three times today. Come back tomorrow.');
+    expect(await judged()).toBe(3);
+  });
+
   it('opens a card about a change of role, reaching the whole charter', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);
@@ -1576,11 +1640,13 @@ describe('openByHand and listForAgent', (): void => {
       agentId,
       summary: 'It no longer triages tier-2 asks.',
     });
+    // `limited` is 18-O's: whether the day's three changes kept the join from asking (D-6 (a)).
     expect(second).toEqual({
       reorientationId: first.reorientationId,
       joined: true,
       asked: true,
       onCard: true,
+      limited: false,
     });
     const cards = await cardsOf(harness, agentId);
     expect(cards).toHaveLength(1);
@@ -1622,11 +1688,13 @@ describe('openByHand and listForAgent', (): void => {
       vi.setSystemTime(Date.now() + 60_000);
       return await owner.mutation(api.reorientationDecisions.openByHand, { agentId, summary });
     };
+    // A talk's proposal is never asked over, so the day's count did not stop it (`limited`, D-6 (a)).
     await expect(again('It no longer triages tier-2 asks')).resolves.toEqual({
       reorientationId,
       joined: true,
       asked: false,
       onCard: true,
+      limited: false,
     });
     // The same words typed again are on the card already.
     await expect(again('It no longer triages tier-2 asks')).resolves.toMatchObject({

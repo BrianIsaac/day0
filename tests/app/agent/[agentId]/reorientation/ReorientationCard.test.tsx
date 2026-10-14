@@ -15,6 +15,8 @@ const backend = vi.hoisted(() => ({
   onCard: true,
   /** Whether the join asked the judgement again. */
   asks: true,
+  /** Whether the day's three changes kept the join from asking again (D-6 (a)). */
+  limits: false,
   /**
    * What a mutation does to the queries before it answers, as the backend's own sync does: a
    * query the mutation changed is drawn again before the call's promise settles.
@@ -67,6 +69,7 @@ function answerOf(name: string): unknown {
       joined: backend.joins,
       asked: backend.asks,
       onCard: backend.onCard,
+      limited: backend.limits,
     };
   }
   return null;
@@ -175,6 +178,7 @@ beforeEach((): void => {
   backend.joins = false;
   backend.onCard = true;
   backend.asks = true;
+  backend.limits = false;
   backend.lands = undefined;
   backend.refuses = undefined;
   backend.listeners.clear();
@@ -966,6 +970,12 @@ describe('an address naming a card lands on it once the cards are drawn (16-D’
     // Where the card's proposal stands (the manager's own talk put it there), nothing says otherwise.
     backend.asks = false;
     expect(await typed()).toBe('Added to today’s card.');
+    // A fourth change of the day joins without a judgement, and says so (D-6 (a); section 7).
+    backend.limits = true;
+    expect(await typed()).toBe(
+      'Added to the card. Mira will not work out a new proposal for it until tomorrow: you have changed this card three times today.',
+    );
+    backend.limits = false;
     // A card whose summary is full keeps the words in the record, and the page says where they are.
     backend.onCard = false;
     expect(await typed()).toBe(

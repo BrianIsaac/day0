@@ -11,6 +11,7 @@ import { Field, INPUT_CLASS } from '../../../components/Field';
 import { StatusRegion } from '../../../components/StatusRegion';
 import { useAgentZone, useNow } from '../../../components/time';
 import { useChange } from '../../../components/use-change';
+import { joinedWithoutProposalWords } from '@/agent/reorientation-words';
 import { useEmployee } from '../employee-context';
 import { EmployeeRail } from '../EmployeeRail';
 import { employeeTabHref } from '../employee-tabs';
@@ -53,7 +54,9 @@ function OpenByHand({ name, working }: { name: string; working: ReadonlySet<stri
                   ? `Today’s card has no room for more words, so this change is in ${name}’s record and not on the card.`
                   : opened.asked
                     ? `Added to today’s card. ${name} is working out what to propose over both.`
-                    : 'Added to today’s card.',
+                    : opened.limited
+                      ? joinedWithoutProposalWords(name)
+                      : 'Added to today’s card.',
             refused: 'No card was opened.',
             after: (opened) => {
               setSummary('');

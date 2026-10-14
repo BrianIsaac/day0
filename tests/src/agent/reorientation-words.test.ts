@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
+  byHandChangesWords,
+  joinedWithoutProposalWords,
   closedByHandSummary,
   decidedByHandSummary,
   closingHeldReason,
@@ -353,6 +355,17 @@ describe('the question as the thread of a delivered request asks it (17-C; secti
     expect(conflictNoticeReplyLine('ab3xyz')).toBe(conflictReplyLine('ab3xyz'));
     expect(conflictNoticeReplyLine('ab3xyz', 2)).toBe(
       'This is question 2 of the plan: answer with “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
+    );
+  });
+});
+
+describe('the day’s three by-hand changes (D-6 (a))', (): void => {
+  it('says a fourth change joined without a judgement, and refuses a new card in its own words', (): void => {
+    expect(joinedWithoutProposalWords('Mateo')).toBe(
+      'Added to the card. Mateo will not work out a new proposal for it until tomorrow: you have changed this card three times today.',
+    );
+    expect(byHandChangesWords('Mateo')).toBe(
+      'You have changed Mateo’s cards three times today. Come back tomorrow.',
     );
   });
 });

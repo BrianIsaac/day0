@@ -147,6 +147,22 @@ export function byHandLimitWords(name: string): string {
   return `You have opened three cards for ${name} today. Decide one, or come back tomorrow.`;
 }
 
+/**
+ * Why a by-hand card was refused once the day's three changes were spent on cards already decided
+ * (D-6 (a); flagged with RM24: section 7 drafts the join's line, not this refusal).
+ */
+export function byHandChangesWords(name: string): string {
+  return `You have changed ${name}’s cards three times today. Come back tomorrow.`;
+}
+
+/**
+ * What the by-hand form says of a fourth change of a day joined to the standing card without a new
+ * judgement (D-6 (a); section 7).
+ */
+export function joinedWithoutProposalWords(name: string): string {
+  return `Added to the card. ${name} will not work out a new proposal for it until tomorrow: you have changed this card three times today.`;
+}
+
 /** What an owed check's card says changed (RM34 (a); section 9.1's words). */
 export const CHECK_OWED_SUMMARY = 'Its agreements could not be checked against the amended charter';
 

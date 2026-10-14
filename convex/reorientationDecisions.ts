@@ -38,6 +38,7 @@ import {
   DEFER_DAYS,
   PROPOSAL_CHANGED,
   approvedResultWords,
+  byHandChangesWords,
   byHandLimitWords,
   decidedElsewhereOf,
   proposalFingerprint,
@@ -818,6 +819,36 @@ export const defer = mutation({
 /** The most a by-hand card's summary grows to as later changes of the day join it. */
 const JOINED_SUMMARY_CHARS = 600;
 
+/** The newest card openings and joins of an employee one count of the day's by-hand changes reads. */
+const DAY_CHANGES_READ = 200;
+
+/**
+ * How many changes the manager typed by hand for an employee today, in its zone: each opened a card
+ * or joined one, and each a judgement asked of the model but those a talk or a repeat kept from
+ * asking (D-6 (a), W17-R5). Read from the record's `reorientation.opened` events, newest first to
+ * a bound; a day past the bound counts as spent.
+ */
+async function byHandChangesToday(
+  ctx: MutationCtx,
+  agent: Doc<'agents'>,
+  now: number,
+): Promise<number> {
+  const opened = await ctx.db
+    .query('events')
+    .withIndex('by_agent_type', (q) =>
+      q.eq('agentId', agent._id).eq('type', 'reorientation.opened'),
+    )
+    .order('desc')
+    .take(DAY_CHANGES_READ);
+  if (opened.length === DAY_CHANGES_READ) return BY_HAND_CARDS_A_DAY;
+  const day = dayKey(now, agentZone(agent));
+  return opened.filter(
+    (event) =>
+      (event.payload as { trigger?: unknown } | undefined)?.trigger === 'role-changed' &&
+      dayKey(event.createdAt, agentZone(agent)) === day,
+  ).length;
+}
+
 /** Whether the card's proposal is one a finished talk put there: the manager's own, never reset. */
 async function proposedByTalk(
   ctx: MutationCtx,
@@ -837,9 +868,11 @@ async function proposedByTalk(
  * judgement.
  *
  * @returns The card; whether the change joined one already standing that day; whether the
- *   proposal is asked for again; and whether the typed words are on the card, which a joined
- *   change past the summary's bound is not (the joined event keeps them).
- * @throws ConvexError for an empty summary or one past 300 characters.
+ *   proposal is asked for again; whether the typed words are on the card, which a joined change
+ *   past the summary's bound is not (the joined event keeps them); and whether a change that would
+ *   have asked again did not, since the day's three changes are spent (D-6 (a)).
+ * @throws ConvexError for an empty summary or one past 300 characters, and for a new card once
+ *   three cards, or three changes, were made by hand today.
  */
 export const openByHand = mutation({
   args: { agentId: v.id('agents'), summary: v.string() },
@@ -851,6 +884,7 @@ export const openByHand = mutation({
     joined: boolean;
     asked: boolean;
     onCard: boolean;
+    limited: boolean;
   }> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
     const summary = args.summary.replace(/\s+/g, ' ').trim();
@@ -872,6 +906,10 @@ export const openByHand = mutation({
     if (!standing && today.length >= BY_HAND_CARDS_A_DAY) {
       throw new ConvexError(byHandLimitWords(agent.name));
     }
+    // A join asked again is a judgement too, and counts against the day's three (D-6 (a)): a
+    // change past them joins the standing card without one, and no new card opens.
+    const spent = (await byHandChangesToday(ctx, agent, now)) >= BY_HAND_CARDS_A_DAY;
+    if (!standing && spent) throw new ConvexError(byHandChangesWords(agent.name));
     const triggerKey = `role-changed:${now}`;
     const reorientationId = await openCard(ctx, {
       agentId: args.agentId,
@@ -889,6 +927,7 @@ export const openByHand = mutation({
     let asked = !joined;
     // Whether the typed words are on the card: a joined change past the summary's bound is not.
     let onCard = true;
+    let limited = false;
     if (card !== null && joined) {
       const held = card.triggerSummary.replace(/[.;\s]+$/u, '');
       const said = held.toLowerCase().includes(summary.replace(/[.;\s]+$/u, '').toLowerCase());
@@ -896,12 +935,14 @@ export const openByHand = mutation({
       onCard = said || fits;
       // The proposal is asked again over both only where it is the judgement's own and the card
       // is open: a talk under way finishes in its own, and a finished talk's is the manager's.
-      asked =
+      const askable =
         !said &&
         fits &&
         card.status === 'open' &&
         card.proposed.kind !== 'pending' &&
         !(await proposedByTalk(ctx, card._id));
+      asked = askable && !spent;
+      limited = askable && spent;
       if (!said && fits) {
         await ctx.db.patch(card._id, {
           triggerSummary: `${held}; ${summary}`,
@@ -916,7 +957,7 @@ export const openByHand = mutation({
       // A card still waiting on its first proposal is judged over both by the join itself.
       asked ||= !said && fits && card.status === 'open' && card.proposed.kind === 'pending';
     }
-    return { reorientationId, joined, asked, onCard };
+    return { reorientationId, joined, asked, onCard, limited };
   },
 });
 
