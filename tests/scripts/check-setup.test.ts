@@ -1147,8 +1147,9 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     );
     expect(off.status).toBe('gap');
     expect(off.lines).toContain(
-      ".env.local turns Node's proxy switch off while it names a proxy: Day0's own processes " +
-        'would go out directly. Remove NODE_USE_ENV_PROXY=0 (docs/running/egress.md).',
+      ".env.local turns Node's proxy switch off while it names a proxy: Day0's services (the " +
+        "Slack socket bridge, the backend's Node actions, Nango) would go out directly. Remove " +
+        'NODE_USE_ENV_PROXY=0 (docs/running/egress.md).',
     );
     const plain = wayOutSection(
       { ...REAL, HTTP_PROXY: 'http://proxy.acme.test:3128' },
@@ -1279,6 +1280,24 @@ describe("check:setup: the customer's own hosts against NO_PROXY, as Node reads 
     ).lines;
     expect(lines).toContain(
       'NO_PROXY does not list day0.corp.invalid, so each is asked for through the proxy:',
+    );
+  });
+
+  // The second pass on 18-P: the bed's layout, the app's and the backend's origins on one host by
+  // two ports, named the host twice.
+  it('names a host once where the app and the backend share it on two ports', (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://10.118.247.1:6610',
+        NEXT_PUBLIC_CONVEX_URL: 'https://10.118.247.1:6611',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY lists nothing more, so 10.118.247.1 is asked for through the proxy:',
     );
   });
 

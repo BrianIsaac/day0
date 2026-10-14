@@ -409,7 +409,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
 
   console.log(`Day0 local setup, read from ${envFile}`);
   console.log(
-    '(process environment wins wherever it declares a variable, empty included, but the proxy, read from the file alone)',
+    '(process environment wins wherever it declares a variable, empty included; the proxy is read from the file alone)',
   );
   console.log(`${modeAndRouteLine(v)}\n`);
   for (const section of sections) {
@@ -2120,10 +2120,12 @@ export function wayOutSection(
     const through = own.filter((address) => !keptOutOfProxy(address.href, settings.noProxy));
     if (listed.length > 0) lines.push(`NO_PROXY also keeps out: ${listed.join(', ')}.`);
     if (through.length > 0) {
-      const hosts = through.map((address) => address.hostname);
+      // Each name once: the app's and the backend's origins may share one by two ports.
+      const hosts = [...new Set(through.map((address) => address.hostname))];
+      const verb = hosts.length === 1 ? ' is' : ' are';
       lines.push(
         `${listed.length > 0 ? 'NO_PROXY does not list' : 'NO_PROXY lists nothing more, so'} ` +
-          `${hostList(hosts)}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
+          `${hostList(hosts)}${listed.length > 0 ? ', so each is' : verb} asked for through the proxy:`,
         'list them in NO_PROXY if the proxy does not serve hosts inside your network.',
       );
       // A bare domain above one of them: Node keeps out that name alone (W17-R27).
@@ -2196,8 +2198,9 @@ export function wayOutSection(
     if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
       worsen('gap');
       lines.push(
-        ".env.local turns Node's proxy switch off while it names a proxy: Day0's own processes " +
-          `would go out directly. Remove NODE_USE_ENV_PROXY=${settings.useEnvProxy} (docs/running/egress.md).`,
+        ".env.local turns Node's proxy switch off while it names a proxy: Day0's services (the " +
+          "Slack socket bridge, the backend's Node actions, Nango) would go out directly. Remove " +
+          `NODE_USE_ENV_PROXY=${settings.useEnvProxy} (docs/running/egress.md).`,
       );
     }
     lines.push(
