@@ -101,6 +101,15 @@ export function closedByHandSummary(previousManager: string): string {
   return `A card ${previousManager} opened was closed at the handover`;
 }
 
+/**
+ * What a card the previous manager opened by hand and decided says once a handover moved it
+ * (W17-R4): their typed words are cleared as an undecided card's are, and the card says who
+ * opened it and that it was decided before the handover; its outcome line says what was decided.
+ */
+export function decidedByHandSummary(previousManager: string): string {
+  return `A card ${previousManager} opened and decided before the handover`;
+}
+
 /** The most cards a manager opens by hand for one employee in a day (W16-R35). */
 export const BY_HAND_CARDS_A_DAY = 3;
 

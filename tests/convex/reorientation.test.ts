@@ -928,11 +928,16 @@ describe('moveCardsToOwner: a handover’s move (16-K’s F2)', (): void => {
       status: 'dismissed',
       triggerSummary: 'A card priya@acme.test opened was closed at the handover',
     });
-    // A card Day0 opened says what changed in Day0's own words, and a decided card is the record.
+    // A card Day0 opened says what changed in Day0's own words.
     expect((await cardOf(harness, automatic)).triggerSummary).toBe('A skill is due a re-check');
-    expect((await cardOf(harness, decidedByHand)).triggerSummary).toBe(
-      'Wren took on the weekly digest',
-    );
+    // Re-taken for W17-R4 (reader 1): a by-hand card the previous manager decided kept their typed
+    // sentence under the new manager's Decided, where the undecided one's was cleared; it is
+    // cleared too, and says who opened it and that it was decided before the handover.
+    expect(await cardOf(harness, decidedByHand)).toMatchObject({
+      status: 'applied',
+      userId: 'successor',
+      triggerSummary: 'A card priya@acme.test opened and decided before the handover',
+    });
   });
 
   it('closes a deferred card too, so it holds nothing and reopens nowhere under the new manager (the second pass)', async (): Promise<void> => {

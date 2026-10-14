@@ -41,6 +41,7 @@ import {
   PROPOSAL_DID_NOT_FINISH,
   approvedResultWords,
   closedByHandSummary,
+  decidedByHandSummary,
   conflictNoticeText,
   conflictQuestionText,
   type NamedPageWords,
@@ -830,6 +831,8 @@ export async function moveCardsToOwner(
   },
 ): Promise<void> {
   const { agentId, userId, now } = handover;
+  // The cards this handover closes, which the read of the decided ones then meets again.
+  const closedHere = new Set<Id<'reorientations'>>();
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
     const read = await ctx.db
       .query('reorientations')
@@ -844,7 +847,9 @@ export async function moveCardsToOwner(
     // under the new manager on its date (the second pass).
     const undecided = (STANDING_STATUSES as readonly string[]).includes(status);
     for (const card of cards) {
+      if (closedHere.has(card._id)) continue;
       if (undecided) {
+        closedHere.add(card._id);
         await ctx.db.patch(card._id, {
           userId,
           status: 'dismissed',
@@ -857,8 +862,14 @@ export async function moveCardsToOwner(
             ? { triggerSummary: closedByHandSummary(handover.previousManager) }
             : {}),
         });
-      } else if (card.userId !== userId) {
-        await ctx.db.patch(card._id, { userId });
+      } else if (card.userId !== userId || card.trigger === 'role-changed') {
+        // A decided card opened by hand loses the previous manager's typed words too (W17-R4).
+        await ctx.db.patch(card._id, {
+          userId,
+          ...(card.trigger === 'role-changed'
+            ? { triggerSummary: decidedByHandSummary(handover.previousManager) }
+            : {}),
+        });
       }
     }
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
   closedByHandSummary,
+  decidedByHandSummary,
   closingHeldReason,
   conflictChoiceWords,
   conflictNoticeText,
@@ -192,6 +193,10 @@ describe('a card decided on another employee’s card, and one closed at a hando
   it('says who opened a by-hand card a handover closed, and none of what they typed (D-5’s remainder)', (): void => {
     expect(closedByHandSummary('priya@acme.test')).toBe(
       'A card priya@acme.test opened was closed at the handover',
+    );
+    // W17-R4: one the previous manager decided says so, and none of their words either.
+    expect(decidedByHandSummary('priya@acme.test')).toBe(
+      'A card priya@acme.test opened and decided before the handover',
     );
   });
 });
