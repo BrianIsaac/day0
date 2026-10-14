@@ -6,6 +6,7 @@ import {
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
 } from '../../../src/surfaces/policy';
 import {
+  CONTRACT_REFUSAL_WORDS,
   DROPPED_READ_PREFIX,
   droppedReadRefusal,
   gateRefusalStop,
@@ -211,6 +212,40 @@ describe('a stop on the model’s reply, as the manager reads it (finding 1 of t
   it('leaves the recorded reason as it was: the record and the export keep the call', (): void => {
     expect(isStopped(PIP_STOP)).toBe(true);
     expect(stoppedReason(PIP_STOP)).toBe(PIP_STOP);
+  });
+});
+
+describe('a reply the contract refused after its repair, as the manager reads it (RM39 (b), 17-FW C3)', (): void => {
+  it('reads every phase and mode of the refusal in the manager’s words, never the contract’s issues', (): void => {
+    for (const recorded of [
+      'stopped: executor action contract remained invalid after one repair: procedure-trail action index does not identify the prescribed effect',
+      'stopped: executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures',
+      'dependent executor procedure contract remained invalid after one repair: a procedure-trail row maps to an action index that does not exist',
+    ]) {
+      expect(stopDetail(recorded), recorded).toBe(CONTRACT_REFUSAL_WORDS);
+    }
+  });
+
+  // 17-FW's C3 row, as a real-mode row recorded it at v0.21.0 after the resume ladder.
+  it('reads a row the resume ladder stopped before v0.22.0 the same way, naming no model', (): void => {
+    expect(
+      stopDetail(
+        'stopped: the execution failed 4 times on the model (executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures); Retry runs it again',
+      ),
+    ).toBe(CONTRACT_REFUSAL_WORDS);
+    expect(CONTRACT_REFUSAL_WORDS).toBe(
+      'the model’s reply did not follow Day0’s rules for this skill after one repair. Retry runs it again.',
+    );
+  });
+
+  it('leaves another ladder stop as it reads', (): void => {
+    expect(
+      stopDetail(
+        'stopped: the execution failed 4 times on the model (429 Too Many Requests); Retry runs it again',
+      ),
+    ).toBe(
+      'the execution failed 4 times on the model (429 Too Many Requests); Retry runs it again',
+    );
   });
 });
 
