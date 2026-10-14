@@ -146,13 +146,13 @@ export async function assertDocsComponentReachable(
 export function serverKindHelp(serverKind: string): string {
   if (serverKind === 'notion') {
     return (
-      "Notion's hosted server is sign-in only, so day0 bundles Notion's own server as a " +
+      "Notion's hosted server is sign-in only, so Day0 bundles Notion's own server as a " +
       `component: start it with \`--profile ${DOCS_NOTION_PROFILE}\` and use ` +
       `\`${DOCS_NOTION_LOCATOR}\` as the location.`
     );
   }
   return (
-    'This points at an MCP server you already run. day0 has no component for it - give the ' +
+    'This points at an MCP server you already run. Day0 has no component for it - give the ' +
     'address your server is reachable at from the backend.'
   );
 }

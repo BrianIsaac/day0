@@ -534,7 +534,7 @@ function revisionOf(value: unknown): string | undefined {
  * generation and delete every page after it, so the batch fails instead.
  */
 export const TRUNCATED_CONTINUATION_REASON =
-  'the documentation provider said there were more pages but gave no continuation day0 can follow; the sync stops here rather than delete the pages after it';
+  'the documentation provider said there were more pages but gave no continuation Day0 can follow; the sync stops here rather than delete the pages after it';
 
 /**
  * The reason a Drive walk stops when Drive says its search did not cover

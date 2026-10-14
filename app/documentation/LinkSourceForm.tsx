@@ -319,7 +319,7 @@ export function LinkSourceForm(): React.ReactNode {
         <a href={AUTHOR_GUIDE_URL} target="_blank" rel="noreferrer">
           the documentation author guide
         </a>{' '}
-        describes, so day0 finds each system, address, credential and intake queue on them.
+        describes, so Day0 finds each system, address, credential and intake queue on them.
       </p>
       {/* The handler says its own refusal under the form; nothing is left to reject. */}
       <form onSubmit={(event) => void onSubmit(event)} className="grid gap-4">

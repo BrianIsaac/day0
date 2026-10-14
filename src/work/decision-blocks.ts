@@ -101,7 +101,7 @@ export function decisionRequestBlocks(args: {
           title: plain('Reject this request?'),
           text: plain(
             args.typedCode === false
-              ? 'Day0 will not do it. To say why, reject it in day0 instead.'
+              ? 'Day0 will not do it. To say why, reject it in Day0 instead.'
               : `Day0 will not do it. To say why, reply “reject ${args.id} <reason>” instead.`,
           ),
           confirm: plain('Reject'),

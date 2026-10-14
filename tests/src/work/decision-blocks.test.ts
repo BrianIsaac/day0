@@ -57,7 +57,8 @@ describe('decisionRequestBlocks', (): void => {
     const [actions] = actionsOf(blocks);
     const reject = actions!.elements[1]!;
     expect(reject.confirm!.text.text).toBe(
-      'Day0 will not do it. To say why, reject it in day0 instead.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Day0 will not do it. To say why, reject it in Day0 instead.',
     );
   });
 
@@ -162,7 +163,8 @@ describe('pressFreeText', (): void => {
   it('takes the buttons out of a request sent before 0.21.0, which named the product in lower case (17-C)', (): void => {
     expect(
       pressFreeText(
-        'Decide this.\n\nPress Approve or Reject below, or decide in day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        'Decide this.\n\nPress Approve or Reject below, or decide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',
       ),
     ).toBe(
       'Decide this.\n\nDecide in Day0. Slack does not let you message this app yet, so a typed reply cannot reach it.',

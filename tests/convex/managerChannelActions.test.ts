@@ -372,7 +372,8 @@ describe('the outbound manager-channel action', (): void => {
     ).resolves.toEqual({ sent: true });
     expect(sent).toHaveLength(2);
     expect(JSON.parse(sent[1].body).text).toContain(
-      'was already approved from the day0 dashboard.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'was already approved from the Day0 dashboard.',
     );
     await expect(
       harness.action(internal.managerChannelActions.sendDecisionNotice, {
@@ -979,7 +980,8 @@ describe('Approve and Reject buttons on a decision request (wave 12, 12-M; RM3)'
       .find((block) => block.type === 'actions')
       ?.elements?.find((button) => button.action_id === 'day0.decision.reject');
     expect(reject?.confirm?.text.text).toBe(
-      'Day0 will not do it. To say why, reject it in day0 instead.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Day0 will not do it. To say why, reject it in Day0 instead.',
     );
   });
 
@@ -2120,7 +2122,8 @@ describe('the notes the gate sends for the manager', (): void => {
         'ops worker finished “B”: 1 change landed.',
         '',
         'Still waiting for your decision (2):',
-        '- “Verify the runbook”: decide in day0',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        '- “Verify the runbook”: decide in Day0',
         '- “Close REVOPS-7”: reply “approve ab3xyz” or “reject ab3xyz <reason>”',
       ].join('\n'),
     );

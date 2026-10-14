@@ -450,7 +450,8 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     expect(
       decisionButtonsWords({ available: false, why: 'bridge-down' }, 'Iris (Day0)', false).note,
     ).toContain(
-      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in Day0.',
     );
   });
 
@@ -476,7 +477,8 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
   it('names no typed code for an app that takes no messages, whatever carries the buttons (W12V-7)', (): void => {
     const on = decisionButtonsWords({ available: true }, 'Iris (Day0)', false);
     expect(on.note).toBe(
-      'The Slack socket service last reported a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'The Slack socket service last reported a live connection for Iris (Day0), so each new request to you arrives with Approve and Reject buttons. Slack does not let you message Iris (Day0) yet, so no typed code reaches it: if a press does not get through, decide in Day0.',
     );
     const noToken = decisionButtonsWords(
       { available: false, why: 'no-app-level-token' },
@@ -485,7 +487,8 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
     );
     expect(
       noToken.note.startsWith(
-        'Requests reach you with no buttons and no typed code, so you decide them in day0.',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        'Requests reach you with no buttons and no typed code, so you decide them in Day0.',
       ),
     ).toBe(true);
     const noBridge = decisionButtonsWords(
@@ -494,7 +497,8 @@ describe('where decisions reach the manager, on a Slack card (wave 12, 12-M; RM3
       false,
     );
     expect(noBridge.note).toContain(
-      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'so requests reach you with no buttons, and with no typed code until Iris (Day0) takes messages: decide them in Day0.',
     );
     for (const words of [on, noToken, noBridge]) {
       expect(words.note).not.toMatch(/typed code (only|still decides|alone)/);
@@ -589,7 +593,8 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
           `decision poll failed: Connected Slack surface does not allow ${method}.`,
         ),
       ).toBe(
-        "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in day0 until it does.",
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in Day0 until it does.",
       );
     }
   });
@@ -604,7 +609,8 @@ describe("a failing manager decision poll in the manager's words (W13-R1)", (): 
 describe('what the forget says of the requests the old app sent (W13-R16)', (): void => {
   it('says a request it already sent is no longer decided in its messages, and where to decide it', (): void => {
     expect(forgetDoneWords({ appId: 'A0LEO', appName: 'Leo (Day0)' })).toBe(
-      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in day0.",
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      "Leo (Day0) (Slack app A0LEO) is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in Day0.",
     );
   });
 });

@@ -810,9 +810,9 @@ export function docSourceDependency(row: {
     return `${row.count} ${label} ${plural} - read by the backend itself; no component needed.`;
   }
   if (row.component === 'docs-notion-mcp') {
-    return `${row.count} ${label} ${plural} - needs day0's Notion component (--profile docs-notion).`;
+    return `${row.count} ${label} ${plural} - needs Day0's Notion component (--profile docs-notion).`;
   }
-  return `${row.count} ${label} ${plural} - points at an MCP server you already run; no day0 component needed.`;
+  return `${row.count} ${label} ${plural} - points at an MCP server you already run; no Day0 component needed.`;
 }
 
 /** Interpret the browser switch with the same parser used at provider boundaries. */
@@ -856,7 +856,7 @@ function tokenStoreLines(values: Values, running: boolean): string[] {
   }
   if (!url && running) {
     return [
-      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      'nango-server is running and DAY0_NANGO_URL is unset, so Day0 will not use it.',
       `Set DAY0_NANGO_URL=http://nango-server:3003 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
       'or stop the component.',
     ];
@@ -928,7 +928,7 @@ export function componentsSection(
   } else if (!browserConfigured && browserRunning) {
     status = 'warn';
     lines.push(
-      'playwright-mcp is running and DAY0_BROWSER_MCP_URL is unset, so day0 will not use it.',
+      'playwright-mcp is running and DAY0_BROWSER_MCP_URL is unset, so Day0 will not use it.',
       `Set DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp in ${ENV_FILE} and re-run`,
       '`pnpm sync:env`, or stop the component.',
     );
@@ -953,7 +953,7 @@ export function componentsSection(
   } else if (!redactorConfigured && redactorRunning) {
     status = 'warn';
     lines.push(
-      'redactor is running and DAY0_REDACTOR_URL is unset, so day0 will not use it.',
+      'redactor is running and DAY0_REDACTOR_URL is unset, so Day0 will not use it.',
       `Set DAY0_REDACTOR_URL=http://redactor:8000 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
       'or stop the component.',
     );

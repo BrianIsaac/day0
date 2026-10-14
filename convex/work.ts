@@ -2218,7 +2218,7 @@ export const prepareRequestClose = internalMutation({
     });
     const claimedAt = Date.now();
     await ctx.db.patch(row._id, { decision: { ...decision, closeClaimedAt: claimedAt } });
-    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in day0';
+    const where = decision.decidedVia === 'channel' ? 'in this DM' : 'in Day0';
     return {
       prepared: true as const,
       claimedAt,
@@ -2314,7 +2314,7 @@ export const prepareReplacedEdit = internalMutation({
       text:
         replaced.outcome === undefined
           ? `${pressFreeText(replaced.requestText)}\n\nReplaced (${replaced.decisionId}): this request no longer decides anything. Day0 asks again in a new message.`
-          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
+          : `${pressFreeText(replaced.requestText)}\n\nDecided: ${replaced.outcome} ${replaced.decidedVia === 'channel' ? 'in this DM' : 'in Day0'} (${replaced.decisionId}). The ticket close it held waits on its card, and Day0 asks about it in a new message.`,
     };
   },
 });
@@ -2455,7 +2455,7 @@ export const prepareDecisionNotice = internalMutation({
       decision: { ...row.decision, duplicateNoticeClaimedAt: Date.now() },
     });
     const origin =
-      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the day0 dashboard';
+      row.decision.decidedVia === 'channel' ? row.decision.surfaceName : 'the Day0 dashboard';
     return {
       prepared: true as const,
       agentId: row.agentId,

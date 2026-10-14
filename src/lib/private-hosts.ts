@@ -54,7 +54,7 @@ function hostList(variable: string, value: string | undefined): PrivateHostAllow
       key.endsWith('.localhost')
     ) {
       throw new Error(
-        `${variable} lists "${entry}", which is this machine or an address day0 never ` +
+        `${variable} lists "${entry}", which is this machine or an address Day0 never ` +
           'dials (loopback, link-local, multicast or unspecified), listed or not.',
       );
     }

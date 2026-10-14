@@ -839,7 +839,7 @@ async function socketCheck(row: ConnectionRow, probes: VendorProbes): Promise<Ac
       'warn',
       `The Slack socket service is not running (${reading.detail}), so decision requests carry ` +
         'no buttons: each is decided by its typed code where the employee app takes messages ' +
-        '(the messages row), or in day0. Start it with pnpm convex:up --profile slack-socket for ' +
+        '(the messages row), or in Day0. Start it with pnpm convex:up --profile slack-socket for ' +
         'Approve and Reject buttons.',
     );
   }

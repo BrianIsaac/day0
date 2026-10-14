@@ -439,7 +439,7 @@ function howLine(input: AccessRequestInput, system: string, name: string): strin
  */
 function buttonsLine(system: string, employee: string): string | undefined {
   if (system !== 'slack') return undefined;
-  return `For Approve and Reject buttons in the manager’s decision requests (optional; without them the manager decides each request in day0, or by its typed code where the app takes messages): a collaborator on ${employee}’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on ${employee}’s Slack card.`;
+  return `For Approve and Reject buttons in the manager’s decision requests (optional; without them the manager decides each request in Day0, or by its typed code where the app takes messages): a collaborator on ${employee}’s app generates an app-level token with the connections:write scope, as docs/running/access-slack.md says, and the manager pastes it on ${employee}’s Slack card.`;
 }
 
 /**

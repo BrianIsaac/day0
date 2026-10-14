@@ -548,7 +548,7 @@ export function forgottenAppWords(
 export function forgetDoneWords(
   app: { readonly appId: string; readonly appName: string } | undefined,
 ): string {
-  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in day0.`;
+  return `${forgottenAppWords(app)} is forgotten. IT deletes it in Slack's app settings. Until then its app-level token, which Day0 no longer holds, still works at Slack. A request it already sent can no longer be decided in its own messages: decide it in Day0.`;
 }
 
 /**
@@ -597,7 +597,7 @@ const HISTORY_REFUSAL =
  */
 export function decisionErrorWords(error: string): string {
   return HISTORY_REFUSAL.test(error)
-    ? "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in day0 until it does."
+    ? "Day0 cannot read a code you type in Slack, because the documentation's Slack page does not let it read your messages there. Decide in Day0 until it does."
     : error;
 }
 
@@ -635,7 +635,7 @@ export function decisionButtonsWords(
       title: 'Decisions in Slack: buttons are on',
       note: typedCode
         ? `${live} and a typed code. Either one decides it, and the typed code still decides it if a button press does not get through.`
-        : `${live}. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in day0.`,
+        : `${live}. Slack does not let you message ${app} yet, so no typed code reaches it: if a press does not get through, decide in Day0.`,
       asksForToken: false,
       offersReplacement: true,
     };
@@ -644,7 +644,7 @@ export function decisionButtonsWords(
   // that takes no messages.
   const withoutButtons = typedCode
     ? 'requests reach you with a typed code only'
-    : `requests reach you with no buttons, and with no typed code until ${app} takes messages: decide them in day0`;
+    : `requests reach you with no buttons, and with no typed code until ${app} takes messages: decide them in Day0`;
   const typedOnly = (title: string, note: string): DecisionButtonsWords => ({
     title,
     note,
@@ -658,7 +658,7 @@ export function decisionButtonsWords(
         note: `${
           typedCode
             ? 'Requests reach you with a typed code only.'
-            : 'Requests reach you with no buttons and no typed code, so you decide them in day0.'
+            : 'Requests reach you with no buttons and no typed code, so you decide them in Day0.'
         } To add Approve and Reject buttons, someone who manages ${app} in Slack makes its app-level token, with the connections:write scope, and pastes it below. In the app's settings, if Socket Mode is on (every app Day0 creates from v0.17.0), that is Basic Information, App-Level Tokens, Generate Token and Scopes; if it is off (an app created earlier may have it off), turning on Enable Socket Mode makes the token in the same dialog.`,
         asksForToken: true,
         offersReplacement: false,

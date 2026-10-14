@@ -288,7 +288,8 @@ describe('dashboard exact-action gate', (): void => {
         decidedVia: 'dashboard',
         surfaceName: 'Company chat',
       }),
-    ).toBe('rejected from the day0 dashboard');
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    ).toBe('rejected from the Day0 dashboard');
     expect(decisionAttribution({ surfaceName: 'Slack' })).toBeUndefined();
   });
 

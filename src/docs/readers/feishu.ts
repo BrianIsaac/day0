@@ -161,8 +161,8 @@ class FeishuGatewayError extends Error {
   constructor(host: string, status: number) {
     super(
       `${host} answered HTTP ${status} with a page that is not Feishu’s own answer, so something ` +
-        'between day0 and Feishu (a proxy or a firewall) may be stopping the request: ask IT ' +
-        `whether the machine day0 runs on reaches ${host} directly.`,
+        'between Day0 and Feishu (a proxy or a firewall) may be stopping the request: ask IT ' +
+        `whether the machine Day0 runs on reaches ${host} directly.`,
     );
     this.name = 'FeishuGatewayError';
   }
@@ -259,10 +259,10 @@ const TYPE_NOUNS: Readonly<Record<string, string>> = {
 /** Why a listed node is not read, when it is not a document. */
 function notReadReason(entry: ListedEntry): string {
   if (entry.shortcut) {
-    return `"${entry.title}" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.`;
+    return `"${entry.title}" is a shortcut, which Day0 does not read twice: the page it points to is read where it lives, if that is in this source.`;
   }
   const noun = TYPE_NOUNS[entry.type] ?? `${entry.type} node`;
-  return `"${entry.title}" is a Feishu ${noun}, which day0 does not read: only documents (docx) are read, as Markdown.`;
+  return `"${entry.title}" is a Feishu ${noun}, which Day0 does not read: only documents (docx) are read, as Markdown.`;
 }
 
 /** Why a document could not be read, from Feishu's refusal. */
@@ -546,7 +546,7 @@ export class FeishuReader implements DocumentationReader {
     );
     const items = field(data, 'items') ?? [];
     if (!Array.isArray(items)) {
-      throw new Error('Feishu listed wiki nodes in a shape day0 does not read.');
+      throw new Error('Feishu listed wiki nodes in a shape Day0 does not read.');
     }
     return {
       items: items.map((item: unknown): ListedItem => {
@@ -588,7 +588,7 @@ export class FeishuReader implements DocumentationReader {
     });
     const files = field(data, 'files') ?? [];
     if (!Array.isArray(files)) {
-      throw new Error('Feishu listed a folder in a shape day0 does not read.');
+      throw new Error('Feishu listed a folder in a shape Day0 does not read.');
     }
     return {
       items: files.map((file: unknown): ListedItem => {
@@ -754,7 +754,7 @@ export class FeishuReader implements DocumentationReader {
     const value = text(body, 'tenant_access_token');
     const expire = field(body, 'expire');
     if (value === undefined || typeof expire !== 'number') {
-      throw new Error('Feishu answered the token request in a shape day0 does not read.');
+      throw new Error('Feishu answered the token request in a shape Day0 does not read.');
     }
     this.token = { key, value, expiresAt: askedAt + expire * 1_000 };
     return value;
@@ -858,7 +858,7 @@ function noNewPageToken(): Error {
 function endlessListing(): Error {
   return new Error(
     `Feishu kept listing this source past ${MAX_LISTING_REQUESTS.toLocaleString('en-GB')} ` +
-      'requests without reaching its end, so day0 stopped; link a smaller wiki space or folder.',
+      'requests without reaching its end, so Day0 stopped; link a smaller wiki space or folder.',
   );
 }
 
@@ -866,6 +866,6 @@ function endlessListing(): Error {
 function tooManyNodes(): Error {
   return new Error(
     `This Feishu source has more than ${MAX_LISTED_NODES.toLocaleString('en-GB')} pages, the ` +
-      'most day0 reads from one source: link a smaller wiki space or a Drive folder.',
+      'most Day0 reads from one source: link a smaller wiki space or a Drive folder.',
   );
 }

@@ -3973,7 +3973,8 @@ describe('the exact-action gate', (): void => {
     );
     expect(notes.map((note) => note.kind)).toEqual(['stopped', 'landed']);
     expect(notes[0].text).toBe(
-      'Priya stopped on “Add the close-summary audit note”: the read did not land. Nothing landed; Retry stands in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Priya stopped on “Add the close-summary audit note”: the read did not land. Nothing landed; Retry stands in Day0.',
     );
     expect(await scheduledFunctionNames(harness)).not.toContain(
       'managerChannelActions:sendManagerNote',

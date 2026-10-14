@@ -445,7 +445,8 @@ describe('landed (work-landed.html)', (): void => {
     const view = card(DRAWN.landed);
     expect(chip(view.container)).toBe('Landed');
     expect(view.text()).toContain(
-      '3 actions reached the work environment · approved from the day0 dashboard at 29 Sep 2026, 15:02',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      '3 actions reached the work environment · approved from the Day0 dashboard at 29 Sep 2026, 15:02',
     );
     expect(view.text()).toContain('Landed: Replied in #revops-asks');
     const send = (): HTMLButtonElement | undefined =>

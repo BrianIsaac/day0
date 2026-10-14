@@ -35,7 +35,7 @@ export const PROBLEM = {
       body: 'Someone defines the role, wires the tools, writes the prompts and encodes what counts as good work, and that work is done again for every team that wants one. Weeks per deployment.',
     },
     {
-      title: 'What day0 does instead',
+      title: 'What Day0 does instead',
       body: 'Day0 is deployed with a name and nothing else. It reads the documentation you point it at, holds a Day-1 one-to-one with you, and drafts its own work charter (like a JD) for your approval. From there it works with you, with clear, distinct roles, and drives work autonomously under your supervision.',
     },
   ],

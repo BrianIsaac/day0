@@ -190,7 +190,8 @@ describe('the clone of a listed git host', (): void => {
       await expect(
         cloneArguments(locator, '/tmp/checkout', answering(...answers)),
         answers.join(','),
-      ).rejects.toThrow('The git host docs.corp.internal answers with an address day0 never dials');
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      ).rejects.toThrow('The git host docs.corp.internal answers with an address Day0 never dials');
     }
     await expect(
       cloneArguments(locator, '/tmp/checkout', async (): Promise<string[]> => {
@@ -230,7 +231,8 @@ describe('the clone of a listed git host', (): void => {
       };
       await expect(
         new GitReader(answering('127.0.0.1')).listPageBatch(source, undefined, undefined, 25),
-      ).rejects.toThrow('answers with an address day0 never dials');
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      ).rejects.toThrow('answers with an address Day0 never dials');
     },
   );
 });
@@ -318,7 +320,8 @@ describe('a public git host listed in DAY0_GIT_HOSTS', (): void => {
     // The pinning's own refusals hold for a listed git host as for a private one.
     await expect(
       cloneArguments(locator, '/tmp/checkout', answering('169.254.169.254')),
-    ).rejects.toThrow('The git host gitee.com answers with an address day0 never dials');
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    ).rejects.toThrow('The git host gitee.com answers with an address Day0 never dials');
     expect(() => archiveUrlFor(locator)).toThrow('no archive fallback');
   });
 

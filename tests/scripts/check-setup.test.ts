@@ -91,7 +91,8 @@ describe('documentation component setup reporting', (): void => {
         component: 'docs-notion-mcp',
         count: 1,
       }),
-    ).toContain("needs day0's Notion component");
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    ).toContain("needs Day0's Notion component");
     expect(docSourceDependency({ kind: 'mcp', serverKind: 'notion', count: 1 })).toContain(
       'an MCP server you already run',
     );
@@ -272,7 +273,8 @@ describe('the token store component (join 9)', (): void => {
     const untold = componentsSection({}, 'day0-bed', ['backend', 'nango-server']);
     expect(untold.status).toBe('warn');
     expect(untold.lines.join('\n')).toContain(
-      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'nango-server is running and DAY0_NANGO_URL is unset, so Day0 will not use it.',
     );
     const told = componentsSection(nango, 'day0-bed', ['backend', 'nango-server']);
     expect(told.status).toBe('ok');

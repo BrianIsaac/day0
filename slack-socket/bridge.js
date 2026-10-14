@@ -41,13 +41,13 @@ export const BACKEND_TIMEOUT_MS = 15_000;
  * stays, so a press a minute later may get through.
  */
 export const PRESS_NOT_RECEIVED =
-  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.';
+  'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in Day0.';
 /**
  * What the person who pressed is told when Day0 answered the press with a refusal, which another
  * press would meet again (W12-R22).
  */
 export const PRESS_REFUSED =
-  'Day0 could not take this press, so nothing was decided. Decide in day0.';
+  'Day0 could not take this press, so nothing was decided. Decide in Day0.';
 /** How long telling the person may take. */
 export const PRESS_NOTICE_TIMEOUT_MS = 5_000;
 /**

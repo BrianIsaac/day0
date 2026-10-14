@@ -484,7 +484,8 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
       replace_original: false,
       // Re-worded for the design pass: a press the backend refused gets the same answer again, so
       // the presser is not told to press again.
-      text: 'Day0 could not take this press, so nothing was decided. Decide in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      text: 'Day0 could not take this press, so nothing was decided. Decide in Day0.',
     });
     expect(logged).toContainEqual(
       expect.objectContaining({ message: 'press given up', appId: 'A_DAY0_FAKE', told: true }),
@@ -500,7 +501,8 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     await until(async () => (await proof()).responses.length === 1, 'the notice');
     expect(backend.presses).toEqual([]);
     expect((await proof()).responses[0]?.text).toBe(
-      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in Day0.',
     );
   });
 
@@ -512,7 +514,8 @@ describe('the Socket Mode bridge under failure (12-M second pass)', (): void => 
     expect(await postAndPress('approve')).toMatchObject({ delivered: true, acknowledged: true });
     await until(async () => (await proof()).responses.length === 1, 'the notice');
     expect((await proof()).responses[0]?.text).toBe(
-      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in day0.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'Day0 did not receive this press, so nothing was decided. Press it again in a minute, or decide in Day0.',
     );
     expect(
       logged.filter((line) => line.message === 'press not handed over').length,
