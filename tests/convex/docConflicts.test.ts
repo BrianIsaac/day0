@@ -1475,6 +1475,47 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     ).resolves.toMatchObject({ status: 'replaced' });
   });
 
+  it('answers through a kept request only the questions asked beside its own plan, never a later plan’s (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    const { relationId, surfaceId, workItemId } = asked;
+    // The plan's request is kept at a park, as the two parks leave the item.
+    const keptAt = Date.now();
+    await harness.run(async (ctx) => {
+      const row = (await ctx.db.get(workItemId))!;
+      const decided = { ...row.decision!, decidedAt: keptAt, outcome: 'approved' as const };
+      await rememberRequestWithQuestion(ctx, { ...row, decision: decided }, keptAt);
+      await ctx.db.patch(workItemId, {
+        state: 'actions-pending',
+        decision: { ...decided, id: 'cd4xyz', kind: 'actions', ts: '1790000000.000900' },
+      });
+    });
+    // A later plan of the item is asked its own question, which stands; the kept request's own
+    // question is still open, but its conflict stopped standing by a path that closed nothing.
+    const later = await secondQuestion(harness, asked);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(later.questionId, { askedAt: keptAt + 60_000 });
+      await ctx.db.patch(relationId, { status: 'proposed' });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000001.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
+      }),
+    ).resolves.toMatchObject({ status: 'ignored', reason: 'no open question' });
+    expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(await noticeTexts(harness)).toEqual([
+      'Nothing is waiting on an answer for decision ab3xyz.',
+    ]);
+  });
+
   it('answers the kept code of a plan since drafted again as replaced, never as a question of the new plan (17-C’s second pass)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

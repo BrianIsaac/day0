@@ -19,6 +19,7 @@ import {
   answerConflictInTransaction,
   numberedConflictQuestions,
   openConflictQuestions,
+  type NumberedConflictQuestion,
 } from './managerQuestions';
 import {
   CONFLICT_CHOICES,
@@ -379,7 +380,15 @@ function standingLine(id: string, standing: readonly { readonly number: number }
 async function answerFromChannel(
   ctx: MutationCtx,
   surface: Doc<'surfaces'>,
-  request: { readonly row: Doc<'workItems'>; readonly decisionId: string },
+  request: {
+    readonly row: Doc<'workItems'>;
+    readonly decisionId: string;
+    /**
+     * For a request a park kept, when it was kept: only the questions asked by then are its own
+     * to answer, a later plan's having a request of its own (W17-R13).
+     */
+    readonly keptAt?: number;
+  },
   args: {
     userId: string;
     messageTs: string;
@@ -402,7 +411,11 @@ async function answerFromChannel(
     )
     .unique();
   if (answered !== null) return { status: 'ignored' as const, reason: 'already answered' };
-  const numbered = await numberedConflictQuestions(ctx, row._id);
+  // The item's questions are numbered whatever plan asked them (C-4), so a kept request's own are
+  // the first of them, and the numbers it was shown still name them.
+  const askedBy = (question: NumberedConflictQuestion): boolean =>
+    request.keptAt === undefined || question.question.askedAt <= request.keptAt;
+  const numbered = (await numberedConflictQuestions(ctx, row._id)).filter(askedBy);
   const standing = numbered.filter((question) => question.standing);
   const notice = async (text: string) =>
     await queueManagerReplyNotice(ctx, {
@@ -486,7 +499,7 @@ async function answerFromChannel(
   });
   // Read again after the answer: naming one page right settles every other question about it.
   const left = (await numberedConflictQuestions(ctx, row._id)).filter(
-    (question) => question.standing,
+    (question) => askedBy(question) && question.standing,
   ).length;
   // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
   // "Both hold" gives no page away, and beside a finished item nothing waits at all (W17-R10).
@@ -678,7 +691,7 @@ export async function resolveManagerReply(ctx: MutationCtx, args: ManagerReply) 
         return await answerFromChannel(
           ctx,
           surface,
-          { row: item, decisionId: kept.decisionId },
+          { row: item, decisionId: kept.decisionId, keptAt: kept.replacedAt },
           { ...args, reply: args.reply },
         );
       }
