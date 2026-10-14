@@ -17,7 +17,7 @@ import { openQuestionStopReason } from '../../src/work/obligations';
 import { parseDecisionReply } from '../../src/work/manager-channel';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
-import { MANAGER_ADDRESS } from './fakes/manager-identity';
+import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { fieldsOf } from './fakes/reorientation';
 import {
   asManager,
@@ -2173,6 +2173,47 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await noticeTexts(harness)).toEqual([
       'Recorded: A, Finance escalation (Finance wiki) is right. Nothing of this item waits on the answer.',
     ]);
+  });
+
+  it('reads the questions past two hundred rows by page within its byte bound, so a question is left unread only past its read, and refuses a stranger (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { agentId, relationId, workItemId } = await askedInRequest(harness);
+    const [asked] = await questionsOf(harness, workItemId);
+    /** Newer conflict questions of the employee's, each answered, with words of the given length. */
+    const answeredSince = async (count: number, length: number): Promise<void> => {
+      await harness.run(async (ctx) => {
+        for (let n = 0; n < count; n += 1) {
+          await ctx.db.insert('managerQuestions', {
+            ...fieldsOf(asked),
+            key: `conflict:${relationId}:${length}:${n}`,
+            question: 'Q'.repeat(length),
+            askedAt: asked.askedAt + 1 + n,
+            answer: { text: 'Both hold', answeredAt: asked.askedAt + 1 + n, via: 'dashboard' },
+          });
+        }
+      });
+    };
+    const drawn = async () =>
+      await asManager(harness).query(api.managerQuestions.conflictsForAgent, { agentId });
+    // Two hundred and fifty answered since: the open one is read, and every answered one with it.
+    await answeredSince(250, 200);
+    const read = await drawn();
+    expect(read).toHaveLength(251);
+    expect(read.at(-1)).toMatchObject({ _id: asked._id, pages: expect.any(Array) });
+    expect(read.filter((view) => view.settled?.answer === 'Both hold')).toHaveLength(250);
+    // Rows heavy enough to pass the read's byte bound: the read stops at it, and what is behind
+    // is past the read, the open question among it.
+    await answeredSince(30, 100_000);
+    const bounded = await drawn();
+    expect(bounded.length).toBeLessThan(30);
+    expect(bounded.some((view) => view._id === asked._id)).toBe(false);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('stranger'))
+        .query(api.managerQuestions.conflictsForAgent, { agentId }),
+    ).rejects.toThrow();
   });
 
   it('draws the question with what Day0 holds now, by its relation, and gives a settled one to the stop’s words (17-C)', async (): Promise<void> => {

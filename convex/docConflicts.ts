@@ -261,7 +261,7 @@ export async function standingConflictsOn(
     standing.push(found.conflict);
     // Each standing conflict cost its two page rows whole: past the bound the rest are left
     // untagged and unasked by this read, and the record says the read was in part.
-    bytes += rowBytes(found.from) + rowBytes(found.to);
+    bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
     if (bytes > bytesMost) {
       log.warn('conflicts read in part', {
         reason: 'the conflicts on the blocks carried pass one read’s byte bound',
@@ -291,7 +291,7 @@ export const CONFLICT_WALK_LOOKUPS = 2_400;
 export const CONFLICT_WALK_BYTES = 8 * 1024 * 1024;
 
 /** An upper bound on the bytes reading a page's row takes. */
-function rowBytes(page: Doc<'docPages'>): number {
+export function pageRowBytes(page: Doc<'docPages'>): number {
   return 3 * (page.markdown.length + page.title.length);
 }
 
@@ -332,7 +332,7 @@ export async function standingConflictsFrom(
         if (lookups > CONFLICT_WALK_LOOKUPS) return { standing, next: before ?? null };
         const found = await standingWithPages(ctx, relation);
         if (found !== undefined) {
-          bytes += rowBytes(found.from) + rowBytes(found.to);
+          bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
           // The rows that pass the bound are read already; the next walk begins with them.
           if (bytes > bytesMost && standing.length > 0) return { standing, next: before ?? null };
           standing.push(found);

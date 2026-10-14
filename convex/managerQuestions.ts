@@ -20,7 +20,9 @@ import {
   conflictsLeanedOn,
   conflictsOnPlanBlocks,
   planLeansOnConflict,
+  pageRowBytes,
   standingConflictOf,
+  standingWithPages,
   type StandingConflict,
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
@@ -727,7 +729,7 @@ export interface ConflictQuestionView {
   readonly settled?: { readonly answer?: string; readonly closed?: ManagerQuestionCloseReason };
 }
 
-/** The conflict questions one read of an employee's takes: one a plan and conflict, few open. */
+/** The open conflict questions one read of an employee's draws: one a plan and conflict, few open. */
 const OPEN_CONFLICTS_READ = 50;
 
 /**
@@ -736,73 +738,110 @@ const OPEN_CONFLICTS_READ = 50;
  */
 const HELD_PLANS_READ = 20;
 
+/** The question rows one page of the read takes, newest first. */
+const QUESTIONS_PAGE = 100;
+
+/** The most question rows one read takes, page by page (W17-R13: it read the newest 200 once). */
+const QUESTION_ROWS_READ = 1_000;
+
 /**
- * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards: those
- * still open, each with the two pages its answers name and what Day0 holds for it now, and those
- * among the newest that were answered or closed, which no card draws and a stopped run's words
- * read. Public, guarded by the employee's owner. Reads the newest questions' small rows, the
- * relation and blocks of each open one, and at most `HELD_PLANS_READ` plans whole.
+ * The most bytes one read draws, counted at three bytes a character: the question rows (a charter
+ * question's row carries the plan text it touched) and, for an open conflict's question, the two
+ * page rows its standing reads whole.
+ */
+const QUESTION_READ_BYTES = 8 * 1024 * 1024;
+
+/** An upper bound on the bytes reading a question's row takes. */
+function questionRowBytes(row: Doc<'managerQuestions'>): number {
+  const words = row.context.words.reduce((total, word) => total + word.length, 0);
+  return (
+    3 * (row.question.length + row.context.text.length + words + (row.answer?.text.length ?? 0))
+  );
+}
+
+/**
+ * The conflict questions beside an employee's plans (RM20 (a)) for the Work tab's cards, newest
+ * first: those still open, each with the two pages its answers name and what Day0 holds for it
+ * now, and those answered or closed, which no card draws and a stopped run's words read. Public,
+ * guarded by the employee's owner. Reads the employee's questions page by page (W17-R13) until
+ * {@link OPEN_CONFLICTS_READ} open ones are drawn, {@link QUESTION_ROWS_READ} rows are read or
+ * {@link QUESTION_READ_BYTES} are drawn, and at most `HELD_PLANS_READ` plans whole. Every
+ * conflict question the read reached is in its answer, so one a stopped run names and the answer
+ * lacks is past the read, which is when its words say so.
  */
 export const conflictsForAgent = query({
   args: { agentId: v.id('agents') },
   handler: async (ctx, args): Promise<ConflictQuestionView[]> => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const rows = await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-      .order('desc')
-      .take(OPEN_CONFLICTS_READ * 4);
     const views: ConflictQuestionView[] = [];
     const plans = new Map<Id<'workItems'>, Doc<'workItems'> | null>();
     let open = 0;
-    let settled = 0;
-    for (const row of rows) {
-      const relationId = row.relationId;
-      if (row.type !== 'retrieval' || relationId === undefined) continue;
-      const named = { _id: row._id, workItemId: row.workItemId, relationId };
-      if (!isOpenQuestion(row)) {
-        if (settled >= OPEN_CONFLICTS_READ) continue;
-        settled += 1;
+    let rows = 0;
+    let bytes = 0;
+    let before: number | undefined;
+    for (;;) {
+      const page = await ctx.db
+        .query('managerQuestions')
+        .withIndex('by_agent', (q) => {
+          const own = q.eq('agentId', args.agentId);
+          return before === undefined ? own : own.lt('_creationTime', before);
+        })
+        .order('desc')
+        .take(QUESTIONS_PAGE);
+      for (const row of page) {
+        rows += 1;
+        bytes += questionRowBytes(row);
+        // The row that passes the bound was read, and is not drawn: the read stops before it.
+        if (bytes > QUESTION_READ_BYTES) return views;
+        const relationId = row.relationId;
+        if (row.type !== 'retrieval' || relationId === undefined) continue;
+        const named = { _id: row._id, workItemId: row.workItemId, relationId };
+        if (!isOpenQuestion(row)) {
+          views.push({
+            ...named,
+            question: row.question,
+            pages: null,
+            settled:
+              row.answer !== undefined
+                ? { answer: row.answer.text }
+                : { closed: row.closed?.reason ?? 'settled' },
+          });
+          continue;
+        }
+        if (open >= OPEN_CONFLICTS_READ) return views;
+        open += 1;
+        const found = await standingWithPages(ctx, await ctx.db.get(relationId));
+        if (found === undefined) {
+          views.push({ ...named, question: row.question, pages: null });
+          continue;
+        }
+        bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
+        const conflict = citeConflictOf(found.conflict);
+        if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
+          plans.set(row.workItemId, await ctx.db.get(row.workItemId));
+        }
+        const plan = plans.get(row.workItemId);
         views.push({
           ...named,
-          question: row.question,
-          pages: null,
-          settled:
-            row.answer !== undefined
-              ? { answer: row.answer.text }
-              : { closed: row.closed?.reason ?? 'settled' },
+          question:
+            plan === undefined || plan === null
+              ? row.question
+              : conflictQuestionText(
+                  agent.name,
+                  conflict.heading,
+                  conflict.pages,
+                  // An item that is done, or whose plan was turned down, holds nothing (W3k).
+                  plan.state === 'completed' || plan.state === 'cancelled'
+                    ? 'nothing'
+                    : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
+                ),
+          pages: [conflict.pages[0], conflict.pages[1]],
         });
-        continue;
+        // Its pages were read whole: past the bound the rest are past the read.
+        if (bytes > QUESTION_READ_BYTES) return views;
       }
-      if (open >= OPEN_CONFLICTS_READ) continue;
-      open += 1;
-      const standing = await standingConflictOf(ctx, await ctx.db.get(relationId));
-      if (standing === undefined) {
-        views.push({ ...named, question: row.question, pages: null });
-        continue;
-      }
-      const conflict = citeConflictOf(standing);
-      if (!plans.has(row.workItemId) && plans.size < HELD_PLANS_READ) {
-        plans.set(row.workItemId, await ctx.db.get(row.workItemId));
-      }
-      const plan = plans.get(row.workItemId);
-      views.push({
-        ...named,
-        question:
-          plan === undefined || plan === null
-            ? row.question
-            : conflictQuestionText(
-                agent.name,
-                conflict.heading,
-                conflict.pages,
-                // An item that is done, or whose plan was turned down, holds nothing (W3k).
-                plan.state === 'completed' || plan.state === 'cancelled'
-                  ? 'nothing'
-                  : await heldSurfaceNames(ctx, plan, { ...conflict, relationId }),
-              ),
-        pages: [conflict.pages[0], conflict.pages[1]],
-      });
+      if (page.length < QUESTIONS_PAGE || rows >= QUESTION_ROWS_READ) return views;
+      before = page[page.length - 1]._creationTime;
     }
-    return views;
   },
 });
