@@ -1670,8 +1670,9 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'ab3xyz', choice: 'both', number: 1 },
       }),
     ).resolves.toMatchObject({ status: 'answered' });
+    // Re-pinned for W17-R10: "Both hold" gives no page away, so nothing is drafted again.
     expect(await noticeTexts(harness)).toEqual([
-      'Recorded for question 1: Both hold. Retry runs the steps that waited on it, drafted again where they relied on the other page. 1 more question of this plan is still open.',
+      'Recorded for question 1: Both hold. Retry runs the steps that waited on it. 1 more question of this plan is still open.',
     ]);
     const [first, second] = await questionsOf(harness, asked.workItemId);
     expect(first.answer).toMatchObject({ text: 'Both hold', via: 'slack' });
@@ -1964,6 +1965,30 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       answered.mutation(internal.work.prepareManagerReplyNotice, { noticeId: stale._id }),
     ).resolves.toEqual({ prepared: false, dropped: true });
     expect(await notices(answered)).toEqual([]);
+  });
+
+  // W17-R10 (reader 2): the acknowledgement said "Retry runs the steps that waited on it, drafted
+  // again where they relied on the other page." for "Both hold", where no page gives way, and for a
+  // question beside an item already finished, where nothing waits (C-9 (a)).
+  it('acknowledges a question answered beside a finished item as holding nothing of it (W17-R10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(asked.workItemId, { state: 'completed' });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: asked.surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered' });
+    expect(await noticeTexts(harness)).toEqual([
+      'Recorded: A, Finance escalation (Finance wiki) is right. Nothing of this item waits on the answer.',
+    ]);
   });
 
   it('draws the question with what Day0 holds now, by its relation, and gives a settled one to the stop’s words (17-C)', async (): Promise<void> => {
