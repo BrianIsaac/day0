@@ -1586,6 +1586,15 @@ export default defineSchema({
      */
     planDraftedWithout: v.optional(planDraftedWithoutValidator),
     /**
+     * When a reorientation card held this row's plan through a change the plan does not rest on
+     * (wave 18, 18-K for 18-O; RM43 (a), D-2 (b)): the plan is kept, not drafted again, and goes
+     * to the manager whatever the autonomy switch says, as a plan whose skip the manager
+     * overruled does. On the row so the work loop's recovery, which asks `decidePlan` again,
+     * never approves it. Cleared wherever a plan is cleared. Absent reads as before: `decidePlan`
+     * decides as the switch says.
+     */
+    heldThroughChangeAt: v.optional(v.number()),
+    /**
      * A manager rejected an earlier plan for this item; its own redraft needs
      * explicit approval. A plan rejection also sets `rejectedAt`, which is
      * what a sibling's plan is held on (N3); this field stands in for it only

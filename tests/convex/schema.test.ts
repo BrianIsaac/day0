@@ -3850,4 +3850,35 @@ describe('the wave 18 schema step (18-K, N10: two indexes and two optional field
       }),
     ).rejects.toThrow();
   });
+
+  it('a work item with and without `heldThroughChangeAt` reads back as written (RM43 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = await insertWork(ctx, agentId, 'FIN-1', 'plan-pending');
+      const heldId = await insertWork(ctx, agentId, 'FIN-2', 'plan-pending');
+      await ctx.db.patch(heldId, { heldThroughChangeAt: 1_791_960_000_000 });
+      const clearedId = await insertWork(ctx, agentId, 'FIN-3', 'plan-pending');
+      await ctx.db.patch(clearedId, { heldThroughChangeAt: 1_791_960_000_000 });
+      await ctx.db.patch(clearedId, { heldThroughChangeAt: undefined });
+      return {
+        older: await ctx.db.get(olderId),
+        held: await ctx.db.get(heldId),
+        cleared: await ctx.db.get(clearedId),
+      };
+    });
+    expect(read.older).not.toHaveProperty('heldThroughChangeAt');
+    expect(read.held).toMatchObject({
+      externalId: 'FIN-2',
+      heldThroughChangeAt: 1_791_960_000_000,
+    });
+    expect(read.cleared).not.toHaveProperty('heldThroughChangeAt');
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.held!._id, {
+          heldThroughChangeAt: 'yesterday' as unknown as number,
+        });
+      }),
+    ).rejects.toThrow();
+  });
 });
