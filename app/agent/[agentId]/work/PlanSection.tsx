@@ -8,7 +8,6 @@ import { Help, ItemSection } from './ItemParts';
 import { PlanObligationsLine } from './RunDetails';
 import type { PlanObligationsRow } from './work-item';
 
-/** A plan as the card reads it off the row. */
 /**
  * A plan's heading: its estimate and its reversibility where the stored plan holds them. Every plan
  * Day0 drafts carries both; a row imported or stored without them is headed "Plan" alone, never
@@ -28,6 +27,7 @@ function planHeading(plan: Pick<ItemPlan, 'estimatedMinutes' | 'reversibility'>)
   return parts.join(' · ');
 }
 
+/** A plan as the card reads it off the row. */
 export interface ItemPlan {
   summary: string;
   steps: string[];
