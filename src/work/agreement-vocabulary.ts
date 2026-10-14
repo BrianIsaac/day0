@@ -123,9 +123,10 @@ export const CHECK_OUTLIVED_MS = 11 * 60_000;
 
 /**
  * How many employees' charters the check of an agreement for every employee reads: an owner with
- * more is refused such an agreement (W13-R28).
+ * more is refused such an agreement (W13-R28). Sixty since wave 18 (W17-R23, D-5 (a)): at fifty a
+ * manager of fifty-one employees had no such agreement checked, judged twice or lifted by hand.
  */
-export const EMPLOYEES_CHECKED = 50;
+export const EMPLOYEES_CHECKED = 60;
 
 /**
  * Where the manager made an agreement active: the promotion card on the Work tab, the "Keep this

@@ -1733,6 +1733,46 @@ describe("willNotDoAsAct (the v0.19.0 walk's finding 8)", (): void => {
   ])('leaves %j as it is, its redirect naming no destination the rule knows', (clause): void => {
     expect(willNotDoAsAct(clause)).toBe(clause);
   });
+
+  // W17-R20 with RM38 (a): a drafted clause that turns to another instruction was written as an
+  // act with the instruction left standing, so "Delete tickets, archive them instead." under Will
+  // not do forbade the archiving. 17-PT's item 1 sentences (W17-R18) are drafted clauses here too.
+  it.each([
+    'Never delete tickets, archive them instead.',
+    'Never approve a refund, tell the manager.',
+    'Never delete tickets, archive them, then tell the manager.',
+    'Never delete tickets, archive them, and tell the manager.',
+    'Do not close the ticket but leave a note on it.',
+    'Never approve anything over 500 - ask the manager.',
+    'Never delete tickets and tell the manager.',
+    'Never refund over 500: ask the manager first.',
+    'Never guess - ask.',
+    'Never approve a refund \u2013 ask the manager.',
+    'Never close a ticket then tell the manager.',
+    'Never close a ticket and then reopen it.',
+  ])(
+    'keeps the drafted %j as drafted, its prohibition with it, since it turns to another instruction (RM38 (a))',
+    (clause): void => {
+      expect(willNotDoAsAct(clause)).toBe(clause);
+    },
+  );
+
+  it.each([
+    ['Never ever share a password.', 'Share a password.'],
+    ["Don't ever post in #general.", 'Post in #general.'],
+    [
+      'Never share customer data - even with another team.',
+      'Share customer data - even with another team.',
+    ],
+    ['Never touch payroll and HR records.', 'Touch payroll and HR records.'],
+  ])('writes %j as the act %j, an emphatic "ever" dropped (RM38 (a))', (clause, act): void => {
+    expect(willNotDoAsAct(clause)).toBe(act);
+  });
+
+  // W17-R22: "NEVER SHARE A PASSWORD." was written "SHARE A PASSWORD.", a clause in capitals.
+  it('writes a clause in capitals as the act in sentence case (W17-R22)', (): void => {
+    expect(willNotDoAsAct('NEVER SHARE A PASSWORD.')).toBe('Share a password.');
+  });
 });
 
 describe('withRoutingRules (RM27)', (): void => {
@@ -1869,6 +1909,29 @@ describe('withRoutingRules (RM27)', (): void => {
       expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
     },
   );
+
+  // W17-R22: the answer's word went and the turn after it stayed, "But only on Fridays, run it by
+  // the manager."
+  it.each([
+    ['Yes - but only on Fridays, run it by me.', 'Only on Fridays, run it by the manager.'],
+    ['No, but anything over 10k, go through me.', 'Anything over 10k, go through the manager.'],
+  ])('writes %j as %j, its condition kept and its turn gone (W17-R22)', (said, clause): void => {
+    const drawn = withRoutingRules(charter([]), { collaborators: said }, [], []);
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
+  });
+
+  // W17-R22: a routing sentence in capitals kept them, "RUN IT BY ME." beside "the manager".
+  it('writes a routing sentence said in capitals as a clause in sentence case (W17-R22)', (): void => {
+    const drawn = withRoutingRules(
+      charter([]),
+      { collaborators: 'RUN IT BY ME BEFORE I SIGN.' },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      'Run it by the manager before the manager signs.',
+    ]);
+  });
 
   it('keeps a clause’s own first word where it is no answer: "Right-size it, then run it by me." (W16-R31)', (): void => {
     const drawn = withRoutingRules(
@@ -2107,6 +2170,32 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
       'Touch payroll and HR records.',
       'Share passwords and API keys in a ticket.',
       'Post in #general after 18:00.',
+    ]);
+  });
+
+  // W17-R22: the manager's capitals were kept, "SHARE A PASSWORD." under Will not do.
+  it('writes a prohibition said in capitals as a clause in sentence case (W17-R22)', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('NEVER SHARE A PASSWORD.', []), rule("DON'T TELL ANYONE MY PIN.", [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share a password.',
+      "Tell anyone the manager's pin.",
+    ]);
+  });
+
+  // RM38 (a): the act-writer keeps a drafted clause that says more than the act, so a relative
+  // clause is read as part of the act it qualifies, for the floor as for a drafted clause.
+  it('writes the one act of a sentence whose later part qualifies what the act touches (RM38 (a))', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [rule('Never own the deals, which belong to the sales lead.', [])],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Own the deals, which belong to the sales lead.',
     ]);
   });
 
