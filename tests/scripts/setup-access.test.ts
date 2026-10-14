@@ -262,6 +262,10 @@ describe('setup: the access verb', (): void => {
     expect(record).toContain('12 hours');
     expect(record).toContain('Linear, shared');
     expect(record).toContain('30 days');
+    // Slack's pair lasts twelve hours from when it was generated, before this run landed it.
+    expect(record).toMatch(
+      /- Secret expires: \d{4}-\d{2}-\d{2} at \d{2}:\d{2} UTC at the latest \(12 hours after it was generated\)/,
+    );
   });
 
   it('adds a second run on the same day to the install record, never replacing the first (R41V-12)', async (): Promise<void> => {
