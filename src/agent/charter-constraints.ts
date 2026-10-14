@@ -676,9 +676,15 @@ function inTheThirdPerson(sentence: string): string {
 const ANSWER_OPENER =
   /^(?:(?:yes|yeah|yep|yup|no|nope|sure|ok|okay|right|correct|absolutely|exactly|definitely)(?:\s*[,.:;!\u2013\u2014]+|\s+-+|-+(?=\s))\s*)+/i;
 
-/** A sentence without the word it answers with, or as it was when nothing follows that word. */
+/**
+ * A sentence without the word it answers with, or as it was when nothing follows that word. A
+ * "but" after the answer turns from it to the instruction's condition and goes with it: "Yes - but
+ * only on Fridays, run it by me." reads "only on Fridays, run it by me." (W17-R22).
+ */
 function withoutAnswerOpener(sentence: string): string {
-  const rest = sentence.replace(ANSWER_OPENER, '');
+  const answered = sentence.replace(ANSWER_OPENER, '');
+  if (answered === sentence) return sentence;
+  const rest = answered.replace(/^but\b\s*/i, '');
   return rest === '' ? sentence : rest;
 }
 

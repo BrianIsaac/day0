@@ -1905,6 +1905,16 @@ describe('withRoutingRules (RM27)', (): void => {
     },
   );
 
+  // W17-R22: the answer's word went and the turn after it stayed, "But only on Fridays, run it by
+  // the manager."
+  it.each([
+    ['Yes - but only on Fridays, run it by me.', 'Only on Fridays, run it by the manager.'],
+    ['No, but anything over 10k, go through me.', 'Anything over 10k, go through the manager.'],
+  ])('writes %j as %j, its condition kept and its turn gone (W17-R22)', (said, clause): void => {
+    const drawn = withRoutingRules(charter([]), { collaborators: said }, [], []);
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([clause]);
+  });
+
   it('keeps a clause’s own first word where it is no answer: "Right-size it, then run it by me." (W16-R31)', (): void => {
     const drawn = withRoutingRules(
       charter([]),
