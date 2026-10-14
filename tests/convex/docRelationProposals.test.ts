@@ -1161,6 +1161,32 @@ describe('a duplicate beside the conflict of its pair (the joins’ W3d)', (): v
     expect(await relations(harness)).toHaveLength(1);
   });
 
+  it('proposes the pair as a conflict, and a dated successor nobody answered goes with it: a proposed dated successor and a new conflict of one pair do not both stand (W17-R17)', async (): Promise<void> => {
+    // The review's W17-R17: the conflict branch deleted proposed duplicates only, so the pair's
+    // dated successor, proposed before its pages came to disagree, stood beside its conflict.
+    const harness = convexTest(schema, allConvexModules());
+    const pair = await reviewWindows(harness);
+    const dated = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: pair.revops.sourceId, ref: 'runbooks/close-review-window.md' },
+          to: { sourceId: pair.policies.sourceId, ref: 'close-review-window.md' },
+          kind: 'possible_successor',
+          evidence: [
+            { measure: 'shared-text', value: 63 },
+            { measure: 'edit-dates', value: 3 },
+          ],
+          status: 'proposed',
+          createdAt: 1,
+        }),
+    );
+    expect(await measure(harness, pair.revops, 'runbooks/close-review-window.md')).toBe(1);
+    const rows = await relations(harness);
+    expect(rows).toMatchObject([{ kind: 'possible_conflict', status: 'proposed' }]);
+    expect(rows.map((row) => row._id)).not.toContain(dated);
+  });
+
   it('leaves a duplicate the manager answered beside the conflict: "Keep both" is their answer', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const pair = await reviewWindows(harness);

@@ -238,8 +238,9 @@ export function conflictBlocks(relation: Pick<Doc<'docRelations'>, 'evidence'>):
  * longer disagree is drawn on no card and holds nothing, so it stands in the way of no later one;
  * left unanswered, it is a proposal nobody can answer, and is deleted here. A duplicate of the
  * pair nobody answered goes when its conflict has, or is about to have, a card (the joins' W3d:
- * the tab drew two cards for one pair); where the conflict was set aside it stays, the pair's
- * one card.
+ * the tab drew two cards for one pair), and so does a successor nobody answered that rested on
+ * the pages' dates alone (W17-R17); where the conflict was set aside it stays, the pair's one
+ * card.
  */
 export async function alreadyHeld(
   ctx: MutationCtx,
@@ -299,7 +300,9 @@ export async function alreadyHeld(
   }
   if (!held || drawn) {
     for (const row of existing) {
-      if (row.kind === 'possible_duplicate' && row.status === 'proposed') {
+      // A successor proposed by the pages' dates alone goes as a duplicate does: two pages that
+      // disagree are not one document in two editions (W17-R17).
+      if (row.status === 'proposed' && (row.kind === 'possible_duplicate' || datedSuccessor(row))) {
         await ctx.db.delete(row._id);
       }
     }

@@ -393,12 +393,34 @@ const SUCCESSOR_ROWS_READ = 4;
 const SUCCESSOR_BLOCKS_READ = 4;
 
 /**
+ * The characters a block keeps of one heading, and of its whole heading path, each level cut to
+ * its share (`src/docs/blocks.ts`'s `HEADING_PATH_CHARS` and `HEADING_PATH_TOTAL_CHARS`, which it
+ * does not export; a mirror test splits a page to hold them equal).
+ */
+const BLOCK_HEADING_CHARS = 200;
+const BLOCK_HEADING_PATH_CHARS = 300;
+
+/**
+ * Whether a block's first heading may have been cut to its share of the path (W17-R17): it holds
+ * as many characters as a block keeps of it. A title that long is rare; its row is read for it.
+ */
+function firstHeadingMayBeCut(path: readonly string[]): boolean {
+  const share = Math.min(
+    BLOCK_HEADING_CHARS,
+    Math.floor(BLOCK_HEADING_PATH_CHARS / Math.max(1, path.length)),
+  );
+  return [...(path[0] ?? '')].length >= share;
+}
+
+/**
  * The title of the page that superseded a cited one. Its row gives it exactly, for the first
  * `SUCCESSOR_ROWS_READ` of one check; past that it is the first heading of the page's first
  * blocks, small rows (W15-R20: a whole row a superseded cite, with the cited page's own, put a
  * plan of a dozen long pages over the read limit). A reader writes a page's title as its first
  * heading and a Markdown file's title is its first level-one heading, so the two agree but for a
- * file that opens with a lower heading; a page with no heading in those blocks is left unnamed.
+ * file that opens with a lower heading; a page with no heading in those blocks is left unnamed. A
+ * heading as long as a block keeps of it may have been cut, and the row is read for the title
+ * then too (W17-R17): a title past two hundred characters, which is rare.
  *
  * @param takeRow - Asks the check for one of its whole-row reads; false once they are spent.
  */
@@ -407,22 +429,25 @@ async function successorTitle(
   successor: { readonly sourceId: Id<'docSources'>; readonly ref: string },
   takeRow: () => boolean,
 ): Promise<string | undefined> {
-  if (takeRow()) {
-    const row = await ctx.db
-      .query('docPages')
-      .withIndex('by_source_ref', (q) =>
-        q.eq('sourceId', successor.sourceId).eq('ref', successor.ref),
-      )
-      .unique();
-    return row?.title;
-  }
+  const rowTitle = async (): Promise<string | undefined> =>
+    (
+      await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) =>
+          q.eq('sourceId', successor.sourceId).eq('ref', successor.ref),
+        )
+        .unique()
+    )?.title;
+  if (takeRow()) return await rowTitle();
   const blocks = await ctx.db
     .query('docBlocks')
     .withIndex('by_source_page', (q) =>
       q.eq('sourceId', successor.sourceId).eq('pageRef', successor.ref),
     )
     .take(SUCCESSOR_BLOCKS_READ);
-  return blocks.find((block) => block.headingPath.length > 0)?.headingPath[0];
+  const path = blocks.find((block) => block.headingPath.length > 0)?.headingPath;
+  if (path !== undefined && firstHeadingMayBeCut(path)) return await rowTitle();
+  return path?.[0];
 }
 
 /** One cited block's page, read once: its row, its source and the page that superseded it. */
