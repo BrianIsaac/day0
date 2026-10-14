@@ -158,6 +158,27 @@ describe('a plan a reorientation card holds (W-9)', (): void => {
   });
 });
 
+describe('a plan a reorientation card’s Approve asked again (D-2 (b), 18-O)', (): void => {
+  it('says the change does not affect it in section 7’s words, only on a plan the release marked', (): void => {
+    const decided = {
+      reorientationId: 'card-1',
+      summary: 'Ines Duarte, its approver: now for “REVOPS close plans”.',
+      decided: true as const,
+    };
+    const asked = card({ ...DRAWN.planPending, heldThroughChangeAt: 5 }, { heldByCard: decided });
+    expect(asked.text()).toContain(
+      'Your change to “Ines Duarte, its approver: now for “REVOPS close plans”” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
+    );
+    expect(asked.text()).not.toContain('Day0 approves nothing here');
+    asked.unmount();
+    // A plan the decided card let go unmarked, decided as any other, says nothing of the card.
+    const released = card(DRAWN.planPending, { heldByCard: decided });
+    expect(released.text()).not.toContain('reorientation card');
+    expect(released.text()).not.toContain('does not affect this plan');
+    released.unmount();
+  });
+});
+
 describe('plan to approve (work-plan-pending.html)', (): void => {
   it("asks the charter's question with its answer box, carries the planner's note and the minutes, and approves with them", async (): Promise<void> => {
     const view = card(DRAWN.planPending, { questions: [QUESTION] });

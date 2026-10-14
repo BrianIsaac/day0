@@ -191,13 +191,18 @@ describe('holdingCardsOf: the plans a reorientation card holds (W-9)', (): void 
   });
 
   it('holds nothing for a card that is low or medium risk, or decided', (): void => {
-    expect(
-      holdingCardsOf([
-        view({ risk: 'medium' }),
-        view({ status: 'applied' }),
-        view({ status: 'dismissed' }),
-      ]).size,
-    ).toBe(0);
+    expect(holdingCardsOf([view({ risk: 'medium' })]).size).toBe(0);
+    // A decided card holds nothing; its rows are named as decided, for a plan its Approve asked
+    // again to say which change does not affect it (D-2 (b), 18-O), the newest decision first.
+    expect([
+      ...holdingCardsOf([
+        view({ status: 'applied', decidedAt: 1 }),
+        view({ _id: 'card-2', status: 'dismissed', decidedAt: 2, triggerSummary: 'Later' }),
+      ]),
+    ]).toEqual([
+      ['w1', { reorientationId: 'card-2', summary: 'Later', decided: true }],
+      ['w2', { reorientationId: 'card-2', summary: 'Later', decided: true }],
+    ]);
     // A deferred high-risk card keeps its hold (A21).
     expect(holdingCardsOf([view({ status: 'deferred' })]).size).toBe(2);
   });

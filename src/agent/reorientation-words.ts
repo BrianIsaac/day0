@@ -223,6 +223,15 @@ export function heldByCardWords(summary: string): string {
 }
 
 /**
+ * What a plan's card on the Work tab says once a reorientation card's Approve asked it again
+ * rather than drafting it again (D-2 (b); section 7's draft, RM24): "Your change to “{summary}”
+ * does not affect this plan, so it was not drafted again: approve it as it is, or send it back."
+ */
+export function askedAgainWords(summary: string): string {
+  return `Your change to “${withoutStop(summary)}” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.`;
+}
+
+/**
  * A documentation page as a conflict's question names it: its title, its source's label and its
  * ref within the source. The ref is absent on a cite stored before v0.21.0.
  */
