@@ -1371,51 +1371,60 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(after.threads).toBeUndefined();
   });
 
-  it('looks up the newest twenty items with an open question for their requests, and no further (17-C’s second pass)', async (): Promise<void> => {
+  it('reads all twenty-five threads of a channel of twenty-five requests with standing questions, the items without a request uncounted (W17-R13)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
     const harness = convexTest(schema, allConvexModules());
     const { agentId, relationId, surfaceId, workItemId } = await askedInRequest(harness);
     const [asked] = await questionsOf(harness, workItemId);
-    // Newer items, each with an open question of its own and no request on this DM.
-    const newer = async (count: number): Promise<void> => {
+    /** Newer items, each with an open question of its own, and a delivered request if asked for. */
+    const newer = async (count: number, requested: boolean): Promise<string[]> =>
       await harness.run(async (ctx) => {
+        const stamps: string[] = [];
         for (let n = 0; n < count; n += 1) {
+          const ts = `17900${requested ? 1 : 2}${String(n).padStart(4, '0')}.000100`;
           const other = await ctx.db.insert('workItems', {
             agentId,
             sourceCategory: 'ticket-queue',
             sourceSystem: 'linear',
-            externalId: `REVOPS-${100 + n}`,
+            externalId: `REVOPS-${requested ? 100 : 200}${n}`,
             title: 'Another plan',
-            contentSummary: 'A plan with a question and no request yet.',
+            contentSummary: 'A plan with a question.',
             contentRefs: [],
             observedAt: 1,
             createdAt: 1,
-            state: 'plan-pending',
+            state: 'plan-approved',
+            ...(requested
+              ? {
+                  decision: {
+                    id: `k${String.fromCharCode(97 + Math.floor(n / 10))}${'abcdefghjk'[n % 10]}xyz`,
+                    kind: 'plan' as const,
+                    requestedAt: 1,
+                    channel: 'D0MANAGER',
+                    surfaceSlug: 'team-chat',
+                    surfaceName: 'Team chat',
+                    ts,
+                    decidedAt: Date.now() - 3 * 60 * 60 * 1000,
+                    outcome: 'approved' as const,
+                  },
+                }
+              : {}),
           });
           await ctx.db.insert('managerQuestions', {
-            agentId,
+            ...fieldsOf(asked),
             key: `conflict:${relationId}:${other}`,
-            question: asked.question,
-            context: asked.context,
             askedAt: asked.askedAt + 1 + n,
             workItemId: other,
-            charterId: asked.charterId,
-            blocking: false,
-            type: 'retrieval',
-            relationId,
           });
+          if (requested) stamps.push(ts);
         }
+        return stamps;
       });
-    };
-    await newer(19);
-    expect((await harness.query(internal.work.openDecisions, { surfaceId })).threads).toEqual([
-      REQUEST_TS,
-    ]);
-    await newer(1);
-    expect(
-      (await harness.query(internal.work.openDecisions, { surfaceId })).threads,
-    ).toBeUndefined();
+    const requested = await newer(24, true);
+    // Newer still, thirty items with a question and no request on this DM: looked up, uncounted.
+    await newer(30, false);
+    const { threads } = await harness.query(internal.work.openDecisions, { surfaceId });
+    expect(new Set(threads)).toEqual(new Set([REQUEST_TS, ...requested]));
   });
 
   it('keeps the plan’s request answerable by its code, and its thread read, after a park cleared it from the item (17-C, C-3)', async (): Promise<void> => {

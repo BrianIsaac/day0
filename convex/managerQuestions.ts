@@ -396,11 +396,13 @@ export interface QuestionRequest {
 }
 
 /**
- * The items one read of the question requests looks up, each row read whole for its request: a
- * row carries its plan and its output, so the bound is on rows and not on questions (17-C's
- * second pass; the cards read as many plans whole, `HELD_PLANS_READ`).
+ * The most bytes one read of the question requests draws, counted at three bytes a character of
+ * each row's JSON: every item looked up is read whole for its request (a row carries its plan and
+ * its output), and each standing conflict's two page rows once a relation. The bound is on bytes
+ * and not on items (W17-R13: twenty items without a request on the DM once left a channel's own
+ * requests unread), so an item found with no request costs its row and nothing of `most`.
  */
-const QUESTION_ITEMS_READ = 20;
+const QUESTION_REQUEST_BYTES = 8 * 1024 * 1024;
 
 /** The remembered requests of one item a read looks through for its plan's: one a park, few. */
 const ITEM_REQUESTS_READ = 20;
@@ -412,11 +414,12 @@ const ITEM_REQUESTS_READ = 20;
  */
 async function planRequestOf(
   ctx: QueryCtx,
-  workItemId: Id<'workItems'>,
+  row: Doc<'workItems'>,
   surface: Pick<Doc<'surfaces'>, 'slug'>,
   channel: string,
 ): Promise<QuestionRequest | undefined> {
-  const decision = (await ctx.db.get(workItemId))?.decision;
+  const workItemId = row._id;
+  const decision = row.decision;
   if (
     decision?.kind === 'plan' &&
     decision.surfaceSlug === surface.slug &&
@@ -445,7 +448,8 @@ async function planRequestOf(
  * first, each item once (17-C): the question holds steps of the plan until it is answered, so the
  * manager may answer long after the request was decided, by its code at the top of the DM or in
  * its thread. A question whose conflict no longer stands waits for nothing. An item's row is read
- * once whatever it was asked, and no more than {@link QUESTION_ITEMS_READ} items are looked up.
+ * once whatever it was asked; an item found with no request on the DM is passed over and counts
+ * nothing of `most` (W17-R13), the read being bound by {@link QUESTION_REQUEST_BYTES}.
  *
  * @param ctx - The poll's query context.
  * @param surface - The manager channel's card.
@@ -465,22 +469,30 @@ export async function questionRequestsOn(
     .take(QUESTIONS_OWED_READ);
   const requests = new Map<Id<'workItems'>, QuestionRequest>();
   const looked = new Map<Id<'workItems'>, QuestionRequest | undefined>();
+  // A relation's standing is read once, whatever number of items asked about it.
+  const standing = new Map<Id<'docRelations'>, boolean>();
+  let bytes = 0;
   for (const question of questions) {
-    if (requests.size >= most) break;
-    if (question.type !== 'retrieval' || question.relationId === undefined) continue;
+    if (requests.size >= most || bytes > QUESTION_REQUEST_BYTES) break;
+    const relationId = question.relationId;
+    if (question.type !== 'retrieval' || relationId === undefined) continue;
     if (!isOpenQuestion(question) || requests.has(question.workItemId)) continue;
     if (!looked.has(question.workItemId)) {
-      if (looked.size >= QUESTION_ITEMS_READ) continue;
+      const row = await ctx.db.get(question.workItemId);
+      bytes += row === null ? 0 : 3 * JSON.stringify(row).length;
       looked.set(
         question.workItemId,
-        await planRequestOf(ctx, question.workItemId, surface, channel),
+        row === null ? undefined : await planRequestOf(ctx, row, surface, channel),
       );
     }
     const request = looked.get(question.workItemId);
     if (request === undefined) continue;
-    if ((await standingConflictOf(ctx, await ctx.db.get(question.relationId))) !== undefined) {
-      requests.set(question.workItemId, request);
+    if (!standing.has(relationId)) {
+      const found = await standingWithPages(ctx, await ctx.db.get(relationId));
+      if (found !== undefined) bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
+      standing.set(relationId, found !== undefined);
     }
+    if (standing.get(relationId) === true) requests.set(question.workItemId, request);
   }
   return [...requests.values()];
 }
