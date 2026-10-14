@@ -21,18 +21,26 @@ const backend = vi.hoisted(() => ({
   laterReads: {} as Record<number, unknown>,
   /** Every later read asked for, by its `conflictsBefore`. */
   readOn: [] as number[],
+  /** What a later read of the proposals answers, by its `proposalsBefore` (D-10's read-more). */
+  proposalReads: {} as Record<number, unknown>,
+  /** Every later read of the proposals asked for, by its `proposalsBefore`. */
+  readOnProposals: [] as number[],
 }));
 
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
   useQueries: (
-    queries: Record<string, { args: { conflictsBefore: number } }>,
+    queries: Record<string, { args: { conflictsBefore?: number; proposalsBefore?: number } }>,
   ): Record<string, unknown> =>
     Object.fromEntries(
       Object.entries(queries).map(([key, { args }]) => {
-        backend.readOn.push(args.conflictsBefore);
-        return [key, backend.laterReads[args.conflictsBefore]];
+        if (args.proposalsBefore !== undefined) {
+          backend.readOnProposals.push(args.proposalsBefore);
+          return [key, backend.proposalReads[args.proposalsBefore]];
+        }
+        backend.readOn.push(args.conflictsBefore!);
+        return [key, backend.laterReads[args.conflictsBefore!]];
       }),
     ),
   usePaginatedQuery: (_reference: unknown, args: { sourceId: string }) => {
@@ -74,8 +82,9 @@ function read(
   cards: readonly unknown[],
   next: number | null = null,
   notShown = { proposals: 0, atLeast: false },
+  proposalsNext: number | null = null,
 ): unknown {
-  return { cards, next, notShown };
+  return { cards, next, notShown, proposalsNext };
 }
 
 /** Two linked sources, the second left out when the employee was deployed. */
@@ -220,6 +229,8 @@ afterEach((): void => {
   backend.results = {};
   backend.laterReads = {};
   backend.readOn = [];
+  backend.proposalReads = {};
+  backend.readOnProposals = [];
   document.body.replaceChildren();
 });
 
@@ -407,6 +418,49 @@ describe('DocumentationView', () => {
     const all = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     expect(all.container.textContent).not.toContain('not shown');
     all.unmount();
+  });
+
+  // D-10's read-more: past twenty proposals the tab drew no more until the twenty were answered.
+  it('draws the next proposals only when Show more is pressed, and offers the rest after them', async () => {
+    populated();
+    const proposals = (from: number, count: number) =>
+      Array.from({ length: count }, (_unused, n) => ({
+        ...RELATIONS[0],
+        _id: `proposal-${from + n}`,
+      }));
+    backend.queries['docRelations:listOpen'] = read(
+      proposals(0, 20),
+      null,
+      { proposals: 25, atLeast: false },
+      900,
+    );
+    backend.proposalReads = {
+      900: read(proposals(20, 20), null, { proposals: 5, atLeast: false }, 800),
+      800: read(proposals(40, 5)),
+    };
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const cards = (): number =>
+      (view.container.textContent ?? '').split('These two look like versions of the same runbook')
+        .length - 1;
+    expect(cards()).toBe(20);
+    expect(backend.readOnProposals).toEqual([]);
+    await press(view.container, 'Show 20 more');
+    expect(cards()).toBe(40);
+    expect([...new Set(backend.readOnProposals)]).toEqual([900]);
+    expect(view.container.textContent).toContain(
+      'Showing the newest 40 relations to answer, and 5 more not shown',
+    );
+    await press(view.container, 'Show 5 more');
+    expect(cards()).toBe(45);
+    expect([...new Set(backend.readOnProposals)]).toEqual([900, 800]);
+    expect(view.container.textContent).not.toContain('not shown');
+    expect(view.container.querySelector('button')?.textContent).not.toMatch(/^Show \d+ more$/);
+    expect(
+      [...view.container.querySelectorAll('button')].some((button) =>
+        /^Show (\d+ )?more$/.test(button.textContent ?? ''),
+      ),
+    ).toBe(false);
+    view.unmount();
   });
 
   it('reads no further once the cards hold as many confirmed conflicts as one read gives', () => {

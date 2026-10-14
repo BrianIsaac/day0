@@ -859,6 +859,10 @@ export interface RelationCardRow {
 /** The most cards of each kind one read of the tab draws. */
 export const RELATION_CARDS_READ = 20;
 
+/** Why a read of the cards is refused: it goes on from two places at once. */
+export const LIST_OPEN_ONE_CURSOR =
+  'A read of the cards goes on from the confirmed conflicts or from the proposals, not both.';
+
 /**
  * The most proposals one read of the tab looks through for the cards it draws: a proposal one of
  * whose pages is no longer current is passed over by a small row each, so such rows above a live
@@ -894,6 +898,12 @@ export interface RelationCardsRead {
    * no proposal.
    */
   readonly notShown: { readonly proposals: number; readonly atLeast: boolean };
+  /**
+   * Where the next read of the proposals goes on from (`proposalsBefore`: the creation time of the
+   * last proposal this read looked at), or null once no proposal stands past what it read (D-10's
+   * read-more). None on a read of the confirmed conflicts going on from a cursor.
+   */
+  readonly proposalsNext: number | null;
 }
 
 /**
@@ -905,33 +915,48 @@ export interface RelationCardsRead {
  * conflicts are read by page (`standingConflictsFrom`), so a conflict a plan's question asks
  * about has its card however many settled conflicts are newer: a read that stops short says where
  * the next goes on (`next`), and that read, given `conflictsBefore`, draws the confirmed
- * conflicts from there and no proposal. Writes nothing.
+ * conflicts from there and no proposal. The proposals past a read's twenty are read on the same
+ * way, by the manager's press (D-10's read-more): given `proposalsBefore` (an earlier read's
+ * `proposalsNext`), a read draws the next proposals from there and no confirmed conflict. Writes
+ * nothing.
  */
 export const listOpen = query({
   args: {
     /** Read only the confirmed conflicts, from where an earlier read's `next` said to go on. */
     conflictsBefore: v.optional(v.number()),
+    /** Read only the proposals, from where an earlier read's `proposalsNext` said to go on. */
+    proposalsBefore: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<RelationCardsRead> => {
     const caller = await getCallerOrThrow(ctx);
+    if (args.conflictsBefore !== undefined && args.proposalsBefore !== undefined) {
+      throw new ConvexError(LIST_OPEN_ONE_CURSOR);
+    }
     const readingOn = args.conflictsBefore !== undefined;
+    const proposalsOnly = args.proposalsBefore !== undefined;
+    const { proposalsBefore } = args;
     const [proposed, confirmed] = await Promise.all([
       readingOn
         ? []
         : ctx.db
             .query('docRelations')
-            .withIndex('by_user_status', (q) =>
-              q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
-            )
+            .withIndex('by_user_status', (q) => {
+              const proposals = q.eq('userId', caller.ownerKey).eq('status', 'proposed');
+              return proposalsBefore === undefined
+                ? proposals
+                : proposals.lt('_creationTime', proposalsBefore);
+            })
             .order('desc')
             .take(PROPOSALS_READ),
       // The confirmed conflicts first: they hold plans, so the proposals' pages never spend the
       // read before them (W15-R22). The tab still draws the proposals above them.
-      standingConflictsFrom(ctx, caller.ownerKey, {
-        ...(args.conflictsBefore !== undefined ? { before: args.conflictsBefore } : {}),
-        most: RELATION_CARDS_READ,
-        bytes: CARD_PAGES_BYTES,
-      }),
+      proposalsOnly
+        ? { standing: [], next: null }
+        : standingConflictsFrom(ctx, caller.ownerKey, {
+            ...(args.conflictsBefore !== undefined ? { before: args.conflictsBefore } : {}),
+            most: RELATION_CARDS_READ,
+            bytes: CARD_PAGES_BYTES,
+          }),
     ]);
     let bytes = 0;
     const conflictCards: RelationCardRow[] = confirmed.standing.map((standing) => {
@@ -994,6 +1019,14 @@ export const listOpen = query({
         ],
       });
     }
+    // The next read of the proposals goes on past the last one this read looked at; one that
+    // looked at none (the confirmed conflicts spent its bytes) starts where this one did.
+    const more = looked < proposed.length || proposed.length === PROPOSALS_READ;
+    const proposalsNext = !more
+      ? null
+      : looked === 0
+        ? (proposalsBefore ?? Number.MAX_SAFE_INTEGER)
+        : proposed[looked - 1]._creationTime;
     return {
       cards: [...cards, ...conflictCards],
       next: confirmed.next,
@@ -1001,6 +1034,7 @@ export const listOpen = query({
         proposals: proposed.length - looked,
         atLeast: proposed.length === PROPOSALS_READ,
       },
+      proposalsNext,
     };
   },
 });

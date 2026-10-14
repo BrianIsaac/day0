@@ -5,11 +5,12 @@ import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
 import { replacePageBlocks } from '../../convex/docBlocks';
 import * as docRelationsModule from '../../convex/docRelations';
-import { DECISION_NOT_OFFERED } from '../../convex/docRelations';
+import { DECISION_NOT_OFFERED, LIST_OPEN_ONE_CURSOR } from '../../convex/docRelations';
 import { standingConflictOf } from '../../convex/docConflicts';
 import { SUCCESSOR_NOT_CURRENT } from '../../convex/docStatus';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
+import { guardRefusal } from './fakes/anonymous-caller';
 import {
   FINANCE,
   PIPELINE_V1,
@@ -582,10 +583,16 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_conflict', [true, true], [false, false]],
     ]);
     // Another manager sees none of them.
-    // Re-pinned for W17-R9 (D-10 (a)): the read says how many proposals it did not draw.
+    // Re-pinned for W17-R9 (D-10 (a)): the read says how many proposals it did not draw; and
+    // by 18-D for D-10's read-more, where the next read of the proposals goes on (none here).
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),
-    ).toEqual({ cards: [], next: null, notShown: { proposals: 0, atLeast: false } });
+    ).toEqual({
+      cards: [],
+      next: null,
+      proposalsNext: null,
+      notShown: { proposals: 0, atLeast: false },
+    });
   });
 
   // W17-R9 with D-10 (a) (the review's bed 1): 58 proposed conflicts drew 21 cards and nothing said
@@ -623,6 +630,78 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
     expect(read.cards).toHaveLength(20);
     expect(read.notShown).toEqual({ proposals: 5, atLeast: false });
   }, 30_000);
+
+  // D-10's read-more (the review's W17-R9, ruled 14 October): the tab read on for confirmed
+  // conflicts only, so past twenty proposals the rest waited until the twenty were answered.
+  it('`listOpen` from a proposals cursor answers the proposals past twenty, and a caller who is not the owner is refused', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const wiki = await syncingSource(harness, 'Team wiki');
+    await storedPage(harness, wiki, {
+      ref: 'policy-0.md',
+      title: 'Policy 0',
+      markdown: '# Policy 0',
+    });
+    for (let pair = 1; pair <= 45; pair += 1) {
+      await storedPage(harness, wiki, {
+        ref: `policy-${pair}.md`,
+        title: `Policy ${pair}`,
+        markdown: `# Policy ${pair}`,
+      });
+      await harness.run(async (ctx) => {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: wiki.sourceId, ref: `policy-${pair}.md` },
+          to: { sourceId: wiki.sourceId, ref: 'policy-0.md' },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 70 }],
+          status: 'proposed',
+          createdAt: pair,
+        });
+      });
+    }
+    const manager = asManager(harness);
+    const titles = (read: { cards: Array<{ from: { title: string } }> }): string[] =>
+      read.cards.map((card) => card.from.title);
+    const first = await manager.query(api.docRelations.listOpen, {});
+    expect(titles(first)).toEqual(Array.from({ length: 20 }, (_, n) => `Policy ${45 - n}`));
+    expect(first.proposalsNext).not.toBeNull();
+    const second = await manager.query(api.docRelations.listOpen, {
+      proposalsBefore: first.proposalsNext!,
+    });
+    // The next twenty, newest first; no confirmed conflict is read again on the way.
+    expect(titles(second)).toEqual(Array.from({ length: 20 }, (_, n) => `Policy ${25 - n}`));
+    expect(second).toMatchObject({ next: null, notShown: { proposals: 5, atLeast: false } });
+    const third = await manager.query(api.docRelations.listOpen, {
+      proposalsBefore: second.proposalsNext!,
+    });
+    expect(titles(third)).toEqual(['Policy 5', 'Policy 4', 'Policy 3', 'Policy 2', 'Policy 1']);
+    expect(third).toMatchObject({
+      proposalsNext: null,
+      notShown: { proposals: 0, atLeast: false },
+    });
+    // A read goes on from one place: both cursors at once are refused in the client's words.
+    await expect(
+      manager.query(api.docRelations.listOpen, {
+        proposalsBefore: first.proposalsNext!,
+        conflictsBefore: 1,
+      }),
+    ).rejects.toMatchObject({ data: LIST_OPEN_ONE_CURSOR });
+    // A caller who is not the owner: refused signed out, and handed none of the owner's cards
+    // whatever cursor they hold.
+    await expect(
+      harness.query(api.docRelations.listOpen, { proposalsBefore: first.proposalsNext! }),
+    ).rejects.toMatchObject(await guardRefusal());
+    expect(
+      await harness
+        .withIdentity(managerIdentity('stranger'))
+        .query(api.docRelations.listOpen, { proposalsBefore: first.proposalsNext! }),
+    ).toEqual({
+      cards: [],
+      next: null,
+      proposalsNext: null,
+      notShown: { proposals: 0, atLeast: false },
+    });
+  }, 60_000);
 
   it('draws a live card behind any number of proposals whose pages are no longer current', async (): Promise<void> => {
     // The second pass's minor 4: the read took the newest 20 proposals and drew the live ones
