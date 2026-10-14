@@ -269,6 +269,9 @@ describe("the mark a handover's keep leaves on the card (the round review's m16)
   const DAY = 24 * 60 * 60 * 1000;
 
   it('knows a kept card by its mark whatever its reason says, and dates the wait from the mark', async (): Promise<void> => {
+    // Its second sweep ends the identity, which schedules the vendor's revocation, a retry and the
+    // card's judgement: drained here, or they run on past the test into the file's teardown (18-G).
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
     const harness = await realHarness();
     const seeded = await seedKept(harness, {
       reason: 'Words a later release wrote for the same keep.',
@@ -282,6 +285,7 @@ describe("the mark a handover's keep leaves on the card (the round review's m16)
     expect(surface?.credentialId).toBeUndefined();
     expect(surface?.keptIdentitySince).toBeUndefined();
     expect(access?.revokedAt).toBe(MOVED_AT + DAY + KEPT_IDENTITY_WAIT_MS);
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
   });
 
   it('takes an unmarked card for no kept one, whatever its words, since 0.17.0 marked every kept card (N10, 14-I)', async (): Promise<void> => {
