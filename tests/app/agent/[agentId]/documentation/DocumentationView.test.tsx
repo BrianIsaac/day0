@@ -346,8 +346,9 @@ describe('DocumentationView', () => {
     // The conflict card for a confirmed conflict, in section 8's words.
     expect(text).toContain(
       // Re-pinned for W15-R45 and D-4 (a): no employee is named, and a plan drafted before the
-      // conflict was confirmed is not held, so the sentence says from when.
-      '“Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki) disagree under “Thresholds”: 10,000 against 5,000. An employee that reads both pages holds any step that relies on it, from the next plan it drafts, and asks you.',
+      // conflict was confirmed is not held, so the sentence says from when. Re-pinned for W17-R1
+      // (D-11 (a)): each page carries the letter the question and the typed answer give it.
+      'A, “Finance escalation” (How-to guides) and B, “Close checklist” (RevOps team wiki) disagree under “Thresholds”: 10,000 against 5,000. An employee that reads both pages holds any step that relies on it, from the next plan it drafts, and asks you.',
     );
     expect(text).toContain('Both hold');
     // The page table's Status and Decided by columns.
@@ -521,13 +522,54 @@ describe('DocumentationView', () => {
       .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
       .map((heading) => heading?.textContent ?? '')
       .filter((name) => /versions of the same runbook|disagree/.test(name));
-    // Each name carries both pages with their sources since W15-R51: titles alone repeat.
+    // Each name carries both pages with their sources since W15-R51: titles alone repeat. A
+    // conflict's pages carry their letters since W17-R1 (D-11 (a)).
     expect(names).toEqual([
       'These two look like versions of the same runbook: “Escalation paths” (RevOps team wiki) and “Escalation paths, draft v2” (How-to guides)',
       'These two look like versions of the same runbook: “Close checklist” (RevOps team wiki) and “Close checklist v2” (How-to guides)',
-      'Two pages disagree: “Finance escalation” (How-to guides) and “Close checklist” (RevOps team wiki)',
-      'Two pages disagree: “Refund policy” (How-to guides) and “Refund runbook” (RevOps team wiki)',
+      'Two pages disagree: A, “Finance escalation” (How-to guides) and B, “Close checklist” (RevOps team wiki)',
+      'Two pages disagree: A, “Refund policy” (How-to guides) and B, “Refund runbook” (RevOps team wiki)',
     ]);
+    view.unmount();
+  });
+
+  it('letters a confirmed conflict’s two pages and names their folders where the title and the source collide, so its two answers are two names (W17-R1, D-11 (a))', () => {
+    // The joins' walk pages under one folder source (the review's bed 1): the card's two buttons
+    // carried one accessible name, "“Close review window” (Company folder) is right".
+    populated();
+    const walkPage = (ref: string) => ({
+      sourceId: 'source-wiki',
+      ref,
+      title: 'Close review window',
+      source: 'Company folder',
+      updatedAt: 1,
+    });
+    backend.queries['docRelations:listOpen'] = read([
+      {
+        ...RELATIONS[1],
+        from: walkPage('policies/close-review-window.md'),
+        to: walkPage('revops/runbooks/close-review-window.md'),
+        disagreement: { heading: 'Review window', figures: { from: '3 days', to: '5 days' } },
+      },
+    ]);
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    const buttons = [...view.container.querySelectorAll('button')]
+      .map((button) => button.textContent ?? '')
+      .filter((name) => name.endsWith('is right'));
+    expect(buttons).toEqual([
+      'A, “Close review window” (Company folder, policies) is right',
+      'B, “Close review window” (Company folder, revops/runbooks) is right',
+    ]);
+    const region = [...view.container.querySelectorAll('section[aria-labelledby]')]
+      .map((section) => document.getElementById(section.getAttribute('aria-labelledby') ?? ''))
+      .map((heading) => heading?.textContent ?? '')
+      .find((name) => name.startsWith('Two pages disagree'));
+    expect(region).toBe(
+      'Two pages disagree: A, “Close review window” (Company folder, policies) and B, “Close review window” (Company folder, revops/runbooks)',
+    );
+    expect(view.container.textContent).toContain(
+      'A, “Close review window” (Company folder, policies) and B, “Close review window” (Company folder, revops/runbooks) disagree under “Review window”: 3 against 5.',
+    );
     view.unmount();
   });
 
@@ -665,10 +707,11 @@ describe('DocumentationView', () => {
     backend.queries['docRelations:listOpen'] = read(RELATIONS);
     const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
     backend.queries['docRelations:listOpen'] = read([RELATIONS[0]]);
-    await press(view.container, '“Finance escalation” (How-to guides) is right');
+    // Re-pinned for W17-R1 (D-11 (a)): the answer and its outcome name each page by its letter.
+    await press(view.container, 'A, “Finance escalation” (How-to guides) is right');
     await settle();
     expect(said(view.container)).toContain(
-      '“Finance escalation” stands; “Close checklist” is superseded. “This is current” on its row takes that back.',
+      'A, “Finance escalation” (How-to guides) stands; B, “Close checklist” (RevOps team wiki) is superseded. “This is current” on its row takes that back.',
     );
     expect([...view.container.querySelectorAll('button')].map((b) => b.textContent)).not.toContain(
       'Undo',

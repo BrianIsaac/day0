@@ -431,9 +431,11 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(conflicts[0]).toEqual({
       relationId,
       heading: 'Thresholds',
+      // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref, by which two pages of one
+      // title in one source are named apart.
       pages: [
-        { title: 'Finance escalation', source: 'Finance wiki' },
-        { title: 'Pipeline runbook', source: 'Handbook' },
+        { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+        { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
       ],
     });
     await asManager(harness).mutation(api.docRelations.decide, {
@@ -1976,9 +1978,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         workItemId,
         relationId,
         question: ASKED,
+        // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref.
         pages: [
-          { title: 'Finance escalation', source: 'Finance wiki' },
-          { title: 'Pipeline runbook', source: 'Handbook' },
+          { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+          { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
         ],
       },
     ]);
@@ -2294,9 +2297,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         // Re-pinned by 17-C: the view names the relation, by which a stop finds its question.
         relationId,
         question: ASKED,
+        // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref.
         pages: [
-          { title: 'Finance escalation', source: 'Finance wiki' },
-          { title: 'Pipeline runbook', source: 'Handbook' },
+          { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+          { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
         ],
       },
     ]);

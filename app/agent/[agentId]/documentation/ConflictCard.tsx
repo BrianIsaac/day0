@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { useMutation } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import { SOURCE_AUTHORITIES, type SourceAuthority } from '@/docs/authority';
+import { pagePlaces, type PageLetter } from '@/agent/reorientation-words';
 import { differingFigures } from '@/docs/relation-words';
 import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
@@ -18,6 +19,15 @@ const TRUST_SOURCE: Readonly<Record<SourceAuthority, string>> = {
   team: 'a team',
   personal: 'a personal',
 };
+
+/**
+ * A page as the card names it: the letter the question and the typed answer give it, its title
+ * and its source, and its place in the source where the two pages share a title and a source
+ * (W17-R1, D-11 (a)), so the card's two answers are two names.
+ */
+function lettered(letter: PageLetter, page: { title: string; source: string }, place?: string) {
+  return `${letter}, “${page.title}” (${page.source}${place === undefined ? '' : `, ${place}`})`;
+}
 
 /**
  * The card for two pages that disagree (the wave file's section 8). A conflict the measures
@@ -42,6 +52,9 @@ export function ConflictCard({
   const card = useRef<HTMLElement>(null);
   const change = useChange(card);
   const { from, to, disagreement } = relation;
+  const places = pagePlaces([from, to]);
+  const a = lettered('A', from, places[0]);
+  const b = lettered('B', to, places[1]);
   const confirmed = relation.status === 'confirmed';
   const answer = (decision: RelationAnswer, done: string): void =>
     change.run(() => decide({ relationId: relation._id, decision }), {
@@ -81,9 +94,10 @@ export function ConflictCard({
         <>
           {confirmed ? 'Two pages disagree' : 'These two pages may disagree'}
           {/* Said, not shown: two such cards are two regions, each named by its pages and their
-              sources, since titles repeat across sources (W15-R51). */}
+              sources, since titles repeat across sources (W15-R51), and by their places where
+              they repeat within one (W17-R1). */}
           <span className="sr-only">
-            : “{from.title}” ({from.source}) and “{to.title}” ({to.source})
+            : {a} and {b}
           </span>
         </>
       }
@@ -92,8 +106,7 @@ export function ConflictCard({
     >
       <div className="grid gap-3">
         <p className="text-sm text-[var(--color-fg-2)]">
-          “{from.title}” ({from.source}) and “{to.title}” ({to.source}){' '}
-          {confirmed ? 'disagree' : 'may disagree'}
+          {a} and {b} {confirmed ? 'disagree' : 'may disagree'}
           {under}
           {figures}. {held}
         </p>
@@ -117,11 +130,9 @@ export function ConflictCard({
               size="small"
               className="!whitespace-normal text-left [overflow-wrap:anywhere]"
               disabled={change.busy}
-              onClick={() =>
-                answer('from-is-right', `“${from.title}” stands; “${to.title}” is superseded.`)
-              }
+              onClick={() => answer('from-is-right', `${a} stands; ${b} is superseded.`)}
             >
-              “{from.title}” ({from.source}) is right
+              {a} is right
             </Button>
           ) : null}
           {relation.offered.includes('to-is-right') ? (
@@ -129,11 +140,9 @@ export function ConflictCard({
               size="small"
               className="!whitespace-normal text-left [overflow-wrap:anywhere]"
               disabled={change.busy}
-              onClick={() =>
-                answer('to-is-right', `“${to.title}” stands; “${from.title}” is superseded.`)
-              }
+              onClick={() => answer('to-is-right', `${b} stands; ${a} is superseded.`)}
             >
-              “{to.title}” ({to.source}) is right
+              {b} is right
             </Button>
           ) : null}
           {relation.offered.includes('both-hold') ? (

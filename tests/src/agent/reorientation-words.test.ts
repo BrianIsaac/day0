@@ -210,6 +210,71 @@ describe('a conflict’s two pages named apart (W16-R12)', (): void => {
   });
 });
 
+// W17-R1 with D-11 (a) (17-J's W3, reproduced on the review's bed 1): two pages of one title in
+// one source read "A, Close review window (Company folder), and B, Close review window (Company
+// folder)" everywhere a pair is drawn, the two answers' names a letter apart.
+describe('a conflict’s two pages of one title in one source named apart (W17-R1, D-11 (a))', (): void => {
+  const WALK_PAGES = [
+    {
+      title: 'Close review window',
+      source: 'Company folder',
+      ref: 'policies/close-review-window.md',
+    },
+    {
+      title: 'Close review window',
+      source: 'Company folder',
+      ref: 'revops/runbooks/close-review-window.md',
+    },
+  ] as const;
+
+  it('names each page’s folder where the title and the source collide, in the question, the notice and the answers', (): void => {
+    expect(conflictQuestionText('Priya', 'Review window', WALK_PAGES)).toBe(
+      'Two pages disagree under “Review window”: A, Close review window (Company folder, policies), and B, Close review window (Company folder, revops/runbooks). Which is right? Priya runs the other steps now and holds the ones that may rely on this until you answer and Retry.',
+    );
+    expect(conflictNoticeText('Priya', 'Review window', WALK_PAGES)).toContain(
+      '“Review window”: A, Close review window (Company folder, policies), and B, Close review window (Company folder, revops/runbooks).',
+    );
+    expect(
+      (['from', 'to'] as const).map((choice) => conflictChoiceWords(choice, WALK_PAGES)),
+    ).toEqual([
+      'A, Close review window (Company folder, policies) is right',
+      'B, Close review window (Company folder, revops/runbooks) is right',
+    ]);
+  });
+
+  it('names each page by its whole ref where the folders do not tell them apart: one at the source’s top, or both in one folder', (): void => {
+    expect(
+      conflictChoiceWords('from', [
+        { ...WALK_PAGES[0], ref: 'close-review-window.md' },
+        WALK_PAGES[0],
+      ]),
+    ).toBe('A, Close review window (Company folder, close-review-window.md) is right');
+    expect(
+      conflictChoiceWords('to', [
+        { ...WALK_PAGES[0], ref: 'policies/close-review-window.md' },
+        { ...WALK_PAGES[0], ref: 'policies/close-review-window-copy.md' },
+      ]),
+    ).toBe(
+      'B, Close review window (Company folder, policies/close-review-window-copy.md) is right',
+    );
+  });
+
+  it('names no folder where the titles or the sources already tell the pages apart, or where a page stored before carries no ref', (): void => {
+    expect(
+      conflictChoiceWords('from', [WALK_PAGES[0], { ...WALK_PAGES[1], title: 'Close runbook' }]),
+    ).toBe('A, Close review window (Company folder) is right');
+    expect(
+      conflictChoiceWords('from', [WALK_PAGES[0], { ...WALK_PAGES[1], source: 'Handbook' }]),
+    ).toBe('A, Close review window (Company folder) is right');
+    expect(
+      conflictChoiceWords('from', [
+        { title: 'Close review window', source: 'Company folder' },
+        WALK_PAGES[1],
+      ]),
+    ).toBe('A, Close review window (Company folder) is right');
+  });
+});
+
 describe('the conflict question says what it holds (W16-R10)', (): void => {
   const pages = [
     { title: 'Close comment limits', source: 'Revops folder' },
