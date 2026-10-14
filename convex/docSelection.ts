@@ -393,6 +393,12 @@ const SUCCESSOR_ROWS_READ = 4;
 const SUCCESSOR_BLOCKS_READ = 4;
 
 /**
+ * The most rows past `SUCCESSOR_ROWS_READ` one check reads for a successor whose first heading may
+ * have been cut (W17-R17): past them a cut title is named by its heading as kept.
+ */
+const SUCCESSOR_CUT_ROWS_READ = 2;
+
+/**
  * The characters a block keeps of one heading, and of its whole heading path, each level cut to
  * its share (`src/docs/blocks.ts`'s `HEADING_PATH_CHARS` and `HEADING_PATH_TOTAL_CHARS`, which it
  * does not export; a mirror test splits a page to hold them equal).
@@ -420,14 +426,16 @@ function firstHeadingMayBeCut(path: readonly string[]): boolean {
  * heading and a Markdown file's title is its first level-one heading, so the two agree but for a
  * file that opens with a lower heading; a page with no heading in those blocks is left unnamed. A
  * heading as long as a block keeps of it may have been cut, and the row is read for the title
- * then too (W17-R17): a title past two hundred characters, which is rare.
+ * then too (W17-R17), for at most `SUCCESSOR_CUT_ROWS_READ` of one check.
  *
  * @param takeRow - Asks the check for one of its whole-row reads; false once they are spent.
+ * @param takeCutRow - Asks for one of its reads of a cut title's row; false once they are spent.
  */
 async function successorTitle(
   ctx: QueryCtx,
   successor: { readonly sourceId: Id<'docSources'>; readonly ref: string },
   takeRow: () => boolean,
+  takeCutRow: () => boolean,
 ): Promise<string | undefined> {
   const rowTitle = async (): Promise<string | undefined> =>
     (
@@ -446,8 +454,28 @@ async function successorTitle(
     )
     .take(SUCCESSOR_BLOCKS_READ);
   const path = blocks.find((block) => block.headingPath.length > 0)?.headingPath;
-  if (path !== undefined && firstHeadingMayBeCut(path)) return await rowTitle();
+  if (path !== undefined && firstHeadingMayBeCut(path) && takeCutRow()) return await rowTitle();
   return path?.[0];
+}
+
+/** One check's whole-row reads of successors: its first few, and the few of cut titles past them. */
+interface SuccessorRowReads {
+  readonly take: () => boolean;
+  readonly takeCut: () => boolean;
+}
+
+/** A check's row reads, each kind counted to its bound. */
+function successorRowReads(): SuccessorRowReads {
+  const spent = { rows: 0, cut: 0 };
+  const taker = (kind: 'rows' | 'cut', most: number) => (): boolean => {
+    if (spent[kind] >= most) return false;
+    spent[kind] += 1;
+    return true;
+  };
+  return {
+    take: taker('rows', SUCCESSOR_ROWS_READ),
+    takeCut: taker('cut', SUCCESSOR_CUT_ROWS_READ),
+  };
 }
 
 /** One cited block's page, read once: its row, its source and the page that superseded it. */
@@ -455,7 +483,7 @@ async function citedPage(
   ctx: QueryCtx,
   block: Pick<Doc<'docBlocks'>, 'sourceId' | 'pageRef'>,
   agent: Pick<Doc<'agents'>, 'userId' | 'excludedDocSourceIds'> | null | undefined,
-  takeRow: () => boolean,
+  rows: SuccessorRowReads,
 ): Promise<CitedPage> {
   const [page, source] = await Promise.all([
     ctx.db
@@ -467,7 +495,7 @@ async function citedPage(
   const supersededBy =
     page?.supersededBy === undefined
       ? undefined
-      : await successorTitle(ctx, page.supersededBy, takeRow);
+      : await successorTitle(ctx, page.supersededBy, rows.take, rows.takeCut);
   return {
     name: `${source?.label || 'source'}/${block.pageRef}`,
     stored: page !== null,
@@ -517,15 +545,10 @@ export const changedCitedBlocks = internalQuery({
         )
         .first()) !== null;
     const pages = new Map<string, Promise<CitedPage>>();
-    let successorRows = 0;
-    const takeRow = (): boolean => {
-      if (successorRows >= SUCCESSOR_ROWS_READ) return false;
-      successorRows += 1;
-      return true;
-    };
+    const rows = successorRowReads();
     const pageOf = (block: Doc<'docBlocks'>): Promise<CitedPage> => {
       const key = pageKeyOf(block.sourceId, block.pageRef);
-      if (!pages.has(key)) pages.set(key, citedPage(ctx, block, agent, takeRow));
+      if (!pages.has(key)) pages.set(key, citedPage(ctx, block, agent, rows));
       return pages.get(key)!;
     };
     const checked = await Promise.all(

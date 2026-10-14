@@ -993,6 +993,51 @@ describe('docSelection.changedCitedBlocks and a page’s status (15-A; W14-R25, 
     ]);
   });
 
+  it('reads at most two cut titles from their rows past the first four, and names the rest by their cut heading (the second pass)', async (): Promise<void> => {
+    // The second pass: a cut heading read its row whatever the check had read already, the
+    // W15-R20 over-read the row budget is for.
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await employee(harness);
+    const handbook = await source(harness, 'Handbook');
+    const long = (index: number): string =>
+      `Quarter close notes ${index} for ${'the kestrel supply ledger and its reconciliations, '.repeat(5)}revised`;
+    const cites: Array<{ id: string; hash: string }> = [];
+    for (let index = 0; index < 8; index += 1) {
+      const title = index < 4 ? `Close notes ${index}, second edition` : long(index);
+      await storePage(harness, {
+        agentId,
+        ...handbook,
+        ref: `old-${index}.md`,
+        title: `Close notes ${index}`,
+        markdown: `# Close notes ${index}\n\nKestrel close notes ${index}.`,
+      });
+      await storePage(harness, {
+        agentId,
+        ...handbook,
+        ref: `new-${index}.md`,
+        title,
+        markdown: `# ${title}\n\nKestrel close notes ${index}, revised.`,
+      });
+      await mark(harness, { ...handbook, ref: `old-${index}.md` }, 'superseded', {
+        sourceId: handbook.sourceId,
+        ref: `new-${index}.md`,
+      });
+      const [block] = await pageBlocks(harness, handbook.sourceId, `old-${index}.md`);
+      cites.push({ id: block._id as string, hash: block.hash });
+    }
+    const gone = await harness.query(internal.docSelection.changedCitedBlocks, {
+      agentId,
+      blocks: cites,
+    });
+    expect(gone.map((block) => block.supersededBy)).toEqual([
+      ...[0, 1, 2, 3].map((index) => `Close notes ${index}, second edition`),
+      long(4),
+      long(5),
+      [...long(6)].slice(0, 200).join(''),
+      [...long(7)].slice(0, 200).join(''),
+    ]);
+  });
+
   it('holds the split’s heading bounds the cut title is read by: whole to 199 characters, 200 kept of a longer one, a deep path in equal shares (the mirror of `firstHeadingMayBeCut`)', async (): Promise<void> => {
     // `firstHeadingMayBeCut` mirrors the split's bounds: a 200-character title is cut to itself,
     // a 199-character one kept whole and read from the heading.

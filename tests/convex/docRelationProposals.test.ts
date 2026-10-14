@@ -853,6 +853,41 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
     }
   });
 
+  it('finds the proposal a fill’s dating rests on behind any number of older relations, and starts a remeasure under way again from the start (the second pass)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder, copies } = await twoCopies(harness);
+    // Forty answered relations of the copy, older than the unanswered dated successor.
+    await harness.run(async (ctx) => {
+      for (let index = 0; index < 40; index += 1) {
+        await ctx.db.insert('docRelations', {
+          userId: 'owner',
+          from: { sourceId: copies.sourceId, ref: 'tile-refresh.md' },
+          to: { sourceId: folder.sourceId, ref: `older-${index}.md` },
+          kind: 'possible_duplicate',
+          evidence: [{ measure: 'shared-text', value: 70 }],
+          status: 'dismissed',
+          createdAt: index,
+          decidedAt: index,
+        });
+      }
+    });
+    expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+    // A remeasure already under way, part of the way through the copies.
+    await harness.run(
+      async (ctx) =>
+        await ctx.db.patch(copies.sourceId, { relationsRemeasure: { cursor: 'part-way' } }),
+    );
+    await harness.mutation(internal.docStatus.recordRead, {
+      sourceId: copies.sourceId,
+      syncRunId: copies.runId,
+      ref: 'tile-refresh.md',
+      datedBySource: false,
+    });
+    expect(
+      (await harness.run(async (ctx) => await ctx.db.get(copies.sourceId)))?.relationsRemeasure,
+    ).toEqual({ cursor: null });
+  });
+
   it('marks no source for a fill that leaves a page’s dating as its kind gave it, or where no card rests on it', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { folder, copies } = await twoCopies(harness);

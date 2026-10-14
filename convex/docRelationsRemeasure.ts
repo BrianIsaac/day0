@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery, type MutationCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { editedAtSource } from '../src/docs/relations';
+import { log } from '../src/lib/logger';
 
 /*
  * The existing library measured once by the dated successor (wave 16, 16-FD; RM19 (a), K-3): the
@@ -104,8 +105,11 @@ const DATING_RELATIONS_READ = 32;
  *
  * Its cost, where it marks: while a source is owed the remeasure its pages are not kept by their
  * revision and a page kept by its hash is checked block for block (as for a library v0.19.0
- * left), until the measuring that follows the sync clears the mark. A fill that leaves the answer
- * as the kind gave it, or a page with no such proposal, marks nothing.
+ * left), until the measuring that follows a completed sync clears the mark (a sync that ends short
+ * leaves it). A remeasure under way starts again from the start. A fill that leaves the answer as
+ * the kind gave it, or a page with no such proposal, marks nothing. Its limit: the page is
+ * measured against its best candidates, so a stale pair whose other page is not among them stands
+ * until either page next changes.
  *
  * @param ctx - The filling mutation's context.
  * @param source - The page's source as the mutation read it.
@@ -120,15 +124,19 @@ export async function remeasureAfterDating(
   datedBySource: boolean,
 ): Promise<boolean> {
   if (editedAtSource(page, source) === editedAtSource({ datedBySource }, source)) return false;
-  if (source.relationsRemeasure !== undefined) return false;
+  // Owed from the start already: the page is measured again.
+  if (source.relationsRemeasure?.cursor === null) return false;
+  // The newest first: an unanswered proposal is newer than the answers a page gathered.
   const [from, to] = await Promise.all([
     ctx.db
       .query('docRelations')
       .withIndex('by_from', (q) => q.eq('from.sourceId', page.sourceId).eq('from.ref', page.ref))
+      .order('desc')
       .take(DATING_RELATIONS_READ),
     ctx.db
       .query('docRelations')
       .withIndex('by_to', (q) => q.eq('to.sourceId', page.sourceId).eq('to.ref', page.ref))
+      .order('desc')
       .take(DATING_RELATIONS_READ),
   ]);
   const restsOnTime = [...from, ...to].some(
@@ -139,6 +147,11 @@ export async function remeasureAfterDating(
           relation.evidence.some((entry) => entry.measure === 'edit-dates'))),
   );
   if (!restsOnTime) return false;
+  // A remeasure under way starts again from the start, so a page it has passed is met too.
   await ctx.db.patch(source._id, { relationsRemeasure: { cursor: null } });
+  log.info('documentation: a page’s dating changed under a proposal; its source is remeasured', {
+    sourceId: source._id,
+    ref: page.ref,
+  });
   return true;
 }
