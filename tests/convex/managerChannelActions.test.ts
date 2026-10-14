@@ -885,6 +885,13 @@ describe('the outbound manager-channel action', (): void => {
     expect((await harness.run(async (ctx) => await ctx.db.get(notice._id)))?.failure).toBe(
       'The plan’s request was not delivered, so the question was not posted in its thread.',
     );
+    const looks = await harness.run(
+      async (ctx) => await ctx.db.system.query('_scheduled_functions').collect(),
+    );
+    // Only the send queued with the question: the last look scheduled none after it.
+    expect(
+      looks.filter((job) => job.name.endsWith('sendManagerReplyNotice')).map((job) => job.args),
+    ).toEqual([[{ noticeId: notice._id }]]);
   });
 });
 

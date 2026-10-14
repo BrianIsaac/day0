@@ -723,9 +723,10 @@ export const RECENT_THREADS_READ = 10;
 /**
  * The most requests with a standing conflict question whose threads one poll reads on a channel,
  * newest first (17-C): each holds steps of a plan until it is answered, so few stand at once. Thirty
- * since W17-R13 (a channel of twenty-five such requests had its oldest unread); with the window's
- * ten and the open requests' own, a poll a minute stays under the fifty calls a minute Slack's
- * tier 3 gives `conversations.replies` (V18-6: the tier as documented, not read off a workspace).
+ * since W17-R13 (a channel of twenty-five such requests had its oldest unread). With the window's
+ * ten that is forty calls of `conversations.replies` a poll a minute, under the fifty Slack's tier
+ * 3 documents (V18-6: not read off a workspace); each open request's own thread is read beside
+ * them and is not bounded here, so the poll's run logs the whole count (`threadReadsOf`).
  */
 export const QUESTION_THREADS_READ = 30;
 
