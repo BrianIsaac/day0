@@ -1,5 +1,5 @@
 import type { ExecutionPlan } from '../src/work/types';
-import { ConvexError, getDocumentSize, v, type Infer } from 'convex/values';
+import { ConvexError, v } from 'convex/values';
 import {
   internalMutation,
   internalQuery,
@@ -11,18 +11,8 @@ import {
 import type { Doc, Id } from './_generated/dataModel';
 import { ticketSnapshotValidator } from './schema';
 import { internal } from './_generated/api';
-import {
-  assertOwnsAgent,
-  assertOwnsWorkItem,
-  employeeOwnerScope,
-  getCallerOrThrow,
-} from './ownership';
-import { confirmedPersonOf } from './itemPeople';
-import { resolvePerson } from './people';
-
-import { isEvaluationAgent } from './metrics';
+import { assertOwnsAgent, assertOwnsWorkItem, getCallerOrThrow } from './ownership';
 import { openTicketsForDraftedWork } from './mock';
-import { incomingTransfersOf } from './managerTransfers';
 import { settleHandoverAfterRun } from './transferInFlight';
 
 import { firstTicketRejection } from './corrections';
@@ -36,10 +26,8 @@ import {
   EXECUTION_STALL_MS,
   OPEN_WORK_STATES,
   openSlotCount,
-  PARKED_WORK_STATES,
   queueStep,
   resumeStalledStepsInTransaction,
-  ROW_BYTES_AT_MOST,
   scheduleApply,
   scheduleNextStep,
   stepMayRun,
@@ -108,11 +96,7 @@ import { redactTokenShapes } from '../src/surfaces/redact';
 import { decisionButtonsFor } from '../src/surfaces/slack-socket';
 import { typedCodeReaches } from '../src/surfaces/slack-messages-tab';
 import { slackEscaped } from '../src/surfaces/slack-markup';
-import {
-  slackMentionIds,
-  type ListedWorkItem,
-  type TicketHolderView,
-} from '../src/work/item-display';
+import type { TicketHolderView } from '../src/work/item-display';
 import { pressFreeText } from '../src/work/decision-blocks';
 import { decisionChannelOf } from '../src/work/decision-channel';
 import { providerTsToMs } from '../src/work/provider-ts';
@@ -164,14 +148,16 @@ import {
   rejectActionsInTransaction,
 } from './managerDecisions';
 import { managerReplyArgs, queueManagerReplyNotice, resolveManagerReply } from './managerReplies';
-import {
-  longestWaitFirst,
-  needsYouEntryValidator,
-  needsYouOfEmployee,
-  transferEntryOf,
-} from './needsYou';
 import { interruptedApplyLedger } from './workApply';
 import { digestNoteFilter, managerDelivery, owedDecisions, queueManagerNote } from './managerNotes';
+import {
+  listForAgentArgs,
+  listForAgentInTransaction,
+  needsYouForAgentInTransaction,
+  needsYouForAgentValidator,
+  needsYouInTransaction,
+  needsYouValidator,
+} from './workLists';
 
 /**
  * How long a closing phase's authoring may hold its claim before its switch
@@ -324,75 +310,6 @@ export async function assertSameAgent(
 }
 
 /**
- * The work items one read of an employee's list holds (W14-R51): the list was every row the
- * employee ever had, each a whole row with its run's output and up to ten name lookups, in one
- * query. An employee past this many keeps its newest on the Work tab.
- */
-export const WORK_LIST_LIMIT = 300;
-
-/**
- * The states a row is not finished in, each with the most of its newest rows one read takes: a
- * slot-holding or parked row is listed whatever its age, since Needs you links to it and the shell
- * counts it (W15-R14); a stopped row as many as the inbox lists (`NEEDS_YOU_STOPPED_READ_LIMIT`),
- * an unjudged one as many as a page of intake. A row that finished, was cancelled or was skipped is
- * listed only among the newest. Slots are held to the work-in-progress cap, so their bound is never
- * reached; the bounds keep the read near the 300 rows it was, with their outputs (the second pass).
- */
-const UNFINISHED_STATE_READS: ReadonlyArray<readonly [Doc<'workItems'>['state'], number]> = [
-  ...OPEN_WORK_STATES.map((state) => [state, 100] as const),
-  ...PARKED_WORK_STATES.map((state) => [state, 100] as const),
-  ['failed', 25],
-  ['discovered', 50],
-];
-
-/**
- * Bytes of rows one read of an employee's list holds at most (W16-R31): the list was bounded in
- * rows and not in bytes, and a row carries its run's output, so an employee with a few hundred
- * heavy rows read past what one query may. Half of that, which leaves the names their reads.
- */
-export const WORK_LIST_BYTES = 8 * 1024 * 1024;
-
-/** One read of an employee's work items, newest first: those created before a time, at most a count. */
-type NewestBefore = (before: number | undefined, count: number) => Promise<Doc<'workItems'>[]>;
-
-/** The reads of one list, which hold {@link WORK_LIST_BYTES} between them. */
-interface ListReader {
-  /**
-   * Rows newest first, a few at a time and never more than fit the room left at a document's
-   * largest size, so the bound holds whatever a row weighs; the read ends at its count, at the
-   * index's end or with the room.
-   */
-  readonly take: (newestBefore: NewestBefore, limit: number) => Promise<Doc<'workItems'>[]>;
-  /** The bytes the list may still read. */
-  readonly room: () => number;
-}
-
-/**
- * A reader of the rows of one list, counted as Convex counts them (a row two reads meet is read
- * twice).
- */
-function listReader(): ListReader {
-  let room = WORK_LIST_BYTES;
-  return {
-    room: () => room,
-    take: async (newestBefore, limit) => {
-      const taken: Doc<'workItems'>[] = [];
-      while (taken.length < limit && room > 0) {
-        const count = Math.min(
-          limit - taken.length,
-          Math.max(1, Math.floor(room / ROW_BYTES_AT_MOST)),
-        );
-        const rows = await newestBefore(taken.at(-1)?._creationTime, count);
-        for (const row of rows) room -= getDocumentSize(row);
-        taken.push(...rows);
-        if (rows.length < count) break;
-      }
-      return taken;
-    },
-  };
-}
-
-/**
  * Public, owner-guarded: one employee's work items: the unfinished ones (each state's newest, to
  * its bound) and the newest {@link WORK_LIST_LIMIT} of all, each once, in the
  * order the page has always been given: by state, last first, and the newest first within one.
@@ -401,104 +318,12 @@ function listReader(): ListReader {
  * by the bytes left, since they are most of the rows and the query is re-run at every change.
  */
 export const listForAgent = query({
-  args: { agentId: v.id('agents') },
-  handler: async (ctx, args): Promise<ListedWorkItem[]> => {
+  args: listForAgentArgs,
+  handler: async (ctx, args) => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const reader = listReader();
-    // One after another, not at once: each read is given what the reads before it left.
-    const open: Doc<'workItems'>[] = [];
-    for (const [state, limit] of UNFINISHED_STATE_READS) {
-      open.push(
-        ...(await reader.take(
-          async (before, count) =>
-            await ctx.db
-              .query('workItems')
-              .withIndex('by_agent_state', (q) => {
-                const ofState = q.eq('agentId', args.agentId).eq('state', state);
-                return before === undefined ? ofState : ofState.lt('_creationTime', before);
-              })
-              .order('desc')
-              .take(count),
-          limit,
-        )),
-      );
-    }
-    const newest =
-      reader.room() > 0
-        ? (
-            await ctx.db
-              .query('workItems')
-              .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
-              .order('desc')
-              .paginate({
-                numItems: WORK_LIST_LIMIT,
-                cursor: null,
-                maximumBytesRead: reader.room(),
-              })
-          ).page
-        : [];
-    const byId = new Map([...newest, ...open].map((row) => [row._id, row]));
-    const items = [...byId.values()].sort((left, right) =>
-      left.state === right.state
-        ? right._creationTime - left._creationTime
-        : left.state < right.state
-          ? 1
-          : -1,
-    );
-    return await withRequesterNames(ctx, agent, items);
+    return await listForAgentInTransaction(ctx, agent, args);
   },
 });
-
-/**
- * Each item with the name of the confirmed person its requester resolved to, where it resolved to
- * one still active in the owner's graph (W13V-7: the Work tab named such an ask "A Slack member"),
- * and the confirmed people its text mentions by Slack user id (W13V-7's second half). Each person
- * is read once.
- */
-async function withRequesterNames(
-  ctx: QueryCtx,
-  agent: Doc<'agents'>,
-  items: readonly Doc<'workItems'>[],
-): Promise<ListedWorkItem[]> {
-  const scope = employeeOwnerScope(agent);
-  if (scope === undefined) return [...items];
-  const names = new Map<string, Promise<string | undefined>>();
-  const nameOf = (resolution: Doc<'workItems'>['requesterPerson']): Promise<string | undefined> => {
-    if (resolution?.kind !== 'person') return Promise.resolve(undefined);
-    const known = names.get(resolution.personId);
-    if (known !== undefined) return known;
-    const read = confirmedPersonOf(ctx, scope, resolution).then((person) => person?.displayName);
-    names.set(resolution.personId, read);
-    return read;
-  };
-  const mentioned = new Map<string, Promise<string | undefined>>();
-  const mentionedName = (id: string): Promise<string | undefined> => {
-    const known = mentioned.get(id);
-    if (known !== undefined) return known;
-    const read = resolvePerson(ctx, scope, { provider: 'slack', externalId: id })
-      .then(async (resolution) => await confirmedPersonOf(ctx, scope, resolution))
-      .then((person) => person?.displayName);
-    mentioned.set(id, read);
-    return read;
-  };
-  return await Promise.all(
-    items.map(async (item): Promise<ListedWorkItem> => {
-      const ids = slackMentionIds(`${item.title}\n${item.contentSummary}`);
-      const [requesterName, mentionedNames] = await Promise.all([
-        nameOf(item.requesterPerson),
-        Promise.all(ids.map(async (id) => [id, await mentionedName(id)] as const)),
-      ]);
-      const mentionNames = Object.fromEntries(
-        mentionedNames.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]])),
-      );
-      return {
-        ...item,
-        ...(requesterName === undefined ? {} : { requesterName }),
-        ...(Object.keys(mentionNames).length === 0 ? {} : { mentionNames }),
-      };
-    }),
-  );
-}
 
 /** Public, owner-guarded: one work item. */
 export const get = query({
@@ -3788,28 +3613,6 @@ export const findExistingClaimInternal = internalQuery({
   handler: async (ctx, args) => await findExistingClaimImpl(ctx, args),
 });
 
-/*
- * The needs-you inbox (v2 section 7 step 3, decision N7): everything waiting
- * on the manager across every employee, one entry per thing to decide,
- * ordered by how long it has waited.
- */
-
-/** How many of the owner's agent rows the inbox reads to find its employees, as the roster does. */
-const NEEDS_YOU_SCAN_LIMIT = 100;
-
-/** The most employees the inbox covers, the roster's twenty. */
-const NEEDS_YOU_EMPLOYEE_LIMIT = 20;
-
-/** The most entries the inbox returns; `total` says how many there are. */
-const NEEDS_YOU_LIMIT = 50;
-
-const needsYouValidator = v.object({
-  entries: v.array(needsYouEntryValidator),
-  total: v.number(),
-  /** How many entries each employee has, all of them counted, not only the ones returned. */
-  waitingByEmployee: v.array(v.object({ agentId: v.id('agents'), waiting: v.number() })),
-});
-
 /**
  * Public, owner-scoped: everything waiting on the manager across their
  * employees, and every handover naming the caller's verified address (the
@@ -3826,46 +3629,10 @@ const needsYouValidator = v.object({
 export const needsYou = query({
   args: {},
   returns: needsYouValidator,
-  handler: async (ctx): Promise<Infer<typeof needsYouValidator>> => {
+  handler: async (ctx) => {
     const caller = await getCallerOrThrow(ctx);
-    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
-    if (caller.ownerKey === '') return { entries: [], total: 0, waitingByEmployee: [] };
-    const employees = (
-      await ctx.db
-        .query('agents')
-        .withIndex('by_userId', (q) => q.eq('userId', caller.ownerKey))
-        .order('desc')
-        .take(NEEDS_YOU_SCAN_LIMIT)
-    )
-      .filter((agent) => !isEvaluationAgent(agent))
-      .slice(0, NEEDS_YOU_EMPLOYEE_LIMIT);
-    const now = Date.now();
-    const [perEmployee, incoming] = await Promise.all([
-      Promise.all(employees.map(async (agent) => await needsYouOfEmployee(ctx, agent, now))),
-      incomingTransfersOf(ctx, caller, now),
-    ]);
-    const waiting = perEmployee.flat().sort(longestWaitFirst);
-    // No employee's page lists a handover, so every one stays in the entries
-    // returned (at most MAX_OPEN_TRANSFERS_PER_ADDRESS); the longest waits fill the rest.
-    const transfers = incoming.map(transferEntryOf);
-    const entries = [
-      ...transfers,
-      ...waiting.slice(0, Math.max(0, NEEDS_YOU_LIMIT - transfers.length)),
-    ].sort(longestWaitFirst);
-    return {
-      entries,
-      total: waiting.length + transfers.length,
-      waitingByEmployee: employees.map((agent, index) => ({
-        agentId: agent._id,
-        waiting: perEmployee[index]?.length ?? 0,
-      })),
-    };
+    return await needsYouInTransaction(ctx, caller);
   },
-});
-
-const needsYouForAgentValidator = v.object({
-  entries: v.array(needsYouEntryValidator),
-  total: v.number(),
 });
 
 /**
@@ -3882,9 +3649,8 @@ const needsYouForAgentValidator = v.object({
 export const needsYouForAgent = query({
   args: { agentId: v.id('agents') },
   returns: needsYouForAgentValidator,
-  handler: async (ctx, args): Promise<Infer<typeof needsYouForAgentValidator>> => {
+  handler: async (ctx, args) => {
     const agent = await assertOwnsAgent(ctx, args.agentId);
-    const entries = (await needsYouOfEmployee(ctx, agent, Date.now())).sort(longestWaitFirst);
-    return { entries: entries.slice(0, NEEDS_YOU_LIMIT), total: entries.length };
+    return await needsYouForAgentInTransaction(ctx, agent);
   },
 });
