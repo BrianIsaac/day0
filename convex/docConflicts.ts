@@ -301,6 +301,8 @@ export function pageRowBytes(page: Doc<'docPages'>): number {
  * `most`, when it has made {@link CONFLICT_WALK_LOOKUPS} block lookups or drawn `bytes` of page
  * rows, or at the end of the owner's confirmed conflicts; `next` is where a later read goes on
  * from, and null only at the end, so nothing behind a run of settled conflicts is lost for good.
+ * It is the last conflict the walk drew, or its stop point where it drew none: a reader that holds
+ * it keeps it while the settled conflicts past the last card change (the review's minor 5).
  *
  * @param ctx - The reader's query context.
  * @param userId - The owner's key.
@@ -322,19 +324,26 @@ export async function standingConflictsFrom(
   let lookups = 0;
   let bytes = 0;
   let before = walk.before;
+  // Where a later walk goes on from: the last conflict drawn, or, where none was, the stop
+  // point. The settled conflicts walked past the last card are walked again, so a change among
+  // them moves no cursor a reader holds (the review's minor 5).
+  const stop = (): { standing: StandingWithPages[]; next: number | null } => ({
+    standing,
+    next: standing.at(-1)?.relation._creationTime ?? before ?? null,
+  });
   for (;;) {
     const page = await confirmedConflicts(ctx, userId, before);
     for (const relation of page) {
-      if (standing.length >= walk.most) return { standing, next: before ?? null };
+      if (standing.length >= walk.most) return stop();
       if (walk.reads === undefined || walk.reads(relation)) {
         // Each block is looked up under both pages (`disagreementOf`).
         lookups += 2 * conflictBlocks(relation).length;
-        if (lookups > CONFLICT_WALK_LOOKUPS) return { standing, next: before ?? null };
+        if (lookups > CONFLICT_WALK_LOOKUPS) return stop();
         const found = await standingWithPages(ctx, relation);
         if (found !== undefined) {
           bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
           // The rows that pass the bound are read already; the next walk begins with them.
-          if (bytes > bytesMost && standing.length > 0) return { standing, next: before ?? null };
+          if (bytes > bytesMost && standing.length > 0) return stop();
           standing.push(found);
         }
       }

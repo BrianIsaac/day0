@@ -259,6 +259,49 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     expect(next).toBeNull();
   });
 
+  it('draws each card of an owner past 2,400 lookups once, the first read going on from its last card, so a settled conflict gone behind it moves no cursor (minor 5)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const { relation } = await behindSettled(harness, 4);
+    // A standing conflict newer than the settled window: the first read's card.
+    const newest = await harness.run(
+      async (ctx) =>
+        await ctx.db.insert('docRelations', fieldsOf((await ctx.db.get(relation._id))!)),
+    );
+    const manager = asManager(harness);
+    /** The tab's chain: the first read, then each later read from the read before's `next`. */
+    const chain = async (): Promise<{ first: number | null; cards: string[] }> => {
+      const first = await manager.query(api.docRelations.listOpen, {});
+      const cards = first.cards.map((card) => card._id as string);
+      let next = first.next;
+      for (let read = 0; next !== null && read < 16; read += 1) {
+        const later = await manager.query(api.docRelations.listOpen, { conflictsBefore: next });
+        cards.push(...later.cards.map((card) => card._id as string));
+        next = later.next;
+      }
+      expect(next).toBeNull();
+      return { first: first.next, cards };
+    };
+    const before = await chain();
+    expect(before.cards).toEqual([newest, relation._id]);
+    // A settled conflict the first read walked past its card goes (taken back to a proposal):
+    // the read stops a relation further on, and where the tab's later reads go on from is unmoved,
+    // so the tab keeps them rather than drawing the first read's card alone until it reads again.
+    await harness.run(async (ctx) => {
+      const settled = await ctx.db
+        .query('docRelations')
+        .withIndex('by_user_kind_status', (q) =>
+          q.eq('userId', 'owner').eq('kind', 'possible_conflict').eq('status', 'confirmed'),
+        )
+        .order('desc')
+        .take(3);
+      await ctx.db.patch(settled[1]._id, { status: 'proposed' });
+    });
+    const after = await chain();
+    expect(after.first).toBe(before.first);
+    expect(after.cards).toEqual([newest, relation._id]);
+  });
+
   it('draws the proposals on the first read alone, so a read going on from a cursor repeats none', async (): Promise<void> => {
     useSurfaceMode('real');
     const harness = convexTest(schema, allConvexModules());
