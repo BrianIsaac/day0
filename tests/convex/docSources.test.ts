@@ -3389,6 +3389,47 @@ describe('pages as blocks, their hash and the skills that read them (14-I)', ():
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await due()).not.toBeNull();
   });
+
+  it('judges a page of fifty hostile lines changed, stamps its skills and stores it (W17-R15)', async (): Promise<void> => {
+    // The review's probe, fifty lines of it: each stored line sixteen markers a letter apart, and
+    // its text fifteen hundred of that letter, which the markers can stand for. The walk lined
+    // each up at the end of its every place, about a second of the store's mutation, which a
+    // backend ends; and judged the page the same, so a page its author rewrote stamped nothing.
+    useSurfaceMode('real');
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.UTC(2026, 9, 14, 3, 0, 0));
+    const harness = convexTest(schema, allConvexModules());
+    const { sourceId, agentId } = await seedSyncedSource(harness);
+    const marker = '<redacted: person>';
+    const hostile = (line: string): string =>
+      `${RUNBOOK}\n\n${Array.from({ length: 50 }, () => line).join('\n')}`;
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'refresh.md',
+        title: 'Refresh the tile',
+        markdown: hostile(`${marker}${`b${marker}`.repeat(15)}Z`),
+        updatedAt: 1,
+      });
+    });
+    const holder = await holderOf(harness, agentId, sourceId);
+    const runId = await harness.mutation(internal.docSources.beginSync, { sourceId });
+    const markdown = hostile(`${'b'.repeat(1_500)}Z`);
+    await harness.mutation(internal.docSources.upsertPage, {
+      sourceId,
+      syncRunId: runId,
+      ref: 'refresh.md',
+      title: 'Refresh the tile',
+      markdown,
+      updatedAt: 2,
+      contentHash: 'a'.repeat(32),
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await harness.run(async (ctx) => (await ctx.db.get(holder))?.recheckDueAt ?? null)).toBe(
+      Date.UTC(2026, 9, 14, 3, 0, 0),
+    );
+    expect((await storedPage(harness, sourceId, 'refresh.md')).page?.markdown).toBe(markdown);
+  });
 });
 
 describe('whether a page’s source dated it, in the page store (D-8 (a), K-2)', (): void => {
