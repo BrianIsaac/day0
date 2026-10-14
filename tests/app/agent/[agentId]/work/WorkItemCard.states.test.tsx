@@ -167,7 +167,8 @@ describe('a plan a reorientation card’s Approve asked again (D-2 (b), 18-O)', 
     };
     const asked = card({ ...DRAWN.planPending, heldThroughChangeAt: 5 }, { heldByCard: decided });
     expect(asked.text()).toContain(
-      'Your change to “Ines Duarte, its approver: now for “REVOPS close plans”” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
+      // A summary that quotes is quoted in single marks, so its own quotes nest (the bed's shot).
+      'Your change to ‘Ines Duarte, its approver: now for “REVOPS close plans”’ does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
     );
     expect(asked.text()).not.toContain('Day0 approves nothing here');
     asked.unmount();

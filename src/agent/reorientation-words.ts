@@ -228,7 +228,18 @@ export function heldByCardWords(summary: string): string {
  * does not affect this plan, so it was not drafted again: approve it as it is, or send it back."
  */
 export function askedAgainWords(summary: string): string {
-  return `Your change to “${withoutStop(summary)}” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.`;
+  return `Your change to ${quotedSummary(summary)} does not affect this plan, so it was not drafted again: approve it as it is, or send it back.`;
+}
+
+/**
+ * A card's summary quoted inside a sentence: in double marks, or in single ones where the summary
+ * quotes something itself, so its own marks nest rather than close against the sentence's (an
+ * edge's summary, "now for “{scope}”, where it was “{old}”", read "…”” does not affect" on the
+ * bed's plan).
+ */
+export function quotedSummary(summary: string): string {
+  const said = withoutStop(summary);
+  return /[“”]/u.test(said) ? `‘${said}’` : `“${said}”`;
 }
 
 /**

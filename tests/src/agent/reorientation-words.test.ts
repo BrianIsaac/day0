@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
+  askedAgainWords,
   byHandChangesWords,
   joinedWithoutProposalWords,
   closedByHandSummary,
@@ -393,6 +394,19 @@ describe('a judgement that failed, by its kind (W17-R8; section 7)', (): void =>
     );
     expect(unproposedWords('Mira', { failedAt: 1, failure: 'refused' })).toBe(
       'Mira could not work out a proposal: the model’s provider refused the request.',
+    );
+  });
+});
+
+describe('a plan asked again (D-2 (b); section 7)', (): void => {
+  it('quotes the change in double marks, or in single ones round a summary that quotes', (): void => {
+    expect(askedAgainWords('Mira now covers renewals.')).toBe(
+      'Your change to “Mira now covers renewals” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
+    );
+    expect(
+      askedAgainWords('Ines Duarte, its approver: now for “refunds”, where it was “none”'),
+    ).toBe(
+      'Your change to ‘Ines Duarte, its approver: now for “refunds”, where it was “none”’ does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
     );
   });
 });

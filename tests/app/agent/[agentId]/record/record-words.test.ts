@@ -554,7 +554,7 @@ describe('recordWords', (): void => {
         subject,
       ),
     ).toBe(
-      'The plan for “Draft response for new tier-two RevOps ask” is asked for your decision again: the change to “Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”” does not affect it.',
+      'The plan for “Draft response for new tier-two RevOps ask” is asked for your decision again: the change to ‘Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”’ does not affect it.',
     );
   });
 

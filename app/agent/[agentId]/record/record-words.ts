@@ -13,7 +13,7 @@ import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { relationshipNoun } from '@/people/words';
-import { CARD_NOT_OPENED_REASON } from '@/agent/reorientation-words';
+import { CARD_NOT_OPENED_REASON, quotedSummary } from '@/agent/reorientation-words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
@@ -1252,7 +1252,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.plan-held': (p, subject) =>
     // A plan asked again, not drafted again (D-2 (b); section 7's draft, RM24).
     p.reason === 'held-through-change' && text(p.summary)
-      ? `The plan${forItem(subject)} is asked for ${their(subject)} decision again: the change to “${text(p.summary)?.replace(/[.!?]+$/u, '')}” does not affect it`
+      ? `The plan${forItem(subject)} is asked for ${their(subject)} decision again: the change to ${quotedSummary(text(p.summary) ?? '')} does not affect it`
       : p.reason === 'reorientation-pending' && text(p.summary)
         ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
         : p.reason === 'documentation-conflict' && text(p.heading)
