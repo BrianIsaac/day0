@@ -186,7 +186,8 @@ export function willNotDoAsAct(clause: string): string {
  */
 function actOf(clause: string): string {
   const trimmed = inSentenceCase(clause.trim());
-  const act = trimmed.replace(EMPHATIC_EVER, '$1').replace(PROHIBITION_OPENING, '');
+  const opened = trimmed.replace(PROHIBITION_OPENING, '');
+  const act = opened === trimmed ? trimmed : opened.replace(EMPHATIC_EVER, '');
   if (act === trimmed || act === '') return clause;
   // One separator only: "Never change prices, run discounts, or send quotes." is a list of acts,
   // each ruled out as written, never a redirect (the second pass).
@@ -1794,10 +1795,10 @@ export function rulePlacement(
 }
 
 /**
- * An emphatic "ever" after a prohibition's opening ("Never ever ...", "Don't ever ..."), which is
- * no word of the act.
+ * An emphatic "ever" left where a prohibition's opening was ("Never ever ...", "Must not ever
+ * ...": every opening, W18-R5), which is no word of the act.
  */
-const EMPHATIC_EVER = /^(never|do\s+not|don['\u2019]t)\s+ever\b/i;
+const EMPHATIC_EVER = /^ever\s+/i;
 
 /**
  * A manager's prohibition as the Will not do clause it is written as: the act ({@link actOf}), in
@@ -1830,6 +1831,25 @@ const INSTRUCTION_FORBIDS =
  */
 const QUALIFIES_THE_ACT =
   /^(?:even|not\s+even|unless|except|including|especially|regardless|no\s+matter|whatever|or|nor|which|who|whom|whose)\b/i;
+
+/** A later part that opens on a relative pronoun ("..., which belong to the sales lead."). */
+const RELATIVE_OPENING = /^(?:which|who|whom|whose)\b/i;
+
+/**
+ * What makes a relative part another thing said rather than a qualifier of what the act touches
+ * (W18-R5): a modal or a word that asks ("which you must archive", "who should ask the sales
+ * lead", "which means archive them"), or a person said ("which I do myself", and the manager it
+ * becomes in the third person). Under Will not do each would read as ruled out; a relative part
+ * that holds none ("which belong to the sales lead") still qualifies.
+ */
+const RELATIVE_SAYS_MORE =
+  /\b(?:must|mustn['\u2019]t|should|shouldn['\u2019]t|shall|will|won['\u2019]t|would|can|can['\u2019]t|cannot|could|may|might|need|needs|ought|means?|meant|ha(?:s|ve)\s+to|i|you|we|me|us|myself|yourself|ourselves|the\s+manager)\b/i;
+
+/** Whether a written clause's later part qualifies the one act ({@link QUALIFIES_THE_ACT}). */
+function qualifiesTheAct(part: string): boolean {
+  if (!QUALIFIES_THE_ACT.test(part)) return false;
+  return !RELATIVE_OPENING.test(part) || !RELATIVE_SAYS_MORE.test(part);
+}
 
 /**
  * A turn to a second thing said ("... but leave a note.", "... archive them instead."); "instead
@@ -1890,7 +1910,8 @@ const LATER_PART = new RegExp(
  * standing there says its opposite: "Never delete tickets, archive them instead." written as
  * "Delete tickets, archive them instead." forbids the archiving (the second pass, continued). A
  * clause passes when the act-writer kept the manager's sentence whole, when it has one part and
- * no turn to another, when each later part ({@link LATER_PART}) qualifies the act, or when it is
+ * no turn to another, when each later part ({@link LATER_PART}) qualifies the act (a relative
+ * part only when it asks for nothing and names no one, {@link RELATIVE_SAYS_MORE}), or when it is
  * a list of acts closed by "or" or "nor" ("Change prices, run discounts, or send quotes."). A
  * list closed by "and" is not taken for one: "Never delete tickets, archive them, and tell me."
  * asks for the last two.
@@ -1901,7 +1922,7 @@ function saysOnlyTheAct(clause: string): boolean {
   const later = clause.split(LATER_PART).slice(1);
   const last = later.at(-1);
   const listOfActs = later.length >= 2 && last !== undefined && /^(?:or|nor)\b/i.test(last);
-  return listOfActs || later.every((part: string): boolean => QUALIFIES_THE_ACT.test(part));
+  return listOfActs || later.every(qualifiesTheAct);
 }
 
 /**
