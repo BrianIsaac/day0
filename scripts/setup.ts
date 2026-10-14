@@ -169,6 +169,7 @@ import {
   type SignInCheck,
 } from './check-sign-in';
 import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
+import { runUnderProxy } from './lib/under-proxy';
 import {
   composeEnvironment,
   processEnvironment,
@@ -6362,6 +6363,9 @@ async function main(): Promise<number> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // Handed back rather than passed to process.exit so a piped stdout drains.
-  process.exitCode = await main();
+  // Handed back rather than passed to process.exit so a piped stdout drains. The setup's own
+  // requests (an MCP server's discovery in `access`) take the proxy `.env.local` names, as its
+  // children do, and never one the shell names: it starts itself again under it, as the three
+  // checks do (wave 18, D-9 (a)).
+  process.exitCode = runUnderProxy(readEnvValues(join(process.cwd(), ENV_FILE))) ?? (await main());
 }
