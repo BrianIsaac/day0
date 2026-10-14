@@ -30,14 +30,17 @@ describe('what reached the work environment', (): void => {
     expect(markup).not.toContain('data-land');
   });
 
-  it('names a landed row by its tool when it carries no effect of its own', (): void => {
+  // Re-pinned (W17-R30): a row with no words of its own was "Applied linear.save_issue", the
+  // transport's name; it is "A write", as the reconciliation checklist names one.
+  it('names a landed row that carries no effect of its own as a write, never by its tool', (): void => {
     const markup = renderToStaticMarkup(
       <LandedChanges
         rows={[{ tool: 'linear.save_issue', ok: true, place: 0 }]}
         fresh={new Set()}
       />,
     );
-    expect(markup).toContain('Applied linear.save_issue');
+    expect(markup).toContain('<span class="sr-only">Landed: </span>A write');
+    expect(markup).not.toContain('linear.save_issue');
   });
 
   it('sets the small print’s parts apart, never run together (the 12-W bed)', (): void => {

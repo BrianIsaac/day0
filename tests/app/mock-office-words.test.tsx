@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionCtx } from '../../convex/_generated/server';
 import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { LandedChanges, NotSentLedger } from '../../app/agent/[agentId]/work/LandedChanges';
+import { ProviderReconciliationControl } from '../../app/agent/[agentId]/work/RunDetails';
 import { RegisteredSkillsPanel } from '../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
 import { mockAdapter } from '../../src/surfaces/mock';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
 import { summariseAction } from '../../src/surfaces/summary';
+import { providerReconciliationEntries } from '../../src/work/reconciliation';
 import type { MockAction } from '../../src/work/types';
 
 vi.mock('convex/react', () => ({
@@ -175,6 +177,27 @@ describe('the mock office’s cards in a manager’s words (W17-R30)', (): void 
     expect(drawn).not.toMatch(INPUT_NAME);
     expect(text(drawn)).toContain(
       'asks for: a record, the value asked for, the channel to reply in, the thread to reply in, where the work came from, how to check what was written',
+    );
+  });
+
+  it('asks for no provider’s reconciliation in an office that has no provider', async (): Promise<void> => {
+    const applied = await Promise.all([THREAD_REPLY, RECAP].map(landed));
+    const output = { actions: [THREAD_REPLY, RECAP], applied };
+    const entries = providerReconciliationEntries(output).map((entry) => ({
+      ...entry,
+      summary: summariseAction([THREAD_REPLY, RECAP][entry.actionIndex]!, []),
+    }));
+    expect(entries).toHaveLength(2);
+    const drawn = text(
+      renderToStaticMarkup(
+        <ProviderReconciliationControl entries={entries} onConfirm={(): void => undefined} />,
+      ),
+    );
+    expect(drawn).not.toMatch(/provider/i);
+    expect(drawn).not.toContain('Ledger key');
+    expect(drawn).not.toMatch(THREAD_KEY);
+    expect(drawn).toContain(
+      'Each write below landed, as Day0 recorded it in the office: a retry never sends one again. Confirm to open Retry.',
     );
   });
 });

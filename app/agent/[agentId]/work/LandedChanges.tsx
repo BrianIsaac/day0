@@ -73,6 +73,14 @@ function LedgerLine({
 }
 
 /**
+ * What a ledger line says first: the write in words (its summary, else its effect), never the
+ * transport's name (W17-R30); a row that carries neither is "A write", as the checklist names one.
+ */
+function rowHeading(row: PhasedLedgerRow): string {
+  return row.summary ?? clipLedgerRow(row.effect) ?? 'A write';
+}
+
+/**
  * The small print of a row: the provider's id, the phase, the earlier run it reuses. The effect
  * above it already says what happened in words, so the transport's name is not repeated.
  *
@@ -134,7 +142,7 @@ export function LandedChanges({
   const arriving = rows.filter((row) => fresh.has(row.place));
   const line = (row: LandedRow, rise?: number) => (
     <LedgerLine key={row.place} kind="landed" rise={rise} meta={rowMeta(row)}>
-      {row.summary ?? clipLedgerRow(row.effect) ?? `Applied ${row.tool}`}
+      {rowHeading(row)}
       <RepairNote repair={row.repair} />
       <SessionRestoreNote restore={row.sessionRestore} />
     </LedgerLine>
@@ -201,7 +209,7 @@ export function NotSentLedger({ rows }: { rows: readonly PhasedLedgerRow[] }) {
     <ul className="grid gap-2">
       {rows.map((row, index) => (
         <LedgerLine key={index} kind="withheld" meta={rowMeta(row)}>
-          {row.summary ?? clipLedgerRow(row.effect) ?? row.tool}
+          {rowHeading(row)}
           <span className="text-[var(--color-muted)]">, {notSentWords(row.reason)}</span>
           <RepairNote repair={row.repair} />
           <SessionRestoreNote restore={row.sessionRestore} />
