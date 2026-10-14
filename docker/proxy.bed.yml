@@ -75,6 +75,9 @@ services:
       proxy-egress:
     environment:
       - FORWARD_PROXY_PORT=3128
+      # `user:password` makes it an authenticating proxy, which the bed's .env.local then names
+      # as http://user:password@<PROXY_BED_FORWARD_ADDRESS>:3128 (wave 18, 18-P).
+      - FORWARD_PROXY_AUTH=${PROXY_BED_FORWARD_AUTH:-}
     volumes:
       - ./docker/proxy-bed:/app:ro
     healthcheck:
