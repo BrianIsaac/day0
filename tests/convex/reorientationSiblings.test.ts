@@ -11,6 +11,7 @@ import {
   openTestCard,
   seedEmployee,
   seedWork,
+  shownOf,
   type Harness,
 } from './fakes/reorientation';
 
@@ -119,7 +120,7 @@ describe('the sibling chain (W17-R7)', (): void => {
     await expect(
       harness
         .withIdentity(OWNER)
-        .mutation(api.reorientationDecisions.approve, { reorientationId: priyas }),
+        .mutation(api.reorientationDecisions.approve, await shownOf(harness, priyas)),
     ).resolves.toEqual({ result: 'the relationship was retired' });
     expect(await cardOf(harness, mateos)).toMatchObject({
       status: 'open',
@@ -174,7 +175,7 @@ describe('the sibling chain (W17-R7)', (): void => {
 
     await harness
       .withIdentity(OWNER)
-      .mutation(api.reorientationDecisions.approve, { reorientationId: priyas });
+      .mutation(api.reorientationDecisions.approve, await shownOf(harness, priyas));
     for (const sibling of [mateos, aikos]) {
       expect((await cardOf(harness, sibling)).status).toBe('open');
     }

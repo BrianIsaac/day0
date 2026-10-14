@@ -697,8 +697,8 @@ async function applyPageStatus(
  * retired an edge that holds for everyone, the close of every other employee's undecided card
  * about that edge as decided here (the first in this transaction, the rest by a chain).
  *
- * @throws ConvexError when the card is gone or decided, nothing is proposed yet, the proposal is
- *   no longer the one the page showed, or the target refuses (gone, moved on, a successor not
+ * @throws ConvexError when the card is gone or decided, nothing is proposed yet, no proposal was
+ *   sent as shown, the proposal is no longer the one the page showed, or the target refuses (gone, moved on, a successor not
  *   current).
  */
 export const approve = mutation({
@@ -707,16 +707,17 @@ export const approve = mutation({
     /**
      * The proposal the manager was shown (`proposalFingerprint`): the page sends it with the
      * press, and Approve is refused when the card proposes something else by then (W16-R24).
-     * Absent from a caller that draws no card, which approves what the card holds.
+     * Required from 0.22.0 (O-2 (a)): every page built since 0.21.0 sends it, and a call without
+     * it, a page left open across the upgrade among them, is refused in words that say to reload.
+     * Optional in the validator so that refusal is the card's own sentence.
      */
     shown: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ result: string }> => {
     const { card } = await decidableCard(ctx, args.reorientationId);
     if (card.proposed.kind === 'pending') throw new ConvexError(CARD_ACTION_REFUSALS.pending);
-    if (args.shown !== undefined && args.shown !== proposalFingerprint(card.proposed)) {
-      throw new ConvexError(PROPOSAL_CHANGED);
-    }
+    if (args.shown === undefined) throw new ConvexError(CARD_ACTION_REFUSALS.reload);
+    if (args.shown !== proposalFingerprint(card.proposed)) throw new ConvexError(PROPOSAL_CHANGED);
     const caller = await getCallerOrThrow(ctx);
     const now = Date.now();
     const decidedBy = verifiedAddressOf(caller);

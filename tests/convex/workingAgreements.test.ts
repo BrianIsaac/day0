@@ -14,6 +14,7 @@ import {
   EMPLOYEES_CHECKED,
 } from '../../src/work/agreement-vocabulary';
 import { allConvexModules } from './all-modules';
+import { shownOf } from './fakes/reorientation';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
@@ -2373,7 +2374,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     expect(
       await harness
         .withIdentity(OWNER)
-        .mutation(api.reorientationDecisions.approve, { reorientationId: card._id }),
+        .mutation(api.reorientationDecisions.approve, await shownOf(harness, card._id)),
     ).toEqual({ result: 'the working agreement is being checked again' });
     await drain(harness);
     // One Approve checked both agreements the card named, and neither check is owed any more.
@@ -2396,7 +2397,7 @@ describe('the hold of an agreement for every employee (15-FX: W14-R15 and W14-R5
     await expect(
       harness
         .withIdentity(OWNER)
-        .mutation(api.reorientationDecisions.approve, { reorientationId: again }),
+        .mutation(api.reorientationDecisions.approve, await shownOf(harness, again)),
     ).rejects.toThrow('These agreements have been checked since this card opened: dismiss it.');
   }, 60_000);
 

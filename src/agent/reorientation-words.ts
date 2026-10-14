@@ -35,6 +35,11 @@ export const CARD_ACTION_REFUSALS = {
    * change nothing but pin the page to the manager, so a later word of its source were ignored.
    */
   held: 'The page already has this status from its source, so approving would change nothing: dismiss the card.',
+  /**
+   * An Approve with no proposal sent as shown (O-2 (a)): a page built before 0.22.0, left open
+   * across the upgrade.
+   */
+  reload: 'This page is from an earlier version of Day0. Reload it, then approve.',
   date: 'Pick a date after today and within a year.',
   summary: 'Say what changed in up to 300 characters.',
 } as const;
