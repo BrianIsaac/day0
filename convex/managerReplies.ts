@@ -432,11 +432,16 @@ async function answerFromChannel(
     notified: await notice(text),
   });
   const { number } = args.reply;
+  // The plan's question numbers in words: one question is said as the one (W18-R16).
+  const numbers =
+    numbered.length === 1 ? 'only question is 1' : `questions are numbered 1 to ${numbered.length}`;
   if (args.reply.runTogether === true && numbered.length > 0) {
     const letter = args.reply.choice === 'from' ? 'A' : args.reply.choice === 'to' ? 'B' : 'both';
+    // The example names a question that exists, never a number typed past the last (W18-R16).
+    const example = numbered.some((question) => question.number === number) ? number : 1;
     return await ignored(
       'number run into its letter',
-      `Write the question’s number and the letter apart, for example “answer ${decisionId} ${number ?? 1} ${letter}”: this plan’s questions are numbered 1 to ${numbered.length}.`,
+      `Write the question’s number and the letter apart, for example “answer ${decisionId} ${example} ${letter}”: this plan’s ${numbers}.`,
     );
   }
   if (number === undefined && standing.length === 0) {
@@ -471,7 +476,7 @@ async function answerFromChannel(
       'no such question',
       numbered.length === 0
         ? `Nothing is waiting on an answer for decision ${decisionId}.`
-        : `This plan has no question ${number}: its questions are numbered 1 to ${numbered.length}.`,
+        : `This plan has no question ${number}: its ${numbers}.`,
     );
   }
   if (!target.standing) {
