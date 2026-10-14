@@ -2032,6 +2032,115 @@ describe('the narrow redraft: one Approve for everyone at fifty-one (D-2 (b), RM
   });
 });
 
+describe('a plan approved while its card stood (V17-9’s remainder, W17-R8)', (): void => {
+  it('sends back a plan the manager approved in Slack while the card stood when Approve changed what it rests on, and leaves one it does not rest on or whose apply is claimed', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const edge = await harness.run(async (ctx) => {
+      const person = await ctx.db.insert('people', {
+        userId: OWNER_SUBJECT,
+        displayName: 'Ines Duarte',
+        nameKey: 'ines duarte',
+        status: 'active',
+        source: 'manager',
+        evidence: [],
+        confirmedAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      return await ctx.db.insert('relationships', {
+        userId: OWNER_SUBJECT,
+        toPersonId: person,
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes',
+        effectiveFrom: 1,
+        status: 'active',
+        source: 'manager',
+        confirmedAt: 1,
+        createdAt: 1,
+      });
+    });
+    const inSlack = {
+      id: 'decision-1',
+      kind: 'plan' as const,
+      requestedAt: 2,
+      channel: 'D0MANAGER',
+      surfaceSlug: 'slack',
+      surfaceName: 'Slack',
+      decidedAt: 3,
+      outcome: 'approved' as const,
+    };
+    const naming = { summary: 'Ask Ines Duarte to approve the journal entry.', steps: ['Ask'] };
+    const approved = await seedWork(harness, agentId, 'plan-approved', {
+      externalId: 'REVOPS-1',
+      plan: naming,
+      decision: inSlack,
+    });
+    const waiting = await seedWork(harness, agentId, 'actions-pending', {
+      externalId: 'REVOPS-2',
+      plan: naming,
+      decision: { ...inSlack, id: 'decision-2', kind: 'actions' },
+      approvedIndexes: [0],
+      applyPhase: 'approved',
+    });
+    const applying = await seedWork(harness, agentId, 'actions-pending', {
+      externalId: 'REVOPS-3',
+      plan: naming,
+      applyClaimedAt: 4,
+    });
+    const elsewhere = await seedWork(harness, agentId, 'plan-approved', {
+      externalId: 'REVOPS-4',
+      plan: { summary: 'Close the renewal with a note.', steps: ['Close'] },
+      decision: { ...inSlack, id: 'decision-4' },
+    });
+    const cardId = await proposedCard(
+      harness,
+      agentId,
+      {
+        kind: 'relationship',
+        relationshipId: edge,
+        action: 'edit',
+        type: 'approval-authority',
+        scope: 'NetLedger journal changes and REVOPS close plans',
+        rationale: 'Widened.',
+      },
+      {
+        evidence: { relationshipIds: [edge] },
+        affected: { relationships: [edge], workItems: [approved, waiting, applying, elsewhere] },
+      },
+    );
+    expect((await cardOf(harness, cardId)).blockingWork).toHaveLength(4);
+    await harness
+      .withIdentity(OWNER)
+      .mutation(api.reorientationDecisions.approve, { reorientationId: cardId });
+    const rows = await harness.run(
+      async (ctx) =>
+        await Promise.all(
+          [approved, waiting, applying, elsewhere].map(async (id) => await ctx.db.get(id)),
+        ),
+    );
+    expect(rows.map((row) => row?.state)).toEqual([
+      'claimed',
+      'claimed',
+      'actions-pending',
+      'plan-approved',
+    ]);
+    for (const row of rows.slice(0, 2)) {
+      expect([row?.plan, row?.decision, row?.approvedIndexes, row?.applyPhase]).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+    }
+    expect(
+      (await payloadsOf(harness, agentId, 'work.plan-redrafting')).map(
+        (payload) => (payload as { workItemId: string }).workItemId,
+      ),
+    ).toEqual([approved, waiting]);
+  });
+});
+
 describe('the mark’s clear: a plan drafted again is decided as any other (RM43 (a))', (): void => {
   /** A row of an employee whose switch is on, in a state, held through a change at 5. */
   async function marked(

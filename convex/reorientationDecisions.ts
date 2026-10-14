@@ -136,14 +136,38 @@ const movedGroundValidator = v.union(
 );
 
 /**
+ * Whether a held row is a plan the manager approved while its card stood and whose apply nobody has
+ * claimed: approved and not started, or a run whose set waits at its approval before the closing
+ * steps the card holds (`heldStageOf`).
+ */
+function approvedWhileHeld(row: Doc<'workItems'>): boolean {
+  if (row.applyClaimedAt !== undefined) return false;
+  return (
+    row.state === 'plan-approved' || (row.state === 'actions-pending' && heldStageOf(row) === 'run')
+  );
+}
+
+/** What a set approved and never applied leaves on its row, cleared as a park clears it. */
+const APPROVED_SET_CLEARED = {
+  output: undefined,
+  pendingRunId: undefined,
+  approvedIndexes: undefined,
+  actionVerdicts: undefined,
+  applyPhase: undefined,
+  executionRunId: undefined,
+  applyAttemptId: undefined,
+} as const;
+
+/**
  * Let go the rows a decided card held. Where the decision moved what a plan was drafted under (an
  * Approve that amended the charter, changed an edge, an agreement, a page, an access or a skill),
  * an undecided plan whose cites, named people or own words reach what moved is sent back to
  * drafting, so neither Day0 under the autonomy switch nor the manager decides a plan written for
  * what no longer holds (V17-9; D-2 (b), O-1). An undecided plan that does not rest on it is marked
  * held through the change and asked again, and its decision goes to the manager whatever the
- * switch says (RM43 (a): `decidePlan` reads the mark, the work loop's recovery with it). Otherwise
- * each plan's decision is asked again, so a released plan goes on.
+ * switch says (RM43 (a): `decidePlan` reads the mark, the work loop's recovery with it). A plan the
+ * manager approved while the card stood and whose apply nobody claimed is sent back by the same
+ * test. Otherwise each plan's decision is asked again, so a released plan goes on.
  *
  * @param moved - What the decision changed; empty for a Dismiss, or an Approve that changed nothing
  *   a plan rests on.
@@ -157,7 +181,18 @@ async function releaseHeldWork(
 ): Promise<void> {
   for (const workItemId of card.blockingWork) {
     const row = await ctx.db.get(workItemId);
-    if (row?.state !== 'plan-pending') continue;
+    if (row === null) continue;
+    if (approvedWhileHeld(row)) {
+      // The manager approved it in Slack while the card stood, and nothing of it has been applied:
+      // drafted again where it rests on what moved, its approval standing otherwise (V17-9's
+      // remainder, W17-R8).
+      if (moved.length > 0 && planRestsOnAny(row, moved)) {
+        await ctx.db.patch(row._id, APPROVED_SET_CLEARED);
+        await sendBackToDrafting(ctx, { ...row, ...APPROVED_SET_CLEARED }, { card }, now);
+      }
+      continue;
+    }
+    if (row.state !== 'plan-pending') continue;
     if (moved.length > 0 && row.decision?.decidedAt === undefined) {
       if (planRestsOnAny(row, moved)) {
         await sendBackToDrafting(ctx, row, { card }, now);
