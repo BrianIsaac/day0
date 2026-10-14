@@ -1514,21 +1514,28 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     // fifty-first the item's index reads (W17-R13's edge, met at Retry).
     const [asked] = await questionsOf(harness, workItemId);
     const questionId = await harness.run(async (ctx) => {
-      const { _id, _creationTime, ...row } = asked;
+      const row = {
+        agentId: asked.agentId,
+        key: asked.key,
+        question: asked.question,
+        context: asked.context,
+        askedAt: asked.askedAt,
+        workItemId,
+        charterId: asked.charterId,
+        blocking: asked.blocking,
+        type: asked.type,
+        relationId,
+      };
       for (let earlier = 0; earlier < 50; earlier += 1) {
         await ctx.db.insert('managerQuestions', {
-          agentId: row.agentId,
-          key: `${row.key}:earlier-${earlier}`,
+          ...row,
+          key: `${asked.key}:earlier-${earlier}`,
           question: `An earlier question ${earlier}`,
-          context: row.context,
-          askedAt: row.askedAt,
-          workItemId,
-          charterId: row.charterId,
           blocking: false,
-          type: 'retrieval',
+          relationId: undefined,
         });
       }
-      await ctx.db.delete(_id);
+      await ctx.db.delete(asked._id);
       return await ctx.db.insert('managerQuestions', row);
     });
     await harness.run(async (ctx) => {
