@@ -12,8 +12,13 @@
 #
 # and recreates the stack (`docker compose ... down`, then `up -d --wait`; the volumes are kept).
 # The test issuer's overlay comes first: it gives the project network the subnet the addresses
-# below are in. `./setup.sh upgrade` recreates the backend from the main file alone, so a bed
-# re-applies the overlays after one.
+# below are in. A setup verb that brings the stack up (`upgrade`, `resume`, `pause`, `restore`)
+# starts it from the main file alone, and cannot while this overlay's stack is up: compose wants
+# the project's network as the main file defines it, and stops on "network ... has active
+# endpoints" with nothing pushed (the 18-P bed, 14 October 2026). So a bed takes the overlays down
+# first (the volumes kept), runs the verb with the proxy's names out of .env.local (the issuer and
+# the proxy are the overlays' own, so its closing check is otherwise a gap), lifts any pause it
+# left (`./setup.sh unpause`), and brings the overlays back with the names in.
 #
 # What it changes:
 #
