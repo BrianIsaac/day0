@@ -3593,3 +3593,11 @@ describe('the hosted office reseed pass (16-PT; W16-R15, D-10 (a))', (): void =>
     expect((await documents(harness, bare)).size).toBe(0);
   });
 });
+
+describe('the migration list through the wave 18 schema step (18-K: no pass)', (): void => {
+  it('runs the same 30 passes as 0.21.0, the newest still of 0.20.0', (): void => {
+    expect(MIGRATION_NAMES).toHaveLength(30);
+    expect(MIGRATION_NAMES.at(-1)).toBe('mock-office-reseed');
+    expect(NEWEST_MIGRATION_RELEASE).toBe('0.20.0');
+  });
+});

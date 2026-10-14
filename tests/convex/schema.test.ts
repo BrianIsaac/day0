@@ -3706,3 +3706,213 @@ describe('the wave 17 schema step (17-K, N10: additive and optional, no table, n
     expect(read.kinds).toHaveLength(17);
   });
 });
+
+describe('the wave 18 schema step (18-K, N10: two indexes and two optional fields, no table, no pass)', (): void => {
+  /** An employee of the owner's. */
+  const insertAgent = async (ctx: GenericMutationCtx<DataModel>): Promise<Id<'agents'>> =>
+    await ctx.db.insert('agents', {
+      bossEmail: MANAGER_ADDRESS,
+      name: 'Mira',
+      userId: 'owner',
+      state: 'deployed',
+      createdAt: 1,
+    });
+
+  /** A work item of the employee's, as intake stores one, in the state the test gives it. */
+  const insertWork = async (
+    ctx: GenericMutationCtx<DataModel>,
+    agentId: Id<'agents'>,
+    externalId: string,
+    state: Doc<'workItems'>['state'],
+    skillId?: Id<'skills'>,
+  ): Promise<Id<'workItems'>> => {
+    const id = (await insertMinimalRow(ctx as never, 'workItems', agentId)) as Id<'workItems'>;
+    await ctx.db.patch(id, { externalId, state, ...(skillId !== undefined ? { skillId } : {}) });
+    return id;
+  };
+
+  it("reading `by_skill_state` for one skill and one state returns only that skill's rows in that state (W17-R8)", async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const skill = (await insertMinimalRow(ctx as never, 'skills', agentId)) as Id<'skills'>;
+      const other = (await insertMinimalRow(ctx as never, 'skills', agentId)) as Id<'skills'>;
+      // The oldest rows of the skill are finished ones, as on a skill that has run for a while.
+      for (let index = 0; index < 3; index += 1) {
+        await insertWork(ctx, agentId, `DONE-${index}`, 'completed', skill);
+      }
+      await insertWork(ctx, agentId, 'OPEN-1', 'plan-pending', skill);
+      await insertWork(ctx, agentId, 'OPEN-2', 'plan-pending', skill);
+      await insertWork(ctx, agentId, 'APPROVED-1', 'plan-approved', skill);
+      await insertWork(ctx, agentId, 'OTHER-1', 'plan-pending', other);
+      await insertWork(ctx, agentId, 'NONE-1', 'plan-pending');
+      const pending = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill_state', (q) => q.eq('skillId', skill).eq('state', 'plan-pending'))
+        .collect();
+      const everyState = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill_state', (q) => q.eq('skillId', skill))
+        .collect();
+      // The index `by_skill` reads as it did: every row of the skill, oldest first.
+      const bySkill = await ctx.db
+        .query('workItems')
+        .withIndex('by_skill', (q) => q.eq('skillId', skill))
+        .take(2);
+      return {
+        pending: pending.map((row) => row.externalId),
+        everyState: everyState.map((row) => `${row.state}:${row.externalId}`),
+        bySkill: bySkill.map((row) => row.externalId),
+      };
+    });
+    expect(read.pending).toEqual(['OPEN-1', 'OPEN-2']);
+    expect(read.everyState).toEqual([
+      'completed:DONE-0',
+      'completed:DONE-1',
+      'completed:DONE-2',
+      'plan-approved:APPROVED-1',
+      'plan-pending:OPEN-1',
+      'plan-pending:OPEN-2',
+    ]);
+    expect(read.bySkill).toEqual(['DONE-0', 'DONE-1']);
+  });
+
+  it('reading `by_agent_digest` for one digest returns only its notes (W17-R22)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const otherAgent = await insertAgent(ctx);
+      const workItemId = await insertWork(ctx, agentId, 'FIN-1', 'completed');
+      const digest = (await insertMinimalRow(ctx as never, 'events', agentId)) as Id<'events'>;
+      const later = (await insertMinimalRow(ctx as never, 'events', agentId)) as Id<'events'>;
+      const note = (
+        agent: Id<'agents'>,
+        text: string,
+        digestId?: Id<'events'>,
+      ): WithoutSystemFields<Doc<'managerNotes'>> => ({
+        agentId: agent,
+        workItemId,
+        kind: 'landed',
+        text,
+        createdAt: 2,
+        keptFor: 'digest',
+        ...(digestId !== undefined ? { digestId, claimedAt: 3 } : {}),
+      });
+      await ctx.db.insert('managerNotes', note(agentId, 'first in the digest', digest));
+      await ctx.db.insert('managerNotes', note(agentId, 'in the next digest', later));
+      await ctx.db.insert('managerNotes', note(agentId, 'not sent yet'));
+      await ctx.db.insert('managerNotes', note(otherAgent, "another employee's", digest));
+      await ctx.db.insert('managerNotes', note(agentId, 'second in the digest', digest));
+      const ofDigest = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_digest', (q) => q.eq('agentId', agentId).eq('digestId', digest))
+        .collect();
+      const unsent = await ctx.db
+        .query('managerNotes')
+        .withIndex('by_agent_digest', (q) => q.eq('agentId', agentId).eq('digestId', undefined))
+        .collect();
+      return { ofDigest: ofDigest.map((row) => row.text), unsent: unsent.map((row) => row.text) };
+    });
+    expect(read.ofDigest).toEqual(['first in the digest', 'second in the digest']);
+    expect(read.unsent).toEqual(['not sent yet']);
+  });
+
+  it('a page stored with and without `titleHash` reads back as written (the 17-X F4 residual)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = (await insertMinimalRow(ctx as never, 'docPages', agentId)) as Id<'docPages'>;
+      const older = await ctx.db.get(olderId);
+      const page = { sourceId: older!.sourceId, markdown: '# Rotation', updatedAt: 5 };
+      const hashedId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'rotation.md',
+        title: 'Rotation for [redacted]',
+        titleHash: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c',
+      });
+      const plainId = await ctx.db.insert('docPages', {
+        ...page,
+        ref: 'refunds.md',
+        title: 'Refunds',
+      });
+      return { older, hashed: await ctx.db.get(hashedId), plain: await ctx.db.get(plainId) };
+    });
+    expect(read.older).not.toHaveProperty('titleHash');
+    expect(read.hashed).toMatchObject({
+      title: 'Rotation for [redacted]',
+      titleHash: '3f1c9a0b7d2e4f6a8b0c1d2e3f4a5b6c',
+    });
+    expect(read.plain).toMatchObject({ title: 'Refunds' });
+    expect(read.plain).not.toHaveProperty('titleHash');
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.plain!._id, { titleHash: 7 as unknown as string });
+      }),
+    ).rejects.toThrow('Validator error: Expected `string`, got `7`');
+  });
+
+  it('a work item with and without `heldThroughChangeAt` reads back as written (RM43 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const read = await harness.run(async (ctx) => {
+      const agentId = await insertAgent(ctx);
+      const olderId = await insertWork(ctx, agentId, 'FIN-1', 'plan-pending');
+      const heldId = await insertWork(ctx, agentId, 'FIN-2', 'plan-pending');
+      await ctx.db.patch(heldId, { heldThroughChangeAt: 1_791_960_000_000 });
+      const clearedId = await insertWork(ctx, agentId, 'FIN-3', 'plan-pending');
+      await ctx.db.patch(clearedId, { heldThroughChangeAt: 1_791_960_000_000 });
+      await ctx.db.patch(clearedId, { heldThroughChangeAt: undefined });
+      return {
+        older: await ctx.db.get(olderId),
+        held: await ctx.db.get(heldId),
+        cleared: await ctx.db.get(clearedId),
+      };
+    });
+    expect(read.older).not.toHaveProperty('heldThroughChangeAt');
+    expect(read.held).toMatchObject({
+      externalId: 'FIN-2',
+      heldThroughChangeAt: 1_791_960_000_000,
+    });
+    expect(read.cleared).not.toHaveProperty('heldThroughChangeAt');
+    await expect(
+      harness.run(async (ctx) => {
+        await ctx.db.patch(read.held!._id, {
+          heldThroughChangeAt: 'yesterday' as unknown as number,
+        });
+      }),
+    ).rejects.toThrow('Validator error: Expected `number`, got `yesterday`');
+  });
+
+  it('adds the two indexes and nothing else: 48 tables, 128 indexes and one search index (N10)', (): void => {
+    const pushed = schema as unknown as { readonly export: () => string };
+    const exported = JSON.parse(pushed.export()) as {
+      readonly tables: readonly {
+        readonly tableName: string;
+        readonly indexes: readonly {
+          readonly indexDescriptor: string;
+          readonly fields: string[];
+        }[];
+        readonly searchIndexes: readonly unknown[];
+      }[];
+    };
+    const indexesOf = (table: string): Record<string, string[]> =>
+      Object.fromEntries(
+        exported.tables
+          .find((entry) => entry.tableName === table)!
+          .indexes.map((index) => [index.indexDescriptor, index.fields]),
+      );
+    expect(exported.tables).toHaveLength(48);
+    // 126 at 0.21.0 (17-K's count), and the two of this step.
+    expect(exported.tables.flatMap((entry) => entry.indexes)).toHaveLength(128);
+    expect(exported.tables.flatMap((entry) => entry.searchIndexes)).toHaveLength(1);
+    expect(indexesOf('workItems')).toMatchObject({
+      by_skill: ['skillId'],
+      by_skill_state: ['skillId', 'state'],
+    });
+    expect(indexesOf('managerNotes')).toEqual({
+      by_agent: ['agentId'],
+      by_agent_unsent: ['agentId', 'claimedAt', 'providerTs'],
+      by_agent_claim_open: ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt'],
+      by_agent_digest: ['agentId', 'digestId'],
+    });
+  });
+});
