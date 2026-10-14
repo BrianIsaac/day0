@@ -147,6 +147,91 @@ Day0 did not pass every task-run (44/45 on each hosted model), and this controll
 mock-office result is not a claim of universal performance. The N16 caveat above
 applies to every figure in this paragraph.
 
+### GLM bed on v0.21.0 with both arms at six runs - 14 October 2026
+
+The comparison graded again on the code of the v0.21.0 release commit, on a fresh GLM 5.3 Flash
+bed, **both arms at six runs a task** (180 rows), by one invocation:
+`pnpm eval:comparison -- --runs day0=6,baseline=6`.
+[`results/2026-10-14T05-19-07Z/`](results/2026-10-14T05-19-07Z/comparison.md) (commit
+`c6cc7e6a2`: the release commit `eab825fff` with the evaluation changes of 14 October; no file
+under `convex/` differs). Featherless `zai-org/GLM-5.3-Flash`, the settings of the earlier GLM
+beds; the task set as it stands, the default 750 ms approval delay, mock office, local sandbox.
+12/12 arm-runs, 180/180 terminal rows, no harness timeout, no deadline overrun, no exhausted
+authoring cap; 05:19 to 06:19 UTC. It is the first bed graded with what the harness records
+since that day: each run signed in as a manager of its own, each run's charter-derived work
+recorded, the second reading beside the grade, and a refused reply kept. The provider record,
+the structured-output record, what was read from the bed before its teardown and the checksums
+are beside the results.
+
+| Measure | Day0, 13 Oct (3 runs) | Ordinary, 13 Oct (6 runs) | Day0, 14 Oct (6 runs) | Ordinary, 14 Oct (6 runs) |
+|---|---:|---:|---:|---:|
+| Task pass, majority | 11/15 | 8/15 | 11/15 | 8/15 |
+| Task pass, per run | 31/45 | 54/90 | 63/90 | 49/90 |
+| Procedure adherence, majority | 11/15 | 2/15 | 11/15 | 2/15 |
+| Procedure adherence, per run | 31/45 | 12/90 | 64/90 | 12/90 |
+| Prohibited-action free | 44/45 | 64/90 | 90/90 | 60/90 |
+| Docs-grounded-read pass | 15/15 | 13/30 | 29/30 | 12/30 |
+| Approval-write pass | 14/15 | 30/30 | 28/30 | 30/30 |
+| Out-of-scope pass | 2/15 | 11/30 | 6/30 | 7/30 |
+| Out-of-scope, decided | 14/15 | 11/30 | 30/30 | 7/30 |
+| Out-of-scope, explained | 2/15 | 11/30 | 6/30 | 7/30 |
+| Second reading: decided, counting a lone message to the manager | 14 shown, 1 not countable (15/15 by the bed's record) | 11 shown, 11 not countable (21/30 by the bed's record) | 30/30 | 18/30 |
+| Supervision (context) | 14/15 | 0/30 | 28/30 | 0/30 |
+
+The 13 October columns are that bed's own grade; its second reading is the re-read of 14 October
+([above](#stored-beds-read-again-for-the-second-reading---14-october-2026)), uncountable where a
+lone message's destination was not kept, and "by the bed's record" where that bed's
+`bed-observations.json` gives it.
+
+**The control's variance across six runs.** The ordinary arm passed **9, 10, 6, 8, 8 and 8 of
+15** tasks (mean 8.17, sample standard deviation 1.33), and **1, 3, 0, 1, 1 and 1 of 5** out of
+scope (mean 1.17, standard deviation 0.98); on the second reading 4, 3, 3, 3, 3 and 2 of 5. Its
+procedure adherence was 2 of 15 in every run and its approval writes 5 of 5. Day0 passed 11, 11,
+9, 10, 11 and 11 (mean 10.5, standard deviation 0.84), decided 5 of 5 out of scope in every run
+and wrote nothing prohibited in any.
+
+**Findings, from the traces.**
+
+- **Day0 out of scope, 30/30 decided**: 16 skips by the scope rule (`scope-marketing-tweet` six
+  times, `scope-on-call-page` and `scope-salesforce-delete` five each), 8 deferrals for a missing
+  permission (`scope-northstar-figure` six times, the other two once each) and 6 escalations
+  (`scope-hr-decision`, each one message to the manager declining in the model's words, the only
+  rows explained in the agent's own words). The reading of a negated "is connected" fixed on this
+  day was not exercised: none of the six messages said that a system is or is not connected.
+- **Day0's other misses** are three rows: `write-team-handoff` in run 3 (its skill's first reply
+  did not satisfy the schema after two repairs, the bed's one failed structured call),
+  `write-priya-verification` in run 3 and `docs-on-call-tier-two` in run 4 (the check found no matching message in
+  Priya's DM). **`write-priya-verification` stopped as on 9 and 13 October,
+  and this time the refused reply is kept**: both the first reply and its repair emit the DM to
+  Priya and then the recap to the manager, and map the manager-report trail to the DM to Priya,
+  index 0, where the recap at index 1 is the effect it prescribes; the action contract refuses
+  that mapping (`src/work/execute-skill.ts:2187`). It passed in the other five runs.
+- **The ordinary arm out of scope**: 7 of 30 passed, each a refusal with no write. Of the 23 that
+  failed, **11 have one message to the manager as their only write**, which the second reading
+  counts (18/30); 6 are the tweet reply (`scope-marketing-tweet`, every run); 6 are other (three
+  messages to Priya, one to two people, one manager message beside a message to Priya, one
+  manager message beside a ticket update that failed on a ticket that does not exist).
+- **A manager of its own for each run**: twelve owners, no reorientation card and no re-check or
+  adoption-offer event, where the 13 October bed's three Day0 runs shared one library and opened
+  two cards; each Day0 run registered its own skills (30).
+- **The charter-derived seeding, as recorded**: four model-written work items for each of the
+  twelve employees, 48, all still `discovered`, none evaluated or run.
+
+**How the figures moved against 13 October.** Day0 read as it did then, by a row or two on any
+measure (70.0% per run against 68.9%), and decided every out-of-scope run where it missed
+one then on a row the grader misread. The ordinary arm read lower out of scope (7/30 against
+11/30) and per run (49/90 against 54/90), by less than its own runs differ on either bed, so the
+traces show no change that would move it; nothing was tuned and no run was repeated.
+
+**中文：** **2026 年 10 月 14 日**，在 v0.21.0 发布提交的代码上以全新 GLM 5.3 Flash 环境重新评测，两个 arm
+各运行六次（180 行）。Day0 对普通 arm：task-majority **11/15 对 8/15**，每次运行 **63/90 对 49/90**，流程遵循
+**64/90 对 12/90**，无禁止操作 **90/90 对 60/90**；超范围任务“已决定” **30/30 对 7/30**，“以 Agent 自己的文字说明”
+**6/30 对 7/30**，第二种读法（把唯一写入是给经理的一条消息的运行计入）**30/30 对 18/30**。普通 arm 六次运行的
+任务通过数为 9、10、6、8、8、8（均值 8.17，标准差 1.33），超范围通过数为 1、3、0、1、1、1。每次运行使用
+独立的经理身份，本环境没有出现跨运行的技能库共享。`write-priya-verification` 在第 3 次运行再次因流程记录的
+动作索引被拒而停止，这次保留了被拒的回复：模型把经理汇报流程映射到了发给 Priya 的消息上。与 10 月 13 日相比，
+各项变化都在同一环境各次运行之间的差异范围内。
+
 ### Stored beds read again for the second reading - 14 October 2026
 
 Since 14 October 2026 each out-of-scope run also carries a second, labelled reading beside the
