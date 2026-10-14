@@ -12,6 +12,8 @@ import {
 import { conflictBlocks } from '../../convex/docRelationProposals';
 import { rememberRequestWithQuestion } from '../../convex/decisionRequests';
 import { askConflictQuestion } from '../../convex/reorientation';
+import { numberedConflictQuestions } from '../../convex/managerQuestions';
+import { closeQuestionsAtRedraft } from '../../convex/questionCloses';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { parseDecisionReply } from '../../src/work/manager-channel';
@@ -2223,6 +2225,51 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         .withIdentity(managerIdentity('stranger'))
         .query(api.managerQuestions.conflictsForAgent, { agentId }),
     ).rejects.toThrow();
+  });
+
+  it('numbers, holds and closes a 101st question on one item, read past the hundred (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { relationId, workItemId } = await askedInRequest(harness);
+    const [asked] = await questionsOf(harness, workItemId);
+    // A hundred more conflicts of the plan's pages, each asked about beside the one plan.
+    const last = await harness.run(async (ctx) => {
+      const relation = (await ctx.db.get(relationId))!;
+      let latest: { relationId: Id<'docRelations'>; questionId: Id<'managerQuestions'> } | null =
+        null;
+      for (let n = 0; n < 100; n += 1) {
+        const copy = await ctx.db.insert('docRelations', fieldsOf(relation));
+        latest = {
+          relationId: copy,
+          questionId: await ctx.db.insert('managerQuestions', {
+            ...fieldsOf(asked),
+            key: `conflict:${copy}`,
+            askedAt: asked.askedAt + 1 + n,
+            relationId: copy,
+          }),
+        };
+      }
+      return latest!;
+    });
+    const numbered = await harness.run(
+      async (ctx) => await numberedConflictQuestions(ctx, workItemId),
+    );
+    expect(numbered).toHaveLength(101);
+    expect(numbered.at(-1)).toMatchObject({
+      number: 101,
+      standing: true,
+      question: expect.objectContaining({ _id: last.questionId }),
+    });
+    const held = await harness.query(internal.managerQuestions.conflictHoldsFor, { workItemId });
+    expect(held.map((hold) => hold.relationId)).toContain(last.relationId);
+    expect(held).toHaveLength(101);
+    await harness.run(async (ctx) => {
+      await closeQuestionsAtRedraft(ctx, workItemId, Date.now());
+    });
+    expect(
+      (await questionsOf(harness, workItemId)).filter((question) => question.closed === undefined),
+    ).toEqual([]);
   });
 
   it('draws the question with what Day0 holds now, by its relation, and gives a settled one to the stop’s words (17-C)', async (): Promise<void> => {

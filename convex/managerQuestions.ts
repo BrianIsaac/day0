@@ -48,7 +48,7 @@ import {
   type ManagerQuestionCloseReason,
 } from '../src/agent/manager-questions';
 import { heldSurfaceNames } from './reorientation';
-import { closeQuestionsOfRelation } from './questionCloses';
+import { closeQuestionsOfRelation, questionsOfItem } from './questionCloses';
 import { appendEvent } from './eventLog';
 
 /**
@@ -220,6 +220,9 @@ export async function answerQuestionInTransaction(
   return { amendedCharterId };
 }
 
+/** The questions one read of the plan's approval screen shows: a handful in practice. */
+const ITEM_QUESTIONS_SHOWN = 100;
+
 /** The questions asked at this work item's plan, those still open first. */
 export const forWorkItem = query({
   args: { workItemId: v.id('workItems') },
@@ -228,7 +231,7 @@ export const forWorkItem = query({
     const rows = await ctx.db
       .query('managerQuestions')
       .withIndex('by_work_item', (q) => q.eq('workItemId', args.workItemId))
-      .take(ITEM_QUESTIONS_READ);
+      .take(ITEM_QUESTIONS_SHOWN);
     return rows.sort((a, b) => Number(!isOpenQuestion(a)) - Number(!isOpenQuestion(b)));
   },
 });
@@ -360,23 +363,12 @@ export const answerConflict = mutation({
   },
 });
 
-/**
- * The questions one item's reads take (standard 10.4): an item asks one question per open charter
- * question its plan touched and one per conflict under it, a handful in practice.
- */
-const ITEM_QUESTIONS_READ = 100;
-
 /** The conflict questions one item's plans raised that are still open, oldest first. */
 export async function openConflictQuestions(
   ctx: Pick<QueryCtx, 'db'>,
   workItemId: Id<'workItems'>,
 ): Promise<Doc<'managerQuestions'>[]> {
-  return (
-    await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-      .take(ITEM_QUESTIONS_READ)
-  ).filter(
+  return (await questionsOfItem(ctx, workItemId)).filter(
     (question) =>
       question.type === 'retrieval' &&
       question.relationId !== undefined &&
@@ -521,12 +513,9 @@ export async function numberedConflictQuestions(
   ctx: QueryCtx,
   workItemId: Id<'workItems'>,
 ): Promise<NumberedConflictQuestion[]> {
-  const asked = (
-    await ctx.db
-      .query('managerQuestions')
-      .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-      .take(ITEM_QUESTIONS_READ)
-  ).filter((question) => question.type === 'retrieval' && question.relationId !== undefined);
+  const asked = (await questionsOfItem(ctx, workItemId)).filter(
+    (question) => question.type === 'retrieval' && question.relationId !== undefined,
+  );
   const numbered: NumberedConflictQuestion[] = [];
   for (const [index, question] of asked.entries()) {
     const relation =

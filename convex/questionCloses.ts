@@ -1,4 +1,4 @@
-import type { MutationCtx } from './_generated/server';
+import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Doc, Id } from './_generated/dataModel';
 import { isOpenQuestion, type ManagerQuestionCloseReason } from '../src/agent/manager-questions';
 
@@ -15,8 +15,15 @@ import { isOpenQuestion, type ManagerQuestionCloseReason } from '../src/agent/ma
  * edge towards `work`, and a page's change of status (`docStatus`) can. It registers no function.
  */
 
-/** The questions one item's close reads: one a conflict under its plans, a handful in practice. */
-const ITEM_QUESTIONS_READ = 100;
+/** The questions one page of an item's read takes, oldest first. */
+const ITEM_QUESTIONS_PAGE = 100;
+
+/**
+ * The most questions one read of an item's takes, page by page: one a conflict under its plans
+ * and one a charter question it touched, a handful in practice. Read past the first hundred since
+ * W17-R13, where the 101st conflict question of an item was never numbered, held or closed.
+ */
+const ITEM_QUESTIONS_READ = 1_000;
 
 /** The questions about one relation one close reads: one a work item, few items a relation. */
 const RELATION_QUESTIONS_READ = 500;
@@ -49,6 +56,33 @@ async function closeOpen(
 }
 
 /**
+ * Every question asked beside one item's plans, oldest first, read by page up to
+ * {@link ITEM_QUESTIONS_READ}: what numbers a plan's conflict questions, what the apply holds and
+ * what a redraft closes, each reading the same questions (W17-R13).
+ *
+ * @param ctx - A query's or a mutation's context.
+ * @param workItemId - The item.
+ */
+export async function questionsOfItem(
+  ctx: Pick<QueryCtx, 'db'>,
+  workItemId: Id<'workItems'>,
+): Promise<Doc<'managerQuestions'>[]> {
+  const asked: Doc<'managerQuestions'>[] = [];
+  for (;;) {
+    const after = asked.at(-1)?._creationTime;
+    const page = await ctx.db
+      .query('managerQuestions')
+      .withIndex('by_work_item', (q) => {
+        const item = q.eq('workItemId', workItemId);
+        return after === undefined ? item : item.gt('_creationTime', after);
+      })
+      .take(ITEM_QUESTIONS_PAGE);
+    asked.push(...page);
+    if (page.length < ITEM_QUESTIONS_PAGE || asked.length >= ITEM_QUESTIONS_READ) return asked;
+  }
+}
+
+/**
  * Close an item's open conflict questions because its plan is being drafted again (`redrafted`):
  * the plan they were asked beside is gone, and the new one is asked on what it cites. Called in
  * the transaction that clears the plan, by every site that does. An answered question keeps its
@@ -64,11 +98,7 @@ export async function closeQuestionsAtRedraft(
   workItemId: Id<'workItems'>,
   now: number,
 ): Promise<number> {
-  const asked = await ctx.db
-    .query('managerQuestions')
-    .withIndex('by_work_item', (q) => q.eq('workItemId', workItemId))
-    .take(ITEM_QUESTIONS_READ);
-  return await closeOpen(ctx, asked, 'redrafted', now);
+  return await closeOpen(ctx, await questionsOfItem(ctx, workItemId), 'redrafted', now);
 }
 
 /**
