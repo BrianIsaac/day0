@@ -39,6 +39,38 @@ describe('planRestsOn', (): void => {
     );
   });
 
+  // W18-R9 (the wave 18 review, reader 1's probe): every ASCII word of four letters of the name
+  // was required, so a plan naming Priya Raman by her first name, and any name of short or
+  // non-ASCII words, read as not resting on the change, and the plan was asked again under it.
+  it('finds a plan that names the person by any one word of the name (W18-R9)', (): void => {
+    const edgeTo = (person: string): Parameters<typeof planRestsOn>[1] => ({
+      kind: 'edge',
+      person,
+      scopes: [],
+    });
+    const asking = (name: string): Parameters<typeof planRestsOn>[0] => ({
+      plan: { summary: `Ask ${name} to approve the journal changes.`, steps: ['Ask'] },
+    });
+    expect(planRestsOn(asking('Priya'), edgeTo('Priya Raman'))).toBe(true);
+    expect(planRestsOn(asking('José'), edgeTo('José Núñez'))).toBe(true);
+    expect(planRestsOn(asking('Núñez'), edgeTo('José Núñez'))).toBe(true);
+    // A name in a script written without spaces is found inside the plan's words.
+    const inChinese = {
+      plan: { summary: '请王小明批准 the NetLedger journal changes.', steps: ['Ask'] },
+    };
+    expect(planRestsOn(inChinese, edgeTo('王小明'))).toBe(true);
+    expect(planRestsOn(inChinese, edgeTo('李小龙'))).toBe(false);
+    // A plan that names someone else does not rest on the person.
+    expect(planRestsOn(asking('Mateo'), edgeTo('José Núñez'))).toBe(false);
+    expect(planRestsOn(asking('Mateo'), edgeTo('Priya Raman'))).toBe(false);
+  });
+
+  it('cannot tell for a person with no name word of three letters, and so drafts again (W18-R9)', (): void => {
+    const plan = { summary: 'Ask Mateo to approve the journal changes.', steps: ['Ask'] };
+    expect(planRestsOn({ plan }, { kind: 'edge', person: 'Li Na', scopes: [] })).toBe(true);
+    expect(planRestsOn({ plan }, { kind: 'edge', person: '李明', scopes: [] })).toBe(true);
+  });
+
   it('reads a clause by half its content words, two at least', (): void => {
     const clause = {
       kind: 'clauses' as const,
