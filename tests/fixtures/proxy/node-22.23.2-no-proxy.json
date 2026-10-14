@@ -1,0 +1,594 @@
+{
+  "node": "v22.23.2",
+  "probe": "tests/fixtures/proxy/probe-no-proxy.mjs",
+  "rows": [
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": ".corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": ".corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": ".corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": ".corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": ".corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": ".corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": ".corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": ".corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "*.corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "*.corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "*.corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "*.corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "*.corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "*.corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "*.corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "*.corp.invalid",
+      "host": "sub.corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:8080",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:8080",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:8080",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:8080",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:9090",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:9090",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:9090",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid:9090",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid:8080",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "10.0.0.0/8",
+      "host": "10.1.2.3",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "10.0.0.0/8",
+      "host": "10.1.2.3",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "10.0.0.0/8",
+      "host": "10.1.2.3",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "10.0.0.0/8",
+      "host": "10.1.2.3",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "10.1.2.3",
+      "host": "10.1.2.3",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "10.1.2.3",
+      "host": "10.1.2.3",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "10.1.2.3",
+      "host": "10.1.2.3",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "10.1.2.3",
+      "host": "10.1.2.3",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "CORP.INVALID",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "CORP.INVALID",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "CORP.INVALID",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "CORP.INVALID",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "other.invalid,corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "other.invalid,corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "other.invalid,corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "other.invalid,corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "other.invalid,*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "other.invalid,*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "other.invalid,*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "other.invalid,*",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "*corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "*corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "*corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "*corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "*corp.invalid",
+      "host": "xcorp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "*corp.invalid",
+      "host": "xcorp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "*corp.invalid",
+      "host": "xcorp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "*corp.invalid",
+      "host": "xcorp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid:443",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid:443",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid:443",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid:443",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "corp.invalid:80",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "corp.invalid:80",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "corp.invalid:80",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "corp.invalid:80",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": " corp.invalid , other.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": " corp.invalid , other.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": " corp.invalid , other.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": " corp.invalid , other.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "http",
+      "noProxy": "other.invalid corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "fetch",
+      "scheme": "https",
+      "noProxy": "other.invalid corp.invalid",
+      "host": "corp.invalid",
+      "proxied": false
+    },
+    {
+      "client": "node:http",
+      "scheme": "http",
+      "noProxy": "other.invalid corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    },
+    {
+      "client": "node:http",
+      "scheme": "https",
+      "noProxy": "other.invalid corp.invalid",
+      "host": "corp.invalid",
+      "proxied": true
+    }
+  ]
+}

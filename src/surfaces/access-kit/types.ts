@@ -47,6 +47,8 @@ export interface SecretLifetime {
   readonly words: string;
   /** Days until it expires, where the vendor fixes a number; absent when it does not expire or IT decides. */
   readonly days?: number;
+  /** Hours until it expires, where the vendor fixes a number under a day (Slack's configuration pair). */
+  readonly hours?: number;
 }
 
 /** One way a system is connected: per employee or shared (D3 with B11). */

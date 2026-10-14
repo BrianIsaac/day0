@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
+import { composeEnvironment, deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
 
 interface Service {
   readonly ports?: readonly string[];
@@ -385,8 +385,20 @@ describe('the backend image (14-F ruling 1 (a), 8 October)', (): void => {
 });
 
 describe('the way out through a proxy (wave 17, 17-P; RM31 (a))', (): void => {
-  /** The services that reach out of the machine, each of which is handed the proxy. */
-  const REACHING_OUT = ['backend', 'slack-socket', 'redactor', 'nango-server'] as const;
+  /**
+   * The services that reach out of the machine, each of which is handed the proxy. The Notion
+   * component, the browser component and the bundled model service joined in wave 18 (17-P's F6):
+   * npm and Notion's API, the pages a browser is sent to, and model pulls.
+   */
+  const REACHING_OUT = [
+    'backend',
+    'slack-socket',
+    'redactor',
+    'nango-server',
+    'docs-notion-mcp',
+    'playwright-mcp',
+    'model',
+  ] as const;
 
   /**
    * A value as Compose renders it from the env file: `${NAME}`, `${NAME:-default}` and
@@ -439,6 +451,24 @@ describe('the way out through a proxy (wave 17, 17-P; RM31 (a))', (): void => {
       expect(environment.HTTPS_PROXY).toBe('');
       expect(environment.HTTP_PROXY).toBe('');
       expect(environment.NODE_USE_ENV_PROXY).toBe('');
+    },
+  );
+
+  // D-9 (a): what compose fills these lines from is `composeEnvironment`, the shell's proxy
+  // names set aside, so one the shell names and the file does not reaches no service.
+  it.each(REACHING_OUT)(
+    'leaves %s without a proxy the shell names and the env file does not',
+    (service): void => {
+      const environment = rendered(
+        service,
+        composeEnvironment(
+          { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080', NO_PROXY: 'intranet.acme.test' },
+          {},
+        ),
+      );
+      expect(environment.HTTPS_PROXY).toBe('');
+      expect(environment.NODE_USE_ENV_PROXY).toBe('');
+      expect(environment.NO_PROXY).toBe(SERVICE_NO_PROXY.join(','));
     },
   );
 

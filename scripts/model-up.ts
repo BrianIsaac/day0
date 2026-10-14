@@ -27,6 +27,8 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { readEnvFileValues } from './lib/env-text';
+import { composeEnvironment } from './lib/proxy-env';
 
 const ENV_FILE = '.env.local';
 const BASE_FILE = 'docker-compose.yml';
@@ -125,6 +127,7 @@ function up(gpu: boolean): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn('docker', composeArgs(gpu, ['--profile', SERVICE, 'up', '-d', SERVICE]), {
       stdio: ['inherit', 'inherit', 'pipe'],
+      env: composeChildEnvironment() as NodeJS.ProcessEnv,
     });
     let stderr = '';
     // Compose reports progress on stderr, so it is echoed as it arrives and
@@ -136,6 +139,15 @@ function up(gpu: boolean): Promise<{ code: number; stderr: string }> {
     });
     child.on('close', (code) => resolve({ code: code ?? 1, stderr }));
   });
+}
+
+/**
+ * What compose runs with: the shell's environment without the proxy it names, then the env
+ * file's own (wave 18, D-9 (a)). Compose fills `${HTTPS_PROXY}` from the process environment
+ * before the env file, so a proxy exported in the shell would reach the service.
+ */
+function composeChildEnvironment(): Record<string, string> {
+  return composeEnvironment(process.env, readEnvFileValues(ENV_FILE));
 }
 
 function composeArgs(gpu: boolean, rest: string[]): string[] {
@@ -155,6 +167,7 @@ function compose(gpu: boolean, rest: string[]): string {
   const result = spawnSync('docker', composeArgs(gpu, rest), {
     encoding: 'utf8',
     stdio: 'pipe',
+    env: composeChildEnvironment() as NodeJS.ProcessEnv,
   });
   return result.stdout ?? '';
 }

@@ -13,18 +13,21 @@
  * `HTTP_PROXY`, `NO_PROXY`), Node is started with it: Next reads the file
  * after Node has started, and Node reads a proxy from its environment only at
  * its start (RM31 (a)). A Node too old to read one is refused here rather
- * than left to dial out directly.
+ * than left to dial out directly. The file is read alone: a proxy the shell
+ * names and the file does not never reaches the app, and is said (D-9 (a)).
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { fromEnvText, resolveAppPort } from './dev';
+import { parseEnvText } from './lib/env-text';
 import {
-  hostProxyEnvironment,
+  processEnvironment,
   proxyAddressGap,
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
+  shellProxyNote,
   type ProxySettings,
 } from './lib/proxy-env';
 
@@ -58,14 +61,20 @@ export function startArguments(host: string, port: string): string[] {
   return ['start', '-H', host, '-p', port];
 }
 
-/** The way out as the shell names it, else as the file does, one name at a time. */
-function wayOut(shell: Shell, envText: string | undefined): ProxySettings {
-  return proxySettings((name) => (shell[name] ?? '').trim() || fromEnvText(envText, name));
+/** The env file's values, none when there is no file. */
+function fileValues(envText: string | undefined): Record<string, string> {
+  return Object.fromEntries(parseEnvText(envText ?? ''));
+}
+
+/** The way out as the file names it: the shell's proxy is never read (D-9 (a)). */
+function wayOut(envText: string | undefined): ProxySettings {
+  return proxySettings((name) => fromEnvText(envText, name));
 }
 
 /**
- * The environment `next start` runs with: the shell's, the chosen port, the proxy on the way out
- * when one is named, and Next's own usage telemetry off unless the shell names its switch. Next
+ * The environment `next start` runs with: the shell's without any proxy it names, the chosen
+ * port, the proxy on the way out when the file names one (with the flag that quiets Node's
+ * warning about it), and Next's own usage telemetry off unless the shell names its switch. Next
  * sends its maker figures from a start unless told not to before it starts, and
  * `telemetry.nextjs.org` is a host no list Day0 prints names (found at a bed's forward proxy, 13
  * October 2026; docs/running/egress.md). The build is told the same by its script.
@@ -74,46 +83,43 @@ function wayOut(shell: Shell, envText: string | undefined): ProxySettings {
  * @param envText - The env file's text, or undefined when there is none.
  * @param port - The port the server binds.
  */
-export function startEnvironment<Given extends Shell>(
-  shell: Given,
+export function startEnvironment(
+  shell: Shell,
   envText: string | undefined,
   port: string,
-): Given & Record<string, string | undefined> {
+): Record<string, string> {
   return {
     NEXT_TELEMETRY_DISABLED: '1',
-    ...shell,
+    ...processEnvironment(shell, fileValues(envText)),
     PORT: port,
-    ...hostProxyEnvironment(wayOut(shell, envText)),
   };
 }
 
 /**
  * Why the app is not started, or undefined when it may be: a proxy is named by an address no
- * client can use, or this Node would ignore it.
+ * client can use, or this Node would ignore it. The file's proxy only: one the shell names is never
+ * read, so it refuses nothing (D-9 (a)).
  *
- * @param shell - The environment `pnpm start` was run from.
  * @param envText - The env file's text, or undefined when there is none.
  * @param nodeVersion - `process.version`.
  */
-export function startRefusal(
-  shell: Shell,
-  envText: string | undefined,
-  nodeVersion: string,
-): string | undefined {
-  const proxy = wayOut(shell, envText);
+export function startRefusal(envText: string | undefined, nodeVersion: string): string | undefined {
+  const proxy = wayOut(envText);
   return proxyAddressGap(proxy) ?? proxyNodeGap(nodeVersion, proxy);
 }
 
 function main(): void {
   const envText = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : undefined;
-  const refusal = startRefusal(process.env, envText, process.version);
+  const refusal = startRefusal(envText, process.version);
   if (refusal !== undefined) {
     console.error(`error: ${refusal} Nothing was started.`);
     process.exit(1);
   }
   const port = resolveAppPort(process.env.PORT, envText);
   const host = resolveStartHost(process.env[APP_HOST_VAR], envText);
-  const proxy = wayOut(process.env, envText);
+  const proxy = wayOut(envText);
+  const shellProxy = shellProxyNote(process.env, fileValues(envText));
+  if (shellProxy !== undefined) console.log(`${shellProxy} (docs/running/egress.md)`);
   if (proxy.httpsProxy !== undefined) {
     console.log(
       `The app's requests go out through the proxy at ${proxyForDisplay(proxy.httpsProxy)} ` +
@@ -128,7 +134,7 @@ function main(): void {
   }
   const server = spawn('next', startArguments(host, port), {
     stdio: 'inherit',
-    env: startEnvironment(process.env, envText, port),
+    env: startEnvironment(process.env, envText, port) as NodeJS.ProcessEnv,
   });
   // Next is this checkout's own, on the PATH pnpm gives a script: missing, it was never installed.
   server.on('error', (error: Error): void => {

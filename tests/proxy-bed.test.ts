@@ -231,6 +231,99 @@ describe("the bed's forward proxy", (): void => {
   }, 20_000);
 });
 
+// W17-R28 (reader 5): an absolute-form `GET https://...` reached `http.request` with an https URL,
+// which throws, and the proxy died with every service's only route out.
+describe("the bed's forward proxy, asked in absolute form for an https address", (): void => {
+  it('answers it, a bad gateway where the origin speaks no TLS, and keeps serving', async (): Promise<void> => {
+    const target = await origin();
+    const port = await freePort();
+    const lines = await start('docker/proxy-bed/forward-proxy.js', {
+      FORWARD_PROXY_PORT: String(port),
+    });
+    const answered = await exchange(
+      port,
+      `GET https://127.0.0.1:${target}/secure HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(answered).toMatch(/^HTTP\/1\.1 502 /);
+    const after = await exchange(
+      port,
+      `GET http://127.0.0.1:${target}/after HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(after).toContain('origin saw GET /after');
+    const said = lines
+      .filter((line) => line.startsWith('{'))
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(said).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ method: 'GET', target: `127.0.0.1:${target}`, scheme: 'https' }),
+      ]),
+    );
+  }, 20_000);
+});
+
+// The bed's authenticating proxy (the 18-P bed's row): with FORWARD_PROXY_AUTH set, a request
+// without the credentials is refused with 407 and one with them is carried, both ways it asks.
+describe("the bed's forward proxy, asking for credentials", (): void => {
+  it('refuses a client without them, carries one with them, and never logs them', async (): Promise<void> => {
+    const target = await origin();
+    const port = await freePort();
+    const lines = await start('docker/proxy-bed/forward-proxy.js', {
+      FORWARD_PROXY_PORT: String(port),
+      FORWARD_PROXY_AUTH: 'day0:bed-secret',
+    });
+    const header = `Proxy-Authorization: Basic ${Buffer.from('day0:bed-secret').toString('base64')}\r\n`;
+    const plain = (auth: string): Promise<string> =>
+      exchange(
+        port,
+        `GET http://127.0.0.1:${target}/plain HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n${auth}Connection: close\r\n\r\n`,
+      );
+    const refused = await plain('');
+    expect(refused).toMatch(/^HTTP\/1\.1 407 /);
+    expect(refused).toContain('Proxy-Authenticate: Basic realm="day0-bed"');
+    expect(await plain(header)).toContain('origin saw GET /plain');
+    const tunnel = (auth: string): Promise<string> =>
+      exchange(
+        port,
+        `CONNECT 127.0.0.1:${target} HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n${auth}\r\n` +
+          `GET /tunnel HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\nConnection: close\r\n\r\n`,
+      );
+    expect(await tunnel('')).toMatch(/^HTTP\/1\.1 407 /);
+    expect(await tunnel(header)).toContain('origin saw GET /tunnel');
+    expect(lines.join('\n')).not.toContain('bed-secret');
+    expect(lines.join('\n')).toContain('"refused":"no credentials"');
+  }, 20_000);
+});
+
+// The second pass on 18-P: the refusal ended the client's socket before any error listener was
+// on it, so a client that reset at once could raise an unhandled error in the bed's only way out.
+describe("the bed's forward proxy, refusing a client that resets at once", (): void => {
+  it('keeps serving after clients reset straight after their CONNECT', async (): Promise<void> => {
+    const target = await origin();
+    const port = await freePort();
+    await start('docker/proxy-bed/forward-proxy.js', {
+      FORWARD_PROXY_PORT: String(port),
+      FORWARD_PROXY_AUTH: 'day0:bed-secret',
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise<void>((resolve) => {
+        const socket = connect(port, '127.0.0.1', (): void => {
+          socket.write(`CONNECT 127.0.0.1:${target} HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n\r\n`);
+          socket.resetAndDestroy();
+        });
+        socket.on('error', (): void => undefined);
+        socket.on('close', (): void => resolve());
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const header = `Proxy-Authorization: Basic ${Buffer.from('day0:bed-secret').toString('base64')}\r\n`;
+    const after = await exchange(
+      port,
+      `GET http://127.0.0.1:${target}/after HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n${header}Connection: close\r\n\r\n`,
+    );
+    expect(after).toContain('origin saw GET /after');
+  }, 20_000);
+});
+
 describe("the bed's relay", (): void => {
   it('carries a loopback port to the address it is given, both ways', async (): Promise<void> => {
     const target = await origin();
