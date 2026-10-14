@@ -814,6 +814,13 @@ export interface RelationCardsRead {
    * that stands behind many settled ones is drawn by a later read (W15-R19, F12).
    */
   readonly next: number | null;
+  /**
+   * The proposals the read did not draw (W17-R9, D-10 (a)): those it read and left once it had
+   * drawn `RELATION_CARDS_READ` or spent its bytes, and whether more may stand past what it read
+   * (`atLeast`: it read `PROPOSALS_READ` rows). None on a read going on from a cursor, which draws
+   * no proposal.
+   */
+  readonly notShown: { readonly proposals: number; readonly atLeast: boolean };
 }
 
 /**
@@ -869,8 +876,10 @@ export const listOpen = query({
       };
     });
     const cards: RelationCardRow[] = [];
+    let looked = 0;
     for (const relation of proposed) {
       if (cards.length >= RELATION_CARDS_READ) break;
+      looked += 1;
       // By a small row first: a proposal whose page a block says is no longer current is passed
       // over for none of the read's page bytes. A page with no block is judged by its row, below.
       const statuses = await Promise.all(
@@ -889,7 +898,11 @@ export const listOpen = query({
         ctx.db.get(relation.to.sourceId),
       ]);
       bytes += rowBytes(from) + rowBytes(to);
-      if (bytes > CARD_PAGES_BYTES) break;
+      if (bytes > CARD_PAGES_BYTES) {
+        // This one is not drawn either.
+        looked -= 1;
+        break;
+      }
       if (from === null || to === null || fromSource === null || toSource === null) continue;
       if (pageStatusOf(from) !== 'active' || pageStatusOf(to) !== 'active') continue;
       cards.push({
@@ -908,6 +921,13 @@ export const listOpen = query({
         ],
       });
     }
-    return { cards: [...cards, ...conflictCards], next: confirmed.next };
+    return {
+      cards: [...cards, ...conflictCards],
+      next: confirmed.next,
+      notShown: {
+        proposals: proposed.length - looked,
+        atLeast: proposed.length === PROPOSALS_READ,
+      },
+    };
   },
 });

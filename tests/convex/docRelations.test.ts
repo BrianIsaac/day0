@@ -582,10 +582,47 @@ describe('listOpen: the cards the manager has still to answer', (): void => {
       ['possible_conflict', [true, true], [false, false]],
     ]);
     // Another manager sees none of them.
+    // Re-pinned for W17-R9 (D-10 (a)): the read says how many proposals it did not draw.
     expect(
       await harness.withIdentity(managerIdentity('stranger')).query(api.docRelations.listOpen, {}),
-    ).toEqual({ cards: [], next: null });
+    ).toEqual({ cards: [], next: null, notShown: { proposals: 0, atLeast: false } });
   });
+
+  // W17-R9 with D-10 (a) (the review's bed 1): 58 proposed conflicts drew 21 cards and nothing said
+  // 38 more were behind them.
+  it('says how many proposals past the twenty it draws it did not show, and that more may stand past its read (W17-R9)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const wiki = await syncingSource(harness, 'Team wiki');
+    const relate = async (count: number): Promise<void> => {
+      await storedPage(harness, wiki, {
+        ref: 'policy-0.md',
+        title: 'Policy 0',
+        markdown: '# Policy 0',
+      });
+      for (let pair = 1; pair <= count; pair += 1) {
+        await storedPage(harness, wiki, {
+          ref: `policy-${pair}.md`,
+          title: `Policy ${pair}`,
+          markdown: `# Policy ${pair}`,
+        });
+        await harness.run(async (ctx) => {
+          await ctx.db.insert('docRelations', {
+            userId: 'owner',
+            from: { sourceId: wiki.sourceId, ref: `policy-${pair}.md` },
+            to: { sourceId: wiki.sourceId, ref: 'policy-0.md' },
+            kind: 'possible_duplicate',
+            evidence: [{ measure: 'shared-text', value: 70 }],
+            status: 'proposed',
+            createdAt: pair,
+          });
+        });
+      }
+    };
+    await relate(25);
+    const read = await asManager(harness).query(api.docRelations.listOpen, {});
+    expect(read.cards).toHaveLength(20);
+    expect(read.notShown).toEqual({ proposals: 5, atLeast: false });
+  }, 30_000);
 
   it('draws a live card behind any number of proposals whose pages are no longer current', async (): Promise<void> => {
     // The second pass's minor 4: the read took the newest 20 proposals and drew the live ones

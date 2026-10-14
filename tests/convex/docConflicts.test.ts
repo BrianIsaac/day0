@@ -264,7 +264,9 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     const first = await manager.query(api.docRelations.listOpen, {});
     expect(first).toMatchObject({ cards: [{ status: 'proposed' }], next: null });
     const later = await manager.query(api.docRelations.listOpen, { conflictsBefore: Date.now() });
-    expect(later).toEqual({ cards: [], next: null });
+    // Re-pinned for W17-R9 (D-10 (a)): a read going on from a cursor draws no proposal, so it
+    // leaves none unshown.
+    expect(later).toEqual({ cards: [], next: null, notShown: { proposals: 0, atLeast: false } });
   });
 
   it('stops a walk at its byte bound with the conflict that passed it still to come, and passes over a relation the reader does not read for no lookup', async (): Promise<void> => {

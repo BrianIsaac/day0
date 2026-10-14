@@ -70,8 +70,12 @@ import { choose, mount, press, said, settle } from '../../../../fixtures/dom/pre
 import { MOCK_OFFICE_DOCUMENTATION } from '../../../../../src/surfaces/mock-office';
 
 /** One read of the relations' cards as `docRelations:listOpen` answers it: the cards, and where a later read goes on. */
-function read(cards: readonly unknown[], next: number | null = null): unknown {
-  return { cards, next };
+function read(
+  cards: readonly unknown[],
+  next: number | null = null,
+  notShown = { proposals: 0, atLeast: false },
+): unknown {
+  return { cards, next, notShown };
 }
 
 /** Two linked sources, the second left out when the employee was deployed. */
@@ -370,6 +374,39 @@ describe('DocumentationView', () => {
     expect(text).toContain('disagree under “Thresholds”: 10,000 against 5,000');
     expect([...new Set(backend.readOn)]).toEqual([500, 200]);
     view.unmount();
+  });
+
+  // W17-R9 with D-10 (a) (the review's bed 1): the tab drew twenty proposals of 58 and said
+  // nothing of the rest.
+  it('says how many relations to answer it does not show, under the ones it draws (W17-R9, D-10 (a))', () => {
+    populated();
+    const proposals = Array.from({ length: 20 }, (_unused, n) => ({
+      ...RELATIONS[1],
+      _id: `proposal-${n}`,
+      status: 'proposed',
+    }));
+    backend.queries['docRelations:listOpen'] = read(proposals, null, {
+      proposals: 38,
+      atLeast: false,
+    });
+    const view = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(view.container.textContent).toContain(
+      'Showing the newest 20 relations to answer, and 38 more not shown: the next are drawn as you answer these.',
+    );
+    view.unmount();
+    backend.queries['docRelations:listOpen'] = read(proposals, null, {
+      proposals: 80,
+      atLeast: true,
+    });
+    const bounded = mount(
+      asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }),
+    );
+    expect(bounded.container.textContent).toContain('and 80 or more not shown');
+    bounded.unmount();
+    backend.queries['docRelations:listOpen'] = read(proposals);
+    const all = mount(asEmployee(<DocumentationView />, { agent: READER, surfaceMode: 'real' }));
+    expect(all.container.textContent).not.toContain('not shown');
+    all.unmount();
   });
 
   it('reads no further once the cards hold as many confirmed conflicts as one read gives', () => {
