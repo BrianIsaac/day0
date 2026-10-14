@@ -70,16 +70,18 @@ proxy](proxy.md)).
 
 ## Which components reach out
 
-Four of them leave the machine: `backend` (the model, the systems an
+Seven of them leave the machine: `backend` (the model, the systems an
 approved card reaches, the documentation readers), `slack-socket` (Slack's
-Socket Mode hosts), `redactor` (its wheels and model, on a first start) and
-`nango-server` (the providers' token endpoints). Where `.env.local` names an
-HTTP proxy (`HTTPS_PROXY`), the compose file hands it to those four, with
-Day0's own service names always kept out of it. `docs-notion-mcp`,
-`playwright-mcp` and `model` (its model pulls, on the local-model way)
-reach out too and are not handed it. [The way out](egress.md) lists every
-host, what each component did with a proxy on a bed whose only route out
-was one, and what needs a direct route.
+Socket Mode hosts), `redactor` (its wheels and model, on a first start),
+`nango-server` (the providers' token endpoints), `docs-notion-mcp` (its npm
+package and Notion's API), `playwright-mcp` (the pages the browser is sent
+to) and `model` (its model pulls, on the local-model way). Where
+`.env.local` names an HTTP proxy (`HTTPS_PROXY`), the compose file hands it
+to all seven, with Day0's own service names always kept out of it, and
+since 0.22.0 only `.env.local` names it: a proxy exported in the shell
+reaches none of them. [The way out](egress.md) lists every host, what each
+component did with a proxy on a bed whose only route out was one, and what
+needs a direct route.
 
 ---
 

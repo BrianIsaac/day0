@@ -1079,7 +1079,10 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(section.title).toBe('The way out: through the proxy at proxy.acme.test:3128');
     const lines = section.lines.join('\n');
     expect(lines).not.toContain('hunter2');
-    expect(lines).toContain('the backend, the Slack socket bridge, the redactor and Nango');
+    // Re-taken (wave 18, 17-P's F6): the Notion and browser components and the model service too.
+    expect(lines).toContain(
+      'docker compose hands it to the backend, the Slack socket bridge, the redactor, Nango, the Notion and browser components and the model service,',
+    );
     expect(lines).toContain(
       'The setup and the three checks start themselves with it, run by hand or not.',
     );

@@ -98,17 +98,19 @@
 
 # The way out (wave 17, 17-P; RM31 (a)). A site with no direct route to the
 # internet names its HTTP proxy once, in `.env.local`: HTTPS_PROXY, HTTP_PROXY
-# and NO_PROXY, the names every client reads. The four services that reach out
-# of the machine are handed them: the backend (the model, the systems an
-# approved card reaches, the readers), the Slack socket bridge, the redactor
-# (its wheels and model, on a first start) and Nango's server. Node reads a
+# and NO_PROXY, the names every client reads. The services that reach out of
+# the machine are handed them: the backend (the model, the systems an approved
+# card reaches, the readers), the Slack socket bridge, the redactor (its wheels
+# and model, on a first start), Nango's server, and since 0.22.0 the Notion
+# component (npm and Notion's API), the browser component (the pages it is
+# sent to) and the bundled model service (model pulls). Node reads a
 # proxy from its environment only when NODE_USE_ENV_PROXY is 1, so that is set
 # wherever HTTPS_PROXY is, unless `.env.local` sets it itself. NO_PROXY always
 # begins with the names that never leave the machine (the container itself and
 # every service another one dials by name), then whatever `.env.local` lists:
 # the customer's own hosts that the proxy does not serve, Day0's public address
 # and the identity provider among them where they are inside the network. The
-# same list on all four, so a name added for one is not forgotten for another.
+# same list on all seven, so a name added for one is not forgotten for another.
 # What each client did with the proxy on a bed whose only route out was one is
 # in docs/running/egress.md, written as found.
 #
@@ -252,6 +254,12 @@ services:
     stop_grace_period: 10s
     environment:
       - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-16384}
+      # The way out through the customer's proxy, when .env.local names one: model pulls from
+      # registry.ollama.ai (wave 18, 18-P; 17-P's F6).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     ports:
       - '${MODEL_BIND_ADDR:-127.0.0.1}:${MODEL_PORT:-11434}:11434'
     volumes:
@@ -469,6 +477,13 @@ services:
       # used without asking the registry, so a start on a network that cannot
       # reach npm succeeds once the component has started on one that can.
       - npm_config_prefer_offline=true
+      # The way out through the customer's proxy, when .env.local names one: npm reads it for
+      # the package, and Node's switch hands it to the server's own calls to api.notion.com
+      # (wave 18, 18-P; 17-P's F6).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     volumes:
       - notion_npm_cache:/root/.npm
     expose: ['3000']
@@ -680,6 +695,14 @@ services:
         '--allowed-origins',
         '${PLAYWRIGHT_ALLOWED_ORIGINS:-http://looker-tile:8080;http://host.docker.internal:3000}',
       ]
+    environment:
+      # The way out through the customer's proxy, when .env.local names one, for the server's
+      # own requests and the pages the browser is sent to; a system inside the network the proxy
+      # does not serve goes in NO_PROXY (wave 18, 18-P; 17-P's F6).
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,host.docker.internal,backend,dashboard,model,redactor,docs-notion-mcp,notion-mcp,slack-socket,looker-tile,playwright-mcp,nango-server,nango-db,nango-redis${NO_PROXY:+,${NO_PROXY}}
+      - NODE_USE_ENV_PROXY=${NODE_USE_ENV_PROXY:-${HTTPS_PROXY:+1}}
     expose: ['8931']
     extra_hosts:
       - 'host.docker.internal:host-gateway'

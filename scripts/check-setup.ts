@@ -2084,7 +2084,7 @@ export function wayOutSection(
     title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
     reportTitle = 'The way out: through a proxy';
     lines.push(
-      'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
+      'docker compose hands it to the backend, the Slack socket bridge, the redactor, Nango, the Notion and browser components and the model service,',
       'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
       "Day0's own services and this machine are always kept out of it.",
     );
