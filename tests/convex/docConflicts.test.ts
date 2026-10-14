@@ -2513,6 +2513,12 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(read).toHaveLength(251);
     expect(read.at(-1)).toMatchObject({ _id: asked._id, pages: expect.any(Array) });
     expect(read.filter((view) => view.settled?.answer === 'Both hold')).toHaveLength(250);
+    // Past five hundred answered ones the read stops, so a reactive answer stays bounded and what
+    // is behind is past the read (the second pass).
+    await answeredSince(260, 200);
+    const capped = await drawn();
+    expect(capped).toHaveLength(500);
+    expect(capped.some((view) => view._id === asked._id)).toBe(false);
     // Rows heavy enough to pass the read's byte bound: the read stops at it, and what is behind
     // is past the read, the open question among it.
     await answeredSince(30, 100_000);

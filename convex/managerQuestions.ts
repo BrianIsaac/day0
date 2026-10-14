@@ -742,6 +742,13 @@ const OPEN_CONFLICTS_READ = 50;
  */
 const HELD_PLANS_READ = 20;
 
+/**
+ * The answered or closed conflict questions one read of an employee's draws before it stops: each
+ * is a small view, but the answer is a reactive query's (the second pass), and a stop that names
+ * one past them reads as past the read.
+ */
+const SETTLED_CONFLICTS_READ = 500;
+
 /** The question rows one page of the read takes, newest first. */
 const QUESTIONS_PAGE = 100;
 
@@ -768,7 +775,7 @@ function questionRowBytes(row: Doc<'managerQuestions'>): number {
  * first: those still open, each with the two pages its answers name and what Day0 holds for it
  * now, and those answered or closed, which no card draws and a stopped run's words read. Public,
  * guarded by the employee's owner. Reads the employee's questions page by page (W17-R13) until
- * {@link OPEN_CONFLICTS_READ} open ones are drawn, {@link QUESTION_ROWS_READ} rows are read or
+ * {@link OPEN_CONFLICTS_READ} open ones or {@link SETTLED_CONFLICTS_READ} settled ones are drawn, {@link QUESTION_ROWS_READ} rows are read or
  * {@link QUESTION_READ_BYTES} are drawn, and at most `HELD_PLANS_READ` plans whole. Every
  * conflict question the read reached is in its answer, so one a stopped run names and the answer
  * lacks is past the read, which is when its words say so.
@@ -780,6 +787,7 @@ export const conflictsForAgent = query({
     const views: ConflictQuestionView[] = [];
     const plans = new Map<Id<'workItems'>, Doc<'workItems'> | null>();
     let open = 0;
+    let settled = 0;
     let rows = 0;
     let bytes = 0;
     let before: number | undefined;
@@ -801,6 +809,8 @@ export const conflictsForAgent = query({
         if (row.type !== 'retrieval' || relationId === undefined) continue;
         const named = { _id: row._id, workItemId: row.workItemId, relationId };
         if (!isOpenQuestion(row)) {
+          if (settled >= SETTLED_CONFLICTS_READ) return views;
+          settled += 1;
           views.push({
             ...named,
             question: row.question,
