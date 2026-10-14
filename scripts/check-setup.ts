@@ -2158,11 +2158,15 @@ export function wayOutSection(
         'Only HTTP_PROXY is named: every vendor Day0 reaches is https, which HTTPS_PROXY carries.',
         'Name the proxy in HTTPS_PROXY as well.',
       );
-    } else if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
-      worsen('warn');
+    }
+    // Only 1 turns Node's switch on. The services take the file's value (the bridge, the
+    // backend's Node actions, Nango); this machine's processes turn it on wherever a proxy is
+    // named (P-7), so the services alone would go out directly (W17-R28).
+    if (settings.useEnvProxy !== undefined && settings.useEnvProxy !== '1') {
+      worsen('gap');
       lines.push(
-        `NODE_USE_ENV_PROXY=${settings.useEnvProxy} turns Node's reading of the proxy off: the bridge, the`,
-        "backend's Node actions and Nango then dial out directly. Empty it, or set it to 1.",
+        ".env.local turns Node's proxy switch off while it names a proxy: Day0's own processes " +
+          `would go out directly. Remove NODE_USE_ENV_PROXY=${settings.useEnvProxy} (docs/running/egress.md).`,
       );
     }
     lines.push(

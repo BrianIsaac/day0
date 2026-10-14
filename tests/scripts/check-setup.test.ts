@@ -1131,15 +1131,22 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
     expect(section.lines.join(' ')).toContain('Node 22.21.0 or later does');
   });
 
-  it("warns when the file turns Node's switch off beside a proxy, or names one for plain http alone", (): void => {
+  // Re-taken (wave 18, W17-R28; P-7 stands): the switch turned off beside a proxy was a warning
+  // the host could never reach, since every process on this machine turns it on. It is a gap
+  // with its reason: the services' Node (the bridge, the backend's Node actions, Nango) would
+  // dial out directly.
+  it("is a gap when the file turns Node's switch off beside a proxy, and warns when one is named for plain http alone", (): void => {
     const off = wayOutSection(
       { ...REAL, HTTPS_PROXY: 'http://proxy.acme.test:3128', NODE_USE_ENV_PROXY: '0' },
       [],
       'v22.23.2',
       'x64',
     );
-    expect(off.status).toBe('warn');
-    expect(off.lines.join(' ')).toContain('NODE_USE_ENV_PROXY=0');
+    expect(off.status).toBe('gap');
+    expect(off.lines).toContain(
+      ".env.local turns Node's proxy switch off while it names a proxy: Day0's own processes " +
+        'would go out directly. Remove NODE_USE_ENV_PROXY=0 (docs/running/egress.md).',
+    );
     const plain = wayOutSection(
       { ...REAL, HTTP_PROXY: 'http://proxy.acme.test:3128' },
       [],
