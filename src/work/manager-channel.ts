@@ -219,15 +219,18 @@ export const MANAGER_MESSAGE_MAX_CHARS = 3_000;
 /** A decision code as a reply's pattern reads it: four to six of the code alphabet's symbols. */
 const DECISION_CODE = `[${DECISION_ID_ALPHABET}]{4,6}`;
 
-/** An answer to a conflict's question: the code, the question's number if any, and the letter. */
+/**
+ * An answer to a conflict's question: the code, the question's number if any, and the letter. A
+ * number is nought or has no leading nought, so "01" is never read as question 1.
+ */
 const ANSWER_SPACED = new RegExp(
-  `^answer\\s*:?\\s+(${DECISION_CODE})(?:\\s+(\\d{1,6}))?\\s+(a|b|both)$`,
+  `^answer\\s*:?\\s+(${DECISION_CODE})(?:\\s+(0|[1-9]\\d{0,5}))?\\s+(a|b|both)$`,
   'i',
 );
 
 /** The same with the number run into its letter ("2B"), read so the channel can say how to write it. */
 const ANSWER_RUN_TOGETHER = new RegExp(
-  `^answer\\s*:?\\s+(${DECISION_CODE})\\s+(\\d{1,6})(a|b|both)$`,
+  `^answer\\s*:?\\s+(${DECISION_CODE})\\s+(0|[1-9]\\d{0,5})(a|b|both)$`,
   'i',
 );
 

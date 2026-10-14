@@ -1114,7 +1114,10 @@ describe('a plan’s conflict question in its request (16-O; RM20 (a))', (): voi
       number: 3,
       runTogether: true,
     });
-    // A number past any a plan could ask is not read as one.
+    // A number past any a plan could ask is not read as one, nor one with a leading nought, which
+    // the parser never took for a question's number (the second pass).
     expect(parseDecisionReply('answer ab3xyz 10000000 B')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 01 A')).toBeUndefined();
+    expect(parseDecisionReply('answer ab3xyz 007B')).toBeUndefined();
   });
 });
