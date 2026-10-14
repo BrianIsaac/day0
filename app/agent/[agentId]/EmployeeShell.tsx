@@ -3,12 +3,11 @@
 import Link from 'next/link';
 import { useRouter, useSelectedLayoutSegment } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useQueries, useQuery, type RequestForQueries } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { oneToOnePhase } from '@/agent/one-to-one-phase';
 import { log } from '@/lib/logger';
-import type { AgentMetrics } from '@/metrics/types';
 import { agentZone } from '@/lib/zone';
 import { toSurfaceRecord } from '@/surfaces/records';
 import { isManagerLookupFailure } from '@/surfaces/manager-lookup';
@@ -38,6 +37,7 @@ import {
 } from './employee-tabs';
 import { EmployeeHeader } from './EmployeeHeader';
 import { EmployeeRetired, NoSuchEmployee } from './NoSuchEmployee';
+import { useEmployeeFigures } from './use-employee-figures';
 import { currentStep, firstWeekSteps } from './first-week';
 import { AgentZoneContext, useNow } from '../../components/time';
 import { ButtonLink } from '../../components/Button';
@@ -199,15 +199,9 @@ export function EmployeeShell({ agentId, children }: EmployeeShellProps) {
   // the Skills tab reads its cards against.
   const now = useNow();
   // The figures are read without a throw: an employee whose rows pass one function's read limit
-  // still has its page, its rail and its tabs, and its figures' cards say they could not be read
-  // (C1, 17-FW; W16-R31). Made once per employee, as `useQueries` subscribes by identity.
-  const hasAgent = agent !== undefined;
-  const figuresQuery = useMemo(
-    (): RequestForQueries =>
-      hasAgent ? { figures: { query: api.metrics.forAgent, args: { agentId } } } : {},
-    [hasAgent, agentId],
-  );
-  const { figures }: Record<string, AgentMetrics | undefined | Error> = useQueries(figuresQuery);
+  // still has its page, its rail and its tabs, and its figures are read by pages (C1, 17-FW;
+  // W16-R31; wave 18), its figures' cards saying so where they could not be read.
+  const figures = useEmployeeFigures(agent !== undefined ? agentId : undefined);
   const figuresFailed = figures instanceof Error;
   const metrics = figuresFailed ? undefined : figures;
   const figuresFailure = figuresFailed ? figures.message : undefined;
