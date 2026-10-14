@@ -1664,6 +1664,18 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
       expect(reportsFindings([row, recap, acmeNote, dm(joined, [0])])).toEqual([]);
     });
 
+    // The second pass: "on REVOPS-9" names where a comment goes, so a sentence that reports a status
+    // change with it named a message's kind, and the D-4 (b) widening bound an unrelated post.
+    it('binds no message for a write reported by its place alone, "on REVOPS-9", with no message verb', (): void => {
+      const status: MockAction = {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-9', status: 'done' },
+      };
+      const updated = 'Updated the status on REVOPS-9.';
+      expect(boundEarlierWrites(dm(updated, null), [recap, status])).toEqual([1]);
+      expect(reportsFindings([recap, status, dm(updated, [1])])).toEqual([]);
+    });
+
     it('binds no message for a sentence that reports the row alone', (): void => {
       expect(boundEarlierWrites(dm('Added the Acme row.', null), [row, recap])).toEqual([0]);
       expect(reportsFindings([row, recap, dm('Added the Acme row.', [0])])).toEqual([]);

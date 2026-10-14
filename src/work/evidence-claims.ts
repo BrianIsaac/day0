@@ -582,9 +582,18 @@ function reportedWriteIndexes(
   // stop-drill notes" beside one such note and an unrelated post reports the one. Where only
   // another kind of write carries its words ("Added the Acme row and posted the note"), no
   // message does, so the kind's messages are bound beside that write (D-4 (b), 14 October 2026).
+  if (sharing.length === 0) return ofKind;
   const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
+  // A write reported by its place alone ("Updated the status on REVOPS-9.") names where a comment
+  // would go, not a message it made: only a message verb or a placed message reports one.
+  if (sharingMessages === 0 && !reportsAMessage(said)) return sharing;
   if (sharingMessages > 0 && sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
   return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
+}
+
+/** Whether a sentence reports a message by its verb or by where it now is (W13-R2). */
+function reportsAMessage(said: string): boolean {
+  return MESSAGE_REPORT.test(said) || COMMENT_REPORT.test(said);
 }
 
 /** Whether the action at a place of its set is a message: a ticket comment or a chat write. */
@@ -922,7 +931,9 @@ function reportsDisagreements(
       // Words that name a message's kind and carry no message's words name no message by
       // themselves, whatever other write they name (D-4 (b)).
       const wordsNameAMessage =
-        !namesMessageKind(said) || byWords.some((at) => isMessageAt(earlier, at));
+        !namesMessageKind(said) ||
+        !reportsAMessage(said) ||
+        byWords.some((at) => isMessageAt(earlier, at));
       if (
         byWords.length > 0 &&
         wordsNameAMessage &&
