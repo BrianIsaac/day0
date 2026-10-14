@@ -408,6 +408,8 @@ describe('frozen planner text', (): void => {
   // your approval"; it says when the approval is asked and to plan each write as its own step.
   // Re-pinned (W19-7, v0.20.0, 12 October 2026): one line, name a record as the manager would.
   // Re-pinned (W15-R15, W19-4, the same day): the action-mode line forbids a step worded as a draft.
+  // Re-pinned (18-W, 14 October 2026): one sentence after it, on a charter clause that routes
+  // replies through the manager (finding 8 of the v0.20.0 hosted walk, reproduced on 18-W's bed).
   it('keeps the mock planner system prompt byte-identical', (): void => {
     expect(planSystemPrompt(false, 'mock')).toMatchInlineSnapshot(`
       "You are an autonomous workplace agent named Day0.
@@ -423,7 +425,7 @@ describe('frozen planner text', (): void => {
         - Two kinds of evidence may follow the candidate: the surfaces section says which systems are connected and by what path, and the loaded documentation carries the team's procedures, runbooks and facts. Plan the steps a documented procedure prescribes on a connected surface; plan no action on a system with no connected surface and name it as the gap instead. When the documentation or the candidate settles a question, plan the work rather than a step to clarify it.
         - Name a page, a channel or a thread as the manager would (the billing replies page, the double charge thread in #office-asks), never by a reference such as docs-fixture/... or channel://...
 
-      Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. Name the approval as the manager reads it, never by the name of a mode."
+      Every emitted action is held for the manager's literal approval and only applied after that decision, which is asked once, for the whole set, after the run has written it. Plan each reply, post or update as the step that makes it, never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval. A charter clause that has replies drafted for the manager to approve, or sent through the manager first, is met by that one approval: plan the reply as the step that posts it, and leave the approval out of the step's words. Name the approval as the manager reads it, never by the name of a mode."
     `);
   });
 
@@ -1670,6 +1672,23 @@ describe('the hosted office plan names records as a manager does (W19-7, the v0.
 });
 
 describe('the mock planner words no step as a draft for approval (W15-R15, W19-4)', (): void => {
+  // 18-W's bed, 14 October 2026, reproducing finding 8 of the v0.20.0 hosted walk: Pip, whose
+  // charter will-do clause reads "Read Slack asks and draft first replies for the manager to
+  // approve." and whose Escalates clause reads "Send all first replies and escalations through
+  // the manager first.", planned Hana's answer as "Post the first reply for Northwind in the double
+  // charge thread in #office-asks, following the support style guide and stating that refunds are
+  // handled by the support lead, for the manager's approval before Hana sends it." The line above
+  // forbids that wording; the charter's clause won. The set's one approval is what such a clause
+  // asks for, and the planner is told so.
+  it('tells the planner a charter clause that routes replies through the manager is met by the one approval', (): void => {
+    expect(actionModeInstruction(false, 'mock')).toContain(
+      "A charter clause that has replies drafted for the manager to approve, or sent through the manager first, is met by that one approval: plan the reply as the step that posts it, and leave the approval out of the step's words.",
+    );
+    expect(planSystemPrompt(false, 'mock')).toContain(
+      'is met by that one approval: plan the reply as the step that posts it',
+    );
+  });
+
   it("says a step is never worded as a draft or as framed for the manager's approval", (): void => {
     expect(actionModeInstruction(false, 'mock')).toContain(
       "never a separate step that drafts it for review or waits for approval, and never a step worded as a draft or as framed for the manager's approval",

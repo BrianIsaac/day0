@@ -821,10 +821,10 @@ describe('the Manager card’s state and reads', () => {
         runsInFlight: 1,
       },
       // An approved set not yet applied, which the old card counted and the move does not.
-      'work:listForAgent': [
-        { state: 'executing' },
-        { state: 'actions-pending', approvedIndexes: [0] },
-      ],
+      'work:listForAgent': {
+        items: [{ state: 'executing' }, { state: 'actions-pending', approvedIndexes: [0] }],
+        cut: false,
+      },
     });
     const view = mount(asEmployee(<PeopleView />));
     expect(managerCard(view.container).textContent).toContain('Mira is finishing 1 run;');

@@ -20,7 +20,11 @@ vi.mock('convex/react', () => ({
 }));
 
 import type { Doc } from '../../../../../convex/_generated/dataModel';
-import { WorkView, holdingCardsOf } from '../../../../../app/agent/[agentId]/work/WorkView';
+import {
+  WORK_LIST_CUT,
+  WorkView,
+  holdingCardsOf,
+} from '../../../../../app/agent/[agentId]/work/WorkView';
 import { asEmployee, EMPLOYEE_ROW } from '../../../../fixtures/dom/employee';
 
 /** A row of the employee's queue with the fields the card reads for its run. */
@@ -61,7 +65,10 @@ afterEach((): void => {
 
 describe('WorkView', () => {
   it('lists the queue beside the rail, the kept corrections only in real mode', () => {
-    backend.queries = { 'work:listForAgent': [], 'corrections:listForAgent': [] };
+    backend.queries = {
+      'work:listForAgent': { items: [], cut: false },
+      'corrections:listForAgent': [],
+    };
     const mock = renderToStaticMarkup(asEmployee(<WorkView />));
     expect(mock).toContain('Work queue');
     // Re-pinned for 16-F: the rail's figures are today's.
@@ -71,9 +78,27 @@ describe('WorkView', () => {
     expect(real).toMatch(/correction/i);
   });
 
+  // W17-R22: the list's bounds left rows out and nothing said so.
+  it('says under the queue that the list was cut, and nothing when it was not', () => {
+    backend.queries = {
+      'work:listForAgent': { items: HELD_RUNS, cut: true },
+      'corrections:listForAgent': [],
+    };
+    const cut = renderToStaticMarkup(asEmployee(<WorkView />));
+    expect(cut).toContain(WORK_LIST_CUT);
+    expect(WORK_LIST_CUT).toBe(
+      'Showing the newest rows that fit. Older rows are not shown here; they are in the export.',
+    );
+    backend.queries = {
+      'work:listForAgent': { items: HELD_RUNS, cut: false },
+      'corrections:listForAgent': [],
+    };
+    expect(renderToStaticMarkup(asEmployee(<WorkView />))).not.toContain('Showing the newest');
+  });
+
   it("opens the Charter tab's amend disclosure from a refused agreement's Amend the charter (13-J)", () => {
     backend.queries = {
-      'work:listForAgent': [],
+      'work:listForAgent': { items: [], cut: false },
       'corrections:listForAgent': [],
       'workingAgreements:listForAgent': [
         {
@@ -92,7 +117,10 @@ describe('WorkView', () => {
   });
 
   it('says each held step is held while the employee is paused, never that it is under way', () => {
-    backend.queries = { 'work:listForAgent': HELD_RUNS, 'corrections:listForAgent': [] };
+    backend.queries = {
+      'work:listForAgent': { items: HELD_RUNS, cut: false },
+      'corrections:listForAgent': [],
+    };
     const paused = renderToStaticMarkup(
       asEmployee(<WorkView />, {
         surfaceMode: 'real',
@@ -118,7 +146,7 @@ describe('WorkView', () => {
       output: { draft: 'Posted.', actions: [] },
     });
     backend.queries = {
-      'work:listForAgent': [...HELD_RUNS, approvedWrite],
+      'work:listForAgent': { items: [...HELD_RUNS, approvedWrite], cut: false },
       'corrections:listForAgent': [],
     };
     const html = renderToStaticMarkup(
@@ -160,7 +188,10 @@ describe('WorkView', () => {
         entries: [],
       },
     });
-    backend.queries = { 'work:listForAgent': [reconciled], 'corrections:listForAgent': [] };
+    backend.queries = {
+      'work:listForAgent': { items: [reconciled], cut: false },
+      'corrections:listForAgent': [],
+    };
     const html = renderToStaticMarkup(asEmployee(<WorkView />, { surfaceMode: 'real' }));
     expect(html).toContain('Verified by you at');
     expect(html).not.toContain(`>${EMPLOYEE_ROW.userId}<`);

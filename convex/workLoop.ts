@@ -1101,6 +1101,75 @@ function sweepRoom(): SweepRoom {
   };
 }
 
+/**
+ * The digest sends one sweep looks behind, newest first. A digest's claim lapses fifteen minutes
+ * after it is taken and the sweep runs every five, while a digest goes out at most every fifteen
+ * in digest mode (`DIGEST_MIN_GAP_MS`) and at the digest job's own turn otherwise, so a send that
+ * died is met by the sweep long before ten newer ones stand in front of it. A pause holds both
+ * jobs; only a sweep that failed at every turn while ten more digests went out would miss one.
+ */
+const LAPSED_DIGESTS_READ = 10;
+
+/**
+ * The notes of an employee's recent digest sends whose claim lapsed with nothing recorded: no
+ * delivery, no failure, not set aside (W17-R22, with K-4 (a)). Each digest's notes are read by
+ * `by_agent_digest`, so a per-run note, which is its own switch's, is never read here. A digest's
+ * notes share one outcome (`work.recordManagerDigest` marks them all delivered or releases them
+ * all, and a released note leaves the index), so one note says whether the send died holding
+ * them, and only such a digest's notes are read further, the other predicates filtering one
+ * digest's notes. Before this read the sweep filtered every open claim on `digestId`, and so read
+ * every stuck per-run note at every sweep to find the digest's behind them.
+ *
+ * @param ctx - The sweep's mutation context.
+ * @param agentId - The employee.
+ * @param before - The instant a claim taken earlier has lapsed by.
+ */
+function lapsedDigestNotes(
+  ctx: MutationCtx,
+  agentId: Id<'agents'>,
+  before: number,
+): { take: (count: number) => Promise<Doc<'managerNotes'>[]> } {
+  const lapsedOpen = (note: Doc<'managerNotes'>): boolean =>
+    note.providerTs === undefined &&
+    note.failure === undefined &&
+    note.discardedAt === undefined &&
+    (note.claimedAt ?? 0) > 0 &&
+    (note.claimedAt ?? 0) < before;
+  return {
+    take: async (count) => {
+      const digests = await eventsOfType(ctx, agentId, 'work.manager-digest-sending')
+        .order('desc')
+        .take(LAPSED_DIGESTS_READ);
+      const notes: Doc<'managerNotes'>[] = [];
+      for (const digest of digests) {
+        if (notes.length >= count) break;
+        const ofDigest = () =>
+          ctx.db
+            .query('managerNotes')
+            .withIndex('by_agent_digest', (q) =>
+              q.eq('agentId', agentId).eq('digestId', digest._id),
+            );
+        const first = await ofDigest().first();
+        if (first === null || !lapsedOpen(first)) continue;
+        notes.push(
+          ...(await ofDigest()
+            .filter((q) =>
+              q.and(
+                q.eq(q.field('providerTs'), undefined),
+                q.eq(q.field('failure'), undefined),
+                q.eq(q.field('discardedAt'), undefined),
+                q.gt(q.field('claimedAt'), 0),
+                q.lt(q.field('claimedAt'), before),
+              ),
+            )
+            .take(count - notes.length)),
+        );
+      }
+      return notes;
+    },
+  };
+}
+
 /** What settling one employee's lapsed claims came to. */
 interface SettledClaims {
   /** How many claims were settled. */
@@ -1166,23 +1235,7 @@ async function settleLapsedManagerClaims(
     return written;
   };
 
-  const notes = await lapsed(
-    ctx.db
-      .query('managerNotes')
-      .withIndex('by_agent_claim_open', (q) =>
-        q
-          .eq('agentId', agentId)
-          .eq('providerTs', undefined)
-          .eq('failure', undefined)
-          .eq('discardedAt', undefined)
-          .gt('claimedAt', 0)
-          .lt('claimedAt', before),
-      )
-      // A digest's notes only: a per-run note is its own switch's, and fifty of them at the head
-      // of the index, read with the rest, were the whole read and hid the digest's behind them.
-      .filter((q) => q.neq(q.field('digestId'), undefined)),
-    LEASE_BATCH,
-  );
+  const notes = await lapsed(lapsedDigestNotes(ctx, agentId, before), LEASE_BATCH);
   const released = await settle(notes, async (note) => {
     await ctx.db.patch(note._id, { claimedAt: undefined, digestId: undefined, failure });
     return getDocumentSize(note);

@@ -1607,13 +1607,12 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
     expect(reportsFindings([plain, worded, share])).toEqual([]);
   });
 
-  // The continuation's second pass asked whether one sentence that reports a row and a message
-  // ("Added the Acme row and posted the note") binds the post, which carries none of its words.
-  // It binds the row alone, as at v0.20.0; the same words in two sentences bind both, as they did
-  // there too. The seam is recorded in the unit's handover for a ruling, and pinned here so that
-  // no change of the binding moves it unseen (this unit's first form widened it and its second
-  // pass narrowed it again, neither with a test).
-  it('binds one sentence that reports a row and a message to the write its words name, as v0.20.0 did', (): void => {
+  // 17-FW's C2, ruled D-4 (b) on 14 October 2026: one sentence that reports a row and a message
+  // ("Added the Acme row and posted the note") beside a post that carries none of its words binds
+  // the row by its words and the kind's messages beside it, since no message carries its words,
+  // and a declaration that leaves the post out is asked for it in the repair turn. At v0.20.0 and
+  // v0.21.0 it bound the row alone, and the post could land while the row waited.
+  describe('one sentence that reports a row and a message (17-FW C2, D-4 (b))', (): void => {
     const row: MockAction = {
       tool: 'spreadsheet.appendRow',
       args: {
@@ -1626,17 +1625,96 @@ describe('a counted report beside one post that shares its words (W16-R31)', ():
       tool: 'slack.postMessage',
       args: { channelSlug: 'revops', body: 'Standup recap is up.' },
     };
-    const dm = (body: string): MockAction => ({
+    const dm = (body: string, reports: number[] | null): MockAction => ({
       tool: 'slack.postMessage',
       args: { channelSlug: 'dm-manager', body },
-      reports: null,
+      reports,
     });
-    expect(
-      boundEarlierWrites(dm('Added the Acme row and posted the note in #revops.'), [row, recap]),
-    ).toEqual([0]);
-    expect(
-      boundEarlierWrites(dm('Added the Acme row. Posted the note in #revops.'), [row, recap]),
-    ).toEqual([0, 1]);
+    const joined = 'Added the Acme row and posted the note in #revops.';
+
+    it('‘Added the Acme row and posted the note in #revops.’ binds the post and asks its declaration', (): void => {
+      expect(boundEarlierWrites(dm(joined, null), [row, recap])).toEqual([0, 1]);
+      expect(
+        heldWithReportedWrites(
+          [row, recap, dm(joined, null)],
+          [{ disposition: 'held', reason: 'write held for the manager' }, auto, auto],
+        ).map((verdict) => verdict.disposition),
+      ).toEqual(['held', 'auto', 'held']);
+      const findings = reportsFindings([row, recap, dm(joined, [0])]);
+      expect(findings.map((finding) => finding.index)).toEqual([2]);
+      expect(findings[0]!.issue).toContain(
+        'reports more writes of this set than its `reports` names',
+      );
+      expect(findings[0]!.issue).toContain('the sentence can mean are [0, 1]');
+      expect(reportsFindings([row, recap, dm(joined, [0, 1])])).toEqual([]);
+    });
+
+    it('binds the same words in two sentences to both writes, as before', (): void => {
+      expect(
+        boundEarlierWrites(dm('Added the Acme row. Posted the note in #revops.', null), [
+          row,
+          recap,
+        ]),
+      ).toEqual([0, 1]);
+    });
+
+    it('binds only the post that carries its words when one does, so an unrelated post stays free', (): void => {
+      const acmeNote = slackPost('C0REVOPS', 'Acme closed-won note: signed on Friday.');
+      expect(boundEarlierWrites(dm(joined, null), [row, recap, acmeNote])).toEqual([0, 2]);
+      expect(reportsFindings([row, recap, acmeNote, dm(joined, [0])])).toEqual([]);
+    });
+
+    // The second pass: "on REVOPS-9" names where a comment goes, so a sentence that reports a status
+    // change with it named a message's kind, and the D-4 (b) widening bound an unrelated post.
+    it('binds no message for a write reported by its place alone, "on REVOPS-9", with no message verb', (): void => {
+      const status: MockAction = {
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-9', status: 'done' },
+      };
+      const updated = 'Updated the status on REVOPS-9.';
+      expect(boundEarlierWrites(dm(updated, null), [recap, status])).toEqual([1]);
+      expect(reportsFindings([recap, status, dm(updated, [1])])).toEqual([]);
+    });
+
+    it('binds no message for a sentence that reports the row alone', (): void => {
+      expect(boundEarlierWrites(dm('Added the Acme row.', null), [row, recap])).toEqual([0]);
+      expect(reportsFindings([row, recap, dm('Added the Acme row.', [0])])).toEqual([]);
+    });
+  });
+
+  // W17-R21's count edges, ruled with D-4 (b): a number before a plural counts the messages only
+  // where it counts them. "3 weeks of notes" counts weeks, and "the 40 messages backlog" names a
+  // backlog, so each sentence reports the one post that carries its words.
+  it('‘Posted the stop-drill note, 3 weeks of notes.’ and ‘the 40 messages backlog’ count one message', (): void => {
+    for (const words of [
+      'Posted the stop-drill note, 3 weeks of notes.',
+      'Posted the stop-drill note on the 40 messages backlog.',
+      'Posted the stop-drill note after two days of replies.',
+      // The second pass: a hyphenated word between the span and the plural.
+      'Posted the stop-drill note, 3 weeks of stop-drill notes.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
+      expect(
+        reportsFindings([plain, worded, { ...commentOn('REVOPS-6', words), reports: [1] }]),
+        words,
+      ).toEqual([]);
+    }
+    // Without a post that carries its words the sentence asks the declaration for one post, not two.
+    const kindOnly = {
+      ...commentOn('REVOPS-6', 'Posted the note, 3 weeks of notes.'),
+      reports: [1],
+    };
+    expect(reportsFindings([plain, worded, kindOnly])).toEqual([]);
+  });
+
+  it('‘a couple of’, ‘one more’ and ‘several’ count nothing', (): void => {
+    for (const words of [
+      'Posted a couple of stop-drill notes in #revops.',
+      'Posted one more stop-drill note in #revops.',
+      'Posted several stop-drill notes in #revops.',
+    ]) {
+      expect(boundEarlierWrites(commentOn('REVOPS-6', words), [plain, worded]), words).toEqual([1]);
+    }
   });
 
   it('asks a declaration that names the one post sharing a word for the other as well (W15-R2)', (): void => {
