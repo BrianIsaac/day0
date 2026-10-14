@@ -384,10 +384,13 @@ describe('the readers’ guides on a page with no text, and the README on fifty 
     },
   );
 
-  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`.
+  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`. The
+  // heading said fifty over a body that says sixty (W18-R23): it says both now, in both halves.
   it('says in the README that a company-wide agreement is checked only while the owner has sixty employees or fewer', (): void => {
     const readme = flat('README.md');
-    expect(readme).toContain('### Fifty employees or fewer');
+    expect(readme).toContain('### Built for fifty, checked to sixty');
+    expect(readme).toContain('#### 为五十名员工而建，检查到六十名');
+    expect(readme).not.toContain('Fifty employees or fewer');
     expect(readme).toContain(
       "a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer",
     );
