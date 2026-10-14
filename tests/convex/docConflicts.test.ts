@@ -2120,6 +2120,35 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await notices(harness)).toEqual([]);
   });
 
+  it('says the page is current again when its return asks the question again in the request’s thread (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId } = await askedInRequest(harness);
+    // The plan's request is out and waits for the manager.
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(workItemId, { state: 'plan-pending' });
+    });
+    const manager = asManager(harness);
+    const pageId = await harness.run(
+      async (ctx) =>
+        (await ctx.db.query('docPages').collect()).find(
+          (page) => page.title === 'Pipeline runbook',
+        )!._id,
+    );
+    await manager.mutation(api.docStatus.setPageStatus, { pageId, status: 'archived' });
+    await ranAsks(harness);
+    await manager.mutation(api.docStatus.clearPageStatus, { pageId });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(
+      (await questionsOf(harness, workItemId)).map((question) => question.closed?.reason),
+    ).toEqual(['settled', undefined]);
+    const asked = (await notices(harness)).filter((notice) => notice.kind === 'question');
+    expect(asked.map((notice) => notice.text)).toEqual([
+      '“Pipeline runbook” is current again, and it disagrees with “Finance escalation” under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds every write of the plan until you answer.',
+    ]);
+  });
+
   it('posts nothing in the thread for a question its request carried, a request that failed, or a question answered meanwhile (17-C)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

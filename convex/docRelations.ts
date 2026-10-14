@@ -595,6 +595,7 @@ const ASK_PLANS_PAGE = 10;
 async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
+  returned?: { readonly sourceId: Id<'docSources'>; readonly ref: string },
 ): Promise<void> {
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
@@ -607,6 +608,9 @@ async function scheduleConfirmationAsks(
     relationId: relation._id,
     readers,
     cursor: null,
+    ...(returned === undefined
+      ? {}
+      : { returned: { sourceId: returned.sourceId, ref: returned.ref } }),
   });
 }
 
@@ -627,6 +631,11 @@ export const askConfirmed = internalMutation({
     readers: v.array(v.id('agents')),
     /** Where in the first reader's drafted plans this step goes on from. */
     cursor: v.union(v.string(), v.null()),
+    /**
+     * The page whose return to current asks again, where that is why (W17-R13): the thread's
+     * notice says the page is current again, not that the manager confirmed the conflict.
+     */
+    returned: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
   },
   handler: async (ctx, args): Promise<{ asked: number }> => {
     const [reader, ...rest] = args.readers;
@@ -643,6 +652,18 @@ export const askConfirmed = internalMutation({
             .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
             .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
     const now = Date.now();
+    const back = args.returned;
+    const isBack = (end: { sourceId: Id<'docSources'>; ref: string }): boolean =>
+      back !== undefined && end.sourceId === back.sourceId && end.ref === back.ref;
+    // Which of the question's two pages came back: they are named in the relation's order.
+    const returned =
+      relation === null
+        ? undefined
+        : isBack(relation.from)
+          ? 0
+          : isBack(relation.to)
+            ? 1
+            : undefined;
     let asked = 0;
     for (const row of drafted.page) {
       if (agent === null) break;
@@ -654,6 +675,7 @@ export const askConfirmed = internalMutation({
         row,
         conflict: { ...conflict, relationId: args.relationId },
         now,
+        ...(returned === undefined ? {} : { returned }),
       });
       if (questionId !== null) asked += 1;
     }
@@ -664,6 +686,7 @@ export const askConfirmed = internalMutation({
       await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
         relationId: args.relationId,
         ...next,
+        ...(back === undefined ? {} : { returned: back }),
       });
     }
     return { asked };
@@ -764,7 +787,7 @@ export const turnPageQuestions = internalMutation({
       await closeCardsOfReturnedPage(ctx, source, page.ref, now);
       for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
         if ((await standingConflictOf(ctx, relation)) === undefined) continue;
-        await scheduleConfirmationAsks(ctx, relation);
+        await scheduleConfirmationAsks(ctx, relation, page);
         asked += 1;
       }
     }
