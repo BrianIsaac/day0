@@ -1,5 +1,11 @@
 import type { Doc } from '@convex/_generated/dataModel';
-import { declaredSkillInputs, impliedSkillInputs, systemDeclaredInputs } from '@/work/skill-inputs';
+import {
+  declaredSkillInputs,
+  impliedSkillInputs,
+  REPLY_SURFACE_INPUT,
+  systemDeclaredInputs,
+} from '@/work/skill-inputs';
+import { accessWords } from '../../../handover-words';
 
 /** A code chip: an input, a scope, a skill's own name. */
 export const CODE_CHIP =
@@ -17,29 +23,49 @@ export function plainSkillName(skill: Pick<Doc<'skills'>, 'name' | 'description'
 }
 
 /**
- * The scopes a skill needs, as code chips after a word, or nothing when it needs none.
+ * The access a skill needs, in a manager's words after a lead, or nothing when it needs none: the
+ * scopes read as the take-on dialog reads an employee's (`accessWords`: "messages to you; reading
+ * and writing tickets"), never as `system:verb` strings (W17-R30: "needs boss:message ticket:read").
  *
  * @param scopes - The skill's required scopes.
- * @param lead - The word before them.
+ * @param lead - The words before them.
  */
 export function ScopeChips({ scopes, lead }: { scopes?: readonly string[]; lead: string }) {
   if (!scopes || scopes.length === 0) return null;
   return (
     <span>
-      {lead}{' '}
-      {scopes.map((scope, index) => (
-        <span key={scope}>
-          {index > 0 ? ' ' : ''}
-          <code className={CODE_CHIP}>{scope}</code>
-        </span>
-      ))}
+      {lead} {accessWords(scopes)}
     </span>
   );
 }
 
 /**
- * The inputs an authored skill declares, as code chips, with the ones the system declared for
- * its author marked.
+ * The inputs Day0 teaches every author, by what each one is in a manager's words. An input an
+ * author named itself reads as its words, `<closing-state>` as "closing state".
+ */
+const TAUGHT_INPUT_LABELS: Readonly<Record<string, string>> = {
+  'record-id': 'a record',
+  'requested-value': 'the value asked for',
+  'reply-channel': 'the channel to reply in',
+  'reply-thread': 'the thread to reply in',
+  [REPLY_SURFACE_INPUT]: 'the chat to reply on',
+  'originating-surface': 'where the work came from',
+  'audit-expectation': 'how to check what was written',
+};
+
+/**
+ * One input's label: the taught input's words, else the author's name for it as words.
+ *
+ * @param name - The placeholder's name, without its brackets.
+ */
+export function skillInputLabel(name: string): string {
+  return TAUGHT_INPUT_LABELS[name] ?? name.replace(/[-_]+/g, ' ').trim();
+}
+
+/**
+ * The inputs an authored skill declares, each by its label (`skillInputLabel`, W17-R30: the row
+ * printed "inputs <record-id> <requested-value>"), with the ones the system declared for its author
+ * marked.
  *
  * The manager approves a skill before its body exists, so this row is the first place the inputs
  * can be shown. An input the author used without declaring is declared for it in real mode; the
@@ -64,11 +90,11 @@ export function SkillInputs({
   const plural = added.size > 1;
   return (
     <div className="mt-1 text-xs leading-relaxed text-[var(--color-muted)] break-words">
-      <span>inputs</span>{' '}
+      <span>asks for:</span>{' '}
       {declared.map((name, index) => (
         <span key={name}>
-          {index > 0 ? ' ' : ''}
-          <code className={CODE_CHIP}>&lt;{name}&gt;</code>
+          {index > 0 ? ', ' : ''}
+          {skillInputLabel(name)}
           {added.has(name) ? ' (added by Day0)' : ''}
           {bound.has(name) ? ' (bound by Day0)' : ''}
         </span>

@@ -1,12 +1,19 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ActionCtx } from '../../convex/_generated/server';
-import type { Id } from '../../convex/_generated/dataModel';
+import type { Doc, Id } from '../../convex/_generated/dataModel';
 import { LandedChanges, NotSentLedger } from '../../app/agent/[agentId]/work/LandedChanges';
+import { RegisteredSkillsPanel } from '../../app/agent/[agentId]/skills/RegisteredSkillsPanel';
 import { mockAdapter } from '../../src/surfaces/mock';
 import { HELD_NOT_APPROVED } from '../../src/surfaces/policy';
 import { summariseAction } from '../../src/surfaces/summary';
 import type { MockAction } from '../../src/work/types';
+
+vi.mock('convex/react', () => ({
+  useQuery: (): undefined => undefined,
+  useMutation: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+  useAction: (): (() => Promise<void>) => async (): Promise<void> => undefined,
+}));
 
 /**
  * W17-R30, the hosted walk's finding 7 (`hosted-walk-v0.20.0-2026-10-13-handover.md:21`): the
@@ -22,6 +29,12 @@ const TOOL_NAME = /\b(?:slack\.postMessage|spreadsheet\.appendRow|ticket\.update
 const SLUG = /(?<![#\w-])(?:dm-[a-z]+|q4-revenue-tracker|tweet-acme-feedback|office-asks)\b/;
 /** A thread's key. */
 const THREAD_KEY = /\bthread-[a-z-]+/;
+/** A grant as the grants table holds it. */
+const SCOPE = /\b(?:boss|docs|slack|social|spreadsheet|ticket):(?:read|write|message)\b/;
+/** A skill input as a body writes it, bracketed or bare. */
+const INPUT_NAME =
+  /&lt;[a-z][a-z-]*&gt;|\b(?:record-id|requested-value|reply-channel|reply-thread|originating-surface|audit-expectation|closed-status)\b/;
+
 /** The markup's text as a reader meets it, tags dropped, so a class name is never read as words. */
 function text(markup: string): string {
   return markup
@@ -58,6 +71,49 @@ const THREAD_REPLY: MockAction = {
     body: 'Hi Hana, here is a first reply for Northwind on invoice INV-2207.',
   },
 };
+
+/** Lark's registered skill as the hosted walk read it (`rows/A-Lark-skills.txt`). */
+const SKILL = {
+  _id: 'skill-1',
+  _creationTime: 0,
+  agentId: 'agent-1',
+  name: 'kanban-comment-and-close',
+  description: 'comment on a ticket and close it',
+  sourceType: 'agent-authored',
+  createdAt: 0,
+  state: 'registered',
+  registeredAt: 0,
+  useCount: 5,
+  requiredScopes: ['boss:message', 'ticket:read', 'ticket:write'],
+  body: [
+    '# Comment and close',
+    '',
+    '## Inputs',
+    '',
+    '- `<record-id>`: the ticket.',
+    '- `<requested-value>`: the comment.',
+    '- `<reply-channel>` and `<reply-thread>`: where the ask came from.',
+    '- `<originating-surface>`: the surface.',
+    '- `<audit-expectation>`: the read-back.',
+    '',
+    '## Procedure',
+    '',
+    'Comment `<requested-value>` on `<record-id>`, reply in `<reply-channel>` `<reply-thread>`, close on `<originating-surface>` and check `<audit-expectation>`.',
+  ].join('\n'),
+} as unknown as Doc<'skills'>;
+
+/** The Skills tab's registered list with Lark's skill on it, as the hosted office draws it. */
+function skillsTab(): string {
+  return renderToStaticMarkup(
+    <RegisteredSkillsPanel
+      skills={[SKILL]}
+      unregistered={[]}
+      authoringFailure={null}
+      onAuthoringAttempt={(): void => undefined}
+      surfaceMode="mock"
+    />,
+  );
+}
 
 /**
  * Apply one write through the office's adapter, the mutation answering that it landed, and return
@@ -105,6 +161,20 @@ describe('the mock office’s cards in a manager’s words (W17-R30)', (): void 
     expect(drawn).not.toMatch(SLUG);
     expect(drawn).toContain(
       'A message in #office-asks in Slack, in the thread about “Northwind’s double charge”',
+    );
+  });
+
+  it('names a skill’s access on the Skills tab as the take-on dialog does, never as scope strings', (): void => {
+    const drawn = text(skillsTab());
+    expect(drawn).not.toMatch(SCOPE);
+    expect(drawn).toContain('needs: messages to you; reading and writing tickets');
+  });
+
+  it('names a skill’s inputs on the Skills tab by their labels, never by their placeholders', (): void => {
+    const drawn = skillsTab();
+    expect(drawn).not.toMatch(INPUT_NAME);
+    expect(text(drawn)).toContain(
+      'asks for: a record, the value asked for, the channel to reply in, the thread to reply in, where the work came from, how to check what was written',
     );
   });
 });

@@ -389,12 +389,11 @@ describe('what Retry does to an unregistered skill', (): void => {
           onAuthoringAttempt={noop}
         />,
       );
-      expect(markup).toMatch(/>inputs<\/span>[^&]*<code[^>]*>&lt;record-id&gt;<\/code>/);
-      expect(markup).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
-      // A placeholder never wraps inside its own name.
-      expect(markup).toMatch(
-        /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;record-id&gt;<\/code>/,
-      );
+      // Re-pinned (W17-R30): each input by its label, where the row drew `<record-id>` and
+      // `<closing-state>` as code chips; an input the author named reads as its words.
+      expect(markup).toMatch(/>asks for:<\/span> <span>a record<\/span>/);
+      expect(markup).toContain('closing state (added by Day0)');
+      expect(markup).not.toContain('&lt;record-id&gt;');
       expect(markup).toContain(
         'The author used the input marked “added by Day0” without declaring it',
       );
@@ -423,14 +422,16 @@ describe('what Retry does to an unregistered skill', (): void => {
           onAuthoringAttempt={noop}
         />,
       );
-      expect(markup).toContain('&lt;record-id&gt;');
+      // Re-pinned (W17-R30): the input by its label, the line led by "asks for:".
+      expect(markup).toContain('<span>a record</span>');
       expect(markup).not.toContain('added by Day0');
-      expect(markup.match(/>inputs</g)).toHaveLength(1);
+      expect(markup.match(/>asks for:</g)).toHaveLength(1);
     });
 
     it('lists them on a failed attempt too, read from the draft the row kept', (): void => {
       const failed = { ...refused, body: '', refusedBody: authored } as unknown as Doc<'skills'>;
-      expect(panel([failed])).toMatch(/<code[^>]*>&lt;closing-state&gt;<\/code> \(added by Day0\)/);
+      // Re-pinned (W17-R30): by its label, where it was the `<closing-state>` chip.
+      expect(panel([failed])).toContain('closing state (added by Day0)');
     });
   });
 
@@ -467,9 +468,8 @@ describe('what Retry does to an unregistered skill', (): void => {
 
     it('lists the input Day0 binds for a skill registered before it was taught, in real mode', (): void => {
       const markup = render(before, 'real');
-      expect(markup).toMatch(
-        /<code class="[^"]*\bwhitespace-nowrap\b[^"]*">&lt;reply-surface&gt;<\/code> \(bound by Day0\)/,
-      );
+      // Re-pinned (W17-R30): by its label, where it was the `<reply-surface>` chip.
+      expect(markup).toContain('the chat to reply on (bound by Day0)');
       expect(markup).toContain(
         'This skill was registered before Day0 taught the input marked “bound by Day0”: the executor binds it from the Reply target, so the reply goes to the chat surface the ask came from.',
       );
@@ -491,10 +491,11 @@ describe('what Retry does to an unregistered skill', (): void => {
     });
 
     it('lists it as the author declared it once taught, and adds nothing in mock mode', (): void => {
-      expect(render(taught, 'real')).toContain('&lt;reply-surface&gt;');
+      // Re-pinned (W17-R30): the input by its label, where it was the `<reply-surface>` chip.
+      expect(render(taught, 'real')).toContain('the chat to reply on');
       expect(render(taught, 'real')).not.toContain('bound by Day0');
-      expect(render(before, 'mock')).not.toContain('reply-surface');
-      expect(render(before)).not.toContain('reply-surface');
+      expect(render(before, 'mock')).not.toContain('the chat to reply on');
+      expect(render(before)).not.toContain('the chat to reply on');
     });
   });
 

@@ -84,7 +84,8 @@ describe('AdoptionCard', (): void => {
     expect(text).toContain(
       "Priya's skill kanban-comment-and-close, verified on 18 September 2026, does this. Mateo can adopt it. It would be re-verified in the sandbox under Mateo's Linear connection before Mateo can use it.",
     );
-    expect(text).toContain('Scopes Mateo would gain: linear:write');
+    // Re-pinned (W17-R30): the scope is said in words, where it was the `linear:write` string.
+    expect(text).toContain('Scopes Mateo would gain: writing Linear');
     expect(buttonNames(view.container)).toEqual([
       'Adopt for Mateo | Adopt for Mateo: kanban-comment-and-close',
       'Write a new one instead | Write a new one instead of kanban-comment-and-close',
