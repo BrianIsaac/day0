@@ -608,6 +608,8 @@ describe('MCP documentation continuations (P10-1)', (): void => {
     const undated = [
       await pagesOf(notionWith({}), sourceOf('notion')),
       await pagesOf(driveWith({ modifiedTime: 'last Tuesday' }), sourceOf('drive')),
+      // V8 reads a bare number as a date of 2001; no server names an edit time so.
+      await pagesOf(driveWith({ modifiedTime: '12' }), sourceOf('drive')),
       await pagesOf(confluenceWith({}), sourceOf('confluence')),
     ];
     for (const pages of undated) {

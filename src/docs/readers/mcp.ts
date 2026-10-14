@@ -528,6 +528,9 @@ function revisionOf(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
 
+/** The start of an ISO 8601 date, which a server's time must have to date its page. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
+
 /**
  * A page's date from the time its server names for it (Notion's `last_edited_time`, a Drive
  * server's `modifiedTime`, Atlassian's `lastModified` or its version's `createdAt`): dated by its
@@ -537,7 +540,9 @@ function revisionOf(value: unknown): string | undefined {
  * @param named - The time the server named, as it gave it.
  */
 function datedByServer(named: unknown): Pick<DocPage, 'updatedAt' | 'datedBySource'> {
-  const time = typeof named === 'string' ? Date.parse(named) : Number.NaN;
+  // Only an ISO 8601 date, as each of the three servers writes one: `Date.parse` also reads a
+  // bare number ("12") as a date of 2001, which no server names as an edit time.
+  const time = typeof named === 'string' && ISO_DATE.test(named) ? Date.parse(named) : Number.NaN;
   return Number.isFinite(time)
     ? { updatedAt: time, datedBySource: true }
     : { updatedAt: Date.now(), datedBySource: false };
