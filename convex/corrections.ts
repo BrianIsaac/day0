@@ -20,7 +20,8 @@ import {
 import { surfaceSlug } from '../src/surfaces/slug';
 import type { ExecutionPlan } from '../src/work/types';
 import { appendEvent } from './eventLog';
-import { agreementsApplying, openCard } from './reorientation';
+import { openCard } from './reorientation';
+import { agreementsApplying } from './reorientationReach';
 import { firstRetiredRejection } from './retirements';
 import { scheduleProposals } from './workingAgreements';
 

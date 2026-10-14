@@ -848,52 +848,6 @@ export function isWriteScope(scope: string): boolean {
   return /:(write|admin)$/.test(scope);
 }
 
-/** The agreements one read of an owner's or an employee's active ones takes. */
-const AGREEMENTS_READ = 200;
-
-/** The owner's active working agreements about one person. */
-export async function personAgreements(
-  ctx: QueryCtx,
-  userId: string,
-  personId: Id<'people'>,
-): Promise<Id<'workingAgreements'>[]> {
-  return (
-    await ctx.db
-      .query('workingAgreements')
-      .withIndex('by_user_person', (q) =>
-        q.eq('userId', userId).eq('personId', personId).eq('status', 'active'),
-      )
-      .take(AGREEMENTS_READ)
-  ).map((agreement) => agreement._id);
-}
-
-/**
- * The active working agreements binding an employee (its own and the owner's for everyone) whose
- * stored plans include a work item: what a correction on that item reaches.
- */
-export async function agreementsApplying(
-  ctx: QueryCtx,
-  agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
-  workItemId: Id<'workItems'>,
-): Promise<Id<'workingAgreements'>[]> {
-  const userId = agent.userId;
-  if (userId === undefined) return [];
-  const [own, everyone] = await Promise.all(
-    [agent._id, undefined].map(
-      async (agentId) =>
-        await ctx.db
-          .query('workingAgreements')
-          .withIndex('by_user_agent_status', (q) =>
-            q.eq('userId', userId).eq('agentId', agentId).eq('status', 'active'),
-          )
-          .take(AGREEMENTS_READ),
-    ),
-  );
-  return [...own, ...everyone]
-    .filter((agreement) => agreement.appliedTo.includes(workItemId))
-    .map((agreement) => agreement._id);
-}
-
 /**
  * Open one card on every employee among some of their systems' cards, each card naming that
  * employee's systems and what they reach: a change the organisation made to a connection several

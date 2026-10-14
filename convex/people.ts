@@ -18,8 +18,8 @@ import {
 } from './ownership';
 import { internal } from './_generated/api';
 import { appendEvent } from './eventLog';
-import { openCards, personAgreements, type CardTrigger } from './reorientation';
-import { ownerAgents } from './reorientationReach';
+import { openCards, type CardTrigger } from './reorientation';
+import { ownerAgents, personAgreements } from './reorientationReach';
 import {
   EVIDENCE_SHOWN,
   GRAPH_READ_LIMIT,

@@ -13,8 +13,10 @@ import { log } from '../src/lib/logger';
  * reads behind a card's affected set and its hold, moved out of `convex/reorientation.ts` as they
  * stood. An employee's open work, whole or by the pages its plans cite or the skills it runs; what
  * a change to skills, to a scope or to a connected system reaches; a reach as its card's writer
- * names it (`CardReach`, `reachOf`); the work a high-risk card holds (`blockingWorkOf`); and an
- * owner's employees, for a change that reaches every one of them (`ownerAgents`).
+ * names it (`CardReach`, `reachOf`); the work a high-risk card holds (`blockingWorkOf`); an
+ * owner's employees, for a change that reaches every one of them (`ownerAgents`); and the active
+ * working agreements a change to a person or a correction on an item reaches (`personAgreements`,
+ * `agreementsApplying`; moved here from the card's store in wave 18, 18-s).
  *
  * A transaction that opens many cards reads these rows within a budget (wave 17, 17-O; W16-R6):
  * each read counts the work rows it took against its transaction (`workRowsReadIn`,
@@ -23,9 +25,9 @@ import { log } from '../src/lib/logger';
  *
  * This module is the floor under the cards: it reads rows and writes none, registers no function,
  * and imports no other `convex/` module, so it sits below `convex/reorientation.ts`, which calls
- * it where a card opens, and below `convex/work.ts`. A trigger's writer (`agents`, `people`,
- * `skills`, `surfaces`, `reorientationPatterns`) imports its reach from here and `openCard` from
- * the card's store.
+ * it where a card opens, and below `convex/work.ts`. A trigger's writer (`agents`, `corrections`,
+ * `people`, `skills`, `surfaces`, `reorientationPatterns`) imports its reach from here and
+ * `openCard` from the card's store.
  */
 
 /** What a card's change reaches. */
@@ -388,4 +390,50 @@ export async function ownerAgents(ctx: QueryCtx, userId: string): Promise<Doc<'a
     log.warn(BOUND_MET, { bound: 'OWNER_AGENTS_READ', limit: OWNER_AGENTS_READ });
   }
   return agents.slice(0, OWNER_AGENTS_READ);
+}
+
+/** The agreements one read of an owner's or an employee's active ones takes. */
+const AGREEMENTS_READ = 200;
+
+/** The owner's active working agreements about one person. */
+export async function personAgreements(
+  ctx: QueryCtx,
+  userId: string,
+  personId: Id<'people'>,
+): Promise<Id<'workingAgreements'>[]> {
+  return (
+    await ctx.db
+      .query('workingAgreements')
+      .withIndex('by_user_person', (q) =>
+        q.eq('userId', userId).eq('personId', personId).eq('status', 'active'),
+      )
+      .take(AGREEMENTS_READ)
+  ).map((agreement) => agreement._id);
+}
+
+/**
+ * The active working agreements binding an employee (its own and the owner's for everyone) whose
+ * stored plans include a work item: what a correction on that item reaches.
+ */
+export async function agreementsApplying(
+  ctx: QueryCtx,
+  agent: Pick<Doc<'agents'>, '_id' | 'userId'>,
+  workItemId: Id<'workItems'>,
+): Promise<Id<'workingAgreements'>[]> {
+  const userId = agent.userId;
+  if (userId === undefined) return [];
+  const [own, everyone] = await Promise.all(
+    [agent._id, undefined].map(
+      async (agentId) =>
+        await ctx.db
+          .query('workingAgreements')
+          .withIndex('by_user_agent_status', (q) =>
+            q.eq('userId', userId).eq('agentId', agentId).eq('status', 'active'),
+          )
+          .take(AGREEMENTS_READ),
+    ),
+  );
+  return [...own, ...everyone]
+    .filter((agreement) => agreement.appliedTo.includes(workItemId))
+    .map((agreement) => agreement._id);
 }
