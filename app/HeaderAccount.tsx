@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, type FocusEvent as ReactFocusEvent 
 import { CUSTOMER_SIGN_IN, type SessionAccount } from '@/lib/customer-sign-in';
 import { DEV_NO_AUTH } from '@/lib/dev-auth';
 import { useAccount } from './account';
+import { NoAuthBadge } from './NoAuthBadge';
 import { clerkAppearance, clerkSignInAppearance } from './clerk-appearance';
 import { CustomerSignOutButton, SessionGate, useCustomerAccount } from './Providers';
 import { AdministeredAccountMenu, OrganisationMenuLink } from './organisation/AdministratorLinks';
@@ -25,16 +26,7 @@ const ACCOUNT_MENU_BOX = `${LAYER} grid size-11 place-items-center`;
  */
 export function HeaderAccount(): React.ReactElement {
   if (CUSTOMER_SIGN_IN) return <CustomerAccountMenu />;
-  if (DEV_NO_AUTH) {
-    return (
-      <span
-        className="text-xs uppercase tracking-[0.18em] px-2.5 py-1 rounded-md border border-[var(--color-warn)]/40 text-[var(--color-warn)] bg-[var(--color-warn)]/10"
-        title="NEXT_PUBLIC_DEV_NO_AUTH is on: Clerk is skipped and every request runs as one local boss. Development only."
-      >
-        No-auth dev mode
-      </span>
-    );
-  }
+  if (DEV_NO_AUTH) return <NoAuthBadge />;
 
   return <AccountSlot />;
 }

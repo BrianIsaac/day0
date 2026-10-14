@@ -418,7 +418,7 @@ export function RegisteredSkillsPanel({
                         : ''}
                       {` · ${usedTimes(s.useCount)}`}
                       {s.requiredScopes && s.requiredScopes.length > 0 ? ' · ' : ''}
-                      <ScopeChips scopes={s.requiredScopes} lead="needs" />
+                      <ScopeChips scopes={s.requiredScopes} lead="needs:" />
                     </p>
                     {authored ? <SkillInputs body={s.body} surfaceMode={surfaceMode} /> : null}
                     {due && s.recheckReason !== undefined ? (
