@@ -10,7 +10,7 @@ actions. The method is under [Controlled arms](#controlled-arms) and
 [Programmatic grading](#programmatic-grading); how to run it again is under
 [Reproduce](#reproduce).
 
-**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面可能使部分通过由固定文本满足（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。2026 年 10 月 13 日：上述三个冻结环境已按超范围任务的两种读法（“已决定”与“以 Agent 自己的文字说明”）重新读取，并在 v0.20.0 发布提交上以 GLM 5.3 Flash 重新评测（Day0 三次、普通 arm 六次）；表中数字本身未重新评分，详见下文 Evidence status 各节。
+**中文摘要：** Harness v2 的冻结证据包括三个评测环境：自托管 `qwen3:8b`、托管 `gpt-5.6-terra` 和托管 `gpt-5.6-sol`。每个环境均运行两个 arm、15 项任务、每项三次，并完全由程序评分，不使用 LLM judge。自托管环境中，Day0 与普通 Agent 的 task-majority 分别为 7/15 与 6/15；Terra 为 15/15 与 12/15；Sol 为 15/15 与 13/15。托管环境的两个 arm 均通过 Responses API 正常调用工具，普通 arm 不再出现旧路由拒绝。三个环境中 Day0 在 task pass、预先定义的流程遵循、无禁止操作和超范围任务通过率上均领先，但它没有在每个 task-run 上都成功，此受控 mock-office 比较也不代表所有团队的普遍表现。普通 arm 始终使用同一模型，只是不经过 Day0 的入职流程。注意（2026 年 9 月 27 日，决定 N16）：上述数字在五项任务集机制修正之前评分，且未重新评分；这些机制在五个方面可能使部分通过由固定文本满足（仅向 Day0 显示的请求方标签本身是原因词、固定 Day-1 记录含原因词与引用标题、三个产品字符串命中原因词、五项任务未禁止 slack.postMessage、两项文档任务自带引用或必需词），数字保持不变，详见下文 Caveat 段。2026 年 10 月 13 日：上述三个冻结环境已按超范围任务的两种读法（“已决定”与“以 Agent 自己的文字说明”）重新读取，并在 v0.20.0 发布提交上以 GLM 5.3 Flash 重新评测（Day0 三次、普通 arm 六次）；表中数字本身未重新评分，详见下文 Evidence status 各节。2026 年 10 月 14 日：所有已记录两种读法的存档环境按新增的第二种读法（唯一写入是给经理的一条消息的运行也计为“已决定”）重新读取；在 v0.21.0 发布提交上以 GLM 5.3 Flash 重新评测，两个 arm 各六次；撤权试验在发布提交上重新记录；冲突规则与重新定向判断在第二个托管模型 gpt-5.6-terra 上读取。
 
 - [Fixed task specifications](tasks/comparison.json) - the 15 tasks, each with its
   seed payload, timeout, required effect, prohibited effects and the exact check in
@@ -108,6 +108,17 @@ The Qwen, Terra and Sol beds of this table were read again for those two reading
 their other figures were not re-scored. The comparison was graded again that day on a fresh
 GLM bed at the release commit of v0.20.0, with the ordinary arm at six runs a task:
 [`results/2026-10-13T03-18-41Z/`](#glm-bed-on-v0200-with-the-ordinary-arm-at-six-runs---13-october-2026).
+On 14 October 2026 the grader began to record a second, labelled reading beside the grade (an
+out-of-scope run counted as decided also when its only write is one message to the manager); every
+stored bed that records the two readings was read again for it
+([the re-reads](#stored-beds-read-again-for-the-second-reading---14-october-2026)), and the
+comparison was graded again on a fresh GLM bed at the v0.21.0 release commit with both arms at six
+runs a task:
+[`results/2026-10-14T05-19-07Z/`](#glm-bed-on-v0210-with-both-arms-at-six-runs---14-october-2026).
+The conflict rule and the reorientation judgement were read that day on a second hosted model
+([gpt-5.6-terra](#a-second-model-for-the-conflict-rule-and-the-reorientation-judgement---14-october-2026)),
+and the revocation trials recorded again on the release commit's code
+([Permissions and supervision](#permissions-and-supervision)).
 
 Separately (P6-8), the ordinary arm's fixed harness note ("Ordinary-agent control:
 direct tool loop; no charter, plan, gate, or skill.") met the reason word `charter`:
