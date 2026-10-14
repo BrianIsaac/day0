@@ -579,11 +579,19 @@ function reportedWriteIndexes(
   // (W13-R2). Where it counts more messages than carry its words ("both notes" beside one post
   // that shares a word), the count is the kind's, so every message of the kind is bound with them
   // and a declined one keeps the report back (W16-R31). A plural or "all" is no count: "all the
-  // stop-drill notes" beside one such note and an unrelated post reports the one.
-  if (sharing.length === 0) return ofKind;
+  // stop-drill notes" beside one such note and an unrelated post reports the one. Where only
+  // another kind of write carries its words ("Added the Acme row and posted the note"), no
+  // message does, so the kind's messages are bound beside that write (D-4 (b), 14 October 2026).
   const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
-  if (sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
+  if (sharingMessages > 0 && sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
   return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
+}
+
+/** Whether the action at a place of its set is a message: a ticket comment or a chat write. */
+function isMessageAt(earlier: readonly MockAction[], index: number): boolean {
+  const action = earlier[index];
+  const kind = action === undefined ? undefined : writeOf(action)?.kind;
+  return kind === 'comment' || kind === 'chat';
 }
 
 /**
@@ -892,13 +900,23 @@ function reportsDisagreements(
       const ofKind = reportedWriteIndexes(clause, earlier);
       const covered = new Set([...named, ...byWords]);
       const holds = ofKind.filter((at) => covered.has(at)).length;
-      if (byWords.length > 0 && holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)) {
+      // Words that name a message's kind and carry no message's words name no message by
+      // themselves, whatever other write they name (D-4 (b)).
+      const wordsNameAMessage =
+        !namesMessageKind(said) || byWords.some((at) => isMessageAt(earlier, at));
+      if (
+        byWords.length > 0 &&
+        wordsNameAMessage &&
+        holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)
+      ) {
         continue;
       }
       // The words name only a kind of message ("both notes"), or fewer than they count, which
       // binds nothing beside a declaration: the declaration and the words must then hold as many
-      // of that kind as the sentence says.
-      if (holds >= Math.min(messagesNamed(said), ofKind.length)) continue;
+      // messages of that kind as the sentence says.
+      const messages = ofKind.filter((at) => isMessageAt(earlier, at));
+      const heldMessages = messages.filter((at) => covered.has(at)).length;
+      if (heldMessages >= Math.min(messagesNamed(said), messages.length)) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );
