@@ -7,6 +7,7 @@ import { replacePageBlocks } from '../../convex/docBlocks';
 import { forgetProposalsOf } from '../../convex/docRelationProposals';
 import {
   DATED_SUCCESSOR_GAP_MS,
+  RELATION_MEASURE_TRIES,
   RELATION_PAGES_PER_STEP,
   RELATION_PROPOSALS_PER_SYNC,
 } from '../../src/docs/relations';
@@ -286,13 +287,15 @@ describe('measurePage: the relations a finishing sync proposes', (): void => {
   it('writes nothing for a generation that is neither the source’s running one nor its last completed', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const { wiki, official } = await twoVersions(harness);
+    // Re-taken by D-12 (a): the measure is a pair a transaction from the measuring's action, and
+    // answers that the run no longer measures, with no pair failed or passed over.
     expect(
-      await harness.mutation(internal.docRelations.measurePage, {
+      await harness.action(internal.docSyncActions.measurePage, {
         sourceId: official.sourceId,
         syncRunId: wiki.runId,
         ref: 'pipeline-runbook-v2.md',
       }),
-    ).toEqual({ proposed: 0, cut: false });
+    ).toEqual({ current: false, proposed: 0, cut: false, failed: [], passedOver: [] });
     expect(await relations(harness)).toEqual([]);
   });
 });
@@ -419,14 +422,15 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
     const harness = convexTest(schema, allConvexModules());
     const first = await versionedLibrary(harness);
     expect(
-      await harness.mutation(internal.docRelations.measurePage, {
+      await harness.action(internal.docSyncActions.measurePage, {
         sourceId: first.sourceId,
         syncRunId: first.runId,
         ref: 'Alpha.md',
         room: 1,
       }),
-      // Its room ended it with two candidates unmeasured, and it says so (W16-R34).
-    ).toEqual({ proposed: 1, cut: true });
+      // Its room ended it with two candidates unmeasured, and it says so (W16-R34). Re-taken by
+      // D-12 (a): a pair a transaction, the answer naming the pairs failed and passed over.
+    ).toEqual({ current: true, proposed: 1, cut: true, failed: [], passedOver: [] });
     expect(await relations(harness)).toHaveLength(1);
     // With no room given a page proposes every relation its three candidates hold.
     expect(await measure(harness, first, 'Bravo.md')).toBe(3);
@@ -440,7 +444,8 @@ describe('the cap on new proposals a sync (the second pass, minor 8)', (): void 
         sourceId: first.sourceId,
         runId: first.runId,
       }),
-    ).toEqual({ measured: 17, proposed: RELATION_PROPOSALS_PER_SYNC });
+      // Re-taken by D-12 (a): a step's answer names what it passed over, here nothing.
+    ).toEqual({ measured: 17, proposed: RELATION_PROPOSALS_PER_SYNC, passedOver: [] });
     expect(await relations(harness)).toHaveLength(RELATION_PROPOSALS_PER_SYNC);
   });
 });
@@ -1345,14 +1350,16 @@ describe('a page whose measure throws (W16-R34)', (): void => {
     expect(await remeasureOf(harness, library.sourceId)).toBeUndefined();
     // Tried at the first step and at two more, each carrying the pages still to try and how
     // often each was, in the source's page order: the copy, whose measure reads the runbook, and
-    // the runbook.
+    // the runbook. Re-taken by D-12 (a): of the copy only its pair with the runbook is tried
+    // again, each pair being measured in its own transaction.
+    const runbook = { sourceId: library.sourceId, ref: 'zebra.md' };
     expect((await stepsOf(harness, 'remeasureRelations')).map((step) => step.retry)).toEqual([
       [
-        { ref: 'zebra-copy.md', tries: 1 },
+        { ref: 'zebra-copy.md', tries: 1, pairs: [runbook] },
         { ref: 'zebra.md', tries: 1 },
       ],
       [
-        { ref: 'zebra-copy.md', tries: 2 },
+        { ref: 'zebra-copy.md', tries: 2, pairs: [runbook] },
         { ref: 'zebra.md', tries: 2 },
       ],
     ]);
@@ -1408,14 +1415,16 @@ describe('a page whose measure throws, at the edges (the second pass)', (): void
     await harness.finishAllScheduledFunctions(vi.runAllTimers);
     expect(await relations(harness)).toEqual([]);
     // In the order the run wrote them: the runbook, then the copy, whose measure reads it.
+    // Re-taken by D-12 (a): of the copy only its pair with the runbook is tried again.
+    const runbook = { sourceId: library.sourceId, ref: 'zebra.md' };
     expect(await retriesOf(harness, 'proposeRelations')).toEqual([
       [
         { ref: 'zebra.md', tries: 1 },
-        { ref: 'zebra-copy.md', tries: 1 },
+        { ref: 'zebra-copy.md', tries: 1, pairs: [runbook] },
       ],
       [
         { ref: 'zebra.md', tries: 2 },
-        { ref: 'zebra-copy.md', tries: 2 },
+        { ref: 'zebra-copy.md', tries: 2, pairs: [runbook] },
       ],
     ]);
     // Nothing is owed for it: the next sync's own look-back is what measures it again.
@@ -1453,6 +1462,198 @@ describe('a page whose measure throws, at the edges (the second pass)', (): void
       (await harness.run(async (ctx) => await ctx.db.get(library.sourceId)))?.relationsRemeasure,
     ).toBeUndefined();
     expect(await retriesOf(harness, 'remeasureRelations')).toHaveLength(1);
+  });
+});
+
+// D-12 (a) (17-FD's F3, the review's carried row): a measure read its page and every candidate in
+// one transaction, so a page whose read breaks threw every measure that read it as a candidate,
+// its neighbours' with it, and the log named the page measured, not the candidate whose read
+// broke it. Each pair is now measured in a transaction of its own, from the measuring's action.
+describe('one pair a transaction (D-12 (a))', (): void => {
+  const DAY = DATED_SUCCESSOR_GAP_MS;
+  const RUNBOOK = '# Zebra quartz runbook\n\nPress Refresh once and read back the zebra figure.';
+
+  /** 17-FD's F3 input: the runbook and its copy, and a second copy beside them. */
+  async function runbookAndCopies(harness: Harness): Promise<Source> {
+    const library = await syncingSource(harness, 'Library');
+    for (const [ref, title, day] of [
+      ['zebra.md', 'Zebra quartz runbook', 2],
+      ['zebra-notes.md', 'Zebra quartz notes', 5],
+      ['zebra-copy.md', 'Zebra quartz copy', 8],
+    ] as const) {
+      await storedPage(harness, library, {
+        ref,
+        title,
+        markdown: RUNBOOK.replace('# Zebra quartz runbook', `# ${title}`),
+        updatedAt: day * DAY,
+      });
+    }
+    return library;
+  }
+
+  /**
+   * A second row under the runbook's ref: every read of the page by its ref throws, as a read
+   * over a transaction's limit does (17-FD's F3 input; the harness enforces the limits too).
+   */
+  const breakRunbook = async (harness: Harness, library: Source): Promise<void> => {
+    await harness.run(async (ctx) => {
+      await ctx.db.insert('docPages', {
+        sourceId: library.sourceId,
+        ref: 'zebra.md',
+        title: 'Zebra quartz runbook',
+        markdown: RUNBOOK,
+        updatedAt: 2 * DAY,
+      });
+    });
+  };
+
+  /** A step's answer. */
+  interface StepAnswer {
+    readonly measured: number;
+    readonly proposed: number;
+    readonly passedOver?: ReadonlyArray<{ ref: string; candidate?: { ref: string } }>;
+  }
+
+  /** The measuring steps of one name the scheduler holds, run or not, by id. */
+  const scheduled = async (
+    harness: Harness,
+    name: string,
+  ): Promise<Array<{ id: string; args: unknown }>> =>
+    await harness.run(async (ctx) =>
+      (await ctx.db.system.query('_scheduled_functions').collect())
+        .filter((row) => row.name.endsWith(name))
+        .map((row) => ({ id: row._id as string, args: row.args[0] })),
+    );
+
+  /**
+   * Run a measuring step by step, each step it schedules run here in turn with the arguments it
+   * was scheduled with (the clock is faked, so none runs by itself), so every step's answer is
+   * read.
+   */
+  async function stepsByHand(
+    harness: Harness,
+    name: 'proposeRelations' | 'remeasureRelations',
+    first: () => Promise<StepAnswer>,
+  ): Promise<StepAnswer[]> {
+    const answers = [await first()];
+    const run = new Set<string>();
+    for (;;) {
+      const next = (await scheduled(harness, name)).find((job) => !run.has(job.id));
+      if (next === undefined) return answers;
+      run.add(next.id);
+      answers.push(
+        (await harness.action(internal.docSyncActions[name], next.args as never)) as StepAnswer,
+      );
+    }
+  }
+
+  it('a page over the read limit costs only its own pairs, and the measuring’s answer names the pair it passed over', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    const library = await runbookAndCopies(harness);
+    await breakRunbook(harness, library);
+    const answers = await stepsByHand(
+      harness,
+      'proposeRelations',
+      async () => await harness.action(internal.docSyncActions.proposeRelations, library),
+    );
+    // The two copies' pair is proposed at the first step, though both copies read the runbook.
+    expect(await relations(harness)).toMatchObject([
+      {
+        kind: 'possible_successor',
+        from: { ref: 'zebra-copy.md' },
+        to: { ref: 'zebra-notes.md' },
+      },
+    ]);
+    // Tried three times, then passed over: the runbook's own measure, and each copy's pair with it.
+    expect(answers).toHaveLength(3);
+    expect(answers.at(-1)?.passedOver).toEqual(
+      expect.arrayContaining([
+        { ref: 'zebra.md' },
+        { ref: 'zebra-notes.md', candidate: { sourceId: library.sourceId, ref: 'zebra.md' } },
+        { ref: 'zebra-copy.md', candidate: { sourceId: library.sourceId, ref: 'zebra.md' } },
+      ]),
+    );
+    expect(answers.at(-1)?.passedOver).toHaveLength(3);
+  });
+
+  it('a retry step that also hands on at the step’s share measures each page once (17-FD’s second pass, item 3)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await syncingSource(harness, 'Library');
+    // The runbook and its copy first, so the read that holds them is the first; then one block a
+    // page, so no page's blocks straddle two reads, filling three reads of blocks (400 a read):
+    // the last retry passes the two over, measures the second read whole and hands on there.
+    for (const [ref, title] of [
+      ['zebra.md', 'Zebra quartz runbook'],
+      ['zebra-copy.md', 'Zebra quartz copy'],
+    ] as const) {
+      await storedPage(harness, library, {
+        ref,
+        title,
+        markdown: RUNBOOK.replace('# Zebra quartz runbook', `# ${title}`),
+      });
+    }
+    await breakRunbook(harness, library);
+    const PAGES = 900;
+    for (let index = 0; index < PAGES; index += 1) {
+      await storedPage(harness, library, {
+        ref: `p${String(index).padStart(3, '0')}.md`,
+        title: `zq${index}x`,
+        markdown: `zq${index}x alone.`,
+      });
+    }
+    const answers = await stepsByHand(
+      harness,
+      'proposeRelations',
+      async () => await harness.action(internal.docSyncActions.proposeRelations, library),
+    );
+    // The first step, the two retries (the second hands on past its share) and the step after it.
+    expect(answers.map((answer) => answer.measured)).toEqual([400, 2, 402, 102]);
+    // Every page once, and the runbook and its copy at each of their three tries.
+    expect(answers.reduce((sum, answer) => sum + answer.measured, 0)).toBe(
+      PAGES + 2 * RELATION_MEASURE_TRIES,
+    );
+  }, 240_000);
+
+  it('a retry for a run a newer sync overtook measures nothing', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const library = await runbookAndCopies(harness);
+    await breakRunbook(harness, library);
+    await harness.action(internal.docSyncActions.proposeRelations, library);
+    const [retry, ...more] = await scheduled(harness, 'proposeRelations');
+    expect(retry).toBeDefined();
+    expect(more).toEqual([]);
+    const before = (await relations(harness)).length;
+    // A newer sync takes the source over, and the runbook is mended before the retry runs.
+    await harness.run(async (ctx) => {
+      const newer = await ctx.db.insert('docSyncRuns', {
+        sourceId: library.sourceId,
+        listing: 2,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'running',
+        createdAt: 3,
+      });
+      await ctx.db.patch(library.sourceId, { activeSyncId: newer, lastCompletedSyncId: undefined });
+      const rows = await ctx.db
+        .query('docPages')
+        .withIndex('by_source_ref', (q) => q.eq('sourceId', library.sourceId).eq('ref', 'zebra.md'))
+        .collect();
+      await ctx.db.delete(rows[1]._id);
+    });
+    const answer = await harness.action(
+      internal.docSyncActions.proposeRelations,
+      retry.args as never,
+    );
+    // The sync's proposals so far, as the retry carried them: none more.
+    expect(answer).toEqual({
+      measured: 0,
+      proposed: (retry.args as { proposed: number }).proposed,
+      passedOver: [],
+    });
+    expect(await relations(harness)).toHaveLength(before);
+    // And it schedules nothing more.
+    expect(await scheduled(harness, 'proposeRelations')).toHaveLength(1);
   });
 });
 
@@ -1549,7 +1750,7 @@ describe('a page whose candidates the cap cut (W16-R34)', (): void => {
 // before its blocks are read, and the function log names it; each candidate in a transaction of
 // its own is wave 18's (D-12 (a)).
 describe('a candidate whose read would pass the measure’s budget (D-12 (b))', (): void => {
-  it('is passed over before its blocks are read and named in the log, and the pairs that fit are proposed', async (): Promise<void> => {
+  it('is measured a pair a transaction since D-12 (a): four pages that passed the limit together each fit with the page', async (): Promise<void> => {
     const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
     // Under the store's 768 KiB, in the script whose search text carries every bigram.
     const paragraph = (n: number): string => `第${n}段：${'季度关账记录保存备查。'.repeat(40)}\n\n`;
@@ -1582,9 +1783,10 @@ describe('a candidate whose read would pass the measure’s budget (D-12 (b))', 
             line.msg ===
             'documentation: a candidate page too large to measure here was passed over',
         );
-      expect(passed.length).toBeGreaterThan(0);
-      expect(passed[0]).toMatchObject({ level: 'warn', ref: 'readme.md', measuring: 'zebra.md' });
-      expect(proposed + passed.length).toBe(3);
+      // Re-taken by D-12 (a): each pair is measured in a transaction of its own, under the
+      // budget, so the four pages that passed the limit together are three pairs that each fit.
+      expect(passed).toEqual([]);
+      expect(proposed).toBe(3);
     } finally {
       logged.mockRestore();
     }

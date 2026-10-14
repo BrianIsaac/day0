@@ -9,8 +9,8 @@ import { editedAtSource } from '../src/docs/relations';
  * start (`docSources.relationsRemeasure`); a completed sync's measuring, once its own pages are
  * measured, measures the source's stored pages from that mark a bounded read at a time
  * (`docSyncActions.proposeRelations`), writing back how far it reached, and clears the mark at the
- * end. The measure is `docRelations.measurePage`, as for a page a sync stores: a pair is proposed
- * once, and only the manager's answer on its card changes a page.
+ * end. The measure is a pair a transaction (`docRelations.measurePair`), as for a page a sync
+ * stores: a pair is proposed once, and only the manager's answer on its card changes a page.
  *
  * The mark is also set by a fill that changes what a kept page's row says of its time where a
  * proposal of the page rests on it (W17-R16, `remeasureAfterDating`), so a dated successor that

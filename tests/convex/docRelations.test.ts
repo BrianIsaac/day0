@@ -850,7 +850,7 @@ describe('the functions convex/docRelations.ts registers', (): void => {
   // The split of its helpers (wave 16, 16-s; decision S-1) moves no registered function: each
   // `api.docRelations.*` and `internal.docRelations.*` path is a string the app, the sync's
   // actions and the scheduler hold. The list as `v0.19.0` registered it.
-  it('are the ones it registered at v0.19.0, each of the same kind and visibility', (): void => {
+  it('are the ones it registered at v0.19.0 but for the measure split a pair a transaction (D-12 (a)), each of the same kind and visibility', (): void => {
     const registered = Object.entries(
       docRelationsModule as unknown as Record<string, RegisteredFunction | undefined>,
     )
@@ -863,14 +863,17 @@ describe('the functions convex/docRelations.ts registers', (): void => {
     // Re-taken by 17-C for one internal mutation added, `askConfirmed`: the asking a confirmation
     // schedules out of its own transaction; and by the joins for `turnPageQuestions`, the step a
     // page's change of status schedules for its conflict questions. No function it registered at
-    // v0.19.0 moved.
+    // v0.19.0 moved. Re-taken by 18-D for D-12 (a): `measurePage`, a mutation that read every
+    // candidate, is `pageCandidates` and `measurePair`, each pair in its own transaction, called
+    // by `docSyncActions.measurePage` (nothing scheduled it, so no job names it at an upgrade).
     expect(registered).toEqual([
       'askConfirmed internal mutation',
       'decide public mutation',
       'generationsToMeasure internal query',
       'listOpen public query',
-      'measurePage internal mutation',
+      'measurePair internal mutation',
       'measuringPlan internal query',
+      'pageCandidates internal query',
       'pagesWrittenBy internal query',
       'settleRelationsOwed internal mutation',
       'turnPageQuestions internal mutation',

@@ -21,6 +21,7 @@ import {
   pageAt,
   relationsBetween,
   type NamedPage,
+  type PageName,
 } from './docRelationProposals';
 import {
   RELATION_DECISIONS,
@@ -52,7 +53,7 @@ import {
   type SourceAuthority,
   type StatusSource,
 } from '../src/docs/authority';
-import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
+import { measureRelation } from '../src/docs/relations';
 import { approvedResultWords, conflictChoiceWords } from '../src/agent/reorientation-words';
 import { isOpenQuestion } from '../src/agent/manager-questions';
 import { storedPageReadBytes } from '../src/docs/blocks';
@@ -60,8 +61,8 @@ import { log } from '../src/lib/logger';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
- * finishing sync writes for the pages it stored or changed (`measurePage`, over
- * `src/docs/relations.ts`), and the manager's decision on each (`decide`). A relation is
+ * finishing sync writes for the pages it stored or changed (`pageCandidates` and `measurePair`, a
+ * pair a transaction since D-12 (a), over `src/docs/relations.ts`), and the manager's decision on each (`decide`). A relation is
  * confirmed on a card and never by code: a proposal changes no page's status, holds no plan and
  * tags no cite. A confirmed successor supersedes the older page (`docStatus.restatePage`); a
  * confirmed conflict between two active pages of equal trust stands (`standingConflictOf`) until
@@ -75,17 +76,14 @@ import { log } from '../src/lib/logger';
  * This module imports nothing of `docSources` or of anything that reaches `work`.
  */
 
-/** The most of an owner's sources one page's candidates are looked for in. */
-const CANDIDATE_SOURCES = 32;
-
 /**
- * The most a measure reads of its page's and its candidates' rows and blocks together, by
- * `storedPageReadBytes` (D-12 (b)): under a transaction's 16 MiB, with room for the search and the
- * relations it reads beside them. Four pages each under the store's bound passed that limit
- * together on 17-FD's bed and failed the whole measure, every pair with it (17-FD's F3 with F9).
- * A candidate whose read would pass the budget is passed over before its blocks are read, and the
- * log names it; its pair is still met when the candidate is measured itself. Measuring each
- * candidate in a transaction of its own, which needs no budget, is wave 18's (D-12 (a)).
+ * The most a pair's measure reads of its two pages' rows and blocks, by `storedPageReadBytes`
+ * (D-12 (b)): under a transaction's 16 MiB, with room for the relations it reads beside them. Two
+ * pages each under the store's bound fit it; it stays as the pair's cheap first test, so a
+ * candidate whose row, read already, says its read would pass the budget is passed over before
+ * its blocks are read, and the log names it. Since D-12 (a) each pair is measured in a
+ * transaction of its own (`measurePair`), so four pages that together passed the limit on 17-FD's
+ * bed (its F3 with F9) are four pairs that each fit.
  */
 const MEASURE_READ_BYTES = 12 * 1024 * 1024;
 
@@ -105,8 +103,13 @@ async function readersOfEither(
   return [...readers.values()];
 }
 
-/** What one page's measure wrote. */
+/** What one page's measure wrote, over the pairs it measured (`docSyncActions.measurePage`). */
 export interface PageMeasure {
+  /**
+   * Whether the run is still the source's running or last completed one: false once a newer sync
+   * has overtaken it, which measures instead, and the measuring stops.
+   */
+  readonly current: boolean;
   /** How many relations it proposed. */
   readonly proposed: number;
   /**
@@ -114,101 +117,139 @@ export interface PageMeasure {
    * measured again, where it was once counted measured and its last candidates never met.
    */
   readonly cut: boolean;
+  /** The candidates whose pair's measure threw, to be tried again (D-12 (a)). */
+  readonly failed: readonly PageName[];
+  /** The candidates passed over at `MEASURE_READ_BYTES` before their blocks were read. */
+  readonly passedOver: readonly PageName[];
 }
 
+/** Whether a run is the source's running or last completed one: a newer sync measures instead. */
+function measuresFor(source: Doc<'docSources'>, runId: Id<'docSyncRuns'>): boolean {
+  return source.activeSyncId === runId || source.lastCompletedSyncId === runId;
+}
+
+/** The most of an owner's sources one page's candidates are looked for in. */
+const CANDIDATE_SOURCES = 32;
+
+/** A page's candidates, or that its run is no longer the one that measures. */
+export type PageCandidates =
+  | { readonly current: false }
+  | { readonly current: true; readonly candidates: PageName[] };
+
+const pageNameValidator = v.object({ sourceId: v.id('docSources'), ref: v.string() });
+
 /**
- * Measure one page a sync stored or changed against the owner's other active pages, and write a
- * `proposed` relation for each pair the measures relate that holds none yet. Internal; the sync
- * calls it a page at a time once its generation has completed and its statuses stand, fenced on
- * that generation still being the source's newest (its last completed one, or the one running).
- * Reads the page, its blocks and at most `RELATION_CANDIDATES_PER_PAGE`
- * other pages with theirs. Writes relation rows and `documentation.relation-proposed` on the
- * record of each employee that reads either page; no page's status, no plan and no cite changes.
- * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
- * most a sync proposes whatever its last page holds.
+ * The owner's other active pages one page a sync stored or changed is measured against
+ * (`candidatesOf`): the first step of its measure, a transaction of its own (D-12 (a)), so a
+ * candidate whose read breaks costs its own pair and not this. Internal; reads the page, its
+ * blocks, the owner's sources and the search's answers; writes nothing.
  *
- * @returns How many relations it proposed, and whether its room cut its candidates short.
+ * @returns Its candidates (none for a page that is gone or not current), or that the run is no
+ *   longer its source's running or last completed one.
  */
-export const measurePage = internalMutation({
-  args: {
-    sourceId: v.id('docSources'),
-    syncRunId: v.id('docSyncRuns'),
-    ref: v.string(),
-    /** The new proposals this call may still write; absent, every one its candidates hold. */
-    room: v.optional(v.number()),
-  },
-  handler: async (ctx, args): Promise<PageMeasure> => {
+export const pageCandidates = internalQuery({
+  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  handler: async (ctx, args): Promise<PageCandidates> => {
     const source = await ctx.db.get(args.sourceId);
-    if (source === null) return { proposed: 0, cut: false };
-    if (source.activeSyncId !== args.syncRunId && source.lastCompletedSyncId !== args.syncRunId) {
-      return { proposed: 0, cut: false };
-    }
+    if (source === null || !measuresFor(source, args.syncRunId)) return { current: false };
     const page = await pageAt(ctx, args);
-    if (page === null || pageStatusOf(page) !== 'active') return { proposed: 0, cut: false };
+    if (page === null || pageStatusOf(page) !== 'active') return { current: true, candidates: [] };
     const sources = await ctx.db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
     const self = await measured(ctx, page, source);
+    return {
+      current: true,
+      candidates: await candidatesOf(ctx, { userId: source.userId, sources }, page, self.blocks),
+    };
+  },
+});
+
+/** What one pair's measure did. */
+export interface PairMeasure {
+  /** As `PageMeasure.current`. */
+  readonly current: boolean;
+  /** Whether it proposed a relation. */
+  readonly proposed: boolean;
+  /** Whether the candidate was passed over at `MEASURE_READ_BYTES`. */
+  readonly passedOver: boolean;
+}
+
+/**
+ * Measure one page a sync stored or changed against one candidate (D-12 (a)), and write a
+ * `proposed` relation where the measures relate them and the pair holds none yet. Internal; the
+ * measuring's action calls it a pair at a time (`docSyncActions.measurePage`), fenced on the run
+ * still being the source's newest (its last completed one, or the one running). Reads the two
+ * pages, their blocks and the relations between them, in one transaction of its own: a page whose
+ * read breaks throws the pairs that read it and no other, and the action names the pair. Writes
+ * the relation and `documentation.relation-proposed` on the record of each employee that reads
+ * either page; no page's status, no plan and no cite changes.
+ */
+export const measurePair = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    syncRunId: v.id('docSyncRuns'),
+    ref: v.string(),
+    candidate: pageNameValidator,
+  },
+  handler: async (ctx, args): Promise<PairMeasure> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || !measuresFor(source, args.syncRunId)) {
+      return { current: false, proposed: false, passedOver: false };
+    }
+    const nothing: PairMeasure = { current: true, proposed: false, passedOver: false };
+    const page = await pageAt(ctx, args);
+    if (page === null || pageStatusOf(page) !== 'active') return nothing;
+    const otherSource = await ctx.db.get(args.candidate.sourceId);
+    // An owner's pages are measured against the owner's own only.
+    if (otherSource === null || otherSource.userId !== source.userId) return nothing;
+    const other = await pageAt(ctx, args.candidate);
+    if (other === null || pageStatusOf(other) !== 'active') return nothing;
     const own = storedPageReadBytes(page.markdown);
-    let read = own.row + own.blocks;
+    const cost = storedPageReadBytes(other.markdown);
+    if (own.row + own.blocks + cost.row + cost.blocks > MEASURE_READ_BYTES) {
+      log.warn(CANDIDATE_PASSED_OVER, {
+        sourceId: other.sourceId,
+        ref: other.ref,
+        bytes: cost.row + cost.blocks,
+        budget: MEASURE_READ_BYTES,
+        measuring: page.ref,
+      });
+      return { ...nothing, passedOver: true };
+    }
+    const self = await measured(ctx, page, source);
+    const relation = measureRelation(self, await measured(ctx, other, otherSource));
+    if (relation === undefined) return nothing;
+    if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) return nothing;
     const now = Date.now();
-    let proposed = 0;
-    for (const candidate of await candidatesOf(
-      ctx,
-      { userId: source.userId, sources },
-      page,
-      self.blocks,
-    )) {
-      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) return { proposed, cut: true };
-      const other = await pageAt(ctx, candidate);
-      const otherSource = sources.find((row) => row._id === candidate.sourceId);
-      if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
-      const cost = storedPageReadBytes(other.markdown);
-      if (read + cost.row + cost.blocks > MEASURE_READ_BYTES) {
-        read += cost.row;
-        log.warn(CANDIDATE_PASSED_OVER, {
-          sourceId: other.sourceId,
-          ref: other.ref,
-          bytes: cost.row + cost.blocks,
-          budget: MEASURE_READ_BYTES,
-          measuring: page.ref,
-        });
-        continue;
-      }
-      read += cost.row + cost.blocks;
-      const relation = measureRelation(self, await measured(ctx, other, otherSource));
-      if (relation === undefined) continue;
-      if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
-      const [from, to] = relation.from === self.key ? [page, other] : [other, page];
-      const relationId = await ctx.db.insert('docRelations', {
-        userId: source.userId,
-        from: { sourceId: from.sourceId, ref: from.ref },
-        to: { sourceId: to.sourceId, ref: to.ref },
-        kind: relation.kind,
-        evidence: relation.evidence.map((entry) => ({ ...entry })),
-        status: 'proposed',
+    const [from, to] = relation.from === self.key ? [page, other] : [other, page];
+    const relationId = await ctx.db.insert('docRelations', {
+      userId: source.userId,
+      from: { sourceId: from.sourceId, ref: from.ref },
+      to: { sourceId: to.sourceId, ref: to.ref },
+      kind: relation.kind,
+      evidence: relation.evidence.map((entry) => ({ ...entry })),
+      status: 'proposed',
+      createdAt: now,
+    });
+    const sourceOf = (row: Doc<'docPages'>): Doc<'docSources'> =>
+      row.sourceId === source._id ? source : otherSource;
+    for (const agent of await readersOfEither(ctx, [source, otherSource])) {
+      await appendEvent(ctx, {
+        agentId: agent._id,
+        type: 'documentation.relation-proposed',
+        payload: {
+          relationId,
+          kind: relation.kind,
+          from: named(from, sourceOf(from)),
+          to: named(to, sourceOf(to)),
+          evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
+        },
         createdAt: now,
       });
-      const sourceOf = (row: Doc<'docPages'>): Doc<'docSources'> =>
-        row.sourceId === source._id ? source : otherSource;
-      for (const agent of await readersOfEither(ctx, [source, otherSource])) {
-        await appendEvent(ctx, {
-          agentId: agent._id,
-          type: 'documentation.relation-proposed',
-          payload: {
-            relationId,
-            kind: relation.kind,
-            from: named(from, sourceOf(from)),
-            to: named(to, sourceOf(to)),
-            evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-          },
-          createdAt: now,
-        });
-      }
-      proposed += 1;
     }
-    return { proposed, cut: false };
+    return { ...nothing, proposed: true };
   },
 });
 

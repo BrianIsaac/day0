@@ -20,8 +20,8 @@ import {
  * conflict's two pages say under the blocks its evidence names, the runs whose pages a completed
  * sync measures, and the proposals a page its source dropped leaves behind (`forgetProposalsOf`,
  * called by `docSources.prunePages`). The registered functions that call the rest
- * (`measurePage`, `generationsToMeasure`, `measuringPlan`) stay in `convex/docRelations.ts` under
- * their paths.
+ * (`pageCandidates`, `measurePair`, `generationsToMeasure`, `measuringPlan`) stay in
+ * `convex/docRelations.ts`.
  *
  * This module sits below `convex/docRelations.ts` and `convex/docConflicts.ts`, and imports
  * nothing of `docSources` or of anything that reaches `work`.
