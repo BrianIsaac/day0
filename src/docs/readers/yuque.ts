@@ -37,7 +37,7 @@ import {
   type ProviderAnswer,
   type ProviderHttpOptions,
 } from './provider-http';
-import { storedPageTitle } from './stored-title';
+import { holdsListedTitle } from './stored-title';
 
 /** The provider's name in a sentence. */
 const PROVIDER = 'Yuque';
@@ -169,7 +169,7 @@ export class YuqueReader implements DocumentationReader {
           revision !== undefined &&
           mark !== undefined &&
           mark.revision === revision &&
-          mark.title === storedPageTitle(textField(entry, 'title')?.trim() || 'Untitled') &&
+          holdsListedTitle(mark, textField(entry, 'title')?.trim() || 'Untitled') &&
           mark.url === this.documentUrl(session.locator, textField(entry, 'slug'))
         ) {
           const nativeStatus = yuqueNativeStatus(field(entry, 'status'));

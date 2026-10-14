@@ -11,7 +11,12 @@ import {
 } from '../../../fixtures/readers/fake';
 import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
-import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
+import {
+  readWhole,
+  storedIn,
+  storeRedactedTitle,
+  type StoredMarks,
+} from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -555,6 +560,24 @@ describe('the Confluence Cloud reader contract by revision (wave 17, 17-X)', ():
     expect(again.read).toEqual([]);
     expect(again.kept).toHaveLength(5);
     expect(library.counts().body).toBe(0);
+  });
+
+  it('keeps a page whose stored title is redacted by its listed title’s keyed hash, and reads it once renamed (wave 18, 18-X)', async (): Promise<void> => {
+    const library = libraryFake('confluence-v2', { pages: 5 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, space, TOKEN, marks);
+    // The title held a value the sync redacts: stored redacted, its listed form's hash beside it.
+    storeRedactedTitle(marks, libraryRef(1));
+    library.reset();
+    const again = await readWhole(reader, space, TOKEN, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(5);
+    expect(library.counts().body).toBe(0);
+
+    library.rename(1, 'Rotate the payroll key');
+    const renamed = await readWhole(reader, space, TOKEN, marks);
+    expect(renamed.read.map((page) => page.ref)).toEqual([libraryRef(1)]);
   });
 
   it('reads a renamed page, though its revision is the stored one', async (): Promise<void> => {

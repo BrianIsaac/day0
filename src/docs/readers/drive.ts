@@ -3,12 +3,13 @@
  * Drive API as Markdown (beside the MCP path, which reads through a server the customer runs).
  *
  * It reads as a service account: an assertion signed with the account's key is exchanged for a
- * read-only token (no domain-wide delegation), and the account sees what the folder's owner
- * shared with its address. Each folder is listed with `files.list`, `nextPageToken` followed to
- * the list's end, and the folders found are read after it. A Google Doc is exported as
- * `text/markdown`, which Google bounds at 10 MB: a larger one is named unread. A Word document
- * is downloaded and converted where the reader runs (`word.ts`, RM9 (b1)). The file's `version`
- * is its revision, and a file in the bin is read and marked archived.
+ * read-only token (no domain-wide delegation), and the account sees what the folder's owner shared
+ * with its address. The token is asked for once a sync: each batch hands it back beside its cursor
+ * and the next reads with it while it serves (X-1; wave 18, 18-X). Each folder is listed with
+ * `files.list`, `nextPageToken` followed to the list's end, and the folders found are read after
+ * it. A Google Doc is exported as `text/markdown`, which Google bounds at 10 MB: a larger one is
+ * named unread. A Word document is downloaded and converted where the reader runs (`word.ts`, RM9
+ * (b1)). The file's `version` is its revision, and a file in the bin is read and marked archived.
  *
  * The listing gives each file's `version`, so a file stored at the version, the name and the
  * address its listing gives is kept with no export or download asked for (the reader contract by
@@ -30,6 +31,7 @@ import {
   type DocumentationReader,
   type KeptPage,
   type ReadPageBatch,
+  type ReaderToken,
   type StoredMark,
   type StoredRevisions,
   type UnreadPage,
@@ -47,7 +49,8 @@ import {
   type ProviderHttpOptions,
   webPageInPlaceOf,
 } from './provider-http';
-import { storedPageTitle } from './stored-title';
+import { BatchToken, issuedToken, type IssuedToken } from './reader-token';
+import { holdsListedTitle } from './stored-title';
 import { MAX_WORD_BYTES, WordDocumentError, wordToMarkdown } from './word';
 
 /** The provider's name in a sentence. */
@@ -140,7 +143,7 @@ function base64url(value: string | Buffer): string {
 interface Session {
   readonly http: ProviderHttp;
   readonly account: DriveServiceAccount;
-  readonly token: string;
+  readonly token: BatchToken;
 }
 
 /** Reader for one Google Drive folder and the folders under it. */
@@ -162,6 +165,9 @@ export class GoogleDriveReader implements DocumentationReader {
    * @param cursor - Where the previous batch left the walk.
    * @param limit - The most entries this batch lists.
    * @param stored - What the sync stored each listed file with; none reads every file.
+   * @param token - The token an earlier batch of this sync handed back; while it serves, the
+   *   batch signs in with no request of its own (X-1).
+   * @returns The batch, with the token it signed in for where it asked for one.
    * @throws Error when the key or the folder is refused, or Drive stays limited past the waits;
    *   ListingChangedError for a cursor that is not this reader's, or a page token Drive no longer
    *   honours.
@@ -172,6 +178,7 @@ export class GoogleDriveReader implements DocumentationReader {
     cursor: string | undefined,
     limit: number,
     stored?: StoredRevisions,
+    token?: ReaderToken,
   ): Promise<ReadPageBatch> {
     if (secret === undefined) {
       throw new Error(
@@ -182,7 +189,17 @@ export class GoogleDriveReader implements DocumentationReader {
     const account = parseDriveSecret(secret);
     const resumed = cursor === undefined ? undefined : walkFromCursor(cursor);
     const http = new ProviderHttp(PROVIDER, 0, this.options);
-    const session: Session = { http, account, token: await this.accessToken(http, account) };
+    const session: Session = {
+      http,
+      account,
+      token: await BatchToken.open({
+        handed: token,
+        now: this.now,
+        ask: async (): Promise<IssuedToken> => await this.accessToken(http, account),
+        provider: PROVIDER,
+        sourceId: source._id,
+      }),
+    };
     if (resumed === undefined) await this.checkFolder(session, locator.folderId);
     const walk: Walk = resumed ?? { queue: [locator.folderId], folders: 1 };
     const listed = await this.listing(session, walk, limit);
@@ -219,12 +236,21 @@ export class GoogleDriveReader implements DocumentationReader {
       unread,
       ...(kept.length > 0 ? { kept } : {}),
       nextCursor: cursorAfter(walk, listed.nextPageToken, found),
+      ...handedBack(session.token),
     };
   }
 
-  /** A read-only access token for the service account, from an assertion it signs. */
-  private async accessToken(http: ProviderHttp, account: DriveServiceAccount): Promise<string> {
-    const issued = Math.floor(this.now() / 1_000);
+  /**
+   * A read-only access token for the service account, from an assertion it signs, with the
+   * lifetime Google gave it.
+   */
+  private async accessToken(
+    http: ProviderHttp,
+    account: DriveServiceAccount,
+  ): Promise<IssuedToken> {
+    // The lifetime runs from the request, so the answer's own latency is not counted in it.
+    const asked = this.now();
+    const issued = Math.floor(asked / 1_000);
     const unsigned = [
       base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })),
       base64url(
@@ -257,7 +283,9 @@ export class GoogleDriveReader implements DocumentationReader {
     });
     const body = providerBody('Google', answer);
     const token = textField(body, 'access_token');
-    if (answer.status === 200 && token !== undefined) return token;
+    if (answer.status === 200 && token !== undefined) {
+      return issuedToken(token, field(body, 'expires_in'), asked);
+    }
     throw new Error(
       `Google refused the service account key this source uses (${textField(body, 'error') ?? `HTTP ${answer.status}`}): ` +
         'the key may have been deleted, or the service account disabled. Ask IT to create a new ' +
@@ -436,12 +464,22 @@ export class GoogleDriveReader implements DocumentationReader {
 
   /** One authorised GET to Drive, a rate limit under 403 waited out as one under 429 is. */
   private async drive(session: Session, url: URL, maxBytes?: number): Promise<ProviderAnswer> {
-    return await session.http.send(url, {
-      headers: { authorization: `Bearer ${session.token}` },
-      limited: isRateLimited,
-      ...(maxBytes === undefined ? {} : { maxBytes }),
-    });
+    const send = async (): Promise<ProviderAnswer> =>
+      await session.http.send(url, {
+        headers: { authorization: `Bearer ${session.token.bearer}` },
+        limited: isRateLimited,
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+      });
+    const answer = await send();
+    // A token an earlier batch handed back and Google refuses is asked for again, once (X-1).
+    return answer.status === 401 && (await session.token.renew()) ? await send() : answer;
   }
+}
+
+/** The token a batch hands back beside its cursor, as the batch's field, where it has one. */
+function handedBack(token: BatchToken): { readonly token?: ReaderToken } {
+  const handBack = token.handBack();
+  return handBack === undefined ? {} : { token: handBack };
 }
 
 /** Whether a listed file is one the reader reads: a Google Doc or a Word document. */
@@ -465,8 +503,8 @@ function documentAddress(file: unknown): string | undefined {
  * A listed document kept as stored, or undefined for one to export or download.
  *
  * It is kept when the sync stored it at the `version` its listing gives, under the title its
- * listing gives (as the store writes a title, `storedPageTitle`) and the address its listing
- * gives: a move to the bin that leaves the version is kept and marked
+ * listing gives (`holdsListedTitle`: by its keyed hash, else as the store writes it) and at the
+ * address its listing gives: a move to the bin that leaves the version is kept and marked
  * archived. A listing that gives no version for a file, or does not say whether it is in the bin
  * (which a kept page's status is read from), has it read as before.
  *
@@ -479,7 +517,7 @@ function keptFile(file: unknown, id: string, mark: StoredMark | undefined): Kept
   if (typeof version !== 'string' && typeof version !== 'number') return undefined;
   if (typeof trashed !== 'boolean') return undefined;
   if (mark.revision !== String(version)) return undefined;
-  if (mark.title !== storedPageTitle(documentTitle(file))) return undefined;
+  if (!holdsListedTitle(mark, documentTitle(file))) return undefined;
   if (mark.url !== documentAddress(file)) return undefined;
   return {
     ref: id,

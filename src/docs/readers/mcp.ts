@@ -528,6 +528,26 @@ function revisionOf(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
 
+/** The start of an ISO 8601 date, which a server's time must have to date its page. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}/;
+
+/**
+ * A page's date from the time its server names for it (Notion's `last_edited_time`, a Drive
+ * server's `modifiedTime`, Atlassian's `lastModified` or its version's `createdAt`): dated by its
+ * source where that time parses, else by the read (RM42 (b); wave 18, 18-X). A generic server's
+ * resource names none, so its pages are dated by the read without this.
+ *
+ * @param named - The time the server named, as it gave it.
+ */
+function datedByServer(named: unknown): Pick<DocPage, 'updatedAt' | 'datedBySource'> {
+  // Only an ISO 8601 date, as each of the three servers writes one: `Date.parse` also reads a
+  // bare number ("12") as a date of 2001, which no server names as an edit time.
+  const time = typeof named === 'string' && ISO_DATE.test(named) ? Date.parse(named) : Number.NaN;
+  return Number.isFinite(time)
+    ? { updatedAt: time, datedBySource: true }
+    : { updatedAt: Date.now(), datedBySource: false };
+}
+
 /**
  * The reason a walk stops when the provider says there is more but gives no
  * continuation the reader can follow. Ending the walk there would complete the
@@ -725,12 +745,7 @@ export class McpReader implements DocumentationReader {
             title: typeof file.title === 'string' ? file.title : `Google Drive file ${fileId}`,
             url: typeof file.viewUrl === 'string' ? file.viewUrl : undefined,
             markdown: content.fileContent,
-            updatedAt:
-              typeof file.modifiedTime === 'string' &&
-              Number.isFinite(Date.parse(file.modifiedTime))
-                ? Date.parse(file.modifiedTime)
-                : Date.now(),
-            datedBySource: false,
+            ...datedByServer(file.modifiedTime),
             ...(file.trashed === true ? { nativeStatus: 'archived' as const } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -830,9 +845,7 @@ export class McpReader implements DocumentationReader {
             title,
             url: typeof result.url === 'string' ? result.url : undefined,
             markdown: unwrapWholePageFence(markdown),
-            updatedAt:
-              modified && Number.isFinite(Date.parse(modified)) ? Date.parse(modified) : Date.now(),
-            datedBySource: false,
+            ...datedByServer(modified),
             ...(nativeStatus !== undefined ? { nativeStatus } : {}),
             ...(revision !== undefined ? { sourceRevision: revision } : {}),
           };
@@ -889,12 +902,7 @@ export class McpReader implements DocumentationReader {
             title: notionPageTitle(result),
             url: typeof result.url === 'string' ? result.url : undefined,
             markdown: unwrapWholePageFence(retrieved.markdown),
-            updatedAt:
-              typeof result.last_edited_time === 'string' &&
-              Number.isFinite(Date.parse(result.last_edited_time))
-                ? Date.parse(result.last_edited_time)
-                : Date.now(),
-            datedBySource: false,
+            ...datedByServer(result.last_edited_time),
             ...(archived ? { nativeStatus: 'archived' as const } : {}),
           };
         }),

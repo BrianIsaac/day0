@@ -22,8 +22,9 @@ import { interruptedReadError } from '../src/lib/transport-error';
 import { mirroredDocSlug, type DocPage, type DocSourceRecord } from '../src/docs/types';
 import {
   ListingChangedError,
-  type DocumentationReader,
+  readerTokenServes,
   type KeptPage,
+  type ReaderToken,
   type StoredMark,
   type StoredRevisions,
   type UnreadPage,
@@ -553,41 +554,7 @@ export async function keptByRevision(
   return pages.map((page) => ({ ref: page.ref }));
 }
 
-/**
- * A reader's access token, handed back beside its cursor so the next batch asks for none (X-1;
- * 17-X's F3). The readers' half is 18-X's: until it lands no reader hands one back, and the sync
- * reads the field where a reader's batch carries it.
- */
-interface ReaderToken {
-  readonly token: string;
-  /** When the provider said it expires, in epoch milliseconds. */
-  readonly expiresAt: number;
-}
-
-/** A reader's batch that may hand its token back beside its cursor (X-1). */
-type TokenReadPageBatch = Awaited<ReturnType<DocumentationReader['listPageBatch']>> & {
-  readonly token?: ReaderToken;
-};
-
-/** A reader that takes its token back for the next batch, after the sync's stored revisions. */
-type TokenReader = {
-  listPageBatch(
-    ...args: [...Parameters<DocumentationReader['listPageBatch']>, token?: ReaderToken]
-  ): Promise<TokenReadPageBatch>;
-};
-
-/**
- * How long before its expiry a token is no longer handed to a batch (the second pass): a batch of
- * twenty-five pages may take a minute or two, and a token that lapsed inside it would fail it.
- */
-const READER_TOKEN_MARGIN_MS = 2 * 60 * 1000;
-
-/** Whether a token still serves a batch begun now. */
-function tokenServes(token: ReaderToken, now: number): boolean {
-  return token.expiresAt - READER_TOKEN_MARGIN_MS > now;
-}
-
-/** Whether a reader handed back a token of the contract's shape. */
+/** Whether a reader handed back a token of the contract's shape (`ReaderToken`; X-1). */
 function readerTokenOf(value: unknown): ReaderToken | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const { token, expiresAt } = value as Record<string, unknown>;
@@ -627,8 +594,8 @@ function sealReaderToken(token: ReaderToken, key: string, binding: string): stri
 
 /**
  * A sealed reader token opened for the next batch, or nothing: sealed under another key, owner,
- * source or run, malformed, or within `READER_TOKEN_MARGIN_MS` of its expiry (the reader then asks
- * for a new one).
+ * source or run, malformed, or inside the margin before its expiry (`readerTokenServes`; the
+ * reader then asks for a new one).
  */
 function openReaderToken(
   sealed: string,
@@ -644,7 +611,7 @@ function openReaderToken(
   } catch {
     return undefined;
   }
-  return token !== undefined && tokenServes(token, now) ? token : undefined;
+  return token !== undefined && readerTokenServes(token, now) ? token : undefined;
 }
 
 /** Whether a source is read with a secret: an MCP source always, another when linked with one. */
@@ -773,6 +740,14 @@ export const syncBatch = internalAction({
       // gives is kept with no body read. A page whose stored text holds a value the owner stored
       // since it was redacted is not offered, so it is read and redacted again.
       const storedByRevision = new Map<string, StoredForRevision>();
+      // The deployment's key seals the reader's token and keys a listed title's hash; a stored
+      // title's hash goes to the reader with the means to take a listed title's, never the key
+      // itself (18-X), so a page whose stored title is redacted is kept by it.
+      const tokenKey = readerTokenKey();
+      const hashTitle =
+        tokenKey === undefined
+          ? undefined
+          : (title: string): string => pageTitleHash(title, tokenKey, source.userId);
       const storedRevisions: StoredRevisions = async (refs) => {
         const rows: StoredForRevision[] = await ctx.runQuery(internal.docPages.storedForRevision, {
           sourceId: source._id,
@@ -791,6 +766,9 @@ export const syncBatch = internalAction({
             revision: row.sourceRevision,
             title: row.title,
             ...(row.url !== undefined ? { url: row.url } : {}),
+            ...(row.titleHash !== undefined && hashTitle !== undefined
+              ? { titleHash: row.titleHash, hashTitle }
+              : {}),
           });
         }
         return revisions;
@@ -798,14 +776,13 @@ export const syncBatch = internalAction({
       // The reader's place, and the token it handed back at the last batch (X-1): opened here for
       // this batch alone, and past its expiry not handed at all.
       const stored = storedCursorParts(args.cursor);
-      const tokenKey = readerTokenKey();
       const binding = readerTokenBinding(source, args.runId);
       const handed =
         stored.sealed === undefined || tokenKey === undefined
           ? undefined
           : openReaderToken(stored.sealed, tokenKey, binding, Date.now());
       if (handed !== undefined) tokens.push(handed.token);
-      const batch = await (readerFor(source.kind) as unknown as TokenReader).listPageBatch(
+      const batch = await readerFor(source.kind).listPageBatch(
         source as DocSourceRecord,
         secret,
         stored.cursor,
@@ -878,7 +855,7 @@ export const syncBatch = internalAction({
       const nextCursor =
         batch.nextCursor === undefined
           ? FINISHING_CURSOR
-          : token === undefined || tokenKey === undefined || !tokenServes(token, Date.now())
+          : token === undefined || tokenKey === undefined || !readerTokenServes(token, Date.now())
             ? batch.nextCursor
             : cursorWithToken(batch.nextCursor, sealReaderToken(token, tokenKey, binding));
       const recorded = await ctx.runMutation(internal.docSources.recordSyncBatch, {

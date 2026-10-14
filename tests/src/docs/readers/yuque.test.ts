@@ -9,6 +9,7 @@ import {
   type FakeOverride,
   type FakeRequest,
 } from '../../../fixtures/readers/fake';
+import { hashTitle } from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -512,6 +513,49 @@ describe('the reader contract by revision (X-13; W15-R31)', (): void => {
     expect(requests.some((request) => request.url.pathname.endsWith('/docs/230000001'))).toBe(
       false,
     );
+  });
+
+  it('keeps a document whose stored title is redacted by its listed title’s keyed hash, and reads it once renamed (wave 18, 18-X)', async (): Promise<void> => {
+    let title = 'Rotate the vault key';
+    const { reader, requests } = readerOnSpace((request) => {
+      if (!request.url.pathname.endsWith('/docs')) return undefined;
+      if (request.url.searchParams.get('deleted') === 'true') return json(200, { data: [] });
+      return json(200, {
+        data: [
+          {
+            id: 230000001,
+            title,
+            type: 'Doc',
+            status: 1,
+            content_updated_at: '2026-10-01T00:00:00.000Z',
+          },
+        ],
+        meta: { total: 1 },
+      });
+    });
+    // The title held a value the sync redacts: stored redacted, its listed form's hash beside it.
+    const stored = async (refs: readonly string[]) =>
+      new Map(
+        refs.map((ref) => [
+          ref,
+          {
+            revision: '2026-10-01T00:00:00.000Z',
+            title: 'Rotate the <credential: api key, stored> key',
+            titleHash: hashTitle('Rotate the vault key'),
+            hashTitle,
+          },
+        ]),
+      );
+    const batch = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(batch.pages).toEqual([]);
+    expect(batch.kept?.map((page) => page.ref)).toEqual(['230000001']);
+
+    title = 'Rotate the payroll key';
+    const renamed = await reader.listPageBatch(repository, TOKEN, undefined, 25, stored);
+    expect(renamed.kept ?? []).toEqual([]);
+    expect(
+      requests.filter((request) => request.url.pathname.endsWith('/docs/230000001')),
+    ).toHaveLength(1);
   });
 
   it('lists 1,200 unchanged documents inside Yuque’s hourly limit at the fifteen-minute schedule', async (): Promise<void> => {

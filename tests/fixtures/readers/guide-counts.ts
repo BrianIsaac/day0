@@ -6,8 +6,11 @@
  * The thousand-page figures are what each reader's contract test counts on the generated library
  * (`library.ts`): a first read, a read with nothing changed and a read after one page changed.
  * The bed's figures are what the bed `day0-w17x` counted from the fakes' own log on 13 October
- * 2026, a running day0 in real mode reading 250 pages of the same library; no test can count
- * them again, so they are pinned here as the bed recorded them.
+ * 2026, a running day0 0.21.0 in real mode reading 250 pages of the same library; no test can
+ * count them again, so they are pinned here as the bed recorded them, and the guides say they are
+ * 0.21.0's. SharePoint's and Drive's were counted before a reader kept its token across a sync's
+ * batches (X-1; wave 18, 18-X), so 11 of SharePoint's 23 and 10 of Drive's 21 are sign-ins this
+ * release no longer asks for.
  */
 import type { LibraryKind } from './library';
 
@@ -20,10 +23,10 @@ export interface ReadCosts {
 
 /** A thousand pages, counted by each reader's own test. */
 export const THOUSAND_PAGE_REQUESTS: Readonly<Record<LibraryKind, ReadCosts>> = {
-  sharepoint: { first: 2_043, unchanged: 83, oneChanged: 85 },
+  sharepoint: { first: 2_003, unchanged: 43, oneChanged: 45 },
   'confluence-v2': { first: 81, unchanged: 41, oneChanged: 42 },
   'confluence-dc': { first: 1_042, unchanged: 42, oneChanged: 43 },
-  drive: { first: 1_081, unchanged: 81, oneChanged: 82 },
+  drive: { first: 1_042, unchanged: 42, oneChanged: 43 },
 };
 
 /** 250 pages, counted on the bed. */
@@ -32,4 +35,23 @@ export const BED_REQUESTS: Readonly<Record<LibraryKind, ReadCosts>> = {
   'confluence-v2': { first: 21, unchanged: 11, oneChanged: 12 },
   'confluence-dc': { first: 262, unchanged: 12, oneChanged: 13 },
   drive: { first: 271, unchanged: 21, oneChanged: 22 },
+};
+
+/**
+ * What 0.21.0 asked of an unchanged library where each batch signed in again, before a reader
+ * kept its token across a sync's batches (X-1; wave 18, 18-X): the whole read and its sign-ins, at
+ * a thousand pages by the readers' tests and at 250 on the bed. The guides of the two readers
+ * that sign in say what the token saved by these.
+ */
+export const SIGN_INS_BEFORE_THE_TOKEN: Readonly<
+  Record<'sharepoint' | 'drive', { readonly thousand: number; readonly bed: number }>
+> = {
+  sharepoint: { thousand: 41, bed: 11 },
+  drive: { thousand: 40, bed: 10 },
+};
+
+/** A thousand unchanged pages at 0.21.0, as its readers' tests counted them. */
+export const THOUSAND_PAGE_UNCHANGED_AT_0_21: Readonly<Record<'sharepoint' | 'drive', number>> = {
+  sharepoint: 83,
+  drive: 81,
 };
