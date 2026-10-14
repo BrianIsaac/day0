@@ -116,6 +116,10 @@ export interface OpenDecisions {
   readonly threads?: readonly string[];
 }
 
+/** Why a question's notice was given up: the request it was to follow never reached the DM. */
+export const QUESTION_NOTICE_UNDELIVERED =
+  'The plan’s request was not delivered, so the question was not posted in its thread.';
+
 /** Nothing open and no notice owed: the decision poll leaves the DM unread. */
 export const NOTHING_OPEN: OpenDecisions = { requests: [], batches: [], noticeOwed: false };
 
