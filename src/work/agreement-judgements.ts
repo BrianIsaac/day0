@@ -3,9 +3,9 @@
  * F10 and F11): whether a statement would go beyond the charter, asked before any proposal is
  * shown and before any statement is kept, and whether two of an employee's corrections say the
  * same thing, asked at most once per new correction; and a charter's check of an agreement already
- * in effect for every employee, whose refusal is judged twice (RM32 (a)). Each call is injected, so
- * a test answers it in-process; each failure is answered as `unavailable`, and the caller shows and
- * keeps nothing unchecked.
+ * in effect for every employee, whose refusal is judged twice, the second time with the charter's
+ * clauses reversed (RM32 (a), D-8 (a)). Each call is injected, so a test answers it in-process;
+ * each failure is answered as `unavailable`, and the caller shows and keeps nothing unchecked.
  */
 
 import type { SpanModel } from '../redaction/client';
@@ -167,9 +167,26 @@ export type CharterChecked =
     };
 
 /**
+ * The charters with each one's Will do and Will not do clauses in reverse order, which the second
+ * judgement of a charter's check reads (D-8 (a)): a provider that answers a byte-identical prompt
+ * alike always agreed with its first answer, so one refusal ended an agreement for every employee
+ * on it. A charter of one clause a list reads the same both ways.
+ */
+function withClausesReversed(charters: readonly CharterBounds[]): CharterBounds[] {
+  return charters.map(
+    (charter: CharterBounds): CharterBounds => ({
+      ...charter,
+      willDo: [...charter.willDo].reverse(),
+      willNotDo: [...charter.willNotDo].reverse(),
+    }),
+  );
+}
+
+/**
  * Check an agreement already in effect for every employee against one employee's newly approved
  * charter (RM32 (a)): as {@link checkStatement}, except that a refusal, which would end the
- * agreement for every employee, is judged a second time with the same prompt. Refused only when
+ * agreement for every employee, is judged a second time with the charter's clauses in reverse
+ * order (D-8 (a)), each quoted by the number that judgement read it under. Refused only when
  * both judgements refuse; `disputed` when the second keeps it, which holds the agreement for that
  * employee alone. A second judgement that could not be had leaves the check `unavailable`, to be
  * tried again, never settled on the one. A credential the redaction removed is refused at once:
@@ -189,7 +206,7 @@ export async function checkAgainstCharter(
   try {
     const first = await judgedOnce(statement, check.charters, call);
     if (first === undefined) return { outcome: 'kept', statement, ...degraded };
-    const second = await judgedOnce(statement, check.charters, call);
+    const second = await judgedOnce(statement, withClausesReversed(check.charters), call);
     return { ...judgedTwice(first, second), statement, ...degraded };
   } catch (err: unknown) {
     return { outcome: 'unavailable', statement, reason: unavailableReason(err) };
