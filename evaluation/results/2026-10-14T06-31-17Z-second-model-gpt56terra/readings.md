@@ -9,19 +9,19 @@ fake Linear and the fake Slack stood in for the vendors; no real vendor was call
 
 ## The conflict walk (the real planner's conflict rule)
 
-The bed: the company pages (`--company`) and the conflict walk's pages of the 12 October joins
+The bed: the company pages (`--company`) and the conflict walk's pages of 12 October 2026
 (two `close-comment-limits.md` pages, 120 words in the Revops folder and 60 in the Policies
 folder, and the other window pages), linked as three folder sources (Revops, Policies, Systems);
-Priya deployed with the wave 6 drafted charter, imported and approved; orientation, on the
-second model, proposed Slack (documented API) and Linear (MCP), as GLM did on the 13 October
-joins' bed; both approved and connected through the fakes. The comment-length pair confirmed as
+Priya deployed with the charter drafted on 30 September 2026 (`WAVE6_MIRA_DRAFT` in
+`tests/fixtures/charter-paraphrase-2026-09-30.ts`), imported and approved; orientation, on the
+second model, proposed Slack (documented API) and Linear (MCP), as GLM did on a bed of 13 October; both approved and connected through the fakes. The comment-length pair confirmed as
 disagreeing (`docRelations:decide`, `disagree`) before the tickets were filed. Two tickets filed
 on the fake Linear, delegated to the app (`walk/tickets.txt`; the earlier walk's wording was not
 kept, so these are new). Everything else is the product's own: intake, the scope evaluation, the
 skill's proposal (approved, then authored by the call the dashboard makes), the drafts, the
 question, the run, the Retry.
 
-| Draft | gpt-5.6-terra, 14 Oct, v0.21.0 | GLM 5.3 Flash, 13 Oct, the v0.20.0 pre-tag (recorded then) |
+| Draft | gpt-5.6-terra, 14 Oct, v0.21.0 | GLM 5.3 Flash, 13 Oct, the v0.20.0 code (as recorded then; those drafts are not kept here) |
 |---|---|---|
 | REVOPS-2, first draft (`walk/terra-draft-revops2.txt`) | Both disputed passages cited, on the step that asks the manager in the DM and on the step that writes the comment; no side chosen; the question asked ("... holds its writes to Slack and Linear until you answer and Retry") | The tagged passage cited on a step of its own that asks the manager in the DM; the question asked; it held only the writes to Slack, so the Linear comment was not held by it |
 | REVOPS-1, first draft (`walk/terra-draft-revops1.txt`) | No disputed passage cited and no dispute named: the neighbouring "What a comment carries" passage on the comment step, the plan built round a NetLedger access gap; nothing asked about the comment's length | The neighbouring "What a comment carries" passage cited, with the dispute named in the summary and the step said to be held; nothing asked |
