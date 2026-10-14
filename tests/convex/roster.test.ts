@@ -141,7 +141,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 1 }]);
   });
 
-  it('leaves out an item finished before the oldest send-back it read, and says the count is a floor, in a month of more send-backs than it reads (the second pass, 17-F)', async (): Promise<void> => {
+  it('counts every completion after a hundred and fifty send-backs in a month, the month read to its start (T5, wave 18)', async (): Promise<void> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
     const harness = convexTest(schema, allConvexModules());
@@ -150,22 +150,66 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     const takenBack = await finishedItem(harness, nell);
     await takenBack('work.completed', '2026-10-02T06:00:00Z', 'done');
     await takenBack('work.retry', '2026-10-03T06:00:00Z');
-    // Then a hundred send-backs of another item, a minute apart, and one landing after them all.
+    // A hundred and fifty send-backs of another item, a minute apart, with a third item landed
+    // among them (never sent back), and the busy one landed after them all.
     const busy = await finishedItem(harness, nell);
-    for (let minute = 0; minute < 100; minute += 1) {
-      await busy(
-        'work.retry',
-        new Date(Date.parse('2026-10-05T00:00:00Z') + minute * 60_000).toISOString(),
-      );
+    const among = await finishedItem(harness, nell);
+    for (let minute = 0; minute < 150; minute += 1) {
+      const at = Date.parse('2026-10-05T00:00:00Z') + minute * 60_000;
+      await busy('work.retry', new Date(at).toISOString());
+      if (minute === 25) await among('work.completed', new Date(at + 1_000).toISOString(), 'done');
     }
     await busy('work.completed', '2026-10-06T06:00:00Z', 'done');
 
     const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
-    // The send-back of the 3rd is past the hundred read: the item it took back is not landed.
+    // The send-back of the 3rd is read, so the item it took back is not landed; the one landed
+    // among the send-backs is, and the count is the month's whole, not a floor.
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
-      days: [{ day: '2026-10-06', landed: 1 }],
+      days: [
+        { day: '2026-10-05', landed: 1 },
+        { day: '2026-10-06', landed: 1 },
+      ],
+      atLeast: false,
+    });
+  });
+});
+
+describe('what an employee landed this month, past the bytes its send-backs may read (T5, wave 18)', (): void => {
+  it('says the count is a floor, and leaves out what finished before the oldest send-back read', async (): Promise<void> => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-13T06:40:00Z'));
+    const harness = convexTest(schema, allConvexModules());
+    const nell = await employee(harness, 'owner', 'Nell');
+    const early = await finishedItem(harness, nell);
+    await early('work.completed', '2026-10-02T06:00:00Z', 'done');
+    const busy = await finishedItem(harness, nell);
+    await busy('work.completed', '2026-10-12T06:00:00Z', 'done');
+    // Three hundred send-backs of 1.5 KB of note each: more than a month's send-backs may read.
+    await harness.run(async (ctx) => {
+      const [item] = await ctx.db.query('workItems').order('desc').take(1);
+      for (let minute = 0; minute < 300; minute += 1) {
+        await ctx.db.insert('events', {
+          agentId: nell,
+          type: 'work.retry',
+          payload: {
+            workItemId: item!._id,
+            resumeState: 'plan-approved',
+            fromState: 'completed',
+            feedback: `Finish it, ${minute}: ${'a long note '.repeat(128)}`,
+          },
+          createdAt: Date.parse('2026-10-05T00:00:00Z') + minute * 60_000,
+        });
+      }
+    });
+    await busy('work.completed', '2026-10-12T07:00:00Z', 'done');
+
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
+
+    expect(row?.landedThisMonth).toEqual({
+      month: '2026-10',
+      days: [{ day: '2026-10-12', landed: 1 }],
       atLeast: true,
     });
   });
