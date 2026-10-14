@@ -2089,6 +2089,37 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(first.answer).toBeUndefined();
   });
 
+  it('posts no notice of a question holding a token-shaped string that its request carried, scrubbed (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const flying = await plannedBeforeConfirmation(harness, {});
+    await asManager(harness).mutation(api.docRelations.decide, {
+      relationId: flying.relationId,
+      decision: 'disagree',
+    });
+    await ranAsks(harness);
+    const [waiting] = await notices(harness);
+    // A page's title holds a token-shaped string, so the question does.
+    const question = `${ASKED} See xoxb-1234567890-abcdefghijkl.`;
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(waiting.questionId!, { question });
+    });
+    // The request carried the question and landed; its stored text is scrubbed of the token, as
+    // the request's record keeps every text it stores.
+    await harness.mutation(internal.work.recordDecisionRequest, {
+      workItemId: flying.workItemId,
+      decisionId: (await harness.run(async (ctx) => await ctx.db.get(flying.workItemId)))!.decision!
+        .id,
+      ts: `${Date.UTC(2026, 9, 1) / 1000 + 2}.000100`,
+      text: `Plan.\n\n${question}`,
+    });
+    await expect(
+      harness.mutation(internal.work.prepareManagerReplyNotice, { noticeId: waiting._id }),
+    ).resolves.toEqual({ prepared: false, dropped: true });
+    expect(await notices(harness)).toEqual([]);
+  });
+
   it('posts nothing in the thread for a question its request carried, a request that failed, or a question answered meanwhile (17-C)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));

@@ -28,6 +28,7 @@ import {
 import type { CiteConflictPage } from '../src/work/types';
 import type { RequestQuestion } from '../src/work/manager-channel';
 import { slackEscaped } from '../src/surfaces/slack-markup';
+import { redactTokenShapes } from '../src/surfaces/redact';
 import { providerTsToMs } from '../src/work/provider-ts';
 import { conflictBlocks } from './docRelationProposals';
 import { decideRelationInTransaction } from './docRelations';
@@ -587,7 +588,9 @@ export async function questionNoticeOwed(
   const deliveredAt = providerTsToMs(decision.ts);
   if (
     (deliveredAt === null || question._creationTime <= deliveredAt + QUESTION_CARRIED_SKEW_MS) &&
-    decision.requestText?.includes(slackEscaped(question.question)) === true
+    // The request's text is stored scrubbed of token shapes, so the question is looked for in the
+    // same form (W17-R13: a question holding a token-shaped string was posted a second time).
+    decision.requestText?.includes(redactTokenShapes(slackEscaped(question.question))) === true
   ) {
     return { state: 'drop' };
   }
