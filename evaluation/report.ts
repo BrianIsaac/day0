@@ -54,7 +54,24 @@ export interface EvaluationTaskResult {
    */
   missingPermissions?: string[];
   actionAudit?: ActionArgumentAudit;
+  /**
+   * The reply the executor's contract still refused after its one repair, as
+   * the work item kept it (since v0.21.0), with what the contract refused in
+   * it and in the first reply. The one place a result keeps what the model
+   * wrote: absent unless such a refusal stopped the run, and on older evidence.
+   */
+  refusedReply?: KeptRefusedReply;
   error?: string;
+}
+
+/** A refused reply as a work item keeps it (`RefusedReply` in `src/work/execute-skill.ts`). */
+export interface KeptRefusedReply {
+  phase: 'initial' | 'dependent';
+  reply: unknown;
+  issues: string[];
+  first: unknown;
+  firstIssues: string[];
+  at: number;
 }
 
 /**

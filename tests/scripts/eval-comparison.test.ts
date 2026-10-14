@@ -1271,3 +1271,59 @@ describe('re-reading a stored run that records the two readings', (): void => {
     );
   });
 });
+
+describe('the reply a refused run kept', (): void => {
+  /** The result written for `write-priya-verification` once its work item has ended as given. */
+  async function writtenPriyaResult(ended: Partial<Doc<'workItems'>>) {
+    const task = (await loadEvaluationTasks()).find(
+      (row) => row.id === 'write-priya-verification',
+    )!;
+    const { context } = await stubContext({
+      'evaluation:snapshot': snapshotOf(workItem({ externalId: task.seed.externalId, ...ended })),
+    });
+    const run: RunWithProgress = {
+      id: 'day0-r3',
+      arm: 'day0',
+      run: 3,
+      status: 'running',
+      humanWaitMs: 0,
+      decisions: [],
+      tasks: [],
+    };
+    return await runTask(context, run, 'agent-1' as never, task);
+  }
+
+  // 16-Q's day0-r3 stopped with this reason and kept no reply; 17-FW keeps it on the row.
+  const refused = {
+    phase: 'initial',
+    reply: {
+      draft: 'Asked Priya to verify the row.',
+      notes: '',
+      actions: [{ tool: 'slack.postMessage', args: { channelSlug: 'dm-priya', body: 'Hi Priya' } }],
+      procedureTrail: [{ kind: 'manager-report', actionIndex: 3 }],
+    },
+    issues: ['procedure-trail action index does not identify the prescribed effect'],
+    first: { draft: 'Asked Priya.', notes: '', actions: [] },
+    firstIssues: ['the action set is empty'],
+    at: 1_760_000_000_000,
+  };
+
+  it('keeps the reply the executor’s contract refused after its repair, as the row kept it', async (): Promise<void> => {
+    const result = await writtenPriyaResult({
+      state: 'failed',
+      skipReason:
+        'stopped: executor action contract remained invalid after one repair: procedure-trail action index does not identify the prescribed effect',
+      output: { draft: 'Asked Priya.', notes: '', actions: [], applied: [], refusedReply: refused },
+    });
+    expect(result.terminalState).toBe('failed');
+    expect(result.refusedReply).toEqual(refused);
+  });
+
+  it('keeps nothing for a row the contract did not refuse', async (): Promise<void> => {
+    const result = await writtenPriyaResult({
+      state: 'completed',
+      output: { draft: 'Done.', notes: '', actions: [], applied: [] },
+    });
+    expect(result).not.toHaveProperty('refusedReply');
+  });
+});

@@ -29,6 +29,7 @@ import {
   type EvaluationEvidence,
   type EvaluationRun,
   type EvaluationTaskResult,
+  type KeptRefusedReply,
 } from '../evaluation/report';
 import { rereadRetainedEvidence, rereadSecondReading } from '../evaluation/retained-reading';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
@@ -937,8 +938,20 @@ export async function runTask(
     actionAudit: auditActionArguments(item.output),
     grade,
     missingPermissions: verdictMissingPermissions(item.verdict),
+    ...keptRefusedReply(item.output),
     ...(active.lastError ? { error: active.lastError } : {}),
   };
+}
+
+/**
+ * The reply the executor's contract refused after its one repair, as the
+ * work item kept it, for a run such a refusal stopped; nothing otherwise.
+ */
+function keptRefusedReply(output: unknown): { refusedReply?: KeptRefusedReply } {
+  const kept = (output as { refusedReply?: unknown } | null | undefined)?.refusedReply;
+  return kept !== null && typeof kept === 'object'
+    ? { refusedReply: kept as KeptRefusedReply }
+    : {};
 }
 
 function newRun(arm: EvaluationArm, run: number): RunWithProgress {
@@ -1091,6 +1104,7 @@ function regradeTask(
     actionAudit: auditActionArguments(item.output),
     grade,
     missingPermissions: verdictMissingPermissions(item.verdict),
+    ...keptRefusedReply(item.output),
   };
 }
 
