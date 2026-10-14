@@ -174,17 +174,42 @@ function askThreadsBySender(
  * A read-and-answer item from someone who asks in a thread the role is shown, given that thread
  * when it names none (W19-4): on the v0.19.0 walk Pip's answer for Hana's docs question had no
  * thread to go back to, went to the manager's DM as a draft "held for your approval", and Hana
- * never had it. Any other item is returned as drafted.
+ * never had it. One that names a channel and no thread, from an asker no thread the role is
+ * shown holds, says that its answer is posted in that channel itself (finding 8 of the v0.20.0
+ * hosted walk: Lark's answer for Aman was planned "in the thread where Aman asked" and posted
+ * unthreaded, and only the run's notes to the manager said why). Any other item is returned as
+ * drafted.
  */
 function withAskThread(
   item: DraftedWorkItem,
   threads: ReadonlyMap<string, string>,
 ): DraftedWorkItem {
   if (item.purpose !== 'read-and-answer') return item;
-  if (item.contentRefs.some((ref) => ref.startsWith('channel://'))) return item;
   // "Hana (Support)" is Hana: the asker by the first word of the label.
-  const thread = threads.get(item.requesterLabel.trim().split(/[\s(,]/)[0] ?? '');
-  return thread ? { ...item, contentRefs: [...item.contentRefs, thread] } : item;
+  const asker = item.requesterLabel.trim().split(/[\s(,]/)[0] ?? '';
+  const thread = threads.get(asker);
+  const channel = item.contentRefs.find((ref) => ref.startsWith('channel://'));
+  if (channel === undefined) {
+    return thread ? { ...item, contentRefs: [...item.contentRefs, thread] } : item;
+  }
+  if (thread !== undefined || item.contentRefs.some((ref) => THREAD_REF.test(ref))) return item;
+  return {
+    ...item,
+    contentSummary: `${item.contentSummary.trim()} ${unthreadedAnswerLine(asker, channel.slice('channel://'.length))}`,
+  };
+}
+
+/**
+ * What a read-and-answer item says when no thread holds its asker's ask: its answer goes in the
+ * channel it names, not in a thread, so the plan does not promise the asker's thread.
+ *
+ * @param asker - The asker's first name; empty when the item names nobody.
+ * @param slug - The channel's slug.
+ */
+function unthreadedAnswerLine(asker: string, slug: string): string {
+  // A straight apostrophe, as the model writes the rest of the summary.
+  const ask = asker === '' ? 'the ask' : `${asker}'s ask`;
+  return `No thread holds ${ask}, so the answer is posted in #${slug} itself, not in a thread.`;
 }
 
 /** One generated work item as the office seeds it; its purpose stays with the generator. */
