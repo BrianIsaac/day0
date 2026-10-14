@@ -57,7 +57,8 @@ export const WORK_LIST_BYTES = 8 * 1024 * 1024;
 
 /**
  * Of {@link WORK_LIST_BYTES}, the most the stopped rows' read may take, so the open and parked
- * rows read after it keep the other half: Needs you links to both, and neither may starve the other
+ * rows read after it keep about the other half (a read takes one row at the least, so the share may
+ * run past its half by one row): Needs you links to both, and neither may starve the other
  * (W17-R22). A stopped row carries its run's output and can be heavy; an open one rarely is.
  */
 export const STOPPED_ROWS_BYTES = WORK_LIST_BYTES / 2;
@@ -169,14 +170,18 @@ export async function listForAgentInTransaction(
           .withIndex('by_agent', (q) => q.eq('agentId', args.agentId))
           .order('desc')
           .paginate({
-            numItems: WORK_LIST_LIMIT,
+            // One past the limit, so a full page says whether more rows wait behind it whatever
+            // the backend answers for `isDone` at exactly the limit.
+            numItems: WORK_LIST_LIMIT + 1,
             cursor: null,
             maximumBytesRead: reader.room(),
           })
       : undefined;
   // With no room left for the newest read, the finished rows are the ones left out.
-  const cut = reader.cut() || newest === undefined || !newest.isDone;
-  const byId = new Map([...(newest?.page ?? []), ...open].map((row) => [row._id, row]));
+  const newestRows = newest?.page.slice(0, WORK_LIST_LIMIT) ?? [];
+  const cut =
+    reader.cut() || newest === undefined || newest.page.length > WORK_LIST_LIMIT || !newest.isDone;
+  const byId = new Map([...newestRows, ...open].map((row) => [row._id, row]));
   const items = [...byId.values()].sort((left, right) =>
     left.state === right.state
       ? right._creationTime - left._creationTime
