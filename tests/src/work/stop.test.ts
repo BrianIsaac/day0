@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppliedAction, SurfaceRecord } from '../../../src/surfaces/types';
 import { OUTCOME_UNKNOWN_REASON } from '../../../src/work/reconciliation';
+import { stoppedNoteText } from '../../../src/work/manager-notes';
 import {
   LEGACY_SHARED_WRITE_WITHOUT_ATTRIBUTION,
   SHARED_WRITE_WITHOUT_ATTRIBUTION,
@@ -234,7 +235,22 @@ describe('a reply the contract refused after its repair, as the manager reads it
       ),
     ).toBe(CONTRACT_REFUSAL_WORDS);
     expect(CONTRACT_REFUSAL_WORDS).toBe(
-      'the model’s reply did not follow Day0’s rules for this skill after one repair. Retry runs it again.',
+      'the model’s reply did not follow Day0’s rules for this skill after one repair',
+    );
+  });
+
+  // The second pass: the words ended "Retry runs it again.", and the stopped note adds ". Nothing
+  // landed; Retry stands in Day0.", so the manager's DM read ".." and named Retry twice.
+  it('reads in the stopped note with one full stop and Retry named once', (): void => {
+    const note = stoppedNoteText({
+      agentName: 'Pip',
+      title: 'Send Priya the verification',
+      reason: stopDetail(
+        'stopped: executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures',
+      ),
+    });
+    expect(note).toBe(
+      'Pip stopped on “Send Priya the verification”: the model’s reply did not follow Day0’s rules for this skill after one repair. Nothing landed; Retry stands in Day0.',
     );
   });
 

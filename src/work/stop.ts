@@ -363,10 +363,12 @@ function modelCallsInWords(reason: string): string {
 
 /**
  * The manager's words for a run that stopped because its reply still broke the executor's
- * contract after the one repair (RM39 (b), 14 October 2026; section 7's draft).
+ * contract after the one repair (RM39 (b), 14 October 2026; section 7's draft). Without the
+ * draft's "Retry runs it again.": every line that prints a stop's reason says what Retry does
+ * after it, and the stopped note's own full stop follows it.
  */
 export const CONTRACT_REFUSAL_WORDS =
-  'the model’s reply did not follow Day0’s rules for this skill after one repair. Retry runs it again.';
+  'the model’s reply did not follow Day0’s rules for this skill after one repair';
 
 /**
  * A reason recorded for a reply the executor's contract refused after its repair, in either phase
