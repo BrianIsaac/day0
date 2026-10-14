@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  storedPageReadBytes,
   BLOCK_WINDOW_CHARS,
   MAX_BLOCKS_PER_PAGE,
   SEARCH_TERM_LIMIT,
@@ -265,5 +266,28 @@ describe('blockSearchQuery', (): void => {
 
   it('answers an empty query for text with no term', (): void => {
     expect(blockSearchQuery('  -- !! ')).toBe('');
+  });
+});
+
+describe('storedPageReadBytes: what a measure reads of a page, from its text (D-12 (b))', (): void => {
+  const bytes = (text: string): number => new TextEncoder().encode(text).length;
+  /** What the rows `splitPage` writes for a page carry, by their text fields. */
+  const written = (markdown: string): number =>
+    splitPage(markdown).reduce(
+      (sum, block) =>
+        sum + bytes(block.text) + bytes(block.searchText) + bytes(block.headingPath.join('')),
+      0,
+    );
+
+  it('is never less than the blocks a page is split into carry, in Latin text or CJK', (): void => {
+    const latin = `# Close\n\n${'## Window\n\nKestrel close notes, kept for the quarter. '.repeat(400)}`;
+    let cjk = '# 月结流程\n\n';
+    for (let n = 0; n < 300; n += 1)
+      cjk += `## 第${n}节\n\n${'季度关账记录保存备查。'.repeat(12)}\n\n`;
+    for (const markdown of [latin, cjk, '# Empty']) {
+      const read = storedPageReadBytes(markdown);
+      expect(read.row).toBe(bytes(markdown));
+      expect(read.blocks).toBeGreaterThanOrEqual(written(markdown));
+    }
   });
 });

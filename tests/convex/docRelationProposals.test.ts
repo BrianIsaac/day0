@@ -1431,6 +1431,55 @@ describe('a page whose candidates the cap cut (W16-R34)', (): void => {
   }, 120_000);
 });
 
+// D-12 (b) (17-FD's F3 with F9, carried by the joins to the review): a measure reads its page and
+// each candidate's row and blocks in one transaction, so four pages each under the store's bound
+// passed its read limit together and the whole measure failed, every pair with it. A candidate
+// whose row, read already, says its read would take the measure past its budget is passed over
+// before its blocks are read, and the function log names it; each candidate in a transaction of
+// its own is wave 18's (D-12 (a)).
+describe('a candidate whose read would pass the measure’s budget (D-12 (b))', (): void => {
+  it('is passed over before its blocks are read and named in the log, and the pairs that fit are proposed', async (): Promise<void> => {
+    const harness = convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+    // Under the store's 768 KiB, in the script whose search text carries every bigram.
+    const paragraph = (n: number): string => `第${n}段：${'季度关账记录保存备查。'.repeat(40)}\n\n`;
+    let body = '';
+    for (let n = 0; Buffer.byteLength(body) < 740 * 1024; n += 1) body += paragraph(n);
+    expect(Buffer.byteLength(body)).toBeLessThan(768 * 1024);
+    const sources: Source[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const source = await syncingSource(harness, `Library ${index}`);
+      await storedPage(harness, source, {
+        ref: 'readme.md',
+        title: 'Readme',
+        markdown: `# Readme\n\n${body}`,
+      });
+      sources.push(source);
+    }
+    await storedPage(harness, sources[0], {
+      ref: 'zebra.md',
+      title: 'Zebra quartz',
+      markdown: `---\nsupersedes: readme\n---\n# Zebra quartz\n\n${body}`,
+      updatedAt: 2,
+    });
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const proposed = await measure(harness, sources[0], 'zebra.md');
+      const passed = logged.mock.calls
+        .map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+        .filter(
+          (line) =>
+            line.msg ===
+            'documentation: a candidate page too large to measure here was passed over',
+        );
+      expect(passed.length).toBeGreaterThan(0);
+      expect(passed[0]).toMatchObject({ level: 'warn', ref: 'readme.md', measuring: 'zebra.md' });
+      expect(proposed + passed.length).toBe(3);
+    } finally {
+      logged.mockRestore();
+    }
+  }, 240_000);
+});
+
 describe('the pages a page’s front matter names, under Convex’s limits (W15-R20; reader 2’s R2-K)', (): void => {
   it('measures a page that names a readme held, at 700 KB, by each of 32 sources', async (): Promise<void> => {
     // The wave 15 review's R2-K: a whole page row was read from every source to test that a named

@@ -55,6 +55,8 @@ import {
 import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
 import { approvedResultWords, conflictChoiceWords } from '../src/agent/reorientation-words';
 import { isOpenQuestion } from '../src/agent/manager-questions';
+import { storedPageReadBytes } from '../src/docs/blocks';
+import { log } from '../src/lib/logger';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
@@ -75,6 +77,21 @@ import { isOpenQuestion } from '../src/agent/manager-questions';
 
 /** The most of an owner's sources one page's candidates are looked for in. */
 const CANDIDATE_SOURCES = 32;
+
+/**
+ * The most a measure reads of its page's and its candidates' rows and blocks together, by
+ * `storedPageReadBytes` (D-12 (b)): under a transaction's 16 MiB, with room for the search and the
+ * relations it reads beside them. Four pages each under the store's bound passed that limit
+ * together on 17-FD's bed and failed the whole measure, every pair with it (17-FD's F3 with F9).
+ * A candidate whose read would pass the budget is passed over before its blocks are read, and the
+ * log names it; its pair is still met when the candidate is measured itself. Measuring each
+ * candidate in a transaction of its own, which needs no budget, is wave 18's (D-12 (a)).
+ */
+const MEASURE_READ_BYTES = 12 * 1024 * 1024;
+
+/** The log line of a candidate passed over at `MEASURE_READ_BYTES`. */
+const CANDIDATE_PASSED_OVER =
+  'documentation: a candidate page too large to measure here was passed over';
 
 /** The owner's employees that read either of two sources, each once. */
 async function readersOfEither(
@@ -133,6 +150,8 @@ export const measurePage = internalMutation({
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
     const self = await measured(ctx, page, source);
+    const own = storedPageReadBytes(page.markdown);
+    let read = own.row + own.blocks;
     const now = Date.now();
     let proposed = 0;
     for (const candidate of await candidatesOf(
@@ -145,6 +164,19 @@ export const measurePage = internalMutation({
       const other = await pageAt(ctx, candidate);
       const otherSource = sources.find((row) => row._id === candidate.sourceId);
       if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
+      const cost = storedPageReadBytes(other.markdown);
+      if (read + cost.row + cost.blocks > MEASURE_READ_BYTES) {
+        read += cost.row;
+        log.warn(CANDIDATE_PASSED_OVER, {
+          sourceId: other.sourceId,
+          ref: other.ref,
+          bytes: cost.row + cost.blocks,
+          budget: MEASURE_READ_BYTES,
+          measuring: page.ref,
+        });
+        continue;
+      }
+      read += cost.row + cost.blocks;
       const relation = measureRelation(self, await measured(ctx, other, otherSource));
       if (relation === undefined) continue;
       if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
