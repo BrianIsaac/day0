@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   deploymentNoProxy,
   hostProxyEnvironment,
+  keptOutOfProxy,
   mergedNoProxy,
   missingFromDeployment,
   proxyAddressGap,
@@ -199,5 +201,57 @@ describe('a proxy address a client cannot use', (): void => {
 
   it('is shown as that, never as an empty host', (): void => {
     expect(proxyForDisplay('proxy.acme.test:3128')).toBe('an address that is not a URL');
+  });
+});
+
+// W17-R27 (reader 5's probe): `check:setup` read `acme.com` in NO_PROXY as keeping out
+// `day0.acme.com`, which Node sends to the proxy. The input is what Node 22.23.2 itself did with
+// each list, both of its clients, recorded by `tests/fixtures/proxy/probe-no-proxy.mjs`.
+describe('a host kept out of the proxy, as Node reads NO_PROXY (W17-R27)', (): void => {
+  const probe = JSON.parse(
+    readFileSync(
+      new URL('../../fixtures/proxy/node-22.23.2-no-proxy.json', import.meta.url),
+      'utf8',
+    ),
+  ) as {
+    node: string;
+    rows: ReadonlyArray<{
+      client: string;
+      scheme: string;
+      noProxy: string;
+      host: string;
+      proxied: boolean;
+    }>;
+  };
+
+  it('is kept out only where every client Node has keeps it out, case by case as Node 22.23.2 answered', (): void => {
+    expect(probe.node).toBe('v22.23.2');
+    const cases = new Map<string, { address: string; noProxy: string; keptOut: boolean }>();
+    for (const row of probe.rows) {
+      const address = `${row.scheme}://${row.host}/`;
+      const key = `${row.noProxy}|${address}`;
+      const keptOut = (cases.get(key)?.keptOut ?? true) && !row.proxied;
+      cases.set(key, { address, noProxy: row.noProxy, keptOut });
+    }
+    expect(cases.size).toBe(42);
+    for (const { address, noProxy, keptOut } of cases.values()) {
+      expect(keptOutOfProxy(address, noProxy), `${address} under NO_PROXY=${noProxy}`).toBe(
+        keptOut,
+      );
+    }
+  });
+
+  it('reads a bare name as itself only, a leading dot or *. as the names under it, a port as narrowing it, and no CIDR', (): void => {
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid')).toBe(true);
+    expect(keptOutOfProxy('https://sub.corp.invalid/', 'corp.invalid')).toBe(false);
+    for (const list of ['.corp.invalid', '*.corp.invalid']) {
+      expect(keptOutOfProxy('https://sub.corp.invalid/', list)).toBe(true);
+    }
+    expect(keptOutOfProxy('https://corp.invalid:8080/', 'corp.invalid:8080')).toBe(true);
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid:8080')).toBe(false);
+    expect(keptOutOfProxy('https://corp.invalid/', 'corp.invalid:443')).toBe(true);
+    expect(keptOutOfProxy('https://10.1.2.3/', '10.0.0.0/8')).toBe(false);
+    expect(keptOutOfProxy('https://corp.invalid/', undefined)).toBe(false);
+    expect(keptOutOfProxy('not an address', 'corp.invalid')).toBe(false);
   });
 });

@@ -1218,6 +1218,73 @@ describe('check:setup: the way out (wave 17, 17-P; RM31 (a))', (): void => {
   });
 });
 
+// W17-R27: the way out's lines read NO_PROXY as Node does (keptOutOfProxy), and the backend's
+// public origin is among the customer's own hosts, since the live-connection probe asks it
+// through the proxy unless the list keeps it out.
+describe("check:setup: the customer's own hosts against NO_PROXY, as Node reads it (W17-R27)", (): void => {
+  const PROXIED = {
+    DAY0_SURFACE_MODE: 'real',
+    OPENAI_API_KEY: 'k',
+    HTTPS_PROXY: 'http://proxy.corp.invalid:3128',
+  };
+
+  it('says a bare domain keeps out itself only, and how to keep out the names under it', (): void => {
+    const lines = wayOutSection(
+      { ...PROXIED, DAY0_PUBLIC_URL: 'https://day0.corp.invalid', NO_PROXY: 'corp.invalid' },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY does not list day0.corp.invalid, so each is asked for through the proxy:',
+    );
+    expect(lines).toContain(
+      'NO_PROXY keeps out corp.invalid only: write .corp.invalid to keep out every name under it.',
+    );
+    const covered = wayOutSection(
+      { ...PROXIED, DAY0_PUBLIC_URL: 'https://day0.corp.invalid', NO_PROXY: '.corp.invalid' },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines.join('\n');
+    expect(covered).not.toContain('NO_PROXY does not list');
+    expect(covered).not.toContain('to keep out every name under it');
+  });
+
+  it('reads a port in an entry as narrowing it to that port', (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://day0.corp.invalid',
+        NO_PROXY: 'day0.corp.invalid:8443',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY does not list day0.corp.invalid, so each is asked for through the proxy:',
+    );
+  });
+
+  it("names the backend's own public host among the customer's hosts the proxy is asked for", (): void => {
+    const lines = wayOutSection(
+      {
+        ...PROXIED,
+        DAY0_PUBLIC_URL: 'https://day0.corp.invalid',
+        NEXT_PUBLIC_CONVEX_URL: 'https://api.day0.corp.invalid',
+        DAY0_OIDC_ISSUER: 'https://login.corp.invalid',
+      },
+      [],
+      'v22.23.2',
+      'x64',
+    ).lines;
+    expect(lines).toContain(
+      'NO_PROXY lists nothing more, so day0.corp.invalid, api.day0.corp.invalid and login.corp.invalid are asked for through the proxy:',
+    );
+  });
+});
+
 describe("the support report's sign-in lines", (): void => {
   it("carries each sign-in check's name and verdict, and none of its lines", (): void => {
     const report = setupReport({

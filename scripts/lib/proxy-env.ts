@@ -79,6 +79,38 @@ export function noProxyEntries(list: string | undefined): string[] {
 }
 
 /**
+ * Whether Node keeps an address out of the proxy under this exclusion list: only where both of
+ * the clients it reads the list with (`fetch`, and `node:http`'s own agent) keep it out, since
+ * Day0's processes use both. A name keeps out itself alone; a leading `.` or `*.` keeps out the
+ * names under it and not itself (`fetch` proxies the bare domain); a port narrows an entry to it;
+ * `*` keeps out everything; an address range is never read. As Node 22.23.2 answered, each case
+ * kept in `tests/fixtures/proxy/node-22.23.2-no-proxy.json` (W17-R27): until 0.22.0 `check:setup`
+ * read `acme.com` as keeping out `day0.acme.com`, which Node sends to the proxy.
+ *
+ * @param address - The URL asked for.
+ * @param noProxy - `NO_PROXY` as written.
+ */
+export function keptOutOfProxy(address: string, noProxy: string | undefined): boolean {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.toLowerCase();
+  const port = url.port || (url.protocol === 'https:' ? '443' : '80');
+  return noProxyEntries(noProxy).some((entry) => {
+    if (entry === '*') return true;
+    const [, named = entry, narrowed] = /^(.+):(\d+)$/.exec(entry) ?? [];
+    if (narrowed !== undefined && narrowed !== port) return false;
+    const name = named.toLowerCase();
+    if (name.startsWith('.')) return host.endsWith(name);
+    if (name.startsWith('*.')) return host.endsWith(name.slice(1));
+    return host === name;
+  });
+}
+
+/**
  * The names the deployment's `NO_PROXY` lacks: every one of the services' own list and of the
  * list as configured must be there, in any order and however often. Compared by what is
  * excluded rather than letter for letter, since the same list reaches a check through the

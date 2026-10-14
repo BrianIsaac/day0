@@ -104,6 +104,7 @@ import {
 } from './check-access';
 import { ADMINISTRATORS_VAR } from '../src/lib/administrators';
 import {
+  keptOutOfProxy,
   missingFromDeployment,
   noProxyEntries,
   SERVICE_NO_PROXY,
@@ -1991,26 +1992,21 @@ export function egressHosts(
   return rows;
 }
 
-/** The host of a customer's own address this configuration names, or undefined when it names none. */
-function ownHost(url: string | undefined): string | undefined {
+/** A customer's own address this configuration names, as a URL, or undefined when it names none. */
+function ownAddress(url: string | undefined): URL | undefined {
   try {
-    return url?.trim() ? new URL(url.trim()).hostname : undefined;
+    return url?.trim() ? new URL(url.trim()) : undefined;
   } catch {
     // Not a URL: its own section says so.
     return undefined;
   }
 }
 
-/** Whether an exclusion list keeps a host out of the proxy, by its name or a suffix of it. */
-function keptOut(host: string, noProxy: readonly string[]): boolean {
-  return noProxy.some((entry) => {
-    // A leading dot or `*.` covers a domain; a port narrows the entry and still names the host.
-    const name = entry
-      .replace(/^\*?\./, '')
-      .replace(/:\d+$/, '')
-      .toLowerCase();
-    return name === '*' || host === name || host.endsWith(`.${name}`);
-  });
+/** Hosts as a sentence names them: "a", "a and b", "a, b and c". */
+function hostList(hosts: readonly string[]): string {
+  return hosts.length < 2
+    ? (hosts[0] ?? '')
+    : `${hosts.slice(0, -1).join(', ')} and ${hosts[hosts.length - 1]}`;
 }
 
 /**
@@ -2056,17 +2052,34 @@ export function wayOutSection(
     const listed = noProxyEntries(settings.noProxy).filter(
       (entry) => !SERVICE_NO_PROXY.some((name) => name === entry.toLowerCase()),
     );
-    const own = [ownHost(v.DAY0_PUBLIC_URL), ownHost(v.DAY0_OIDC_ISSUER)].filter(
-      (host): host is string => host !== undefined && !isLoopback(`http://${host}`),
+    // The app's public origin, the backend's (the live-connection probe asks it) and the issuer.
+    const own = [
+      ownAddress(v.DAY0_PUBLIC_URL),
+      ownAddress(proxiedBackendOrigin(v)),
+      ownAddress(v.DAY0_OIDC_ISSUER),
+    ].filter(
+      (address, index, all): address is URL =>
+        address !== undefined &&
+        !isLoopback(address.href) &&
+        all.findIndex((other) => other?.host === address.host) === index,
     );
-    const through = own.filter((host) => !keptOut(host, listed));
+    const through = own.filter((address) => !keptOutOfProxy(address.href, settings.noProxy));
     if (listed.length > 0) lines.push(`NO_PROXY also keeps out: ${listed.join(', ')}.`);
     if (through.length > 0) {
+      const hosts = through.map((address) => address.hostname);
       lines.push(
         `${listed.length > 0 ? 'NO_PROXY does not list' : 'NO_PROXY lists nothing more, so'} ` +
-          `${through.join(' and ')}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
+          `${hostList(hosts)}${listed.length > 0 ? ', so each is' : ' are'} asked for through the proxy:`,
         'list them in NO_PROXY if the proxy does not serve hosts inside your network.',
       );
+      // A bare domain above one of them: Node keeps out that name alone (W17-R27).
+      for (const entry of listed) {
+        const name = entry.replace(/:\d+$/, '').toLowerCase();
+        if (/^[.*]/.test(name) || !hosts.some((host) => host.endsWith(`.${name}`))) continue;
+        lines.push(
+          `NO_PROXY keeps out ${name} only: write .${name} to keep out every name under it.`,
+        );
+      }
     }
     const addressGap = proxyAddressGap(settings);
     if (addressGap !== undefined) {
