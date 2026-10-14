@@ -7,7 +7,7 @@ import { api } from '../../convex/_generated/api';
 import { OWNER_ROW_EMPLOYEE_ID_FIELDS } from '../../convex/exportActions';
 import type { Id } from '../../convex/_generated/dataModel';
 import schema from '../../convex/schema';
-import { employeeTracesOf, readOwnerExport } from '../../src/export/trace';
+import { employeeTracesOf, OWNER_SECTIONS, readOwnerExport } from '../../src/export/trace';
 import { encrypt } from '../../src/lib/credential-crypto';
 import { allConvexModules } from './all-modules';
 import { fixtureAddressOf, MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -217,6 +217,24 @@ describe('the owner export (wave 16, 16-F)', (): void => {
     for (const id of [b.agentId, b.evaluationId]) {
       expect([...employees, ...setAside].map((agent) => agent.id)).not.toContain(id);
     }
+  });
+
+  it('counts the owner’s own rows by their ids in the head, the ids the file then carries and no other owner’s (wave 18, F16)', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    await seedOwner(harness, 'owner-a', 'Alpha');
+    await seedOwner(harness, 'owner-b', 'Bravo');
+    const caller = harness.withIdentity(managerIdentity('owner-a'));
+
+    const head = await caller.action(api.exportActions.exportForOwner, {});
+    const file = await ownerExportOf(harness, 'owner-a');
+
+    for (const section of OWNER_SECTIONS) {
+      expect(head.rowIds[section].flat()).toEqual(
+        file.owner[section].map((row) => (row as { _id: string })._id),
+      );
+    }
+    expect(OWNER_SECTIONS.some((section) => head.rowIds[section].flat().length > 0)).toBe(true);
+    expect(file.manifest.counts.skillVersions).toBe(head.rowIds.skillVersions.flat().length);
   });
 
   it('refuses a caller with no identity', async (): Promise<void> => {

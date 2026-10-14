@@ -9,10 +9,14 @@ import { ownerKnownValues, scrubKnownValues } from '../src/redaction/known-value
 import { redactFloorFor } from '../src/redaction/redact';
 import {
   OWNER_SECTIONS,
+  rowIdPieces,
   TRACE_SECTIONS,
+  type CountedOwnerExportHead,
   type OwnerAgentsPage,
+  type OwnerCursor,
   type OwnerExportHead,
   type OwnerPage,
+  type OwnerSection,
   type TraceHead,
   type TracePage,
 } from '../src/export/trace';
@@ -159,26 +163,71 @@ function agentIdsOf(page: Pick<OwnerAgentsPage, 'employees' | 'setAside'>): Set<
 }
 
 /**
+ * The ids of the caller's own rows, section by section, read by the export's own pages from where
+ * they start to their end (wave 18, 18-F; F16): the counts the file's manifest carries before the
+ * rows are written. Each page is read and let go; only the ids are kept, redacted as
+ * `exportOwnerPage` redacts its rows, so each is the id the file will name (a short stored value
+ * inside an id is scrubbed there too).
+ *
+ * @param known - The caller's stored values, as `exportOwnerPage` reads them.
+ * @throws Error when a page answers a cursor it gave before, which would read the same pages for
+ *   ever.
+ */
+async function ownerRowIds(
+  ctx: ActionCtx,
+  from: OwnerCursor,
+  known: readonly string[],
+): Promise<CountedOwnerExportHead['rowIds']> {
+  const ids = Object.fromEntries(
+    OWNER_SECTIONS.map((section): [OwnerSection, Set<string>] => [section, new Set()]),
+  ) as Record<OwnerSection, Set<string>>;
+  const asked = new Set<string>();
+  let next: OwnerCursor | null = from;
+  while (next !== null) {
+    const printed = JSON.stringify(next);
+    if (asked.has(printed)) {
+      throw new Error(`the export answered the same cursor of the owner’s ${next.section} twice`);
+    }
+    asked.add(printed);
+    const page: OwnerPage = await ctx.runQuery(internal.events.exportOwnerPage, next);
+    const read = page.rows.map((row) => String((row as { _id?: unknown })._id));
+    for (const id of redactStrings(read, known, employeeIdsOf(page.rows))) {
+      ids[page.section].add(id);
+    }
+    next = page.next;
+  }
+  return Object.fromEntries(
+    OWNER_SECTIONS.map((section): [OwnerSection, string[][]] => [
+      section,
+      rowIdPieces([...ids[section]]),
+    ]),
+  ) as Record<OwnerSection, string[][]>;
+}
+
+/**
  * The head of the caller's owner export (wave 16, 16-F; decision F-1): its manifest, the first
  * page of the employees the caller holds, whose traces follow through `exportForAgent` and
  * `exportPage`, and of the agents the figures set aside, with where the next page of them starts
- * (`exportOwnerAgents`), and where the owner's rows start. Public, any signed-in caller, for the
- * caller's own rows only (`getCallerOrThrow`; every read is keyed by the caller's owner key);
- * reads, writes nothing.
+ * (`exportOwnerAgents`), where the owner's rows start, and the ids of those rows section by
+ * section, read first so the file can carry their counts before them and write them as they are
+ * read (wave 18, F16). Public, any signed-in caller, for the caller's own rows only
+ * (`getCallerOrThrow`; every read is keyed by the caller's owner key); reads, writes nothing.
  */
 export const exportForOwner = action({
   args: {},
-  handler: async (ctx): Promise<OwnerExportHead> => {
+  handler: async (ctx): Promise<CountedOwnerExportHead> => {
     const known = await knownValuesOfCaller(ctx);
     const head: OwnerExportHead = await ctx.runQuery(internal.events.exportOwnerHead, {
       exportedAt: Date.now(),
     });
-    // The owner key and the cursors are the file's own bearings, never data to redact.
+    // The owner key, the cursors and the rows' ids are the file's own bearings, never data to
+    // redact.
     return {
       ...redactStrings(head, known, agentIdsOf(head)),
       manifest: { ...redactStrings(head.manifest, known), ownerKey: head.manifest.ownerKey },
       moreAgents: head.moreAgents,
       next: head.next,
+      rowIds: await ownerRowIds(ctx, head.next, known),
     };
   },
 });

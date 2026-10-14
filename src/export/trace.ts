@@ -602,6 +602,38 @@ export interface OwnerExportHead extends OwnerAgentsPage {
   readonly next: OwnerCursor;
 }
 
+/**
+ * The head as the export's first public call answers it (`exportActions.exportForOwner`): with the
+ * ids of the owner's rows, section by section, read in a pass of their pages before it answered
+ * (wave 18, 18-F; F16). The manifest that opens the file carries their counts, so the rows can be
+ * written as they are read and no section is held once it is written; a row written after the
+ * count is left out, and a counted row gone before it is read ends the export.
+ */
+export interface CountedOwnerExportHead extends OwnerExportHead {
+  /**
+   * Each section's row ids, once each, as the pass read them, in pieces of at most
+   * {@link OWNER_ROW_IDS_PIECE}: the backend answers no array past 8,192 elements, and a library
+   * of stored pages can pass that.
+   */
+  readonly rowIds: Readonly<Record<OwnerSection, ReadonlyArray<readonly string[]>>>;
+}
+
+/** The most row ids one piece of a section's ids holds, under the backend's 8,192 elements. */
+export const OWNER_ROW_IDS_PIECE = 8_000;
+
+/**
+ * One section's row ids in pieces of at most {@link OWNER_ROW_IDS_PIECE}, as the head carries them.
+ *
+ * @param ids - The section's ids, once each, in the order they were read.
+ */
+export function rowIdPieces(ids: readonly string[]): string[][] {
+  const pieces: string[][] = [];
+  for (let at = 0; at < ids.length; at += OWNER_ROW_IDS_PIECE) {
+    pieces.push(ids.slice(at, at + OWNER_ROW_IDS_PIECE));
+  }
+  return pieces;
+}
+
 /** One later call's answer: one page of one section of the owner's rows. */
 export interface OwnerPage<Section extends OwnerSection = OwnerSection> {
   readonly section: Section;
@@ -644,7 +676,7 @@ export interface TraceCalls {
 
 /** The calls of the owner's paged export: its head, its later pages of agents, its rows. */
 export interface OwnerExportCalls {
-  head(): Promise<OwnerExportHead>;
+  head(): Promise<CountedOwnerExportHead>;
   /** One later page of the owner's agents, from the cursor the head or the page before gave. */
   agents(cursor: string): Promise<OwnerAgentsPage>;
   page(cursor: OwnerCursor): Promise<OwnerPage>;
@@ -714,63 +746,106 @@ function printedAt(value: unknown, depth: number): string {
   return JSON.stringify(value, null, 2).replace(/\n/g, `\n${FILE_INDENT.repeat(depth)}`);
 }
 
-/** What the first piece of the file is written from, beside the calls and the sink. */
+/** What the first pieces of the file are written from, beside the calls and the sink. */
 interface OwnerRowsRequest {
-  readonly head: OwnerExportHead;
+  readonly head: CountedOwnerExportHead;
   /** How many employees' traces follow, for the manifest's counts. */
   readonly employees: number;
   /** Throws once the export is cancelled. */
   readonly live: () => void;
 }
 
+/** A row's id as the export names it, the key a row two pages both answered is kept once by. */
+function rowIdOf(row: unknown): string {
+  return String((row as { _id?: unknown })._id);
+}
+
 /**
- * Read the owner's rows page by page and write the file's first piece: the manifest, which
- * carries their counts, the rows, and the opening of the employees' list. The rows are this
- * function's own, so they are let go when it returns, before the first employee is read: on the
- * wave 17 bed they were 8 MB of an 11 MB file, held to the export's end while they were the
- * stream's.
+ * Write the file's first pieces: the manifest, whose counts the head read first by the rows' ids,
+ * then the owner's rows section by section, each page written as it is read, then the opening of
+ * the employees' list (wave 18, 18-F; F16). No row is held past the page it came in, so the
+ * owner's rows never weigh on the export as a whole: on the wave 17 bed they were 8 MB of an
+ * 11 MB file, held whole while they were read. The pieces print what `JSON.stringify` printed of
+ * the whole, byte for byte. A row the head did not count (written since) is left out, so the file
+ * is what its manifest says; a counted row the pages no longer answer ends the export.
  *
  * @returns The manifest as written.
- * @throws Error when a page answers for a section other than the one asked for, or a cursor it
- *   gave before.
+ * @throws Error when a page answers for a section other than the one asked for, a cursor it gave
+ *   before or a section out of order, or when a section's rows changed after they were counted.
  */
 async function writeOwnerRows(
   call: OwnerExportCalls,
   sink: OwnerExportSink,
   { head, employees, live }: OwnerRowsRequest,
 ): Promise<OwnerExport['manifest']> {
-  const owner = Object.fromEntries(
-    OWNER_SECTIONS.map((section): [OwnerSection, unknown[]] => [section, []]),
-  ) as Record<OwnerSection, unknown[]>;
-  const seen = new Set<string>();
-  const once = cursorWalk((cursor) => `the owner’s ${(cursor as OwnerCursor).section}`);
-  let next: OwnerCursor | null = head.next;
-  while (next !== null) {
-    live();
-    once(next);
-    const page: OwnerPage = await call.page(next);
-    if (page.section !== next.section) {
-      throw new Error(`asked for ${next.section}, the export answered ${page.section}`);
-    }
-    for (const row of page.rows) {
-      const id = String((row as { _id?: unknown })._id);
-      if (seen.has(`${page.section}:${id}`)) continue;
-      seen.add(`${page.section}:${id}`);
-      owner[page.section].push(row);
-    }
-    next = page.next;
-  }
+  const counted = Object.fromEntries(
+    OWNER_SECTIONS.map((section): [OwnerSection, ReadonlySet<string>] => [
+      section,
+      new Set(head.rowIds[section].flat()),
+    ]),
+  ) as Record<OwnerSection, ReadonlySet<string>>;
   const counts = Object.fromEntries(
-    OWNER_SECTIONS.map((section) => [section, owner[section].length]),
+    OWNER_SECTIONS.map((section) => [section, counted[section].size]),
   ) as Record<OwnerSection, number>;
   const manifest: OwnerExport['manifest'] = {
     ...head.manifest,
     counts: { ...counts, employees },
   };
+  // The file's own brackets and keys ride on the next piece of rows, so a page is one write.
+  let pending = `{\n${FILE_INDENT}"manifest": ${printedAt(manifest, 1)},\n${FILE_INDENT}"owner": {`;
+  const once = cursorWalk((cursor) => `the owner’s ${(cursor as OwnerCursor).section}`);
+  let next: OwnerCursor | null = head.next;
+  /**
+   * Read one page of a section and write its rows that were counted and not yet written, after the
+   * text pending; answers where the next page starts, and whether it wrote (and so the text).
+   */
+  const writeOwnerPage = async (
+    cursor: OwnerCursor,
+    written: Set<string>,
+    before: string,
+  ): Promise<{ readonly next: OwnerCursor | null; readonly wrote: boolean }> => {
+    const page: OwnerPage = await call.page(cursor);
+    if (page.section !== cursor.section) {
+      throw new Error(`asked for ${cursor.section}, the export answered ${page.section}`);
+    }
+    // Counted and not yet written: a row two pages both answered is written once.
+    const pieces: string[] = [];
+    for (const row of page.rows as readonly unknown[]) {
+      const id = rowIdOf(row);
+      if (!counted[cursor.section].has(id) || written.has(id)) continue;
+      pieces.push(`${written.size === 0 ? '' : ','}\n${FILE_INDENT.repeat(3)}${printedAt(row, 3)}`);
+      written.add(id);
+    }
+    if (pieces.length > 0) {
+      live();
+      await sink.write(`${before}${pieces.join('')}`);
+    }
+    return { next: page.next, wrote: pieces.length > 0 };
+  };
+  for (const [index, section] of OWNER_SECTIONS.entries()) {
+    const written = new Set<string>();
+    pending += `${index === 0 ? '' : ','}\n${FILE_INDENT.repeat(2)}${JSON.stringify(section)}: [`;
+    while (next !== null && next.section === section) {
+      live();
+      once(next);
+      // A function of its own, so the page's rows go with its frame when it returns: held in this
+      // loop, the last page of a section stayed reachable until the next section's first answered.
+      const read = await writeOwnerPage(next, written, pending);
+      if (read.wrote) pending = '';
+      next = read.next;
+    }
+    if (written.size !== counted[section].size) {
+      throw new Error(
+        `the owner’s ${section} changed while the export read them: ${counted[section].size} were counted and ${written.size} of them read; export again`,
+      );
+    }
+    pending += written.size === 0 ? ']' : `\n${FILE_INDENT.repeat(2)}]`;
+  }
+  if (next !== null) {
+    throw new Error(`the export answered the owner’s ${next.section} out of order`);
+  }
   live();
-  await sink.write(
-    `{\n${FILE_INDENT}"manifest": ${printedAt(manifest, 1)},\n${FILE_INDENT}"owner": ${printedAt(owner, 1)},\n${FILE_INDENT}"employees": [`,
-  );
+  await sink.write(`${pending}\n${FILE_INDENT}},\n${FILE_INDENT}"employees": [`);
   return manifest;
 }
 
@@ -778,9 +853,8 @@ async function writeOwnerRows(
  * Write the owner export to a sink as it is read (wave 17, 17-F; decision F-1): the head and the
  * rest of the owner's agents, the owner's rows page by page, then each employee's trace through
  * the employee's own export, its owner-scoped sections left to the owner's rows. The owner's rows
- * are held until they are written, since the manifest that goes first carries their counts, and
- * let go before the first employee is read ({@link writeOwnerRows}): they hold no stored page's
- * text, and the skill library's bodies are the heaviest thing among them.
+ * are written page by page as they are read, their counts read first by the head
+ * ({@link writeOwnerRows}; wave 18, F16), so no section of them is held once it is written.
  * An employee's trace is written the moment it is whole and let go before the next is read, so
  * the export holds one trace however many employees there are. The pieces together are the file
  * `JSON.stringify(file, null, 2)` and a line break would print of the whole {@link OwnerExport},
@@ -793,7 +867,7 @@ async function writeOwnerRows(
  * @returns The file's manifest, with its counts.
  * @throws OwnerExportCancelled when the signal is aborted; the sink then holds part of a file.
  * @throws Error when a page answers for a section other than the one asked for, or a cursor it
- *   gave before.
+ *   gave before, or when the owner's rows changed after the head counted them.
  */
 export async function streamOwnerExport(
   call: OwnerExportCalls,
@@ -847,7 +921,7 @@ export async function streamOwnerExport(
  *   takes them).
  * @returns The one file's contents, with the counts in its manifest.
  * @throws Error when a page answers for a section other than the one asked for, or a cursor it
- *   gave before.
+ *   gave before, or when the owner's rows changed after the head counted them.
  */
 export async function assembleOwnerExport(call: OwnerExportCalls): Promise<OwnerExport> {
   const pieces: string[] = [];

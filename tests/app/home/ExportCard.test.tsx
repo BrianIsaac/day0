@@ -54,6 +54,10 @@ beforeEach((): void => {
       setAside: [],
       moreAgents: null,
       next: { section: OWNER_SECTIONS[0], cursor: null },
+      // The ids the head counts first (wave 18, F16): the one skill version the pages answer.
+      rowIds: Object.fromEntries(
+        OWNER_SECTIONS.map((section) => [section, section === 'skillVersions' ? [['v1']] : []]),
+      ),
     }),
     'exportActions:exportOwnerPage': (args) => {
       const section = args.section as OwnerSection;
@@ -213,6 +217,11 @@ describe('the home’s export card (wave 16, 16-F)', (): void => {
       ...(pages(args) as object),
       rows: [],
     });
+    const owner = backend.results['exportActions:exportForOwner']!;
+    backend.results['exportActions:exportForOwner'] = (args) => ({
+      ...(owner(args) as object),
+      rowIds: Object.fromEntries(OWNER_SECTIONS.map((section) => [section, []])),
+    });
     const view = mount(<ExportCard />);
     await press(view.container, 'Export');
     await vi.waitFor((): void => {
@@ -264,9 +273,10 @@ describe('the export card at fifty employees: progress, Cancel and the file (wav
     const view = mount(<ExportCard />);
     await press(view.container, 'Export');
 
-    // The owner's rows and the first employee's trace are on disk before the second is read.
-    expect(file.written).toHaveLength(2);
-    expect(file.written[1]).toContain('"id": "agent-1"');
+    // The owner's rows, a page a piece and then the rest of their sections (wave 18, F16), and
+    // the first employee's trace are on disk before the second is read.
+    expect(file.written).toHaveLength(3);
+    expect(file.written[2]).toContain('"id": "agent-1"');
     expect(file.closed).toBe(false);
 
     second.release();
@@ -274,7 +284,7 @@ describe('the export card at fifty employees: progress, Cancel and the file (wav
     await vi.waitFor((): void => {
       expect(file.closed).toBe(true);
     });
-    expect(file.written).toHaveLength(4);
+    expect(file.written).toHaveLength(5);
     const saved = JSON.parse(file.written.join('')) as { employees: unknown[] };
     expect(saved.employees).toHaveLength(2);
     expect(said(view.container)).toEqual([
@@ -432,11 +442,12 @@ describe('the export card at fifty employees: progress, Cancel and the file (wav
   });
 
   it('keeps no file when Cancel is pressed as the last piece goes to it', async (): Promise<void> => {
-    // One employee: the owner's rows, its trace, the file's end. The end waits on the disk.
-    const file = pickerOf('october-export.json', { holdWrite: 3 });
+    // One employee: the owner's rows in two pieces (the page of its one row, then the rest of
+    // its sections: wave 18, F16), its trace, the file's end. The end waits on the disk.
+    const file = pickerOf('october-export.json', { holdWrite: 4 });
     const view = mount(<ExportCard />);
     await press(view.container, 'Export');
-    expect(file.written).toHaveLength(2);
+    expect(file.written).toHaveLength(3);
 
     await press(view.container, 'Cancel');
     file.release();
