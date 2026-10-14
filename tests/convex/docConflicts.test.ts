@@ -17,6 +17,7 @@ import { closeQuestionsAtRedraft } from '../../convex/questionCloses';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
 import { parseDecisionReply } from '../../src/work/manager-channel';
+import { FINISHING_CURSOR } from '../../src/docs/finishing';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
@@ -1019,6 +1020,51 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       pages: [{ sourceId: relation.to.sourceId, ref: relation.to.ref, back: false }],
     });
     expect(await closes()).toEqual(['settled', undefined]);
+  });
+
+  it('closes the questions of a page its sync prunes in the prune’s own transaction (W17-R13)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { workItemId, pages } = await askedInRequest(harness);
+    const finance = pages.finance;
+    // The finance wiki's sync is finishing, and its last complete walk listed the page no more.
+    await harness.run(async (ctx) => {
+      const walked = await ctx.db.insert('docSyncRuns', {
+        sourceId: finance.sourceId,
+        listing: 2,
+        pagesListed: 0,
+        credentialRefs: [],
+        pageCount: 0,
+        redactionCount: 0,
+        state: 'completed',
+        createdAt: 1,
+        completedAt: 1,
+      });
+      await ctx.db.patch(finance.sourceId, { listings: 2, lastCompletedSyncId: walked });
+      await ctx.db.patch(finance.runId, { listing: 3, cursor: FINISHING_CURSOR });
+      await ctx.db.insert('docPageListings', {
+        sourceId: finance.sourceId,
+        ref: 'escalation.md',
+        seenBy: 1,
+      });
+    });
+    expect((await questionsOf(harness, workItemId)).map((question) => question.closed)).toEqual([
+      undefined,
+    ]);
+    await expect(
+      harness.mutation(internal.docSources.prunePages, {
+        sourceId: finance.sourceId,
+        runId: finance.runId,
+        checkpoint: FINISHING_CURSOR,
+        from: null,
+        record: false,
+      }),
+    ).resolves.toMatchObject({ removed: 1 });
+    // Read before any scheduled step runs: the prune itself closed it.
+    expect((await questionsOf(harness, workItemId)).map((question) => question.closed)).toEqual([
+      { reason: 'settled', at: Date.UTC(2026, 9, 1) },
+    ]);
   });
 
   it('asks out of the confirming transaction, a page of the reader’s drafted plans a step, until every plan was read (17-C; the pre-tag’s second pass)', async (): Promise<void> => {

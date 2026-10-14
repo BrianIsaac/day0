@@ -12,7 +12,8 @@ import { isOpenQuestion, type ManagerQuestionCloseReason } from '../src/agent/ma
  * This module is a floor: it imports no `convex/` module, so every site that sends a plan back to
  * drafting (`planRedraft`, `workApply`, `skillControls`, `workRuns`), the relation's decision
  * (`docRelations`) and the run's own read (`managerQuestions.closeSettled`) call it without an
- * edge towards `work`, and a page's change of status (`docStatus`) can. It registers no function.
+ * edge towards `work`, and a page's change of status (`docStatus`) and the sync's prune
+ * (`docSources`) can. It registers no function.
  */
 
 /** The questions one page of an item's read takes, oldest first. */
@@ -127,9 +128,10 @@ export async function closeQuestionsOfRelation(
  * Close the open questions of every confirmed conflict one page is an end of, because the page
  * stopped being current (superseded, archived, gone) and no conflict stands on a page that is not
  * (`docConflicts.standingConflictOf`). Called by the relation's decision for the page an answer
- * takes out of use, and by the step a page's change of status schedules when it leaves `active`
+ * takes out of use, by the step a page's change of status schedules when it leaves `active`
  * by another path (the Documentation tab's status, the sync: `docRelations.turnPageQuestions`,
- * the joins). A run that reads a question first still closes it (`managerQuestions.closeSettled`).
+ * the joins), and by the sync's prune for a page it deletes (`docSources.prunePages`, W17-R13). A
+ * run that reads a question first still closes it (`managerQuestions.closeSettled`).
  *
  * @param ctx - The transaction that changed the page.
  * @param page - The page that is no longer current.
