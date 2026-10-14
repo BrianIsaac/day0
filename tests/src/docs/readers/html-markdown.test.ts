@@ -233,6 +233,16 @@ describe('underTitle', (): void => {
   });
 });
 
+/** What `convert` threw, or undefined when it returned. */
+function refusalOf(convert: () => unknown): unknown {
+  try {
+    convert();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
+
 describe('what the document conversion refuses', (): void => {
   it('refuses a document nested deeper than it can convert, in words a reader puts after its title (W15-R9)', (): void => {
     // The review's four shapes (reader 3's deep.mts): each overflowed the converter's stack.
@@ -254,9 +264,12 @@ describe('what the document conversion refuses', (): void => {
           .map((name) => `</${name}>`)
           .join('')
           .repeat(depth);
+      // Each shape converted once a converter, both claims read off the one refusal: it was
+      // converted twice, and the sixteen conversions outran the 20 s timeout at load (18-G).
       for (const convert of [documentHtmlToMarkdown, confluenceStorageToMarkdown]) {
-        expect(() => convert(nested), `${tag} x ${depth}`).toThrow(DocumentConversionError);
-        expect(() => convert(nested), `${tag} x ${depth}`).toThrow(
+        const refusal = refusalOf(() => convert(nested));
+        expect(refusal, `${tag} x ${depth}`).toBeInstanceOf(DocumentConversionError);
+        expect((refusal as Error).message, `${tag} x ${depth}`).toContain(
           'it is laid out too deeply for Day0 to convert: lists, tables or quotations inside one another, many levels down',
         );
       }
