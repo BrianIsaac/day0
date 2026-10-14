@@ -29,12 +29,14 @@ function runSync(
   localEnv: string,
   storedCredentials = '',
   pushed = false,
+  shell: Readonly<Record<string, string>> = {},
 ): {
   status: number | null;
   calls: string[];
   stdout: string;
   stderr: string;
   deployment: string[];
+  childEnvironment: string[];
 } {
   const directory = temporary('day0-sync-env-');
   const envFile = join(directory, '.env.local');
@@ -48,6 +50,7 @@ function runSync(
     [
       '#!/usr/bin/env bash',
       `echo "$*" >> "${log}"`,
+      `echo "HTTPS_PROXY=\${HTTPS_PROXY:-} https_proxy=\${https_proxy:-} NO_PROXY=\${NO_PROXY:-} NODE_USE_ENV_PROXY=\${NODE_USE_ENV_PROXY:-} NODE_OPTIONS=\${NODE_OPTIONS:-}" >> "${log}.env"`,
       'if [ "$1 $2 $3" = "convex env list" ]; then cat "' + state + '"; exit 0; fi',
       `if [ "$1 $2 $3" = "convex data credentials" ]; then printf '%s' '${storedCredentials}'; exit 0; fi`,
       // A deployment with functions on it validates its auth config on every
@@ -79,7 +82,7 @@ function runSync(
   const result = spawnSync('bash', [SCRIPT, envFile], {
     cwd: directory,
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ''}` },
+    env: { ...process.env, ...shell, PATH: `${directory}:${process.env.PATH ?? ''}` },
   });
   let calls: string[] = [];
   try {
@@ -88,7 +91,20 @@ function runSync(
     calls = [];
   }
   const deployment = readFileSync(state, 'utf8').split('\n').filter(Boolean).sort();
-  return { status: result.status, calls, stdout: result.stdout, stderr: result.stderr, deployment };
+  let childEnvironment: string[] = [];
+  try {
+    childEnvironment = [...new Set(readFileSync(`${log}.env`, 'utf8').trim().split('\n'))];
+  } catch {
+    childEnvironment = [];
+  }
+  return {
+    status: result.status,
+    calls,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    deployment,
+    childEnvironment,
+  };
 }
 
 describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): void => {
@@ -345,6 +361,35 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     );
     expect(dropped.calls).toContain('convex env remove NO_PROXY');
     expect(dropped.deployment.some((line) => line.startsWith('NO_PROXY='))).toBe(false);
+  });
+
+  // D-9 (a), W17-R25: the script read the file alone for the deployment's NO_PROXY, while its
+  // Convex CLI children took whatever proxy the shell exported, this machine's own backend at
+  // 127.0.0.1 among what they would send to it.
+  it("hands its Convex CLI children the file's proxy with this machine kept out of it, never the shell's (D-9 (a))", (): void => {
+    const shell = {
+      HTTPS_PROXY: 'http://corp-proxy.acme.test:8080',
+      https_proxy: 'http://corp-proxy.acme.test:8080',
+      NO_PROXY: 'intranet.acme.test',
+      NODE_USE_ENV_PROXY: '1',
+      NODE_OPTIONS: '',
+    };
+    const direct = runSync([], 'DAY0_SURFACE_MODE=mock\n', '', false, shell);
+    expect(direct.status).toBe(0);
+    expect(direct.childEnvironment).toEqual([
+      'HTTPS_PROXY= https_proxy= NO_PROXY= NODE_USE_ENV_PROXY= NODE_OPTIONS=',
+    ]);
+    expect(direct.calls.join('\n')).not.toContain('NO_PROXY');
+    const proxied = runSync(
+      [],
+      'DAY0_SURFACE_MODE=mock\nHTTPS_PROXY=http://proxy.acme.test:3128\nNO_PROXY=day0.acme.test\n',
+      '',
+      false,
+      shell,
+    );
+    expect(proxied.childEnvironment).toEqual([
+      'HTTPS_PROXY=http://proxy.acme.test:3128 https_proxy= NO_PROXY=localhost,127.0.0.1,day0.acme.test NODE_USE_ENV_PROXY=1 NODE_OPTIONS=--disable-warning=UNDICI-EHPA',
+    ]);
   });
 
   it('puts the Slack socket bridge secret on the deployment, and clears it once the file drops it (12-M)', (): void => {

@@ -194,6 +194,28 @@ read_local() {
   grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true
 }
 
+# The way out is read from the file alone, as every process Day0 starts takes
+# it (wave 18, D-9 (a); scripts/lib/proxy-env.ts, processEnvironment): the
+# shell's proxy names reach none of this script's Convex CLI children, and the
+# file's reach them with this machine's own names kept out, so a call to the
+# backend at 127.0.0.1 never goes to the proxy, with Node's switch and the flag
+# that quiets its warning.
+unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_USE_ENV_PROXY ALL_PROXY \
+  https_proxy http_proxy no_proxy all_proxy
+file_https_proxy=$(read_local HTTPS_PROXY)
+file_http_proxy=$(read_local HTTP_PROXY)
+if [ -n "$file_https_proxy" ] || [ -n "$file_http_proxy" ]; then
+  [ -n "$file_https_proxy" ] && export HTTPS_PROXY="$file_https_proxy"
+  [ -n "$file_http_proxy" ] && export HTTP_PROXY="$file_http_proxy"
+  file_no_proxy=$(read_local NO_PROXY)
+  export NO_PROXY="localhost,127.0.0.1${file_no_proxy:+,${file_no_proxy}}"
+  export NODE_USE_ENV_PROXY=1
+  case " ${NODE_OPTIONS:-} " in
+    *" --disable-warning=UNDICI-EHPA "*) ;;
+    *) export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--disable-warning=UNDICI-EHPA" ;;
+  esac
+fi
+
 # The deployment cannot verify a no-auth caller's token without the public key,
 # and a push in that state would refuse every caller. Say so here rather than
 # leaving it to be discovered as a 'not authenticated' on the dashboard.

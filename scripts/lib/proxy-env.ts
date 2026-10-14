@@ -7,6 +7,11 @@
  * is what the processes started on this machine (the app under `pnpm start`, the setup's children,
  * the checks and their probes) are given, since Node reads a proxy from its environment only when
  * `NODE_USE_ENV_PROXY=1` is set before it starts, and Next reads `.env.local` after.
+ *
+ * `.env.local` is read alone (wave 18, D-9 (a)): a proxy the shell names and the file does not
+ * reaches no process Day0 starts, no compose service and not the deployment, and `check:setup`
+ * says the shell named one. Until 0.22.0 the shell's names won here and the sync's did not, so
+ * the deployment lost its NO_PROXY while the backend took the shell's proxy (W17-R25).
  */
 
 /** The names the way out is given by: the three every client reads, and Node's own switch. */
@@ -16,6 +21,41 @@ export const PROXY_VARIABLES = [
   'NO_PROXY',
   'NODE_USE_ENV_PROXY',
 ] as const;
+
+/**
+ * Every name a client on this machine reads a proxy from, in both the cases it is written: curl
+ * and git read the lower-case ones, and `ALL_PROXY` too. None of them is taken from the shell.
+ */
+export const SHELL_PROXY_NAMES = [
+  ...PROXY_VARIABLES,
+  'ALL_PROXY',
+  'https_proxy',
+  'http_proxy',
+  'no_proxy',
+  'all_proxy',
+] as const;
+
+/** The names of these that name a proxy, rather than what is kept out of one or Node's switch. */
+const SHELL_PROXY_ADDRESSES = [
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+] as const;
+
+/**
+ * Set on every process Day0 starts where the shell named a proxy `.env.local` does not: the
+ * names, never the value, so `check:setup` can say so wherever in the chain it runs.
+ */
+export const SHELL_PROXY_MARK = 'DAY0_SHELL_PROXY';
+
+/**
+ * What quiets Node's `[UNDICI-EHPA] Warning: EnvHttpProxyAgent is experimental`, which every
+ * process started with its proxy switch on printed (W17-R28). Given wherever the switch is.
+ */
+export const QUIET_PROXY_WARNING = '--disable-warning=UNDICI-EHPA';
 
 /** The first Node on the 22 line that reads a proxy from the environment. */
 export const ENV_PROXY_NODE = '22.21.0';
@@ -193,28 +233,136 @@ export function hostProxyEnvironment(settings: ProxySettings): Record<string, st
   };
 }
 
+/** An environment's values, the unset ones left out. */
+type Environment = Readonly<Record<string, string | undefined>>;
+
 /**
- * What a command on this machine must be started again with so that it, and every child it
- * starts, takes the way out the install names: undefined when it already holds it, or when no
- * proxy is named.
+ * The shell's names that name a proxy the file does not (empty, or another), in the shell's
+ * spelling. A name the file has no upper-case twin for (`ALL_PROXY`) is one the file never names.
  *
- * A check run by hand starts in a shell that names no proxy while `.env.local` does. Its own
- * requests would then dial out directly, and its Convex CLI children, handed the file's values as
- * written, would send their calls to this machine's backend to the proxy (found on the bed
- * `day0-w17p`, 13 October 2026: nine refused, and two findings that were not so). Started by the
- * setup, or once restarted, it holds exactly this and runs as it is.
+ * @param shell - The environment a command was started with.
+ * @param file - The env file's values.
+ */
+export function shellOnlyProxy(shell: Environment, file: Environment): string[] {
+  return SHELL_PROXY_ADDRESSES.filter((name) => {
+    const given = (shell[name] ?? '').trim();
+    return given !== '' && given !== (file[name.toUpperCase()] ?? '').trim();
+  });
+}
+
+/**
+ * `check:setup`'s and the setup's note where the shell names a proxy the file does not, read
+ * from the shell or from the mark a parent left once it had set the shell's names aside; undefined
+ * where it names none (wave 18, section 7's draft).
+ *
+ * @param shell - The environment the command runs with.
+ * @param file - The env file's values.
+ */
+export function shellProxyNote(shell: Environment, file: Environment): string | undefined {
+  const direct = shellOnlyProxy(shell, file);
+  const names =
+    direct.length > 0
+      ? direct
+      : (shell[SHELL_PROXY_MARK] ?? '').split(',').filter((name) => name.trim() !== '');
+  if (names.length === 0) return undefined;
+  const listed =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+  const settings = proxySettings((name) => file[name]);
+  const address = settings.httpsProxy ?? settings.httpProxy;
+  const way =
+    address === undefined ? 'directly' : `through the proxy at ${proxyForDisplay(address)}`;
+  return (
+    `The shell names a proxy (${listed}) that .env.local does not. Day0 reads .env.local only, ` +
+    `so it goes out ${way}: name the proxy in .env.local, or unset it in the shell.`
+  );
+}
+
+/**
+ * The shell with none of its proxy names, and the mark naming those the file does not: what
+ * every process Day0 starts is given before the file's own way out is added.
+ */
+function withoutShellProxy(shell: Environment, file: Environment): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(shell)) {
+    if (value === undefined || name === SHELL_PROXY_MARK) continue;
+    if ((SHELL_PROXY_NAMES as readonly string[]).includes(name)) continue;
+    kept[name] = value;
+  }
+  const unread = shellOnlyProxy(shell, file);
+  const mark = unread.length > 0 ? unread.join(',') : shell[SHELL_PROXY_MARK];
+  return mark === undefined || mark === '' ? kept : { ...kept, [SHELL_PROXY_MARK]: mark };
+}
+
+/**
+ * What a Node process Day0 starts on this machine runs with (D-9 (a)): the shell's environment
+ * without its proxy names, then the way out `.env.local` names, with this machine's own names
+ * kept out of it, Node's switch and the flag that quiets the switch's warning. So the setup's
+ * children, a check run by hand and `pnpm start` take the proxy from the one place it is written.
  *
  * @param shell - The environment the command was started with.
  * @param file - The env file's values.
  */
+export function processEnvironment(shell: Environment, file: Environment): Record<string, string> {
+  const environment = withoutShellProxy(shell, file);
+  const proxy = hostProxyEnvironment(proxySettings((name) => file[name]));
+  if (Object.keys(proxy).length === 0) return environment;
+  const options = (environment.NODE_OPTIONS ?? '').trim();
+  return {
+    ...environment,
+    ...proxy,
+    NODE_OPTIONS: options.split(/\s+/).includes(QUIET_PROXY_WARNING)
+      ? options
+      : `${options} ${QUIET_PROXY_WARNING}`.trim(),
+  };
+}
+
+/**
+ * What `docker compose` runs with (P-1 (a)): the shell without its proxy names, then the file's
+ * own as written, an explicit map. Compose prefers the process environment to `--env-file` when
+ * it fills `${HTTPS_PROXY}` in, so a shell's proxy would otherwise reach every service.
+ *
+ * @param shell - The environment the command was started with.
+ * @param file - The env file's values.
+ */
+export function composeEnvironment(shell: Environment, file: Environment): Record<string, string> {
+  const environment = withoutShellProxy(shell, file);
+  for (const name of PROXY_VARIABLES) {
+    const value = (file[name] ?? '').trim();
+    if (value !== '') environment[name] = value;
+  }
+  return environment;
+}
+
+/**
+ * What a command on this machine must be started again with so that it, and every child it
+ * starts, takes the way out the install names and nothing the shell names: undefined when it
+ * already holds that.
+ *
+ * A check run by hand starts in a shell that names no proxy while `.env.local` does. Its own
+ * requests would then dial out directly, and its Convex CLI children, handed the file's values as
+ * written, would send their calls to this machine's backend to the proxy (found on the bed
+ * `day0-w17p`, 13 October 2026: nine refused, and two findings that were not so). A shell that
+ * names a proxy the file does not is started again without it (D-9 (a)). Started by the setup,
+ * or once restarted, it holds exactly this and runs as it is.
+ *
+ * @param shell - The environment the command was started with.
+ * @param file - The env file's values.
+ * @returns The whole environment to start again with.
+ */
 export function restartEnvironment(
-  shell: Readonly<Record<string, string | undefined>>,
-  file: Readonly<Record<string, string | undefined>>,
+  shell: Environment,
+  file: Environment,
 ): Record<string, string> | undefined {
-  const wanted = hostProxyEnvironment(
-    proxySettings((name) => (shell[name] ?? '').trim() || file[name]),
-  );
-  return Object.entries(wanted).some(([name, value]) => shell[name] !== value) ? wanted : undefined;
+  const wanted = processEnvironment(shell, file);
+  const names = new Set([
+    ...SHELL_PROXY_NAMES,
+    SHELL_PROXY_MARK,
+    'NODE_OPTIONS',
+    ...Object.keys(wanted),
+  ]);
+  return [...names].some((name) => (shell[name] ?? undefined) !== wanted[name])
+    ? wanted
+    : undefined;
 }
 
 /**

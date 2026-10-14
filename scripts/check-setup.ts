@@ -108,12 +108,13 @@ import {
   missingFromDeployment,
   noProxyEntries,
   SERVICE_NO_PROXY,
-  PROXY_VARIABLES,
   proxyAddressGap,
   proxyConfigured,
   proxyForDisplay,
   proxyNodeGap,
   proxySettings,
+  SHELL_PROXY_NAMES,
+  shellProxyNote,
 } from './lib/proxy-env';
 import { runUnderProxy } from './lib/under-proxy';
 import { readEnvFileValues } from './lib/env-text';
@@ -217,7 +218,6 @@ export const WATCHED = [
   'DAY0_PUBLIC_URL',
   'COMPOSE_PROJECT_NAME',
   'DAY0_APP_PORT',
-  ...PROXY_VARIABLES,
 ] as const;
 
 /** How a section reads: complete, worth saying out loud, or half-done. */
@@ -247,13 +247,41 @@ export function readEnvFile(path: string): Values {
   return readEnvFileValues(path);
 }
 
-/** File values, then the process environment wherever it declares one at all. */
-function resolve(path: string): Values {
+/**
+ * File values, then the process environment wherever it declares a watched one at all. The way
+ * out through a proxy is not among them: it is read from the file alone, as every process Day0
+ * starts takes it (wave 18, D-9 (a)), and a proxy the shell names is a note (`wayOutSection`).
+ *
+ * @param path - The env file's path.
+ * @param environment - The process environment.
+ */
+export function resolveValues(
+  path: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): Values {
   const values = readEnvFile(path);
   for (const key of WATCHED) {
-    if (key in process.env) values[key] = process.env[key] ?? '';
+    if (key in environment) values[key] = environment[key] ?? '';
   }
   return values;
+}
+
+/**
+ * What a Convex CLI child of this check is started with: the file's values for the deployment it
+ * asks, over this process's environment, whose way out is the one this check was (re)started with
+ * (`runUnderProxy`): the proxy with this machine's own names kept out of it. The file's own proxy
+ * names, as written, would send the CLI's calls to the backend on this machine to the proxy
+ * (17-P's B-1).
+ *
+ * @param values - The resolved values.
+ */
+function cliEnvironment(values: Values): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { ...process.env, ...values };
+  for (const name of SHELL_PROXY_NAMES) {
+    if (process.env[name] === undefined) delete environment[name];
+    else environment[name] = process.env[name];
+  }
+  return environment;
 }
 
 /**
@@ -299,7 +327,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
     return 1;
   }
 
-  const v = resolve(envFile);
+  const v = resolveValues(envFile);
   const selfHosted = !!v.CONVEX_SELF_HOSTED_URL;
   const projectName = v.COMPOSE_PROJECT_NAME || 'day0';
   // Asked once and shared: every section that cares about a container reads the
@@ -348,6 +376,7 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
       process.version,
       daemonArchitecture(versions.docker) ?? process.arch,
       wayOutDeployment,
+      process.env,
     ),
   ];
 
@@ -379,7 +408,9 @@ export function main(envFile: string = ENV_FILE, options: { report?: boolean } =
   }
 
   console.log(`Day0 local setup, read from ${envFile}`);
-  console.log('(process environment wins wherever it declares a variable, empty included)');
+  console.log(
+    '(process environment wins wherever it declares a variable, empty included, but the proxy, read from the file alone)',
+  );
   console.log(`${modeAndRouteLine(v)}\n`);
   for (const section of sections) {
     console.log(`${marker(section.status)} ${section.title}`);
@@ -512,7 +543,7 @@ function storedCredentialCount(values: Values): number | undefined {
     {
       encoding: 'utf8',
       timeout: 30_000,
-      env: { ...process.env, ...values },
+      env: cliEnvironment(values),
     },
   );
   if (probe.status !== 0) return undefined;
@@ -568,7 +599,7 @@ function readMigrationStatus(values: Values): MigrationStatusRead | { error: str
   const probe = spawnSync(
     'npx',
     ['convex', 'run', '--typecheck', 'disable', '--codegen', 'disable', 'migrations:status', '{}'],
-    { encoding: 'utf8', timeout: 60_000, env: { ...process.env, ...values } },
+    { encoding: 'utf8', timeout: 60_000, env: cliEnvironment(values) },
   );
   const firstLine = (text: string | null | undefined): string =>
     (text ?? '')
@@ -772,7 +803,7 @@ function linkedDocSourceKinds(
       'docSources:linkedKinds',
       '{}',
     ],
-    { encoding: 'utf8', timeout: 30_000, env: { ...process.env, ...values } },
+    { encoding: 'utf8', timeout: 30_000, env: cliEnvironment(values) },
   );
   if (probe.status !== 0) return undefined;
   try {
@@ -2021,6 +2052,8 @@ function hostList(hosts: readonly string[]): string {
  * @param architecture - The platform the backend image is built for.
  * @param deployment - The deployment's own variables, when it was asked: a Node action reads its
  *   `NO_PROXY` from there, never from the container.
+ * @param shell - The environment this check runs in, for a proxy it names that the file does not
+ *   (or the mark the setup or the restart left once it set the shell's names aside).
  */
 export function wayOutSection(
   v: Values,
@@ -2028,6 +2061,7 @@ export function wayOutSection(
   nodeVersion: string,
   architecture: string,
   deployment?: DeploymentRead,
+  shell: Readonly<Record<string, string | undefined>> = {},
 ): Section {
   const settings = proxySettings((name) => v[name]);
   const lines: string[] = [];
@@ -2037,6 +2071,12 @@ export function wayOutSection(
   };
   let title = 'The way out: direct';
   let reportTitle: string | undefined;
+  // Read from the file alone; one the shell names is said, never read (D-9 (a)).
+  const shellProxy = shellProxyNote(shell, v);
+  if (shellProxy !== undefined) {
+    worsen('warn');
+    lines.push(shellProxy);
+  }
   if (!proxyConfigured(settings)) {
     lines.push('No proxy is named (HTTPS_PROXY), so every service dials out directly.');
   } else {

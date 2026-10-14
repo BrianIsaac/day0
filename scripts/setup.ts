@@ -169,7 +169,13 @@ import {
   type SignInCheck,
 } from './check-sign-in';
 import { publicOrigin, redirectUriOf, signedOutUriOf } from '../src/lib/customer-sign-in-settings';
-import { hostProxyEnvironment, proxyNodeGap, proxySettings } from './lib/proxy-env';
+import {
+  composeEnvironment,
+  processEnvironment,
+  proxyNodeGap,
+  proxySettings,
+  shellProxyNote,
+} from './lib/proxy-env';
 
 /** The env file helpers, where the setup's callers and tests have always found them. */
 export { readEnvValues, writeEnvValues };
@@ -5921,30 +5927,32 @@ async function runInstall(options: SetupOptions, io: SetupIo): Promise<number> {
   return 0;
 }
 
-/** The way out as the shell names it, else as the checkout's `.env.local` does, one name at a time. */
-function wayOutSettings(
-  cwd: string,
-  shell: Readonly<Record<string, string | undefined>>,
-): ReturnType<typeof proxySettings> {
+/** The way out as the checkout's `.env.local` names it: the shell's proxy is never read (D-9 (a)). */
+function wayOutSettings(cwd: string): ReturnType<typeof proxySettings> {
   const file = readEnvValues(join(cwd, ENV_FILE));
-  return proxySettings((name) => (shell[name] ?? '').trim() || file[name]);
+  return proxySettings((name) => file[name]);
 }
 
 /**
- * What every child the setup starts is given when `.env.local` (or the shell) names a proxy on
- * the way out: the proxy, this machine's own names kept out of it, and Node's switch for reading
- * it (wave 17, 17-P; RM31 (a)). So the checks an install runs, the Convex CLI and pnpm take the
- * customer's proxy from the one place it is written, and the pushes to the backend's own port on
- * this machine never go through it. Nothing when no proxy is named.
+ * The environment every child the setup starts is given (wave 17, 17-P; RM31 (a); wave 18,
+ * D-9 (a)): the shell's without any proxy it names, then the way out `.env.local` names. A Node
+ * child (the checks, the Convex CLI, pnpm) gets the proxy with this machine's own names kept out
+ * of it, Node's switch and the flag that quiets its warning, so the pushes to the backend's own
+ * port on this machine never go through it; `docker compose` gets the file's names as written,
+ * which it fills the services' lines from. A proxy the shell names and the file does not reaches
+ * neither, and is marked by name for `check:setup`'s note.
  *
  * @param cwd - The checkout, whose `.env.local` is read.
  * @param shell - The environment the command was run from.
+ * @param command - What is started.
  */
-export function childProxyEnvironment(
+export function childProcessEnvironment(
   cwd: string,
   shell: Readonly<Record<string, string | undefined>>,
+  command: string,
 ): Record<string, string> {
-  return hostProxyEnvironment(wayOutSettings(cwd, shell));
+  const file = readEnvValues(join(cwd, ENV_FILE));
+  return command === 'docker' ? composeEnvironment(shell, file) : processEnvironment(shell, file);
 }
 
 /**
@@ -5960,11 +5968,11 @@ export function childProxyEnvironment(
 export async function runCommand(options: SetupOptions, io: SetupIo): Promise<number> {
   // A proxy on the way out that this Node would ignore: said before anything runs, since what
   // follows would otherwise dial out directly and meet a proxy-only network as bare timeouts.
-  const nodeGap = proxyNodeGap(
-    io.nodeVersion ?? process.version,
-    wayOutSettings(io.cwd, io.environment),
-  );
+  const nodeGap = proxyNodeGap(io.nodeVersion ?? process.version, wayOutSettings(io.cwd));
   if (nodeGap !== undefined) io.log(`note: ${nodeGap} (docs/running/egress.md)`);
+  // A proxy the shell names and the file does not: said first, since nothing below takes it.
+  const shellProxy = shellProxyNote(io.environment, readEnvValues(join(io.cwd, ENV_FILE)));
+  if (shellProxy !== undefined) io.log(`note: ${shellProxy} (docs/running/egress.md)`);
   switch (options.command) {
     case 'stop':
       return runStop(options, io);
@@ -6224,7 +6232,10 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
       const result = spawnSync(command, [...args], {
         cwd,
         encoding: 'utf8',
-        env: { ...process.env, ...childProxyEnvironment(cwd, process.env), ...(options.env ?? {}) },
+        env: {
+          ...childProcessEnvironment(cwd, process.env, command),
+          ...(options.env ?? {}),
+        } as NodeJS.ProcessEnv,
         timeout: options.timeoutMs,
         input: options.input,
         stdio: [
@@ -6296,7 +6307,7 @@ export function consoleIo(cwd: string = process.cwd()): SetupIo {
       const backend = proxiedBackendOrigin(values);
       // Asked as every child of the setup is started, so this step and `pnpm check:setup` cannot
       // disagree about one address: through the proxy unless NO_PROXY keeps the host out of it.
-      const env = { ...process.env, ...childProxyEnvironment(cwd, process.env) };
+      const env = childProcessEnvironment(cwd, process.env, 'node') as NodeJS.ProcessEnv;
       return proxyChecks(
         values,
         {

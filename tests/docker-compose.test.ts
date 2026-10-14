@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
-import { deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
+import { composeEnvironment, deploymentNoProxy, SERVICE_NO_PROXY } from '../scripts/lib/proxy-env';
 
 interface Service {
   readonly ports?: readonly string[];
@@ -439,6 +439,24 @@ describe('the way out through a proxy (wave 17, 17-P; RM31 (a))', (): void => {
       expect(environment.HTTPS_PROXY).toBe('');
       expect(environment.HTTP_PROXY).toBe('');
       expect(environment.NODE_USE_ENV_PROXY).toBe('');
+    },
+  );
+
+  // D-9 (a): what compose fills these lines from is `composeEnvironment`, the shell's proxy
+  // names set aside, so one the shell names and the file does not reaches no service.
+  it.each(REACHING_OUT)(
+    'leaves %s without a proxy the shell names and the env file does not',
+    (service): void => {
+      const environment = rendered(
+        service,
+        composeEnvironment(
+          { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080', NO_PROXY: 'intranet.acme.test' },
+          {},
+        ),
+      );
+      expect(environment.HTTPS_PROXY).toBe('');
+      expect(environment.NODE_USE_ENV_PROXY).toBe('');
+      expect(environment.NO_PROXY).toBe(SERVICE_NO_PROXY.join(','));
     },
   );
 

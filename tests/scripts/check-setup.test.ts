@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { proxyChecks } from '../../scripts/check-sign-in';
@@ -18,6 +19,7 @@ import {
   modelSection,
   modeAndRouteLine,
   parseMigrationStatus,
+  resolveValues,
   settingsSection,
   setupReport,
   wayOutSection,
@@ -1282,6 +1284,52 @@ describe("check:setup: the customer's own hosts against NO_PROXY, as Node reads 
     expect(lines).toContain(
       'NO_PROXY lists nothing more, so day0.corp.invalid, api.day0.corp.invalid and login.corp.invalid are asked for through the proxy:',
     );
+  });
+});
+
+// D-9 (a), W17-R25 (reader 5): `resolve` laid the shell's proxy names over the file's, so a
+// proxy exported in a corporate shell profile was read here while `pnpm sync:env` read the file
+// alone, and the gap this check named ("run `pnpm sync:env`") could not be closed.
+describe('check:setup and a proxy the shell names (D-9 (a))', (): void => {
+  const REAL = { DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' };
+  const SHELL = { HTTPS_PROXY: 'http://corp-proxy.acme.test:8080', NO_PROXY: 'intranet.acme.test' };
+
+  it('reads the way out from .env.local alone, whatever the shell names', (): void => {
+    const directory = mkdtempSync(join(tmpdir(), 'day0-check-shell-'));
+    const file = join(directory, '.env.local');
+    writeFileSync(
+      file,
+      'DAY0_SURFACE_MODE=real\nDAY0_OIDC_ISSUER=https://login.acme.test\n',
+      'utf8',
+    );
+    const values = resolveValues(file, { ...SHELL, DAY0_OIDC_ISSUER: 'https://other.acme.test' });
+    expect(values.HTTPS_PROXY).toBeUndefined();
+    expect(values.NO_PROXY).toBeUndefined();
+    // Every other watched name still lets the process environment win, as before.
+    expect(values.DAY0_OIDC_ISSUER).toBe('https://other.acme.test');
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('notes the shell’s proxy and says the way out is direct, never reading it', (): void => {
+    const section = wayOutSection(REAL, [], 'v22.23.2', 'x64', undefined, SHELL);
+    expect(section.title).toBe('The way out: direct');
+    expect(section.status).toBe('warn');
+    expect(section.lines).toContain(
+      'The shell names a proxy (HTTPS_PROXY) that .env.local does not. Day0 reads .env.local ' +
+        'only, so it goes out directly: name the proxy in .env.local, or unset it in the shell.',
+    );
+    // Nothing of the shell's reaches the deployment's reading either: no proxy is named.
+    expect(
+      wayOutSection(REAL, [], 'v22.23.2', 'x64', { values: {} }, SHELL).lines.join(' '),
+    ).not.toContain('The deployment');
+  });
+
+  it('notes it from the mark the setup or the restart left, where the shell’s names are gone', (): void => {
+    const section = wayOutSection(REAL, [], 'v22.23.2', 'x64', undefined, {
+      DAY0_SHELL_PROXY: 'HTTPS_PROXY',
+    });
+    expect(section.status).toBe('warn');
+    expect(section.lines.join(' ')).toContain('The shell names a proxy (HTTPS_PROXY)');
   });
 });
 
