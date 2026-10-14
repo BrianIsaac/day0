@@ -3,7 +3,7 @@ import { internalMutation, mutation, query, type MutationCtx } from './_generate
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { assertOwnsAgent, getCallerOrThrow, verifiedAddressOf } from './ownership';
-import { appendEvent } from './eventLog';
+import { appendEvent, eventsOfType } from './eventLog';
 import { callersCard, closeTalkOfCard } from './reorientationTalk';
 import { OPEN_WORK_STATES, ownerAgents } from './reorientationReach';
 import { amendCharterInTransaction } from './charters';
@@ -834,11 +834,10 @@ async function byHandChangesToday(
   agent: Doc<'agents'>,
   now: number,
 ): Promise<number> {
-  const opened = await ctx.db
-    .query('events')
-    .withIndex('by_agent_type', (q) =>
-      q.eq('agentId', agent._id).eq('type', 'reorientation.opened'),
-    )
+  // A day in any zone began less than twenty-six hours ago, a change of clocks included.
+  const opened = await eventsOfType(ctx, agent._id, 'reorientation.opened', {
+    from: now - 26 * 3_600_000,
+  })
     .order('desc')
     .take(DAY_CHANGES_READ);
   if (opened.length === DAY_CHANGES_READ) return BY_HAND_CARDS_A_DAY;
