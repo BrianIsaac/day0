@@ -35,10 +35,10 @@ import type { WorkDoneAnswer } from '../src/work/types';
 /*
  * The landing page's roster: one row per employee of an owner. The home reads it by pages
  * through {@link page} (wave 17, 17-F; RM33 (a)), so an owner of fifty employees sees every one,
- * each row's day and month read at the viewer's own clock. `agents.rosterForUser`, which
- * validates and authorises and calls {@link rosterOf} (standard 9.3), still answers the twenty
- * newest at the backend's clock for a page loaded before wave 17. Moved out of `convex/agents.ts`
- * to keep that module under the standard's soft 1,000 lines (9.2).
+ * each row's day and month read at the viewer's own clock. `agents.rosterForUser`, which answered
+ * the twenty newest at the backend's clock for a page loaded before wave 17, is gone since 0.22.0
+ * (wave 18, F-1). Moved out of `convex/agents.ts` to keep that module under the standard's soft
+ * 1,000 lines (9.2).
  */
 
 /** The longest role line the roster shows, the ellipsis included. */
@@ -50,7 +50,7 @@ const CHARTER_PENDING_ROLE_LINE = 'charter pending';
 /** The role line of an approved charter whose body states no function. */
 const ROLE_NOT_STATED = 'role not stated';
 
-/** The most employees one read of the roster lists: `rosterForUser`'s all, and one page's. */
+/** The most employees one page of the roster lists. */
 const ROSTER_LIMIT = 20;
 
 /**
@@ -189,7 +189,7 @@ const oneToOnePhaseKindValidator = v.union(
   ...ONE_TO_ONE_PHASE_KINDS.map((kind: OneToOnePhase['kind']) => v.literal(kind)),
 );
 
-/** One employee as the landing page lists it, as `agents.rosterForUser` answers it. */
+/** One employee as the landing page lists it, as a page of `roster.page` answers it. */
 export const rosterRowValidator = v.object({
   agentId: v.id('agents'),
   name: v.string(),
@@ -439,27 +439,6 @@ async function rosterRows(
       };
     }),
   );
-}
-
-/**
- * The owner's newest employees, one row each ({@link rosterRows}), at the backend's clock:
- * `agents.rosterForUser`'s answer. Evaluation agents and the baseline arm are left out.
- *
- * @param ctx - The query's context.
- * @param ownerKey - The owner whose employees are listed.
- * @returns At most `ROSTER_LIMIT` rows, newest first.
- */
-export async function rosterOf(ctx: QueryCtx, ownerKey: string): Promise<RosterRow[]> {
-  const agents = (
-    await ctx.db
-      .query('agents')
-      .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
-      .order('desc')
-      .take(ROSTER_SCAN_LIMIT)
-  )
-    .filter((agent) => !isEvaluationAgent(agent))
-    .slice(0, ROSTER_LIMIT);
-  return await rosterRows(ctx, ownerKey, agents, Date.now());
 }
 
 /** The last instant the roster's calendar is read at: the start of the last day Day0 counts. */

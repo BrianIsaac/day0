@@ -36,7 +36,7 @@ const PHASE_KINDS: Readonly<Record<OneToOnePhase['kind'], true>> = {
   drafted: true,
 };
 
-/** Every kind a one-to-one's phase can be, for a validator that must name each (`rosterForUser`). */
+/** Every kind a one-to-one's phase can be, for a validator that must name each (the roster's row). */
 export const ONE_TO_ONE_PHASE_KINDS = Object.keys(PHASE_KINDS) as ReadonlyArray<
   OneToOnePhase['kind']
 >;

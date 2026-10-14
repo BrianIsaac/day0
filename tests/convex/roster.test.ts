@@ -12,11 +12,12 @@ import { guardRefusal } from './fakes/anonymous-caller';
 import { fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 import { registeredIn } from './registered-functions';
 import * as rosterModule from '../../convex/roster';
+import { rosterRows } from './fakes/roster';
 
 /*
- * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). The roster
- * query (`agents.rosterForUser`) is tested where its path is, in `agents.test.ts`; what wave 17
- * changed of a row's reading (17-F) is tested here, through the same query.
+ * The roster's helpers, moved out of `convex/agents.ts` with them (standard 9.2). A row's reading
+ * is tested in `agents.test.ts` and here, through the page the home reads (`roster.page`; the one
+ * read of the twenty newest, `agents.rosterForUser`, is gone since 0.22.0, F-1).
  */
 
 type Harness = TestConvex<typeof schema>;
@@ -99,9 +100,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await log('work.retry', '2026-10-13T06:34:00Z');
     await log('work.completed', '2026-10-13T06:35:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
@@ -123,9 +122,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await partly('work.retry', '2026-10-12T08:00:00Z');
     await partly('work.completed', '2026-10-13T01:00:00Z', 'partial');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 0, partly: 1 }]);
   });
@@ -139,9 +136,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     await log('work.completed', '2026-10-12T06:10:00Z', 'not-done');
     await log('work.completed', '2026-10-13T06:35:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth.days).toEqual([{ day: '2026-10-13', landed: 1 }]);
   });
@@ -165,9 +160,7 @@ describe('what an employee landed this month, after a send-back (the v0.20.0 wal
     }
     await busy('work.completed', '2026-10-06T06:00:00Z', 'done');
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     // The send-back of the 3rd is past the hundred read: the item it took back is not landed.
     expect(row?.landedThisMonth).toEqual({
@@ -195,9 +188,7 @@ describe('what an employee landed this month, at exactly the send-backs it reads
       );
     }
 
-    const [row] = await harness
-      .withIdentity(managerIdentity('owner'))
-      .query(api.agents.rosterForUser, {});
+    const [row] = await rosterRows(harness.withIdentity(managerIdentity('owner')));
 
     expect(row?.landedThisMonth).toEqual({
       month: '2026-10',
