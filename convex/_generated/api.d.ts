@@ -90,6 +90,7 @@ import type * as refreshLease from '../refreshLease.js';
 import type * as reorientation from '../reorientation.js';
 import type * as reorientationActions from '../reorientationActions.js';
 import type * as reorientationDecisions from '../reorientationDecisions.js';
+import type * as reorientationJudgementInput from '../reorientationJudgementInput.js';
 import type * as reorientationPatterns from '../reorientationPatterns.js';
 import type * as reorientationReach from '../reorientationReach.js';
 import type * as reorientationTalk from '../reorientationTalk.js';
@@ -235,6 +236,7 @@ declare const fullApi: ApiFromModules<{
   reorientation: typeof reorientation;
   reorientationActions: typeof reorientationActions;
   reorientationDecisions: typeof reorientationDecisions;
+  reorientationJudgementInput: typeof reorientationJudgementInput;
   reorientationPatterns: typeof reorientationPatterns;
   reorientationReach: typeof reorientationReach;
   reorientationTalk: typeof reorientationTalk;

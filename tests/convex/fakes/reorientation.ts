@@ -3,7 +3,8 @@ import { vi } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type schema from '../../../convex/schema';
 import { internal } from '../../../convex/_generated/api';
-import { openCard, proposalBasis, type CardTrigger } from '../../../convex/reorientation';
+import { openCard, type CardTrigger } from '../../../convex/reorientation';
+import { proposalBasis } from '../../../convex/reorientationJudgementInput';
 import { MANAGER_ADDRESS, OWNER_SUBJECT } from './manager-identity';
 
 /*

@@ -3,7 +3,7 @@ import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/s
 import type { Doc, Id } from './_generated/dataModel';
 import { getCallerOrThrow } from './ownership';
 import { appendEvent } from './eventLog';
-import { proposalInputOf } from './reorientation';
+import { proposalInputOf } from './reorientationJudgementInput';
 import {
   oneToOneTurnValidator,
   reorientationProposalValidator,

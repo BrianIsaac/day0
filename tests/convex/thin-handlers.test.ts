@@ -119,13 +119,7 @@ describe('the registered functions of convex/work.ts, convex/reorientation.ts an
   });
 
   it('are each a validator, a guard and one call, in reorientation.ts but for the handlers named here', (): void => {
-    expect(thickHandlers('convex/reorientation.ts')).toEqual([
-      'holdingCard',
-      'proposalInput',
-      'recordProposalFailure',
-      'reopenDeferred',
-      'writeProposal',
-    ]);
+    expect(thickHandlers('convex/reorientation.ts')).toEqual(['holdingCard', 'reopenDeferred']);
   });
 
   it('are each a validator, a guard and one call, in metrics.ts but for the handlers named here', (): void => {
