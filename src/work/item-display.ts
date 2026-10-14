@@ -461,7 +461,7 @@ export interface TicketHolderView {
 
 /** A ticket as intake last saw it, in the two parts the card's line puts its time between. */
 export interface TicketLastSeen {
-  /** Where it stood: "in Backlog, unassigned, marked not to be automated". */
+  /** Where it stood: "in “Backlog”, unassigned, marked not to be automated". */
   readonly seen: string;
   /** Why intake refused it on that listing, as a sentence, when it did. */
   readonly refusal?: string;
@@ -485,7 +485,8 @@ export function ticketAsLastSeen(
   refused?: string,
   holder?: TicketHolderView,
 ): TicketLastSeen {
-  const state = tracker.state ? `in ${tracker.state}` : 'in a state the tracker did not name';
+  // The tracker's own name, quoted: "In Progress" read "in In Progress" (W17-R22).
+  const state = tracker.state ? `in “${tracker.state}”` : 'in a state the tracker did not name';
   const held = tracker.assigneeId
     ? holder === undefined
       ? 'assigned to someone in the tracker'

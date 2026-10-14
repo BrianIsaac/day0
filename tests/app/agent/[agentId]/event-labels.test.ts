@@ -51,6 +51,18 @@ describe('the live feed labels', (): void => {
     ).toBe('deferred reorientation card open again: a further change joined it: x');
   });
 
+  it('labels a failed run’s model call in the manager’s words (W17-R22)', (): void => {
+    expect(
+      eventLabel({
+        type: 'work.failed',
+        payload: {
+          reason:
+            'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-1-initial): prompt reply did not satisfy the schema',
+        },
+      }),
+    ).toBe('run failed (the model’s reply was not in the form Day0 reads)');
+  });
+
   it('labels a card a fan-out could not open by what it was about (17-O; W16-R23)', (): void => {
     expect(
       eventLabel({

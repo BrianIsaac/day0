@@ -15,6 +15,7 @@ import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
 import { decidedElsewhereOf } from '@/agent/reorientation-words';
+import { reasonInWords } from '@/work/stop';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -807,7 +808,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.dependent-authoring-claimed': 'closing phase started',
   'work.completed': (payload) => finishedAs(payload.output),
   'work.failed': (payload) =>
-    payload.stopped === true ? 'run stopped' : `run failed${because(payload.reason)}`,
+    payload.stopped === true
+      ? 'run stopped'
+      : `run failed${because(reasonInWords(payload.reason))}`,
   'work.actions-auto-applying': (payload) =>
     `applying ${counted(payload.autoIndexes?.length, 'action') ?? 'actions'} ${
       payload.autonomousActions === true ? 'autonomously' : 'automatically'

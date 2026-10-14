@@ -656,6 +656,21 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a failed run’s model call in the manager’s words, as the Work card does, never by its internal name (W17-R22)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.failed',
+          payload: {
+            reason:
+              'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-1-initial): prompt reply did not satisfy the schema',
+          },
+        },
+        subject,
+      ),
+    ).not.toContain('agentJson');
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',

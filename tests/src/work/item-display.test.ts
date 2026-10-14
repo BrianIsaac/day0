@@ -355,7 +355,9 @@ describe('ticketAsLastSeen', (): void => {
         stateType: 'started',
         doNotAutomate: false,
       }),
-    ).toEqual({ seen: 'in In Progress, assigned to someone in the tracker' });
+      // Re-pinned for W17-R22 (17-FW's C6): the tracker's own name for a state is quoted, so "In
+      // Progress" never reads "in In Progress".
+    ).toEqual({ seen: 'in “In Progress”, assigned to someone in the tracker' });
   });
 
   it('names the employee’s own identity holding the ticket, never its raw id (W12V-15)', (): void => {
@@ -369,10 +371,10 @@ describe('ticketAsLastSeen', (): void => {
     };
     expect(
       ticketAsLastSeen(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: true }),
-    ).toEqual({ seen: 'in Backlog, held by the account Iris works as in the tracker' });
+    ).toEqual({ seen: 'in “Backlog”, held by the account Iris works as in the tracker' });
     expect(
       ticketAsLastSeen(tracker, undefined, { employeeName: 'Iris', holderIsEmployee: false }),
-    ).toEqual({ seen: 'in Backlog, assigned to someone other than Iris in the tracker' });
+    ).toEqual({ seen: 'in “Backlog”, assigned to someone other than Iris in the tracker' });
   });
 
   it('says what the tracker did not name, the do-not-automate mark and a refusal', (): void => {
