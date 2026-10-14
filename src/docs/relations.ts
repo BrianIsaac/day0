@@ -226,6 +226,31 @@ export function namedSuccessor(
   return undefined;
 }
 
+/**
+ * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
+ * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
+ * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
+ * which its time is ({@link editedAtSource}).
+ */
+export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<string> = new Set(['urls', 'mcp', 'git']);
+
+/**
+ * Whether a stored page's time is when its source says it was edited (wave 17, 17-FD; D-8 (a)):
+ * what its row says (`datedBySource`, the reader's own word, false where it fell back to the time
+ * it read the page; a folder's file time counts as its source's, X-3), and for a row that does
+ * not say, the rule by its source's kind. Only an edit time dates a successor, and a card says
+ * "edited" of nothing else.
+ *
+ * @param page - The stored page's word on its time, if it holds one.
+ * @param source - Its source's kind.
+ */
+export function editedAtSource(
+  page: { readonly datedBySource?: boolean },
+  source: { readonly kind: string },
+): boolean {
+  return page.datedBySource ?? !KINDS_WITHOUT_EDIT_TIME.has(source.kind);
+}
+
 /** A figure in a line: a number with its separators, as written. */
 const FIGURE = /\d+(?:[.,:]\d+)*/g;
 
@@ -254,6 +279,21 @@ const WORDED_DATE = new RegExp(
   'i',
 );
 
+/**
+ * A figure that is an amount, not a year, though it may look like one: after a currency sign or
+ * a word that bounds a quantity ("above", "at most", 超过), or before a currency or a unit
+ * ("2000 USD", "1999 rows", "2000 元"). Taken out of a line before a year is looked for in it, so
+ * "Updated policy: refunds above 2000 USD" states a figure and is compared (17-FD's second pass,
+ * item 7: it read as dating its page, and two pages that disagreed on it were never a conflict).
+ */
+const AMOUNT = new RegExp(
+  [
+    '(?:[$£€¥]|\\b(?:above|over|under|below|than|up to|at most|at least|exceeding|beyond|within|max(?:imum)?|min(?:imum)?)\\s+|超过|高于|低于|不超过|至少|最多)\\s*\\d[\\d.,]*',
+    '\\d[\\d.,]*\\s*(?:(?:usd|eur|gbp|sgd|cny|rmb|jpy|hkd|aud|cad|chf|inr|myr|dollars?|euros?|pounds?|yuan|percent|units?|items?|rows?|words?|pages?|tickets?|records?|lines?|hours?|minutes?|days?|weeks?)\\b|%|元|美元|人民币|行|条|个|天|小时)',
+  ].join('|'),
+  'gi',
+);
+
 /** "3 May", "May 2026": the month, never the verb, so its capital is read. */
 const MAY_DATE = /\b\d{1,2}(?:st|nd|rd|th)?\s+May\b|\bMay\s+\d{1,4}\b/;
 
@@ -269,14 +309,13 @@ const VERSION_NUMBER = /\b(?:version|revision)\b\s*[:：]?\s*\d|版本\s*[:：]?
  * date in figures, a version beside its number, or a date word beside a date. A date word in a
  * sentence that states a figure is part of the sentence (the joins' W3c: "is reviewed within 2
  * working days" against "5 working days" was passed over for its "reviewed", and the pair
- * proposed as a duplicate).
+ * proposed as a duplicate), and so is an amount that looks like a year ({@link AMOUNT}).
  */
 function datesItsPage(line: string): boolean {
-  return (
-    FIGURE_DATE.test(line) ||
-    VERSION_NUMBER.test(line) ||
-    (DATE_WORD.test(line) && (WORDED_DATE.test(line) || MAY_DATE.test(line)))
-  );
+  if (FIGURE_DATE.test(line) || VERSION_NUMBER.test(line)) return true;
+  if (!DATE_WORD.test(line)) return false;
+  const dates = line.replace(AMOUNT, ' ');
+  return WORDED_DATE.test(dates) || MAY_DATE.test(dates);
 }
 
 /** A heading as the conflict measure compares it. */
