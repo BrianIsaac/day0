@@ -30,7 +30,7 @@ import {
   type EvaluationRun,
   type EvaluationTaskResult,
 } from '../evaluation/report';
-import { rereadRetainedEvidence } from '../evaluation/retained-reading';
+import { rereadRetainedEvidence, rereadSecondReading } from '../evaluation/retained-reading';
 import { mintDevNoAuthToken } from '../src/lib/dev-auth-token';
 import { MODEL_CALL_TIMEOUT_MS, MODEL_TEMPERATURE } from '../src/lib/mastra';
 import { MODEL } from '../src/lib/openai';
@@ -302,7 +302,9 @@ function usage(): string {
                            pass an earlier path to resume that run
   --regrade path.json      re-score a retained run into a new output; makes no model calls
   --reread path.json       read a stored run's out-of-scope rows again from its retained grades
-                           into a new output; needs no backend and makes no model calls
+                           into a new output: the two readings where it records neither, the
+                           second reading where it records them; needs no backend and makes no
+                           model calls
   --approval-delay-ms N    simulated human decision delay (default 750)
   --poll-ms N              state polling interval (default 500)
 `;
@@ -1252,21 +1254,29 @@ export async function runRegrade(
 /**
  * Read a stored run's out-of-scope rows again from its retained grades, for a
  * run whose backend is gone, and write the result as new evidence with its
- * report. No backend is opened and the source file is never touched.
+ * report. A run that records neither reading gains the two; one that records
+ * them, live or by an earlier re-read, gains the second reading alone. No
+ * backend is opened and the source file is never touched.
  *
- * @throws when the output exists, or the source is not evidence, is itself a re-read or already
- *   records the readings.
+ * @throws when the output exists, or the source is not evidence, is itself a re-read for the
+ *   second reading or already records it.
  */
 export async function runRetainedReread(
   options: CliOptions,
   dependencies: Pick<RegradeDependencies, 'commit' | 'now'> = {},
 ): Promise<EvaluationEvidence> {
   const { sourcePath, outPath, source } = await readRegradeSource(options, 'reread');
-  const evidence = rereadRetainedEvidence(source, {
+  const provenance = {
     path: recordedSourcePath(sourcePath),
     gradedAtCommit: dependencies.commit ?? currentCommit(),
     now: dependencies.now ?? new Date(),
-  });
+  };
+  const recordsReadings = source.runs.some((run) =>
+    run.tasks.some((task) => task.grade.facts.outOfScope !== undefined),
+  );
+  const evidence = recordsReadings
+    ? rereadSecondReading(source, provenance)
+    : rereadRetainedEvidence(source, provenance);
   await atomicWrite(outPath, `${JSON.stringify(evidence, null, 2)}\n`);
   await atomicWrite(reportPathFor(outPath), renderEvaluationReport(evidence));
   return evidence;
@@ -1337,7 +1347,11 @@ async function main(): Promise<void> {
     const reread = evidence.runs
       .flatMap((run) => run.tasks)
       .filter((task) => task.grade.facts.outOfScope !== undefined).length;
-    console.log(`[eval] re-read: ${reread} out-of-scope rows from their retained grades`);
+    const what =
+      evidence.regradedFrom?.basis === 'retained-grade-second-reading'
+        ? 'for the second reading'
+        : 'for the two readings';
+    console.log(`[eval] re-read: ${reread} out-of-scope rows ${what} from their retained grades`);
     console.log(`[eval] JSON: ${resolve(options.out)}`);
     console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
     return;

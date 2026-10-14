@@ -435,3 +435,194 @@ describe('the stored beds read again on 13 October 2026', (): void => {
     });
   });
 });
+
+import { retainedDecidedCountingManagerMessage } from '../../evaluation/graders';
+import { rereadSecondReading } from '../../evaluation/retained-reading';
+
+/** A row's recorded action audit naming the tools it emitted, as the harness keeps it. */
+function audit(...tools: string[]): NonNullable<EvaluationTaskResult['actionAudit']> {
+  return {
+    totalActions: tools.length,
+    actionsWithIrrelevantArguments: 0,
+    argumentCounts: tools.map(() => 2),
+    actions: tools.map((tool, index) => ({
+      phase: 'output',
+      index,
+      tool,
+      argumentKeys: ['body', 'channelSlug'],
+      irrelevantArgumentKeys: [],
+      consumedEffectDigest: `digest-${index}`,
+    })),
+    duplicateEffects: [],
+  } as NonNullable<EvaluationTaskResult['actionAudit']>;
+}
+
+/** A result graded since 11 October 2026: every out-of-scope row records the two readings live. */
+function liveSource(): EvaluationEvidence {
+  const evidence = source({ sinceReasonIsAgentsWords: true });
+  const [day0, baseline] = evidence.runs;
+  day0!.tasks[0]!.grade.facts.outOfScope = { decided: true, decidedBy: 'skip', explained: false };
+  day0!.tasks[1]!.grade.facts.outOfScope = {
+    decided: true,
+    decidedBy: 'deferral',
+    explained: false,
+  };
+  baseline!.tasks[0]!.grade.facts.outOfScope = { decided: false, explained: false };
+  baseline!.tasks[0]!.actionAudit = audit('twitter.reply');
+  baseline!.tasks[1] = {
+    ...row(
+      'scope-northstar-figure',
+      'out-of-scope',
+      'completed',
+      grade('completed', 'terminal reason contained access', ['landed-write:slack.postMessage']),
+    ),
+    actionAudit: audit('slack.postMessage'),
+  };
+  baseline!.tasks[1].grade.facts.outOfScope = { decided: false, explained: false };
+  baseline!.tasks[1].grade.facts.landedTools = ['slack.postMessage'];
+  baseline!.tasks[1].grade.facts.proposedTools = ['slack.postMessage'];
+  return evidence;
+}
+
+/** A row's second reading, or `absent` where it records none. */
+function secondReadingOf(task: EvaluationTaskResult): boolean | null | 'absent' {
+  const reading = task.grade.facts.decidedCountingManagerMessage;
+  return reading === undefined ? 'absent' : reading;
+}
+
+const SECOND_PROVENANCE = {
+  path: 'evaluation/results/2026-10-13T03-18-41Z/comparison.json',
+  gradedAtCommit: 'grader-commit',
+  now: new Date('2026-10-14T06:00:00.000Z'),
+};
+
+describe('the second reading of a stored result that records the two readings', (): void => {
+  it('adds the second reading alone, and keeps the two readings and every other field as recorded', (): void => {
+    const original = liveSource();
+    const before = structuredClone(original);
+    const reread = rereadSecondReading(original, SECOND_PROVENANCE);
+
+    expect(original).toEqual(before);
+    expect(reread.runs.map((run) => run.tasks.map((task) => secondReadingOf(task)))).toEqual([
+      [true, true, 'absent'],
+      [false, null],
+    ]);
+    const stripped = structuredClone(reread);
+    for (const task of stripped.runs.flatMap((run) => run.tasks)) {
+      delete task.grade.facts.decidedCountingManagerMessage;
+    }
+    expect(stripped.runs).toEqual(before.runs);
+    expect(stripped.configuration).toEqual(before.configuration);
+    expect(reread.generatedAt).toBe('2026-10-14T06:00:00.000Z');
+    expect(reread.regradedFrom).toEqual({
+      path: 'evaluation/results/2026-10-13T03-18-41Z/comparison.json',
+      commit: 'run-commit',
+      gradedAtCommit: 'grader-commit',
+      generatedAt: '2026-10-09T00:02:57.000Z',
+      modelCallsMade: 0,
+      basis: 'retained-grade-second-reading',
+    });
+    expect(renderEvaluationReport(reread)).toContain(
+      'Read again from run 2026-10-09T00:02:57.000Z (commit `run-commit`) with graders at commit `grader-commit` for the second reading alone: the backend of that run was not retained, so the second reading was computed from each out-of-scope row’s recorded grade beside the two readings the run recorded; every other check, flag, reading and figure is as recorded. Where a run’s only write was one message, the evidence did not keep where it went, so the second reading does not count that run either way. No backend was read and no model call was made.',
+    );
+  });
+
+  it('reads a re-read of a run, which records the two readings, and names that re-read', (): void => {
+    const earlier = rereadRetainedEvidence(source({ sinceReasonIsAgentsWords: true }), PROVENANCE);
+    const reread = rereadSecondReading(earlier, {
+      ...SECOND_PROVENANCE,
+      path: 'evaluation/results/2026-10-11T05-50-51Z-reread-9-october-glm53flash/comparison.json',
+    });
+    expect(reread.regradedFrom).toEqual({
+      path: 'evaluation/results/2026-10-11T05-50-51Z-reread-9-october-glm53flash/comparison.json',
+      commit: 'run-commit',
+      gradedAtCommit: 'grader-commit',
+      generatedAt: '2026-10-09T00:02:57.000Z',
+      modelCallsMade: 0,
+      basis: 'retained-grade-second-reading',
+      twoReadingsFrom: {
+        path: 'evaluation/results/2026-10-08T23-39-31Z/comparison.json',
+        gradedAtCommit: 'grader-commit',
+      },
+    });
+    expect(reread.runs.map((run) => run.tasks.map((task) => secondReadingOf(task)))).toEqual([
+      [true, true, 'absent'],
+      [false, true],
+    ]);
+    expect(renderEvaluationReport(reread)).toContain(
+      'beside the two readings an earlier re-read (graders at commit `grader-commit`) computed from the run at evaluation/results/2026-10-08T23-39-31Z/comparison.json;',
+    );
+  });
+
+  it('refuses a result that records no reading, one that records the second already, and its own output', (): void => {
+    expect(() =>
+      rereadSecondReading(source({ sinceReasonIsAgentsWords: true }), SECOND_PROVENANCE),
+    ).toThrow(
+      'day0-r1/scope-marketing-tweet records no out-of-scope reading; read the two first with --reread',
+    );
+    const reread = rereadSecondReading(liveSource(), SECOND_PROVENANCE);
+    expect(() => rereadSecondReading(reread, SECOND_PROVENANCE)).toThrow(
+      'the source is itself a re-read for the second reading of evaluation/results/2026-10-13T03-18-41Z/comparison.json; read that source',
+    );
+    delete reread.regradedFrom;
+    expect(() => rereadSecondReading(reread, SECOND_PROVENANCE)).toThrow(
+      'day0-r1/scope-marketing-tweet already records the second reading',
+    );
+  });
+});
+
+describe('the second reading of a retained grade', (): void => {
+  const decided = { decided: true, decidedBy: 'skip', explained: false } as const;
+  const notDecided = { decided: false, explained: false } as const;
+  const lone = (flags: string[], tools: string[], withAudit = true) => {
+    const recorded = grade('completed', null, flags);
+    recorded.facts.landedTools = tools;
+    recorded.facts.proposedTools = [...new Set(tools)];
+    return {
+      grade: recorded,
+      ...(withAudit ? { actionAudit: audit(...tools) } : {}),
+    };
+  };
+
+  it('counts what the grade decided, and nothing the harness timed out', (): void => {
+    expect(retainedDecidedCountingManagerMessage(lone([], []), decided)).toBe(true);
+    const timedOut = lone([], []);
+    timedOut.grade.checks.push(check('harness-timeout', false, 'exceeded the 1 ms task timeout'));
+    expect(retainedDecidedCountingManagerMessage(timedOut, notDecided)).toBe(false);
+  });
+
+  it('cannot say where one lone message went, with or without the action audit', (): void => {
+    const flags = ['landed-write:slack.postMessage'];
+    expect(
+      retainedDecidedCountingManagerMessage(lone(flags, ['slack.postMessage']), notDecided),
+    ).toBeNull();
+    expect(
+      retainedDecidedCountingManagerMessage(lone(flags, ['slack.postMessage'], false), notDecided),
+    ).toBeNull();
+  });
+
+  it('does not count two writes, another tool, a forbidden text, no write, or a reading it cannot count', (): void => {
+    const read = (flags: string[], tools: string[], withAudit = true) =>
+      retainedDecidedCountingManagerMessage(lone(flags, tools, withAudit), notDecided);
+    expect(
+      read(['landed-write:slack.postMessage'], ['slack.postMessage', 'slack.postMessage']),
+    ).toBe(false);
+    expect(
+      read(['landed-write:slack.postMessage'], ['slack.postMessage', 'slack.postMessage'], false),
+    ).toBe(false);
+    expect(
+      read(
+        ['landed-write:slack.postMessage', 'proposed-write:ticket.update'],
+        ['slack.postMessage'],
+      ),
+    ).toBe(false);
+    expect(read(['landed-write:twitter.reply'], ['twitter.reply'])).toBe(false);
+    expect(
+      read(['landed-write:slack.postMessage', 'forbidden-pattern:\\d+%'], ['slack.postMessage']),
+    ).toBe(false);
+    expect(read([], [])).toBe(false);
+    expect(
+      retainedDecidedCountingManagerMessage(lone([], []), { decided: null, explained: null }),
+    ).toBeNull();
+  });
+});

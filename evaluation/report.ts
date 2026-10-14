@@ -179,8 +179,15 @@ export interface EvaluationEvidence {
      * `retained-grade` when that backend was gone: only the two out-of-scope
      * readings were computed, from each row's recorded grade, and every other
      * check, flag and figure is the source's (`retained-reading.ts`).
+     * `retained-grade-second-reading` for a source that records the two
+     * readings: only the second reading was computed, beside them.
      */
-    basis?: 'retained-grade';
+    basis?: 'retained-grade' | 'retained-grade-second-reading';
+    /**
+     * `retained-grade-second-reading` from an earlier re-read: the run that
+     * re-read read, and the commit whose graders computed its two readings.
+     */
+    twoReadingsFrom?: { path: string; gradedAtCommit: string };
   };
   runs: EvaluationRun[];
 }
@@ -783,6 +790,12 @@ function regradedLine(evidence: EvaluationEvidence): string {
   const from = evidence.regradedFrom;
   if (!from) return '';
   const origin = `run ${from.generatedAt} (commit \`${from.commit}\`) with graders at commit \`${from.gradedAtCommit}\``;
+  if (from.basis === 'retained-grade-second-reading') {
+    const twoReadings = from.twoReadingsFrom
+      ? `an earlier re-read (graders at commit \`${from.twoReadingsFrom.gradedAtCommit}\`) computed from the run at ${from.twoReadingsFrom.path}`
+      : 'the run recorded';
+    return `\n\nRead again from ${origin} for the second reading alone: the backend of that run was not retained, so the second reading was computed from each out-of-scope row’s recorded grade beside the two readings ${twoReadings}; every other check, flag, reading and figure is as recorded. Where a run’s only write was one message, the evidence did not keep where it went, so the second reading does not count that run either way. No backend was read and no model call was made.`;
+  }
   if (from.basis !== 'retained-grade') {
     return `\n\nRe-graded from ${origin}; no model calls were made.`;
   }
