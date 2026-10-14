@@ -1376,6 +1376,30 @@ describe("check:setup: the proxy's address on the deployment (P-14)", (): void =
   });
 });
 
+// The 18-P bed (day0-w18p, 14 October 2026): the redactor's first start behind the forward proxy
+// asked for three hosts no list named. Its own log lines are the input.
+describe("check:setup's host list: the redactor's first start, as the bed's proxy saw it", (): void => {
+  const SEEN = [
+    '{"from":"10.118.247.5","method":"CONNECT","target":"pypi.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"files.pythonhosted.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"download.pytorch.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"download-r2.pytorch.org:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"huggingface.co:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"cas-server.xethub.hf.co:443"}',
+    '{"from":"10.118.247.5","method":"CONNECT","target":"us.aws.cdn.hf.co:443"}',
+  ];
+
+  it('names every host the redactor reached on its first start', (): void => {
+    const listed = egressHosts({ DAY0_SURFACE_MODE: 'real', OPENAI_API_KEY: 'k' }, [], 'x64').map(
+      (row) => row.host,
+    );
+    for (const line of SEEN) {
+      const host = (JSON.parse(line) as { target: string }).target.replace(/:443$/, '');
+      expect(listed, host).toContain(host);
+    }
+  });
+});
+
 describe("the support report's sign-in lines", (): void => {
   it("carries each sign-in check's name and verdict, and none of its lines", (): void => {
     const report = setupReport({

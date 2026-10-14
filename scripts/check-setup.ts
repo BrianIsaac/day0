@@ -1972,9 +1972,23 @@ export function egressHosts(
     }
     add('api.notion.com', 'the Notion documentation component, when a Notion source is linked');
     add('huggingface.co', "the redactor's model snapshot, on its first start");
+    // The snapshot's files come from Hugging Face's own storage, whose hosts it picks: the two the
+    // 18-P bed's forward proxy saw on 14 October 2026 (day0-w18p), as `wss-primary.slack.com` is.
+    add(
+      'cas-server.xethub.hf.co',
+      "the redactor's model files, on its first start (Hugging Face's storage picks the host; the one seen in October 2026 was this)",
+    );
+    add(
+      'us.aws.cdn.hf.co',
+      "the redactor's model files, on its first start (Hugging Face's storage picks the host; the one seen in October 2026 was this)",
+    );
     add('pypi.org', "the redactor's wheels, on its first start");
     add('files.pythonhosted.org', "the redactor's wheels, on its first start");
     add('download.pytorch.org', "the redactor's CPU build of torch, on its first start");
+    add(
+      'download-r2.pytorch.org',
+      "the redactor's CPU build of torch, on its first start (download.pytorch.org sends it there)",
+    );
     add('registry.npmjs.org', "the Notion component's pinned package, on its first start");
   }
   if (

@@ -156,7 +156,8 @@ by what needs each:
 | `oauth2.googleapis.com`, `www.googleapis.com` | a Google Drive documentation source |
 | `api.notion.com` | the Notion documentation component, when a Notion source is linked (directly: see above) |
 | `huggingface.co` | the redactor's model snapshot, on its first start |
-| `pypi.org`, `files.pythonhosted.org`, `download.pytorch.org` | the redactor's wheels, on its first start |
+| `cas-server.xethub.hf.co`, `us.aws.cdn.hf.co` | the redactor's model files, on its first start. Hugging Face's storage picks the hosts; these are the ones seen in October 2026 |
+| `pypi.org`, `files.pythonhosted.org`, `download.pytorch.org`, `download-r2.pytorch.org` | the redactor's wheels, on its first start (`download.pytorch.org` sends torch's on to `download-r2.pytorch.org`) |
 | `registry.npmjs.org` | the Notion component's pinned package, on its first start (directly: see above) |
 | `registry.ollama.ai` | model pulls, with the bundled model service only (directly: see above) |
 | `app.daytona.io`, or the one `DAYTONA_API_URL` names | the hosted sandbox, when `DAYTONA_API_KEY` is set |
