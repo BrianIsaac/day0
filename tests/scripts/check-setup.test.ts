@@ -1242,6 +1242,32 @@ describe("the support report's sign-in lines", (): void => {
   });
 });
 
+// W17-R28 (reader 5): the support report keeps each section's title, and the way out's named the
+// proxy's host and port, where the report carries nothing of the configuration but hostnames of
+// what Day0 reaches.
+describe("the support report's way-out title (W17-R28)", (): void => {
+  it('says the way out is through a proxy, and names no proxy', (): void => {
+    const values = {
+      HTTPS_PROXY: 'http://proxy.internal.acme.test:3128',
+      DAY0_PUBLIC_URL: 'https://day0.acme.test',
+    };
+    const section = wayOutSection(values, [], 'v22.23.2', 'x64');
+    expect(section.title).toBe('The way out: through the proxy at proxy.internal.acme.test:3128');
+    const report = setupReport({
+      values,
+      sections: [section],
+      versions: {},
+      images: [],
+      digests: {},
+      generatedAt: '2026-10-14T09:00:00.000Z',
+    });
+    expect(report.sections).toEqual([
+      { title: 'The way out: through a proxy', status: section.status },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('proxy.internal.acme.test');
+  });
+});
+
 describe('check:setup: the access block (11-AI)', (): void => {
   const ACCESS_VALUES = {
     DAY0_PROFILE: 'customer-local',

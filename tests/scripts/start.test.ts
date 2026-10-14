@@ -24,6 +24,19 @@ describe('the address pnpm start binds (P-1)', (): void => {
     expect(startArguments('127.0.0.1', '3000')).toEqual(['start', '-H', '127.0.0.1', '-p', '3000']);
   });
 
+  // W17-R28 (reader 5): the contributors' table and the README's company sign-in still said
+  // `pnpm start` is `next start` on 3000, after 17-P made it this script on loopback.
+  it('is described as it starts, never as next start on 3000 (W17-R28)', (): void => {
+    const contributing = readFileSync('CONTRIBUTING.md', 'utf8');
+    const readme = readFileSync('README.md', 'utf8');
+    expect(contributing).not.toContain('`next start` on 3000');
+    expect(contributing).toContain(
+      '| `pnpm start` | The built app on `127.0.0.1`, its port `PORT`, then `DAY0_APP_PORT`, then 3000',
+    );
+    expect(readme).not.toContain('the first install runs `next start`');
+    expect(readme).toContain('the first install runs `pnpm start`');
+  });
+
   it('is what package.json runs for pnpm start', (): void => {
     const scripts = (
       JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }

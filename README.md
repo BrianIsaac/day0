@@ -456,7 +456,7 @@ A customer install is real mode under the customer's own sign-in, behind the cus
 
 ### The company sign-in (customer-local)
 
-Installed at a customer, Day0 signs people in through the customer's own identity provider, never Clerk or the local key: `DAY0_PROFILE=customer-local`. It is an install kit we run with the customer's IT, not a self-service feature, and the first install runs `next start` behind the customer's https proxy. On an installation `./setup.sh --route ...` made:
+Installed at a customer, Day0 signs people in through the customer's own identity provider, never Clerk or the local key: `DAY0_PROFILE=customer-local`. It is an install kit we run with the customer's IT, not a self-service feature, and the first install runs `pnpm start` behind the customer's https proxy. On an installation `./setup.sh --route ...` made:
 
 ```bash
 ./setup.sh sign-in --provider entra     # or okta, or google; asks for what no flag names
@@ -1615,7 +1615,7 @@ pnpm convex:down                 # the backend; the data volume stays
 
 #### 公司登录（customer-local）
 
-在客户处安装时，Day0 通过客户自己的身份提供方让人员登录，绝不使用 Clerk 或本机密钥：`DAY0_PROFILE=customer-local`。这是一个由我们与客户 IT 一起执行的安装套件，而不是自助功能；首次安装在客户的 https 反向代理之后直接运行 `next start`。在由 `./setup.sh --route ...` 完成的安装上：
+在客户处安装时，Day0 通过客户自己的身份提供方让人员登录，绝不使用 Clerk 或本机密钥：`DAY0_PROFILE=customer-local`。这是一个由我们与客户 IT 一起执行的安装套件，而不是自助功能；首次安装在客户的 https 反向代理之后运行 `pnpm start`。在由 `./setup.sh --route ...` 完成的安装上：
 
 ```bash
 ./setup.sh sign-in --provider entra     # 或 okta、google；未由参数给出的内容会逐项询问

@@ -227,6 +227,11 @@ export interface Section {
   title: string;
   status: Status;
   lines: string[];
+  /**
+   * The title the support report carries where the one printed names something of the
+   * configuration beyond a host Day0 reaches (W17-R28: the way out's proxy address).
+   */
+  reportTitle?: string;
 }
 
 type Values = Record<string, string>;
@@ -2035,11 +2040,13 @@ export function wayOutSection(
     if (to === 'gap' || status === 'ok') status = to;
   };
   let title = 'The way out: direct';
+  let reportTitle: string | undefined;
   if (!proxyConfigured(settings)) {
     lines.push('No proxy is named (HTTPS_PROXY), so every service dials out directly.');
   } else {
     const address = settings.httpsProxy ?? settings.httpProxy ?? '';
     title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
+    reportTitle = 'The way out: through a proxy';
     lines.push(
       'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
       'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
@@ -2113,7 +2120,12 @@ export function wayOutSection(
     'The hosts this configuration reaches, each by what needs it (docs/running/egress.md):',
     ...egressHosts(v, connections, architecture).map((row) => `  ${row.host}: ${row.purpose}`),
   );
-  return { title: titleFor(status, title), status, lines };
+  return {
+    title: titleFor(status, title),
+    status,
+    lines,
+    ...(reportTitle === undefined ? {} : { reportTitle: titleFor(status, reportTitle) }),
+  };
 }
 
 /** The Dockerfile a compose service is built from, by its path from the compose file. */
@@ -2222,7 +2234,10 @@ export function setupReport(inputs: {
       inputs.connections,
       daemonArchitecture(inputs.versions.docker) ?? process.arch,
     ),
-    sections: inputs.sections.map(({ title, status }) => ({ title, status })),
+    sections: inputs.sections.map(({ title, reportTitle, status }) => ({
+      title: reportTitle ?? title,
+      status,
+    })),
     ...(inputs.signIn === undefined
       ? {}
       : { signIn: inputs.signIn.map(({ name, status }) => ({ check: name, status })) }),
