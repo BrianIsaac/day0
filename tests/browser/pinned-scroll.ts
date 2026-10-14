@@ -30,6 +30,16 @@ export const SPEEDS = [
   { tag: 'fast', px: 48 },
 ] as const;
 
+/**
+ * Chromium's flags for a scroll pass whose frames follow the work, not the display's 60 Hz. A
+ * reader's speed is pixels per animation frame, so a pass reads the same frames either way; paced
+ * at 60 Hz, the slow pass at 1440 spent most of its budget waiting for vsync, 54 s of the
+ * landing's 90 and 174 s of the walkthrough's 240 on a quiet machine, and ran past both under
+ * load (18-G). The rests between stops stay timed: the frames' transitions and the run's clock
+ * are the page's own wall-clock motion.
+ */
+export const UNPACED_FRAMES = ['--disable-frame-rate-limit', '--disable-gpu-vsync'];
+
 /** The scroll position at which step `step` sits at a reader's `stop`. */
 export function stopFor(page: Page, step: number, stop: ReaderStop): Promise<number> {
   return page.evaluate(

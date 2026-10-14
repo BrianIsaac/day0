@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from 'playwright/test';
 import { THEMES, chooseTheme, expectDrawnIn } from './theme';
 import { RECORDED_RUN, elapsedLabel } from '../../src/demo/walkthrough';
-import { SPEEDS, atRest, readStop, type ReaderStop } from './pinned-scroll';
+import { SPEEDS, UNPACED_FRAMES, atRest, readStop, type ReaderStop } from './pinned-scroll';
 
 /**
  * The walkthrough's pinned device frame, proved the way UX round four proved its prototype
@@ -45,6 +45,8 @@ interface StopResult {
 }
 
 const results: StopResult[] = [];
+
+test.use({ launchOptions: { args: UNPACED_FRAMES } });
 
 /** The clock the frame bar shows at rest. */
 function clock(page: Page): Promise<string> {

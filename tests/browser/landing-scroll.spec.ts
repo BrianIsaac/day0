@@ -1,6 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test, type Page } from 'playwright/test';
+import { UNPACED_FRAMES } from './pinned-scroll';
 import { THEMES, chooseTheme, expectDrawnIn } from './theme';
 
 /**
@@ -48,6 +49,8 @@ interface StopResult {
 }
 
 const results: StopResult[] = [];
+
+test.use({ launchOptions: { args: UNPACED_FRAMES } });
 
 /** The scroll position at which step `step` sits at a reader's `stop`. */
 function target(page: Page, step: number, stop: Stop): Promise<number> {
