@@ -1680,7 +1680,7 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
       notified: true,
     });
     expect(await noticeTexts(harness)).toEqual([
-      'Which one? This plan has 2 questions open: answer with its number, for example “answer ab3xyz 2 B”. They are: 1, under “Thresholds”; 2, under “Owners”.',
+      'Which one? This plan has 2 questions open: 1, under “Thresholds”, “Finance escalation” or “Pipeline runbook”; 2, under “Owners”, “Finance escalation” or “Pipeline runbook”. Answer with its number, for example “answer ab3xyz 2 B”.',
     ]);
     expect((await questionsOf(harness, workItemId)).map((question) => question.answer)).toEqual([
       undefined,

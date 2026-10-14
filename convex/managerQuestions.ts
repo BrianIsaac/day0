@@ -21,6 +21,7 @@ import {
   conflictsOnPlanBlocks,
   planLeansOnConflict,
   standingConflictOf,
+  type StandingConflict,
 } from './docConflicts';
 import type { CiteConflictPage } from '../src/work/types';
 import type { RequestQuestion } from '../src/work/manager-channel';
@@ -493,6 +494,8 @@ export interface NumberedConflictQuestion {
   readonly question: Doc<'managerQuestions'>;
   /** Whether it still waits for its answer and its conflict still stands. */
   readonly standing: boolean;
+  /** The conflict as it stands, its two pages named, while it is standing. */
+  readonly conflict?: StandingConflict;
 }
 
 /**
@@ -516,10 +519,12 @@ export async function numberedConflictQuestions(
       isOpenQuestion(question) && question.relationId !== undefined
         ? await ctx.db.get(question.relationId)
         : null;
+    const conflict = relation === null ? undefined : await standingConflictOf(ctx, relation);
     numbered.push({
       number: index + 1,
       question,
-      standing: relation !== null && (await standingConflictOf(ctx, relation)) !== undefined,
+      standing: conflict !== undefined,
+      ...(conflict === undefined ? {} : { conflict }),
     });
   }
   return numbered;

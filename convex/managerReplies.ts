@@ -23,7 +23,9 @@ import {
 import {
   CONFLICT_CHOICES,
   CONFLICT_QUESTION_CLOSED,
+  pagePlaces,
   type ConflictChoice,
+  type NamedPageWords,
 } from '../src/agent/reorientation-words';
 import {
   approveActionsInTransaction,
@@ -309,22 +311,43 @@ async function managerReplyNoticeAnchor(
   );
 }
 
+/** One standing question as "Which one?" names it: its number, its heading and its two pages. */
+export interface WhichQuestion {
+  readonly number: number;
+  readonly heading: string;
+  readonly pages: readonly [NamedPageWords, NamedPageWords];
+}
+
+/**
+ * One of a question's two pages as "Which one?" names it: its title, and where the two titles are
+ * alike, what tells them apart (W17-R1's place, or the source where the sources differ).
+ */
+function whichPageName(pages: readonly [NamedPageWords, NamedPageWords], index: 0 | 1): string {
+  const page = pages[index];
+  const title = `“${slackEscaped(page.title)}”`;
+  if (pages[0].title !== pages[1].title) return title;
+  const place =
+    pagePlaces(pages)[index] ?? (pages[0].source !== pages[1].source ? page.source : undefined);
+  return place === undefined ? title : `${title} (${slackEscaped(place)})`;
+}
+
 /**
  * What Day0 answers a bare `answer {code} B` while several of the plan's questions stand (17-C;
- * section 7's draft, with the open questions named after it so the reply can be acted on from a
- * message that showed no number): nothing is decided. A heading is a page's own words, so it is
- * escaped as Slack asks and never read as a mention or a link.
+ * section 7's draft, W17-R13): each open question by its number, its heading and its two pages,
+ * so two conflicts under one heading read apart, then how to answer. Nothing is decided. A
+ * heading and a title are a page's own words, so they are escaped as Slack asks and never read as
+ * a mention or a link.
  */
-export function whichQuestionText(
-  id: string,
-  open: ReadonlyArray<{ readonly number: number; readonly heading: string }>,
-): string {
+export function whichQuestionText(id: string, open: readonly WhichQuestion[]): string {
   const example = open[1]?.number ?? open[0]?.number ?? 1;
-  // Each carries a comma of its own, so the list is set off by semicolons.
+  // Each carries commas of its own, so the list is set off by semicolons.
   const named = open
-    .map((question) => `${question.number}, under “${slackEscaped(question.heading)}”`)
+    .map(
+      (question) =>
+        `${question.number}, under “${slackEscaped(question.heading)}”, ${whichPageName(question.pages, 0)} or ${whichPageName(question.pages, 1)}`,
+    )
     .join('; ');
-  return `Which one? This plan has ${open.length} questions open: answer with its number, for example “answer ${id} ${example} B”. They are: ${named}.`;
+  return `Which one? This plan has ${open.length} questions open: ${named}. Answer with its number, for example “answer ${id} ${example} B”.`;
 }
 
 /**
@@ -382,10 +405,17 @@ async function answerFromChannel(
       'several questions open',
       whichQuestionText(
         decisionId,
-        standing.map((question) => ({
-          number: question.number,
-          heading: question.question.context.text,
-        })),
+        standing.flatMap((question) =>
+          question.conflict === undefined
+            ? []
+            : [
+                {
+                  number: question.number,
+                  heading: question.question.context.text,
+                  pages: [question.conflict.from, question.conflict.to] as const,
+                },
+              ],
+        ),
       ),
     );
   }
