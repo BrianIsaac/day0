@@ -3,6 +3,7 @@ import { internalMutation, mutation, type MutationCtx, type QueryCtx } from './_
 import type { Doc, Id } from './_generated/dataModel';
 import { internal } from './_generated/api';
 import { copyPageStatusToBlocks } from './docBlocks';
+import { remeasureAfterDating } from './docRelationsRemeasure';
 import { appendEvent } from './eventLog';
 import { openCards, type CardTrigger } from './reorientation';
 import { getCallerOrThrow, verifiedAddressOf } from './ownership';
@@ -482,6 +483,9 @@ export const recordRead = internalMutation({
       Object.keys(filled).length > 0
     ) {
       await ctx.db.patch(page._id, { ...inputs, ...filled });
+    }
+    if (filled.datedBySource !== undefined) {
+      await remeasureAfterDating(ctx, source, page, filled.datedBySource);
     }
     const now = Date.now();
     const change = await restatePage(ctx, { source, page: { ...page, ...inputs }, now });

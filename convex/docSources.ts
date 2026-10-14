@@ -25,6 +25,7 @@ import { sha256OfText } from '../src/lib/sha256';
 import { agentReadsSource } from '../src/docs/agent-sources';
 import { readableDocs } from './mock';
 import { forgetProposalsOf } from './docRelationProposals';
+import { remeasureAfterDating } from './docRelationsRemeasure';
 import { stampRemovedPages } from './docStatus';
 import {
   endedShort,
@@ -2025,6 +2026,12 @@ export const upsertPage = internalMutation({
             : {}),
         };
         if (Object.keys(filled).length > 0) await ctx.db.patch(existing._id, filled);
+        if (filled.datedBySource !== undefined) {
+          const source = await ctx.db.get(args.sourceId);
+          if (source !== null) {
+            await remeasureAfterDating(ctx, source, existing, filled.datedBySource);
+          }
+        }
         return existing._id;
       }
       await ctx.db.patch(existing._id, page);

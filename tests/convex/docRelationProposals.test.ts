@@ -788,6 +788,91 @@ describe('the dated successor between copies (RM19 (a))', (): void => {
     }
   });
 
+  it('removes a stale dated successor at the next measure once a fill changes a page’s dating, kept or stored again (W17-R16)', async (): Promise<void> => {
+    // The review's W17-R16: the K-2 fill wrote the field and nothing else, and a kept page is
+    // never measured again, so a 0.20.0 dated successor whose page is now dated by its read stood
+    // with its card saying "last read" beside "edited 3 days after".
+    for (const fill of ['kept by its hash', 'stored unchanged'] as const) {
+      const harness = convexTest(schema, allConvexModules());
+      const { folder, copies } = await twoCopies(harness);
+      expect(await measure(harness, folder, 'revops/runbooks/how-to-refresh-the-tile.md')).toBe(1);
+      expect(await relations(harness)).toMatchObject([
+        { kind: 'possible_successor', status: 'proposed' },
+      ]);
+      // The next sync of the copies meets the copy unchanged, and its reader says its time is
+      // when it read it.
+      if (fill === 'kept by its hash') {
+        await harness.mutation(internal.docStatus.recordRead, {
+          sourceId: copies.sourceId,
+          syncRunId: copies.runId,
+          ref: 'tile-refresh.md',
+          datedBySource: false,
+        });
+      } else {
+        const page = (await harness.run(
+          async (ctx) =>
+            await ctx.db
+              .query('docPages')
+              .withIndex('by_source_ref', (q) =>
+                q.eq('sourceId', copies.sourceId).eq('ref', 'tile-refresh.md'),
+              )
+              .unique(),
+        ))!;
+        await harness.mutation(internal.docSources.upsertPage, {
+          sourceId: copies.sourceId,
+          syncRunId: copies.runId,
+          ref: page.ref,
+          title: page.title,
+          markdown: page.markdown,
+          updatedAt: page.updatedAt,
+          datedBySource: false,
+        });
+      }
+      // Two syncs that changed nothing put both pages out of every look-back: only a mark on the
+      // source owes them a measure.
+      for (const source of [folder, copies]) {
+        await completedWalk(harness, source.sourceId);
+        await completedWalk(harness, source.sourceId);
+      }
+      await harness.action(
+        internal.docSyncActions.proposeRelations,
+        await completedWalk(harness, copies.sourceId),
+      );
+      await harness.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await relations(harness), fill).toMatchObject([
+        { kind: 'possible_duplicate', status: 'proposed' },
+      ]);
+      expect(
+        (await harness.run(async (ctx) => await ctx.db.get(copies.sourceId)))?.relationsRemeasure,
+      ).toBeUndefined();
+    }
+  });
+
+  it('marks no source for a fill that leaves a page’s dating as its kind gave it, or where no card rests on it', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const { folder, copies } = await twoCopies(harness);
+    const remeasureOf = async (sourceId: Id<'docSources'>) =>
+      (await harness.run(async (ctx) => await ctx.db.get(sourceId)))?.relationsRemeasure;
+    // A folder's file is dated by its source: the fill says what the kind said.
+    await harness.mutation(internal.docStatus.recordRead, {
+      sourceId: folder.sourceId,
+      syncRunId: folder.runId,
+      ref: 'revops/runbooks/how-to-refresh-the-tile.md',
+      datedBySource: true,
+    });
+    // No relation of the copy yet: nothing a measure would take back.
+    await harness.mutation(internal.docStatus.recordRead, {
+      sourceId: copies.sourceId,
+      syncRunId: copies.runId,
+      ref: 'tile-refresh.md',
+      datedBySource: false,
+    });
+    expect([await remeasureOf(folder.sourceId), await remeasureOf(copies.sourceId)]).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
   it('gives an unanswered duplicate of the pair way to the successor, and leaves one the manager answered', async (): Promise<void> => {
     for (const answered of [undefined, 'confirmed', 'dismissed'] as const) {
       const harness = convexTest(schema, allConvexModules());

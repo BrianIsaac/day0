@@ -226,6 +226,31 @@ export function namedSuccessor(
   return undefined;
 }
 
+/**
+ * The kinds of source whose reader gives no edit time: a page's time is when it was read (a list
+ * of URLs, an MCP server), or when a fresh checkout wrote its file (git), so it dates no successor
+ * and its card says "last read". The rule for a page stored before 0.21.0, whose row does not say
+ * which its time is ({@link editedAtSource}).
+ */
+export const KINDS_WITHOUT_EDIT_TIME: ReadonlySet<string> = new Set(['urls', 'mcp', 'git']);
+
+/**
+ * Whether a stored page's time is when its source says it was edited (wave 17, 17-FD; D-8 (a)):
+ * what its row says (`datedBySource`, the reader's own word, false where it fell back to the time
+ * it read the page; a folder's file time counts as its source's, X-3), and for a row that does
+ * not say, the rule by its source's kind. Only an edit time dates a successor, and a card says
+ * "edited" of nothing else.
+ *
+ * @param page - The stored page's word on its time, if it holds one.
+ * @param source - Its source's kind.
+ */
+export function editedAtSource(
+  page: { readonly datedBySource?: boolean },
+  source: { readonly kind: string },
+): boolean {
+  return page.datedBySource ?? !KINDS_WITHOUT_EDIT_TIME.has(source.kind);
+}
+
 /** A figure in a line: a number with its separators, as written. */
 const FIGURE = /\d+(?:[.,:]\d+)*/g;
 
