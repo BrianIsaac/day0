@@ -42,14 +42,14 @@ import { actionsOf, verdictList } from './workLedger';
  * work-in-progress cap, so for them the bound is never reached; parked rows
  * hold no slot, so for them it is the most the inbox lists.
  */
-const NEEDS_YOU_STATE_READ_LIMIT = 100;
+export const NEEDS_YOU_STATE_READ_LIMIT = 100;
 
 /**
  * Bound on the stopped-row read, the roster's. Nothing caps the failed rows an
  * employee has, so the newest are read: a failure the manager has not seen yet
  * is never pushed out by old ones.
  */
-const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
+export const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
 
 /** Bound on an employee's surfaces read, newest first, for the ones proposed to the manager. */
 const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
@@ -67,8 +67,9 @@ export type StateRows = (
  * One employee's rows by state, each state read once a transaction at each bound, however many
  * readers ask for it: the roster counts the very rows its inbox entries list, and a row read twice
  * is charged twice against the transaction's bytes (18-W's F1, at the joins: eleven parked rows of
- * 900 KB, read by both, took the roster's page past its read). The roster's bounds equal this
- * module's (a hundred a state, twenty-five stopped), so the two share each read.
+ * 900 KB, read by both, took the roster's page past its read). The roster reads at this module's
+ * bounds ({@link NEEDS_YOU_STATE_READ_LIMIT}, {@link NEEDS_YOU_STOPPED_READ_LIMIT}), so the two
+ * share each read.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.

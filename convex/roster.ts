@@ -7,7 +7,13 @@ import { query, type QueryCtx } from './_generated/server';
 import { getCallerOrThrow } from './ownership';
 import schema from './schema';
 import { eventsOfType } from './eventLog';
-import { needsYouOfEmployee, stateRowsOnce, type StateRows } from './needsYou';
+import {
+  NEEDS_YOU_STATE_READ_LIMIT,
+  NEEDS_YOU_STOPPED_READ_LIMIT,
+  needsYouOfEmployee,
+  stateRowsOnce,
+  type StateRows,
+} from './needsYou';
 import { byWriteOrder, isEvaluationAgent, type ReadRoom } from './metrics';
 import {
   holdsLiveStepClaim,
@@ -66,16 +72,18 @@ const SURFACE_READ_LIMIT = 100;
 /**
  * Bound on each open-state read. Open rows are held to the work-in-progress
  * cap (`AUTONOMOUS_WIP_LIMIT` across all five states), so the bound keeps
- * the read finite and is never the count.
+ * the read finite and is never the count. The inbox's own bound, so the counts and the inbox
+ * entries share each state's read (`stateRowsOnce`, 18-W's F1).
  */
-const OPEN_STATE_READ_LIMIT = 100;
+const OPEN_STATE_READ_LIMIT = NEEDS_YOU_STATE_READ_LIMIT;
 
 /**
  * Bound on the stopped-row read. Nothing caps how many rows an employee has
  * in `failed`, and each carries its run's output, so the bound is lower than
- * the open one and is the most the list can show, the newest first.
+ * the open one and is the most the list can show, the newest first. The inbox's own bound, so the
+ * two share the read.
  */
-const STOPPED_READ_LIMIT = 25;
+const STOPPED_READ_LIMIT = NEEDS_YOU_STOPPED_READ_LIMIT;
 
 /** Bound on the owner's documentation sources read for the count. */
 const DOC_SOURCE_READ_LIMIT = 100;
