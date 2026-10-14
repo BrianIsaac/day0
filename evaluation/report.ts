@@ -136,6 +136,8 @@ export interface EvaluationEvidence {
     surfaceMode: 'mock';
     arms?: EvaluationArm[];
     requestedRuns: number;
+    /** The runs each arm was asked for; absent before 14 October 2026, when every arm ran `requestedRuns`. */
+    requestedRunsByArm?: Partial<Record<EvaluationArm, number>>;
     taskIds: string[];
     taskTimeoutMs?: Record<string, number>;
     approvalDelayMs: number;
@@ -840,8 +842,10 @@ export function renderEvaluationReport(
     detailRow(row, documentedProcedureAdherence(row, tasks.get(row.taskId))),
   );
   const completedRuns = evidence.runs.filter((run) => run.status === 'completed').length;
-  const expectedRuns =
-    evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
+  const byArm = evidence.configuration.requestedRunsByArm;
+  const expectedRuns = byArm
+    ? Object.values(byArm).reduce((total, runs) => total + runs, 0)
+    : evidence.configuration.requestedRuns * (evidence.configuration.arms?.length ?? 2);
 
   return `# Controlled comparison
 

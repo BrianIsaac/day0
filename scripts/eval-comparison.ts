@@ -71,6 +71,8 @@ const onboardingFixtureSchema = z.object({
 export interface CliOptions {
   arms: EvaluationArm[];
   runs: number;
+  /** A count for each arm, when `--runs` names one; `runs` is then the largest. */
+  runsByArm?: Partial<Record<EvaluationArm, number>>;
   taskSelectors: string[];
   out: string;
   regrade?: string;
@@ -161,6 +163,38 @@ function positiveInteger(flag: string, value: string | undefined): number {
 }
 
 /**
+ * A count for each arm, from `day0=N,baseline=N` (either arm alone too).
+ *
+ * @throws when an entry names no arm, an arm twice, or a count that is not a positive integer.
+ */
+function runsByArm(value: string): Partial<Record<EvaluationArm, number>> {
+  const counts: Partial<Record<EvaluationArm, number>> = {};
+  for (const entry of value.split(',')) {
+    const match = /^(day0|baseline)=(\d+)$/.exec(entry);
+    const count = Number(match?.[2]);
+    const arm = match?.[1] as EvaluationArm | undefined;
+    if (!arm || counts[arm] !== undefined || !Number.isInteger(count) || count <= 0) {
+      throw new Error('--runs must be a positive integer, or day0=N,baseline=N');
+    }
+    counts[arm] = count;
+  }
+  return counts;
+}
+
+/** The runs an arm is asked for: its own count when `--runs` named one, else the one count. */
+export function runsForArm(
+  options: Pick<CliOptions, 'runs' | 'runsByArm'>,
+  arm: EvaluationArm,
+): number {
+  return options.runsByArm?.[arm] ?? options.runs;
+}
+
+/** The runs each arm of an invocation is asked for. */
+function requestedRunsByArm(options: CliOptions): Partial<Record<EvaluationArm, number>> {
+  return Object.fromEntries(options.arms.map((arm) => [arm, runsForArm(options, arm)]));
+}
+
+/**
  * Parse the command line into one invocation's settings.
  *
  * @throws on an unknown flag, a missing value or an invalid subset.
@@ -196,7 +230,13 @@ export function parseCliOptions(argv: string[]): CliOptions {
       }
       result.arms = arms as EvaluationArm[];
     } else if (flag === '--runs') {
-      result.runs = positiveInteger(flag, value);
+      if (/^\d+$/.test(value)) {
+        result.runs = positiveInteger(flag, value);
+        result.runsByArm = undefined;
+      } else {
+        result.runsByArm = runsByArm(value);
+        result.runs = Math.max(...Object.values(result.runsByArm));
+      }
     } else if (flag === '--tasks') {
       result.taskSelectors = value.split(',').filter(Boolean);
       if (result.taskSelectors.length === 0) throw new Error('--tasks cannot be empty');
@@ -213,6 +253,14 @@ export function parseCliOptions(argv: string[]): CliOptions {
     } else {
       throw new Error(`unknown option ${flag}`);
     }
+  }
+  if (
+    result.runsByArm &&
+    !sameStrings(Object.keys(result.runsByArm).sort(), [...result.arms].sort())
+  ) {
+    throw new Error(
+      `--runs must name a count for each arm it runs: ${result.arms.map((arm) => `${arm}=N`).join(',')}`,
+    );
   }
   if (result.regrade && result.reread) {
     throw new Error('--reread and --regrade are two ways to grade again; pass one');
@@ -247,7 +295,8 @@ function usage(): string {
   return `Usage: pnpm eval:comparison -- [options]
 
   --arms day0,baseline     arms to run (default both)
-  --runs N                 paired run count per arm (default 3)
+  --runs N                 paired run count per arm (default 3); or a count for each arm,
+                           day0=N,baseline=N, the arms alternating while both have runs left
   --tasks id,id            task ids or EVAL external ids (default all 15)
   --out path.json          raw evidence path (default evaluation/results/<timestamp>/comparison.json);
                            pass an earlier path to resume that run
@@ -305,6 +354,12 @@ export function assertResumeCompatible(
     config.temperature !== MODEL_TEMPERATURE ||
     config.modelCallTimeoutMs !== MODEL_CALL_TIMEOUT_MS ||
     config.requestedRuns !== options.runs ||
+    JSON.stringify(
+      config.requestedRunsByArm ??
+        Object.fromEntries(
+          (config.arms ?? ['day0', 'baseline']).map((arm) => [arm, config.requestedRuns]),
+        ),
+    ) !== JSON.stringify(requestedRunsByArm(options)) ||
     config.approvalDelayMs !== options.approvalDelayMs ||
     config.pollIntervalMs !== options.pollIntervalMs ||
     config.skillAuthoringMaxAttempts !== MAX_SKILL_AUTHORING_ATTEMPTS ||
@@ -360,6 +415,7 @@ export async function loadOrCreateEvidence(
       surfaceMode: 'mock',
       arms: options.arms,
       requestedRuns: options.runs,
+      requestedRunsByArm: requestedRunsByArm(options),
       taskIds: tasks.map((task) => task.id),
       taskDefinitions: tasks,
       taskTimeoutMs,
@@ -895,11 +951,14 @@ function newRun(arm: EvaluationArm, run: number): RunWithProgress {
   };
 }
 
-function scheduledRuns(options: CliOptions): Array<{ arm: EvaluationArm; run: number }> {
+/** The runs an invocation makes, in order: the arms alternate their order run by run, and an arm whose count is spent drops out. */
+export function scheduledRuns(options: CliOptions): Array<{ arm: EvaluationArm; run: number }> {
   const rows: Array<{ arm: EvaluationArm; run: number }> = [];
   for (let run = 1; run <= options.runs; run += 1) {
     const arms = run % 2 === 0 ? [...options.arms].reverse() : options.arms;
-    for (const arm of arms) rows.push({ arm, run });
+    for (const arm of arms) {
+      if (run <= runsForArm(options, arm)) rows.push({ arm, run });
+    }
   }
   return rows;
 }
@@ -1292,7 +1351,8 @@ async function main(): Promise<void> {
   }
   const evidence = await runEvaluation(options);
   const completed = evidence.runs.filter((run) => run.status === 'completed').length;
-  console.log(`[eval] complete: ${completed}/${options.runs * options.arms.length} runs`);
+  const requested = options.arms.reduce((total, arm) => total + runsForArm(options, arm), 0);
+  console.log(`[eval] complete: ${completed}/${requested} runs`);
   console.log(`[eval] JSON: ${resolve(options.out)}`);
   console.log(`[eval] report: ${reportPathFor(resolve(options.out))}`);
 }

@@ -1155,3 +1155,67 @@ describe('what the charter-derived seeding left on a bed', (): void => {
     );
   });
 });
+
+import { scheduledRuns } from '../../scripts/eval-comparison';
+
+describe('a run count for each arm', (): void => {
+  it('takes one count for both arms, or a count named for each arm', (): void => {
+    expect(scheduledRuns(parseCliOptions(['--runs', '2']))).toEqual([
+      { arm: 'day0', run: 1 },
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+      { arm: 'day0', run: 2 },
+    ]);
+    const options = parseCliOptions(['--runs', 'day0=1,baseline=3']);
+    expect(options.runsByArm).toEqual({ day0: 1, baseline: 3 });
+    expect(scheduledRuns(options)).toEqual([
+      { arm: 'day0', run: 1 },
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+      { arm: 'baseline', run: 3 },
+    ]);
+    expect(scheduledRuns(parseCliOptions(['--arms', 'baseline', '--runs', 'baseline=2']))).toEqual([
+      { arm: 'baseline', run: 1 },
+      { arm: 'baseline', run: 2 },
+    ]);
+  });
+
+  it('refuses a count for an arm it does not run, an arm with no count, or a count that is not one', (): void => {
+    expect(() => parseCliOptions(['--runs', 'day0=6'])).toThrow(
+      '--runs must name a count for each arm it runs: day0=N,baseline=N',
+    );
+    expect(() => parseCliOptions(['--arms', 'day0', '--runs', 'day0=2,baseline=2'])).toThrow(
+      '--runs must name a count for each arm it runs: day0=N',
+    );
+    expect(() => parseCliOptions(['--runs', 'day0=6,baseline=0'])).toThrow(
+      '--runs must be a positive integer, or day0=N,baseline=N',
+    );
+    expect(() => parseCliOptions(['--runs', 'day0=6,day0=6'])).toThrow(
+      '--runs must be a positive integer, or day0=N,baseline=N',
+    );
+  });
+
+  it('records the count of each arm, and resumes only under the same counts', async (): Promise<void> => {
+    const tasks = await loadEvaluationTasks();
+    const dir = await temporaryDirectory('eval-runs-');
+    const out = join(dir, 'comparison.json');
+    const options = parseCliOptions(['--runs', 'day0=6,baseline=6', '--out', out]);
+    const evidence = await loadOrCreateEvidence(options, tasks);
+    expect(evidence.configuration.requestedRunsByArm).toEqual({ day0: 6, baseline: 6 });
+    expect(renderEvaluationReport(evidence)).toContain(
+      'Evidence status: 0/12 configured runs completed.',
+    );
+    // As the run records it once the backend has said which sandbox it selects.
+    evidence.configuration.skillSandboxBackend = 'local';
+    const commit = evidence.configuration.commit;
+    expect(() => assertResumeCompatible(evidence, options, tasks, commit)).not.toThrow();
+    expect(() =>
+      assertResumeCompatible(
+        evidence,
+        parseCliOptions(['--runs', 'day0=3,baseline=6', '--out', out]),
+        tasks,
+        commit,
+      ),
+    ).toThrow('was created with different code or options');
+  });
+});
