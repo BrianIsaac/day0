@@ -17,6 +17,7 @@ import {
   managerMessageUpdateAction,
   parseDecisionReply,
   readsManagerDm,
+  threadReadsOf,
 } from '../../../src/work/manager-channel';
 import { decisionRequestBlocks, settledRequestBlocks } from '../../../src/work/decision-blocks';
 import type { MockAction } from '../../../src/work/types';
@@ -492,6 +493,20 @@ describe('manager channel decision requests', (): void => {
       reason: 'not this week',
     });
     expect(parseDecisionReply('approve ab3xyz?')).toBeUndefined();
+  });
+});
+
+describe('threadReadsOf (W17-R13)', (): void => {
+  it('counts one thread read for each delivered open request and each other thread, none for a request still going out', (): void => {
+    expect(threadReadsOf({ requests: [], batches: [], noticeOwed: false })).toBe(0);
+    expect(
+      threadReadsOf({
+        requests: [{ decisionId: 'ab3xyz', ts: '1.1' }, { decisionId: 'cd4xyz' }],
+        batches: [],
+        noticeOwed: true,
+        threads: ['2.1', '3.1', '4.1'],
+      }),
+    ).toBe(4);
   });
 });
 

@@ -16,7 +16,7 @@ import { numberedConflictQuestions } from '../../convex/managerQuestions';
 import { closeQuestionsAtRedraft } from '../../convex/questionCloses';
 import type { SelectionRequest } from '../../src/docs/select';
 import { openQuestionStopReason } from '../../src/work/obligations';
-import { parseDecisionReply } from '../../src/work/manager-channel';
+import { parseDecisionReply, threadReadsOf } from '../../src/work/manager-channel';
 import { FINISHING_CURSOR } from '../../src/docs/finishing';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
 import { allConvexModules } from './all-modules';
@@ -1620,6 +1620,41 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     await newer(30, false);
     const { threads } = await harness.query(internal.work.openDecisions, { surfaceId });
     expect(new Set(threads)).toEqual(new Set([REQUEST_TS, ...requested]));
+  });
+
+  it('records on the poll’s run how many threads it reads, its open request’s and the questions’ (W17-R13, for RM18’s row 14)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const { surfaceId, workItemId } = await askedInRequest(harness);
+    // The plan's request was decided three hours ago, and its question still stands.
+    await harness.run(async (ctx) => {
+      const row = (await ctx.db.get(workItemId))!;
+      await ctx.db.patch(workItemId, {
+        decision: {
+          ...row.decision!,
+          decidedAt: Date.now() - 3 * 60 * 60 * 1000,
+          outcome: 'approved',
+        },
+      });
+    });
+    const lines: unknown[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
+      lines.push(line);
+    });
+    try {
+      const open = await harness.query(internal.work.openDecisions, { surfaceId });
+      expect(open.threads).toEqual([REQUEST_TS]);
+      expect(threadReadsOf(open)).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    const recorded = lines
+      .map((line) => JSON.parse(String(line)) as Record<string, unknown>)
+      .filter((line) => line.msg === 'decision poll reads threads');
+    expect(recorded).toEqual([
+      expect.objectContaining({ level: 'info', surfaceId, threads: 1, questionThreads: 1 }),
+    ]);
   });
 
   it('keeps the plan’s request answerable by its code, and its thread read, after a park cleared it from the item (17-C, C-3)', async (): Promise<void> => {

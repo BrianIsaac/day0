@@ -146,6 +146,19 @@ export function readsManagerDm(open: OpenDecisions): boolean {
 }
 
 /**
+ * How many threads the decision poll's read of the manager DM reads: one `conversations.replies`
+ * call for each open request delivered, and one for each other message's thread (W17-R13: the
+ * count is recorded on the poll's run, for Slack's rate tier, V18-6).
+ *
+ * @param open - What the channel has open.
+ */
+export function threadReadsOf(open: OpenDecisions): number {
+  return (
+    open.requests.filter((request) => request.ts !== undefined).length + (open.threads?.length ?? 0)
+  );
+}
+
+/**
  * The codes whose replies wait for the next poll because a read they depend
  * on failed: each request whose thread could not be read, and every batch
  * that decides one of them. An answer in the unread thread may have come

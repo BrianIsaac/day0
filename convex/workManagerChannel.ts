@@ -20,11 +20,14 @@ import {
   type OpenDecisionRequest,
   type OpenDecisions,
   QUESTION_NOTICE_UNDELIVERED,
+  readsManagerDm,
+  threadReadsOf,
   undeliveredDecisionReason,
 } from '../src/work/manager-channel';
 import { digestDue, digestText, managerNotificationMode } from '../src/work/manager-notes';
 import { agentZone } from '../src/lib/zone';
 import { appendEvent, eventsOfType } from './eventLog';
+import { log } from '../src/lib/logger';
 import { typedCodeReachOf } from './slackMessagesTab';
 import { socketBridgeStateOf } from './socketHeartbeats';
 import type { DecisionAcknowledgementKind, DecisionNoticeKind } from '../src/events/contract';
@@ -361,12 +364,23 @@ export async function openDecisionsInTransaction(
     open: requests.flatMap((request) => (request.ts ? [request.ts] : [])),
     questions: asking.flatMap((request) => (request.ts ? [request.ts] : [])),
   });
-  return {
+  const open: OpenDecisions = {
     requests,
     batches,
     noticeOwed: decidedLately.length > 0 || asking.length > 0,
     ...(threads.length > 0 ? { threads } : {}),
   };
+  // The poll reads each of these threads with one call, so its run says how many (W17-R13; the
+  // reading RM18's row 14 takes against Slack's tier for `conversations.replies`, V18-6).
+  if (readsManagerDm(open)) {
+    log.info('decision poll reads threads', {
+      surfaceId: surface._id,
+      agentId: surface.agentId,
+      threads: threadReadsOf(open),
+      questionThreads: asking.filter((request) => request.ts !== undefined).length,
+    });
+  }
+  return open;
 }
 
 /** What `work.recordDecisionPoll` takes. */
