@@ -294,6 +294,36 @@ describe("the bed's forward proxy, asking for credentials", (): void => {
   }, 20_000);
 });
 
+// The second pass on 18-P: the refusal ended the client's socket before any error listener was
+// on it, so a client that reset at once could raise an unhandled error in the bed's only way out.
+describe("the bed's forward proxy, refusing a client that resets at once", (): void => {
+  it('keeps serving after clients reset straight after their CONNECT', async (): Promise<void> => {
+    const target = await origin();
+    const port = await freePort();
+    await start('docker/proxy-bed/forward-proxy.js', {
+      FORWARD_PROXY_PORT: String(port),
+      FORWARD_PROXY_AUTH: 'day0:bed-secret',
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise<void>((resolve) => {
+        const socket = connect(port, '127.0.0.1', (): void => {
+          socket.write(`CONNECT 127.0.0.1:${target} HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n\r\n`);
+          socket.resetAndDestroy();
+        });
+        socket.on('error', (): void => undefined);
+        socket.on('close', (): void => resolve());
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const header = `Proxy-Authorization: Basic ${Buffer.from('day0:bed-secret').toString('base64')}\r\n`;
+    const after = await exchange(
+      port,
+      `GET http://127.0.0.1:${target}/after HTTP/1.1\r\nHost: 127.0.0.1:${target}\r\n${header}Connection: close\r\n\r\n`,
+    );
+    expect(after).toContain('origin saw GET /after');
+  }, 20_000);
+});
+
 describe("the bed's relay", (): void => {
   it('carries a loopback port to the address it is given, both ways', async (): Promise<void> => {
     const target = await origin();

@@ -80,6 +80,9 @@ const server = createServer((request, response) => {
 });
 
 server.on('connect', (request, client, head) => {
+  // Before anything is written: a client that resets at once must not take the proxy down.
+  let upstream;
+  client.on('error', () => upstream?.destroy());
   const [host, targetPort] = (request.url ?? '').split(':');
   const refused = refusal(request);
   if (refused !== undefined) {
@@ -91,7 +94,7 @@ server.on('connect', (request, client, head) => {
     return;
   }
   log({ from: client.remoteAddress, method: 'CONNECT', target: request.url });
-  const upstream = connect(Number(targetPort || 443), host, () => {
+  upstream = connect(Number(targetPort || 443), host, () => {
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     upstream.write(head);
     upstream.pipe(client);
@@ -101,7 +104,6 @@ server.on('connect', (request, client, head) => {
     log({ from: client.remoteAddress, target: request.url, failed: error.message });
     client.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
   });
-  client.on('error', () => upstream.destroy());
 });
 
 server.listen(port, '0.0.0.0', () =>
