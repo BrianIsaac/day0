@@ -39,14 +39,18 @@ export const TALK_FINISH_NOTE =
  * `closingLine` not in the tool's shape): one more ask, naming the fields the schema refused and
  * never their words, which are the model's and may quote the manager.
  *
+ * The empty path, a call whose whole input the schema refused, is named "the whole reply" where it
+ * named a blank (W17-R8).
+ *
  * @param refusedFields - The paths the schema refused; none when no call was made at all.
  */
 export function talkRepairNote(refusedFields: readonly string[]): string {
+  const named = refusedFields.map((path) => (path === '' ? 'the whole reply' : path));
   const what =
-    refusedFields.length === 0
+    named.length === 0
       ? 'You did not call reorientationComplete.'
-      : `Your call of reorientationComplete was not taken: ${refusedFields.join(', ')} ${
-          refusedFields.length === 1 ? 'was' : 'were'
+      : `Your call of reorientationComplete was not taken: ${named.join(', ')} ${
+          named.length === 1 ? 'was' : 'were'
         } not in the shape the tool takes.`;
   return `${what} Call reorientationComplete once more, every field as the tool describes it. Say nothing else.`;
 }
