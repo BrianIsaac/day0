@@ -594,9 +594,55 @@ function managerSentencesAsSaid(answers: Partial<Record<DayOneTopic, string>>): 
     .filter((sentence: string): boolean => sentence.length > 0 && !sentence.endsWith('?'));
 }
 
+/**
+ * The verbs whose third person is not the first person with an "s" (W17-R19: "unless I have
+ * approved it" was written "unless the manager have approved it").
+ */
+const THIRD_PERSON_IRREGULAR: Readonly<Record<string, string>> = {
+  am: 'is',
+  are: 'is',
+  have: 'has',
+  do: 'does',
+  "haven't": "hasn't",
+  'haven\u2019t': 'hasn\u2019t',
+  "don't": "doesn't",
+  'don\u2019t': 'doesn\u2019t',
+  "aren't": "isn't",
+  'aren\u2019t': 'isn\u2019t',
+};
+
+/**
+ * The words after "I" that read alike in every person: the modals, a past tense, and a
+ * negative's contraction other than the irregular ones.
+ */
+const SAME_IN_EVERY_PERSON =
+  /^(?:can|could|will|would|shall|should|may|might|must|was|were|did|had|said|sent|told|got|made|took|gave|came|went|saw|knew|thought|found|left|kept|held|brought|bought|paid|ran|began|wrote|spoke|met|heard|\w+ed|\w+n['\u2019]t)$/i;
+
+/** A verb said after "I", as it is said after "the manager". */
+function thirdPersonVerb(verb: string): string {
+  const irregular = THIRD_PERSON_IRREGULAR[verb.toLowerCase()];
+  if (irregular !== undefined) return irregular;
+  if (SAME_IN_EVERY_PERSON.test(verb)) return verb;
+  if (/(?:s|x|z|ch|sh|o)$/i.test(verb)) return `${verb}es`;
+  if (/[^aeiou]y$/i.test(verb)) return `${verb.slice(0, -1)}ies`;
+  return `${verb}s`;
+}
+
+/**
+ * "I" and the verb it is the subject of, with an adverb between them: "I have", "I ask", "I
+ * personally approve", "I always watch".
+ */
+const I_AND_ITS_VERB =
+  /\bI(\s+(?:always|never|usually|often|also|just|really|only|still|already|sometimes|normally|typically|rarely|actually|first|\w+ly))?\s+([A-Za-z]+(?:n['\u2019]t)?)\b(?!['\u2019])/g;
+
 /** The manager's first person in the third person the clauses are written in. */
 function inTheThirdPerson(sentence: string): string {
   return sentence
+    .replace(
+      I_AND_ITS_VERB,
+      (_said: string, adverb: string | undefined, verb: string): string =>
+        `the manager${adverb ?? ''} ${thirdPersonVerb(verb)}`,
+    )
     .replace(/\bI['\u2019]m\b/g, 'the manager is')
     .replace(/\bI['\u2019]ll\b/g, 'the manager will')
     .replace(/\bI['\u2019]ve\b/g, 'the manager has')
@@ -1760,19 +1806,67 @@ const QUALIFIES_THE_ACT =
 const TURNS_TO_ANOTHER = /\bbut\b|\binstead\b(?!\s+of\b)/i;
 
 /**
+ * The verbs a manager's second instruction opens on after a bare "and" ("Never delete tickets and
+ * tell me."). An "and" before any other word joins two things the act touches ("Never touch
+ * payroll and HR records."); one this list misses is written as an act and reads oddly on the
+ * card, where the manager can strike it.
+ */
+const INSTRUCTION_VERBS = [
+  ...Object.keys(REDIRECT_GERUNDS),
+  'tell',
+  'let',
+  'flag',
+  'ping',
+  'message',
+  'email',
+  'call',
+  'notify',
+  'inform',
+  'loop',
+  'raise',
+  'report',
+  'archive',
+  'reopen',
+  'note',
+  'post',
+  'forward',
+  'get',
+  'keep',
+  'put',
+  'move',
+  'mark',
+  'reply',
+  'contact',
+  'copy',
+  'cc',
+].join('|');
+
+/**
+ * Where a clause written for a prohibition goes on to a later part: a comma, a semicolon or a
+ * colon before a space, a dash with a space beside it or a long dash wherever it stands, "then",
+ * and "and" before an instruction's verb (W17-R18: "Never approve anything over 500 - ask me.",
+ * "Never refund over 500: ask me first.", "Never delete tickets and tell me.").
+ */
+const LATER_PART = new RegExp(
+  `[,;:]\\s+|\\s*[\u2013\u2014]+\\s*|\\s+-+\\s*|-+\\s+|\\s+(?:and\\s+)?then\\s+|\\s+and\\s+(?=(?:${INSTRUCTION_VERBS})\\b)`,
+  'i',
+);
+
+/**
  * Whether a clause written for a prohibition says the forbidden act and nothing the manager asked
  * for. Under Will not do every part of a clause reads as ruled out, so a second instruction left
  * standing there says its opposite: "Never delete tickets, archive them instead." written as
  * "Delete tickets, archive them instead." forbids the archiving (the second pass, continued). A
  * clause passes when the act-writer kept the manager's sentence whole, when it has one part and
- * no turn to another, when each later part qualifies the act, or when it is a list of acts closed
- * by "or" or "nor" ("Change prices, run discounts, or send quotes."). A list closed by "and" is
- * not taken for one: "Never delete tickets, archive them, and tell me." asks for the last two.
+ * no turn to another, when each later part ({@link LATER_PART}) qualifies the act, or when it is
+ * a list of acts closed by "or" or "nor" ("Change prices, run discounts, or send quotes."). A
+ * list closed by "and" is not taken for one: "Never delete tickets, archive them, and tell me."
+ * asks for the last two.
  */
 function saysOnlyTheAct(clause: string): boolean {
   if (PROHIBITION_OPENING.test(clause)) return true;
   if (TURNS_TO_ANOTHER.test(clause)) return false;
-  const later = clause.split(/[,;]\s+/).slice(1);
+  const later = clause.split(LATER_PART).slice(1);
   const last = later.at(-1);
   const listOfActs = later.length >= 2 && last !== undefined && /^(?:or|nor)\b/i.test(last);
   return listOfActs || later.every((part: string): boolean => QUALIFIES_THE_ACT.test(part));
