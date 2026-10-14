@@ -344,14 +344,14 @@ export async function standingConflictsFrom(
   }
 }
 
-/** A standing conflict as a cite carries it: the relation, the heading and the two pages. */
+/** A standing conflict as a cite carries it: the relation, the heading and the two pages, each with its ref. */
 export function citeConflictOf(conflict: StandingConflict): CiteConflict {
   return {
     relationId: conflict.relationId,
     heading: conflict.heading,
     pages: [
-      { title: conflict.from.title, source: conflict.from.source },
-      { title: conflict.to.title, source: conflict.to.source },
+      { title: conflict.from.title, source: conflict.from.source, ref: conflict.from.ref },
+      { title: conflict.to.title, source: conflict.to.source, ref: conflict.to.ref },
     ],
   };
 }

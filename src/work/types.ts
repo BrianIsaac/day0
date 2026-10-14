@@ -220,7 +220,7 @@ export interface CiteConflict {
   readonly relationId: string;
   /** The heading the two pages disagree under. */
   readonly heading: string;
-  /** The two pages, each by its title and its source's label. */
+  /** The two pages, each by its title, its source's label and its ref. */
   readonly pages: readonly [CiteConflictPage, CiteConflictPage];
 }
 
@@ -228,6 +228,11 @@ export interface CiteConflict {
 export interface CiteConflictPage {
   readonly title: string;
   readonly source: string;
+  /**
+   * The page's ref within its source, which names two pages of one title in one source apart
+   * (W17-R1). Absent on a cite stored before v0.21.0.
+   */
+  readonly ref?: string;
 }
 
 /** One cite of a plan step: the cite line's words and the stored blocks under it. */

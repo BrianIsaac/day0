@@ -51,7 +51,8 @@ describe('the top of a work item', (): void => {
 
   it('stamps who decided with its time, unless the landed line says it', (): void => {
     expect(head(DRAWN.landed)).toMatch(
-      /approved from the day0 dashboard at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>\./,
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      /approved from the Day0 dashboard at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>\./,
     );
     expect(head(DRAWN.landed, { stampDecision: false })).not.toContain('approved from');
   });

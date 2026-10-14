@@ -710,6 +710,48 @@ describe('approve: the proposal applied through its target', (): void => {
     expect((await cardOf(harness, card)).status).toBe('open');
   });
 
+  it('refuses a status the page already holds from its source, which would pin it to the manager and change nothing (W17-R2, D-1 (a))', async (): Promise<void> => {
+    const harness = convexTest(schema, allConvexModules());
+    const agentId = await seedEmployee(harness);
+    const sourceId = await harness.run(async (ctx) => {
+      const sourceId = await ctx.db.insert('docSources', {
+        userId: OWNER_SUBJECT,
+        kind: 'folder',
+        label: 'Company handbook',
+        locator: '.',
+        status: 'synced',
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      await ctx.db.insert('docPages', {
+        sourceId,
+        ref: 'runbook.md',
+        title: 'Runbook',
+        markdown: '# Runbook',
+        updatedAt: 1,
+        status: 'archived',
+        statusSource: 'source-native',
+      });
+      return sourceId;
+    });
+    const card = await proposedCard(harness, agentId, {
+      kind: 'page-status',
+      page: { sourceId, ref: 'runbook.md' },
+      status: 'archived',
+      rationale: 'The source archived it.',
+    });
+    await expect(
+      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
+        reorientationId: card,
+      }),
+    ).rejects.toThrow(
+      'The page already has this status from its source, so approving would change nothing: dismiss the card.',
+    );
+    expect((await cardOf(harness, card)).status).toBe('open');
+    const [page] = await harness.run(async (ctx) => await ctx.db.query('docPages').collect());
+    expect(page).toMatchObject({ status: 'archived', statusSource: 'source-native' });
+  });
+
   it('says a charter change the charter no longer takes in the card’s words (the second pass’s m15)', async (): Promise<void> => {
     const harness = convexTest(schema, allConvexModules());
     const agentId = await seedEmployee(harness);

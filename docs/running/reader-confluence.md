@@ -41,7 +41,10 @@ asks for no page's text. On **Cloud** the pages of one listing that changed are 
 together, by their ids, in one request; on **Data Center** each page that changed is asked for by
 its id, a request a page. One exception: a page whose title holds a value day0 takes out of what
 it stores (a password written into a title) is asked for at every read, because the title it was
-stored under is no longer the one its listing gives.
+stored under is no longer the one its listing gives. Another: a page with no text under its
+title, such as a parent page that holds only a children or include macro, is asked for at every
+read and then kept by its text, since a listing's version is kept only for a page with text to
+keep.
 
 Counted on the test doubles of Confluence that day0's own tests use, not on a site. The bed is a
 running day0 in real mode reading a space of 250 pages; the thousand-page figures are the same

@@ -189,7 +189,8 @@ describe('the Feishu documentation reader', (): void => {
       {
         ref: 'wikcnShortcut00000000000001',
         reason:
-          '"Handbook (shortcut)" is a shortcut, which day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
+          // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+          '"Handbook (shortcut)" is a shortcut, which Day0 does not read twice: the page it points to is read where it lives, if that is in this source.',
         kind: 'not-read',
       },
     ]);
@@ -205,13 +206,15 @@ describe('the Feishu documentation reader', (): void => {
     expect(batch.unread).toContainEqual({
       ref: NODES.sheet.node,
       reason:
-        '"Q3 numbers" is a Feishu sheet, which day0 does not read: only documents (docx) are read, as Markdown.',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        '"Q3 numbers" is a Feishu sheet, which Day0 does not read: only documents (docx) are read, as Markdown.',
       kind: 'not-read',
     });
     expect(batch.unread).toContainEqual({
       ref: NODES.map.node,
       reason:
-        '"Pipeline map" is a Feishu mind note, which day0 does not read: only documents (docx) are read, as Markdown.',
+        // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+        '"Pipeline map" is a Feishu mind note, which Day0 does not read: only documents (docx) are read, as Markdown.',
       kind: 'not-read',
     });
     // Nothing is asked of a node the reader does not read.
@@ -530,7 +533,8 @@ describe('the Feishu walk between batches (second pass)', (): void => {
       },
     });
     await expect(reader.listPageBatch(wiki, SECRET, undefined, 5_000)).rejects.toThrow(
-      'This Feishu source has more than 2,000 pages, the most day0 reads from one source',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'This Feishu source has more than 2,000 pages, the most Day0 reads from one source',
     );
   });
 
@@ -641,7 +645,8 @@ describe('the Feishu reads a batch keeps inside its time (second pass)', (): voi
     });
     const failure = await reader.listPageBatch(wiki, SECRET, undefined, 25).catch((error) => error);
     expect(String(failure)).toContain(
-      'open.feishu.cn answered HTTP 403 with a page that is not Feishu’s own answer, so something between day0 and Feishu (a proxy or a firewall) may be stopping the request',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'open.feishu.cn answered HTTP 403 with a page that is not Feishu’s own answer, so something between Day0 and Feishu (a proxy or a firewall) may be stopping the request',
     );
     expect(String(failure)).not.toContain('add the app');
   });

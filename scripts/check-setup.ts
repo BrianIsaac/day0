@@ -115,6 +115,7 @@ import {
   proxySettings,
 } from './lib/proxy-env';
 import { runUnderProxy } from './lib/under-proxy';
+import { readEnvFileValues } from './lib/env-text';
 import { recipeForSystem } from '../src/surfaces/access-kit';
 
 export { setupRoute, type ReportedRoute, type RouteReport } from './setup-route';
@@ -226,18 +227,23 @@ export interface Section {
   title: string;
   status: Status;
   lines: string[];
+  /**
+   * The title the support report carries where the one printed names something of the
+   * configuration beyond a host Day0 reaches (W17-R28: the way out's proxy address).
+   */
+  reportTitle?: string;
 }
 
 type Values = Record<string, string>;
 
-function readEnvFile(path: string): Values {
-  const values: Values = {};
-  if (!existsSync(path)) return values;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (match) values[match[1]] = match[2].trim().replace(/^"(.*)"$/, '$1');
-  }
-  return values;
+/**
+ * The env file's values, as every script reads it (`readEnvFileValues`, W17-R24).
+ *
+ * @param path - The env file's path.
+ * @returns The declared values; empty when the file does not exist.
+ */
+export function readEnvFile(path: string): Values {
+  return readEnvFileValues(path);
 }
 
 /** File values, then the process environment wherever it declares one at all. */
@@ -804,9 +810,9 @@ export function docSourceDependency(row: {
     return `${row.count} ${label} ${plural} - read by the backend itself; no component needed.`;
   }
   if (row.component === 'docs-notion-mcp') {
-    return `${row.count} ${label} ${plural} - needs day0's Notion component (--profile docs-notion).`;
+    return `${row.count} ${label} ${plural} - needs Day0's Notion component (--profile docs-notion).`;
   }
-  return `${row.count} ${label} ${plural} - points at an MCP server you already run; no day0 component needed.`;
+  return `${row.count} ${label} ${plural} - points at an MCP server you already run; no Day0 component needed.`;
 }
 
 /** Interpret the browser switch with the same parser used at provider boundaries. */
@@ -850,7 +856,7 @@ function tokenStoreLines(values: Values, running: boolean): string[] {
   }
   if (!url && running) {
     return [
-      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      'nango-server is running and DAY0_NANGO_URL is unset, so Day0 will not use it.',
       `Set DAY0_NANGO_URL=http://nango-server:3003 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
       'or stop the component.',
     ];
@@ -922,7 +928,7 @@ export function componentsSection(
   } else if (!browserConfigured && browserRunning) {
     status = 'warn';
     lines.push(
-      'playwright-mcp is running and DAY0_BROWSER_MCP_URL is unset, so day0 will not use it.',
+      'playwright-mcp is running and DAY0_BROWSER_MCP_URL is unset, so Day0 will not use it.',
       `Set DAY0_BROWSER_MCP_URL=http://playwright-mcp:8931/mcp in ${ENV_FILE} and re-run`,
       '`pnpm sync:env`, or stop the component.',
     );
@@ -947,7 +953,7 @@ export function componentsSection(
   } else if (!redactorConfigured && redactorRunning) {
     status = 'warn';
     lines.push(
-      'redactor is running and DAY0_REDACTOR_URL is unset, so day0 will not use it.',
+      'redactor is running and DAY0_REDACTOR_URL is unset, so Day0 will not use it.',
       `Set DAY0_REDACTOR_URL=http://redactor:8000 in ${ENV_FILE} and re-run \`pnpm sync:env\`,`,
       'or stop the component.',
     );
@@ -2034,11 +2040,13 @@ export function wayOutSection(
     if (to === 'gap' || status === 'ok') status = to;
   };
   let title = 'The way out: direct';
+  let reportTitle: string | undefined;
   if (!proxyConfigured(settings)) {
     lines.push('No proxy is named (HTTPS_PROXY), so every service dials out directly.');
   } else {
     const address = settings.httpsProxy ?? settings.httpProxy ?? '';
     title = `The way out: through the proxy at ${proxyForDisplay(address)}`;
+    reportTitle = 'The way out: through a proxy';
     lines.push(
       'docker compose hands it to the backend, the Slack socket bridge, the redactor and Nango,',
       'and `pnpm start` to the app. The setup and the three checks start themselves with it, run by hand or not.',
@@ -2112,7 +2120,12 @@ export function wayOutSection(
     'The hosts this configuration reaches, each by what needs it (docs/running/egress.md):',
     ...egressHosts(v, connections, architecture).map((row) => `  ${row.host}: ${row.purpose}`),
   );
-  return { title: titleFor(status, title), status, lines };
+  return {
+    title: titleFor(status, title),
+    status,
+    lines,
+    ...(reportTitle === undefined ? {} : { reportTitle: titleFor(status, reportTitle) }),
+  };
 }
 
 /** The Dockerfile a compose service is built from, by its path from the compose file. */
@@ -2221,7 +2234,10 @@ export function setupReport(inputs: {
       inputs.connections,
       daemonArchitecture(inputs.versions.docker) ?? process.arch,
     ),
-    sections: inputs.sections.map(({ title, status }) => ({ title, status })),
+    sections: inputs.sections.map(({ title, reportTitle, status }) => ({
+      title: reportTitle ?? title,
+      status,
+    })),
     ...(inputs.signIn === undefined
       ? {}
       : { signIn: inputs.signIn.map(({ name, status }) => ({ check: name, status })) }),

@@ -379,6 +379,17 @@ export function stopDetail(skipReason: string): string {
 }
 
 /**
+ * A recorded event's reason as the Record tab and the feed say it ({@link stopDetail}): a model
+ * call's failure in words, as the Work card says it (W17-R22: a failed run's line printed
+ * "agentJson(day0-skill-...): ..."). Anything that is not text is given back as it is.
+ *
+ * @param reason - The event's stored reason.
+ */
+export function reasonInWords(reason: unknown): unknown {
+  return typeof reason === 'string' ? stopDetail(reason) : reason;
+}
+
+/**
  * The run's landed rows as the completion note tells them: every landed or
  * outcome-unknown row in ledger order, reads included, each in a manager's
  * words. The manager DM is left out, as in `landedWork`: it reports on work

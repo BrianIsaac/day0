@@ -6,6 +6,7 @@ import { useQueries, useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
+import { relationsNotShownWords } from '@/docs/relation-words';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { LinkSourceForm } from '../../../documentation/LinkSourceForm';
@@ -102,9 +103,16 @@ export function DocumentationView() {
   const { agent, surfaceMode, arriving } = useEmployee();
   const zone = useAgentZone();
   const sources = useQuery(api.docSources.listMine, surfaceMode === 'real' ? {} : 'skip');
-  const relations = useRelationCards(
-    useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip'),
-  );
+  const firstRead = useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip');
+  const relations = useRelationCards(firstRead);
+  // The proposals the first read left out, said under the ones it drew (W17-R9, D-10 (a)).
+  const notShown =
+    firstRead === undefined
+      ? undefined
+      : relationsNotShownWords(
+          firstRead.cards.filter((card) => card.status === 'proposed').length,
+          firstRead.notShown,
+        );
   const [picked, setPicked] = useState<Id<'docSources'> | undefined>(undefined);
   const [answered, setAnswered] = useState<AnsweredRelation | null>(null);
   const excluded = useMemo(
@@ -189,6 +197,9 @@ export function DocumentationView() {
           />
         ),
       )}
+      {notShown !== undefined ? (
+        <p className="text-sm text-[var(--color-muted)]">{notShown}</p>
+      ) : null}
       {shown ? <PageTable key={shown._id} source={shown} zone={zone} /> : null}
       <Card title="Link a location">
         <LinkSourceForm />

@@ -2018,9 +2018,14 @@ export interface ReorientationDeferredPayload extends ReorientationNamed {
   readonly revisitAt: number;
 }
 
-/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date. */
+/** The payload of `reorientation.reopened`: the Defer sweep opened the card again on its date, or a change that joined it opened it before (W17-R3). */
 export interface ReorientationReopenedPayload extends ReorientationNamed {
   readonly revisitAt: number;
+  /**
+   * Set when a change joined the deferred card and made it riskier or made it hold more work, so
+   * it opened before its date (W17-R3, D-3 (a)); absent when its date came.
+   */
+  readonly joined?: boolean;
 }
 
 /**

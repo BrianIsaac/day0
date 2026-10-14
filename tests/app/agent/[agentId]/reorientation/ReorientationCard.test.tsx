@@ -715,6 +715,23 @@ describe('a reorientation card', (): void => {
     view.unmount();
   });
 
+  it('says a card its page’s return closed was closed as no longer needed, not dismissed (W17-R2, D-1 (a))', async (): Promise<void> => {
+    const view = drawn(
+      withCard({
+        status: 'dismissed',
+        decidedAt: OPENED + 60_000,
+        outcome: { summary: 'no longer needed: “Escalation paths” is current again' },
+      }),
+    );
+    const text = view.container.textContent ?? '';
+    expect(text).toContain('Closed as no longer needed: “Escalation paths” is current again.');
+    expect(text).toContain('closed 26 Sep 2026, 14:45');
+    expect(text).not.toContain('Dismissed');
+    expect(controls(view.container)).toEqual([]);
+    await floor(view.container);
+    view.unmount();
+  });
+
   it('offers Discuss with Mira after the three decisions, to the card’s own talk', async (): Promise<void> => {
     const view = drawn(BASE);
     const foot = [...view.container.querySelectorAll('button, a')].map(

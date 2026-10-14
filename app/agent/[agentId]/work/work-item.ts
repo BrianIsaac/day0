@@ -607,7 +607,7 @@ export function decisionAttribution(
     | undefined,
 ): string | undefined {
   if (!decision?.decidedAt || !decision.outcome || !decision.decidedVia) return undefined;
-  const source = decision.decidedVia === 'channel' ? decision.surfaceName : 'the day0 dashboard';
+  const source = decision.decidedVia === 'channel' ? decision.surfaceName : 'the Day0 dashboard';
   return `${decision.outcome} from ${source}`;
 }
 

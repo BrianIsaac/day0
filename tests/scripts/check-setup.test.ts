@@ -91,7 +91,8 @@ describe('documentation component setup reporting', (): void => {
         component: 'docs-notion-mcp',
         count: 1,
       }),
-    ).toContain("needs day0's Notion component");
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+    ).toContain("needs Day0's Notion component");
     expect(docSourceDependency({ kind: 'mcp', serverKind: 'notion', count: 1 })).toContain(
       'an MCP server you already run',
     );
@@ -272,7 +273,8 @@ describe('the token store component (join 9)', (): void => {
     const untold = componentsSection({}, 'day0-bed', ['backend', 'nango-server']);
     expect(untold.status).toBe('warn');
     expect(untold.lines.join('\n')).toContain(
-      'nango-server is running and DAY0_NANGO_URL is unset, so day0 will not use it.',
+      // Re-pinned for W17-R29: Day0 is capitalised wherever a sentence names it.
+      'nango-server is running and DAY0_NANGO_URL is unset, so Day0 will not use it.',
     );
     const told = componentsSection(nango, 'day0-bed', ['backend', 'nango-server']);
     expect(told.status).toBe('ok');
@@ -1239,6 +1241,32 @@ describe("the support report's sign-in lines", (): void => {
       { check: 'session-secret', status: 'ok' },
     ]);
     expect(JSON.stringify(report)).not.toContain('curl');
+  });
+});
+
+// W17-R28 (reader 5): the support report keeps each section's title, and the way out's named the
+// proxy's host and port, where the report carries nothing of the configuration but hostnames of
+// what Day0 reaches.
+describe("the support report's way-out title (W17-R28)", (): void => {
+  it('says the way out is through a proxy, and names no proxy', (): void => {
+    const values = {
+      HTTPS_PROXY: 'http://proxy.internal.acme.test:3128',
+      DAY0_PUBLIC_URL: 'https://day0.acme.test',
+    };
+    const section = wayOutSection(values, [], 'v22.23.2', 'x64');
+    expect(section.title).toBe('The way out: through the proxy at proxy.internal.acme.test:3128');
+    const report = setupReport({
+      values,
+      sections: [section],
+      versions: {},
+      images: [],
+      digests: {},
+      generatedAt: '2026-10-14T09:00:00.000Z',
+    });
+    expect(report.sections).toEqual([
+      { title: 'The way out: through a proxy', status: section.status },
+    ]);
+    expect(JSON.stringify(report)).not.toContain('proxy.internal.acme.test');
   });
 });
 

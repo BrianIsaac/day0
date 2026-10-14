@@ -3199,7 +3199,7 @@ export async function runSetup(options: SetupOptions, io: SetupIo): Promise<numb
     if (real) {
       io.log('');
       io.log(
-        `Real mode: day0 reads the documentation in ${docsHostDir} and, once you approve a card,`,
+        `Real mode: Day0 reads the documentation in ${docsHostDir} and, once you approve a card,`,
       );
       io.log(
         '  acts on the systems those pages record. Nothing is read until you link the folder.',

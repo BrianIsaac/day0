@@ -424,10 +424,17 @@ async function answerFromChannel(
   const left = (await numberedConflictQuestions(ctx, row._id)).filter(
     (question) => question.standing,
   ).length;
+  // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
+  // "Both hold" gives no page away, and beside a finished item nothing waits at all (W17-R10).
+  const after =
+    row.state === 'completed' || row.state === 'cancelled'
+      ? 'Nothing of this item waits on the answer.'
+      : args.reply.choice === 'both'
+        ? 'Retry runs the steps that waited on it.'
+        : 'Retry runs the steps that waited on it, drafted again where they relied on the other page.';
   const notified = await notice(
-    // O-17: Retry runs the held steps, and drafts again those that relied on the losing page (m7).
     [
-      `Recorded${number === undefined ? '' : ` for question ${target.number}`}: ${slackEscaped(text)}. Retry runs the steps that waited on it, drafted again where they relied on the other page.`,
+      `Recorded${number === undefined ? '' : ` for question ${target.number}`}: ${slackEscaped(text)}. ${after}`,
       ...(left === 0
         ? []
         : [

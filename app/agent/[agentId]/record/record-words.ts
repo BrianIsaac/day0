@@ -18,6 +18,7 @@ import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
+import { reasonInWords } from '@/work/stop';
 
 /**
  * A payload as the record reads it: a row an older release wrote may lack any field a newer
@@ -1333,7 +1334,7 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
   'work.failed': (p, subject) =>
     p.stopped === true
       ? `The run${forItem(subject)} stopped`
-      : `The run${forItem(subject)} failed${because(p.reason)}`,
+      : `The run${forItem(subject)} failed${because(reasonInWords(p.reason))}`,
   'work.actions-auto-applying': (p, subject) =>
     `${subject.name} is applying ${counted(p.autoIndexes?.length, 'action') ?? 'actions'}${onItem(
       subject,
@@ -1441,7 +1442,9 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       text(p.question) ? `: ${text(p.question)}` : ''
     }`,
   'reorientation.reopened': (p) =>
-    `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+    p.joined === true
+      ? `A deferred reorientation card opened again before its date, since a further change joined it${cardAbout(p.summary)}`
+      : `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
   'reorientation.card-not-opened': (p, subject) =>
     `Day0 could not open a reorientation card for ${subject.name}${
       text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''

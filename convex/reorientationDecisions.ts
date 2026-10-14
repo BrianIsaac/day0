@@ -482,6 +482,17 @@ async function applyPageStatus(
     await clearPageStatusInTransaction(ctx, source, page);
     return { result: approvedResultWords.page('clear', page.title) };
   }
+  // A status the page already holds from its source changes nothing but pins the page to the
+  // manager, after which the source's own later word is ignored (W17-R2, D-1 (a)).
+  if (
+    page.statusSource !== 'manager' &&
+    (page.status ?? 'active') === proposed.status &&
+    (proposed.status !== 'superseded' ||
+      (page.supersededBy?.sourceId === proposed.supersededBy?.sourceId &&
+        page.supersededBy?.ref === proposed.supersededBy?.ref))
+  ) {
+    throw new ConvexError(CARD_ACTION_REFUSALS.held);
+  }
   let supersededBy: { sourceId: Id<'docSources'>; ref: string } | undefined;
   if (proposed.status === 'superseded') {
     const successor = proposed.supersededBy ? await pageAt(proposed.supersededBy) : null;

@@ -41,6 +41,7 @@ import {
   PROPOSAL_DID_NOT_FINISH,
   approvedResultWords,
   closedByHandSummary,
+  decidedByHandSummary,
   conflictNoticeText,
   conflictQuestionText,
   type NamedPageWords,
@@ -302,7 +303,7 @@ function higher(left: ReorientationRisk, right: ReorientationRisk): Reorientatio
 }
 
 /** An employee's cards still standing (open, discussing or deferred), newest first per standing. */
-async function standingCards(
+export async function standingCards(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
 ): Promise<Doc<'reorientations'>[]> {
@@ -681,7 +682,12 @@ export const openCardLater = internalMutation({
   },
 });
 
-/** Join a change to the card of its kind standing that day: its lists grow, its risk can rise. */
+/**
+ * Join a change to the card of its kind standing that day, or deferred on an earlier one: its
+ * lists grow, its risk can rise. A deferred card the change makes riskier, or makes hold work it
+ * did not, opens again with its date cleared (W17-R3, D-3 (a)): left deferred, it held the new
+ * plans under a card the Needs you inbox does not list until its date, up to a year on.
+ */
 async function joinCard(
   ctx: MutationCtx,
   card: Doc<'reorientations'>,
@@ -693,7 +699,29 @@ async function joinCard(
   const affected = joinedAffected(card.affected, input.affected);
   const risk = higher(card.risk, riskOf(affected, input.writeScope === true));
   const blockingWork = await blockingWorkOf(ctx, affected, risk);
-  await ctx.db.patch(card._id, { evidence, affected, risk, blockingWork });
+  const reopens =
+    card.status === 'deferred' &&
+    (risk !== card.risk || blockingWork.some((id) => !card.blockingWork.includes(id)));
+  await ctx.db.patch(card._id, {
+    evidence,
+    affected,
+    risk,
+    blockingWork,
+    ...(reopens ? { status: 'open' as const, revisitAt: undefined } : {}),
+  });
+  if (reopens) {
+    await appendEvent(ctx, {
+      agentId: card.agentId,
+      type: 'reorientation.reopened',
+      payload: {
+        reorientationId: card._id,
+        summary: card.triggerSummary,
+        revisitAt: card.revisitAt ?? now,
+        joined: true,
+      },
+      createdAt: now,
+    });
+  }
   await appendEvent(ctx, {
     agentId: card.agentId,
     type: 'reorientation.opened',
@@ -803,6 +831,8 @@ export async function moveCardsToOwner(
   },
 ): Promise<void> {
   const { agentId, userId, now } = handover;
+  // The cards this handover closes, which the read of the decided ones then meets again.
+  const closedHere = new Set<Id<'reorientations'>>();
   for (const status of ['open', 'discussing', 'deferred', 'applied', 'dismissed'] as const) {
     const read = await ctx.db
       .query('reorientations')
@@ -817,7 +847,9 @@ export async function moveCardsToOwner(
     // under the new manager on its date (the second pass).
     const undecided = (STANDING_STATUSES as readonly string[]).includes(status);
     for (const card of cards) {
+      if (closedHere.has(card._id)) continue;
       if (undecided) {
+        closedHere.add(card._id);
         await ctx.db.patch(card._id, {
           userId,
           status: 'dismissed',
@@ -830,8 +862,14 @@ export async function moveCardsToOwner(
             ? { triggerSummary: closedByHandSummary(handover.previousManager) }
             : {}),
         });
-      } else if (card.userId !== userId) {
-        await ctx.db.patch(card._id, { userId });
+      } else if (card.userId !== userId || card.trigger === 'role-changed') {
+        // A decided card opened by hand loses the previous manager's typed words too (W17-R4).
+        await ctx.db.patch(card._id, {
+          userId,
+          ...(card.trigger === 'role-changed'
+            ? { triggerSummary: decidedByHandSummary(handover.previousManager) }
+            : {}),
+        });
       }
     }
   }

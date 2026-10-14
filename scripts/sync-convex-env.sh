@@ -180,12 +180,23 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
+# The file is read once, by the one reader every script shares
+# (scripts/lib/env-text.ts, W17-R24): IT writes it as a shell file is written,
+# with quotes, `export`, inline comments or CRLF line ends, and compose and
+# Next read it as dotenv does, so this script reads it that way too rather
+# than by grep. One `NAME=value` a line, each name once, its last value.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if ! LOCAL_VALUES=$("$REPO_ROOT/node_modules/.bin/tsx" "$REPO_ROOT/scripts/lib/env-text.ts" "$ENV_FILE"); then
+  echo "error: could not read $ENV_FILE." >&2
+  exit 1
+fi
+read_local() {
+  grep -E "^${1}=" <<<"$LOCAL_VALUES" | head -n1 | cut -d= -f2- || true
+}
+
 # The deployment cannot verify a no-auth caller's token without the public key,
 # and a push in that state would refuse every caller. Say so here rather than
 # leaving it to be discovered as a 'not authenticated' on the dashboard.
-read_local() {
-  grep -E "^${1}=" "$ENV_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true
-}
 if [ "$(read_local NEXT_PUBLIC_DEV_NO_AUTH)" = "true" ] && [ -z "$(read_local DEV_NO_AUTH_JWKS)" ]; then
   echo "error: NEXT_PUBLIC_DEV_NO_AUTH=true in $ENV_FILE but DEV_NO_AUTH_JWKS is empty." >&2
   echo "       No-auth mode accepts only callers holding this machine's local key," >&2

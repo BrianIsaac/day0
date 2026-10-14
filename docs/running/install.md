@@ -34,8 +34,12 @@ Ask the customer's IT to have ready, or to do with you on the day:
    your reverse proxy](proxy.md) says what it must carry, with a
    configuration for Caddy and one for nginx; the install checks yours.
 3. **The way out.** Ask whether the machine reaches the internet directly or
-   only through an HTTP proxy. If through a proxy, its address goes in
-   `.env.local` before the install, and IT allows the hosts Day0 reaches:
+   only through an HTTP proxy. If through a proxy, ask for its address in
+   the form `http://<host>:<port>`, reachable from the machine’s containers
+   and not only from its own shell, and the names inside your network it
+   does not serve (`NO_PROXY`). The address goes in `.env.local` before the
+   install and nowhere else, so it is not also exported in the shell the
+   install runs from, and IT allows the hosts Day0 reaches:
    [The way out](egress.md) lists every one by what needs it, and says which
    parts of Day0 do not take a proxy at all.
 4. **The identity provider's app registration**, following the guide for it:

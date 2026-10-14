@@ -264,7 +264,9 @@ describe('the confirmed conflicts read past one read’s window (17-C; W15-R19, 
     const first = await manager.query(api.docRelations.listOpen, {});
     expect(first).toMatchObject({ cards: [{ status: 'proposed' }], next: null });
     const later = await manager.query(api.docRelations.listOpen, { conflictsBefore: Date.now() });
-    expect(later).toEqual({ cards: [], next: null });
+    // Re-pinned for W17-R9 (D-10 (a)): a read going on from a cursor draws no proposal, so it
+    // leaves none unshown.
+    expect(later).toEqual({ cards: [], next: null, notShown: { proposals: 0, atLeast: false } });
   });
 
   it('stops a walk at its byte bound with the conflict that passed it still to come, and passes over a relation the reader does not read for no lookup', async (): Promise<void> => {
@@ -431,9 +433,11 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(conflicts[0]).toEqual({
       relationId,
       heading: 'Thresholds',
+      // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref, by which two pages of one
+      // title in one source are named apart.
       pages: [
-        { title: 'Finance escalation', source: 'Finance wiki' },
-        { title: 'Pipeline runbook', source: 'Handbook' },
+        { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+        { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
       ],
     });
     await asManager(harness).mutation(api.docRelations.decide, {
@@ -1666,8 +1670,9 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         reply: { verb: 'answer', id: 'ab3xyz', choice: 'both', number: 1 },
       }),
     ).resolves.toMatchObject({ status: 'answered' });
+    // Re-pinned for W17-R10: "Both hold" gives no page away, so nothing is drafted again.
     expect(await noticeTexts(harness)).toEqual([
-      'Recorded for question 1: Both hold. Retry runs the steps that waited on it, drafted again where they relied on the other page. 1 more question of this plan is still open.',
+      'Recorded for question 1: Both hold. Retry runs the steps that waited on it. 1 more question of this plan is still open.',
     ]);
     const [first, second] = await questionsOf(harness, asked.workItemId);
     expect(first.answer).toMatchObject({ text: 'Both hold', via: 'slack' });
@@ -1962,6 +1967,30 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
     expect(await notices(answered)).toEqual([]);
   });
 
+  // W17-R10 (reader 2): the acknowledgement said "Retry runs the steps that waited on it, drafted
+  // again where they relied on the other page." for "Both hold", where no page gives way, and for a
+  // question beside an item already finished, where nothing waits (C-9 (a)).
+  it('acknowledges a question answered beside a finished item as holding nothing of it (W17-R10)', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.setSystemTime(Date.UTC(2026, 9, 1));
+    const harness = convexTest(schema, allConvexModules());
+    const asked = await askedInRequest(harness);
+    await harness.run(async (ctx) => {
+      await ctx.db.patch(asked.workItemId, { state: 'completed' });
+    });
+    await expect(
+      harness.mutation(internal.work.resolveChannelDecision, {
+        surfaceId: asked.surfaceId,
+        userId: 'UMANAGER',
+        messageTs: '1790000000.000100',
+        reply: { verb: 'answer', id: 'ab3xyz', choice: 'from' },
+      }),
+    ).resolves.toMatchObject({ status: 'answered' });
+    expect(await noticeTexts(harness)).toEqual([
+      'Recorded: A, Finance escalation (Finance wiki) is right. Nothing of this item waits on the answer.',
+    ]);
+  });
+
   it('draws the question with what Day0 holds now, by its relation, and gives a settled one to the stop’s words (17-C)', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.setSystemTime(Date.UTC(2026, 9, 1));
@@ -1976,9 +2005,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         workItemId,
         relationId,
         question: ASKED,
+        // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref.
         pages: [
-          { title: 'Finance escalation', source: 'Finance wiki' },
-          { title: 'Pipeline runbook', source: 'Handbook' },
+          { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+          { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
         ],
       },
     ]);
@@ -2294,9 +2324,10 @@ describe('a confirmed conflict in a selection and at a plan’s decision (the si
         // Re-pinned by 17-C: the view names the relation, by which a stop finds its question.
         relationId,
         question: ASKED,
+        // Re-pinned for W17-R1 (D-11 (a)): each page carries its ref.
         pages: [
-          { title: 'Finance escalation', source: 'Finance wiki' },
-          { title: 'Pipeline runbook', source: 'Handbook' },
+          { title: 'Finance escalation', source: 'Finance wiki', ref: 'escalation.md' },
+          { title: 'Pipeline runbook', source: 'Handbook', ref: 'runbooks/pipeline-runbook.md' },
         ],
       },
     ]);

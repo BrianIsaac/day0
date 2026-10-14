@@ -425,6 +425,26 @@ describe.skipIf(!hasHostTool('bash'))('sync-convex-env.sh (needs bash)', (): voi
     expect(empty.calls).toContain('convex env set DAY0_CREDENTIAL_KEY -- new');
   });
 
+  it('reads a file written as a shell file is written as dotenv does: quotes, an inline comment, an export line, CRLF and a key set twice (W17-R24)', (): void => {
+    const shellShaped = runSync(
+      [],
+      [
+        "export HTTPS_PROXY='http://proxy.acme.test:3128' # corp",
+        'OPENAI_REASONING_EFFORT=low # the bed',
+        'OPENAI_MAX_OUTPUT_TOKENS=1024',
+        'OPENAI_MAX_OUTPUT_TOKENS=32768',
+        '',
+      ].join('\r\n'),
+    );
+    expect(shellShaped.status).toBe(0);
+    expect(shellShaped.calls).toContain('convex env set OPENAI_REASONING_EFFORT -- low');
+    expect(shellShaped.calls).toContain('convex env set OPENAI_MAX_OUTPUT_TOKENS -- 32768');
+    // The file names a proxy, so the deployment is given what NO_PROXY keeps out.
+    expect(shellShaped.calls.some((call) => call.startsWith('convex env set NO_PROXY -- '))).toBe(
+      true,
+    );
+  });
+
   it('sets a value that begins with a dash as a value, and aliases without associative arrays', (): void => {
     expect(readFileSync(SCRIPT, 'utf8')).not.toMatch(/declare -A/);
     const { status, calls } = runSync(

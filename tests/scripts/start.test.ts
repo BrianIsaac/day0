@@ -24,6 +24,19 @@ describe('the address pnpm start binds (P-1)', (): void => {
     expect(startArguments('127.0.0.1', '3000')).toEqual(['start', '-H', '127.0.0.1', '-p', '3000']);
   });
 
+  // W17-R28 (reader 5): the contributors' table and the README's company sign-in still said
+  // `pnpm start` is `next start` on 3000, after 17-P made it this script on loopback.
+  it('is described as it starts, never as next start on 3000 (W17-R28)', (): void => {
+    const contributing = readFileSync('CONTRIBUTING.md', 'utf8');
+    const readme = readFileSync('README.md', 'utf8');
+    expect(contributing).not.toContain('`next start` on 3000');
+    expect(contributing).toContain(
+      '| `pnpm start` | The built app on `127.0.0.1`, its port `PORT`, then `DAY0_APP_PORT`, then 3000',
+    );
+    expect(readme).not.toContain('the first install runs `next start`');
+    expect(readme).toContain('the first install runs `pnpm start`');
+  });
+
   it('is what package.json runs for pnpm start', (): void => {
     const scripts = (
       JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
@@ -115,6 +128,20 @@ describe('what the app is started with behind a proxy on the way out (RM31 (a))'
       PATH: '/usr/bin',
       PORT: '3000',
       NEXT_TELEMETRY_DISABLED: '1',
+      HTTPS_PROXY: 'http://proxy.acme.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
+      NODE_USE_ENV_PROXY: '1',
+    });
+  });
+
+  it('hands Node a proxy the file quotes and comments as a shell file would, never refusing it (W17-R24)', (): void => {
+    const envText = [
+      "export HTTPS_PROXY='http://proxy.acme.test:3128' # corp",
+      'NO_PROXY="day0.acme.test"',
+      '',
+    ].join('\r\n');
+    expect(startRefusal({}, envText, 'v22.23.2')).toBeUndefined();
+    expect(startEnvironment({ PATH: '/usr/bin' }, envText, '3000')).toMatchObject({
       HTTPS_PROXY: 'http://proxy.acme.test:3128',
       NO_PROXY: 'localhost,127.0.0.1,day0.acme.test',
       NODE_USE_ENV_PROXY: '1',

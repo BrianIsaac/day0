@@ -647,7 +647,7 @@ export const BROWSER_DRIVER_ABSENT = 'BROWSER_DRIVER_ABSENT';
 
 /** What to do about it, in the words the running instructions use. */
 export const BROWSER_COMPONENT_ABSENT =
-  "day0's browser component is not running - add `--profile browser` (see running instructions)";
+  "Day0's browser component is not running - add `--profile browser` (see running instructions)";
 
 /** The card's sentence: why this system needs the component, then what to do. */
 export const BROWSER_COMPONENT_CARD_MESSAGE = `This system is reached through its web UI. ${BROWSER_COMPONENT_ABSENT}`;

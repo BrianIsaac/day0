@@ -622,6 +622,55 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a deferred card a further change opened before its date as that, and a page’s return closing its card (W17-R3, W17-R2)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.reopened',
+          payload: {
+            reorientationId: 'card-1',
+            summary: 'Access linear:read was revoked',
+            revisitAt: 1,
+            joined: true,
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'A deferred reorientation card opened again before its date, since a further change joined it: Access linear:read was revoked.',
+    );
+    expect(
+      recordWords(
+        {
+          type: 'reorientation.dismissed',
+          payload: {
+            reorientationId: 'card-1',
+            summary: '\u201cClose review window\u201d was archived',
+            outcome: 'no longer needed: \u201cClose review window\u201d is current again',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The reorientation card about \u201c\u201cClose review window\u201d was archived\u201d closed as no longer needed: \u201cClose review window\u201d is current again.',
+    );
+  });
+
+  it('says a failed run’s model call in the manager’s words, as the Work card does, never by its internal name (W17-R22)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.failed',
+          payload: {
+            reason:
+              'agentJson(day0-skill-kanban-comment-and-close-ticket-ticket-1-initial): prompt reply did not satisfy the schema',
+          },
+        },
+        subject,
+      ),
+    ).not.toContain('agentJson');
+  });
+
   it('says a type only an older release wrote under the name it was stored as', (): void => {
     expect(recordWords({ type: 'work.teleported', payload: {} }, subject)).toBe(
       'An event this release does not describe: work.teleported.',

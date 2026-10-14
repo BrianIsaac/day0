@@ -39,8 +39,9 @@ describe('the ticket now (K D3)', (): void => {
     // Re-pinned for W12a, 13 October 2026 (the wave 17 file's section 7, RM24): the line is what
     // intake last saw and when, never "The ticket is in ...", which under a landed move read as
     // the ticket's state now.
+    // Re-pinned for W17-R22 (17-FW's C6): the tracker's state is quoted, never "in In Progress".
     expect(markup).toMatch(
-      /Intake last saw this ticket in In Progress, assigned to someone other than Mira in the tracker, at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>\. It reads the tracker again at its next check\./,
+      /Intake last saw this ticket in “In Progress”, assigned to someone other than Mira in the tracker, at <time dateTime="2026-09-29T07:02:00.000Z"[^>]*>29 Sep 2026, 15:02<\/time>\. It reads the tracker again at its next check\./,
     );
     expect(markup).not.toContain('user-7');
     expect(markup).not.toContain('The ticket is in');
@@ -57,7 +58,7 @@ describe('the ticket now (K D3)', (): void => {
     };
     const markup = renderToStaticMarkup(<TicketNowLine workItemId={ITEM} zone="Asia/Singapore" />);
     expect(markup.replace(/<[^>]+>/g, '')).toContain(
-      'Intake last saw this ticket in Backlog, unassigned, marked not to be automated, at 12 Oct 2026, 22:56. Intake refused it on that listing: Marked not to be automated. It reads the tracker again at its next check.',
+      'Intake last saw this ticket in “Backlog”, unassigned, marked not to be automated, at 12 Oct 2026, 22:56. Intake refused it on that listing: Marked not to be automated. It reads the tracker again at its next check.',
     );
   });
 

@@ -14,6 +14,8 @@ import { judgedAs, REEVALUATION } from './verdict-words';
 import { finishedAs } from './work/work-item';
 import { EMPLOYEES_CHECKED } from '@/work/agreement-vocabulary';
 import { skipClause } from '@/work/skip-reasons';
+import { decidedElsewhereOf } from '@/agent/reorientation-words';
+import { reasonInWords } from '@/work/stop';
 
 /**
  * A payload as the feed reads it: a row an older release wrote may lack any
@@ -806,7 +808,9 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'work.dependent-authoring-claimed': 'closing phase started',
   'work.completed': (payload) => finishedAs(payload.output),
   'work.failed': (payload) =>
-    payload.stopped === true ? 'run stopped' : `run failed${because(payload.reason)}`,
+    payload.stopped === true
+      ? 'run stopped'
+      : `run failed${because(reasonInWords(payload.reason))}`,
   'work.actions-auto-applying': (payload) =>
     `applying ${counted(payload.autoIndexes?.length, 'action') ?? 'actions'} ${
       payload.autonomousActions === true ? 'autonomously' : 'automatically'
@@ -862,14 +866,18 @@ const LABELS: { readonly [Type in EventType]: Label<Type> } = {
   'reorientation.approved': (payload) =>
     `reorientation card approved${text(payload.result) ? `: ${payload.result}` : ''}`,
   'reorientation.dismissed': (payload) =>
-    payload.outcome !== undefined
-      ? 'reorientation card closed: decided on another employee’s card'
-      : 'reorientation card dismissed; nothing changed',
+    payload.outcome === undefined
+      ? 'reorientation card dismissed; nothing changed'
+      : decidedElsewhereOf(payload.outcome) !== undefined
+        ? 'reorientation card closed: decided on another employee’s card'
+        : `reorientation card closed as ${payload.outcome}`,
   'reorientation.deferred': 'reorientation card deferred; it opens again on its date',
   'manager.question-asked': (payload) =>
     `question asked beside the plan${text(payload.question) ? `: ${payload.question}` : ''}`,
   'reorientation.reopened': (payload) =>
-    `deferred reorientation card open again${text(payload.summary) ? `: ${payload.summary}` : ''}`,
+    `deferred reorientation card open again${
+      payload.joined === true ? ': a further change joined it' : ''
+    }${text(payload.summary) ? `: ${payload.summary}` : ''}`,
   'reorientation.card-not-opened': (payload) =>
     `reorientation card not opened${text(payload.summary) ? `: ${payload.summary}` : ''}`,
 };

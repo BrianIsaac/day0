@@ -1780,6 +1780,22 @@ describe('withRoutingRules (RM27)', (): void => {
     ]);
   });
 
+  it('writes the verb after the manager\u2019s "I" in the third person in a routing clause (W17-R19)', (): void => {
+    const drawn = withRoutingRules(
+      charter([]),
+      {
+        collaborators:
+          "Run it by me if I haven't replied by noon. Talk to me first when I do the close.",
+      },
+      [],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.escalationTriggers).toEqual([
+      "Run it by the manager if the manager hasn't replied by noon.",
+      'Talk to the manager first when the manager does the close.',
+    ]);
+  });
+
   it("writes the manager's contractions in the third person too", (): void => {
     const drawn = withRoutingRules(
       charter([]),
@@ -2055,6 +2071,77 @@ describe("withProhibitionClauses (the v0.20.0 walk's finding 6)", (): void => {
       'Contact finance directly without going through the manager.',
       'Share a password in a ticket comment.',
       'Never post in #general, use #revops.',
+    ]);
+  });
+
+  // W17-R18 (reader 4's sentences): the turn to a second instruction on a dash, a colon or a bare
+  // "and" or "then" was read as part of the act, so "Never delete tickets and tell me." was written
+  // "Delete tickets and tell the manager.", which under Will not do forbids the telling.
+  it('writes nothing for a sentence that turns to another instruction on a dash, a colon or a bare "and" or "then" (W17-R18)', (): void => {
+    const before = charter([DUTY], []);
+    const rules = [
+      rule('Never approve anything over 500 - ask me.', []),
+      rule('Never delete tickets and tell me.', []),
+      rule('Never refund over 500: ask me first.', []),
+      rule('Never guess - ask.', []),
+      rule('Never approve a refund \u2013 ask me.', []),
+      rule('Never close a ticket then tell me.', []),
+      rule('Never close a ticket and then reopen it.', []),
+    ];
+    expect(withProhibitionClauses(before, rules, [])).toEqual({ charter: before, rules });
+  });
+
+  it('still writes the one act of a sentence whose dash opens a qualifier, or whose "and" joins two things the act touches (W17-R18)', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [
+        rule('Never share customer data - even with another team.', []),
+        rule('Never touch payroll and HR records.', []),
+        rule('Never share passwords and API keys in a ticket.', []),
+        rule('Never post in #general after 18:00.', []),
+      ],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Share customer data - even with another team.',
+      'Touch payroll and HR records.',
+      'Share passwords and API keys in a ticket.',
+      'Post in #general after 18:00.',
+    ]);
+  });
+
+  // W17-R19 (reader 4's sentences): "I" became "the manager" and its verb stayed in the first
+  // person, "unless the manager have approved it".
+  it('writes the verb after the manager\u2019s "I" in the third person, in every tense a prohibition says it (W17-R19)', (): void => {
+    const drawn = withProhibitionClauses(
+      charter([DUTY], []),
+      [
+        rule('Never send a quote, unless I have approved it.', []),
+        rule('Never touch the ledger unless I ask.', []),
+        rule('Never close a ticket until I say so.', []),
+        rule('Never reply to a customer while I haven\u2019t seen the draft.', []),
+        rule('Never post the figures until I personally approve them.', []),
+        rule('Never refund an order I declined.', []),
+        rule('Never merge a branch unless I can review it.', []),
+        rule('Never send the invoice before I reply.', []),
+        rule('Never change a deal I always watch.', []),
+        rule('Never move a card I was assigned.', []),
+        rule('Never edit a page I go through each week.', []),
+      ],
+      [],
+    );
+    expect(drawn.charter.proposedBoundaries.willNotDo).toEqual([
+      'Send a quote, unless the manager has approved it.',
+      'Touch the ledger unless the manager asks.',
+      'Close a ticket until the manager says so.',
+      'Reply to a customer while the manager hasn\u2019t seen the draft.',
+      'Post the figures until the manager personally approves them.',
+      'Refund an order the manager declined.',
+      'Merge a branch unless the manager can review it.',
+      'Send the invoice before the manager replies.',
+      'Change a deal the manager always watches.',
+      'Move a card the manager was assigned.',
+      'Edit a page the manager goes through each week.',
     ]);
   });
 
