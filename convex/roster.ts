@@ -88,22 +88,17 @@ const DOC_SOURCE_READ_LIMIT = 100;
 const MONTH_LANDED_READ_LIMIT = 100;
 
 /**
- * How many of an employee's send-backs one read of the month takes. The reads go on, a page at a
- * time, to the month's start (T5, wave 18): the newest hundred alone left out a completion that
- * landed before the oldest of them, and made the count a floor past a hundred send-backs.
- */
-const MONTH_SENT_BACK_PAGE = 100;
-
-/**
- * The bytes an employee's send-backs of one month may read before the count is a floor. A
+ * The bytes an employee's send-backs of one month may read before the count is a floor (T5, wave
+ * 18): the month's send-backs are read to its start, where the newest hundred alone left out a
+ * completion that landed before the oldest of them and made the count a floor past a hundred. A
  * send-back's event holds an item's id and the manager's note, so this is some thousands of them,
  * and twenty employees' months stay well inside one read.
  */
 const MONTH_SENT_BACK_BYTES = 256 * 1024;
 
 /**
- * An employee's send-backs this month, newest first, read a page at a time to the month's start,
- * within {@link MONTH_SENT_BACK_BYTES}.
+ * An employee's send-backs this month, newest first, read to the month's start within
+ * {@link MONTH_SENT_BACK_BYTES}.
  *
  * @param ctx - Query context.
  * @param agentId - The employee.
@@ -117,25 +112,14 @@ async function monthSentBack(
 ): Promise<{ readonly sentBack: Doc<'events'>[]; readonly more: boolean }> {
   const sentBack: Doc<'events'>[] = [];
   let room = MONTH_SENT_BACK_BYTES;
-  for (;;) {
-    const before = sentBack.at(-1)?._creationTime;
-    // `eventsOfType`'s read with an upper bound, which it does not take: one type, one employee.
-    const page = await ctx.db
-      .query('events')
-      .withIndex('by_agent_type', (index) => {
-        const ofMonth = index
-          .eq('agentId', agentId)
-          .eq('type', 'work.retry')
-          .gte('_creationTime', monthStart);
-        return before === undefined ? ofMonth : ofMonth.lt('_creationTime', before);
-      })
-      .order('desc')
-      .take(MONTH_SENT_BACK_PAGE);
-    for (const event of page) room -= getDocumentSize(event);
-    sentBack.push(...page);
-    if (page.length < MONTH_SENT_BACK_PAGE) return { sentBack, more: false };
+  for await (const event of eventsOfType(ctx, agentId, 'work.retry', { from: monthStart }).order(
+    'desc',
+  )) {
     if (room <= 0) return { sentBack, more: true };
+    room -= getDocumentSize(event);
+    sentBack.push(event);
   }
+  return { sentBack, more: false };
 }
 
 const landedThisMonthValidator = v.object({
@@ -165,7 +149,7 @@ type LandedThisMonth = Infer<typeof landedThisMonthValidator>;
  * finding 4). Reads the month's `work.completed` and `work.retry` events by
  * the type index, from the month's first midnight on, and dates each by the
  * instant it was logged: the newest completions to a bound, and the send-backs
- * page by page to the month's start ({@link monthSentBack}, T5). Past the
+ * to the month's start ({@link monthSentBack}, T5). Past the
  * completions' bound, or the send-backs' bytes, the count is a floor and says so,
  * and past the send-backs' bytes a completion older than the oldest send-back
  * read is left out, since one of the unread may have taken it back.
