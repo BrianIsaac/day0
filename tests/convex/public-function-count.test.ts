@@ -30,9 +30,10 @@ interface RegisteredFunction {
  * `managerQuestions:conflictsForAgent`; 229 with 16-D's `reorientationTalk:takeTurn`,
  * `:recordAnswer`, `:finish`, `:keepReplyDraft` and `:forCard`; 232 with wave 17's
  * `exportActions:exportOwnerAgents`, `roster:page` and `metrics:forOwnerByPages`, 17-F; 231
- * without `agents:rosterForUser`, which no page read since 17-F, removed in wave 18, F-1 (a)).
+ * without `agents:rosterForUser`, which no page read since 17-F, removed in wave 18, F-1 (a); 232
+ * with 18-F's `metrics:forAgentByPages`, C1).
  */
-const PINNED_COUNT = 231;
+const PINNED_COUNT = 232;
 
 const CONFIGURATION_MODULES = new Set(['schema', 'auth.config']);
 

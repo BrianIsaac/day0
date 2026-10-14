@@ -37,7 +37,8 @@ The entry points a reader is most likely to want:
 | `skills:approve`, `skills:reject` | mutation | The manager's decision on a proposed skill |
 | `surfaces:approve` | mutation | The manager's one approval a connection card needs before its probe runs, by `surfaceId` |
 | `agents:revokeScope`, `agents:setAutonomousActions` | mutation | Revoke a grant; turn the autonomy switch |
-| `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger |
+| `metrics:forAgent` | query | The Supervision card's numbers, derived from the event ledger; an employee whose records pass what one read of them holds is refused in words the page reads, and the page asks `metrics:forAgentByPages` |
+| `metrics:forAgentByPages` | action | The same numbers for such an employee, its records read page by page with each run's output cut to what the figures read |
 | `metrics:forOwner` | query | The Supervision numbers of the twenty most recent employees the owner holds, and as many of those it handed over, with their company row: decisions and their waits pooled for the one manager, each employee's time to an approved charter quoted and never summed, evaluation agents and baseline arms left out; `omittedEmployees` counts the employees it did not read |
 | `metrics:forOwnerByPages` | action | The same figures over every employee the owner holds, read five employees a page and pooled once; the home draws it in place of `metrics:forOwner` where that read left employees out, and `pnpm metrics:recompute` agrees with it from an owner export of the same company |
 | `roster:page` | query | One page of the owner's roster, twenty employees at most, each row's day and month read at `at`, the viewer's clock rounded down to a quarter hour; the home reads the pages to their end |
